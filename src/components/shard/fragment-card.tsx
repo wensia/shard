@@ -12,34 +12,55 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Button } from "@/components/ui/button"
+import { FragmentContent } from "@/components/shard/fragment-content"
 import { TagBadge } from "@/components/shard/tag-badge"
 import type { Fragment } from "@/types"
 
 interface FragmentCardProps {
   fragment: Fragment
+  onArchive?: (fragment: Fragment) => void
+  onEdit?: (fragment: Fragment) => void
+  onToggleTask?: (fragment: Fragment, lineIndex: number) => void
 }
 
-export function FragmentCard({ fragment }: FragmentCardProps) {
+export function FragmentCard({
+  fragment,
+  onArchive,
+  onEdit,
+  onToggleTask,
+}: FragmentCardProps) {
   const createdTime = formatCreatedTime(fragment.createdAt)
+  const visibleTags = fragment.tags.filter((tag) => tag !== "inbox")
+  const displayTags = visibleTags.length > 0 ? visibleTags : fragment.tags
 
   return (
     <article
-      className="group flex min-h-40 flex-col rounded-[var(--shard-surface-radius)] border border-border bg-card px-5 py-4 transition-colors hover:border-[color:var(--shard-border-strong)]"
+      className="group flex flex-col rounded-[var(--shard-surface-radius)] bg-card px-[var(--shard-card-padding-x)] py-[var(--shard-card-padding-y)]"
     >
-      <div className="flex items-start gap-4">
+      <div className="flex items-start gap-[var(--shard-card-gap)]">
         <div className="min-w-0 flex-1">
           <time
-            className="mb-2 block text-xs font-medium text-muted-foreground"
+            className="shard-memo-meta mb-[var(--shard-space-2)] block text-muted-foreground"
             dateTime={fragment.createdAt}
           >
             {createdTime}
           </time>
-          <p className="line-clamp-4 text-[15px] leading-6 font-medium whitespace-pre-wrap">
-            {fragment.content}
+          {displayTags.length > 0 ? (
+            <div className="shard-card-tags mb-[var(--shard-space-3)] flex flex-wrap gap-[var(--shard-space-2)] [--shard-tag-height:1.5rem] [--shard-tag-padding-x:10px]">
+              {displayTags.map((tag) => (
+                <TagBadge key={tag} tag={tag} />
+              ))}
+            </div>
+          ) : null}
+          <p className="shard-memo-body whitespace-pre-wrap">
+            <FragmentContent
+              content={fragment.content}
+              onTaskToggle={(lineIndex) => onToggleTask?.(fragment, lineIndex)}
+            />
           </p>
         </div>
 
-        <div className="flex shrink-0 items-center gap-2">
+        <div className="flex shrink-0 items-center gap-[var(--shard-space-2)]">
           <DropdownMenu>
             <DropdownMenuTrigger render={<Button size="icon-sm" variant="ghost" />}>
               <MoreHorizontalIcon
@@ -50,27 +71,28 @@ export function FragmentCard({ fragment }: FragmentCardProps) {
             </DropdownMenuTrigger>
             <DropdownMenuContent
               align="end"
-              className="w-fit min-w-0 rounded-md p-1 shadow-[0_8px_20px_rgba(0,0,0,0.08)] ring-black/10"
+              className="w-fit min-w-0 rounded-[var(--shard-radius-control)] p-[var(--shard-space-1)] shadow-[0_8px_20px_rgb(0_0_0/var(--shard-alpha-8))] ring-[rgb(0_0_0/var(--shard-alpha-13))]"
             >
               <DropdownMenuGroup>
-                <DropdownMenuItem className="grid h-8 grid-cols-[14px_max-content] gap-2 px-2 text-[13px] font-medium whitespace-nowrap [&_svg]:size-3.5 [&_svg]:stroke-[1.65]">
+                <DropdownMenuItem
+                  className="grid h-8 grid-cols-[14px_max-content] gap-[var(--shard-space-2)] px-[var(--shard-space-2)] text-[13px] font-medium whitespace-nowrap [&_svg]:size-3.5 [&_svg]:stroke-[1.65]"
+                  onClick={() => onEdit?.(fragment)}
+                >
                   <PencilLineIcon />
-                  编辑片段
+                  编辑
                 </DropdownMenuItem>
-                <DropdownMenuItem className="grid h-8 grid-cols-[14px_max-content] gap-2 px-2 text-[13px] font-medium whitespace-nowrap [&_svg]:size-3.5 [&_svg]:stroke-[1.65]">
+                <DropdownMenuItem
+                  className="grid h-8 grid-cols-[14px_max-content] gap-[var(--shard-space-2)] px-[var(--shard-space-2)] text-[13px] font-medium whitespace-nowrap [&_svg]:size-3.5 [&_svg]:stroke-[1.65]"
+                  disabled={fragment.archived}
+                  onClick={() => onArchive?.(fragment)}
+                >
                   <ArchiveIcon />
-                  归档片段
+                  {fragment.archived ? "已归档" : "归档"}
                 </DropdownMenuItem>
               </DropdownMenuGroup>
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
-      </div>
-
-      <div className="mt-auto flex flex-wrap gap-2 pt-4">
-        {fragment.tags.map((tag) => (
-          <TagBadge key={tag} tag={tag} />
-        ))}
       </div>
     </article>
   )

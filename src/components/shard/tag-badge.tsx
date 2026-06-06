@@ -10,15 +10,17 @@ interface TagBadgeProps {
 }
 
 export function TagBadge({ removable = false, tag, onRemove }: TagBadgeProps) {
+  const toneClass = tag === "inbox" ? "shard-tag-muted" : ""
+
   return (
     <Badge
-      className="h-6 rounded-full border-0 bg-[color:var(--shard-chip-bg)] px-2.5 py-0 text-xs leading-none font-normal text-[color:var(--shard-chip-fg)] hover:bg-[color:var(--shard-chip-hover)]"
+      className={`shard-tag ${toneClass} border-0 py-0 font-medium shadow-none`}
       variant="secondary"
     >
       #{tag}
       {removable ? (
         <Button
-          className="-mr-1 ml-0.5 size-4 rounded-full p-0 hover:bg-[color:var(--shard-chip-hover)]"
+          className="shard-tag-remove -mr-[3px] ml-[var(--shard-space-micro)] size-[18px] rounded-full p-0 text-current hover:text-current"
           onClick={() => onRemove?.(tag)}
           size="icon-xs"
           type="button"

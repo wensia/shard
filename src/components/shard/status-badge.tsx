@@ -25,19 +25,19 @@ const statusMeta: Record<
   committed: {
     label: "committed",
     className:
-      "border-[color:var(--shard-emerald)]/30 bg-[color:var(--shard-emerald)]/10 text-[color:var(--shard-emerald)]",
+      "border-[rgb(var(--shard-emerald-rgb)/var(--shard-alpha-34))] bg-[rgb(var(--shard-emerald-rgb)/var(--shard-alpha-8))] text-[color:var(--shard-emerald)]",
     icon: CheckCircle2Icon,
   },
   sync_pending: {
     label: "sync pending",
     className:
-      "border-[color:var(--shard-amber)]/40 bg-[color:var(--shard-amber)]/10 text-[color:var(--shard-amber)]",
+      "border-[rgb(var(--shard-amber-rgb)/var(--shard-alpha-34))] bg-[rgb(var(--shard-amber-rgb)/var(--shard-alpha-8))] text-[color:var(--shard-amber)]",
     icon: Clock3Icon,
   },
   commit_failed: {
     label: "commit failed",
     className:
-      "border-[color:var(--shard-ruby)]/35 bg-[color:var(--shard-ruby)]/10 text-[color:var(--shard-ruby)]",
+      "border-[rgb(var(--shard-ruby-rgb)/var(--shard-alpha-34))] bg-[rgb(var(--shard-ruby-rgb)/var(--shard-alpha-8))] text-[color:var(--shard-ruby)]",
     icon: CircleAlertIcon,
   },
 }

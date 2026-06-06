@@ -1,7 +1,325 @@
+/*
+ * Shard geometry contract.
+ *
+ * The interface should read as quiet and simple, but every visible distance is
+ * still deliberate. Build from the 4px lattice in src/index.css, use the 6px
+ * micro step only for dense icon/chip gaps, and keep component geometry derived
+ * from tokens instead of one-off pixel values.
+ *
+ * Core relationships:
+ * - surface radius = 12px = 2 * control radius
+ * - chip height = 24px = 6 * 4px
+ * - card gap = composer padding = 16px
+ * - heatmap width = 12 columns * 12px + 11 gaps * 5px = 199px
+ * - text never scales with viewport width; layout absorbs responsive pressure
+ * - editor fields use a custom caret; native textarea caret height follows the
+ *   line box and is too visually tall for this writing surface
+ *
+ * Opacity contract:
+ * Shard-authored color transparency uses Fibonacci-percent stops only:
+ * 5, 8, 13, 21, 34, 55, and 89.
+ * - 5: barely visible washes on large quiet surfaces
+ * - 8: resting tint for small chips and tags
+ * - 13: hover tint, hairline rings, and light shadows
+ * - 21: selected or active fills
+ * - 34: emphasized active rings and elevated highlights
+ * - 55: secondary glyphs, close controls, and medium overlays
+ * - 89: strong tinted text that should still read as color, not black
+ * Use 0 and 1 only for binary visibility states such as caret animation.
+ */
+
+@layer base {
+  :root {
+    --shard-alpha-5: 0.05;
+    --shard-alpha-8: 0.08;
+    --shard-alpha-13: 0.13;
+    --shard-alpha-21: 0.21;
+    --shard-alpha-34: 0.34;
+    --shard-alpha-55: 0.55;
+    --shard-alpha-89: 0.89;
+  }
+
+  textarea,
+  input,
+  [contenteditable="true"] {
+    caret-color: var(--shard-caret-color);
+  }
+}
+
 @layer utilities {
+  .shard-content-inset {
+    padding-inline: var(--shard-content-inset);
+  }
+
+  @media (width >= 64rem) {
+    .shard-content-inset {
+      padding-inline: var(--shard-content-inset-lg);
+    }
+  }
+
+  .shard-content-measure {
+    margin-inline: auto;
+    width: 100%;
+    max-width: var(--shard-content-max-width);
+  }
+
+  .shard-surface-radius {
+    border-radius: var(--shard-surface-radius);
+  }
+
+  .shard-control-radius {
+    border-radius: var(--shard-radius-control);
+  }
+
+  .shard-heatmap-grid {
+    display: grid;
+    grid-auto-flow: column;
+    grid-template-rows: repeat(7, var(--shard-heatmap-cell));
+    grid-auto-columns: var(--shard-heatmap-cell);
+    column-gap: var(--shard-heatmap-column-gap);
+    row-gap: var(--shard-heatmap-row-gap);
+  }
+
+  .shard-chip {
+    display: inline-flex;
+    height: var(--shard-chip-height);
+    align-items: center;
+    border-radius: 999px;
+    padding-inline: var(--shard-chip-padding-x);
+    font-size: 0.75rem;
+    line-height: var(--shard-chip-height);
+  }
+
+  .shard-chip-text {
+    display: inline-flex;
+    height: var(--shard-chip-height);
+    align-items: center;
+    line-height: var(--shard-chip-height);
+  }
+
+  .shard-tag {
+    display: inline-flex;
+    min-width: 0;
+    height: var(--shard-tag-height);
+    align-items: center;
+    border-radius: calc(var(--shard-radius-control) + 4px);
+    padding-inline: var(--shard-tag-padding-x);
+    color: var(--shard-tag-fg);
+    background: var(--shard-tag-bg);
+    box-shadow: inset 0 0 0 1px var(--shard-tag-ring);
+    font-size: var(--shard-tag-font-size);
+    line-height: 1;
+    letter-spacing: 0;
+    transition:
+      background-color 140ms ease,
+      color 140ms ease,
+      box-shadow 140ms ease;
+  }
+
+  .shard-tag:hover {
+    color: var(--shard-tag-fg-strong);
+    background: var(--shard-tag-hover);
+  }
+
+  .shard-tag-active {
+    color: var(--shard-tag-fg-strong);
+    background: var(--shard-tag-active-bg);
+    box-shadow: inset 0 0 0 1px var(--shard-tag-active-ring);
+  }
+
+  .shard-tag-muted {
+    color: var(--shard-tag-muted-fg);
+    background: var(--shard-tag-muted-bg);
+    box-shadow: none;
+  }
+
+  .shard-tag-count {
+    color: currentColor;
+    opacity: var(--shard-alpha-55);
+  }
+
+  .shard-card-tags {
+    --shard-tag-bg: rgb(var(--shard-primary-rgb) / var(--shard-alpha-8));
+    --shard-tag-hover: rgb(var(--shard-primary-rgb) / var(--shard-alpha-13));
+    --shard-tag-font-size: 12px;
+    --shard-tag-ring: rgb(var(--shard-primary-rgb) / var(--shard-alpha-13));
+    --shard-tag-active-bg: rgb(var(--shard-primary-rgb) / var(--shard-alpha-21));
+    --shard-tag-active-ring: rgb(var(--shard-primary-rgb) / var(--shard-alpha-34));
+  }
+
+  .shard-memo-body {
+    color: var(--shard-memo-content-color);
+    font-size: var(--shard-memo-font-size);
+    font-weight: var(--shard-memo-font-weight);
+    letter-spacing: var(--shard-memo-letter-spacing);
+    line-height: var(--shard-memo-line-height);
+    overflow-wrap: break-word;
+    text-rendering: optimizeLegibility;
+  }
+
+  .shard-memo-meta {
+    font-size: var(--shard-memo-meta-font-size);
+    font-weight: var(--shard-memo-meta-font-weight);
+    letter-spacing: 0;
+    line-height: var(--shard-memo-meta-line-height);
+  }
+
+  .shard-fragment-content {
+    white-space: inherit;
+  }
+
+  .shard-task-marker {
+    position: relative;
+    display: inline-block;
+    padding: 0;
+    border: 0;
+    margin: 0;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    line-height: inherit;
+    text-align: left;
+    vertical-align: baseline;
+  }
+
+  .shard-task-toggle {
+    cursor: pointer;
+    pointer-events: auto;
+  }
+
+  .shard-task-toggle:focus-visible {
+    outline: none;
+  }
+
+  .shard-task-toggle:focus-visible .shard-task-checkbox {
+    box-shadow: 0 0 0 2px rgb(var(--shard-primary-rgb) / var(--shard-alpha-21));
+  }
+
+  .shard-task-marker-measure {
+    visibility: hidden;
+    white-space: pre;
+  }
+
+  .shard-task-list-marker {
+    white-space: pre;
+  }
+
+  .shard-task-checkbox {
+    position: absolute;
+    top: 50%;
+    left: 0;
+    display: inline-block;
+    width: 1em;
+    height: 1em;
+    border: 1.4px solid var(--muted-foreground);
+    border-radius: calc(var(--shard-radius-control) - 2px);
+    background: transparent;
+    transform: translateY(-50%);
+  }
+
+  .shard-task-checkbox-checked {
+    border-color: var(--shard-sapphire);
+    background: var(--shard-sapphire);
+  }
+
+  .shard-task-checkbox-checked::after {
+    position: absolute;
+    top: 1px;
+    left: 4px;
+    width: 4px;
+    height: 8px;
+    border: solid white;
+    border-width: 0 1.5px 1.5px 0;
+    content: "";
+    transform: rotate(45deg);
+  }
+
+  .shard-tag-remove {
+    opacity: var(--shard-alpha-55);
+  }
+
+  .shard-tag-remove:hover {
+    background: rgb(255 255 255 / var(--shard-alpha-55));
+    opacity: var(--shard-alpha-89);
+  }
+
+  .dark .shard-tag-remove:hover {
+    background: rgb(255 255 255 / var(--shard-alpha-13));
+  }
+
+  .shard-editor-field {
+    caret-color: transparent;
+    color: var(--shard-memo-content-color);
+    font-size: var(--shard-editor-font-size) !important;
+    font-feature-settings: "tnum" 1;
+    font-variant-numeric: tabular-nums;
+    font-weight: var(--shard-editor-font-weight);
+    letter-spacing: var(--shard-editor-letter-spacing);
+    line-height: var(--shard-editor-line-height);
+    text-rendering: optimizeLegibility;
+  }
+
+  .shard-editor-overlay-field {
+    color: transparent !important;
+    -webkit-text-fill-color: transparent;
+  }
+
+  .shard-editor-highlight-layer {
+    position: absolute;
+    inset: 0;
+    z-index: 20;
+    overflow: hidden;
+    color: var(--shard-memo-content-color);
+    font-size: var(--shard-editor-font-size);
+    font-feature-settings: "tnum" 1;
+    font-variant-numeric: tabular-nums;
+    font-weight: var(--shard-editor-font-weight);
+    letter-spacing: var(--shard-editor-letter-spacing);
+    line-height: var(--shard-editor-line-height);
+    pointer-events: none;
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+    text-rendering: optimizeLegibility;
+  }
+
+  .shard-editor-tag-highlight {
+    display: inline-block;
+    margin:
+      calc(var(--shard-editor-tag-pad-y) * -1)
+      calc(var(--shard-editor-tag-pad-x) * -1);
+    padding: var(--shard-editor-tag-pad-y) var(--shard-editor-tag-pad-x);
+    border-radius: var(--shard-editor-tag-radius);
+    color: var(--shard-tag-fg);
+    background: var(--shard-tag-bg);
+    font-weight: 500;
+    line-height: inherit;
+    vertical-align: baseline;
+  }
+
+  .shard-editor-placeholder {
+    position: absolute;
+    z-index: 10;
+    color: var(--muted-foreground);
+    font-size: var(--shard-editor-font-size);
+    font-weight: var(--shard-editor-font-weight);
+    letter-spacing: var(--shard-editor-letter-spacing);
+    line-height: var(--shard-editor-line-height);
+    pointer-events: none;
+  }
+
+  .shard-custom-caret {
+    position: absolute;
+    z-index: 30;
+    width: var(--shard-caret-width);
+    border-radius: 999px;
+    background: var(--shard-caret-color);
+    pointer-events: none;
+    animation: shard-caret-blink 1.12s steps(1, end) infinite;
+  }
+
   .shard-edge-action-row {
-    --shard-edge-action-inset: 0.625rem;
-    --shard-edge-action-size: 1.75rem;
+    --shard-edge-action-inset: var(--shard-space-3);
+    --shard-edge-action-size: 28px;
     min-height: calc(
       var(--shard-edge-action-size) + var(--shard-edge-action-inset) +
         var(--shard-edge-action-inset)
@@ -10,15 +328,28 @@
   }
 
   .shard-edge-action {
-    height: var(--shard-edge-action-size);
+    width: var(--shard-edge-action-size, 28px);
+    height: var(--shard-edge-action-size, 28px);
   }
 
   .shard-edge-action-save {
-    width: 2rem;
-    height: 2rem;
+    width: 32px;
+    height: 32px;
     border-radius: 999px;
     box-shadow:
-      0 1px 2px rgba(17, 19, 21, 0.12),
-      inset 0 1px 0 rgba(255, 255, 255, 0.28);
+      0 1px 2px rgb(17 19 21 / var(--shard-alpha-13)),
+      inset 0 1px 0 rgb(255 255 255 / var(--shard-alpha-34));
+  }
+}
+
+@keyframes shard-caret-blink {
+  0%,
+  54% {
+    opacity: 1;
+  }
+
+  55%,
+  100% {
+    opacity: 0;
   }
 }

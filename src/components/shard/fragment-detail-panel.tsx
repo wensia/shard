@@ -10,18 +10,22 @@ import {
 import { StatusBadge } from "@/components/shard/status-badge"
 import { TagBadge } from "@/components/shard/tag-badge"
 import { Button } from "@/components/ui/button"
+import { FragmentContent } from "@/components/shard/fragment-content"
 import { Input } from "@/components/ui/input"
 import { Separator } from "@/components/ui/separator"
+import { normalizeTag, toggleTaskLine } from "@/lib/editor-format"
 import type { Fragment } from "@/types"
 
 interface FragmentDetailPanelProps {
   fragment: Fragment | null
+  onUpdateContent?: (id: string, content: string, tags: string[]) => void | Promise<void>
   onUpdateTags: (id: string, tags: string[]) => void | Promise<void>
   vaultPath: string
 }
 
 export function FragmentDetailPanel({
   fragment,
+  onUpdateContent,
   onUpdateTags,
   vaultPath,
 }: FragmentDetailPanelProps) {
@@ -65,6 +69,13 @@ export function FragmentDetailPanel({
     if (!fragment) return
     const nextTags = fragment.tags.filter((current) => current !== tag)
     void onUpdateTags(fragment.id, nextTags.length ? nextTags : ["inbox"])
+  }
+
+  function toggleTask(lineIndex: number) {
+    if (!fragment || !onUpdateContent) return
+    const nextContent = toggleTaskLine(fragment.content, lineIndex)
+    if (nextContent === fragment.content) return
+    void onUpdateContent(fragment.id, nextContent, fragment.tags)
   }
 
   return (
@@ -148,8 +159,11 @@ export function FragmentDetailPanel({
 
         <section className="flex flex-col gap-3">
           <h2 className="text-sm font-bold">内容</h2>
-          <div className="min-h-28 rounded-md border border-border bg-muted/50 p-3 text-sm leading-6 whitespace-pre-wrap">
-            {fragment.content}
+          <div className="shard-memo-body min-h-28 rounded-md border border-border bg-muted/[var(--shard-alpha-55)] p-3 whitespace-pre-wrap">
+            <FragmentContent
+              content={fragment.content}
+              onTaskToggle={onUpdateContent ? toggleTask : undefined}
+            />
           </div>
         </section>
 
@@ -163,7 +177,7 @@ export function FragmentDetailPanel({
               <span className="sr-only">整理片段</span>
             </Button>
           </div>
-          <div className="rounded-md border border-[color:var(--shard-sapphire)]/30 bg-[color:var(--shard-sapphire-soft)] p-3 text-sm leading-6 text-[color:var(--shard-sapphire-text)]">
+          <div className="rounded-md border border-[rgb(var(--shard-primary-rgb)/var(--shard-alpha-34))] bg-[rgb(var(--shard-primary-rgb)/var(--shard-alpha-8))] p-3 text-sm leading-6 text-[color:var(--shard-sapphire-text)]">
             AI 整理会在后续版本中接入本地 Codex / Claude Code CLI。创建片段时不会等待 AI。
           </div>
         </section>
@@ -181,8 +195,4 @@ export function FragmentDetailPanel({
       </div>
     </aside>
   )
-}
-
-function normalizeTag(tag: string) {
-  return tag.trim().replace(/^#+/, "").replace(/\s+/g, "-")
 }

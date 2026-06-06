@@ -17,6 +17,7 @@ export interface Fragment {
   gitStatus: FragmentStatus
   error: string | null
   aiStatus?: "none" | "pending" | "suggested" | "accepted" | "skipped"
+  archived: boolean
 }
 
 export interface GitInfo {
@@ -24,6 +25,14 @@ export interface GitInfo {
   shortCommit: string
   hasRemote: boolean
   status: "ready" | "no_git" | "dirty" | "syncing" | "error"
+  error: string | null
+}
+
+export interface GithubCliInfo {
+  installed: boolean
+  authenticated: boolean
+  login: string | null
+  protocol: string | null
   error: string | null
 }
 

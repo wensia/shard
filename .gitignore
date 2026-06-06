@@ -17,6 +17,24 @@ dist-ssr
 src-tauri/target/
 src-tauri/gen/schemas/
 
+# Local agent rules and private docs
+AGENTS.md
+CLAUDE.md
+GEMINI.md
+.codex/
+.cursor/
+.cursorignore
+.cursorrules
+.windsurfrules
+.clinerules*
+.rules/
+*.rules.md
+*.md
+!README.md
+docs/
+/*.png
+src/assets/logo-concepts/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
