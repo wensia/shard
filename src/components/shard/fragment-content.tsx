@@ -8,6 +8,8 @@ interface FragmentContentProps {
   content: string
   highlightTags?: boolean
   onTaskToggle?: (lineIndex: number) => void
+  selectionEnd?: number
+  selectionStart?: number
 }
 
 const TASK_MARKER_PATTERN =
@@ -18,17 +20,33 @@ export function FragmentContent({
   content,
   highlightTags = false,
   onTaskToggle,
+  selectionEnd,
+  selectionStart,
 }: FragmentContentProps) {
   const lines = content.split("\n")
+  const selectionRange = getSelectionRange(selectionStart, selectionEnd)
+  let lineStart = 0
 
   return (
     <span className={cn("shard-fragment-content", className)}>
-      {lines.map((line, index) => (
-        <Fragment key={`${index}-${line}`}>
-          {renderLine(line, highlightTags, index, onTaskToggle)}
-          {index < lines.length - 1 ? "\n" : null}
-        </Fragment>
-      ))}
+      {lines.map((line, index) => {
+        const currentLineStart = lineStart
+        lineStart += line.length + 1
+
+        return (
+          <Fragment key={`${index}-${line}`}>
+            {renderLine(
+              line,
+              highlightTags,
+              index,
+              currentLineStart,
+              selectionRange,
+              onTaskToggle
+            )}
+            {index < lines.length - 1 ? "\n" : null}
+          </Fragment>
+        )
+      })}
     </span>
   )
 }
@@ -37,23 +55,46 @@ function renderLine(
   line: string,
   highlightTags: boolean,
   lineIndex: number,
+  lineStart: number,
+  selectionRange: SelectionRange | null,
   onTaskToggle: ((lineIndex: number) => void) | undefined
 ): ReactNode {
   const taskMatch = line.match(TASK_MARKER_PATTERN)
   if (!taskMatch) {
-    return renderInlineContent(line, highlightTags, `line-${lineIndex}`)
+    return renderInlineContent(
+      line,
+      highlightTags,
+      `line-${lineIndex}`,
+      lineStart,
+      selectionRange
+    )
   }
 
   const [, indentation, listMarker, taskMarker, checkedMarker, body = ""] =
     taskMatch
   const checked = checkedMarker.toLowerCase() === "x"
   const isOrderedTask = /^\d+[.)]\s+$/.test(listMarker)
+  const listMarkerStart = lineStart + indentation.length
+  const taskMarkerStart = listMarkerStart + listMarker.length
+  const bodyStart = taskMarkerStart + taskMarker.length
 
   return (
     <>
-      {indentation}
+      {renderSelectedText(
+        indentation,
+        lineStart,
+        `task-indent-${lineIndex}`,
+        selectionRange
+      )}
       {isOrderedTask ? (
-        <span className="shard-task-list-marker">{listMarker}</span>
+        <span className="shard-task-list-marker">
+          {renderSelectedText(
+            listMarker,
+            listMarkerStart,
+            `task-list-${lineIndex}`,
+            selectionRange
+          )}
+        </span>
       ) : null}
       <TaskMarker
         checked={checked}
@@ -61,7 +102,13 @@ function renderLine(
         onTaskToggle={onTaskToggle}
         rawMarker={isOrderedTask ? taskMarker : `${listMarker}${taskMarker}`}
       />
-      {renderInlineContent(body, highlightTags, `task-${lineIndex}`)}
+      {renderInlineContent(
+        body,
+        highlightTags,
+        `task-${lineIndex}`,
+        bodyStart,
+        selectionRange
+      )}
     </>
   )
 }
@@ -125,10 +172,14 @@ function TaskMarker({
 function renderInlineContent(
   text: string,
   highlightTags: boolean,
-  keyPrefix: string
+  keyPrefix: string,
+  textStart: number,
+  selectionRange: SelectionRange | null
 ): ReactNode {
   if (text.length === 0) return "\u200b"
-  if (!highlightTags) return text
+  if (!highlightTags) {
+    return renderSelectedText(text, textStart, keyPrefix, selectionRange)
+  }
 
   const ranges = getTagRanges(text)
   const nodes: ReactNode[] = []
@@ -137,9 +188,12 @@ function renderInlineContent(
   for (const range of ranges) {
     if (range.start > cursor) {
       nodes.push(
-        <Fragment key={`${keyPrefix}-text-${cursor}`}>
-          {text.slice(cursor, range.start)}
-        </Fragment>
+        renderSelectedText(
+          text.slice(cursor, range.start),
+          textStart + cursor,
+          `${keyPrefix}-text-${cursor}`,
+          selectionRange
+        )
       )
     }
 
@@ -148,7 +202,12 @@ function renderInlineContent(
         className="shard-editor-tag-highlight"
         key={`${keyPrefix}-tag-${range.start}`}
       >
-        {range.text}
+        {renderSelectedText(
+          range.text,
+          textStart + range.start,
+          `${keyPrefix}-tag-text-${range.start}`,
+          selectionRange
+        )}
       </span>
     )
     cursor = range.end
@@ -156,11 +215,91 @@ function renderInlineContent(
 
   if (cursor < text.length) {
     nodes.push(
-      <Fragment key={`${keyPrefix}-text-${cursor}`}>
-        {text.slice(cursor)}
-      </Fragment>
+      renderSelectedText(
+        text.slice(cursor),
+        textStart + cursor,
+        `${keyPrefix}-text-${cursor}`,
+        selectionRange
+      )
     )
   }
 
   return nodes.length > 0 ? nodes : text
+}
+
+interface SelectionRange {
+  end: number
+  start: number
+}
+
+function getSelectionRange(
+  selectionStart: number | undefined,
+  selectionEnd: number | undefined
+): SelectionRange | null {
+  if (
+    selectionStart === undefined ||
+    selectionEnd === undefined ||
+    selectionStart === selectionEnd
+  ) {
+    return null
+  }
+
+  return {
+    end: Math.max(selectionStart, selectionEnd),
+    start: Math.min(selectionStart, selectionEnd),
+  }
+}
+
+function renderSelectedText(
+  text: string,
+  textStart: number,
+  keyPrefix: string,
+  selectionRange: SelectionRange | null
+): ReactNode {
+  if (
+    !selectionRange ||
+    !doesSelectionIntersectText(text, textStart, selectionRange)
+  ) {
+    return text
+  }
+
+  const selectionStart = Math.max(0, selectionRange.start - textStart)
+  const selectionEnd = Math.min(text.length, selectionRange.end - textStart)
+  const nodes: ReactNode[] = []
+
+  if (selectionStart > 0) {
+    nodes.push(
+      <Fragment key={`${keyPrefix}-before`}>
+        {text.slice(0, selectionStart)}
+      </Fragment>
+    )
+  }
+
+  nodes.push(
+    <span
+      className="shard-editor-selection-highlight"
+      key={`${keyPrefix}-selection`}
+    >
+      {text.slice(selectionStart, selectionEnd)}
+    </span>
+  )
+
+  if (selectionEnd < text.length) {
+    nodes.push(
+      <Fragment key={`${keyPrefix}-after`}>
+        {text.slice(selectionEnd)}
+      </Fragment>
+    )
+  }
+
+  return nodes
+}
+
+function doesSelectionIntersectText(
+  text: string,
+  textStart: number,
+  selectionRange: SelectionRange
+) {
+  const textEnd = textStart + text.length
+  return selectionRange.start < textEnd && selectionRange.end > textStart
 }

@@ -11,16 +11,21 @@ import { toast } from "sonner"
 
 import { EditorToolbar } from "@/components/shard/editor-toolbar"
 import { FragmentContent } from "@/components/shard/fragment-content"
+import {
+  getTagCompletionPopoverPosition,
+  TagCompletionPopover,
+} from "@/components/shard/tag-completion-popover"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import {
   applyInlineFormat,
   applyLineFormat,
+  applyTagCompletion,
   applyTaskMarkerDeletion,
   extractTags,
+  getActiveTag,
   insertMarkdownImage,
   insertTagMarker,
-  isTagBoundary,
   normalizeTag,
   normalizeTagList,
   toggleTaskLine,
@@ -29,7 +34,7 @@ import {
   type TextEdit,
 } from "@/lib/editor-format"
 import { getTextareaCaretBox, type TextareaCaretBox } from "@/lib/textarea-caret"
-import { saveFragmentImage } from "@/lib/api"
+import { getApiErrorMessage, saveFragmentImage } from "@/lib/api"
 
 interface CaptureBoxProps {
   collapseSignal: number
@@ -45,6 +50,7 @@ export function CaptureBox({
   onCreate,
 }: CaptureBoxProps) {
   const [content, setContent] = useState("")
+  const [caretEpoch, setCaretEpoch] = useState(0)
   const [isEditorExpanded, setIsEditorExpanded] = useState(false)
   const [selectionStart, setSelectionStart] = useState(0)
   const [tagPopoverPosition, setTagPopoverPosition] = useState({
@@ -167,26 +173,11 @@ export function CaptureBox({
   useLayoutEffect(() => {
     if (!activeTag || !textareaRef.current || !containerRef.current) return
 
-    const textarea = textareaRef.current
-    const container = containerRef.current
-    const caret = getTextareaCaretBox(textarea, selectionStart)
-    const textareaRect = textarea.getBoundingClientRect()
-    const containerRect = container.getBoundingClientRect()
-
-    const preferredLeft = textareaRect.left - containerRect.left + caret.left - 4
-    const maxLeft = Math.max(
-      TAG_POPOVER_MARGIN,
-      containerRect.width - TAG_POPOVER_WIDTH - TAG_POPOVER_MARGIN
+    const nextPosition = getTagCompletionPopoverPosition(
+      textareaRef.current,
+      containerRef.current,
+      selectionStart
     )
-    const nextPosition = {
-      left: clamp(preferredLeft, TAG_POPOVER_MARGIN, maxLeft),
-      top:
-        textareaRect.top -
-        containerRect.top +
-        caret.lineTop +
-        caret.lineHeight +
-        4,
-    }
 
     setTagPopoverPosition((currentPosition) => {
       const isSamePosition =
@@ -197,14 +188,29 @@ export function CaptureBox({
     })
   }, [activeTag, content, selectionStart])
 
-  function submit() {
+  async function submit() {
     const next = content.trim()
     if (!next || isCreating) return
 
-    setContent("")
-    setIsEditorExpanded(false)
-    setSelectionStart(0)
-    void onCreate(next, normalizeTagList(["inbox", ...extractTags(next)]))
+    try {
+      await onCreate(next, normalizeTagList(["inbox", ...extractTags(next)]))
+      setContent("")
+      setIsEditorExpanded(false)
+      setSelectionStart(0)
+      setSelectionEnd(0)
+      requestAnimationFrame(() => {
+        const textarea = textareaRef.current
+        if (!textarea) return
+
+        textarea.value = ""
+        textarea.setSelectionRange(0, 0)
+      })
+    } catch {
+      setIsEditorExpanded(true)
+      requestAnimationFrame(() => {
+        textareaRef.current?.focus()
+      })
+    }
   }
 
   function insertTag() {
@@ -263,12 +269,13 @@ export function CaptureBox({
       applyTextEdit(nextEdit)
     } catch (error) {
       toast.error("图片上传失败", {
-        description: String(error),
+        description: getApiErrorMessage(error),
       })
     }
   }
 
   function applyTextEdit(nextEdit: TextEdit) {
+    showCaretImmediately()
     setContent(nextEdit.content)
     setSelectionStart(nextEdit.selectionStart)
     setSelectionEnd(nextEdit.selectionEnd)
@@ -290,6 +297,10 @@ export function CaptureBox({
         nextEdit.selectionEnd
       )
     })
+  }
+
+  function showCaretImmediately() {
+    setCaretEpoch((current) => current + 1)
   }
 
   function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
@@ -333,7 +344,7 @@ export function CaptureBox({
     }
 
     event.preventDefault()
-    submit()
+    void submit()
   }
 
   function applyTag(tag: string) {
@@ -344,24 +355,11 @@ export function CaptureBox({
     const targetTag = tagAtCursor ?? activeTag
     if (!targetTag) return
 
-    const tagEnd = getTagInputEnd(currentContent, targetTag.hashStart)
-    const rawTag = currentContent.slice(targetTag.hashStart + 1, tagEnd)
-    const nextTag = normalizeTag(rawTag || tag || targetTag.query)
-    if (!nextTag) return
-
-    const before = currentContent.slice(0, targetTag.hashStart)
-    const after = currentContent.slice(tagEnd)
-    const hasInlineSeparator = /^[^\S\r\n]/u.test(after)
-    const separator = hasInlineSeparator ? "" : " "
-    const nextContent = `${before}#${nextTag}${separator}${after}`
-    const nextCursor = before.length + nextTag.length + 2
+    const nextEdit = applyTagCompletion(currentContent, targetTag, tag)
+    if (!nextEdit) return
 
     setIsEditorExpanded(true)
-    applyTextEdit({
-      content: nextContent,
-      selectionEnd: nextCursor,
-      selectionStart: nextCursor,
-    })
+    applyTextEdit(nextEdit)
   }
 
   function toggleTask(lineIndex: number) {
@@ -423,6 +421,8 @@ export function CaptureBox({
               content={content}
               highlightTags
               onTaskToggle={toggleTask}
+              selectionEnd={isEditorFocused ? selectionEnd : undefined}
+              selectionStart={isEditorFocused ? selectionStart : undefined}
             />
           </div>
         ) : null}
@@ -454,6 +454,7 @@ export function CaptureBox({
             setIsEditorExpanded(true)
           }}
           onKeyDown={handleKeyDown}
+          onMouseDown={showCaretImmediately}
           onKeyUp={(event) => {
             syncSelection(event.currentTarget)
           }}
@@ -484,6 +485,7 @@ export function CaptureBox({
           <span
             aria-hidden="true"
             className="shard-custom-caret"
+            key={`${caretEpoch}-${selectionStart}-${selectionEnd}`}
             style={{
               height: customCaret.height,
               left: customCaret.left,
@@ -493,31 +495,13 @@ export function CaptureBox({
         ) : null}
       </div>
       {activeTag ? (
-        <div
-          className="absolute z-40 w-[168px] max-w-[calc(100%-1.5rem)] rounded-[var(--shard-surface-radius)] border border-[rgb(0_0_0/var(--shard-alpha-5))] bg-card p-[var(--shard-space-1)] text-card-foreground shadow-[0_6px_14px_rgb(0_0_0/var(--shard-alpha-5))]"
-          style={{
-            left: tagPopoverPosition.left,
-            top: tagPopoverPosition.top,
-          }}
-        >
-          <div className="flex h-8 items-center gap-[var(--shard-space-micro)] rounded-[calc(var(--shard-radius-control)+4px)] bg-[color:var(--shard-tag-bg)] px-[var(--shard-tag-padding-x)] shadow-[inset_0_0_0_1px_var(--shard-tag-ring)]">
-            <div className="min-w-0 flex-1 truncate text-xs leading-none font-medium text-[color:var(--shard-tag-fg-strong)]">
-              {activeNewTag || "标签"}
-            </div>
-            <Button
-              className="h-[var(--shard-chip-height)] min-w-10 rounded-[var(--shard-radius-control)] bg-white/[var(--shard-alpha-55)] px-[var(--shard-space-2)] text-xs leading-none font-medium text-[color:var(--shard-tag-fg)] hover:bg-white hover:text-[color:var(--shard-tag-fg-strong)] disabled:bg-white/[var(--shard-alpha-34)] disabled:text-muted-foreground/[var(--shard-alpha-55)]"
-              disabled={!activeNewTag}
-              onMouseDown={(event) => {
-                event.preventDefault()
-                applyTag(activeNewTag)
-              }}
-              type="button"
-              variant="ghost"
-            >
-              {activeTagExists ? "使用" : "新建"}
-            </Button>
-          </div>
-        </div>
+        <TagCompletionPopover
+          exists={activeTagExists}
+          label={activeNewTag}
+          left={tagPopoverPosition.left}
+          onApply={() => applyTag(activeNewTag)}
+          top={tagPopoverPosition.top}
+        />
       ) : null}
 
       <div className="shard-edge-action-row rounded-b-[var(--shard-surface-radius)] bg-card">
@@ -536,7 +520,7 @@ export function CaptureBox({
                     : "disabled:bg-transparent disabled:text-muted-foreground"
                 }`}
                 disabled={!canSubmit}
-                onClick={submit}
+                onClick={() => void submit()}
                 size="icon-sm"
                 type="button"
               >
@@ -566,15 +550,8 @@ export function CaptureBox({
   )
 }
 
-interface ActiveTag {
-  hashStart: number
-  query: string
-}
-
 const CAPTURE_COLLAPSED_ROWS = 2
 const CAPTURE_EXPANDED_ROWS = 4
-const TAG_POPOVER_WIDTH = 168
-const TAG_POPOVER_MARGIN = 8
 const TEXTAREA_MIRROR_PROPERTIES = [
   "box-sizing",
   "border-bottom-width",
@@ -685,36 +662,4 @@ function getTextareaRowsHeight(textarea: HTMLTextAreaElement, rows: number) {
 function toPixelValue(value: string, fallback: number) {
   const parsed = Number.parseFloat(value)
   return Number.isFinite(parsed) ? parsed : fallback
-}
-
-function clamp(value: number, min: number, max: number) {
-  return Math.min(Math.max(value, min), max)
-}
-
-function getActiveTag(value: string, cursor: number): ActiveTag | null {
-  const beforeCursor = value.slice(0, cursor)
-  const hashStart = beforeCursor.lastIndexOf("#")
-  if (hashStart < 0) return null
-
-  const previous = hashStart > 0 ? value[hashStart - 1] : ""
-  if (previous && !isTagBoundary(previous)) return null
-
-  const query = beforeCursor.slice(hashStart + 1)
-  if (/\s|#/.test(query)) return null
-
-  return { hashStart, query }
-}
-
-function getTagInputEnd(value: string, hashStart: number) {
-  let end = hashStart + 1
-
-  while (
-    end < value.length &&
-    !/\s/u.test(value[end]) &&
-    value[end] !== "#"
-  ) {
-    end += 1
-  }
-
-  return end
 }

@@ -10,6 +10,11 @@ export interface TagRange {
   text: string
 }
 
+export interface ActiveTag {
+  hashStart: number
+  query: string
+}
+
 export type InlineFormat = "bold" | "highlight" | "underline"
 export type LineFormat = "ordered" | "task" | "unordered"
 export type TaskMarkerDeletionKey = "Backspace" | "Delete"
@@ -39,6 +44,30 @@ export function insertTagMarker(value: string, cursor: number): TextEdit {
 
   return {
     content: value.slice(0, cursor) + marker + value.slice(cursor),
+    selectionEnd: nextCursor,
+    selectionStart: nextCursor,
+  }
+}
+
+export function applyTagCompletion(
+  value: string,
+  targetTag: ActiveTag,
+  fallbackTag: string
+): TextEdit | null {
+  const tagEnd = getTagInputEnd(value, targetTag.hashStart)
+  const rawTag = value.slice(targetTag.hashStart + 1, tagEnd)
+  const nextTag = normalizeTag(rawTag || fallbackTag || targetTag.query)
+  if (!nextTag) return null
+
+  const before = value.slice(0, targetTag.hashStart)
+  const after = value.slice(tagEnd)
+  const hasInlineSeparator = /^[^\S\r\n]/u.test(after)
+  const separator = hasInlineSeparator ? "" : " "
+  const nextContent = `${before}#${nextTag}${separator}${after}`
+  const nextCursor = before.length + nextTag.length + 2
+
+  return {
+    content: nextContent,
     selectionEnd: nextCursor,
     selectionStart: nextCursor,
   }
@@ -283,6 +312,34 @@ export function isTagBoundary(char: string) {
   return /[\s([{<"'“‘，。！？；：、,.!?;:]|[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u.test(
     char
   )
+}
+
+export function getActiveTag(value: string, cursor: number): ActiveTag | null {
+  const beforeCursor = value.slice(0, cursor)
+  const hashStart = beforeCursor.lastIndexOf("#")
+  if (hashStart < 0) return null
+
+  const previous = hashStart > 0 ? value[hashStart - 1] : ""
+  if (previous && !isTagBoundary(previous)) return null
+
+  const query = beforeCursor.slice(hashStart + 1)
+  if (/\s|#/.test(query)) return null
+
+  return { hashStart, query }
+}
+
+function getTagInputEnd(value: string, hashStart: number) {
+  let end = hashStart + 1
+
+  while (
+    end < value.length &&
+    !/\s/u.test(value[end]) &&
+    value[end] !== "#"
+  ) {
+    end += 1
+  }
+
+  return end
 }
 
 function formatLine(line: string, format: LineFormat, index: number) {

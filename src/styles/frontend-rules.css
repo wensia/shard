@@ -139,12 +139,18 @@
   }
 
   .shard-card-tags {
-    --shard-tag-bg: rgb(var(--shard-primary-rgb) / var(--shard-alpha-8));
-    --shard-tag-hover: rgb(var(--shard-primary-rgb) / var(--shard-alpha-13));
+    --shard-tag-bg: rgb(var(--shard-primary-rgb) / var(--shard-alpha-13));
+    --shard-tag-hover: rgb(var(--shard-primary-rgb) / var(--shard-alpha-21));
     --shard-tag-font-size: 12px;
-    --shard-tag-ring: rgb(var(--shard-primary-rgb) / var(--shard-alpha-13));
+    --shard-tag-ring: rgb(var(--shard-primary-rgb) / var(--shard-alpha-21));
     --shard-tag-active-bg: rgb(var(--shard-primary-rgb) / var(--shard-alpha-21));
     --shard-tag-active-ring: rgb(var(--shard-primary-rgb) / var(--shard-alpha-34));
+    --shard-tag-muted-bg: var(--shard-tag-bg);
+    --shard-tag-muted-fg: var(--shard-tag-fg);
+  }
+
+  .shard-card-tags .shard-tag-muted {
+    box-shadow: inset 0 0 0 1px var(--shard-tag-ring);
   }
 
   .shard-memo-body {
@@ -264,6 +270,12 @@
     -webkit-text-fill-color: transparent;
   }
 
+  .shard-editor-overlay-field::selection {
+    color: transparent;
+    background: transparent;
+    -webkit-text-fill-color: transparent;
+  }
+
   .shard-editor-highlight-layer {
     position: absolute;
     inset: 0;
@@ -286,14 +298,22 @@
     display: inline-block;
     margin:
       calc(var(--shard-editor-tag-pad-y) * -1)
-      calc(var(--shard-editor-tag-pad-x) * -1);
+      0;
     padding: var(--shard-editor-tag-pad-y) var(--shard-editor-tag-pad-x);
     border-radius: var(--shard-editor-tag-radius);
     color: var(--shard-tag-fg);
     background: var(--shard-tag-bg);
+    box-shadow: inset 0 0 0 1px var(--shard-tag-ring);
     font-weight: 500;
     line-height: inherit;
     vertical-align: baseline;
+  }
+
+  .shard-editor-selection-highlight {
+    border-radius: calc(var(--shard-radius-control) / 3);
+    background: rgb(17 19 21 / var(--shard-alpha-13));
+    box-decoration-break: clone;
+    -webkit-box-decoration-break: clone;
   }
 
   .shard-editor-placeholder {

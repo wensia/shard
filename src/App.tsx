@@ -359,6 +359,7 @@ function App() {
       </main>
       <FragmentEditor
         fragment={editingFragment}
+        knownTags={knownTags}
         onClose={() => setEditingFragmentId(null)}
         onSave={handleUpdateFragment}
       />
