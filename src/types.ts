@@ -4,7 +4,13 @@ export type FragmentStatus =
   | "sync_pending"
   | "commit_failed"
 
-export type FragmentFilter = "inbox" | "tagged" | "ai" | "archive"
+export type FragmentFilter =
+  | "inbox"
+  | "tagged"
+  | "dailyReview"
+  | "insight"
+  | "walk"
+  | "archive"
 
 export interface Fragment {
   id: string
@@ -34,6 +40,27 @@ export interface GithubCliInfo {
   login: string | null
   protocol: string | null
   error: string | null
+}
+
+export interface CodexAgentStatus {
+  installed: boolean
+  version: string | null
+  path: string | null
+  error: string | null
+}
+
+export type CodexReviewTask = "insight" | "walk"
+
+export interface CodexReviewFragment {
+  id: string
+  content: string
+  createdAt: string
+  tags: string[]
+  path: string
+}
+
+export interface CodexReviewTaskResult {
+  text: string
 }
 
 export interface VaultState {

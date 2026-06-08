@@ -102,6 +102,7 @@
     --shard-tag-hover: rgb(var(--shard-primary-rgb) / var(--shard-alpha-13));
     --shard-tag-fg: rgb(var(--shard-primary-rgb) / var(--shard-alpha-89));
     --shard-tag-fg-strong: rgb(var(--shard-primary-rgb) / 1);
+    --shard-editor-tag-fg: #5a3fb0;
     --shard-tag-ring: rgb(var(--shard-primary-rgb) / var(--shard-alpha-13));
     --shard-tag-active-bg: rgb(var(--shard-primary-rgb) / var(--shard-alpha-21));
     --shard-tag-active-ring: rgb(var(--shard-primary-rgb) / var(--shard-alpha-34));
@@ -122,18 +123,19 @@
     --shard-sidebar-inset: var(--shard-space-5);
     --shard-content-inset: var(--shard-space-5);
     --shard-content-inset-lg: var(--shard-space-8);
-    --shard-composer-top-gap: var(--shard-space-4);
+    --shard-composer-top-gap: var(--shard-space-1);
     --shard-composer-bottom-gap: var(--shard-space-4);
     --shard-composer-padding: var(--shard-space-4);
     --shard-card-padding-x: var(--shard-space-5);
     --shard-card-padding-y: var(--shard-space-4);
+    --shard-card-padding-bottom: calc(var(--shard-card-padding-y) - 2px);
     --shard-card-gap: var(--shard-space-4);
     --shard-memo-content-color: #323232;
     --shard-memo-font-size: 14px;
     --shard-memo-font-weight: 400;
     --shard-memo-letter-spacing: 0px;
     --shard-memo-line-height: 1.8;
-    --shard-memo-meta-font-size: 14px;
+    --shard-memo-meta-font-size: 13px;
     --shard-memo-meta-font-weight: 400;
     --shard-memo-meta-line-height: 20px;
     --shard-heatmap-cell: 12px;
@@ -144,7 +146,7 @@
     --shard-tag-height: 28px;
     --shard-tag-font-size: 13px;
     --shard-tag-padding-x: 11px;
-    --shard-editor-tag-pad-x: 2px;
+    --shard-editor-tag-pad-x: 0.2em;
     --shard-editor-tag-pad-y: 2px;
     --shard-editor-tag-radius: 8px;
     --shard-editor-font-size: var(--shard-memo-font-size);
@@ -202,6 +204,7 @@
     --shard-tag-hover: rgb(var(--shard-primary-rgb) / var(--shard-alpha-34));
     --shard-tag-fg: rgb(var(--shard-primary-soft-rgb) / var(--shard-alpha-89));
     --shard-tag-fg-strong: rgb(var(--shard-primary-soft-rgb) / 1);
+    --shard-editor-tag-fg: #c4b5fd;
     --shard-tag-ring: rgb(var(--shard-primary-soft-rgb) / var(--shard-alpha-13));
     --shard-tag-active-bg: rgb(var(--shard-primary-rgb) / var(--shard-alpha-34));
     --shard-tag-active-ring: rgb(var(--shard-primary-soft-rgb) / var(--shard-alpha-21));

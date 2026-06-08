@@ -5,6 +5,7 @@ import { BottomTabs } from "@/components/shard/bottom-tabs"
 import { CaptureBox } from "@/components/shard/capture-box"
 import { FragmentEditor } from "@/components/shard/fragment-editor"
 import { FragmentTimeline } from "@/components/shard/fragment-timeline"
+import { ReviewWorkspace } from "@/components/shard/review-workspace"
 import { SidebarNav } from "@/components/shard/sidebar-nav"
 import { TaggedPanel, type TaggedSummary } from "@/components/shard/tagged-panel"
 import { VaultGuide } from "@/components/shard/vault-guide"
@@ -13,7 +14,10 @@ import { TooltipProvider } from "@/components/ui/tooltip"
 import {
   archiveFragment,
   createFragment,
+  DESKTOP_RUNTIME_MESSAGE,
+  getApiErrorMessage,
   listFragments,
+  restoreWindowFrame,
   syncVault,
   updateFragment,
 } from "@/lib/api"
@@ -44,6 +48,16 @@ function App() {
       const state = await listFragments()
       applyVaultState(state)
     } catch (error) {
+      const message = getApiErrorMessage(error)
+
+      if (message === DESKTOP_RUNTIME_MESSAGE) {
+        setFragments([])
+        setGit(null)
+        setVaultPath("")
+        setNeedsVaultSetup(false)
+        return
+      }
+
       if (isVaultNotConfigured(error)) {
         setFragments([])
         setGit(null)
@@ -54,7 +68,7 @@ function App() {
       }
 
       toast.error("读取 Shard vault 失败", {
-        description: String(error),
+        description: message,
       })
     } finally {
       setIsLoading(false)
@@ -68,12 +82,17 @@ function App() {
     setNeedsVaultSetup(false)
   }
 
-  function handleVaultState(state: VaultState) {
+  function handleVaultState(
+    state: VaultState,
+    options: { resetView?: boolean } = {}
+  ) {
     applyVaultState(state)
-    setEditingFragmentId(null)
-    setSelectedTag(null)
-    setFilter("inbox")
-    setIsVaultGuideOpen(false)
+    if (options.resetView) {
+      setEditingFragmentId(null)
+      setSelectedTag(null)
+      setFilter("inbox")
+    }
+    setIsVaultGuideOpen(true)
   }
 
   async function handleCreate(content: string, tags: string[]) {
@@ -110,12 +129,14 @@ function App() {
       }
       void refreshFragments()
     } catch (error) {
+      const message = getApiErrorMessage(error)
       setFragments((current) =>
         current.filter((fragment) => fragment.id !== optimisticId)
       )
       toast.error("创建片段失败", {
-        description: String(error),
+        description: message,
       })
+      throw new Error(message)
     } finally {
       setIsCreating(false)
     }
@@ -133,13 +154,13 @@ function App() {
         setIsVaultGuideOpen(true)
         void refreshFragments()
         toast.warning("需要完成 Git 配置", {
-          description: String(error),
+          description: getApiErrorMessage(error),
         })
         return
       }
 
       toast.error("同步失败", {
-        description: String(error),
+        description: getApiErrorMessage(error),
       })
     } finally {
       setIsSyncing(false)
@@ -180,7 +201,7 @@ function App() {
         )
       )
       toast.error("更新复选框失败", {
-        description: String(error),
+        description: getApiErrorMessage(error),
       })
     }
   }
@@ -204,7 +225,31 @@ function App() {
       toast.success("已归档")
     } catch (error) {
       toast.error("归档失败", {
-        description: String(error),
+        description: getApiErrorMessage(error),
+      })
+    }
+  }
+
+  function showShortcuts() {
+    toast.info("快捷键", {
+      description: "保存：Cmd/Ctrl/Shift + Enter。换行：Enter。编辑片段时按 Esc 退出。",
+    })
+  }
+
+  function showHelp() {
+    toast.info("帮助", {
+      description:
+        "先在 Inbox 写片段，用 #标签归类。需要持久化和同步时，在设置里选择或创建 vault。",
+    })
+  }
+
+  async function handleRestoreWindow() {
+    try {
+      await restoreWindowFrame()
+      toast.success("已还原窗口尺寸")
+    } catch (error) {
+      toast.error("还原窗口尺寸失败", {
+        description: getApiErrorMessage(error),
       })
     }
   }
@@ -246,12 +291,12 @@ function App() {
               fragment.tags.includes(selectedTag)
             )
           : taggedFragments
-      case "ai":
-        return activeFragments.filter(
-          (fragment) => fragment.aiStatus === "suggested"
-        )
       case "archive":
         return archivedFragments
+      case "dailyReview":
+      case "insight":
+      case "walk":
+        return []
       case "inbox":
       default:
         return activeFragments.filter((fragment) =>
@@ -280,10 +325,16 @@ function App() {
     [editingFragmentId, fragments]
   )
   const isInboxView = filter === "inbox"
+  const isReviewView =
+    filter === "dailyReview" || filter === "insight" || filter === "walk"
+  const isVaultDialogOpen = isVaultGuideOpen || needsVaultSetup
 
   return (
     <TooltipProvider>
-      <main className="grid h-dvh grid-rows-[1fr_auto] overflow-hidden bg-background text-foreground lg:grid-cols-[var(--shard-sidebar-width)_minmax(0,1fr)] lg:grid-rows-1">
+      <main
+        aria-hidden={isVaultDialogOpen ? true : undefined}
+        className="grid h-dvh grid-rows-[1fr_auto] overflow-hidden bg-background text-foreground lg:grid-cols-[var(--shard-sidebar-width)_minmax(0,1fr)] lg:grid-rows-1"
+      >
         <div className="hidden min-h-0 lg:block">
           <SidebarNav
             activeFilter={filter}
@@ -291,7 +342,10 @@ function App() {
             git={git}
             isSyncing={isSyncing}
             onFilterChange={setFilter}
+            onHelp={showHelp}
             onOpenSettings={() => setIsVaultGuideOpen(true)}
+            onRestoreWindow={handleRestoreWindow}
+            onShortcuts={showShortcuts}
             onSync={handleSync}
             vaultPath={vaultPath}
           />
@@ -322,27 +376,41 @@ function App() {
             />
           ) : null}
 
-          <FragmentTimeline
-            emptyMessage={
-              filter === "tagged"
-                ? "还没有带标签的内容。到 Inbox 输入 #标签 即可归类。"
-                : filter === "ai"
-                  ? "还没有 AI 建议。"
+          {isReviewView ? (
+            <ReviewWorkspace
+              fragments={fragments}
+              isLoading={isLoading}
+              mode={filter}
+              onArchive={handleArchiveFragment}
+              onCreate={handleCreate}
+              onEdit={(fragment) => setEditingFragmentId(fragment.id)}
+              onToggleTask={(fragment, lineIndex) => {
+                void handleToggleFragmentTask(fragment, lineIndex)
+              }}
+              vaultPath={vaultPath}
+            />
+          ) : (
+            <FragmentTimeline
+              emptyMessage={
+                filter === "tagged"
+                  ? "还没有带标签的内容。到 Inbox 输入 #标签 即可归类。"
                   : filter === "archive"
                     ? "还没有归档内容。"
                     : undefined
-            }
-            fragments={filteredFragments}
-            isLoading={isLoading}
-            onArchive={handleArchiveFragment}
-            onEdit={(fragment) => setEditingFragmentId(fragment.id)}
-            onScrollDown={() => {
-              setComposerCollapseSignal((current) => current + 1)
-            }}
-            onToggleTask={(fragment, lineIndex) => {
-              void handleToggleFragmentTask(fragment, lineIndex)
-            }}
-          />
+              }
+              fragments={filteredFragments}
+              isLoading={isLoading}
+              onArchive={handleArchiveFragment}
+              onEdit={(fragment) => setEditingFragmentId(fragment.id)}
+              onScrollDown={() => {
+                setComposerCollapseSignal((current) => current + 1)
+              }}
+              onToggleTask={(fragment, lineIndex) => {
+                void handleToggleFragmentTask(fragment, lineIndex)
+              }}
+              vaultPath={vaultPath}
+            />
+          )}
         </section>
         <div className="lg:hidden">
           <BottomTabs
@@ -351,7 +419,10 @@ function App() {
             git={git}
             isSyncing={isSyncing}
             onFilterChange={setFilter}
+            onHelp={showHelp}
             onOpenSettings={() => setIsVaultGuideOpen(true)}
+            onRestoreWindow={handleRestoreWindow}
+            onShortcuts={showShortcuts}
             onSync={handleSync}
             vaultPath={vaultPath}
           />
@@ -371,7 +442,7 @@ function App() {
           }
         }}
         onVaultState={handleVaultState}
-        open={isVaultGuideOpen || needsVaultSetup}
+        open={isVaultDialogOpen}
         required={needsVaultSetup}
         vaultPath={vaultPath}
       />

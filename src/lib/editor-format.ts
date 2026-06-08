@@ -10,6 +10,11 @@ export interface TagRange {
   text: string
 }
 
+export interface MarkdownImage {
+  alt: string
+  path: string
+}
+
 export interface ActiveTag {
   hashStart: number
   query: string
@@ -27,6 +32,7 @@ const UNORDERED_LIST_MARKER_PATTERN =
   /^(\s*)([-*+])\s+(?:\[[ xX]\]\s*)?/
 const TASK_LINE_MARKER_PATTERN =
   /^(\s*)((?:[-*+]|\d+[.)])\s+)(\[[ xX]\]\s*)/
+const MARKDOWN_IMAGE_LINE_PATTERN = /^\s*!\[([^\]\n]*)\]\(([^)\n]+)\)\s*$/
 const ORDERED_LIST_PREFIX_PATTERN = /^\d+[.)]\s+$/
 const TRAILING_TAG_PUNCTUATION = /[),.?!;:，。！？；：、\]}>"'”’]+$/g
 const TRAILING_TAG_PUNCTUATION_CHAR = /[),.?!;:，。！？；：、\]}>"'”’]/u
@@ -71,6 +77,16 @@ export function applyTagCompletion(
     selectionEnd: nextCursor,
     selectionStart: nextCursor,
   }
+}
+
+export function applyActiveTagCompletion(
+  value: string,
+  cursor: number
+): TextEdit | null {
+  const activeTag = getActiveTag(value, cursor)
+  if (!activeTag || !normalizeTag(activeTag.query)) return null
+
+  return applyTagCompletion(value, activeTag, activeTag.query)
 }
 
 export function applyLineFormat(
@@ -151,7 +167,7 @@ export function insertMarkdownImage(
   path: string
 ): TextEdit {
   const selected = value.slice(selectionStart, selectionEnd).trim()
-  const alt = selected || getImageAlt(fileName)
+  const alt = selected || getMarkdownImageAlt(fileName)
   const prefix = shouldPrefixWithLineBreak(value, selectionStart) ? "\n" : ""
   const suffix = shouldSuffixWithLineBreak(value, selectionEnd) ? "\n" : ""
   const markdown = `${prefix}![${alt}](${path})${suffix}`
@@ -163,6 +179,20 @@ export function insertMarkdownImage(
     content,
     selectionEnd: cursor,
     selectionStart: cursor,
+  }
+}
+
+export function parseMarkdownImageLine(line: string): MarkdownImage | null {
+  const match = line.match(MARKDOWN_IMAGE_LINE_PATTERN)
+  if (!match) return null
+
+  const [, alt, rawPath] = match
+  const path = normalizeMarkdownImagePath(rawPath)
+  if (!path) return null
+
+  return {
+    alt: alt.trim(),
+    path,
   }
 }
 
@@ -372,8 +402,25 @@ function getLinePrefix(format: LineFormat, index: number) {
   }
 }
 
-function getImageAlt(fileName: string) {
+export function getMarkdownImageAlt(fileName: string) {
   return fileName.replace(/\.[^.]+$/, "").replace(/[-_]+/g, " ").trim() || "image"
+}
+
+function normalizeMarkdownImagePath(rawPath: string) {
+  let path = rawPath.trim()
+  if (!path) return ""
+
+  if (path.startsWith("<")) {
+    const end = path.indexOf(">")
+    path = end > 0 ? path.slice(1, end) : path.slice(1)
+  } else {
+    const titleStart = path.search(/\s+["']/u)
+    if (titleStart > 0) {
+      path = path.slice(0, titleStart)
+    }
+  }
+
+  return path.replace(/\\([\\()])/g, "$1").trim()
 }
 
 function trimTrailingWhitespace(value: string, start: number, end: number) {

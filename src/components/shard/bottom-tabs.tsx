@@ -1,15 +1,19 @@
 import {
   ArchiveIcon,
-  BotIcon,
+  CalendarDaysIcon,
   GitBranchIcon,
   HelpCircleIcon,
   InboxIcon,
   KeyboardIcon,
+  Maximize2Icon,
   MoreHorizontalIcon,
   RefreshCwIcon,
+  RouteIcon,
   SettingsIcon,
+  SparklesIcon,
   TagIcon,
 } from "lucide-react"
+import { useState } from "react"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -17,6 +21,7 @@ import {
   DropdownMenuContent,
   DropdownMenuGroup,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import {
@@ -33,7 +38,10 @@ interface BottomTabsProps {
   git: GitInfo | null
   isSyncing: boolean
   onFilterChange: (filter: FragmentFilter) => void
+  onHelp: () => void
   onOpenSettings: () => void
+  onRestoreWindow: () => void
+  onShortcuts: () => void
   onSync: () => void
   vaultPath: string
 }
@@ -46,9 +54,14 @@ const tabItems: Array<{
 }> = [
   { id: "inbox", label: "Inbox", fullLabel: "Inbox", icon: InboxIcon },
   { id: "tagged", label: "Tagged", fullLabel: "Tagged", icon: TagIcon },
-  { id: "ai", label: "AI", fullLabel: "AI Suggestions", icon: BotIcon },
+  { id: "dailyReview", label: "回顾", fullLabel: "每日回顾", icon: CalendarDaysIcon },
+  { id: "insight", label: "洞察", fullLabel: "AI 洞察", icon: SparklesIcon },
+  { id: "walk", label: "漫步", fullLabel: "随机漫步", icon: RouteIcon },
   { id: "archive", label: "Archive", fullLabel: "Archive", icon: ArchiveIcon },
 ]
+
+const utilityMenuItemClass =
+  "grid h-8 grid-cols-[16px_1fr] gap-2 px-2 text-[13px] font-medium whitespace-nowrap [&_svg]:size-3.5 [&_svg]:stroke-[1.65]"
 
 export function BottomTabs({
   activeFilter,
@@ -56,10 +69,14 @@ export function BottomTabs({
   git,
   isSyncing,
   onFilterChange,
+  onHelp,
   onOpenSettings,
+  onRestoreWindow,
+  onShortcuts,
   onSync,
   vaultPath,
 }: BottomTabsProps) {
+  const [isMenuOpen, setIsMenuOpen] = useState(false)
   const activeFragments = fragments.filter((fragment) => !fragment.archived)
   const archivedFragments = fragments.filter((fragment) => fragment.archived)
   const counts: Record<FragmentFilter, number> = {
@@ -67,7 +84,9 @@ export function BottomTabs({
     tagged: activeFragments.filter((fragment) =>
       fragment.tags.some((tag) => tag !== "inbox")
     ).length,
-    ai: activeFragments.filter((fragment) => fragment.aiStatus === "suggested").length,
+    dailyReview: activeFragments.length,
+    insight: activeFragments.length,
+    walk: activeFragments.length,
     archive: archivedFragments.length,
   }
 
@@ -131,44 +150,46 @@ export function BottomTabs({
         </div>
 
         <div className="flex items-center gap-2">
-          <nav
-            aria-label="Fragment filters"
-            className="grid min-w-0 flex-1 grid-cols-4 gap-1 rounded-[8px] bg-muted p-1"
-          >
-            {tabItems.map((item) => {
-              const Icon = item.icon
-              const isActive = item.id === activeFilter
+          <div className="min-w-0 flex-1 overflow-x-auto rounded-[8px] bg-muted p-1">
+            <nav
+              aria-label="Fragment filters"
+              className="grid min-w-[456px] grid-cols-6 gap-1"
+            >
+              {tabItems.map((item) => {
+                const Icon = item.icon
+                const isActive = item.id === activeFilter
 
-              return (
-                <button
-                  aria-label={item.fullLabel}
-                  className={[
-                    "relative flex h-12 min-w-0 flex-col items-center justify-center gap-0.5 rounded-[6px] px-1.5 text-[11px] leading-none font-semibold transition-colors",
-                    isActive
-                      ? "bg-card text-foreground shadow-[0_1px_2px_rgb(17_19_21/var(--shard-alpha-8))]"
-                      : "text-muted-foreground hover:bg-card/[var(--shard-alpha-55)] hover:text-foreground",
-                  ].join(" ")}
-                  key={item.id}
-                  onClick={() => onFilterChange(item.id)}
-                  type="button"
-                >
-                  {isActive ? (
-                    <span
-                      aria-hidden="true"
-                      className="absolute inset-x-3 top-1 h-0.5 rounded-full bg-[color:var(--shard-sapphire)]"
-                    />
-                  ) : null}
-                  <Icon className="size-4 shrink-0" />
-                  <span className="max-w-full truncate">{item.label}</span>
-                  <span className="absolute top-1 right-1 min-w-4 rounded-full bg-background px-1 text-[10px] leading-4 font-bold text-muted-foreground">
-                    {counts[item.id]}
-                  </span>
-                </button>
-              )
-            })}
-          </nav>
+                return (
+                  <button
+                    aria-label={item.fullLabel}
+                    className={[
+                      "relative flex h-12 min-w-0 flex-col items-center justify-center gap-0.5 rounded-[6px] px-1.5 text-[11px] leading-none font-semibold transition-colors",
+                      isActive
+                        ? "bg-card text-foreground shadow-[0_1px_2px_rgb(17_19_21/var(--shard-alpha-8))]"
+                        : "text-muted-foreground hover:bg-card/[var(--shard-alpha-55)] hover:text-foreground",
+                    ].join(" ")}
+                    key={item.id}
+                    onClick={() => onFilterChange(item.id)}
+                    type="button"
+                  >
+                    {isActive ? (
+                      <span
+                        aria-hidden="true"
+                        className="absolute inset-x-3 top-1 h-0.5 rounded-full bg-[color:var(--shard-sapphire)]"
+                      />
+                    ) : null}
+                    <Icon className="size-4 shrink-0" />
+                    <span className="max-w-full truncate">{item.label}</span>
+                    <span className="absolute top-1 right-1 min-w-4 rounded-full bg-background px-1 text-[10px] leading-4 font-bold text-muted-foreground">
+                      {counts[item.id]}
+                    </span>
+                  </button>
+                )
+              })}
+            </nav>
+          </div>
 
-          <DropdownMenu>
+          <DropdownMenu open={isMenuOpen} onOpenChange={setIsMenuOpen}>
             <DropdownMenuTrigger render={<Button size="icon" variant="ghost" />}>
               <MoreHorizontalIcon data-icon="inline-start" />
               <span className="sr-only">更多操作</span>
@@ -181,25 +202,54 @@ export function BottomTabs({
             >
               <DropdownMenuGroup>
                 <DropdownMenuItem
-                  className="grid h-8 grid-cols-[16px_1fr] gap-2 px-2 text-[13px] font-medium whitespace-nowrap [&_svg]:size-3.5 [&_svg]:stroke-[1.65]"
+                  className={utilityMenuItemClass}
                   disabled={isSyncing}
-                  onClick={onSync}
+                  onClick={() => {
+                    setIsMenuOpen(false)
+                    window.setTimeout(onSync, 0)
+                  }}
                 >
                   <RefreshCwIcon className={isSyncing ? "animate-spin" : ""} />
                   {isSyncing ? "同步中" : "同步 Git vault"}
                 </DropdownMenuItem>
                 <DropdownMenuItem
-                  className="grid h-8 grid-cols-[16px_1fr] gap-2 px-2 text-[13px] font-medium whitespace-nowrap [&_svg]:size-3.5 [&_svg]:stroke-[1.65]"
-                  onClick={onOpenSettings}
+                  className={utilityMenuItemClass}
+                  onClick={() => {
+                    setIsMenuOpen(false)
+                    window.setTimeout(onRestoreWindow, 0)
+                  }}
+                >
+                  <Maximize2Icon />
+                  还原窗口尺寸
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  className={utilityMenuItemClass}
+                  onClick={() => {
+                    setIsMenuOpen(false)
+                    window.setTimeout(onOpenSettings, 0)
+                  }}
                 >
                   <SettingsIcon />
                   设置
                 </DropdownMenuItem>
-                <DropdownMenuItem className="grid h-8 grid-cols-[16px_1fr] gap-2 px-2 text-[13px] font-medium whitespace-nowrap [&_svg]:size-3.5 [&_svg]:stroke-[1.65]">
+                <DropdownMenuItem
+                  className={utilityMenuItemClass}
+                  onClick={() => {
+                    setIsMenuOpen(false)
+                    window.setTimeout(onShortcuts, 0)
+                  }}
+                >
                   <KeyboardIcon />
                   快捷键
                 </DropdownMenuItem>
-                <DropdownMenuItem className="grid h-8 grid-cols-[16px_1fr] gap-2 px-2 text-[13px] font-medium whitespace-nowrap [&_svg]:size-3.5 [&_svg]:stroke-[1.65]">
+                <DropdownMenuItem
+                  className={utilityMenuItemClass}
+                  onClick={() => {
+                    setIsMenuOpen(false)
+                    window.setTimeout(onHelp, 0)
+                  }}
+                >
                   <HelpCircleIcon />
                   帮助
                 </DropdownMenuItem>

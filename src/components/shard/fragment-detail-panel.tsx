@@ -163,6 +163,8 @@ export function FragmentDetailPanel({
             <FragmentContent
               content={fragment.content}
               onTaskToggle={onUpdateContent ? toggleTask : undefined}
+              renderImages
+              vaultPath={vaultPath}
             />
           </div>
         </section>

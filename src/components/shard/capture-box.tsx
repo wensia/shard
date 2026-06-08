@@ -10,7 +10,10 @@ import { Loader2Icon, SendHorizontalIcon } from "lucide-react"
 import { toast } from "sonner"
 
 import { EditorToolbar } from "@/components/shard/editor-toolbar"
-import { FragmentContent } from "@/components/shard/fragment-content"
+import {
+  FragmentContent,
+  FragmentImageAttachment,
+} from "@/components/shard/fragment-content"
 import {
   getTagCompletionPopoverPosition,
   TagCompletionPopover,
@@ -18,13 +21,14 @@ import {
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import {
+  applyActiveTagCompletion,
   applyInlineFormat,
   applyLineFormat,
   applyTagCompletion,
   applyTaskMarkerDeletion,
   extractTags,
   getActiveTag,
-  insertMarkdownImage,
+  getMarkdownImageAlt,
   insertTagMarker,
   normalizeTag,
   normalizeTagList,
@@ -43,6 +47,13 @@ interface CaptureBoxProps {
   onCreate: (content: string, tags: string[]) => void | Promise<void>
 }
 
+interface PendingImage {
+  alt: string
+  id: string
+  path: string
+  previewUrl: string
+}
+
 export function CaptureBox({
   collapseSignal,
   isCreating,
@@ -52,6 +63,7 @@ export function CaptureBox({
   const [content, setContent] = useState("")
   const [caretEpoch, setCaretEpoch] = useState(0)
   const [isEditorExpanded, setIsEditorExpanded] = useState(false)
+  const [pendingImages, setPendingImages] = useState<PendingImage[]>([])
   const [selectionStart, setSelectionStart] = useState(0)
   const [tagPopoverPosition, setTagPopoverPosition] = useState({
     left: 12,
@@ -65,6 +77,7 @@ export function CaptureBox({
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const hasSkippedInitialFocusRef = useRef(false)
   const isComposingRef = useRef(false)
+  const pendingImagesRef = useRef<PendingImage[]>([])
 
   const activeTag = useMemo(
     () => getActiveTag(content, selectionStart),
@@ -77,7 +90,20 @@ export function CaptureBox({
   const activeNewTag = activeTag ? normalizeTag(activeTag.query) : ""
   const activeTagExists =
     activeNewTag.length > 0 && normalizedKnownTags.includes(activeNewTag)
-  const canSubmit = content.trim().length > 0 && !isCreating
+  const canSubmit =
+    (content.trim().length > 0 || pendingImages.length > 0) && !isCreating
+
+  useEffect(() => {
+    pendingImagesRef.current = pendingImages
+  }, [pendingImages])
+
+  useEffect(() => {
+    return () => {
+      pendingImagesRef.current.forEach((image) => {
+        URL.revokeObjectURL(image.previewUrl)
+      })
+    }
+  }, [])
 
   useEffect(() => {
     if (collapseSignal === 0) return
@@ -189,12 +215,16 @@ export function CaptureBox({
   }, [activeTag, content, selectionStart])
 
   async function submit() {
-    const next = content.trim()
+    const next = buildContentWithPendingImages(content, pendingImages)
     if (!next || isCreating) return
 
     try {
       await onCreate(next, normalizeTagList(["inbox", ...extractTags(next)]))
+      pendingImages.forEach((image) => {
+        URL.revokeObjectURL(image.previewUrl)
+      })
       setContent("")
+      setPendingImages([])
       setIsEditorExpanded(false)
       setSelectionStart(0)
       setSelectionEnd(0)
@@ -253,24 +283,29 @@ export function CaptureBox({
   async function uploadImage(file: File) {
     const textarea = textareaRef.current
     if (!textarea) return
+    const previewUrl = URL.createObjectURL(file)
 
     try {
       const bytes = Array.from(new Uint8Array(await file.arrayBuffer()))
       const path = await saveFragmentImage(file.name, bytes)
-      const nextEdit = insertMarkdownImage(
-        content,
-        textarea.selectionStart,
-        textarea.selectionEnd,
-        file.name,
-        path
-      )
-
       setIsEditorExpanded(true)
-      applyTextEdit(nextEdit)
+      setPendingImages((current) => [
+        ...current,
+        {
+          alt: getMarkdownImageAlt(file.name),
+          id: `${Date.now()}-${path}`,
+          path,
+          previewUrl,
+        },
+      ])
+      requestAnimationFrame(() => {
+        textarea.focus()
+      })
     } catch (error) {
       toast.error("图片上传失败", {
         description: getApiErrorMessage(error),
       })
+      URL.revokeObjectURL(previewUrl)
     }
   }
 
@@ -339,6 +374,27 @@ export function CaptureBox({
       }
     }
 
+    if (
+      event.key === "Enter" &&
+      !event.altKey &&
+      !event.ctrlKey &&
+      !event.metaKey &&
+      !event.shiftKey &&
+      event.currentTarget.selectionStart === event.currentTarget.selectionEnd
+    ) {
+      const nextEdit = applyActiveTagCompletion(
+        event.currentTarget.value,
+        event.currentTarget.selectionStart
+      )
+
+      if (nextEdit) {
+        event.preventDefault()
+        setIsEditorExpanded(true)
+        applyTextEdit(nextEdit)
+        return
+      }
+    }
+
     if (!isSaveShortcut) {
       return
     }
@@ -383,6 +439,20 @@ export function CaptureBox({
     })
   }
 
+  function removePendingImage(id: string) {
+    setPendingImages((current) => {
+      const removedImage = current.find((image) => image.id === id)
+      if (removedImage) {
+        URL.revokeObjectURL(removedImage.previewUrl)
+      }
+
+      return current.filter((image) => image.id !== id)
+    })
+    requestAnimationFrame(() => {
+      textareaRef.current?.focus()
+    })
+  }
+
   function syncSelection(textarea: HTMLTextAreaElement) {
     setSelectionStart(textarea.selectionStart)
     setSelectionEnd(textarea.selectionEnd)
@@ -402,8 +472,10 @@ export function CaptureBox({
       return
     }
 
+    const currentValue = textarea.value
+    const currentActiveTag = getActiveTag(currentValue, selectionStart)
     const caret = getTextareaCaretBox(textarea, selectionStart)
-    setCustomCaret(activeTag ? { ...caret, top: caret.lineTop } : caret)
+    setCustomCaret(currentActiveTag ? { ...caret, top: caret.lineTop } : caret)
   }
 
   return (
@@ -415,7 +487,7 @@ export function CaptureBox({
         {content ? (
           <div
             aria-hidden="true"
-            className="shard-editor-highlight-layer px-[var(--shard-composer-padding)] py-[var(--shard-composer-padding)]"
+            className="shard-editor-highlight-layer shard-memo-tags px-[var(--shard-composer-padding)] py-[var(--shard-composer-padding)]"
           >
             <FragmentContent
               content={content}
@@ -504,6 +576,21 @@ export function CaptureBox({
         />
       ) : null}
 
+      {pendingImages.length > 0 ? (
+        <div className="shard-image-attachment-row px-[var(--shard-composer-padding)] pb-[var(--shard-space-3)]">
+          {pendingImages.map((image) => (
+            <FragmentImageAttachment
+              alt={image.alt}
+              key={image.id}
+              onRemove={() => removePendingImage(image.id)}
+              path={image.path}
+              src={image.previewUrl}
+              wrapped={false}
+            />
+          ))}
+        </div>
+      ) : null}
+
       <div className="shard-edge-action-row rounded-b-[var(--shard-surface-radius)] bg-card">
         <div className="min-w-0 flex-1">
           <EditorToolbar
@@ -552,6 +639,23 @@ export function CaptureBox({
 
 const CAPTURE_COLLAPSED_ROWS = 2
 const CAPTURE_EXPANDED_ROWS = 4
+
+function buildContentWithPendingImages(
+  value: string,
+  pendingImages: PendingImage[]
+) {
+  const text = value.trim()
+  const imageMarkdown = pendingImages
+    .map((image) => `![${escapeMarkdownImageAlt(image.alt)}](${image.path})`)
+    .join("\n")
+
+  return [text, imageMarkdown].filter(Boolean).join("\n")
+}
+
+function escapeMarkdownImageAlt(alt: string) {
+  return alt.replace(/\\/g, "\\\\").replace(/]/g, "\\]")
+}
+
 const TEXTAREA_MIRROR_PROPERTIES = [
   "box-sizing",
   "border-bottom-width",

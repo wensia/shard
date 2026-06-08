@@ -1,6 +1,14 @@
-import { Fragment, type MouseEvent, type ReactNode } from "react"
+import {
+  Fragment,
+  useEffect,
+  useState,
+  type MouseEvent,
+  type ReactNode,
+} from "react"
+import { XIcon } from "lucide-react"
 
-import { getTagRanges } from "@/lib/editor-format"
+import { getTagRanges, parseMarkdownImageLine } from "@/lib/editor-format"
+import { loadFragmentImageSrc } from "@/lib/fragment-images"
 import { cn } from "@/lib/utils"
 
 interface FragmentContentProps {
@@ -8,8 +16,10 @@ interface FragmentContentProps {
   content: string
   highlightTags?: boolean
   onTaskToggle?: (lineIndex: number) => void
+  renderImages?: boolean
   selectionEnd?: number
   selectionStart?: number
+  vaultPath?: string
 }
 
 const TASK_MARKER_PATTERN =
@@ -20,8 +30,10 @@ export function FragmentContent({
   content,
   highlightTags = false,
   onTaskToggle,
+  renderImages = false,
   selectionEnd,
   selectionStart,
+  vaultPath,
 }: FragmentContentProps) {
   const lines = content.split("\n")
   const selectionRange = getSelectionRange(selectionStart, selectionEnd)
@@ -31,6 +43,8 @@ export function FragmentContent({
     <span className={cn("shard-fragment-content", className)}>
       {lines.map((line, index) => {
         const currentLineStart = lineStart
+        const isImageLine =
+          renderImages && parseMarkdownImageLine(line) !== null
         lineStart += line.length + 1
 
         return (
@@ -41,9 +55,11 @@ export function FragmentContent({
               index,
               currentLineStart,
               selectionRange,
-              onTaskToggle
+              onTaskToggle,
+              renderImages,
+              vaultPath
             )}
-            {index < lines.length - 1 ? "\n" : null}
+            {index < lines.length - 1 && !isImageLine ? "\n" : null}
           </Fragment>
         )
       })}
@@ -57,8 +73,21 @@ function renderLine(
   lineIndex: number,
   lineStart: number,
   selectionRange: SelectionRange | null,
-  onTaskToggle: ((lineIndex: number) => void) | undefined
+  onTaskToggle: ((lineIndex: number) => void) | undefined,
+  renderImages: boolean,
+  vaultPath: string | undefined
 ): ReactNode {
+  const image = renderImages ? parseMarkdownImageLine(line) : null
+  if (image) {
+    return (
+      <FragmentImageAttachment
+        alt={image.alt}
+        path={image.path}
+        vaultPath={vaultPath}
+      />
+    )
+  }
+
   const taskMatch = line.match(TASK_MARKER_PATTERN)
   if (!taskMatch) {
     return renderInlineContent(
@@ -113,6 +142,72 @@ function renderLine(
   )
 }
 
+interface FragmentImageAttachmentProps {
+  alt: string
+  onRemove?: () => void
+  path: string
+  src?: string
+  vaultPath?: string
+  wrapped?: boolean
+}
+
+export function FragmentImageAttachment({
+  alt,
+  onRemove,
+  path,
+  src,
+  vaultPath,
+  wrapped = true,
+}: FragmentImageAttachmentProps) {
+  const label = alt ? `图片附件：${alt}` : "图片附件"
+  const [imageSrc, setImageSrc] = useState(src ?? "")
+
+  useEffect(() => {
+    let isMounted = true
+    setImageSrc(src ?? "")
+
+    if (src) return
+
+    loadFragmentImageSrc(path, vaultPath)
+      .then((loadedSrc) => {
+        if (isMounted) setImageSrc(loadedSrc)
+      })
+      .catch(() => {
+        if (isMounted) setImageSrc("")
+      })
+
+    return () => {
+      isMounted = false
+    }
+  }, [path, src, vaultPath])
+
+  const attachment = (
+    <span className="shard-image-attachment" title={label}>
+      {imageSrc ? (
+        <img alt={label} data-source-path={path} loading="lazy" src={imageSrc} />
+      ) : (
+        <span aria-hidden="true" className="shard-image-attachment-placeholder" />
+      )}
+      {onRemove ? (
+        <button
+          aria-label="移除图片附件"
+          className="shard-image-attachment-remove"
+          onClick={onRemove}
+          type="button"
+        >
+          <XIcon data-icon="inline-start" />
+        </button>
+      ) : null}
+    </span>
+  )
+
+  return wrapped ? (
+    <span className="shard-image-attachment-row">{attachment}</span>
+  ) : (
+    attachment
+  )
+}
+
 interface TaskMarkerProps {
   checked: boolean
   lineIndex: number
@@ -127,20 +222,18 @@ function TaskMarker({
   rawMarker,
 }: TaskMarkerProps) {
   const checkbox = (
-    <>
-      <span className="shard-task-marker-measure">{rawMarker}</span>
-      <span
-        className={cn(
-          "shard-task-checkbox",
-          checked && "shard-task-checkbox-checked"
-        )}
-      />
-    </>
+    <span
+      className={cn(
+        "shard-task-checkbox",
+        checked && "shard-task-checkbox-checked"
+      )}
+    />
   )
 
   if (!onTaskToggle) {
     return (
       <span className="shard-task-marker" aria-hidden="true">
+        <span className="shard-task-marker-measure">{rawMarker}</span>
         {checkbox}
       </span>
     )
@@ -152,20 +245,23 @@ function TaskMarker({
   }
 
   return (
-    <button
-      aria-label={checked ? "标记为未完成" : "标记为完成"}
-      aria-pressed={checked}
-      className="shard-task-marker shard-task-toggle"
-      onClick={(event) => {
-        event.preventDefault()
-        event.stopPropagation()
-        onTaskToggle(lineIndex)
-      }}
-      onMouseDown={stopEditorSelection}
-      type="button"
-    >
-      {checkbox}
-    </button>
+    <span className="shard-task-marker">
+      <span className="shard-task-marker-measure">{rawMarker}</span>
+      <button
+        aria-label={checked ? "标记为未完成" : "标记为完成"}
+        aria-pressed={checked}
+        className="shard-task-toggle"
+        onClick={(event) => {
+          event.preventDefault()
+          event.stopPropagation()
+          onTaskToggle(lineIndex)
+        }}
+        onMouseDown={stopEditorSelection}
+        type="button"
+      >
+        {checkbox}
+      </button>
+    </span>
   )
 }
 

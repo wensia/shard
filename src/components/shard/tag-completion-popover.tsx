@@ -21,12 +21,12 @@ export function TagCompletionPopover({
       className="absolute z-40 w-[168px] max-w-[calc(100%-1.5rem)] rounded-[var(--shard-surface-radius)] border border-[rgb(0_0_0/var(--shard-alpha-5))] bg-card p-[var(--shard-space-1)] text-card-foreground shadow-[0_6px_14px_rgb(0_0_0/var(--shard-alpha-5))]"
       style={{ left, top }}
     >
-      <div className="flex h-8 items-center gap-[var(--shard-space-micro)] rounded-[calc(var(--shard-radius-control)+4px)] bg-[color:var(--shard-tag-bg)] px-[var(--shard-tag-padding-x)] shadow-[inset_0_0_0_1px_var(--shard-tag-ring)]">
-        <div className="min-w-0 flex-1 truncate text-xs leading-none font-medium text-[color:var(--shard-tag-fg-strong)]">
+      <div className="flex min-h-8 items-center justify-between gap-[var(--shard-space-2)] rounded-[var(--shard-radius-control)] px-[var(--shard-space-2)] text-card-foreground transition-colors hover:bg-muted/[var(--shard-alpha-55)]">
+        <div className="min-w-0 flex-1 truncate text-xs leading-5 font-normal text-foreground">
           {label || "标签"}
         </div>
         <Button
-          className="h-[var(--shard-chip-height)] min-w-10 rounded-[var(--shard-radius-control)] bg-white/[var(--shard-alpha-55)] px-[var(--shard-space-2)] text-xs leading-none font-medium text-[color:var(--shard-tag-fg)] hover:bg-white hover:text-[color:var(--shard-tag-fg-strong)] disabled:bg-white/[var(--shard-alpha-34)] disabled:text-muted-foreground/[var(--shard-alpha-55)]"
+          className="h-5 min-w-9 rounded-[var(--shard-radius-control)] bg-muted px-[var(--shard-space-2)] text-[11px] leading-none font-normal text-muted-foreground hover:bg-muted hover:text-foreground disabled:bg-muted/[var(--shard-alpha-55)] disabled:text-muted-foreground/[var(--shard-alpha-55)]"
           disabled={!label}
           onMouseDown={(event) => {
             event.preventDefault()

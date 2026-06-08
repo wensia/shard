@@ -1,15 +1,27 @@
 import {
   ArchiveIcon,
-  BotIcon,
+  CalendarDaysIcon,
   HelpCircleIcon,
   InboxIcon,
   KeyboardIcon,
+  Maximize2Icon,
+  MoreHorizontalIcon,
   RefreshCwIcon,
+  RouteIcon,
   SettingsIcon,
+  SparklesIcon,
   TagIcon,
 } from "lucide-react"
+import { useState } from "react"
 
 import { Button } from "@/components/ui/button"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import {
   Tooltip,
   TooltipContent,
@@ -24,21 +36,170 @@ interface SidebarNavProps {
   git: GitInfo | null
   isSyncing: boolean
   onFilterChange: (filter: FragmentFilter) => void
+  onHelp: () => void
   onOpenSettings: () => void
+  onRestoreWindow: () => void
+  onShortcuts: () => void
   onSync: () => void
   vaultPath: string
 }
 
 const navItems: Array<{
   id: FragmentFilter
-  label: string
   icon: typeof InboxIcon
 }> = [
-  { id: "inbox", label: "Inbox", icon: InboxIcon },
-  { id: "tagged", label: "Tagged", icon: TagIcon },
-  { id: "ai", label: "AI Suggestions", icon: BotIcon },
-  { id: "archive", label: "Archive", icon: ArchiveIcon },
+  { id: "inbox", icon: InboxIcon },
+  { id: "tagged", icon: TagIcon },
+  { id: "dailyReview", icon: CalendarDaysIcon },
+  { id: "insight", icon: SparklesIcon },
+  { id: "walk", icon: RouteIcon },
+  { id: "archive", icon: ArchiveIcon },
 ]
+
+const utilityMenuItemClass =
+  "grid h-8 grid-cols-[16px_1fr] gap-2 px-2 text-[13px] font-medium whitespace-nowrap [&_svg]:size-3.5 [&_svg]:stroke-[1.65]"
+
+type SidebarLanguage = "en" | "zh"
+
+const SIDEBAR_COPY: Record<
+  SidebarLanguage,
+  {
+    aria: {
+      filters: string
+      heatmap: string
+      utilityMenu: string
+      stats: string
+    }
+    gitState: {
+      error: string
+      noGit: string
+      noRemote: string
+      noVault: string
+      pending: string
+      synced: string
+    }
+    help: string
+    noCommit: string
+    nav: Record<FragmentFilter, string>
+    restoreWindow: string
+    settings: string
+    shortcuts: string
+    stats: {
+      days: string
+      fragments: string
+      tags: string
+    }
+    syncGitVault: string
+    syncing: string
+    vaultNotLoaded: string
+  }
+> = {
+  zh: {
+    aria: {
+      filters: "片段筛选",
+      heatmap: "片段热力图",
+      stats: "资料库统计",
+      utilityMenu: "打开帮助与设置菜单",
+    },
+    gitState: {
+      error: "错误",
+      noGit: "未初始化 Git",
+      noRemote: "未配置远端",
+      noVault: "无资料库",
+      pending: "待同步",
+      synced: "已同步",
+    },
+    help: "帮助",
+    noCommit: "无提交",
+    nav: {
+      archive: "归档",
+      dailyReview: "每日回顾",
+      inbox: "收件箱",
+      insight: "AI 洞察",
+      tagged: "标签",
+      walk: "随机漫步",
+    },
+    restoreWindow: "还原窗口尺寸",
+    settings: "设置",
+    shortcuts: "快捷键",
+    stats: {
+      days: "天",
+      fragments: "片段",
+      tags: "标签",
+    },
+    syncGitVault: "同步 Git 资料库",
+    syncing: "同步中",
+    vaultNotLoaded: "资料库未加载",
+  },
+  en: {
+    aria: {
+      filters: "Fragment filters",
+      heatmap: "Fragment heatmap",
+      stats: "Vault stats",
+      utilityMenu: "Open help and settings menu",
+    },
+    gitState: {
+      error: "Error",
+      noGit: "No Git",
+      noRemote: "No Remote",
+      noVault: "No Vault",
+      pending: "Pending",
+      synced: "Synced",
+    },
+    help: "Help",
+    noCommit: "no commit",
+    nav: {
+      archive: "Archive",
+      dailyReview: "Daily Review",
+      inbox: "Inbox",
+      insight: "AI Insights",
+      tagged: "Tagged",
+      walk: "Random Walk",
+    },
+    restoreWindow: "Restore Window Size",
+    settings: "Settings",
+    shortcuts: "Shortcuts",
+    stats: {
+      days: "Days",
+      fragments: "Fragments",
+      tags: "Tags",
+    },
+    syncGitVault: "Sync Git vault",
+    syncing: "Syncing",
+    vaultNotLoaded: "Vault not loaded",
+  },
+}
+
+const MONTH_LABELS: Record<SidebarLanguage, readonly string[]> = {
+  zh: [
+    "一月",
+    "二月",
+    "三月",
+    "四月",
+    "五月",
+    "六月",
+    "七月",
+    "八月",
+    "九月",
+    "十月",
+    "十一月",
+    "十二月",
+  ],
+  en: [
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "May",
+    "Jun",
+    "Jul",
+    "Aug",
+    "Sep",
+    "Oct",
+    "Nov",
+    "Dec",
+  ],
+}
 
 export function SidebarNav({
   activeFilter,
@@ -46,10 +207,16 @@ export function SidebarNav({
   git,
   isSyncing,
   onFilterChange,
+  onHelp,
   onOpenSettings,
+  onRestoreWindow,
+  onShortcuts,
   onSync,
   vaultPath,
 }: SidebarNavProps) {
+  const [isUtilityMenuOpen, setIsUtilityMenuOpen] = useState(false)
+  const language = getSidebarLanguage()
+  const copy = SIDEBAR_COPY[language]
   const activeFragments = fragments.filter((fragment) => !fragment.archived)
   const archivedFragments = fragments.filter((fragment) => fragment.archived)
   const counts: Record<FragmentFilter, number> = {
@@ -57,16 +224,18 @@ export function SidebarNav({
     tagged: activeFragments.filter((fragment) =>
       fragment.tags.some((tag) => tag !== "inbox")
     ).length,
-    ai: activeFragments.filter((fragment) => fragment.aiStatus === "suggested").length,
+    dailyReview: activeFragments.length,
+    insight: activeFragments.length,
+    walk: activeFragments.length,
     archive: archivedFragments.length,
   }
-  const gitStateLabel = getGitStateLabel(git)
-  const gitSummary = `${git?.branch || "main"} · ${git?.shortCommit || "no commit"}`
-  const vaultLabel = vaultPath || "Vault not loaded"
+  const gitStateLabel = getGitStateLabel(git, copy)
+  const gitSummary = `${git?.branch || "main"} · ${git?.shortCommit || copy.noCommit}`
+  const vaultLabel = vaultPath || copy.vaultNotLoaded
   const isMissingRemote = Boolean(
     git && git.status !== "no_git" && !git.hasRemote
   )
-  const heatmap = buildSidebarHeatmap(activeFragments)
+  const heatmap = buildSidebarHeatmap(activeFragments, language)
 
   return (
     <aside className="flex h-full min-h-0 flex-col border-r border-border bg-sidebar">
@@ -85,21 +254,27 @@ export function SidebarNav({
       </div>
 
       <div className="px-[var(--shard-sidebar-inset)] pb-[var(--shard-space-5)]">
-        <div className="grid grid-cols-3 gap-[var(--shard-space-3)]">
-          <SidebarStat label="片段" value={activeFragments.length} />
-          <SidebarStat label="标签" value={heatmap.tagCount} />
-          <SidebarStat label="天" value={heatmap.daySpan} />
+        <div
+          aria-label={copy.aria.stats}
+          className="grid grid-cols-3 gap-[var(--shard-space-2)]"
+        >
+          <SidebarStat
+            label={copy.stats.fragments}
+            value={activeFragments.length}
+          />
+          <SidebarStat label={copy.stats.tags} value={heatmap.tagCount} />
+          <SidebarStat label={copy.stats.days} value={heatmap.daySpan} />
         </div>
 
         <div
-          aria-label="片段热力图"
+          aria-label={copy.aria.heatmap}
           className="mt-[var(--shard-space-4)]"
           role="img"
         >
           <div className="shard-heatmap-grid">
             {heatmap.cells.map((cell) => (
               <span
-                aria-label={`${cell.label}: ${cell.count} 条片段`}
+                aria-label={formatHeatmapCellLabel(cell, language)}
                 className={[
                   "size-[var(--shard-heatmap-cell)] rounded-[calc(var(--shard-radius-control)/2)]",
                   HEATMAP_LEVEL_CLASSES[cell.level],
@@ -108,7 +283,7 @@ export function SidebarNav({
                     : "",
                 ].join(" ")}
                 key={cell.key}
-                title={`${cell.label}: ${cell.count} 条片段`}
+                title={formatHeatmapCellLabel(cell, language)}
               />
             ))}
           </div>
@@ -130,7 +305,7 @@ export function SidebarNav({
       </div>
 
       <nav
-        aria-label="Fragment filters"
+        aria-label={copy.aria.filters}
         className="flex flex-col gap-[var(--shard-space-1)] px-[var(--shard-space-3)]"
       >
         {navItems.map((item) => {
@@ -157,7 +332,9 @@ export function SidebarNav({
                 />
               ) : null}
               <Icon className="size-4 shrink-0 stroke-[1.75]" />
-              <span className="min-w-0 flex-1 truncate">{item.label}</span>
+              <span className="min-w-0 flex-1 truncate">
+                {copy.nav[item.id]}
+              </span>
               <span className="min-w-7 rounded-md bg-muted px-2 py-0.5 text-center text-xs font-semibold text-muted-foreground">
                 {counts[item.id]}
               </span>
@@ -200,11 +377,13 @@ export function SidebarNav({
                     : "",
                 ].join(" ")}
               />
-              <span className="sr-only">同步 Git vault</span>
+              <span className="sr-only">{copy.syncGitVault}</span>
             </TooltipTrigger>
             <TooltipContent side="top">
               <div className="flex flex-col gap-1">
-                <span>{isSyncing ? "同步中" : `Git ${gitStateLabel}`}</span>
+                <span>
+                  {isSyncing ? copy.syncing : `Git ${gitStateLabel}`}
+                </span>
                 <span className="text-background/[var(--shard-alpha-55)]">{gitSummary}</span>
                 <span className="max-w-64 truncate text-background/[var(--shard-alpha-55)]">
                   {vaultLabel}
@@ -215,41 +394,96 @@ export function SidebarNav({
           <Tooltip>
             <TooltipTrigger
               render={
-                <Button onClick={onOpenSettings} size="icon" variant="ghost" />
+                <Button onClick={onRestoreWindow} size="icon" variant="ghost" />
               }
             >
-              <SettingsIcon data-icon="inline-start" />
-              <span className="sr-only">设置</span>
+              <Maximize2Icon data-icon="inline-start" />
+              <span className="sr-only">{copy.restoreWindow}</span>
             </TooltipTrigger>
-            <TooltipContent side="top">设置</TooltipContent>
+            <TooltipContent side="top">{copy.restoreWindow}</TooltipContent>
           </Tooltip>
-          <Tooltip>
-            <TooltipTrigger render={<Button size="icon" variant="ghost" />}>
-              <KeyboardIcon data-icon="inline-start" />
-              <span className="sr-only">快捷键</span>
-            </TooltipTrigger>
-            <TooltipContent side="top">快捷键</TooltipContent>
-          </Tooltip>
-          <Tooltip>
-            <TooltipTrigger render={<Button size="icon" variant="ghost" />}>
-              <HelpCircleIcon data-icon="inline-start" />
-              <span className="sr-only">帮助</span>
-            </TooltipTrigger>
-            <TooltipContent side="top">帮助</TooltipContent>
-          </Tooltip>
+          <DropdownMenu
+            open={isUtilityMenuOpen}
+            onOpenChange={setIsUtilityMenuOpen}
+          >
+            <DropdownMenuTrigger
+              render={
+                <Button
+                  aria-label={copy.aria.utilityMenu}
+                  size="icon"
+                  title={copy.aria.utilityMenu}
+                  variant="ghost"
+                />
+              }
+            >
+              <MoreHorizontalIcon data-icon="inline-start" />
+              <span className="sr-only">{copy.aria.utilityMenu}</span>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent
+              align="end"
+              className="w-40 rounded-md p-1 shadow-[0_8px_20px_rgb(0_0_0/var(--shard-alpha-8))] ring-[rgb(0_0_0/var(--shard-alpha-13))]"
+              side="top"
+              sideOffset={8}
+            >
+              <DropdownMenuGroup>
+                <DropdownMenuItem
+                  className={utilityMenuItemClass}
+                  onClick={() => {
+                    setIsUtilityMenuOpen(false)
+                    window.setTimeout(onOpenSettings, 0)
+                  }}
+                >
+                  <SettingsIcon />
+                  {copy.settings}
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  className={utilityMenuItemClass}
+                  onClick={() => {
+                    setIsUtilityMenuOpen(false)
+                    window.setTimeout(onShortcuts, 0)
+                  }}
+                >
+                  <KeyboardIcon />
+                  {copy.shortcuts}
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  className={utilityMenuItemClass}
+                  onClick={() => {
+                    setIsUtilityMenuOpen(false)
+                    window.setTimeout(onHelp, 0)
+                  }}
+                >
+                  <HelpCircleIcon />
+                  {copy.help}
+                </DropdownMenuItem>
+              </DropdownMenuGroup>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </div>
     </aside>
   )
 }
 
-function getGitStateLabel(git: GitInfo | null) {
-  if (!git) return "No Vault"
-  if (git.status === "no_git") return "No Git"
-  if (!git.hasRemote) return "No Remote"
-  if (git.status === "dirty") return "Pending"
-  if (git.status === "error") return "Error"
-  return "Synced"
+function getSidebarLanguage(): SidebarLanguage {
+  if (typeof navigator === "undefined") return "zh"
+
+  const preferredLanguage =
+    navigator.languages?.find((language) => language) ?? navigator.language
+
+  return preferredLanguage.toLowerCase().startsWith("zh") ? "zh" : "en"
+}
+
+function getGitStateLabel(
+  git: GitInfo | null,
+  copy: (typeof SIDEBAR_COPY)[SidebarLanguage]
+) {
+  if (!git) return copy.gitState.noVault
+  if (git.status === "no_git") return copy.gitState.noGit
+  if (!git.hasRemote) return copy.gitState.noRemote
+  if (git.status === "dirty") return copy.gitState.pending
+  if (git.status === "error") return copy.gitState.error
+  return copy.gitState.synced
 }
 
 interface SidebarStatProps {
@@ -259,11 +493,11 @@ interface SidebarStatProps {
 
 function SidebarStat({ label, value }: SidebarStatProps) {
   return (
-    <div className="min-w-0">
-      <div className="text-xl leading-6 font-semibold text-muted-foreground">
+    <div className="min-w-0 px-[var(--shard-space-1)] py-[var(--shard-space-2)] text-center">
+      <div className="text-[21px] leading-6 font-medium tracking-normal text-sidebar-foreground tabular-nums">
         {value}
       </div>
-      <div className="mt-1 text-xs leading-none font-medium text-muted-foreground">
+      <div className="mt-[var(--shard-space-1)] text-[11px] leading-3 font-medium tracking-normal text-muted-foreground">
         {label}
       </div>
     </div>
@@ -298,22 +532,10 @@ const HEATMAP_LEVEL_CLASSES = [
   "bg-[color-mix(in_srgb,var(--shard-sapphire)_52%,transparent)]",
   "bg-[color-mix(in_srgb,var(--shard-sapphire)_82%,transparent)]",
 ] as const
-const MONTH_LABELS = [
-  "一月",
-  "二月",
-  "三月",
-  "四月",
-  "五月",
-  "六月",
-  "七月",
-  "八月",
-  "九月",
-  "十月",
-  "十一月",
-  "十二月",
-] as const
-
-function buildSidebarHeatmap(fragments: Fragment[]): SidebarHeatmap {
+function buildSidebarHeatmap(
+  fragments: Fragment[],
+  language: SidebarLanguage
+): SidebarHeatmap {
   const today = startOfLocalDay(new Date())
   const todayKey = formatDateKey(today)
   const currentWeekStart = startOfWeek(today)
@@ -361,7 +583,7 @@ function buildSidebarHeatmap(fragments: Fragment[]): SidebarHeatmap {
       ) {
         monthLabels.push({
           column,
-          label: MONTH_LABELS[date.getMonth()],
+          label: MONTH_LABELS[language][date.getMonth()],
         })
         labeledMonths.add(monthKey)
       }
@@ -370,7 +592,7 @@ function buildSidebarHeatmap(fragments: Fragment[]): SidebarHeatmap {
         count,
         isToday: key === todayKey,
         key,
-        label: formatHeatmapDateLabel(date),
+        label: formatHeatmapDateLabel(date, language),
         level: getHeatmapLevel(count),
       })
     }
@@ -417,6 +639,22 @@ function formatDateKey(date: Date) {
   return `${date.getFullYear()}-${month}-${day}`
 }
 
-function formatHeatmapDateLabel(date: Date) {
-  return `${date.getMonth() + 1}月${date.getDate()}日`
+function formatHeatmapDateLabel(date: Date, language: SidebarLanguage) {
+  if (language === "zh") {
+    return `${date.getMonth() + 1}月${date.getDate()}日`
+  }
+
+  return `${MONTH_LABELS.en[date.getMonth()]} ${date.getDate()}`
+}
+
+function formatHeatmapCellLabel(
+  cell: HeatmapCell,
+  language: SidebarLanguage
+) {
+  if (language === "zh") {
+    return `${cell.label}: ${cell.count} 条片段`
+  }
+
+  const unit = cell.count === 1 ? "fragment" : "fragments"
+  return `${cell.label}: ${cell.count} ${unit}`
 }

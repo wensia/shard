@@ -1,9 +1,11 @@
-import { useRef, type UIEvent } from "react"
+import { useEffect, useMemo, useRef, useState, type UIEvent } from "react"
 import { InboxIcon } from "lucide-react"
 
 import { FragmentCard } from "@/components/shard/fragment-card"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import type { Fragment } from "@/types"
+
+const WIDE_TIMELINE_QUERY = "(min-width: 96rem)"
 
 interface FragmentTimelineProps {
   emptyMessage?: string
@@ -13,6 +15,7 @@ interface FragmentTimelineProps {
   onEdit?: (fragment: Fragment) => void
   onScrollDown?: () => void
   onToggleTask?: (fragment: Fragment, lineIndex: number) => void
+  vaultPath?: string
 }
 
 export function FragmentTimeline({
@@ -23,8 +26,33 @@ export function FragmentTimeline({
   onEdit,
   onScrollDown,
   onToggleTask,
+  vaultPath,
 }: FragmentTimelineProps) {
   const lastScrollTopRef = useRef(0)
+  const [usesWaterfallColumns, setUsesWaterfallColumns] = useState(() =>
+    typeof window === "undefined"
+      ? false
+      : window.matchMedia(WIDE_TIMELINE_QUERY).matches
+  )
+  const fragmentColumns = useMemo(
+    () => splitIntoColumns(fragments, usesWaterfallColumns ? 2 : 1),
+    [fragments, usesWaterfallColumns]
+  )
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia(WIDE_TIMELINE_QUERY)
+
+    function handleTimelineWidthChange() {
+      setUsesWaterfallColumns(mediaQuery.matches)
+    }
+
+    handleTimelineWidthChange()
+    mediaQuery.addEventListener("change", handleTimelineWidthChange)
+
+    return () => {
+      mediaQuery.removeEventListener("change", handleTimelineWidthChange)
+    }
+  }, [])
 
   function handleViewportScroll(event: UIEvent<HTMLDivElement>) {
     const nextScrollTop = event.currentTarget.scrollTop
@@ -56,14 +84,22 @@ export function FragmentTimeline({
         ) : (
           <div className="shard-content-inset pb-[var(--shard-space-8)]">
             <div className="shard-content-measure grid grid-cols-1 items-start gap-[var(--shard-card-gap)] 2xl:grid-cols-2">
-              {fragments.map((fragment) => (
-                <FragmentCard
-                  fragment={fragment}
-                  key={fragment.id}
-                  onArchive={onArchive}
-                  onEdit={onEdit}
-                  onToggleTask={onToggleTask}
-                />
+              {fragmentColumns.map((column, columnIndex) => (
+                <div
+                  className="flex min-w-0 flex-col gap-[var(--shard-card-gap)]"
+                  key={columnIndex}
+                >
+                  {column.map((fragment) => (
+                    <FragmentCard
+                      fragment={fragment}
+                      key={fragment.id}
+                      onArchive={onArchive}
+                      onEdit={onEdit}
+                      onToggleTask={onToggleTask}
+                      vaultPath={vaultPath}
+                    />
+                  ))}
+                </div>
               ))}
             </div>
           </div>
@@ -71,4 +107,14 @@ export function FragmentTimeline({
       </ScrollArea>
     </div>
   )
+}
+
+function splitIntoColumns(fragments: Fragment[], columnCount: number) {
+  const columns = Array.from({ length: columnCount }, () => [] as Fragment[])
+
+  fragments.forEach((fragment, index) => {
+    columns[index % columnCount].push(fragment)
+  })
+
+  return columns
 }

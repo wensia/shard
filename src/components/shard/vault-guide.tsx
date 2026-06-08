@@ -14,6 +14,7 @@ import { Input } from "@/components/ui/input"
 import {
   createGithubVaultRepo,
   getGithubCliStatus,
+  getApiErrorMessage,
   initializeVaultGit,
   setVaultPath,
   setVaultRemote,
@@ -23,14 +24,247 @@ import type { GithubCliInfo, GitInfo, VaultState } from "@/types"
 interface VaultGuideProps {
   git: GitInfo | null
   onClose: () => void
-  onVaultState: (state: VaultState) => void
+  onVaultState: (
+    state: VaultState,
+    options?: { resetView?: boolean }
+  ) => void
   open: boolean
   required: boolean
   vaultPath: string
 }
 
 type VaultAction = "create" | "github" | "git" | "open" | "remote" | null
-type SettingSectionId = "directory" | "git" | "overview" | "remote"
+type SettingsLocale = "en" | "zh"
+
+interface SettingsCopy {
+  close: string
+  connectRemote: string
+  connectRemoteBusy: string
+  createRepo: string
+  createRepoBusy: string
+  createVaultDescription: string
+  createVaultLabel: string
+  dialogTitleCreate: string
+  dialogTitleOpen: string
+  directoryDescription: string
+  directoryTitle: string
+  githubBusy: string
+  githubChecking: string
+  githubCurrentAccount: string
+  githubIdle: string
+  githubMissing: string
+  githubNotAuthenticated: string
+  gitDescription: string
+  gitEmptyDetail: string
+  gitStatus: Record<"dirty" | "error" | "local" | "none" | "ready" | "syncing", string>
+  gitTitle: string
+  headlineDefault: string
+  headlineNeedsRemote: string
+  initGitDescription: string
+  initGitLabel: string
+  manualRemoteHint: string
+  noVault: string
+  openVaultDescription: string
+  openVaultLabel: string
+  remoteAlreadyConnected: string
+  remoteBusy: string
+  remoteIdle: string
+  remoteStatus: Record<"connected" | "connecting" | "creating" | "missing" | "pending", string>
+  remoteTitle: string
+  remoteNeeds: string
+  remoteReady: string
+  settingsTitle: string
+  sideCurrent: string
+  sideGit: string
+  sideRemote: string
+  toastGithubCreated: string
+  toastGithubCreatedDescription: string
+  toastGithubFailed: string
+  toastGitInitialized: string
+  toastGitInitializeFailed: string
+  toastRepoRequired: string
+  toastRemoteConfigured: string
+  toastRemoteFailed: string
+  toastRemoteRequired: string
+  toastVaultCreated: string
+  toastVaultFailed: string
+  toastVaultSwitched: string
+  vaultTitle: string
+  githubAuthenticated(account: string, protocol: string): string
+  githubProtocol(protocol: string): string
+}
+
+const settingsCopy: Record<SettingsLocale, SettingsCopy> = {
+  en: {
+    close: "Close",
+    connectRemote: "Connect remote",
+    connectRemoteBusy: "Connecting",
+    createRepo: "Create private repo",
+    createRepoBusy: "Creating",
+    createVaultDescription: "Choose an empty folder and initialize Git.",
+    createVaultLabel: "Create folder",
+    dialogTitleCreate: "Choose or create a Shard vault folder",
+    dialogTitleOpen: "Choose an existing vault folder",
+    directoryDescription:
+      "Open an existing ShardVault, or choose a new folder as the local root.",
+    directoryTitle: "Folder",
+    githubBusy:
+      "Creating a private GitHub repository, connecting origin, and pushing the current commit.",
+    githubChecking: "Checking GitHub CLI sign-in...",
+    githubCurrentAccount: "current account",
+    githubIdle:
+      "When available, Shard will create a private repository, connect origin, and push local commits.",
+    githubMissing:
+      "GitHub CLI was not found. You can still enter a remote URL manually.",
+    githubNotAuthenticated: "gh is not signed in. Run gh auth login first.",
+    gitDescription:
+      "Shard uses local Git for fragment history. The remote is only for cloud sync.",
+    gitEmptyDetail: "No commit status is available yet.",
+    gitStatus: {
+      dirty: "Unsynced",
+      error: "Git error",
+      local: "Local only",
+      none: "No Git",
+      ready: "Ready",
+      syncing: "Syncing",
+    },
+    gitTitle: "Git",
+    headlineDefault:
+      "Choose an existing Shard folder, or create a new one as the local root for Markdown and Git.",
+    headlineNeedsRemote:
+      "The current folder is usable, but it is not connected to a Git remote yet. Configure a remote before syncing to a cloud repository.",
+    initGitDescription: "Enable local commit history for the current folder.",
+    initGitLabel: "Initialize Git",
+    manualRemoteHint:
+      "The manual URL is saved as origin. You can also run git remote add origin <url> in the current folder.",
+    noVault: "No folder selected",
+    openVaultDescription: "Open an existing ShardVault or Git repository.",
+    openVaultLabel: "Choose folder",
+    remoteAlreadyConnected:
+      "The current vault already has a Git remote. Use the sidebar sync action when needed.",
+    remoteBusy: "Connecting Git remote.",
+    remoteIdle: "Choose or create a vault before connecting a Git remote.",
+    remoteStatus: {
+      connected: "Connected",
+      connecting: "Connecting",
+      creating: "Creating",
+      missing: "Not configured",
+      pending: "Pending",
+    },
+    remoteTitle: "Git remote",
+    remoteNeeds:
+      "Use GitHub CLI to create a private repository automatically, or enter any Git repository URL manually.",
+    remoteReady:
+      "The remote is saved as origin and used to sync the local ShardVault to a cloud repository.",
+    settingsTitle: "Settings",
+    sideCurrent: "Folder",
+    sideGit: "Git",
+    sideRemote: "Remote",
+    toastGithubCreated: "GitHub repository created and connected",
+    toastGithubCreatedDescription:
+      "Settings will stay open so you can keep checking Git status or adjust the remote.",
+    toastGithubFailed: "GitHub setup failed",
+    toastGitInitialized: "Git initialized",
+    toastGitInitializeFailed: "Git initialization failed",
+    toastRepoRequired: "GitHub repository name is required",
+    toastRemoteConfigured: "Git remote configured",
+    toastRemoteFailed: "Git remote setup failed",
+    toastRemoteRequired: "Git remote URL is required",
+    toastVaultCreated: "Vault created",
+    toastVaultFailed: "Vault setup failed",
+    toastVaultSwitched: "Vault switched",
+    vaultTitle: "Vault",
+    githubAuthenticated: (account, protocol) =>
+      `Signed in as ${account}${protocol}. A private repository will be created and connected to origin.`,
+    githubProtocol: (protocol) => `, Git protocol ${protocol}`,
+  },
+  zh: {
+    close: "关闭",
+    connectRemote: "连接远端",
+    connectRemoteBusy: "连接中",
+    createRepo: "创建私有仓库",
+    createRepoBusy: "创建中",
+    createVaultDescription: "选择一个空目录，并为它初始化 Git。",
+    createVaultLabel: "创建新目录",
+    dialogTitleCreate: "选择或新建 Shard vault 目录",
+    dialogTitleOpen: "选择已有 vault 目录",
+    directoryDescription: "打开已有 ShardVault，或选择一个新目录作为本地根目录。",
+    directoryTitle: "目录",
+    githubBusy: "正在创建 GitHub 私有仓库、连接 origin，并推送当前提交。",
+    githubChecking: "正在检查 GitHub CLI 登录状态...",
+    githubCurrentAccount: "当前账号",
+    githubIdle: "可用时会创建私有仓库、连接 origin，并推送本地提交。",
+    githubMissing: "未检测到 gh。可以继续手动填写远端 URL。",
+    githubNotAuthenticated: "gh 尚未登录。请先运行 gh auth login。",
+    gitDescription: "Shard 用本地 Git 保存片段历史，remote 只负责云端同步。",
+    gitEmptyDetail: "还没有可显示的提交状态。",
+    gitStatus: {
+      dirty: "未同步",
+      error: "Git 错误",
+      local: "仅本地",
+      none: "未初始化",
+      ready: "已就绪",
+      syncing: "同步中",
+    },
+    gitTitle: "Git",
+    headlineDefault:
+      "选择已有 Shard 目录，或创建一个新目录作为 Markdown 与 Git 的本地根目录。",
+    headlineNeedsRemote:
+      "当前目录已经可用，但还没有连接 Git 远端。配置 remote 后才能同步到云端仓库。",
+    initGitDescription: "为当前目录开启本地提交历史。",
+    initGitLabel: "初始化 Git",
+    manualRemoteHint:
+      "手动 URL 会保存为 origin。也可以在当前目录运行 git remote add origin <url>。",
+    noVault: "未选择目录",
+    openVaultDescription: "打开已有 ShardVault 或 Git 仓库。",
+    openVaultLabel: "选择已有目录",
+    remoteAlreadyConnected: "当前 vault 已有 Git 远端，可以从侧栏执行同步。",
+    remoteBusy: "正在连接 Git 远端。",
+    remoteIdle: "选择或创建 vault 后，可以在这里连接 Git 远端。",
+    remoteStatus: {
+      connected: "已连接",
+      connecting: "连接中",
+      creating: "创建中",
+      missing: "未配置",
+      pending: "待配置",
+    },
+    remoteTitle: "Git 远端",
+    remoteNeeds:
+      "可以用 GitHub CLI 自动创建私有仓库，也可以手动填写任意 Git 仓库 URL。",
+    remoteReady:
+      "远端保存为 origin，用于把本地 ShardVault 同步到云端仓库。",
+    settingsTitle: "设置",
+    sideCurrent: "当前目录",
+    sideGit: "Git 状态",
+    sideRemote: "远端",
+    toastGithubCreated: "GitHub 仓库已创建并连接",
+    toastGithubCreatedDescription:
+      "设置窗口会保持打开，可以继续检查 Git 状态或手动调整 remote。",
+    toastGithubFailed: "自动配置 GitHub 失败",
+    toastGitInitialized: "Git 已初始化",
+    toastGitInitializeFailed: "Git 初始化失败",
+    toastRepoRequired: "GitHub 仓库名不能为空",
+    toastRemoteConfigured: "Git 远端已配置",
+    toastRemoteFailed: "Git 远端配置失败",
+    toastRemoteRequired: "Git 远端 URL 不能为空",
+    toastVaultCreated: "Vault 已创建",
+    toastVaultFailed: "Vault 设置失败",
+    toastVaultSwitched: "Vault 已切换",
+    vaultTitle: "Vault",
+    githubAuthenticated: (account, protocol) =>
+      `已登录 ${account}${protocol}。将创建私有仓库并连接 origin。`,
+    githubProtocol: (protocol) => `，Git 协议 ${protocol}`,
+  },
+}
+
+function getPreferredSettingsLocale(): SettingsLocale {
+  const language =
+    typeof navigator === "undefined"
+      ? ""
+      : navigator.languages?.[0] || navigator.language || ""
+
+  return language.toLowerCase().startsWith("zh") ? "zh" : "en"
+}
 
 export function VaultGuide({
   git,
@@ -45,145 +279,99 @@ export function VaultGuide({
   const [isCheckingGithub, setIsCheckingGithub] = useState(false)
   const [remoteUrl, setRemoteUrl] = useState("")
   const [repoName, setRepoName] = useState(defaultRepoName(vaultPath))
-  const [activeSection, setActiveSection] =
-    useState<SettingSectionId>("overview")
-  const detailsRef = useRef<HTMLDivElement>(null)
-  const requestedSectionRef = useRef<SettingSectionId | null>(null)
-  const scrollSyncTimerRef = useRef<number | null>(null)
-  const sectionRefs = useRef<Record<SettingSectionId, HTMLElement | null>>({
-    directory: null,
-    git: null,
-    overview: null,
-    remote: null,
-  })
+  const dialogRef = useRef<HTMLDivElement>(null)
+  const copy = settingsCopy[getPreferredSettingsLocale()]
 
   const needsRemote = Boolean(
     vaultPath && git && git.status !== "no_git" && !git.hasRemote
   )
+  const isCreatingGithubRepo = activeAction === "github"
+  const isConfiguringRemote = activeAction === "remote"
+  const isRemoteBusy = isCreatingGithubRepo || isConfiguringRemote
+  const isVaultActionBusy = activeAction !== null
+  const remoteLabel = isCreatingGithubRepo
+    ? copy.remoteStatus.creating
+    : isConfiguringRemote
+      ? copy.remoteStatus.connecting
+      : needsRemote
+        ? copy.remoteStatus.missing
+        : git?.hasRemote
+          ? copy.remoteStatus.connected
+          : copy.remoteStatus.pending
+  const remoteToneClass = isRemoteBusy
+    ? "bg-muted text-muted-foreground"
+    : needsRemote
+    ? "bg-[rgb(var(--shard-amber-rgb)/var(--shard-alpha-13))] text-[color:var(--shard-amber)]"
+    : git?.hasRemote
+      ? "bg-[rgb(var(--shard-emerald-rgb)/var(--shard-alpha-13))] text-[color:var(--shard-emerald)]"
+      : "bg-muted text-muted-foreground"
 
   useEffect(() => {
     setRepoName(defaultRepoName(vaultPath))
   }, [vaultPath])
 
   useEffect(() => {
-    if (!isOpen || !needsRemote) return
+    if (!isOpen || !needsRemote) {
+      setIsCheckingGithub(false)
+      return
+    }
 
     let cancelled = false
-    setIsCheckingGithub(true)
-    void getGithubCliStatus()
-      .then((status) => {
-        if (!cancelled) {
-          setGithubStatus(status)
-        }
-      })
-      .catch((error) => {
-        if (!cancelled) {
-          setGithubStatus({
-            authenticated: false,
-            error: String(error),
-            installed: false,
-            login: null,
-            protocol: null,
+    let frameId: number | null = null
+    let timerId: number | null = null
+
+    frameId = window.requestAnimationFrame(() => {
+      timerId = window.setTimeout(() => {
+        if (cancelled) return
+
+        setIsCheckingGithub(true)
+        void getGithubCliStatus()
+          .then((status) => {
+            if (!cancelled) {
+              setGithubStatus(status)
+            }
           })
-        }
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setIsCheckingGithub(false)
-        }
-      })
+          .catch((error) => {
+            if (!cancelled) {
+              setGithubStatus({
+                authenticated: false,
+                error: getApiErrorMessage(error),
+                installed: false,
+                login: null,
+                protocol: null,
+              })
+            }
+          })
+          .finally(() => {
+            if (!cancelled) {
+              setIsCheckingGithub(false)
+            }
+          })
+      }, 0)
+    })
 
     return () => {
       cancelled = true
+      if (frameId !== null) {
+        window.cancelAnimationFrame(frameId)
+      }
+      if (timerId !== null) {
+        window.clearTimeout(timerId)
+      }
     }
   }, [isOpen, needsRemote])
 
   useEffect(() => {
     if (isOpen) {
-      setActiveSection("overview")
-      detailsRef.current?.scrollTo({ top: 0 })
+      requestAnimationFrame(() => {
+        dialogRef.current?.focus()
+      })
     }
   }, [isOpen])
 
   if (!isOpen) return null
 
-  const gitLabel = getGitStatusLabel(git)
-  const settingsNav: Array<{
-    description: string
-    id: SettingSectionId
-    label: string
-  }> = [
-    {
-      description: vaultPath ? "路径与状态" : "开始配置",
-      id: "overview",
-      label: "Vault",
-    },
-    {
-      description: needsRemote ? "需要连接" : "同步目标",
-      id: "remote",
-      label: "Remote",
-    },
-    {
-      description: "打开或创建",
-      id: "directory",
-      label: "Directory",
-    },
-    {
-      description: gitLabel,
-      id: "git",
-      label: "Git",
-    },
-  ]
-
-  function scrollToSection(sectionId: SettingSectionId) {
-    const container = detailsRef.current
-    const section = sectionRefs.current[sectionId]
-    if (!container || !section) return
-
-    requestedSectionRef.current = sectionId
-    setActiveSection(sectionId)
-    if (scrollSyncTimerRef.current !== null) {
-      window.clearTimeout(scrollSyncTimerRef.current)
-    }
-    scrollSyncTimerRef.current = window.setTimeout(() => {
-      requestedSectionRef.current = null
-      scrollSyncTimerRef.current = null
-    }, 450)
-    container.scrollTo({
-      top: section.offsetTop - 20,
-      behavior: "smooth",
-    })
-  }
-
-  function syncActiveSection() {
-    const container = detailsRef.current
-    if (!container) return
-
-    if (requestedSectionRef.current) {
-      setActiveSection(requestedSectionRef.current)
-      return
-    }
-
-    if (container.scrollTop <= 4) {
-      setActiveSection("overview")
-      return
-    }
-
-    const containerRect = container.getBoundingClientRect()
-    const anchorTop = containerRect.top + containerRect.height * 0.55
-    let nextActive: SettingSectionId = "overview"
-
-    for (const item of settingsNav) {
-      const section = sectionRefs.current[item.id]
-      if (section && section.getBoundingClientRect().top <= anchorTop) {
-        nextActive = item.id
-      }
-    }
-
-    setActiveSection((current) =>
-      current === nextActive ? current : nextActive
-    )
-  }
+  const gitLabel = getGitStatusLabel(git, copy)
 
   async function chooseVault(initializeGit: boolean) {
     setActiveAction(initializeGit ? "create" : "open")
@@ -192,18 +380,18 @@ export function VaultGuide({
       const selected = await open({
         directory: true,
         multiple: false,
-        title: initializeGit ? "选择或新建 Shard vault 目录" : "选择已有 vault 目录",
+        title: initializeGit ? copy.dialogTitleCreate : copy.dialogTitleOpen,
       })
 
       const path = Array.isArray(selected) ? selected[0] : selected
       if (!path) return
 
       const state = await setVaultPath(path, initializeGit)
-      onVaultState(state)
-      toast.success(initializeGit ? "Vault 已创建" : "Vault 已切换")
+      onVaultState(state, { resetView: true })
+      toast.success(initializeGit ? copy.toastVaultCreated : copy.toastVaultSwitched)
     } catch (error) {
-      toast.error("Vault 设置失败", {
-        description: String(error),
+      toast.error(copy.toastVaultFailed, {
+        description: getApiErrorMessage(error),
       })
     } finally {
       setActiveAction(null)
@@ -216,10 +404,10 @@ export function VaultGuide({
     try {
       const state = await initializeVaultGit()
       onVaultState(state)
-      toast.success("Git 已初始化")
+      toast.success(copy.toastGitInitialized)
     } catch (error) {
-      toast.error("Git 初始化失败", {
-        description: String(error),
+      toast.error(copy.toastGitInitializeFailed, {
+        description: getApiErrorMessage(error),
       })
     } finally {
       setActiveAction(null)
@@ -229,7 +417,7 @@ export function VaultGuide({
   async function configureRemote() {
     const nextRemoteUrl = remoteUrl.trim()
     if (!nextRemoteUrl) {
-      toast.error("Git remote URL 不能为空")
+      toast.error(copy.toastRemoteRequired)
       return
     }
 
@@ -239,10 +427,10 @@ export function VaultGuide({
       const state = await setVaultRemote(nextRemoteUrl)
       onVaultState(state)
       setRemoteUrl("")
-      toast.success("Git remote 已配置")
+      toast.success(copy.toastRemoteConfigured)
     } catch (error) {
-      toast.error("Git remote 配置失败", {
-        description: String(error),
+      toast.error(copy.toastRemoteFailed, {
+        description: getApiErrorMessage(error),
       })
     } finally {
       setActiveAction(null)
@@ -252,7 +440,7 @@ export function VaultGuide({
   async function createGithubRepo() {
     const nextRepoName = repoName.trim()
     if (!nextRepoName) {
-      toast.error("GitHub 仓库名不能为空")
+      toast.error(copy.toastRepoRequired)
       return
     }
 
@@ -261,10 +449,12 @@ export function VaultGuide({
     try {
       const state = await createGithubVaultRepo(nextRepoName)
       onVaultState(state)
-      toast.success("GitHub 仓库已创建并连接")
+      toast.success(copy.toastGithubCreated, {
+        description: copy.toastGithubCreatedDescription,
+      })
     } catch (error) {
-      toast.error("自动配置 GitHub 失败", {
-        description: String(error),
+      toast.error(copy.toastGithubFailed, {
+        description: getApiErrorMessage(error),
       })
     } finally {
       setActiveAction(null)
@@ -272,8 +462,21 @@ export function VaultGuide({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/[var(--shard-alpha-89)] px-[var(--shard-content-inset)] py-[var(--shard-space-5)] backdrop-blur-sm">
-      <div className="relative flex h-[min(82vh,760px)] w-full max-w-[980px] flex-col overflow-hidden rounded-[var(--shard-surface-radius)] border border-border bg-card shadow-[0_18px_48px_rgb(17_19_21/var(--shard-alpha-13))] md:grid md:grid-cols-[196px_minmax(0,1fr)]">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/[var(--shard-alpha-89)] px-[var(--shard-content-inset)] py-[var(--shard-space-4)] backdrop-blur-sm md:py-[var(--shard-space-5)]">
+      <div
+        aria-labelledby="vault-guide-title"
+        aria-modal="true"
+        className="relative flex h-[min(78dvh,640px)] max-h-[calc(100dvh-32px)] w-full max-w-[960px] flex-col overflow-hidden rounded-[var(--shard-surface-radius)] border border-border bg-card shadow-[0_18px_48px_rgb(17_19_21/var(--shard-alpha-13))] outline-none md:grid md:grid-cols-[176px_minmax(0,1fr)]"
+        onKeyDown={(event) => {
+          if (event.key === "Escape" && !required) {
+            event.preventDefault()
+            onClose()
+          }
+        }}
+        ref={dialogRef}
+        role="dialog"
+        tabIndex={-1}
+      >
         {!required ? (
           <Button
             className="absolute top-[var(--shard-space-3)] right-[var(--shard-space-3)] z-20"
@@ -283,118 +486,102 @@ export function VaultGuide({
             variant="ghost"
           >
             <XIcon data-icon="inline-start" />
-            <span className="sr-only">关闭</span>
+            <span className="sr-only">{copy.close}</span>
           </Button>
         ) : null}
 
-        <aside className="shrink-0 border-b border-border bg-muted/[var(--shard-alpha-55)] px-[var(--shard-space-3)] py-[var(--shard-space-3)] md:border-r md:border-b-0">
-          <div className="md:sticky md:top-0">
-            <div className="px-[var(--shard-space-2)] pb-[var(--shard-space-2)] pr-[var(--shard-space-8)]">
-              <div className="text-[11px] leading-4 font-semibold tracking-[0.08em] text-muted-foreground uppercase">
-                Settings
-              </div>
-              <h2 className="mt-1 text-lg leading-6 font-semibold">Vault</h2>
+        <aside className="grid shrink-0 grid-cols-3 gap-[var(--shard-space-2)] border-b border-border bg-sidebar px-[var(--shard-space-3)] py-[var(--shard-space-3)] md:grid-cols-1 md:grid-rows-[auto_1fr] md:border-r md:border-b-0">
+          <div className="col-span-3 px-[var(--shard-space-2)] pr-[var(--shard-space-8)] md:col-span-1">
+            <div className="text-[11px] leading-4 font-semibold text-muted-foreground uppercase">
+              {copy.settingsTitle}
             </div>
-            <nav
-              aria-label="Vault 设置分组"
-              className="grid grid-cols-2 gap-[var(--shard-space-1)] md:grid-cols-1"
+            <h2
+              className="mt-1 text-lg leading-6 font-semibold"
+              id="vault-guide-title"
             >
-              {settingsNav.map((item) => (
-                <button
-                  aria-current={activeSection === item.id ? "page" : undefined}
-                  className={`min-w-0 rounded-[var(--shard-radius-control)] px-[var(--shard-space-2)] py-[var(--shard-space-2)] text-left transition-colors ${
-                    activeSection === item.id
-                      ? "bg-card text-foreground shadow-[inset_3px_0_0_var(--shard-sapphire)]"
-                      : "text-muted-foreground hover:bg-card/[var(--shard-alpha-55)] hover:text-foreground"
-                  }`}
-                  key={item.id}
-                  onClick={() => scrollToSection(item.id)}
-                  type="button"
-                >
-                  <span className="block text-sm leading-5 font-medium">
-                    {item.label}
-                  </span>
-                  <span className="block truncate text-xs leading-4">
-                    {item.description}
-                  </span>
-                </button>
-              ))}
-            </nav>
+              {copy.vaultTitle}
+            </h2>
+          </div>
+
+          <div className="col-span-3 grid min-h-0 grid-cols-3 gap-[var(--shard-space-2)] md:col-span-1 md:grid-cols-1 md:self-start">
+            <div className="min-w-0 rounded-[var(--shard-radius-control)] bg-sidebar-accent px-[var(--shard-space-3)] py-[var(--shard-space-2)]">
+              <div className="text-[11px] leading-4 font-semibold text-muted-foreground">
+                {copy.sideCurrent}
+              </div>
+              <div className="mt-1 truncate text-xs leading-4 font-semibold">
+                {vaultPath || copy.noVault}
+              </div>
+            </div>
+            <div className="min-w-0 rounded-[var(--shard-radius-control)] bg-sidebar-accent px-[var(--shard-space-3)] py-[var(--shard-space-2)]">
+              <div className="text-[11px] leading-4 font-semibold text-muted-foreground">
+                {copy.sideGit}
+              </div>
+              <div className="mt-1 truncate text-xs leading-4 font-semibold">
+                {gitLabel}
+              </div>
+            </div>
+            <div className="min-w-0 rounded-[var(--shard-radius-control)] bg-sidebar-accent px-[var(--shard-space-3)] py-[var(--shard-space-2)]">
+              <div className="text-[11px] leading-4 font-semibold text-muted-foreground">
+                {copy.sideRemote}
+              </div>
+              <div className="mt-1 truncate text-xs leading-4 font-semibold">
+                {remoteLabel}
+              </div>
+            </div>
           </div>
         </aside>
 
-        <div
-          className="min-h-0 overflow-y-auto scroll-smooth px-[var(--shard-space-5)] py-[var(--shard-space-5)] pr-[var(--shard-space-6)]"
-          onScroll={syncActiveSection}
-          ref={detailsRef}
-        >
-          <div className="grid gap-[var(--shard-space-5)] pb-[var(--shard-space-8)]">
-            <section
-              className="scroll-mt-[var(--shard-space-5)]"
-              ref={(node) => {
-                sectionRefs.current.overview = node
-              }}
-            >
-              <div className="pr-[var(--shard-space-8)]">
-                <h3 className="text-lg leading-6 font-semibold">Vault</h3>
-                <p className="mt-[var(--shard-space-2)] max-w-[640px] text-sm leading-6 text-muted-foreground">
-                  {needsRemote
-                    ? "当前目录已经可用，但还没有连接 Git 远端。配置 remote 后才能同步到云端仓库。"
-                    : "选择已有 Shard 目录，或创建一个新目录作为 Markdown 与 Git 的本地根目录。"}
-                </p>
-              </div>
+        <main className="grid min-h-0 flex-1 grid-rows-[auto_minmax(0,1fr)]">
+          <section className="border-b border-border px-[var(--shard-space-5)] py-[var(--shard-space-4)] pr-[calc(var(--shard-space-8)+32px)]">
+            <h3 className="text-lg leading-6 font-semibold">{copy.vaultTitle}</h3>
+            <p className="mt-[var(--shard-space-2)] max-w-[620px] text-sm leading-6 text-muted-foreground">
+              {needsRemote
+                ? copy.headlineNeedsRemote
+                : copy.headlineDefault}
+            </p>
+          </section>
 
-              <div className="mt-[var(--shard-space-4)] grid gap-[var(--shard-space-3)] md:grid-cols-[minmax(0,1fr)_180px]">
-                <div className="rounded-[var(--shard-radius-control)] bg-muted px-[var(--shard-space-3)] py-[var(--shard-space-2)]">
-                  <div className="text-[11px] leading-4 font-semibold tracking-[0.08em] text-muted-foreground uppercase">
-                    Current
-                  </div>
-                  <div className="mt-1 truncate text-sm leading-5 font-medium">
-                    {vaultPath || "未选择目录"}
-                  </div>
-                </div>
-                <div className="rounded-[var(--shard-radius-control)] border border-border px-[var(--shard-space-3)] py-[var(--shard-space-2)]">
-                  <div className="text-[11px] leading-4 font-semibold tracking-[0.08em] text-muted-foreground uppercase">
-                    Git
-                  </div>
-                  <div className="mt-1 text-sm leading-5 font-medium">
-                    {gitLabel}
-                  </div>
-                </div>
-              </div>
-            </section>
-
-            <section
-              className="scroll-mt-[var(--shard-space-5)] rounded-[var(--shard-surface-radius)] border border-[rgb(var(--shard-amber-rgb)/var(--shard-alpha-34))] bg-muted/[var(--shard-alpha-55)] px-[var(--shard-space-4)] py-[var(--shard-space-4)]"
-              ref={(node) => {
-                sectionRefs.current.remote = node
-              }}
+          <section className="grid min-h-0 gap-[var(--shard-space-4)] p-[var(--shard-space-5)] lg:grid-cols-[minmax(0,8fr)_minmax(240px,5fr)]">
+            <div
+              aria-busy={isRemoteBusy}
+              className="flex min-h-0 flex-col rounded-[var(--shard-surface-radius)] border border-border bg-card px-[var(--shard-space-4)] py-[var(--shard-space-4)]"
             >
               <div className="flex items-start justify-between gap-[var(--shard-space-4)]">
-                <div>
+                <div className="min-w-0">
                   <h3 className="text-base leading-6 font-semibold">
-                    Git remote
+                    {copy.remoteTitle}
                   </h3>
                   <p className="mt-1 text-sm leading-6 text-muted-foreground">
                     {needsRemote
-                      ? "可以用 GitHub CLI 自动创建私有仓库，也可以手动填写任意 Git 仓库 URL。"
-                      : "Remote 保存为 origin，用于把本地 ShardVault 同步到云端仓库。"}
+                      ? copy.remoteNeeds
+                      : copy.remoteReady}
                   </p>
                 </div>
-                <span className="shard-chip bg-card text-muted-foreground">
-                  {needsRemote ? "未配置" : git?.hasRemote ? "已连接" : "待配置"}
+                <span className={`shard-chip shrink-0 whitespace-nowrap ${remoteToneClass}`}>
+                  {remoteLabel}
                 </span>
               </div>
 
+              {isRemoteBusy ? (
+                <div className="mt-[var(--shard-space-3)] flex items-center gap-[var(--shard-space-2)] rounded-[var(--shard-radius-control)] border border-border bg-background px-[var(--shard-space-3)] py-[var(--shard-space-2)] text-sm leading-5 text-muted-foreground">
+                  <Loader2Icon className="size-4 animate-spin" />
+                  <span>
+                    {isCreatingGithubRepo
+                      ? copy.githubBusy
+                      : copy.remoteBusy}
+                  </span>
+                </div>
+              ) : null}
+
               {needsRemote ? (
-                <div className="mt-[var(--shard-space-4)] grid gap-[var(--shard-space-3)]">
+                <div className="mt-[var(--shard-space-4)] grid min-h-0 gap-[var(--shard-space-3)]">
                   <div className="rounded-[var(--shard-radius-control)] border border-border bg-background px-[var(--shard-space-3)] py-[var(--shard-space-3)]">
                     <div className="flex items-center gap-[var(--shard-space-2)] text-sm leading-5 font-semibold">
                       <GitBranchIcon className="size-4" />
                       GitHub
                     </div>
                     <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                      {getGithubStatusText(githubStatus, isCheckingGithub)}
+                      {getGithubStatusText(githubStatus, isCheckingGithub, copy)}
                     </p>
                     <form
                       className="mt-[var(--shard-space-3)] grid gap-[var(--shard-space-2)] sm:grid-cols-[minmax(0,1fr)_max-content]"
@@ -407,7 +594,7 @@ export function VaultGuide({
                         autoCapitalize="none"
                         autoCorrect="off"
                         disabled={
-                          activeAction === "github" ||
+                          isRemoteBusy ||
                           isCheckingGithub ||
                           !githubStatus?.authenticated
                         }
@@ -417,7 +604,7 @@ export function VaultGuide({
                       />
                       <Button
                         disabled={
-                          activeAction === "github" ||
+                          isRemoteBusy ||
                           isCheckingGithub ||
                           !githubStatus?.authenticated
                         }
@@ -432,7 +619,7 @@ export function VaultGuide({
                         ) : (
                           <GitBranchIcon data-icon="inline-start" />
                         )}
-                        创建私有仓库
+                        {isCreatingGithubRepo ? copy.createRepoBusy : copy.createRepo}
                       </Button>
                     </form>
                   </div>
@@ -447,14 +634,14 @@ export function VaultGuide({
                     <Input
                       autoCapitalize="none"
                       autoCorrect="off"
-                      disabled={activeAction === "remote"}
+                      disabled={isRemoteBusy}
                       onChange={(event) => setRemoteUrl(event.target.value)}
                       placeholder="git@github.com:you/shard-vault.git"
                       spellCheck={false}
                       value={remoteUrl}
                     />
                     <Button
-                      disabled={activeAction === "remote"}
+                      disabled={isRemoteBusy}
                       type="submit"
                       variant="default"
                     >
@@ -466,98 +653,92 @@ export function VaultGuide({
                       ) : (
                         <GitBranchIcon data-icon="inline-start" />
                       )}
-                      连接远端
+                      {isConfiguringRemote ? copy.connectRemoteBusy : copy.connectRemote}
                     </Button>
                   </form>
                   <p className="text-xs leading-5 text-muted-foreground">
-                    手动 URL 会保存为 origin。也可以在当前目录运行 git remote
-                    add origin &lt;url&gt;。
+                    {copy.manualRemoteHint}
                   </p>
                 </div>
               ) : (
                 <div className="mt-[var(--shard-space-4)] rounded-[var(--shard-radius-control)] border border-border bg-background px-[var(--shard-space-3)] py-[var(--shard-space-3)] text-sm leading-6 text-muted-foreground">
                   {vaultPath
                     ? git?.hasRemote
-                      ? "当前 vault 已有 Git remote，可以从侧栏执行同步。"
-                      : "当前状态暂时不需要配置 remote。"
-                    : "选择或创建 vault 后，可以在这里连接 Git remote。"}
+                      ? copy.remoteAlreadyConnected
+                      : copy.remoteStatus.pending
+                    : copy.remoteIdle}
                 </div>
               )}
-            </section>
+            </div>
 
-            <section
-              className="scroll-mt-[var(--shard-space-5)]"
-              ref={(node) => {
-                sectionRefs.current.directory = node
-              }}
-            >
-              <div>
-                <h3 className="text-base leading-6 font-semibold">
-                  Directory
-                </h3>
-                <p className="mt-1 text-sm leading-6 text-muted-foreground">
-                  打开已有 ShardVault，或选择一个新目录作为本地根目录。
-                </p>
-              </div>
-              <div className="mt-[var(--shard-space-3)] grid gap-[var(--shard-space-2)]">
-                <VaultActionButton
-                  active={activeAction === "open"}
-                  description="打开已有 ShardVault 或 Git 仓库。"
-                  icon={FolderOpenIcon}
-                  label="选择已有目录"
-                  onClick={() => void chooseVault(false)}
-                />
-                <VaultActionButton
-                  active={activeAction === "create"}
-                  description="选择一个空目录，并为它初始化 Git。"
-                  icon={FolderPlusIcon}
-                  label="创建新目录"
-                  onClick={() => void chooseVault(true)}
-                />
-              </div>
-            </section>
-
-            <section
-              className="scroll-mt-[var(--shard-space-5)]"
-              ref={(node) => {
-                sectionRefs.current.git = node
-              }}
-            >
-              <div>
-                <h3 className="text-base leading-6 font-semibold">Git</h3>
-                <p className="mt-1 text-sm leading-6 text-muted-foreground">
-                  Shard 用本地 Git 保存片段历史，remote 只负责云端同步。
-                </p>
-              </div>
-              <div className="mt-[var(--shard-space-3)] grid gap-[var(--shard-space-2)]">
-                <div className="grid min-h-[64px] grid-cols-[32px_minmax(0,1fr)] items-center gap-[var(--shard-space-3)] rounded-[var(--shard-radius-control)] border border-border bg-background px-[var(--shard-space-3)]">
-                  <span className="flex size-8 items-center justify-center rounded-[var(--shard-radius-control)] bg-muted text-muted-foreground">
-                    <GitBranchIcon className="size-4" />
-                  </span>
-                  <span className="min-w-0">
-                    <span className="block text-sm leading-5 font-semibold">
-                      {gitLabel}
-                    </span>
-                    <span className="block truncate text-xs leading-4 text-muted-foreground">
-                      {git?.shortCommit
-                        ? `${git.branch} · ${git.shortCommit}`
-                        : git?.error || "还没有可显示的提交状态。"}
-                    </span>
-                  </span>
+            <div className="grid min-h-0 gap-[var(--shard-space-4)] lg:grid-rows-[minmax(0,1fr)_auto]">
+              <section className="rounded-[var(--shard-surface-radius)] border border-border bg-card px-[var(--shard-space-4)] py-[var(--shard-space-4)]">
+                <div>
+                  <h3 className="text-base leading-6 font-semibold">
+                    {copy.directoryTitle}
+                  </h3>
+                  <p className="mt-1 text-sm leading-6 text-muted-foreground">
+                    {copy.directoryDescription}
+                  </p>
                 </div>
-                {vaultPath && git?.status === "no_git" ? (
+                <div className="mt-[var(--shard-space-3)] grid gap-[var(--shard-space-2)]">
                   <VaultActionButton
-                    active={activeAction === "git"}
-                    description="为当前目录开启本地提交历史。"
-                    icon={GitBranchIcon}
-                    label="初始化 Git"
-                    onClick={() => void initializeGit()}
+                    active={activeAction === "open"}
+                    disabled={isVaultActionBusy}
+                    description={copy.openVaultDescription}
+                    icon={FolderOpenIcon}
+                    label={copy.openVaultLabel}
+                    onClick={() => void chooseVault(false)}
                   />
-                ) : null}
-              </div>
-            </section>
-          </div>
-        </div>
+                  <VaultActionButton
+                    active={activeAction === "create"}
+                    disabled={isVaultActionBusy}
+                    description={copy.createVaultDescription}
+                    icon={FolderPlusIcon}
+                    label={copy.createVaultLabel}
+                    onClick={() => void chooseVault(true)}
+                  />
+                </div>
+              </section>
+
+              <section className="rounded-[var(--shard-surface-radius)] border border-border bg-card px-[var(--shard-space-4)] py-[var(--shard-space-4)]">
+                <div>
+                  <h3 className="text-base leading-6 font-semibold">{copy.gitTitle}</h3>
+                  <p className="mt-1 text-sm leading-6 text-muted-foreground">
+                    {copy.gitDescription}
+                  </p>
+                </div>
+                <div className="mt-[var(--shard-space-3)] grid gap-[var(--shard-space-2)]">
+                  <div className="grid min-h-[56px] grid-cols-[32px_minmax(0,1fr)] items-center gap-[var(--shard-space-3)] rounded-[var(--shard-radius-control)] border border-border bg-background px-[var(--shard-space-3)]">
+                    <span className="flex size-8 items-center justify-center rounded-[var(--shard-radius-control)] bg-muted text-muted-foreground">
+                      <GitBranchIcon className="size-4" />
+                    </span>
+                    <span className="min-w-0">
+                      <span className="block text-sm leading-5 font-semibold">
+                        {gitLabel}
+                      </span>
+                      <span className="block truncate text-xs leading-4 text-muted-foreground">
+                        {git?.shortCommit
+                          ? `${git.branch} · ${git.shortCommit}`
+                          : git?.error || copy.gitEmptyDetail}
+                      </span>
+                    </span>
+                  </div>
+                  {vaultPath && git?.status === "no_git" ? (
+                    <VaultActionButton
+                      active={activeAction === "git"}
+                      disabled={isVaultActionBusy}
+                      description={copy.initGitDescription}
+                      icon={GitBranchIcon}
+                      label={copy.initGitLabel}
+                      onClick={() => void initializeGit()}
+                    />
+                  ) : null}
+                </div>
+              </section>
+            </div>
+          </section>
+        </main>
       </div>
     </div>
   )
@@ -574,42 +755,48 @@ function defaultRepoName(vaultPath: string) {
   )
 }
 
-function getGitStatusLabel(git: GitInfo | null) {
-  if (!git) return "No Vault"
+function getGitStatusLabel(git: GitInfo | null, copy: SettingsCopy) {
+  if (!git) return copy.noVault
 
   switch (git.status) {
     case "ready":
-      return git.hasRemote ? "Ready" : "Local only"
+      return git.hasRemote ? copy.gitStatus.ready : copy.gitStatus.local
     case "dirty":
-      return "Unsynced"
+      return copy.gitStatus.dirty
     case "syncing":
-      return "Syncing"
+      return copy.gitStatus.syncing
     case "error":
-      return "Git error"
+      return copy.gitStatus.error
     case "no_git":
     default:
-      return "No Git"
+      return copy.gitStatus.none
   }
 }
 
 function getGithubStatusText(
   githubStatus: GithubCliInfo | null,
-  isCheckingGithub: boolean
+  isCheckingGithub: boolean,
+  copy: SettingsCopy
 ) {
-  if (isCheckingGithub) return "正在检查 GitHub CLI 登录状态..."
-  if (!githubStatus) return "可用时会创建私有仓库、连接 origin，并推送本地提交。"
-  if (!githubStatus.installed) return "未检测到 gh。可以继续手动填写 remote URL。"
+  if (isCheckingGithub) return copy.githubChecking
+  if (!githubStatus) return copy.githubIdle
+  if (!githubStatus.installed) return copy.githubMissing
   if (!githubStatus.authenticated) {
-    return githubStatus.error ?? "gh 尚未登录。请先运行 gh auth login。"
+    return githubStatus.error ?? copy.githubNotAuthenticated
   }
 
-  const account = githubStatus.login ? `@${githubStatus.login}` : "当前账号"
-  const protocol = githubStatus.protocol ? `，Git 协议 ${githubStatus.protocol}` : ""
-  return `已登录 ${account}${protocol}。将创建私有仓库并连接 origin。`
+  const account = githubStatus.login
+    ? `@${githubStatus.login}`
+    : copy.githubCurrentAccount
+  const protocol = githubStatus.protocol
+    ? copy.githubProtocol(githubStatus.protocol)
+    : ""
+  return copy.githubAuthenticated(account, protocol)
 }
 
 interface VaultActionButtonProps {
   active: boolean
+  disabled?: boolean
   description: string
   icon: typeof FolderOpenIcon
   label: string
@@ -618,6 +805,7 @@ interface VaultActionButtonProps {
 
 function VaultActionButton({
   active,
+  disabled = false,
   description,
   icon: Icon,
   label,
@@ -625,8 +813,8 @@ function VaultActionButton({
 }: VaultActionButtonProps) {
   return (
     <button
-      className="grid min-h-[64px] grid-cols-[32px_minmax(0,1fr)] items-center gap-[var(--shard-space-3)] rounded-[var(--shard-radius-control)] border border-border bg-background px-[var(--shard-space-3)] text-left transition-colors hover:border-[color:var(--shard-sapphire)] hover:bg-[color:var(--shard-sapphire-soft)] disabled:pointer-events-none disabled:opacity-[var(--shard-alpha-55)]"
-      disabled={active}
+      className="grid min-h-[56px] grid-cols-[32px_minmax(0,1fr)] items-center gap-[var(--shard-space-3)] rounded-[var(--shard-radius-control)] border border-border bg-background px-[var(--shard-space-3)] text-left transition-colors hover:border-[color:var(--shard-sapphire)] hover:bg-[color:var(--shard-sapphire-soft)] disabled:pointer-events-none disabled:opacity-[var(--shard-alpha-55)]"
+      disabled={disabled || active}
       onClick={onClick}
       type="button"
     >

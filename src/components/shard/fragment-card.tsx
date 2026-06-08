@@ -21,6 +21,7 @@ interface FragmentCardProps {
   onArchive?: (fragment: Fragment) => void
   onEdit?: (fragment: Fragment) => void
   onToggleTask?: (fragment: Fragment, lineIndex: number) => void
+  vaultPath?: string
 }
 
 export function FragmentCard({
@@ -28,14 +29,16 @@ export function FragmentCard({
   onArchive,
   onEdit,
   onToggleTask,
+  vaultPath,
 }: FragmentCardProps) {
   const createdTime = formatCreatedTime(fragment.createdAt)
+  const displayContent = fragment.content.trimEnd()
   const visibleTags = fragment.tags.filter((tag) => tag !== "inbox")
   const displayTags = visibleTags.length > 0 ? visibleTags : fragment.tags
 
   return (
     <article
-      className="group flex flex-col rounded-[var(--shard-surface-radius)] bg-card px-[var(--shard-card-padding-x)] py-[var(--shard-card-padding-y)]"
+      className="group flex flex-col rounded-[var(--shard-surface-radius)] bg-card px-[var(--shard-card-padding-x)] pt-[var(--shard-card-padding-y)] pb-[var(--shard-card-padding-bottom)]"
     >
       <div className="flex items-start gap-[var(--shard-card-gap)]">
         <div className="min-w-0 flex-1">
@@ -46,7 +49,7 @@ export function FragmentCard({
             {createdTime}
           </time>
           {displayTags.length > 0 ? (
-            <div className="shard-card-tags mb-[var(--shard-space-3)] flex flex-wrap gap-[var(--shard-space-2)] [--shard-tag-height:1.5rem] [--shard-tag-padding-x:10px]">
+            <div className="shard-card-tags mb-[var(--shard-space-3)] flex flex-wrap gap-[var(--shard-space-2)]">
               {displayTags.map((tag) => (
                 <TagBadge key={tag} tag={tag} />
               ))}
@@ -54,8 +57,10 @@ export function FragmentCard({
           ) : null}
           <p className="shard-memo-body whitespace-pre-wrap">
             <FragmentContent
-              content={fragment.content}
+              content={displayContent}
               onTaskToggle={(lineIndex) => onToggleTask?.(fragment, lineIndex)}
+              renderImages
+              vaultPath={vaultPath}
             />
           </p>
         </div>

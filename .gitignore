@@ -21,7 +21,7 @@ src-tauri/gen/schemas/
 AGENTS.md
 CLAUDE.md
 GEMINI.md
-.codex/
+.codex/*
 .cursor/
 .cursorignore
 .cursorrules
@@ -31,7 +31,12 @@ GEMINI.md
 *.rules.md
 *.md
 !README.md
-docs/
+!DESIGN.md
+!DESIGN.zh-CN.md
+docs/*
+!docs/design/
+docs/design/*
+!docs/design/shard-main-screen-concept.png
 /*.png
 src/assets/logo-concepts/
 
@@ -45,3 +50,4 @@ src/assets/logo-concepts/
 *.njsproj
 *.sln
 *.sw?
+.gstack/

@@ -20,6 +20,7 @@ import {
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import {
+  applyActiveTagCompletion,
   applyInlineFormat,
   applyLineFormat,
   applyTagCompletion,
@@ -216,6 +217,26 @@ export function FragmentEditor({
         event.currentTarget.selectionStart,
         event.currentTarget.selectionEnd,
         event.key
+      )
+
+      if (nextEdit) {
+        event.preventDefault()
+        applyTextEdit(nextEdit)
+        return
+      }
+    }
+
+    if (
+      event.key === "Enter" &&
+      !event.altKey &&
+      !event.ctrlKey &&
+      !event.metaKey &&
+      !event.shiftKey &&
+      event.currentTarget.selectionStart === event.currentTarget.selectionEnd
+    ) {
+      const nextEdit = applyActiveTagCompletion(
+        event.currentTarget.value,
+        event.currentTarget.selectionStart
       )
 
       if (nextEdit) {
@@ -442,42 +463,10 @@ export function FragmentEditor({
       return
     }
 
+    const currentValue = textarea.value
+    const currentActiveTag = getActiveTag(currentValue, selectionStart)
     const caret = getTextareaCaretBox(textarea, selectionStart)
-    if (isSuppressedActiveTag(suppressedActiveTag, content, selectionStart)) {
-      const tagElement = getTagElementAtCursor(textarea, content, selectionStart)
-      const tagRect = tagElement?.getBoundingClientRect()
-      const frameRect = frame.getBoundingClientRect()
-
-      if (tagRect) {
-        setCustomCaret({
-          ...caret,
-          left: tagRect.right - frameRect.left + 1,
-          top: caret.lineTop,
-        })
-        return
-      }
-    }
-
-    const tagBeforeSpaceElement = getTagElementBeforeInlineSpaceCursor(
-      textarea,
-      content,
-      selectionStart
-    )
-    const tagBeforeSpaceRect = tagBeforeSpaceElement?.getBoundingClientRect()
-    if (tagBeforeSpaceRect) {
-      const frameRect = frame.getBoundingClientRect()
-      setCustomCaret({
-        ...caret,
-        left:
-          tagBeforeSpaceRect.right -
-          frameRect.left +
-          TAG_BOUNDARY_SPACE_CARET_GAP,
-        top: caret.lineTop,
-      })
-      return
-    }
-
-    setCustomCaret(activeTag ? { ...caret, top: caret.lineTop } : caret)
+    setCustomCaret(currentActiveTag ? { ...caret, top: caret.lineTop } : caret)
   }
 
   return (
@@ -490,7 +479,7 @@ export function FragmentEditor({
           {content ? (
             <div
               aria-hidden="true"
-              className="shard-editor-highlight-layer px-0 py-[var(--shard-space-4)]"
+              className="shard-editor-highlight-layer shard-memo-tags px-0 py-[var(--shard-space-4)]"
               style={{
                 transform: `translateY(-${editorScrollTop}px)`,
               }}
@@ -621,8 +610,6 @@ interface PointerPoint {
   y: number
 }
 
-const TAG_BOUNDARY_SPACE_CARET_GAP = 4
-
 function shouldSuppressActiveTagAfterPointer(
   textarea: HTMLTextAreaElement,
   value: string,
@@ -735,26 +722,6 @@ function getTagElementAtCursor(
   const tagIndex = tagRanges.findIndex(
     (range) => range.start === activeTag.hashStart && range.end === cursor
   )
-  if (tagIndex < 0) return null
-
-  return (
-    textarea.parentElement?.querySelectorAll(".shard-editor-tag-highlight")[
-      tagIndex
-    ] ?? null
-  )
-}
-
-function getTagElementBeforeInlineSpaceCursor(
-  textarea: HTMLTextAreaElement,
-  value: string,
-  cursor: number
-) {
-  if (cursor <= 0 || !/^[^\S\r\n]$/u.test(value[cursor - 1] ?? "")) {
-    return null
-  }
-
-  const tagRanges = getTagRanges(value)
-  const tagIndex = tagRanges.findIndex((range) => range.end === cursor - 1)
   if (tagIndex < 0) return null
 
   return (
