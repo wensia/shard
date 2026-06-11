@@ -2,12 +2,14 @@ import { invoke, isTauri } from "@tauri-apps/api/core"
 
 import type {
   CodexAgentStatus,
+  CodexInsightLens,
   CodexReviewFragment,
   CodexReviewTask,
   CodexReviewTaskResult,
   Fragment,
   GithubCliInfo,
   GitInfo,
+  LockboxSetupResult,
   VaultState,
 } from "@/types"
 
@@ -59,12 +61,28 @@ export function archiveFragment(id: string) {
   return desktopInvoke<Fragment>("archive_fragment", { id })
 }
 
+export function pinFragment(id: string, pinned: boolean) {
+  return desktopInvoke<Fragment>("set_fragment_pinned", { id, pinned })
+}
+
+export function moveFragmentToLockbox(id: string) {
+  return desktopInvoke<VaultState>("move_fragment_to_lockbox", { id })
+}
+
 export function saveFragmentImage(fileName: string, bytes: number[]) {
   return desktopInvoke<string>("save_fragment_image", { fileName, bytes })
 }
 
 export function readFragmentImage(path: string) {
   return desktopInvoke<string>("read_fragment_image", { path })
+}
+
+export function saveRecoveryKey(path: string, recoveryKey: string) {
+  return desktopInvoke<void>("save_recovery_key", { path, recoveryKey })
+}
+
+export function saveExportedImage(path: string, bytes: number[]) {
+  return desktopInvoke<void>("save_exported_image", { path, bytes })
 }
 
 export function setWindowControlsHidden(hidden: boolean) {
@@ -83,6 +101,39 @@ export function initializeVaultGit() {
   return desktopInvoke<VaultState>("initialize_vault_git")
 }
 
+export function setupLockbox(password: string) {
+  return desktopInvoke<LockboxSetupResult>("setup_lockbox", { password })
+}
+
+export function unlockLockbox(password: string) {
+  return desktopInvoke<VaultState>("unlock_lockbox", { password })
+}
+
+export function lockLockbox() {
+  return desktopInvoke<VaultState>("lock_lockbox")
+}
+
+export function changeLockboxPassword(
+  currentPassword: string,
+  newPassword: string
+) {
+  return desktopInvoke<VaultState>("change_lockbox_password", {
+    currentPassword,
+    newPassword,
+  })
+}
+
+export function resetLockboxPassword(recoveryKey: string, newPassword: string) {
+  return desktopInvoke<LockboxSetupResult>("reset_lockbox_password", {
+    recoveryKey,
+    newPassword,
+  })
+}
+
+export function clearLockbox(confirmation: string) {
+  return desktopInvoke<VaultState>("clear_lockbox", { confirmation })
+}
+
 export function setVaultRemote(remoteUrl: string) {
   return desktopInvoke<VaultState>("set_vault_remote", { remoteUrl })
 }
@@ -98,11 +149,13 @@ export function getCodexAgentStatus() {
 export function runCodexReviewTask(
   task: CodexReviewTask,
   fragments: CodexReviewFragment[],
-  vaultPath: string
+  vaultPath: string,
+  lens?: CodexInsightLens
 ) {
   return desktopInvoke<CodexReviewTaskResult>("run_codex_review_task", {
     request: {
       task,
+      lens,
       fragments,
       vaultPath,
     },

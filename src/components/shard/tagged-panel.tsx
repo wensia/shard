@@ -1,4 +1,5 @@
-import { TagIcon } from "lucide-react"
+import { LockKeyholeIcon, TagIcon } from "lucide-react"
+import type { LockboxState } from "@/types"
 
 export interface TaggedSummary {
   count: number
@@ -7,20 +8,24 @@ export interface TaggedSummary {
 }
 
 interface TaggedPanelProps {
+  isLockboxActive?: boolean
+  lockbox: LockboxState | null
   selectedTag: string | null
   summaries: TaggedSummary[]
   totalCount: number
+  onOpenLockbox: () => void
   onSelectTag: (tag: string | null) => void
 }
 
 export function TaggedPanel({
+  isLockboxActive = false,
+  lockbox,
   selectedTag,
   summaries,
   totalCount,
+  onOpenLockbox,
   onSelectTag,
 }: TaggedPanelProps) {
-  if (summaries.length === 0) return null
-
   return (
     <div className="shard-content-inset pb-[var(--shard-space-4)]">
       <div className="shard-content-measure flex flex-col gap-[var(--shard-space-3)]">
@@ -31,7 +36,23 @@ export function TaggedPanel({
           <span>{totalCount} 条</span>
         </div>
 
-        <div className="flex max-h-[88px] flex-wrap content-start gap-[var(--shard-space-2)] overflow-y-auto pr-[var(--shard-space-1)]">
+        <div className="shard-tag-filters flex max-h-[88px] flex-wrap content-start gap-[var(--shard-space-2)] overflow-y-auto pr-[var(--shard-space-1)]">
+          <button
+            aria-pressed={isLockboxActive}
+            className={[
+              "shard-tag shard-tag-lockbox max-w-full gap-[var(--shard-space-micro)] font-medium",
+              isLockboxActive ? "shard-tag-active" : "",
+            ].join(" ")}
+            onClick={onOpenLockbox}
+            title="密匣"
+            type="button"
+          >
+            <LockKeyholeIcon className="size-3.5 stroke-[1.75]" />
+            <span className="shard-chip-text truncate">密匣</span>
+            <span className="shard-chip-text shard-tag-count">
+              {lockbox?.unlocked ? "已解锁" : lockbox?.configured ? "已上锁" : "设置"}
+            </span>
+          </button>
           <TagFilterButton
             active={selectedTag === null}
             count={totalCount}

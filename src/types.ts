@@ -7,6 +7,7 @@ export type FragmentStatus =
 export type FragmentFilter =
   | "inbox"
   | "tagged"
+  | "lockbox"
   | "dailyReview"
   | "insight"
   | "walk"
@@ -24,6 +25,8 @@ export interface Fragment {
   error: string | null
   aiStatus?: "none" | "pending" | "suggested" | "accepted" | "skipped"
   archived: boolean
+  lockbox: boolean
+  pinned: boolean
 }
 
 export interface GitInfo {
@@ -51,6 +54,14 @@ export interface CodexAgentStatus {
 
 export type CodexReviewTask = "insight" | "walk"
 
+export type CodexInsightLens =
+  | "default"
+  | "values"
+  | "reverse"
+  | "secondOrder"
+  | "friction"
+  | "actions"
+
 export interface CodexReviewFragment {
   id: string
   content: string
@@ -67,4 +78,17 @@ export interface VaultState {
   vaultPath: string
   fragments: Fragment[]
   git: GitInfo
+  lockbox: LockboxState
+}
+
+export interface LockboxState {
+  configured: boolean
+  unlocked: boolean
+  expiresAt: string | null
+  ttlSeconds: number
+}
+
+export interface LockboxSetupResult {
+  recoveryKey: string
+  vault: VaultState
 }

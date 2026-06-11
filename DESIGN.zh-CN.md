@@ -1,7 +1,7 @@
 # Shard 前端设计
 
-状态：锁定草案
-日期：2026-06-02
+状态：已与当前实现同步
+日期：2026-06-09
 
 视觉概念：[docs/design/shard-main-screen-concept.png](docs/design/shard-main-screen-concept.png)
 
@@ -12,7 +12,7 @@ Shard 是一个轻量级 Markdown 片段捕获桌面应用。UI 必须围绕一�
 1. 输入一段片段。
 2. 按 Cmd+Enter、Ctrl+Enter 或 Shift+Enter。
 3. 创建一个 Markdown 文件。
-4. 时间线中出现一张实线轮廓卡片。
+4. 时间线中出现一张安静的纸片卡片。
 5. Git 状态在后台更新。
 
 这个应用不是 Markdown 编辑器、文档工作区、图谱视图或仪表盘。首屏就是真正的产品。
@@ -47,21 +47,25 @@ Shard 是一个轻量级 Markdown 片段捕获桌面应用。UI 必须围绕一�
 - Composer 和片段卡片共享同一个 surface radius token。
 - 最小化 chrome。
 - 高对比度文字。
-- 小面积宝石色强调只用于标签和状态。
+- 小面积暖色强调和语义状态色只用于标签、焦点和状态。
 - 不使用渐变、装饰性 blob、玻璃效果或营销页式构图。
 
 视觉中心是时间线，不是侧边栏或 inspector。
 
 ## 主色策略
 
-Shard 应有一个主强调色，但必须保持克制。使用爱琴海青绿色作为主强调色，而不是大面积品牌填充色。
+Shard 应有一个主强调色，但必须保持克制。当前运行态使用暖赭色作为主强调色，它是精确的状态色，不是大面积品牌填充色。
 
-- 主强调色：`#087e8b`
-- 色彩性格：饱和蓝绿色，中低亮度；清晰但不荧光。
+- 主强调色：`#b6533c`
+- Hover 强调色：`#96432f`
+- 柔和强调底色：`#f8ede9`
+- 强调文字色：`#743225`
+- 色彩性格：暖红土/赭色，中低亮度；清晰但不偏橙、不偏棕、不荧光。
 - 视觉占比：首屏约 3%-5%。
-- 青绿色用于焦点/编辑卡片边框、focus ring、链接、AI 建议强调、细微侧边栏选中指示，以及少量主强调。
-- 不要把青绿色用作完整侧边栏、应用顶部栏、页面背景，或每个按钮的默认颜色。
-- 保留 `--primary` 给 shadcn 的 ink-style 主按钮控件；Shard 特定强调使用 `--accent-sapphire`。
+- 强调色用于焦点/编辑卡片边框、focus ring、链接、AI 建议强调、细微侧边栏选中指示、已勾选任务框，以及少量主强调。
+- 不要把强调色用作完整侧边栏、应用顶部栏、页面背景，或每个按钮的默认颜色。
+- 保留 `--primary` 给 shadcn 的 ink-style 主按钮控件；Shard 特定强调使用 `--shard-accent`。
+- 当前组件仍在引用 `--shard-sapphire` 及相关变量；这些是映射到 `--shard-accent` 的兼容别名。
 
 相关强调色保持语义归属：
 
@@ -104,7 +108,7 @@ Shard 应有一个主强调色，但必须保持克制。使用爱琴海青绿�
 - 右边框：1px solid token border。
 - 侧栏外不要包 card。
 - 选中项使用细微填充背景和更强文字，而不是亮色。
-- 选中项可以有 2px 青绿色指示条，但绝不能整行填充青绿色。
+- 选中项可以有 2px 强调色指示条，但绝不能整行填充强调色。
 - 小 viewport 下，将导航折叠为紧凑底部 tabs。
 
 ### 中心列
@@ -126,18 +130,19 @@ Capture 输入：
 - Placeholder：`想到什么，写什么...`
 - 底部工具栏使用 `src/styles/frontend-rules.css` 中可复用的 `.shard-edge-action-row` 规则：同一个 inset token 控制左右 padding 和底部 padding，让边缘动作拥有相等的侧边和底部间距。
 - Composer action inset：`--shard-space-3`。保存按钮：32px 正方形。底部工具栏最小高度由 action size 加两个相等 inset 推导。
-- 工具栏文本工具包括标签、无序列表、有序列表和任务清单按钮。列表工具把 Markdown 标记应用到当前行或当前选区中的每一行。
+- 工具栏工具包括图片上传、标签、无序列表、有序列表、任务清单、粗体、下划线和高亮按钮。列表工具把 Markdown 标记应用到当前行或当前选区中的每一行。行内工具把 Markdown 风格标记应用到当前选区。
 - 应用启动时必须聚焦。
 - `Enter` 插入换行。
 - `Cmd+Enter`、`Ctrl+Enter` 或 `Shift+Enter` 创建片段，除非 IME composition 正在进行。
 - 输入 `#` 或点击 `#` 按钮，会在 capture box 中打开一个紧凑标签 popover，直接定位在当前文本光标下方。
 - 保存时提取 `#work` 这类内联标签，并和 `inbox` 一起写入片段 frontmatter。
+- 图片上传会插入 Markdown image 行，并在 capture、editor 和片段内容中渲染为紧凑方形附件。附件 chrome 必须保持安静，并使用同一套 radius/alpha 系统。
 
 Composer 标签语言：
 
-- 标签是 24px 高、100px radius 的 pill。
+- 通用标签是 28px 高 pill；memo/card 标签通过 `.shard-card-tags` 和 `.shard-memo-tags` 降到 24px。
 - 默认标签使用中性填充，不使用大面积饱和色。
-- 活跃标签创建使用一个极简 capsule：左侧是青绿色文字的当前标签值，右侧是紧凑的 `新建` / `使用` 按钮。
+- 活跃标签创建使用一个极简 capsule：左侧是强调色文字的当前标签值，右侧是紧凑的 `新建` / `使用` 按钮。
 - 标签创建 capsule 应小于 tooltip，大约 168px 宽、38px 高，文字 12px；它不能读起来像 composer 内的 card。
 - 它跟随活跃 `#tag` 的 caret 位置，绝不能固定在 composer 某个角落。
 - 默认捕获循环中不要展示多行建议菜单。
@@ -154,7 +159,7 @@ Timeline：
 
 目的：可选编辑和 AI 建议回顾，默认隐藏。
 
-只在用户明确操作后显示，例如编辑动作或 overflow menu 项。使用 Sheet、Dialog 或紧凑 Popover，而不是常驻第三列。
+只在用户明确操作后显示，例如编辑动作或 overflow menu 项。当前实现使用 `FragmentEditor` 作为主要编辑表面；未来详情视图可以使用 Sheet、Dialog 或紧凑 Popover，而不是常驻第三列。
 
 区块：
 
@@ -162,6 +167,7 @@ Timeline：
 - 标签及添加按钮。
 - Git 状态。
 - 内容预览/编辑器。
+- 回顾表面通过 `MarkdownDocument` 提供 Markdown 预览。
 - AI 建议预览。
 - 底部动作：archive、edit。
 
@@ -187,11 +193,17 @@ Timeline：
 - 默认：白色 surface，无卡片边框。
 - 片段卡片使用 `--shard-surface-radius`，与 capture composer 一致。
 - Hover：保持 chrome 安静；默认不要引入 outline。
-- Focus 或明确编辑状态可以使用强调青绿色，但只在存在可编辑 surface 或明确选中时使用。
+- Focus 或明确编辑状态可以使用强调色，但只在存在可编辑 surface 或明确选中时使用。
 - Commit 和 sync 状态不作为默认卡片 chrome 展示；保留在侧边栏 sync block 或明确详情表面中。
-- AI suggested 状态仅在可操作且不占主导时使用小青绿色 chip。
+- AI suggested 状态仅在可操作且不占主导时使用小强调色 chip。
 
 卡片不应像沉重的仪表盘 widget。它们是纸片片段。
+
+片段内容规则：
+
+- 任务清单标记渲染为行内复选框，并可从卡片/回顾表面切换。
+- 当 `vaultPath` 可用时，Markdown image 行渲染为紧凑附件。
+- 富 Markdown block 属于回顾/详情表面；卡片保持轻量片段阅读风格。
 
 ## 几何 Tokens
 
@@ -217,6 +229,7 @@ Shard 使用一套小而可测量的几何系统。组件添加新值之前，�
 --shard-composer-padding: var(--shard-space-4);
 --shard-card-padding-x: var(--shard-space-5);
 --shard-card-padding-y: var(--shard-space-4);
+--shard-card-padding-bottom: calc(var(--shard-card-padding-y) - 2px);
 --shard-card-gap: var(--shard-space-4);
 
 --shard-radius-control: 6px;
@@ -227,9 +240,20 @@ Shard 使用一套小而可测量的几何系统。组件添加新值之前，�
 --shard-heatmap-row-gap: 6px;
 --shard-chip-height: var(--shard-space-6);
 --shard-chip-padding-x: 10px;
---shard-editor-line-height: 1.58;
+--shard-tag-height: 28px;
+--shard-tag-font-size: 13px;
+--shard-tag-padding-x: 11px;
+--shard-memo-content-color: #323232;
+--shard-memo-font-size: 14px;
+--shard-memo-font-weight: 400;
+--shard-memo-letter-spacing: 0px;
+--shard-memo-line-height: 1.8;
+--shard-memo-meta-font-size: 13px;
+--shard-memo-meta-font-weight: 400;
+--shard-memo-meta-line-height: 20px;
+--shard-editor-line-height: var(--shard-memo-line-height);
 --shard-caret-color: var(--shard-sapphire);
---shard-caret-height-ratio: 1.04;
+--shard-caret-height-ratio: 1.22;
 --shard-caret-width: 1.5px;
 ```
 
@@ -239,37 +263,35 @@ Composer 放置：capture box 是主要动作，因此不使用大的 32px 页�
 
 前端规则来源：`src/styles/frontend-rules.css` 把共享几何契约编码为可复用 utilities。添加组件局部 spacing 或 grid math 之前，先使用 `.shard-content-inset`、`.shard-content-measure`、`.shard-heatmap-grid` 和 `.shard-edge-action-row`。
 
-编辑器光标规则：原生 textarea caret 高度跟随 line box，对 Shard 的写作 surface 来说过高。使用 `.shard-editor-field` 隐藏原生 caret，并基于共享 textarea mirror geometry 渲染 `.shard-custom-caret`。自定义 caret 基于字形高度，1.5px 宽，圆角，并由 capture 和 full-screen editing 共用。Capture placeholder 文本也作为来自同一 caret geometry 的自定义 overlay 渲染，让提示文字和插入点共享同一坐标系。
+编辑器光标规则：原生 textarea caret 无法满足这个 surface——它的高度跟随引擎的 line box 而非字形——因此编辑器字段隐藏原生 caret，渲染 `.shard-custom-caret`（高度由 `--shard-caret-height-ratio` 决定，垂直居中于字形盒）。caret 位置必须用 Range API 在可见高亮层的 `data-text-start` span 上测量，禁止用离屏 textarea mirror 估算：用户看到的渲染字形就是唯一事实来源，caret 物理上不可能偏离它。mirror 几何只允许作为高亮层无可测文字时的兜底（空内容、图片附件行）。
 
 ## 颜色 Tokens
 
-使用语义 CSS 变量。具体值可以在实现过程中调整，但调色板关系已锁定。
+使用语义 CSS 变量。当前运行态值如下：
 
 ```css
 --background: #f7f8f8;
 --foreground: #111315;
---surface: #ffffff;
---surface-muted: #f1f3f3;
+--card: #ffffff;
+--muted: #f1f3f3;
 --border: #d8dddd;
 --border-strong: #aeb7b7;
 --muted-foreground: #687173;
 
---accent-sapphire: #087e8b;
---accent-sapphire-hover: #066a75;
---accent-sapphire-soft: #e6f6f8;
---accent-sapphire-text: #075e67;
---accent-emerald: #148a4a;
---accent-amber: #b76a00;
---accent-ruby: #b42318;
-
---tag-blue-bg: #e6f6f8;
---tag-blue-fg: #075e67;
---tag-green-bg: #edf8f1;
---tag-green-fg: #17663a;
---tag-amber-bg: #fff5e6;
---tag-amber-fg: #8a4a00;
---tag-violet-bg: #f3f0ff;
---tag-violet-fg: #5a3fb0;
+--shard-accent: #b6533c;
+--shard-accent-hover: #96432f;
+--shard-accent-soft: #f8ede9;
+--shard-accent-text: #743225;
+--shard-sapphire: var(--shard-accent);
+--shard-sapphire-hover: var(--shard-accent-hover);
+--shard-sapphire-soft: var(--shard-accent-soft);
+--shard-sapphire-text: var(--shard-accent-text);
+--shard-primary-rgb: 182 83 60;
+--shard-primary-soft-rgb: 222 150 129;
+--shard-emerald: #148a4a;
+--shard-amber: #b76a00;
+--shard-ruby: #b42318;
+--shard-editor-tag-fg: #5a3fb0;
 
 --shard-radius-control: 6px;
 --shard-surface-radius: 12px;
@@ -286,9 +308,9 @@ Radius：
 Borders：
 
 - 结构分隔：1px solid `--border`
-- Composer：1px solid `--border`；focus border 使用 `--accent-sapphire`
+- Composer：1px solid `--border`；focus border 通过 `--shard-sapphire` 使用当前强调色
 - Cards：默认无边框
-- Focus/edit card：只有存在明确选中或编辑状态时，使用 1px solid `--accent-sapphire`
+- Focus/edit card：只有存在明确选中或编辑状态时，使用 1px solid 当前强调色
 
 Shadows：
 
@@ -313,8 +335,8 @@ font-family: "Barlow", "PingFang SC", "Microsoft YaHei", ui-sans-serif, system-u
 
 - App title：22px / 28px，700
 - Section labels：13px / 18px，600
-- Body/card text：15px / 24px，450-500
-- Metadata：12px / 16px，500
+- Body/card text：14px / 25.2px，400
+- Metadata：13px / 20px，400
 - Button/control text：13px / 18px，600
 - Tag text：12px / 16px，600
 
@@ -351,18 +373,25 @@ Shard 特定组件：
 - `SidebarNav`
 - `BottomTabs`
 - `CaptureBox`
+- `EditorToolbar`
 - `FragmentTimeline`
 - `FragmentCard`
-- `FragmentDetailSurface`（未来 Sheet/Dialog，不是默认面板）
-- `GitStatusBadge`
+- `FragmentContent`
+- `FragmentEditor`
+- `FragmentDetailPanel`
+- `MarkdownDocument`
+- `ReviewWorkspace`
+- `TaggedPanel`
+- `VaultGuide`
+- `StatusBadge`
 - `TagBadge`
-- `AiSuggestionPanel`
+- `TagCompletionPopover`
 
 组合规则：
 
 - 使用 `Badge` 表示标签和状态 chip。
 - 使用 `Textarea` 进行捕获，不使用 contenteditable div。
-- Composer 的 list/checklist 控件使用 Markdown 文本插入，不在 textarea 内使用富文本 widgets。
+- Composer 的 list/checklist 和行内格式控件使用 Markdown 文本插入，不在 textarea 内使用富文本 widgets。
 - 卡片 overflow actions 使用 `DropdownMenu`。
 - 纯图标按钮使用 `Tooltip`。
 - 底部对齐的边缘动作行使用 `.shard-edge-action-row`；不要围绕动作按钮独立调水平 padding 和底部 padding。
@@ -448,7 +477,7 @@ Git：
 要做：
 
 - 保持首个 viewport 就是可用应用。
-- 使用实线边框卡片。
+- 使用安静纸片卡片；实线边框只用于结构、焦点和明确的容器 surface。
 - 保持 AI 次要。
 - 让 Git 状态可见但小。
 - 让中心时间线成为主对象。

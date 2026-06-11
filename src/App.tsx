@@ -1,28 +1,59 @@
 import { useEffect, useMemo, useState } from "react"
+import { LockKeyholeIcon } from "lucide-react"
 import { toast } from "sonner"
 
 import { BottomTabs } from "@/components/shard/bottom-tabs"
 import { CaptureBox } from "@/components/shard/capture-box"
 import { FragmentEditor } from "@/components/shard/fragment-editor"
+import { FragmentImageExporter } from "@/components/shard/fragment-image-exporter"
 import { FragmentTimeline } from "@/components/shard/fragment-timeline"
+import {
+  LockboxDialog,
+  type LockboxDialogMode,
+} from "@/components/shard/lockbox-dialog"
 import { ReviewWorkspace } from "@/components/shard/review-workspace"
 import { SidebarNav } from "@/components/shard/sidebar-nav"
 import { TaggedPanel, type TaggedSummary } from "@/components/shard/tagged-panel"
 import { VaultGuide } from "@/components/shard/vault-guide"
+import { Button } from "@/components/ui/button"
 import { Toaster } from "@/components/ui/sonner"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import {
   archiveFragment,
+  changeLockboxPassword,
+  clearLockbox,
   createFragment,
   DESKTOP_RUNTIME_MESSAGE,
   getApiErrorMessage,
   listFragments,
+  lockLockbox,
+  moveFragmentToLockbox,
+  pinFragment,
   restoreWindowFrame,
+  resetLockboxPassword,
+  setupLockbox,
   syncVault,
+  unlockLockbox,
   updateFragment,
 } from "@/lib/api"
 import { toggleTaskLine } from "@/lib/editor-format"
-import type { Fragment, FragmentFilter, GitInfo, VaultState } from "@/types"
+import {
+  hasMarkdownImage,
+  isLockboxReady,
+  LOCKBOX_TAG,
+  publicFragments,
+  wantsLockbox,
+} from "@/lib/lockbox"
+import type {
+  Fragment,
+  FragmentFilter,
+  GitInfo,
+  LockboxState,
+  VaultState,
+} from "@/types"
+
+const DEFAULT_PROJECT_TAGS: readonly string[] = ["日程"]
+type EditingVariant = "inline" | "zen"
 
 function App() {
   const [fragments, setFragments] = useState<Fragment[]>([])
@@ -32,8 +63,15 @@ function App() {
   const [isLoading, setIsLoading] = useState(true)
   const [isCreating, setIsCreating] = useState(false)
   const [isSyncing, setIsSyncing] = useState(false)
+  const [lockbox, setLockbox] = useState<LockboxState | null>(null)
+  const [lockboxDialogMode, setLockboxDialogMode] =
+    useState<LockboxDialogMode | null>(null)
+  const [recoveryKey, setRecoveryKey] = useState<string | null>(null)
   const [composerCollapseSignal, setComposerCollapseSignal] = useState(0)
   const [editingFragmentId, setEditingFragmentId] = useState<string | null>(null)
+  const [editingVariant, setEditingVariant] =
+    useState<EditingVariant>("inline")
+  const [exportingFragment, setExportingFragment] = useState<Fragment | null>(null)
   const [isVaultGuideOpen, setIsVaultGuideOpen] = useState(false)
   const [needsVaultSetup, setNeedsVaultSetup] = useState(false)
   const [selectedTag, setSelectedTag] = useState<string | null>(null)
@@ -41,6 +79,13 @@ function App() {
   useEffect(() => {
     void refreshFragments()
   }, [])
+
+  // 离开「标签」区域（标签面板 / 密匣视图）即重新上锁，再次进入需要密码
+  useEffect(() => {
+    if (filter === "tagged" || filter === "lockbox") return
+    if (!lockbox?.unlocked) return
+    void autoLockLockbox()
+  }, [filter, lockbox?.unlocked])
 
   async function refreshFragments() {
     setIsLoading(true)
@@ -53,6 +98,7 @@ function App() {
       if (message === DESKTOP_RUNTIME_MESSAGE) {
         setFragments([])
         setGit(null)
+        setLockbox(null)
         setVaultPath("")
         setNeedsVaultSetup(false)
         return
@@ -61,6 +107,7 @@ function App() {
       if (isVaultNotConfigured(error)) {
         setFragments([])
         setGit(null)
+        setLockbox(null)
         setVaultPath("")
         setNeedsVaultSetup(true)
         setIsVaultGuideOpen(true)
@@ -76,8 +123,9 @@ function App() {
   }
 
   function applyVaultState(state: VaultState) {
-    setFragments(state.fragments)
+    setFragments(sortFragmentsForDisplay(state.fragments))
     setGit(state.git)
+    setLockbox(state.lockbox)
     setVaultPath(state.vaultPath)
     setNeedsVaultSetup(false)
   }
@@ -88,7 +136,7 @@ function App() {
   ) {
     applyVaultState(state)
     if (options.resetView) {
-      setEditingFragmentId(null)
+      closeEditor()
       setSelectedTag(null)
       setFilter("inbox")
     }
@@ -97,6 +145,35 @@ function App() {
 
   async function handleCreate(content: string, tags: string[]) {
     setIsCreating(true)
+    const shouldCreateInLockbox = wantsLockbox(content, tags)
+
+    if (shouldCreateInLockbox) {
+      try {
+        if (hasMarkdownImage(content)) {
+          throw new Error("密匣暂不支持图片附件。请先移除图片，再保存到密匣。")
+        }
+        if (!ensureLockboxReady()) {
+          throw new Error("请先解锁或设置密匣，然后再次保存。")
+        }
+
+        const created = await createFragment(content, tags)
+        setFragments((current) => [created, ...current])
+        setSelectedTag(null)
+        setFilter("lockbox")
+        toast.success("已保存到密匣")
+        void refreshFragments()
+      } catch (error) {
+        const message = getApiErrorMessage(error)
+        toast.error("创建密匣片段失败", {
+          description: message,
+        })
+        throw new Error(message)
+      } finally {
+        setIsCreating(false)
+      }
+      return
+    }
+
     const optimisticId = `pending-${Date.now()}`
     const pendingFragment: Fragment = {
       id: optimisticId,
@@ -109,15 +186,19 @@ function App() {
       gitStatus: "saved",
       error: null,
       archived: false,
+      lockbox: false,
+      pinned: false,
     }
 
-    setFragments((current) => [pendingFragment, ...current])
+    setFragments((current) => sortFragmentsForDisplay([pendingFragment, ...current]))
 
     try {
       const created = await createFragment(content, tags)
       setFragments((current) =>
-        current.map((fragment) =>
-          fragment.id === optimisticId ? created : fragment
+        sortFragmentsForDisplay(
+          current.map((fragment) =>
+            fragment.id === optimisticId ? created : fragment
+          )
         )
       )
       if (created.gitStatus === "commit_failed") {
@@ -168,11 +249,43 @@ function App() {
   }
 
   async function handleUpdateFragment(id: string, content: string, tags: string[]) {
+    const currentFragment =
+      fragments.find((fragment) => fragment.id === id) ?? null
+    const movesToLockbox = !currentFragment?.lockbox && wantsLockbox(content, tags)
+    const editsLockbox = Boolean(currentFragment?.lockbox)
+
+    if (movesToLockbox || editsLockbox) {
+      if (hasMarkdownImage(content)) {
+        throw new Error("密匣暂不支持图片附件。请先移除图片，再保存到密匣。")
+      }
+      if (!ensureLockboxReady()) {
+        throw new Error("请先解锁或设置密匣，然后再次保存。")
+      }
+    }
+
     const updated = await updateFragment(id, content, tags)
     setFragments((current) =>
       current.map((fragment) => (fragment.id === id ? updated : fragment))
     )
+    if (movesToLockbox) {
+      setSelectedTag(null)
+      setFilter("lockbox")
+    }
     return updated
+  }
+
+  function openInlineEditor(fragment: Fragment) {
+    setEditingVariant("inline")
+    setEditingFragmentId(fragment.id)
+  }
+
+  function openZenEditor(fragment: Fragment) {
+    setEditingVariant("zen")
+    setEditingFragmentId(fragment.id)
+  }
+
+  function closeEditor() {
+    setEditingFragmentId(null)
   }
 
   async function handleToggleFragmentTask(fragment: Fragment, lineIndex: number) {
@@ -220,7 +333,7 @@ function App() {
         )
       )
       if (editingFragmentId === fragment.id) {
-        setEditingFragmentId(null)
+        closeEditor()
       }
       toast.success("已归档")
     } catch (error) {
@@ -228,6 +341,95 @@ function App() {
         description: getApiErrorMessage(error),
       })
     }
+  }
+
+  async function handlePinFragment(fragment: Fragment) {
+    if (fragment.archived) return
+
+    const nextPinned = !fragment.pinned
+    setFragments((current) =>
+      sortFragmentsForDisplay(
+        current.map((currentFragment) =>
+          currentFragment.id === fragment.id
+            ? { ...currentFragment, pinned: nextPinned }
+            : currentFragment
+        )
+      )
+    )
+
+    try {
+      const updated = await pinFragment(fragment.id, nextPinned)
+      setFragments((current) =>
+        sortFragmentsForDisplay(
+          current.map((currentFragment) =>
+            currentFragment.id === fragment.id ? updated : currentFragment
+          )
+        )
+      )
+      toast.success(nextPinned ? "已置顶" : "已取消置顶")
+    } catch (error) {
+      setFragments((current) =>
+        sortFragmentsForDisplay(
+          current.map((currentFragment) =>
+            currentFragment.id === fragment.id ? fragment : currentFragment
+          )
+        )
+      )
+      toast.error(nextPinned ? "置顶失败" : "取消置顶失败", {
+        description: getApiErrorMessage(error),
+      })
+    }
+  }
+
+  async function handleMoveFragmentToLockbox(fragment: Fragment) {
+    if (fragment.lockbox || fragment.archived) return
+    if (hasMarkdownImage(fragment.content)) {
+      toast.error("密匣暂不支持图片附件", {
+        description: "请先移除图片，再移入密匣，避免附件留在公开 assets 目录。",
+      })
+      return
+    }
+    if (!ensureLockboxReady()) {
+      toast.info("需要先解锁密匣")
+      return
+    }
+
+    const confirmed = window.confirm(
+      "移入密匣会把当前文件改为加密文件，但不会清理已经存在的 Git 历史提交。确认继续？"
+    )
+    if (!confirmed) return
+
+    try {
+      const state = await moveFragmentToLockbox(fragment.id)
+      applyVaultState(state)
+      closeEditor()
+      setSelectedTag(null)
+      setFilter("lockbox")
+      toast.success("已移入密匣")
+    } catch (error) {
+      toast.error("移入密匣失败", {
+        description: getApiErrorMessage(error),
+      })
+    }
+  }
+
+  function ensureLockboxReady() {
+    if (isLockboxReady(lockbox)) return true
+    openLockboxGate()
+    return false
+  }
+
+  function openLockboxGate() {
+    if (!lockbox?.configured) {
+      setLockboxDialogMode("setup")
+      return
+    }
+    if (!lockbox.unlocked) {
+      setLockboxDialogMode("unlock")
+      return
+    }
+    setSelectedTag(null)
+    setFilter("lockbox")
   }
 
   function showShortcuts() {
@@ -254,14 +456,106 @@ function App() {
     }
   }
 
+  async function handleSetupLockbox(password: string) {
+    const result = await setupLockbox(password)
+    applyVaultState(result.vault)
+    setRecoveryKey(result.recoveryKey)
+    toast.success("密匣已设置")
+  }
+
+  async function handleUnlockLockbox(password: string) {
+    const state = await unlockLockbox(password)
+    applyVaultState(state)
+    setLockboxDialogMode(null)
+    setSelectedTag(null)
+    setFilter("lockbox")
+    toast.success("密匣已解锁")
+  }
+
+  async function handleLockLockbox() {
+    try {
+      const state = await lockLockbox()
+      applyVaultState(state)
+      closeEditor()
+      if (filter === "lockbox") {
+        setFilter("tagged")
+      }
+      toast.success("密匣已上锁")
+    } catch (error) {
+      toast.error("密匣上锁失败", {
+        description: getApiErrorMessage(error),
+      })
+    }
+  }
+
+  async function autoLockLockbox() {
+    try {
+      const state = await lockLockbox()
+      applyVaultState(state)
+    } catch {
+      // 静默失败：下次进入密匣仍需密码，必要时可手动上锁
+    }
+  }
+
+  async function handleChangeLockboxPassword(
+    currentPassword: string,
+    newPassword: string
+  ) {
+    const state = await changeLockboxPassword(currentPassword, newPassword)
+    applyVaultState(state)
+    setLockboxDialogMode(null)
+    toast.success("密匣密码已修改")
+  }
+
+  async function handleResetLockboxPassword(
+    nextRecoveryKey: string,
+    newPassword: string
+  ) {
+    const result = await resetLockboxPassword(nextRecoveryKey, newPassword)
+    applyVaultState(result.vault)
+    setRecoveryKey(result.recoveryKey)
+    toast.success("密匣密码已重置")
+  }
+
+  async function handleClearLockbox(confirmation: string) {
+    const state = await clearLockbox(confirmation)
+    applyVaultState(state)
+    setRecoveryKey(null)
+    setLockboxDialogMode(null)
+    if (filter === "lockbox") {
+      setFilter("tagged")
+    }
+    toast.success("密匣已清空")
+  }
+
+  function closeLockboxDialog() {
+    setLockboxDialogMode(null)
+    setRecoveryKey(null)
+  }
+
+  const publicOnlyFragments = useMemo(
+    () => publicFragments(fragments),
+    [fragments]
+  )
+
   const activeFragments = useMemo(
     () => fragments.filter((fragment) => !fragment.archived),
     [fragments]
   )
 
+  const publicActiveFragments = useMemo(
+    () => publicOnlyFragments.filter((fragment) => !fragment.archived),
+    [publicOnlyFragments]
+  )
+
   const archivedFragments = useMemo(
-    () => fragments.filter((fragment) => fragment.archived),
-    [fragments]
+    () => publicOnlyFragments.filter((fragment) => fragment.archived),
+    [publicOnlyFragments]
+  )
+
+  const lockboxFragments = useMemo(
+    () => activeFragments.filter((fragment) => fragment.lockbox),
+    [activeFragments]
   )
 
   const taggedFragments = useMemo(
@@ -270,7 +564,7 @@ function App() {
   )
 
   const tagSummaries = useMemo(
-    () => buildTagSummaries(activeFragments),
+    () => buildTagSummaries(activeFragments, DEFAULT_PROJECT_TAGS),
     [activeFragments]
   )
 
@@ -291,6 +585,8 @@ function App() {
               fragment.tags.includes(selectedTag)
             )
           : taggedFragments
+      case "lockbox":
+        return lockbox?.unlocked ? lockboxFragments : []
       case "archive":
         return archivedFragments
       case "dailyReview":
@@ -299,19 +595,31 @@ function App() {
         return []
       case "inbox":
       default:
-        return activeFragments.filter((fragment) =>
+        return publicActiveFragments.filter((fragment) =>
           fragment.tags.includes("inbox")
         )
     }
-  }, [activeFragments, archivedFragments, filter, selectedTag, taggedFragments])
+  }, [
+    activeFragments,
+    archivedFragments,
+    filter,
+    lockbox?.unlocked,
+    lockboxFragments,
+    publicActiveFragments,
+    selectedTag,
+    taggedFragments,
+  ])
 
   const knownTags = useMemo(
     () =>
       Array.from(
         new Set(
-          activeFragments
-            .flatMap((fragment) => fragment.tags)
-            .filter((tag) => tag !== "inbox")
+          DEFAULT_PROJECT_TAGS.concat(
+            [LOCKBOX_TAG],
+            activeFragments
+              .flatMap((fragment) => fragment.tags)
+              .filter((tag) => tag !== "inbox")
+          )
         )
       ).sort((a, b) => a.localeCompare(b)),
     [activeFragments]
@@ -328,17 +636,20 @@ function App() {
   const isReviewView =
     filter === "dailyReview" || filter === "insight" || filter === "walk"
   const isVaultDialogOpen = isVaultGuideOpen || needsVaultSetup
+  const isExportSheetOpen = exportingFragment !== null
+  const isBlockingDialogOpen =
+    isVaultDialogOpen || lockboxDialogMode !== null || isExportSheetOpen
 
   return (
     <TooltipProvider>
       <main
-        aria-hidden={isVaultDialogOpen ? true : undefined}
+        aria-hidden={isBlockingDialogOpen ? true : undefined}
         className="grid h-dvh grid-rows-[1fr_auto] overflow-hidden bg-background text-foreground lg:grid-cols-[var(--shard-sidebar-width)_minmax(0,1fr)] lg:grid-rows-1"
       >
         <div className="hidden min-h-0 lg:block">
           <SidebarNav
             activeFilter={filter}
-            fragments={fragments}
+            fragments={publicOnlyFragments}
             git={git}
             isSyncing={isSyncing}
             onFilterChange={setFilter}
@@ -369,21 +680,43 @@ function App() {
 
           {filter === "tagged" ? (
             <TaggedPanel
+              lockbox={lockbox}
               selectedTag={selectedTag}
               summaries={tagSummaries}
               totalCount={taggedFragments.length}
+              onOpenLockbox={openLockboxGate}
               onSelectTag={setSelectedTag}
+            />
+          ) : null}
+
+          {filter === "lockbox" ? (
+            <LockboxHeader
+              lockbox={lockbox}
+              onChangePassword={() => setLockboxDialogMode("change")}
+              onClear={() => setLockboxDialogMode("clear")}
+              onLock={() => void handleLockLockbox()}
+              onUnlock={openLockboxGate}
             />
           ) : null}
 
           {isReviewView ? (
             <ReviewWorkspace
-              fragments={fragments}
+              editingFragmentId={
+                editingVariant === "inline" ? editingFragmentId : null
+              }
+              fragments={publicOnlyFragments}
               isLoading={isLoading}
+              knownTags={knownTags}
               mode={filter}
               onArchive={handleArchiveFragment}
+              onCancelEdit={closeEditor}
               onCreate={handleCreate}
-              onEdit={(fragment) => setEditingFragmentId(fragment.id)}
+              onEdit={openInlineEditor}
+              onExportImage={setExportingFragment}
+              onMoveToLockbox={handleMoveFragmentToLockbox}
+              onOpenZen={openZenEditor}
+              onPin={handlePinFragment}
+              onSave={handleUpdateFragment}
               onToggleTask={(fragment, lineIndex) => {
                 void handleToggleFragmentTask(fragment, lineIndex)
               }}
@@ -391,20 +724,34 @@ function App() {
             />
           ) : (
             <FragmentTimeline
+              editingFragmentId={
+                editingVariant === "inline" ? editingFragmentId : null
+              }
               emptyMessage={
                 filter === "tagged"
                   ? "还没有带标签的内容。到 Inbox 输入 #标签 即可归类。"
+                  : filter === "lockbox"
+                    ? lockbox?.unlocked
+                      ? "密匣里还没有笔记。到 Inbox 输入 #密匣 即可保存到这里。"
+                      : "密匣已上锁。"
                   : filter === "archive"
                     ? "还没有归档内容。"
                     : undefined
               }
               fragments={filteredFragments}
               isLoading={isLoading}
+              knownTags={knownTags}
               onArchive={handleArchiveFragment}
-              onEdit={(fragment) => setEditingFragmentId(fragment.id)}
+              onCancelEdit={closeEditor}
+              onEdit={openInlineEditor}
+              onExportImage={setExportingFragment}
+              onMoveToLockbox={handleMoveFragmentToLockbox}
+              onOpenZen={openZenEditor}
+              onPin={handlePinFragment}
               onScrollDown={() => {
                 setComposerCollapseSignal((current) => current + 1)
               }}
+              onSave={handleUpdateFragment}
               onToggleTask={(fragment, lineIndex) => {
                 void handleToggleFragmentTask(fragment, lineIndex)
               }}
@@ -415,7 +762,7 @@ function App() {
         <div className="lg:hidden">
           <BottomTabs
             activeFilter={filter}
-            fragments={fragments}
+            fragments={publicOnlyFragments}
             git={git}
             isSyncing={isSyncing}
             onFilterChange={setFilter}
@@ -429,10 +776,17 @@ function App() {
         </div>
       </main>
       <FragmentEditor
-        fragment={editingFragment}
+        fragment={editingVariant === "zen" ? editingFragment : null}
         knownTags={knownTags}
-        onClose={() => setEditingFragmentId(null)}
+        onClose={closeEditor}
         onSave={handleUpdateFragment}
+        vaultPath={vaultPath}
+      />
+      <FragmentImageExporter
+        fragment={exportingFragment}
+        onClose={() => setExportingFragment(null)}
+        open={isExportSheetOpen}
+        vaultPath={vaultPath}
       />
       <VaultGuide
         git={git}
@@ -446,12 +800,77 @@ function App() {
         required={needsVaultSetup}
         vaultPath={vaultPath}
       />
+      <LockboxDialog
+        mode={lockboxDialogMode}
+        recoveryKey={recoveryKey}
+        onChangePassword={handleChangeLockboxPassword}
+        onClear={handleClearLockbox}
+        onClose={closeLockboxDialog}
+        onModeChange={setLockboxDialogMode}
+        onReset={handleResetLockboxPassword}
+        onSetup={handleSetupLockbox}
+        onUnlock={handleUnlockLockbox}
+      />
       <Toaster />
     </TooltipProvider>
   )
 }
 
 export default App
+
+function LockboxHeader({
+  lockbox,
+  onChangePassword,
+  onClear,
+  onLock,
+  onUnlock,
+}: {
+  lockbox: LockboxState | null
+  onChangePassword: () => void
+  onClear: () => void
+  onLock: () => void
+  onUnlock: () => void
+}) {
+  return (
+    <div className="shard-content-inset pb-[var(--shard-space-4)]">
+      <div className="shard-content-measure flex flex-wrap items-center justify-between gap-[var(--shard-space-3)] border-b border-border pb-[var(--shard-space-4)]">
+        <div className="flex min-w-0 items-center gap-[var(--shard-space-3)]">
+          <span className="flex size-8 shrink-0 items-center justify-center rounded-[var(--shard-radius-control)] border border-border bg-card text-[color:var(--shard-sapphire)]">
+            <LockKeyholeIcon className="size-4 stroke-[1.75]" />
+          </span>
+          <div className="min-w-0">
+            <h1 className="text-lg leading-6 font-bold">密匣</h1>
+            <p className="mt-1 text-sm leading-5 text-muted-foreground">
+              {lockbox?.unlocked
+                ? `已解锁${lockbox.expiresAt ? `至 ${formatLockboxExpiry(lockbox.expiresAt)}` : ""}`
+                : "需要密码访问。私密笔记不会出现在主页、回顾或普通统计中。"}
+            </p>
+          </div>
+        </div>
+
+        <div className="flex shrink-0 items-center gap-[var(--shard-space-2)]">
+          {lockbox?.unlocked ? (
+            <>
+              <Button onClick={onChangePassword} size="sm" variant="outline">
+                修改密码
+              </Button>
+              <Button onClick={onLock} size="sm" variant="outline">
+                上锁
+              </Button>
+            </>
+          ) : (
+            <Button onClick={onUnlock} size="sm">
+              解锁
+            </Button>
+          )}
+          <Button onClick={onClear} size="sm" variant="ghost">
+            清空
+          </Button>
+        </div>
+      </div>
+    </div>
+  )
+}
 
 function isVaultNotConfigured(error: unknown) {
   return String(error).includes("vault_not_configured")
@@ -463,14 +882,41 @@ function isGitSetupError(error: unknown) {
 }
 
 function hasVisibleTag(fragment: Fragment) {
-  return fragment.tags.some((tag) => tag !== "inbox")
+  return fragment.tags.some((tag) => tag !== "inbox" && tag !== LOCKBOX_TAG)
 }
 
-function buildTagSummaries(fragments: Fragment[]): TaggedSummary[] {
+function formatLockboxExpiry(expiresAt: string) {
+  return new Date(expiresAt).toLocaleTimeString("zh-CN", {
+    hour: "2-digit",
+    minute: "2-digit",
+  })
+}
+
+function sortFragmentsForDisplay(fragments: Fragment[]) {
+  return [...fragments].sort((a, b) => {
+    if (a.pinned !== b.pinned) return a.pinned ? -1 : 1
+    return b.createdAt.localeCompare(a.createdAt)
+  })
+}
+
+function buildTagSummaries(
+  fragments: Fragment[],
+  defaultTags: readonly string[]
+): TaggedSummary[] {
   const summaries = new Map<string, TaggedSummary>()
 
+  for (const tag of defaultTags) {
+    summaries.set(tag, {
+      count: 0,
+      latestAt: "",
+      tag,
+    })
+  }
+
   for (const fragment of fragments) {
-    const tags = new Set(fragment.tags.filter((tag) => tag !== "inbox"))
+    const tags = new Set(
+      fragment.tags.filter((tag) => tag !== "inbox" && tag !== LOCKBOX_TAG)
+    )
 
     for (const tag of tags) {
       const current = summaries.get(tag)

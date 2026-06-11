@@ -1,7 +1,7 @@
 # Shard Frontend Design
 
-Status: locked draft
-Date: 2026-06-02
+Status: synced with current implementation
+Date: 2026-06-09
 
 Visual concept: [docs/design/shard-main-screen-concept.png](docs/design/shard-main-screen-concept.png)
 
@@ -12,7 +12,7 @@ Shard is a lightweight Markdown fragment capture desktop app. The UI must optimi
 1. Type a fragment.
 2. Press Cmd+Enter, Ctrl+Enter, or Shift+Enter.
 3. A Markdown file is created.
-4. A solid-outline card appears in the timeline.
+4. A quiet paper card appears in the timeline.
 5. Git status updates in the background.
 
 The app is not a Markdown editor, document workspace, graph view, or dashboard. The first screen is the real product.
@@ -47,25 +47,33 @@ The interface should feel like a native developer utility with a paper-card time
 - Composer and fragment cards share the same surface radius token.
 - Minimal chrome.
 - High-contrast text.
-- Small jewel-tone accents only for tags and status.
+- Small warm accents and semantic status colors only for tags, focus, and state.
 - No gradients, decorative blobs, glass effects, or marketing-page composition.
 
 The visual center is the timeline, not the sidebar or inspector.
 
 ## Primary Color Policy
 
-Shard should have one primary accent color, but it must stay restrained. Use
-Aegean teal as the primary accent, not as a large brand fill.
+Shard should have one primary accent color, but it must stay restrained. The
+current runtime accent is warm terracotta, used as a precise state color rather
+than a broad brand fill.
 
-- Primary accent: `#087e8b`
-- Color character: saturated blue-green, medium-low brightness; clear but not neon.
+- Primary accent: `#b6533c`
+- Hover accent: `#96432f`
+- Soft accent wash: `#f8ede9`
+- Accent text: `#743225`
+- Color character: warm red-clay/terracotta, medium-low brightness; clear but
+  not orange, brown, or neon.
 - Visual share: about 3%-5% of the first screen.
-- Use teal for focus/edit card borders, focus rings, links, AI suggestion
-  accents, subtle sidebar selection indicators, and rare primary emphasis.
-- Do not use teal as a full sidebar, app header, page background, or default
-  color for every button.
+- Use the accent for focus/edit borders, focus rings, links, AI suggestion
+  accents, subtle sidebar selection indicators, checked task boxes, and rare
+  primary emphasis.
+- Do not use the accent as a full sidebar, app header, page background, or
+  default color for every button.
 - Keep `--primary` available for shadcn's ink-style primary controls; use
-  `--accent-sapphire` for Shard-specific emphasis.
+  `--shard-accent` for Shard-specific emphasis.
+- Existing components still reference `--shard-sapphire` and related variables;
+  these are compatibility aliases that mirror `--shard-accent`.
 
 Related accents keep semantic ownership:
 
@@ -114,7 +122,7 @@ Rules:
 - Border-right: 1px solid token border.
 - No card wrapper around the rail.
 - Selected item uses subtle filled background and stronger text, not bright color.
-- A selected item may include a 2px teal indicator, but never a full teal row
+- A selected item may include a 2px accent indicator, but never a full accent row
   fill.
 - On small viewports, collapse navigation to compact bottom tabs.
 
@@ -146,9 +154,10 @@ Capture input:
   and bottom padding so edge actions have equal side and bottom spacing.
 - Composer action inset: `--shard-space-3`. Save button: 32px square. Bottom
   toolbar minimum height is derived from action size plus two equal insets.
-- Toolbar text tools include tag, unordered list, ordered list, and task
-  checklist buttons. List tools apply Markdown markers to the current line or
-  every line in the active selection.
+- Toolbar tools include image upload, tag, unordered list, ordered list, task
+  checklist, bold, underline, and highlight buttons. List tools apply Markdown
+  markers to the current line or every line in the active selection. Inline
+  tools apply Markdown-style text markers to the active selection.
 - Must be focused on app launch.
 - `Enter` inserts a newline.
 - `Cmd+Enter`, `Ctrl+Enter`, or `Shift+Enter` creates a fragment unless IME
@@ -157,13 +166,17 @@ Capture input:
   capture box, positioned directly below the current text cursor.
 - Inline tags such as `#work` are extracted on save and written to fragment
   frontmatter together with `inbox`.
+- Image uploads insert Markdown image lines and render as compact square
+  attachments inside capture, editor, and fragment content. Attachment chrome
+  must stay quiet and use the same radius/alpha system as the rest of the app.
 
 Composer tag language:
 
-- Tags are 24px high pills with 100px radius.
+- General tags are 28px high pills; memo/card tags reduce to 24px through
+  `.shard-card-tags` and `.shard-memo-tags`.
 - Default tags use neutral fill, not large saturated color.
 - Active tag creation uses one minimal capsule: current tag value on the left
-  in teal text, and a compact `新建` / `使用` button on the right.
+  in accent text, and a compact `新建` / `使用` button on the right.
 - The tag creation capsule should be smaller than a tooltip, about 168px wide
   and 38px high, with 12px text; it must not read as a card inside the composer.
 - It follows the active `#tag` caret position and should never sit in a fixed
@@ -185,8 +198,9 @@ Timeline:
 Purpose: optional editing and AI suggestion review, hidden by default.
 
 Shown only after explicit user action, such as an edit action or overflow menu
-item. Use a Sheet, Dialog, or compact Popover instead of a permanent third
-column.
+item. The current implementation uses `FragmentEditor` as the primary edit
+surface; future detail views can use a Sheet, Dialog, or compact Popover
+instead of a permanent third column.
 
 Sections:
 
@@ -194,6 +208,7 @@ Sections:
 - Tags with add button.
 - Git status.
 - Content preview/editor.
+- Markdown preview for review surfaces through `MarkdownDocument`.
 - AI suggestion preview.
 - Bottom actions: archive, edit.
 
@@ -223,14 +238,23 @@ Card states:
 - Default: white surface, no card border.
 - Fragment cards use `--shard-surface-radius`, matching the capture composer.
 - Hover: keep chrome quiet; do not introduce an outline by default.
-- Focus or explicit edit state may use accent teal only when there is an
+- Focus or explicit edit state may use the accent only when there is an
   editable surface or explicit selection.
 - Commit and sync status are not shown as default card chrome; keep them in the
   sidebar sync block or explicit detail surfaces.
-- AI suggested state may use a small teal chip only when it is actionable
+- AI suggested state may use a small accent chip only when it is actionable
   and not dominant.
 
 Cards should not look like heavy dashboard widgets. They are paper fragments.
+
+Fragment content rules:
+
+- Task checklist markers render as inline checkboxes and can be toggled from
+  cards/review surfaces.
+- Markdown image lines render as compact attachments when `vaultPath` is
+  available.
+- Rich Markdown blocks belong in review/detail surfaces; cards keep a lightweight
+  fragment reading style.
 
 ## Geometry Tokens
 
@@ -257,6 +281,7 @@ tokens before a component adds a new one.
 --shard-composer-padding: var(--shard-space-4);
 --shard-card-padding-x: var(--shard-space-5);
 --shard-card-padding-y: var(--shard-space-4);
+--shard-card-padding-bottom: calc(var(--shard-card-padding-y) - 2px);
 --shard-card-gap: var(--shard-space-4);
 
 --shard-radius-control: 6px;
@@ -267,9 +292,20 @@ tokens before a component adds a new one.
 --shard-heatmap-row-gap: 6px;
 --shard-chip-height: var(--shard-space-6);
 --shard-chip-padding-x: 10px;
---shard-editor-line-height: 1.58;
+--shard-tag-height: 28px;
+--shard-tag-font-size: 13px;
+--shard-tag-padding-x: 11px;
+--shard-memo-content-color: #323232;
+--shard-memo-font-size: 14px;
+--shard-memo-font-weight: 400;
+--shard-memo-letter-spacing: 0px;
+--shard-memo-line-height: 1.8;
+--shard-memo-meta-font-size: 13px;
+--shard-memo-meta-font-weight: 400;
+--shard-memo-meta-line-height: 20px;
+--shard-editor-line-height: var(--shard-memo-line-height);
 --shard-caret-color: var(--shard-sapphire);
---shard-caret-height-ratio: 1.04;
+--shard-caret-height-ratio: 1.22;
 --shard-caret-width: 1.5px;
 ```
 
@@ -285,43 +321,43 @@ geometry contract as reusable utilities. Use `.shard-content-inset`,
 `.shard-content-measure`, `.shard-heatmap-grid`, and `.shard-edge-action-row`
 before adding component-local spacing or grid math.
 
-Editor caret rule: native textarea caret height follows the line box and is too
-tall for Shard's writing surface. Use `.shard-editor-field` to hide the native
-caret and render `.shard-custom-caret` from the shared textarea mirror geometry.
-The custom caret is glyph-height based, 1.5px wide, rounded, and shared by
-capture and full-screen editing. Capture placeholder text is also rendered as a
-custom overlay from the same caret geometry so the prompt and insertion point
-share one coordinate system.
+Editor caret rule: the native textarea caret cannot match this surface — its
+height follows the engine's line box, not the glyphs — so editor fields hide it
+and render `.shard-custom-caret` (glyph-height via `--shard-caret-height-ratio`,
+vertically centered on the glyph box). The caret position MUST be measured from
+the visible highlight layer with Range APIs over the `data-text-start` spans,
+never estimated from an off-screen textarea mirror: the rendered glyphs the
+user sees are the single source of truth, so the caret cannot drift from them.
+Mirror geometry is allowed only as a fallback where the layer has no
+measurable text (empty content, image attachment lines).
 
 ## Color Tokens
 
-Use semantic CSS variables. Exact values can be adjusted during implementation, but the palette relationship is locked.
+Use semantic CSS variables. The current runtime values are:
 
 ```css
 --background: #f7f8f8;
 --foreground: #111315;
---surface: #ffffff;
---surface-muted: #f1f3f3;
+--card: #ffffff;
+--muted: #f1f3f3;
 --border: #d8dddd;
 --border-strong: #aeb7b7;
 --muted-foreground: #687173;
 
---accent-sapphire: #087e8b;
---accent-sapphire-hover: #066a75;
---accent-sapphire-soft: #e6f6f8;
---accent-sapphire-text: #075e67;
---accent-emerald: #148a4a;
---accent-amber: #b76a00;
---accent-ruby: #b42318;
-
---tag-blue-bg: #e6f6f8;
---tag-blue-fg: #075e67;
---tag-green-bg: #edf8f1;
---tag-green-fg: #17663a;
---tag-amber-bg: #fff5e6;
---tag-amber-fg: #8a4a00;
---tag-violet-bg: #f3f0ff;
---tag-violet-fg: #5a3fb0;
+--shard-accent: #b6533c;
+--shard-accent-hover: #96432f;
+--shard-accent-soft: #f8ede9;
+--shard-accent-text: #743225;
+--shard-sapphire: var(--shard-accent);
+--shard-sapphire-hover: var(--shard-accent-hover);
+--shard-sapphire-soft: var(--shard-accent-soft);
+--shard-sapphire-text: var(--shard-accent-text);
+--shard-primary-rgb: 182 83 60;
+--shard-primary-soft-rgb: 222 150 129;
+--shard-emerald: #148a4a;
+--shard-amber: #b76a00;
+--shard-ruby: #b42318;
+--shard-editor-tag-fg: #5a3fb0;
 
 --shard-radius-control: 6px;
 --shard-surface-radius: 12px;
@@ -339,9 +375,10 @@ Radius:
 Borders:
 
 - Structural separators: 1px solid `--border`
-- Composer: 1px solid `--border`; focus border uses `--accent-sapphire`
+- Composer: 1px solid `--border`; focus border uses the current accent via
+  `--shard-sapphire`
 - Cards: no default border
-- Focus/edit card: 1px solid `--accent-sapphire` only when explicit selection
+- Focus/edit card: 1px solid current accent only when explicit selection
   or editing state exists
 
 Shadows:
@@ -368,8 +405,8 @@ Text scale:
 
 - App title: 22px / 28px, 700
 - Section labels: 13px / 18px, 600
-- Body/card text: 15px / 24px, 450-500
-- Metadata: 12px / 16px, 500
+- Body/card text: 14px / 25.2px, 400
+- Metadata: 13px / 20px, 400
 - Button/control text: 13px / 18px, 600
 - Tag text: 12px / 16px, 600
 
@@ -406,19 +443,26 @@ Shard-specific components:
 - `SidebarNav`
 - `BottomTabs`
 - `CaptureBox`
+- `EditorToolbar`
 - `FragmentTimeline`
 - `FragmentCard`
-- `FragmentDetailSurface` (future Sheet/Dialog, not a default panel)
-- `GitStatusBadge`
+- `FragmentContent`
+- `FragmentEditor`
+- `FragmentDetailPanel`
+- `MarkdownDocument`
+- `ReviewWorkspace`
+- `TaggedPanel`
+- `VaultGuide`
+- `StatusBadge`
 - `TagBadge`
-- `AiSuggestionPanel`
+- `TagCompletionPopover`
 
 Composition rules:
 
 - Use `Badge` for tags and status chips.
 - Use `Textarea` for capture, not a contenteditable div.
-- Use Markdown text insertion for composer list/checklist controls, not rich
-  text widgets inside the textarea.
+- Use Markdown text insertion for composer list/checklist and inline formatting
+  controls, not rich text widgets inside the textarea.
 - Use `DropdownMenu` for card overflow actions.
 - Use `Tooltip` for icon-only buttons.
 - Use `.shard-edge-action-row` for bottom-aligned edge action rows; do not
@@ -507,7 +551,8 @@ Preferred:
 Do:
 
 - Keep the first viewport as a usable app.
-- Use solid-border cards.
+- Use quiet paper cards; reserve solid borders for structure, focus, and
+  explicit contained surfaces.
 - Keep AI secondary.
 - Keep Git status visible but small.
 - Make the center timeline the main object.

@@ -17,6 +17,7 @@ import {
 import {
   getTagCompletionPopoverPosition,
   TagCompletionPopover,
+  type TagSuggestion,
 } from "@/components/shard/tag-completion-popover"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
@@ -37,8 +38,9 @@ import {
   type LineFormat,
   type TextEdit,
 } from "@/lib/editor-format"
-import { getTextareaCaretBox, type TextareaCaretBox } from "@/lib/textarea-caret"
 import { getApiErrorMessage, saveFragmentImage } from "@/lib/api"
+import { getEditorCaretBox, type EditorCaretBox } from "@/lib/editor-caret"
+import { wantsLockbox } from "@/lib/lockbox"
 
 interface CaptureBoxProps {
   collapseSignal: number
@@ -49,8 +51,9 @@ interface CaptureBoxProps {
 
 interface PendingImage {
   alt: string
+  bytes: number[]
+  fileName: string
   id: string
-  path: string
   previewUrl: string
 }
 
@@ -62,6 +65,7 @@ export function CaptureBox({
 }: CaptureBoxProps) {
   const [content, setContent] = useState("")
   const [caretEpoch, setCaretEpoch] = useState(0)
+  const [customCaret, setCustomCaret] = useState<EditorCaretBox | null>(null)
   const [isEditorExpanded, setIsEditorExpanded] = useState(false)
   const [pendingImages, setPendingImages] = useState<PendingImage[]>([])
   const [selectionStart, setSelectionStart] = useState(0)
@@ -69,7 +73,6 @@ export function CaptureBox({
     left: 12,
     top: 44,
   })
-  const [customCaret, setCustomCaret] = useState<TextareaCaretBox | null>(null)
   const [isEditorFocused, setIsEditorFocused] = useState(false)
   const [selectionEnd, setSelectionEnd] = useState(0)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -88,10 +91,43 @@ export function CaptureBox({
     [knownTags]
   )
   const activeNewTag = activeTag ? normalizeTag(activeTag.query) : ""
-  const activeTagExists =
-    activeNewTag.length > 0 && normalizedKnownTags.includes(activeNewTag)
+  const tagSuggestions = useMemo<TagSuggestion[]>(() => {
+    if (!activeTag) return []
+
+    const query = activeNewTag
+    const matches = (
+      query
+        ? normalizedKnownTags.filter((tag) => tag.includes(query))
+        : normalizedKnownTags
+    )
+      .slice()
+      .sort((a, b) => {
+        if (!query) return 0
+        const aStarts = a.startsWith(query) ? 0 : 1
+        const bStarts = b.startsWith(query) ? 0 : 1
+        if (aStarts !== bStarts) return aStarts - bStarts
+        return a.localeCompare(b)
+      })
+      .slice(0, MAX_TAG_SUGGESTIONS)
+
+    const items: TagSuggestion[] = matches.map((tag) => ({
+      kind: "existing",
+      tag,
+    }))
+
+    if (query.length > 0 && !normalizedKnownTags.includes(query)) {
+      items.push({ kind: "create", tag: query })
+    }
+
+    return items
+  }, [activeTag, activeNewTag, normalizedKnownTags])
+  const [activeSuggestionIndex, setActiveSuggestionIndex] = useState(0)
   const canSubmit =
     (content.trim().length > 0 || pendingImages.length > 0) && !isCreating
+
+  useEffect(() => {
+    setActiveSuggestionIndex(0)
+  }, [activeNewTag])
 
   useEffect(() => {
     pendingImagesRef.current = pendingImages
@@ -110,6 +146,24 @@ export function CaptureBox({
 
     setIsEditorExpanded(false)
   }, [collapseSignal])
+
+  useEffect(() => {
+    // React's onSelect stays silent while the mouse is still down, so drag
+    // selection needs the document-level selectionchange stream to paint the
+    // highlight live instead of only after mouseup
+    function handleSelectionChange() {
+      const textarea = textareaRef.current
+      if (!textarea || document.activeElement !== textarea) return
+
+      setSelectionStart(textarea.selectionStart)
+      setSelectionEnd(textarea.selectionEnd)
+    }
+
+    document.addEventListener("selectionchange", handleSelectionChange)
+    return () => {
+      document.removeEventListener("selectionchange", handleSelectionChange)
+    }
+  }, [])
 
   useEffect(() => {
     const scrollPositions = new WeakMap<EventTarget, number>()
@@ -193,8 +247,21 @@ export function CaptureBox({
   }, [content, isEditorExpanded])
 
   useLayoutEffect(() => {
-    syncCustomCaret()
-  }, [content, isEditorFocused, selectionEnd, selectionStart])
+    const textarea = textareaRef.current
+    const frame = editorFrameRef.current
+
+    if (
+      !textarea ||
+      !frame ||
+      !isEditorFocused ||
+      selectionStart !== selectionEnd
+    ) {
+      setCustomCaret(null)
+      return
+    }
+
+    setCustomCaret(getEditorCaretBox(textarea, frame, selectionStart))
+  }, [content, isEditorExpanded, isEditorFocused, selectionEnd, selectionStart])
 
   useLayoutEffect(() => {
     if (!activeTag || !textareaRef.current || !containerRef.current) return
@@ -215,10 +282,33 @@ export function CaptureBox({
   }, [activeTag, content, selectionStart])
 
   async function submit() {
-    const next = buildContentWithPendingImages(content, pendingImages)
-    if (!next || isCreating) return
+    if (isCreating) return
+
+    const draftTags = normalizeTagList(["inbox", ...extractTags(content)])
+    if (wantsLockbox(content, draftTags) && pendingImages.length > 0) {
+      toast.error("密匣暂不支持图片附件", {
+        description: "请先移除图片，再保存到密匣，避免附件写入公开 assets 目录。",
+      })
+      setIsEditorExpanded(true)
+      return
+    }
 
     try {
+      const savedImages = []
+      for (const image of pendingImages) {
+        const path = await saveFragmentImage(image.fileName, image.bytes).catch(
+          (error) => {
+            toast.error("图片保存失败", {
+              description: getApiErrorMessage(error),
+            })
+            throw error
+          }
+        )
+        savedImages.push({ alt: image.alt, path })
+      }
+      const next = buildContentWithPendingImages(content, savedImages)
+      if (!next) return
+
       await onCreate(next, normalizeTagList(["inbox", ...extractTags(next)]))
       pendingImages.forEach((image) => {
         URL.revokeObjectURL(image.previewUrl)
@@ -287,14 +377,14 @@ export function CaptureBox({
 
     try {
       const bytes = Array.from(new Uint8Array(await file.arrayBuffer()))
-      const path = await saveFragmentImage(file.name, bytes)
       setIsEditorExpanded(true)
       setPendingImages((current) => [
         ...current,
         {
           alt: getMarkdownImageAlt(file.name),
-          id: `${Date.now()}-${path}`,
-          path,
+          bytes,
+          fileName: file.name,
+          id: `${Date.now()}-${file.name}`,
           previewUrl,
         },
       ])
@@ -307,6 +397,10 @@ export function CaptureBox({
       })
       URL.revokeObjectURL(previewUrl)
     }
+  }
+
+  function showCaretImmediately() {
+    setCaretEpoch((current) => current + 1)
   }
 
   function applyTextEdit(nextEdit: TextEdit) {
@@ -332,10 +426,6 @@ export function CaptureBox({
         nextEdit.selectionEnd
       )
     })
-  }
-
-  function showCaretImmediately() {
-    setCaretEpoch((current) => current + 1)
   }
 
   function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
@@ -374,13 +464,54 @@ export function CaptureBox({
       }
     }
 
+    const isCollapsedCaret =
+      event.currentTarget.selectionStart === event.currentTarget.selectionEnd
+
+    // 当标签建议列表可见时，方向键在列表内移动，回车选中高亮项
+    if (activeTag && tagSuggestions.length > 0 && isCollapsedCaret) {
+      if (event.key === "ArrowDown") {
+        event.preventDefault()
+        setActiveSuggestionIndex(
+          (current) => (current + 1) % tagSuggestions.length
+        )
+        return
+      }
+
+      if (event.key === "ArrowUp") {
+        event.preventDefault()
+        setActiveSuggestionIndex(
+          (current) =>
+            (current - 1 + tagSuggestions.length) % tagSuggestions.length
+        )
+        return
+      }
+
+      if (
+        event.key === "Enter" &&
+        !event.altKey &&
+        !event.ctrlKey &&
+        !event.metaKey &&
+        !event.shiftKey
+      ) {
+        const item =
+          tagSuggestions[
+            Math.min(activeSuggestionIndex, tagSuggestions.length - 1)
+          ]
+        if (item) {
+          event.preventDefault()
+          applyTag(item.tag)
+          return
+        }
+      }
+    }
+
     if (
       event.key === "Enter" &&
       !event.altKey &&
       !event.ctrlKey &&
       !event.metaKey &&
       !event.shiftKey &&
-      event.currentTarget.selectionStart === event.currentTarget.selectionEnd
+      isCollapsedCaret
     ) {
       const nextEdit = applyActiveTagCompletion(
         event.currentTarget.value,
@@ -458,26 +589,6 @@ export function CaptureBox({
     setSelectionEnd(textarea.selectionEnd)
   }
 
-  function syncCustomCaret() {
-    const textarea = textareaRef.current
-    const frame = editorFrameRef.current
-
-    if (
-      !textarea ||
-      !frame ||
-      !isEditorFocused ||
-      selectionStart !== selectionEnd
-    ) {
-      setCustomCaret(null)
-      return
-    }
-
-    const currentValue = textarea.value
-    const currentActiveTag = getActiveTag(currentValue, selectionStart)
-    const caret = getTextareaCaretBox(textarea, selectionStart)
-    setCustomCaret(currentActiveTag ? { ...caret, top: caret.lineTop } : caret)
-  }
-
   return (
     <div
       className="shard-content-measure relative rounded-[var(--shard-surface-radius)] border border-border bg-card p-0 shadow-[var(--shard-composer-shadow)] transition-colors focus-within:border-[color:var(--shard-sapphire)]"
@@ -490,6 +601,7 @@ export function CaptureBox({
             className="shard-editor-highlight-layer shard-memo-tags px-[var(--shard-composer-padding)] py-[var(--shard-composer-padding)]"
           >
             <FragmentContent
+              caretAligned
               content={content}
               highlightTags
               onTaskToggle={toggleTask}
@@ -536,7 +648,6 @@ export function CaptureBox({
           onBlur={() => {
             setIsEditorFocused(false)
           }}
-          onScroll={syncCustomCaret}
           placeholder="想到什么，写什么..."
           ref={textareaRef}
           value={content}
@@ -568,10 +679,11 @@ export function CaptureBox({
       </div>
       {activeTag ? (
         <TagCompletionPopover
-          exists={activeTagExists}
-          label={activeNewTag}
+          activeIndex={activeSuggestionIndex}
           left={tagPopoverPosition.left}
-          onApply={() => applyTag(activeNewTag)}
+          onHover={setActiveSuggestionIndex}
+          onSelect={applyTag}
+          suggestions={tagSuggestions}
           top={tagPopoverPosition.top}
         />
       ) : null}
@@ -583,7 +695,7 @@ export function CaptureBox({
               alt={image.alt}
               key={image.id}
               onRemove={() => removePendingImage(image.id)}
-              path={image.path}
+              path={image.fileName}
               src={image.previewUrl}
               wrapped={false}
             />
@@ -637,12 +749,13 @@ export function CaptureBox({
   )
 }
 
+const MAX_TAG_SUGGESTIONS = 8
 const CAPTURE_COLLAPSED_ROWS = 2
 const CAPTURE_EXPANDED_ROWS = 4
 
 function buildContentWithPendingImages(
   value: string,
-  pendingImages: PendingImage[]
+  pendingImages: Array<{ alt: string; path: string }>
 ) {
   const text = value.trim()
   const imageMarkdown = pendingImages

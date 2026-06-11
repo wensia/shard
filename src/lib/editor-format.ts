@@ -60,9 +60,11 @@ export function applyTagCompletion(
   targetTag: ActiveTag,
   fallbackTag: string
 ): TextEdit | null {
-  const tagEnd = getTagInputEnd(value, targetTag.hashStart)
-  const rawTag = value.slice(targetTag.hashStart + 1, tagEnd)
-  const nextTag = normalizeTag(rawTag || fallbackTag || targetTag.query)
+  // 标签内容止于光标（query），不吞掉光标后紧跟的正文。中文无空格时若一路
+  // 吃到行尾（旧的 getTagInputEnd 行为），整行会变成一个超长标签、光标跳到末尾。
+  // fallbackTag（用户选中的建议）优先于已输入文本，确保点选建议能正确补全。
+  const tagEnd = targetTag.hashStart + 1 + targetTag.query.length
+  const nextTag = normalizeTag(fallbackTag || targetTag.query)
   if (!nextTag) return null
 
   const before = value.slice(0, targetTag.hashStart)
@@ -356,20 +358,6 @@ export function getActiveTag(value: string, cursor: number): ActiveTag | null {
   if (/\s|#/.test(query)) return null
 
   return { hashStart, query }
-}
-
-function getTagInputEnd(value: string, hashStart: number) {
-  let end = hashStart + 1
-
-  while (
-    end < value.length &&
-    !/\s/u.test(value[end]) &&
-    value[end] !== "#"
-  ) {
-    end += 1
-  }
-
-  return end
 }
 
 function formatLine(line: string, format: LineFormat, index: number) {

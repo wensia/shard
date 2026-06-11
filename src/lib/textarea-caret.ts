@@ -1,9 +1,8 @@
 export interface TextareaCaretBox {
-  height: number
+  glyphHeight: number
   left: number
   lineHeight: number
   lineTop: number
-  top: number
 }
 
 const TEXTAREA_MIRROR_PROPERTIES = [
@@ -64,43 +63,16 @@ export function getTextareaCaretBox(
 
   const fontSize = toPixelValue(styles.fontSize, 14)
   const lineHeight = toPixelValue(styles.lineHeight, fontSize * 1.58)
-  const caretHeightRatio = toPixelValue(
-    styles.getPropertyValue("--shard-caret-height-ratio"),
-    1.22
-  )
-  const browserCaretGap = toPixelValue(
-    styles.getPropertyValue("--shard-caret-gap"),
-    1
-  )
-  const desktopCaretGap = toPixelValue(
-    styles.getPropertyValue("--shard-caret-desktop-gap"),
-    3
-  )
-  const browserCaretYAdjust = toPixelValue(
-    styles.getPropertyValue("--shard-caret-y-adjust"),
-    0
-  )
-  const desktopCaretYAdjust = toPixelValue(
-    styles.getPropertyValue("--shard-caret-desktop-y-adjust"),
-    -2
-  )
-  const isDesktop = isTauriRuntime()
-  const caretGap = isDesktop ? desktopCaretGap : browserCaretGap
-  const caretYAdjust = isDesktop ? desktopCaretYAdjust : browserCaretYAdjust
   const borderLeft = toPixelValue(styles.borderLeftWidth, 0)
   const borderTop = toPixelValue(styles.borderTopWidth, 0)
-  const lineTop = marker.offsetTop + borderTop - textarea.scrollTop
-  const caretHeight = Math.round(fontSize * Math.max(1, caretHeightRatio))
-  const top = lineTop + caretYAdjust
-  const previousChar = textarea.value[selectionStart - 1]
-  const glyphGap = previousChar && previousChar !== "\n" ? caretGap : 0
 
+  // marker is an inline span, so offsetTop/offsetHeight describe the glyph
+  // inline box (below the line box's half-leading), not the full line box
   const position = {
-    height: caretHeight,
-    left: marker.offsetLeft + borderLeft + glyphGap - textarea.scrollLeft,
+    glyphHeight: marker.offsetHeight,
+    left: marker.offsetLeft + borderLeft - textarea.scrollLeft,
     lineHeight,
-    lineTop,
-    top,
+    lineTop: marker.offsetTop + borderTop - textarea.scrollTop,
   }
 
   mirror.remove()
@@ -110,13 +82,4 @@ export function getTextareaCaretBox(
 function toPixelValue(value: string, fallback: number) {
   const parsed = Number.parseFloat(value)
   return Number.isFinite(parsed) ? parsed : fallback
-}
-
-function isTauriRuntime() {
-  const tauriWindow = window as Window & {
-    __TAURI__?: unknown
-    __TAURI_INTERNALS__?: unknown
-  }
-
-  return Boolean(tauriWindow.__TAURI__ || tauriWindow.__TAURI_INTERNALS__)
 }

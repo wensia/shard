@@ -1,13 +1,11 @@
 import {
   ArchiveIcon,
-  CalendarDaysIcon,
   HelpCircleIcon,
   InboxIcon,
   KeyboardIcon,
   Maximize2Icon,
   MoreHorizontalIcon,
   RefreshCwIcon,
-  RouteIcon,
   SettingsIcon,
   SparklesIcon,
   TagIcon,
@@ -28,6 +26,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip"
 import shardAppIconUrl from "@/assets/shard-app-icon.png"
+import { dailyReviewCount, insightReviewCount } from "@/lib/review-workflows"
 import type { Fragment, FragmentFilter, GitInfo } from "@/types"
 
 interface SidebarNavProps {
@@ -50,9 +49,7 @@ const navItems: Array<{
 }> = [
   { id: "inbox", icon: InboxIcon },
   { id: "tagged", icon: TagIcon },
-  { id: "dailyReview", icon: CalendarDaysIcon },
   { id: "insight", icon: SparklesIcon },
-  { id: "walk", icon: RouteIcon },
   { id: "archive", icon: ArchiveIcon },
 ]
 
@@ -115,7 +112,8 @@ const SIDEBAR_COPY: Record<
       archive: "归档",
       dailyReview: "每日回顾",
       inbox: "收件箱",
-      insight: "AI 洞察",
+      insight: "洞察视角",
+      lockbox: "密匣",
       tagged: "标签",
       walk: "随机漫步",
     },
@@ -152,7 +150,8 @@ const SIDEBAR_COPY: Record<
       archive: "Archive",
       dailyReview: "Daily Review",
       inbox: "Inbox",
-      insight: "AI Insights",
+      insight: "Insight Lenses",
+      lockbox: "Lockbox",
       tagged: "Tagged",
       walk: "Random Walk",
     },
@@ -224,8 +223,9 @@ export function SidebarNav({
     tagged: activeFragments.filter((fragment) =>
       fragment.tags.some((tag) => tag !== "inbox")
     ).length,
-    dailyReview: activeFragments.length,
-    insight: activeFragments.length,
+    dailyReview: dailyReviewCount(fragments),
+    insight: insightReviewCount(fragments),
+    lockbox: 0,
     walk: activeFragments.length,
     archive: archivedFragments.length,
   }

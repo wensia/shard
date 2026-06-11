@@ -1,15 +1,24 @@
 import {
   BotIcon,
+  BrainCircuitIcon,
   CalendarDaysIcon,
   CircleAlertIcon,
+  CircleDotIcon,
+  GitBranchIcon,
+  CheckIcon,
+  ListChecksIcon,
+  PlusIcon,
   RefreshCwIcon,
   RouteIcon,
   SaveIcon,
+  ScaleIcon,
   SparklesIcon,
+  RotateCcwIcon,
 } from "lucide-react"
 import { useEffect, useMemo, useState } from "react"
 
 import { FragmentCard } from "@/components/shard/fragment-card"
+import { MarkdownDocument } from "@/components/shard/markdown-document"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -21,11 +30,13 @@ import {
 import {
   codexReviewFragments,
   dailyReviewFragments,
+  insightReviewFragments,
   randomWalkFragments,
   reviewFragmentSummary,
 } from "@/lib/review-workflows"
 import type {
   CodexAgentStatus,
+  CodexInsightLens,
   CodexReviewTask,
   Fragment,
   FragmentFilter,
@@ -34,12 +45,20 @@ import type {
 type ReviewMode = Extract<FragmentFilter, "dailyReview" | "insight" | "walk">
 
 interface ReviewWorkspaceProps {
+  editingFragmentId?: string | null
   fragments: Fragment[]
   isLoading: boolean
+  knownTags?: string[]
   mode: ReviewMode
   onArchive?: (fragment: Fragment) => void
+  onCancelEdit?: () => void
   onCreate: (content: string, tags: string[]) => Promise<void>
   onEdit?: (fragment: Fragment) => void
+  onExportImage?: (fragment: Fragment) => void
+  onMoveToLockbox?: (fragment: Fragment) => void
+  onOpenZen?: (fragment: Fragment) => void
+  onPin?: (fragment: Fragment) => void
+  onSave?: (id: string, content: string, tags: string[]) => Promise<Fragment>
   onToggleTask?: (fragment: Fragment, lineIndex: number) => void
   vaultPath: string
 }
@@ -58,8 +77,8 @@ const modeMeta: Record<
     icon: CalendarDaysIcon,
   },
   insight: {
-    title: "AI 洞察",
-    description: "让本机 Codex 只读分析当前回顾集，找主题、盲点和继续追问。",
+    title: "洞察视角",
+    description: "选择任意视角，让本机 Codex 只读分析当前范围内的片段。",
     icon: SparklesIcon,
   },
   walk: {
@@ -69,18 +88,92 @@ const modeMeta: Record<
   },
 }
 
+const insightLenses: Array<{
+  id: CodexInsightLens
+  title: string
+  description: string
+  focus: string
+  icon: typeof SparklesIcon
+}> = [
+  {
+    id: "default",
+    title: "默认洞察",
+    description: "挖掘片段背后反复出现的思维模式、关注点和内在张力。",
+    focus: "主题复盘",
+    icon: BrainCircuitIcon,
+  },
+  {
+    id: "values",
+    title: "价值澄清",
+    description: "从取舍、反复记录和情绪强度里找出你真正看重的东西。",
+    focus: "取舍判断",
+    icon: ScaleIcon,
+  },
+  {
+    id: "reverse",
+    title: "逆向思考",
+    description: "反过来审视片段中的默认假设、遗漏条件和可能误判。",
+    focus: "假设检查",
+    icon: RotateCcwIcon,
+  },
+  {
+    id: "secondOrder",
+    title: "二阶思考",
+    description: "识别表层问题背后的上游原因，以及继续行动的二阶影响。",
+    focus: "影响推演",
+    icon: GitBranchIcon,
+  },
+  {
+    id: "friction",
+    title: "阻滞定位",
+    description: "找出反复卡住、回避或摇摆的地方，只给内容证据和改进角度。",
+    focus: "卡点排查",
+    icon: CircleDotIcon,
+  },
+  {
+    id: "actions",
+    title: "行动线索",
+    description: "把片段里的想法压缩成可验证问题、下一步动作和可继续写的线索。",
+    focus: "行动整理",
+    icon: ListChecksIcon,
+  },
+]
+
+const insightLensById = Object.fromEntries(
+  insightLenses.map((lens) => [lens.id, lens])
+) as Record<CodexInsightLens, (typeof insightLenses)[number]>
+
+const insightLensGroups: Array<{
+  title: string
+  lensIds: CodexInsightLens[]
+}> = [
+  { title: "思维复盘", lensIds: ["default", "reverse", "secondOrder"] },
+  { title: "自我觉察", lensIds: ["values", "friction", "actions"] },
+]
+
 export function ReviewWorkspace({
+  editingFragmentId = null,
   fragments,
   isLoading,
+  knownTags = [],
   mode,
   onArchive,
+  onCancelEdit,
   onCreate,
   onEdit,
+  onExportImage,
+  onMoveToLockbox,
+  onOpenZen,
+  onPin,
+  onSave,
   onToggleTask,
   vaultPath,
 }: ReviewWorkspaceProps) {
   const [dailySeed, setDailySeed] = useState(() => daySeed())
+  const [insightSeed, setInsightSeed] = useState(() => daySeed())
   const [walkSeed, setWalkSeed] = useState(() => daySeed() + 17)
+  const [selectedInsightLens, setSelectedInsightLens] =
+    useState<CodexInsightLens>("default")
   const [codexStatus, setCodexStatus] = useState<CodexAgentStatus | null>(null)
   const [codexError, setCodexError] = useState<string | null>(null)
   const [isCheckingCodex, setIsCheckingCodex] = useState(false)
@@ -94,14 +187,24 @@ export function ReviewWorkspace({
     () => dailyReviewFragments(fragments, dailySeed),
     [dailySeed, fragments]
   )
+  const insightFragments = useMemo(
+    () => insightReviewFragments(fragments, insightSeed),
+    [fragments, insightSeed]
+  )
   const walkFragments = useMemo(
     () => randomWalkFragments(fragments, walkSeed),
     [fragments, walkSeed]
   )
-  const displayFragments = mode === "walk" ? walkFragments : dailyFragments
+  const displayFragments =
+    mode === "walk"
+      ? walkFragments
+      : mode === "insight"
+        ? insightFragments
+        : dailyFragments
   const meta = modeMeta[mode]
   const MetaIcon = meta.icon
   const canRunCodex = Boolean(codexStatus?.installed)
+  const selectedInsightLensMeta = insightLensById[selectedInsightLens]
 
   useEffect(() => {
     if (mode !== "insight" && mode !== "walk") return
@@ -133,7 +236,7 @@ export function ReviewWorkspace({
   }, [mode])
 
   async function runCodex(task: CodexReviewTask) {
-    const selectedFragments = task === "walk" ? walkFragments : dailyFragments
+    const selectedFragments = task === "walk" ? walkFragments : insightFragments
     if (selectedFragments.length === 0) return
 
     setCodexError(null)
@@ -147,7 +250,8 @@ export function ReviewWorkspace({
       const result = await runCodexReviewTask(
         task,
         codexReviewFragments(selectedFragments),
-        vaultPath
+        vaultPath,
+        task === "insight" ? selectedInsightLens : undefined
       )
       if (task === "walk") {
         setWalkText(result.text)
@@ -168,7 +272,11 @@ export function ReviewWorkspace({
 
     setIsSavingInsight(true)
     try {
-      await onCreate(`AI 洞察\n\n${content}`, ["inbox", "ai/insight"])
+      await onCreate(`${selectedInsightLensMeta.title}\n\n${content}`, [
+        "inbox",
+        "ai/insight",
+        `insight/${selectedInsightLens}`,
+      ])
     } finally {
       setIsSavingInsight(false)
     }
@@ -179,11 +287,17 @@ export function ReviewWorkspace({
       <ReviewHeader
         icon={MetaIcon}
         mode={mode}
-        summary={reviewFragmentSummary(displayFragments)}
+        summary={reviewFragmentSummary(
+          displayFragments,
+          mode === "insight" ? "笔记" : "片段"
+        )}
         title={meta.title}
         description={meta.description}
         onRefreshDaily={() => {
           setDailySeed((current) => current + 1)
+        }}
+        onRefreshInsight={() => {
+          setInsightSeed((current) => current + 1)
           setInsightText("")
         }}
         onRefreshWalk={() => {
@@ -201,19 +315,28 @@ export function ReviewWorkspace({
           <div className="shard-content-inset pb-[var(--shard-space-8)]">
             <div className="shard-content-measure flex flex-col gap-[var(--shard-card-gap)]">
               {mode === "insight" ? (
-                <CodexPanel
-                  actionLabel={isRunningInsight ? "生成中" : "生成洞察"}
-                  canRun={canRunCodex && !isRunningInsight}
-                  error={codexError}
-                  isChecking={isCheckingCodex}
-                  isRunning={isRunningInsight}
-                  onRun={() => void runCodex("insight")}
-                  result={insightText}
-                  status={codexStatus}
-                  title="当前回顾集洞察"
-                  onSave={insightText ? saveInsight : undefined}
-                  isSaving={isSavingInsight}
-                />
+                <>
+                  <InsightLensGallery
+                    selectedLens={selectedInsightLens}
+                    onSelect={(lens) => {
+                      setSelectedInsightLens(lens)
+                      setInsightText("")
+                    }}
+                  />
+                  <CodexPanel
+                    actionLabel={isRunningInsight ? "洞察中" : "开始洞察"}
+                    canRun={canRunCodex && !isRunningInsight}
+                    error={codexError}
+                    isChecking={isCheckingCodex}
+                    isRunning={isRunningInsight}
+                    onRun={() => void runCodex("insight")}
+                    result={insightText}
+                    status={codexStatus}
+                    title={selectedInsightLensMeta.title}
+                    onSave={insightText ? saveInsight : undefined}
+                    isSaving={isSavingInsight}
+                  />
+                </>
               ) : null}
 
               {mode === "walk" ? (
@@ -233,7 +356,12 @@ export function ReviewWorkspace({
               <div className="flex flex-col gap-[var(--shard-card-gap)]">
                 {displayFragments.map((fragment, index) => (
                   <div
-                    className="grid grid-cols-[28px_minmax(0,1fr)] gap-[var(--shard-space-3)]"
+                    className={[
+                      "grid gap-[var(--shard-space-3)]",
+                      mode === "insight"
+                        ? "grid-cols-[56px_minmax(0,1fr)]"
+                        : "grid-cols-[28px_minmax(0,1fr)]",
+                    ].join(" ")}
                     key={fragment.id}
                   >
                     {mode === "walk" ? (
@@ -248,13 +376,27 @@ export function ReviewWorkspace({
                           />
                         ) : null}
                       </div>
+                    ) : mode === "insight" ? (
+                      <div className="pt-[var(--shard-space-4)]">
+                        <span className="inline-flex h-6 items-center rounded-[var(--shard-radius-control)] border border-border bg-background px-2 text-[11px] leading-none font-bold text-muted-foreground">
+                          笔记 {index + 1}
+                        </span>
+                      </div>
                     ) : (
                       <span aria-hidden="true" />
                     )}
                     <FragmentCard
                       fragment={fragment}
+                      isEditing={editingFragmentId === fragment.id}
+                      knownTags={knownTags}
                       onArchive={onArchive}
+                      onCancelEdit={onCancelEdit}
                       onEdit={onEdit}
+                      onExportImage={onExportImage}
+                      onMoveToLockbox={onMoveToLockbox}
+                      onOpenZen={onOpenZen}
+                      onPin={onPin}
+                      onSave={onSave}
                       onToggleTask={onToggleTask}
                       vaultPath={vaultPath}
                     />
@@ -274,6 +416,7 @@ interface ReviewHeaderProps {
   icon: typeof CalendarDaysIcon
   mode: ReviewMode
   onRefreshDaily: () => void
+  onRefreshInsight: () => void
   onRefreshWalk: () => void
   summary: string
   title: string
@@ -284,6 +427,7 @@ function ReviewHeader({
   icon: Icon,
   mode,
   onRefreshDaily,
+  onRefreshInsight,
   onRefreshWalk,
   summary,
   title,
@@ -305,10 +449,16 @@ function ReviewHeader({
           </div>
 
           <div className="flex shrink-0 items-center gap-[var(--shard-space-2)]">
-            {mode === "dailyReview" || mode === "insight" ? (
+            {mode === "dailyReview" ? (
               <Button variant="outline" size="sm" onClick={onRefreshDaily}>
                 <RefreshCwIcon data-icon="inline-start" />
                 换一组
+              </Button>
+            ) : null}
+            {mode === "insight" ? (
+              <Button variant="outline" size="sm" onClick={onRefreshInsight}>
+                <RefreshCwIcon data-icon="inline-start" />
+                换范围
               </Button>
             ) : null}
             {mode === "walk" ? (
@@ -328,6 +478,84 @@ function ReviewHeader({
         </Badge>
       </div>
     </header>
+  )
+}
+
+function InsightLensGallery({
+  selectedLens,
+  onSelect,
+}: {
+  selectedLens: CodexInsightLens
+  onSelect: (lens: CodexInsightLens) => void
+}) {
+  return (
+    <section
+      aria-label="洞察视角选择"
+      className="flex flex-col gap-[var(--shard-space-8)]"
+    >
+      {insightLensGroups.map((group) => (
+        <div key={group.title}>
+          <h2 className="px-1 text-xl leading-7 font-bold">{group.title}</h2>
+          <div className="mt-[var(--shard-space-4)] grid gap-[var(--shard-space-3)] md:grid-cols-3">
+            {group.lensIds.map((lensId) => {
+              const lens = insightLensById[lensId]
+              const Icon = lens.icon
+              const isSelected = lens.id === selectedLens
+              const SelectIcon = isSelected ? CheckIcon : PlusIcon
+
+              return (
+                <button
+                  aria-pressed={isSelected}
+                  className={[
+                    "group/lens flex min-h-[176px] flex-col rounded-[var(--shard-surface-radius)] border p-[var(--shard-space-5)] text-left outline-none transition-colors focus-visible:ring-3 focus-visible:ring-ring/[var(--shard-alpha-34)]",
+                    isSelected
+                      ? "border-[rgb(var(--shard-primary-rgb)/var(--shard-alpha-34))] bg-[rgb(var(--shard-primary-rgb)/var(--shard-alpha-5))]"
+                      : "border-border bg-card hover:border-[rgb(var(--shard-primary-rgb)/var(--shard-alpha-21))]",
+                  ].join(" ")}
+                  key={lens.id}
+                  onClick={() => onSelect(lens.id)}
+                  type="button"
+                >
+                  <span className="flex items-start justify-between gap-[var(--shard-space-4)]">
+                    <span
+                      className={[
+                        "flex size-11 items-center justify-center rounded-[var(--shard-radius-control)] border bg-background transition-colors",
+                        isSelected
+                          ? "border-[rgb(var(--shard-primary-rgb)/var(--shard-alpha-21))] text-[color:var(--shard-sapphire)]"
+                          : "border-transparent text-foreground group-hover/lens:border-border",
+                      ].join(" ")}
+                    >
+                      <Icon className="size-6 stroke-[1.75]" />
+                    </span>
+                    <span
+                      aria-hidden="true"
+                      className={[
+                        "flex size-8 shrink-0 items-center justify-center rounded-full transition-colors",
+                        isSelected
+                          ? "bg-[color:var(--shard-sapphire)] text-white"
+                          : "border border-border bg-background text-muted-foreground group-hover/lens:border-[color:var(--shard-sapphire)] group-hover/lens:text-[color:var(--shard-sapphire)]",
+                      ].join(" ")}
+                    >
+                      <SelectIcon className="size-4 stroke-[2]" />
+                    </span>
+                  </span>
+
+                  <span className="mt-[var(--shard-space-5)] block text-lg leading-6 font-bold">
+                    {lens.title}
+                  </span>
+                  <span className="mt-[var(--shard-space-3)] line-clamp-3 block text-sm leading-6 text-muted-foreground">
+                    {lens.description}
+                  </span>
+                  <span className="mt-auto pt-[var(--shard-space-5)] text-xs leading-4 text-muted-foreground">
+                    适合：{lens.focus}
+                  </span>
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      ))}
+    </section>
   )
 }
 
@@ -402,9 +630,10 @@ function CodexPanel({
       ) : null}
 
       {result ? (
-        <div className="mt-[var(--shard-space-4)] whitespace-pre-wrap rounded-[var(--shard-radius-control)] bg-background px-[var(--shard-space-4)] py-[var(--shard-space-3)] text-sm leading-6">
-          {result}
-        </div>
+        <MarkdownDocument
+          className="mt-[var(--shard-space-4)]"
+          content={result}
+        />
       ) : (
         <div className="mt-[var(--shard-space-4)] text-sm leading-6 text-muted-foreground">
           {isRunning ? "Codex 正在只读分析当前片段..." : "生成后会显示在这里。"}

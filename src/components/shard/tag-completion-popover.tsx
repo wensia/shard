@@ -1,43 +1,80 @@
-import { Button } from "@/components/ui/button"
+import { useEffect, useRef } from "react"
+import { HashIcon, PlusIcon } from "lucide-react"
+
 import { getTextareaCaretBox } from "@/lib/textarea-caret"
 
+export interface TagSuggestion {
+  kind: "create" | "existing"
+  tag: string
+}
+
 interface TagCompletionPopoverProps {
-  exists: boolean
-  label: string
+  activeIndex: number
   left: number
-  onApply: () => void
+  suggestions: TagSuggestion[]
+  onHover: (index: number) => void
+  onSelect: (tag: string) => void
   top: number
 }
 
 export function TagCompletionPopover({
-  exists,
-  label,
+  activeIndex,
   left,
-  onApply,
+  suggestions,
+  onHover,
+  onSelect,
   top,
 }: TagCompletionPopoverProps) {
+  const activeItemRef = useRef<HTMLButtonElement>(null)
+
+  useEffect(() => {
+    activeItemRef.current?.scrollIntoView({ block: "nearest" })
+  }, [activeIndex])
+
   return (
     <div
-      className="absolute z-40 w-[168px] max-w-[calc(100%-1.5rem)] rounded-[var(--shard-surface-radius)] border border-[rgb(0_0_0/var(--shard-alpha-5))] bg-card p-[var(--shard-space-1)] text-card-foreground shadow-[0_6px_14px_rgb(0_0_0/var(--shard-alpha-5))]"
+      className="absolute z-40 max-h-[240px] w-[200px] max-w-[calc(100%-1.5rem)] overflow-y-auto rounded-[var(--shard-surface-radius)] border border-[rgb(0_0_0/var(--shard-alpha-5))] bg-card p-[var(--shard-space-1)] text-card-foreground shadow-[0_6px_14px_rgb(0_0_0/var(--shard-alpha-5))]"
       style={{ left, top }}
     >
-      <div className="flex min-h-8 items-center justify-between gap-[var(--shard-space-2)] rounded-[var(--shard-radius-control)] px-[var(--shard-space-2)] text-card-foreground transition-colors hover:bg-muted/[var(--shard-alpha-55)]">
-        <div className="min-w-0 flex-1 truncate text-xs leading-5 font-normal text-foreground">
-          {label || "标签"}
+      {suggestions.length === 0 ? (
+        <div className="flex min-h-8 items-center px-[var(--shard-space-2)] text-xs leading-5 font-normal text-muted-foreground">
+          暂无标签
         </div>
-        <Button
-          className="h-5 min-w-9 rounded-[var(--shard-radius-control)] bg-muted px-[var(--shard-space-2)] text-[11px] leading-none font-normal text-muted-foreground hover:bg-muted hover:text-foreground disabled:bg-muted/[var(--shard-alpha-55)] disabled:text-muted-foreground/[var(--shard-alpha-55)]"
-          disabled={!label}
-          onMouseDown={(event) => {
-            event.preventDefault()
-            onApply()
-          }}
-          type="button"
-          variant="ghost"
-        >
-          {exists ? "使用" : "新建"}
-        </Button>
-      </div>
+      ) : (
+        suggestions.map((item, index) => {
+          const isActive = index === activeIndex
+          const isCreate = item.kind === "create"
+
+          return (
+            <button
+              className={[
+                "flex min-h-8 w-full items-center justify-between gap-[var(--shard-space-2)] rounded-[var(--shard-radius-control)] px-[var(--shard-space-2)] text-left transition-colors",
+                isActive ? "bg-muted/[var(--shard-alpha-55)]" : "",
+              ].join(" ")}
+              key={`${item.kind}-${item.tag}`}
+              onMouseDown={(event) => {
+                event.preventDefault()
+                onSelect(item.tag)
+              }}
+              onMouseEnter={() => onHover(index)}
+              ref={isActive ? activeItemRef : null}
+              type="button"
+            >
+              <span className="flex min-w-0 flex-1 items-center gap-[var(--shard-space-micro)] text-xs leading-5 font-normal text-foreground">
+                {isCreate ? (
+                  <PlusIcon className="size-3.5 shrink-0 text-muted-foreground" />
+                ) : (
+                  <HashIcon className="size-3.5 shrink-0 text-muted-foreground" />
+                )}
+                <span className="truncate">{item.tag}</span>
+              </span>
+              <span className="shrink-0 text-[11px] leading-none font-normal text-muted-foreground">
+                {isCreate ? "新建" : "使用"}
+              </span>
+            </button>
+          )
+        })
+      )}
     </div>
   )
 }
@@ -74,7 +111,7 @@ export function getTagCompletionPopoverPosition(
   }
 }
 
-const TAG_COMPLETION_POPOVER_WIDTH = 168
+const TAG_COMPLETION_POPOVER_WIDTH = 200
 const TAG_COMPLETION_POPOVER_MARGIN = 8
 
 function clamp(value: number, min: number, max: number) {

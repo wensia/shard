@@ -8,7 +8,7 @@ import {
   type MouseEvent,
 } from "react"
 import { isTauri } from "@tauri-apps/api/core"
-import { XIcon } from "lucide-react"
+import { Loader2Icon, SendHorizontalIcon, XIcon } from "lucide-react"
 import { toast } from "sonner"
 
 import { EditorToolbar } from "@/components/shard/editor-toolbar"
@@ -16,6 +16,7 @@ import { FragmentContent } from "@/components/shard/fragment-content"
 import {
   getTagCompletionPopoverPosition,
   TagCompletionPopover,
+  type TagSuggestion,
 } from "@/components/shard/tag-completion-popover"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
@@ -42,7 +43,8 @@ import {
   saveFragmentImage,
   setWindowControlsHidden,
 } from "@/lib/api"
-import { getTextareaCaretBox, type TextareaCaretBox } from "@/lib/textarea-caret"
+import { getEditorCaretBox, type EditorCaretBox } from "@/lib/editor-caret"
+import { hasMarkdownImage, wantsLockbox } from "@/lib/lockbox"
 import type { Fragment } from "@/types"
 
 interface FragmentEditorProps {
@@ -50,6 +52,8 @@ interface FragmentEditorProps {
   knownTags: string[]
   onClose: () => void
   onSave: (id: string, content: string, tags: string[]) => Promise<Fragment>
+  variant?: "inline" | "zen"
+  vaultPath?: string
 }
 
 type SaveState = "dirty" | "error" | "saved" | "saving"
@@ -59,10 +63,12 @@ export function FragmentEditor({
   knownTags,
   onClose,
   onSave,
+  variant = "zen",
+  vaultPath,
 }: FragmentEditorProps) {
   const [content, setContent] = useState("")
   const [caretEpoch, setCaretEpoch] = useState(0)
-  const [customCaret, setCustomCaret] = useState<TextareaCaretBox | null>(null)
+  const [customCaret, setCustomCaret] = useState<EditorCaretBox | null>(null)
   const [editorScrollTop, setEditorScrollTop] = useState(0)
   const [isEditorFocused, setIsEditorFocused] = useState(false)
   const [saveState, setSaveState] = useState<SaveState>("saved")
@@ -83,6 +89,7 @@ export function FragmentEditor({
   const editorFrameRef = useRef<HTMLDivElement>(null)
   const lastPointerRef = useRef<PointerPoint | null>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const isZen = variant === "zen"
 
   const rawActiveTag = useMemo(
     () => getActiveTag(content, selectionStart),
@@ -98,12 +105,63 @@ export function FragmentEditor({
     [knownTags]
   )
   const activeNewTag = activeTag ? normalizeTag(activeTag.query) : ""
-  const activeTagExists =
-    activeNewTag.length > 0 && normalizedKnownTags.includes(activeNewTag)
+  const tagSuggestions = useMemo<TagSuggestion[]>(() => {
+    if (!activeTag) return []
+
+    const query = activeNewTag
+    const matches = (
+      query
+        ? normalizedKnownTags.filter((tag) => tag.includes(query))
+        : normalizedKnownTags
+    )
+      .slice()
+      .sort((a, b) => {
+        if (!query) return 0
+        const aStarts = a.startsWith(query) ? 0 : 1
+        const bStarts = b.startsWith(query) ? 0 : 1
+        if (aStarts !== bStarts) return aStarts - bStarts
+        return a.localeCompare(b)
+      })
+      .slice(0, MAX_TAG_SUGGESTIONS)
+
+    const items: TagSuggestion[] = matches.map((tag) => ({
+      kind: "existing",
+      tag,
+    }))
+
+    if (query.length > 0 && !normalizedKnownTags.includes(query)) {
+      items.push({ kind: "create", tag: query })
+    }
+
+    return items
+  }, [activeTag, activeNewTag, normalizedKnownTags])
+  const [activeSuggestionIndex, setActiveSuggestionIndex] = useState(0)
+
+  useEffect(() => {
+    setActiveSuggestionIndex(0)
+  }, [activeNewTag])
 
   useEffect(() => {
     onSaveRef.current = onSave
   }, [onSave])
+
+  useEffect(() => {
+    // React's onSelect stays silent while the mouse is still down, so drag
+    // selection needs the document-level selectionchange stream to paint the
+    // highlight live instead of only after mouseup
+    function handleSelectionChange() {
+      const textarea = textareaRef.current
+      if (!textarea || document.activeElement !== textarea) return
+
+      setSelectionStart(textarea.selectionStart)
+      setSelectionEnd(textarea.selectionEnd)
+    }
+
+    document.addEventListener("selectionchange", handleSelectionChange)
+    return () => {
+      document.removeEventListener("selectionchange", handleSelectionChange)
+    }
+  }, [])
 
   useEffect(() => {
     if (!fragment) return
@@ -124,19 +182,31 @@ export function FragmentEditor({
       textarea.setSelectionRange(cursor, cursor)
       textarea.scrollTop = textarea.scrollHeight
       setEditorScrollTop(textarea.scrollTop)
+      // focus() 会同步触发 onFocus→syncSelection，在 setSelectionRange 之前
+      // 读到浏览器默认选区(0)并写回 state；这里再同步一次，确保自绘光标与
+      // 原生选区都停在末尾，而不是被覆盖到起始位置
+      setSelectionStart(cursor)
+      setSelectionEnd(cursor)
       setIsEditorFocused(true)
     })
   }, [fragment?.id])
 
   useLayoutEffect(() => {
-    syncCustomCaret()
-  }, [
-    content,
-    isEditorFocused,
-    selectionEnd,
-    selectionStart,
-    suppressedActiveTag,
-  ])
+    const textarea = textareaRef.current
+    const frame = editorFrameRef.current
+
+    if (
+      !textarea ||
+      !frame ||
+      !isEditorFocused ||
+      selectionStart !== selectionEnd
+    ) {
+      setCustomCaret(null)
+      return
+    }
+
+    setCustomCaret(getEditorCaretBox(textarea, frame, selectionStart))
+  }, [content, editorScrollTop, isEditorFocused, selectionEnd, selectionStart])
 
   useLayoutEffect(() => {
     if (!activeTag || !textareaRef.current || !editorFrameRef.current) return
@@ -157,19 +227,28 @@ export function FragmentEditor({
   }, [activeTag, content, editorScrollTop, selectionStart])
 
   useEffect(() => {
-    if (!fragment || content === lastSavedContentRef.current) return
+    if (!fragment) return
+
+    clearSaveTimer()
+
+    if (content === lastSavedContentRef.current) {
+      setSaveState("saved")
+      return
+    }
 
     setSaveState("dirty")
-    clearSaveTimer()
+
+    if (!isZen) return
+
     saveTimerRef.current = window.setTimeout(() => {
       void saveDraft(content)
     }, 800)
 
     return clearSaveTimer
-  }, [content, fragment?.id])
+  }, [content, fragment?.id, isZen])
 
   useEffect(() => {
-    if (!fragment || !isTauri()) return
+    if (!fragment || !isZen || !isTauri()) return
 
     void setWindowControlsHidden(true).catch((error) => {
       console.warn("Unable to hide window controls for zen editor", error)
@@ -180,12 +259,17 @@ export function FragmentEditor({
         console.warn("Unable to restore window controls", error)
       })
     }
-  }, [fragment?.id])
+  }, [fragment?.id, isZen])
 
   if (!fragment) return null
 
   async function handleClose() {
     clearSaveTimer()
+
+    if (!isZen) {
+      onClose()
+      return
+    }
 
     if (content !== lastSavedContentRef.current) {
       const saved = await saveDraft(content)
@@ -195,9 +279,26 @@ export function FragmentEditor({
     onClose()
   }
 
+  async function handleSubmit() {
+    clearSaveTimer()
+
+    if (content === lastSavedContentRef.current) {
+      onClose()
+      return
+    }
+
+    const saved = await saveDraft(content)
+    if (saved) {
+      onClose()
+    }
+  }
+
   function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
     const nativeEvent = event.nativeEvent
     const isCloseShortcut = event.key === "Escape"
+    const isSaveShortcut =
+      event.key === "Enter" &&
+      (event.metaKey || event.ctrlKey || event.shiftKey)
     const isComposing =
       isComposingRef.current ||
       nativeEvent.isComposing ||
@@ -226,13 +327,54 @@ export function FragmentEditor({
       }
     }
 
+    const isCollapsedCaret =
+      event.currentTarget.selectionStart === event.currentTarget.selectionEnd
+
+    // 标签建议列表可见时，方向键在列表内移动，回车选中高亮项
+    if (activeTag && tagSuggestions.length > 0 && isCollapsedCaret) {
+      if (event.key === "ArrowDown") {
+        event.preventDefault()
+        setActiveSuggestionIndex(
+          (current) => (current + 1) % tagSuggestions.length
+        )
+        return
+      }
+
+      if (event.key === "ArrowUp") {
+        event.preventDefault()
+        setActiveSuggestionIndex(
+          (current) =>
+            (current - 1 + tagSuggestions.length) % tagSuggestions.length
+        )
+        return
+      }
+
+      if (
+        event.key === "Enter" &&
+        !event.altKey &&
+        !event.ctrlKey &&
+        !event.metaKey &&
+        !event.shiftKey
+      ) {
+        const item =
+          tagSuggestions[
+            Math.min(activeSuggestionIndex, tagSuggestions.length - 1)
+          ]
+        if (item) {
+          event.preventDefault()
+          applyTag(item.tag)
+          return
+        }
+      }
+    }
+
     if (
       event.key === "Enter" &&
       !event.altKey &&
       !event.ctrlKey &&
       !event.metaKey &&
       !event.shiftKey &&
-      event.currentTarget.selectionStart === event.currentTarget.selectionEnd
+      isCollapsedCaret
     ) {
       const nextEdit = applyActiveTagCompletion(
         event.currentTarget.value,
@@ -244,6 +386,13 @@ export function FragmentEditor({
         applyTextEdit(nextEdit)
         return
       }
+    }
+
+    // 复用主编辑框（capture-box）的保存快捷键：cmd/ctrl/shift + Enter 提交
+    if (isSaveShortcut) {
+      event.preventDefault()
+      void handleSubmit()
+      return
     }
 
     if (!isCloseShortcut) return
@@ -261,6 +410,10 @@ export function FragmentEditor({
     showCaretImmediately()
   }
 
+  function showCaretImmediately() {
+    setCaretEpoch((current) => current + 1)
+  }
+
   async function saveDraft(nextContent: string) {
     if (!fragment) return false
     if (nextContent.trim().length === 0) {
@@ -273,6 +426,9 @@ export function FragmentEditor({
 
     try {
       const tags = normalizeTagList(["inbox", ...extractTags(nextContent)])
+      if ((fragment.lockbox || wantsLockbox(nextContent, tags)) && hasMarkdownImage(nextContent)) {
+        throw new Error("密匣暂不支持图片附件。请先移除图片，再保存到密匣。")
+      }
       await onSaveRef.current(fragment.id, nextContent, tags)
       lastSavedContentRef.current = nextContent
       setSaveState("saved")
@@ -336,7 +492,14 @@ export function FragmentEditor({
 
   async function uploadImage(file: File) {
     const textarea = textareaRef.current
-    if (!textarea) return
+    if (!textarea || !fragment) return
+    const tags = normalizeTagList(["inbox", ...extractTags(content)])
+    if (fragment.lockbox || wantsLockbox(content, tags)) {
+      toast.error("密匣暂不支持图片附件", {
+        description: "请先移除 #密匣，或在公开笔记中上传图片。",
+      })
+      return
+    }
 
     try {
       const bytes = Array.from(new Uint8Array(await file.arrayBuffer()))
@@ -381,10 +544,6 @@ export function FragmentEditor({
         nextEdit.selectionEnd
       )
     })
-  }
-
-  function showCaretImmediately() {
-    setCaretEpoch((current) => current + 1)
   }
 
   function clearSaveTimer() {
@@ -449,123 +608,179 @@ export function FragmentEditor({
     })
   }
 
-  function syncCustomCaret() {
-    const textarea = textareaRef.current
-    const frame = editorFrameRef.current
+  const editorPaddingClass = isZen
+    ? "px-0 py-[var(--shard-space-4)]"
+    : "px-[var(--shard-composer-padding)] py-[var(--shard-composer-padding)]"
+  const fieldClass = isZen
+    ? "h-full min-h-0 overflow-y-auto px-0 py-[var(--shard-space-4)]"
+    : "min-h-[144px] max-h-[min(52dvh,520px)] overflow-y-auto rounded-t-[var(--shard-surface-radius)] rounded-b-none px-[var(--shard-composer-padding)] py-[var(--shard-composer-padding)]"
+  const canSubmit = saveState !== "saving" && content.trim().length > 0
+  const editorFrame = (
+    <div
+      className={isZen ? "shard-content-measure relative h-full" : "relative"}
+      ref={editorFrameRef}
+    >
+      {content ? (
+        <div
+          aria-hidden="true"
+          className={`shard-editor-highlight-layer shard-memo-tags ${editorPaddingClass}`}
+          style={{
+            transform: `translateY(-${editorScrollTop}px)`,
+          }}
+        >
+          <FragmentContent
+            caretAligned
+            content={content}
+            highlightTags
+            onTaskToggle={toggleTask}
+            renderImages
+            selectionEnd={isEditorFocused ? selectionEnd : undefined}
+            selectionStart={isEditorFocused ? selectionStart : undefined}
+            vaultPath={vaultPath}
+          />
+        </div>
+      ) : null}
+      <Textarea
+        className={`shard-editor-field shard-editor-overlay-field relative z-10 resize-none border-0 bg-transparent shadow-none focus-visible:border-transparent focus-visible:ring-0 ${fieldClass}`}
+        onChange={(event) => {
+          const outsideTagEdit = getOutsideTagInputEdit(
+            content,
+            event.currentTarget.value,
+            event.currentTarget.selectionStart,
+            suppressedActiveTag
+          )
 
-    if (
-      !textarea ||
-      !frame ||
-      !isEditorFocused ||
-      selectionStart !== selectionEnd
-    ) {
-      setCustomCaret(null)
-      return
-    }
+          if (outsideTagEdit) {
+            applyTextEdit(outsideTagEdit)
+            return
+          }
 
-    const currentValue = textarea.value
-    const currentActiveTag = getActiveTag(currentValue, selectionStart)
-    const caret = getTextareaCaretBox(textarea, selectionStart)
-    setCustomCaret(currentActiveTag ? { ...caret, top: caret.lineTop } : caret)
+          setSuppressedActiveTag(null)
+          setContent(event.currentTarget.value)
+          syncSelection(event.currentTarget)
+        }}
+        onClick={(event) => {
+          syncSelection(event.currentTarget)
+        }}
+        onCompositionEnd={() => {
+          isComposingRef.current = false
+        }}
+        onCompositionStart={() => {
+          isComposingRef.current = true
+        }}
+        onKeyDown={handleKeyDown}
+        onMouseDown={rememberPointer}
+        onKeyUp={(event) => {
+          syncSelection(event.currentTarget)
+        }}
+        onSelect={(event) => {
+          syncSelection(event.currentTarget)
+        }}
+        onBlur={() => {
+          setIsEditorFocused(false)
+        }}
+        onFocus={(event) => {
+          setIsEditorFocused(true)
+          syncSelection(event.currentTarget)
+        }}
+        onScroll={(event) => {
+          setEditorScrollTop(event.currentTarget.scrollTop)
+        }}
+        ref={textareaRef}
+        value={content}
+      />
+      {customCaret ? (
+        <span
+          aria-hidden="true"
+          className="shard-custom-caret"
+          key={`${caretEpoch}-${selectionStart}-${selectionEnd}`}
+          style={{
+            height: customCaret.height,
+            left: customCaret.left,
+            top: customCaret.top,
+          }}
+        />
+      ) : null}
+      {activeTag ? (
+        <TagCompletionPopover
+          activeIndex={activeSuggestionIndex}
+          left={tagPopoverPosition.left}
+          onHover={setActiveSuggestionIndex}
+          onSelect={applyTag}
+          suggestions={tagSuggestions}
+          top={tagPopoverPosition.top}
+        />
+      ) : null}
+    </div>
+  )
+
+  if (!isZen) {
+    return (
+      <article className="relative flex flex-col rounded-[var(--shard-surface-radius)] border border-border bg-card p-0 shadow-[var(--shard-composer-shadow)] transition-colors focus-within:border-[color:var(--shard-sapphire)]">
+        {editorFrame}
+        <div className="shard-edge-action-row rounded-b-[var(--shard-surface-radius)] bg-card">
+          <EditorToolbar
+            disabled={saveState === "saving"}
+            onImageUpload={uploadImage}
+            onInlineFormat={formatInline}
+            onInsertTag={insertTag}
+            onLineFormat={formatLines}
+            trailing={
+              <>
+                <span
+                  aria-hidden="true"
+                  className="mx-[var(--shard-space-1)] h-5 w-px bg-border/[var(--shard-alpha-55)]"
+                />
+                <span className="px-[var(--shard-space-1)] text-sm font-medium text-muted-foreground tabular-nums">
+                  {content.trim().length}
+                </span>
+                <Button
+                  className="h-8 rounded-[var(--shard-radius-control)] px-[var(--shard-space-2)] text-muted-foreground"
+                  disabled={saveState === "saving"}
+                  onMouseDown={(event) => {
+                    event.preventDefault()
+                    void handleClose()
+                  }}
+                  size="sm"
+                  type="button"
+                  variant="ghost"
+                >
+                  取消
+                </Button>
+                <Button
+                  className="shard-edge-action shard-edge-action-save size-8 rounded-full bg-[color:var(--shard-sapphire)] text-white hover:bg-[color:var(--shard-sapphire-hover)] disabled:bg-transparent disabled:text-muted-foreground"
+                  disabled={!canSubmit}
+                  onMouseDown={(event) => {
+                    event.preventDefault()
+                    void handleSubmit()
+                  }}
+                  size="icon-sm"
+                  title={saveState === "saving" ? "保存中" : "保存修改"}
+                  type="button"
+                >
+                  {saveState === "saving" ? (
+                    <Loader2Icon
+                      className="animate-spin"
+                      data-icon="inline-start"
+                    />
+                  ) : (
+                    <SendHorizontalIcon data-icon="inline-start" />
+                  )}
+                  <span className="sr-only">
+                    {saveState === "saving" ? "保存中" : "保存修改"}
+                  </span>
+                </Button>
+              </>
+            }
+          />
+        </div>
+      </article>
+    )
   }
 
   return (
     <div className="fixed inset-0 z-50 grid grid-rows-[minmax(0,1fr)_auto] bg-background text-foreground">
-      <div className="shard-content-inset min-h-0">
-        <div
-          className="shard-content-measure relative h-full"
-          ref={editorFrameRef}
-        >
-          {content ? (
-            <div
-              aria-hidden="true"
-              className="shard-editor-highlight-layer shard-memo-tags px-0 py-[var(--shard-space-4)]"
-              style={{
-                transform: `translateY(-${editorScrollTop}px)`,
-              }}
-            >
-              <FragmentContent
-                content={content}
-                highlightTags
-                onTaskToggle={toggleTask}
-                selectionEnd={isEditorFocused ? selectionEnd : undefined}
-                selectionStart={isEditorFocused ? selectionStart : undefined}
-              />
-            </div>
-          ) : null}
-          <Textarea
-            className="shard-editor-field shard-editor-overlay-field relative z-10 h-full min-h-0 resize-none overflow-y-auto border-0 bg-transparent px-0 py-[var(--shard-space-4)] shadow-none focus-visible:border-transparent focus-visible:ring-0"
-            onChange={(event) => {
-              const outsideTagEdit = getOutsideTagInputEdit(
-                content,
-                event.currentTarget.value,
-                event.currentTarget.selectionStart,
-                suppressedActiveTag
-              )
-
-              if (outsideTagEdit) {
-                applyTextEdit(outsideTagEdit)
-                return
-              }
-
-              setSuppressedActiveTag(null)
-              setContent(event.currentTarget.value)
-              syncSelection(event.currentTarget)
-            }}
-            onClick={(event) => {
-              syncSelection(event.currentTarget)
-            }}
-            onCompositionEnd={() => {
-              isComposingRef.current = false
-            }}
-            onCompositionStart={() => {
-              isComposingRef.current = true
-            }}
-            onKeyDown={handleKeyDown}
-            onMouseDown={rememberPointer}
-            onKeyUp={(event) => {
-              syncSelection(event.currentTarget)
-            }}
-            onSelect={(event) => {
-              syncSelection(event.currentTarget)
-            }}
-            onBlur={() => {
-              setIsEditorFocused(false)
-            }}
-            onFocus={(event) => {
-              setIsEditorFocused(true)
-              syncSelection(event.currentTarget)
-            }}
-            onScroll={(event) => {
-              setEditorScrollTop(event.currentTarget.scrollTop)
-              syncCustomCaret()
-            }}
-            ref={textareaRef}
-            value={content}
-          />
-          {customCaret ? (
-            <span
-              aria-hidden="true"
-              className="shard-custom-caret"
-              key={`${caretEpoch}-${selectionStart}-${selectionEnd}`}
-              style={{
-                height: customCaret.height,
-                left: customCaret.left,
-                top: customCaret.top,
-              }}
-            />
-          ) : null}
-          {activeTag ? (
-            <TagCompletionPopover
-              exists={activeTagExists}
-              label={activeNewTag}
-              left={tagPopoverPosition.left}
-              onApply={() => applyTag(activeNewTag)}
-              top={tagPopoverPosition.top}
-            />
-          ) : null}
-        </div>
-      </div>
+      <div className="shard-content-inset min-h-0">{editorFrame}</div>
 
       <footer className="shard-content-inset pb-[var(--shard-space-4)]">
         <div className="mx-auto w-fit max-w-full rounded-[var(--shard-surface-radius)] bg-card p-[var(--shard-space-3)] shadow-[var(--shard-composer-shadow)]">
@@ -609,6 +824,8 @@ interface PointerPoint {
   x: number
   y: number
 }
+
+const MAX_TAG_SUGGESTIONS = 8
 
 function shouldSuppressActiveTagAfterPointer(
   textarea: HTMLTextAreaElement,

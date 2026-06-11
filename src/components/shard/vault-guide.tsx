@@ -99,8 +99,8 @@ const settingsCopy: Record<SettingsLocale, SettingsCopy> = {
     close: "Close",
     connectRemote: "Connect remote",
     connectRemoteBusy: "Connecting",
-    createRepo: "Create private repo",
-    createRepoBusy: "Creating",
+    createRepo: "Auto configure sync",
+    createRepoBusy: "Configuring",
     createVaultDescription: "Choose an empty folder and initialize Git.",
     createVaultLabel: "Create folder",
     dialogTitleCreate: "Choose or create a Shard vault folder",
@@ -109,11 +109,11 @@ const settingsCopy: Record<SettingsLocale, SettingsCopy> = {
       "Open an existing ShardVault, or choose a new folder as the local root.",
     directoryTitle: "Folder",
     githubBusy:
-      "Creating a private GitHub repository, connecting origin, and pushing the current commit.",
+      "Initializing Git if needed, creating a private GitHub repository, connecting origin, and pushing the current commit.",
     githubChecking: "Checking GitHub CLI sign-in...",
     githubCurrentAccount: "current account",
     githubIdle:
-      "When available, Shard will create a private repository, connect origin, and push local commits.",
+      "When available, Shard will initialize Git if needed, create a private repository, connect origin, and push local commits.",
     githubMissing:
       "GitHub CLI was not found. You can still enter a remote URL manually.",
     githubNotAuthenticated: "gh is not signed in. Run gh auth login first.",
@@ -132,7 +132,7 @@ const settingsCopy: Record<SettingsLocale, SettingsCopy> = {
     headlineDefault:
       "Choose an existing Shard folder, or create a new one as the local root for Markdown and Git.",
     headlineNeedsRemote:
-      "The current folder is usable, but it is not connected to a Git remote yet. Configure a remote before syncing to a cloud repository.",
+      "The current folder is usable, but sync is not configured yet. Auto configure GitHub sync, or enter any Git remote URL manually.",
     initGitDescription: "Enable local commit history for the current folder.",
     initGitLabel: "Initialize Git",
     manualRemoteHint:
@@ -153,16 +153,16 @@ const settingsCopy: Record<SettingsLocale, SettingsCopy> = {
     },
     remoteTitle: "Git remote",
     remoteNeeds:
-      "Use GitHub CLI to create a private repository automatically, or enter any Git repository URL manually.",
+      "Use GitHub CLI to initialize Git if needed, create a private repository, connect origin, and push local commits automatically.",
     remoteReady:
       "The remote is saved as origin and used to sync the local ShardVault to a cloud repository.",
     settingsTitle: "Settings",
     sideCurrent: "Folder",
     sideGit: "Git",
     sideRemote: "Remote",
-    toastGithubCreated: "GitHub repository created and connected",
+    toastGithubCreated: "Git sync configured",
     toastGithubCreatedDescription:
-      "Settings will stay open so you can keep checking Git status or adjust the remote.",
+      "A private GitHub repository is connected as origin. Use the sidebar sync action for future updates.",
     toastGithubFailed: "GitHub setup failed",
     toastGitInitialized: "Git initialized",
     toastGitInitializeFailed: "Git initialization failed",
@@ -175,25 +175,25 @@ const settingsCopy: Record<SettingsLocale, SettingsCopy> = {
     toastVaultSwitched: "Vault switched",
     vaultTitle: "Vault",
     githubAuthenticated: (account, protocol) =>
-      `Signed in as ${account}${protocol}. A private repository will be created and connected to origin.`,
+      `Signed in as ${account}${protocol}. Shard can configure GitHub sync automatically.`,
     githubProtocol: (protocol) => `, Git protocol ${protocol}`,
   },
   zh: {
     close: "关闭",
     connectRemote: "连接远端",
     connectRemoteBusy: "连接中",
-    createRepo: "创建私有仓库",
-    createRepoBusy: "创建中",
+    createRepo: "自动配置同步",
+    createRepoBusy: "配置中",
     createVaultDescription: "选择一个空目录，并为它初始化 Git。",
     createVaultLabel: "创建新目录",
     dialogTitleCreate: "选择或新建 Shard vault 目录",
     dialogTitleOpen: "选择已有 vault 目录",
     directoryDescription: "打开已有 ShardVault，或选择一个新目录作为本地根目录。",
     directoryTitle: "目录",
-    githubBusy: "正在创建 GitHub 私有仓库、连接 origin，并推送当前提交。",
+    githubBusy: "正在初始化 Git、创建 GitHub 私有仓库、连接 origin，并推送当前提交。",
     githubChecking: "正在检查 GitHub CLI 登录状态...",
     githubCurrentAccount: "当前账号",
-    githubIdle: "可用时会创建私有仓库、连接 origin，并推送本地提交。",
+    githubIdle: "可用时会自动初始化 Git、创建私有仓库、连接 origin，并推送本地提交。",
     githubMissing: "未检测到 gh。可以继续手动填写远端 URL。",
     githubNotAuthenticated: "gh 尚未登录。请先运行 gh auth login。",
     gitDescription: "Shard 用本地 Git 保存片段历史，remote 只负责云端同步。",
@@ -210,7 +210,7 @@ const settingsCopy: Record<SettingsLocale, SettingsCopy> = {
     headlineDefault:
       "选择已有 Shard 目录，或创建一个新目录作为 Markdown 与 Git 的本地根目录。",
     headlineNeedsRemote:
-      "当前目录已经可用，但还没有连接 Git 远端。配置 remote 后才能同步到云端仓库。",
+      "当前目录已经可用，但还没有完成同步配置。可以自动配置 GitHub 同步，也可以手动填写任意 Git 远端。",
     initGitDescription: "为当前目录开启本地提交历史。",
     initGitLabel: "初始化 Git",
     manualRemoteHint:
@@ -230,16 +230,16 @@ const settingsCopy: Record<SettingsLocale, SettingsCopy> = {
     },
     remoteTitle: "Git 远端",
     remoteNeeds:
-      "可以用 GitHub CLI 自动创建私有仓库，也可以手动填写任意 Git 仓库 URL。",
+      "可以用 GitHub CLI 自动初始化 Git、创建私有仓库、连接 origin，并推送本地提交。",
     remoteReady:
       "远端保存为 origin，用于把本地 ShardVault 同步到云端仓库。",
     settingsTitle: "设置",
     sideCurrent: "当前目录",
     sideGit: "Git 状态",
     sideRemote: "远端",
-    toastGithubCreated: "GitHub 仓库已创建并连接",
+    toastGithubCreated: "Git 同步已配置",
     toastGithubCreatedDescription:
-      "设置窗口会保持打开，可以继续检查 Git 状态或手动调整 remote。",
+      "私有 GitHub 仓库已连接为 origin，后续可直接从侧栏同步。",
     toastGithubFailed: "自动配置 GitHub 失败",
     toastGitInitialized: "Git 已初始化",
     toastGitInitializeFailed: "Git 初始化失败",
@@ -252,7 +252,7 @@ const settingsCopy: Record<SettingsLocale, SettingsCopy> = {
     toastVaultSwitched: "Vault 已切换",
     vaultTitle: "Vault",
     githubAuthenticated: (account, protocol) =>
-      `已登录 ${account}${protocol}。将创建私有仓库并连接 origin。`,
+      `已登录 ${account}${protocol}。Shard 可以自动配置 GitHub 同步。`,
     githubProtocol: (protocol) => `，Git 协议 ${protocol}`,
   },
 }
@@ -282,9 +282,7 @@ export function VaultGuide({
   const dialogRef = useRef<HTMLDivElement>(null)
   const copy = settingsCopy[getPreferredSettingsLocale()]
 
-  const needsRemote = Boolean(
-    vaultPath && git && git.status !== "no_git" && !git.hasRemote
-  )
+  const needsRemote = Boolean(vaultPath && git && !git.hasRemote)
   const isCreatingGithubRepo = activeAction === "github"
   const isConfiguringRemote = activeAction === "remote"
   const isRemoteBusy = isCreatingGithubRepo || isConfiguringRemote

@@ -22,6 +22,7 @@ AGENTS.md
 CLAUDE.md
 GEMINI.md
 .codex/*
+.claude/
 .cursor/
 .cursorignore
 .cursorrules

@@ -12,8 +12,9 @@
  * - card gap = composer padding = 16px
  * - heatmap width = 12 columns * 12px + 11 gaps * 5px = 199px
  * - text never scales with viewport width; layout absorbs responsive pressure
- * - editor fields use a custom caret; native textarea caret height follows the
- *   line box and is too visually tall for this writing surface
+ * - editor caret is custom (glyph-height, centered on the line). Its position
+ *   must be measured from the visible highlight layer with Range APIs, never
+ *   estimated from an off-screen textarea mirror
  *
  * Opacity contract:
  * Shard-authored color transparency uses Fibonacci-percent stops only:
@@ -157,7 +158,8 @@
     box-shadow: inset 0 0 0 1px var(--shard-tag-ring);
   }
 
-  .shard-card-tags .shard-tag {
+  .shard-card-tags .shard-tag,
+  .shard-tag-filters .shard-tag {
     border-radius: calc(var(--shard-radius-control) - 1px);
   }
 
@@ -303,8 +305,11 @@
   }
 
   .shard-task-marker-measure {
+    display: inline-block;
     visibility: hidden;
     white-space: pre;
+    line-height: inherit;
+    vertical-align: baseline;
   }
 
   .shard-task-list-marker {
@@ -334,6 +339,13 @@
   .shard-task-checkbox-checked {
     border-color: var(--shard-sapphire);
     background: var(--shard-sapphire);
+    /* Optical compensation: a solid square reads smaller than a hollow one of
+       the same size (irradiation), so nudge the checked box up ~6%. */
+    transform: translateY(-50%) scale(1.06);
+  }
+
+  .shard-task-toggle .shard-task-checkbox-checked {
+    transform: scale(1.06);
   }
 
   .shard-task-checkbox-checked::after {

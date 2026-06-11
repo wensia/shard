@@ -8,23 +8,39 @@ import type { Fragment } from "@/types"
 const WIDE_TIMELINE_QUERY = "(min-width: 96rem)"
 
 interface FragmentTimelineProps {
+  editingFragmentId?: string | null
   emptyMessage?: string
   fragments: Fragment[]
   isLoading: boolean
+  knownTags?: string[]
   onArchive?: (fragment: Fragment) => void
+  onCancelEdit?: () => void
   onEdit?: (fragment: Fragment) => void
+  onExportImage?: (fragment: Fragment) => void
+  onMoveToLockbox?: (fragment: Fragment) => void
+  onOpenZen?: (fragment: Fragment) => void
+  onPin?: (fragment: Fragment) => void
   onScrollDown?: () => void
+  onSave?: (id: string, content: string, tags: string[]) => Promise<Fragment>
   onToggleTask?: (fragment: Fragment, lineIndex: number) => void
   vaultPath?: string
 }
 
 export function FragmentTimeline({
+  editingFragmentId = null,
   emptyMessage = "还没有片段。写下第一条，按 Cmd/Ctrl/Shift+Enter 保存。",
   fragments,
   isLoading,
+  knownTags = [],
   onArchive,
+  onCancelEdit,
   onEdit,
+  onExportImage,
+  onMoveToLockbox,
+  onOpenZen,
+  onPin,
   onScrollDown,
+  onSave,
   onToggleTask,
   vaultPath,
 }: FragmentTimelineProps) {
@@ -92,9 +108,17 @@ export function FragmentTimeline({
                   {column.map((fragment) => (
                     <FragmentCard
                       fragment={fragment}
+                      isEditing={editingFragmentId === fragment.id}
                       key={fragment.id}
+                      knownTags={knownTags}
                       onArchive={onArchive}
+                      onCancelEdit={onCancelEdit}
                       onEdit={onEdit}
+                      onExportImage={onExportImage}
+                      onMoveToLockbox={onMoveToLockbox}
+                      onOpenZen={onOpenZen}
+                      onPin={onPin}
+                      onSave={onSave}
                       onToggleTask={onToggleTask}
                       vaultPath={vaultPath}
                     />

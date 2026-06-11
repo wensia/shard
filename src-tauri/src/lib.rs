@@ -1,5 +1,11 @@
+use aes_gcm::{
+    aead::{Aead, KeyInit},
+    Aes256Gcm, Nonce,
+};
+use argon2::{Algorithm, Argon2, Params, Version};
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use chrono::Local;
+use rand::{rngs::OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashSet,
@@ -7,12 +13,19 @@ use std::{
     io::Write,
     path::{Path, PathBuf},
     process::{Command, Stdio},
-    time::{SystemTime, UNIX_EPOCH},
+    sync::{Arc, Mutex},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tauri::Manager;
 
 const DEFAULT_WINDOW_WIDTH: f64 = 1180.0;
 const DEFAULT_WINDOW_HEIGHT: f64 = 820.0;
+const LOCKBOX_TAG: &str = "密匣";
+const LOCKBOX_TTL: Duration = Duration::from_secs(15 * 60);
+const LOCKBOX_VERSION: u32 = 1;
+const LOCKBOX_MASTER_KEY_BYTES: usize = 32;
+const LOCKBOX_SALT_BYTES: usize = 16;
+const LOCKBOX_NONCE_BYTES: usize = 12;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -28,6 +41,8 @@ struct Fragment {
     error: Option<String>,
     ai_status: String,
     archived: bool,
+    lockbox: bool,
+    pinned: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -36,6 +51,7 @@ struct VaultState {
     vault_path: String,
     fragments: Vec<Fragment>,
     git: GitInfo,
+    lockbox: LockboxState,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]
@@ -80,6 +96,17 @@ enum CodexReviewTask {
     Walk,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+enum CodexInsightLens {
+    Default,
+    Values,
+    Reverse,
+    SecondOrder,
+    Friction,
+    Actions,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct CodexReviewFragment {
@@ -94,6 +121,7 @@ struct CodexReviewFragment {
 #[serde(rename_all = "camelCase")]
 struct CodexReviewTaskRequest {
     task: CodexReviewTask,
+    lens: Option<CodexInsightLens>,
     fragments: Vec<CodexReviewFragment>,
     vault_path: String,
 }
@@ -104,6 +132,58 @@ struct CodexReviewTaskResult {
     text: String,
 }
 
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct LockboxState {
+    configured: bool,
+    unlocked: bool,
+    expires_at: Option<String>,
+    ttl_seconds: u64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LockboxSetupResult {
+    recovery_key: String,
+    vault: VaultState,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct LockboxManifest {
+    version: u32,
+    created_at: String,
+    updated_at: String,
+    password_salt: String,
+    password_nonce: String,
+    password_encrypted_master_key: String,
+    recovery_salt: String,
+    recovery_nonce: String,
+    recovery_encrypted_master_key: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct LockboxEncryptedFragment {
+    version: u32,
+    id: String,
+    nonce: String,
+    ciphertext: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct LockboxFragmentPayload {
+    frontmatter: FragmentFrontmatter,
+    body: String,
+}
+
+#[derive(Default)]
+struct LockboxSession {
+    expires_at: Option<SystemTime>,
+    master_key: Option<Vec<u8>>,
+    vault_path: Option<PathBuf>,
+}
+
+type LockboxRuntime = Arc<Mutex<LockboxSession>>;
+
 #[derive(Debug, Serialize, Deserialize)]
 struct FragmentFrontmatter {
     id: String,
@@ -112,7 +192,13 @@ struct FragmentFrontmatter {
     tags: Vec<String>,
     category: Option<String>,
     ai_status: Option<String>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pinned: bool,
     source: String,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 async fn run_blocking<T, F>(operation: F) -> Result<T, String>
@@ -126,10 +212,14 @@ where
 }
 
 #[tauri::command]
-async fn list_fragments(app: tauri::AppHandle) -> Result<VaultState, String> {
+async fn list_fragments(
+    app: tauri::AppHandle,
+    lockbox_runtime: tauri::State<'_, LockboxRuntime>,
+) -> Result<VaultState, String> {
+    let lockbox_runtime = lockbox_runtime.inner().clone();
     run_blocking(move || {
         let vault = ensure_vault_dirs(&app)?;
-        list_fragments_in_vault(&vault)
+        list_fragments_in_vault(&vault, &lockbox_runtime)
     })
     .await
 }
@@ -137,9 +227,11 @@ async fn list_fragments(app: tauri::AppHandle) -> Result<VaultState, String> {
 #[tauri::command]
 async fn set_vault_path(
     app: tauri::AppHandle,
+    lockbox_runtime: tauri::State<'_, LockboxRuntime>,
     path: String,
     initialize_git: bool,
 ) -> Result<VaultState, String> {
+    let lockbox_runtime = lockbox_runtime.inner().clone();
     run_blocking(move || {
         let vault = PathBuf::from(path.trim());
         if vault.as_os_str().is_empty() {
@@ -160,24 +252,34 @@ async fn set_vault_path(
                 vault_path: Some(vault.display().to_string()),
             },
         )?;
+        lock_lockbox_runtime(&lockbox_runtime);
 
-        list_fragments_in_vault(&vault)
+        list_fragments_in_vault(&vault, &lockbox_runtime)
     })
     .await
 }
 
 #[tauri::command]
-async fn initialize_vault_git(app: tauri::AppHandle) -> Result<VaultState, String> {
+async fn initialize_vault_git(
+    app: tauri::AppHandle,
+    lockbox_runtime: tauri::State<'_, LockboxRuntime>,
+) -> Result<VaultState, String> {
+    let lockbox_runtime = lockbox_runtime.inner().clone();
     run_blocking(move || {
         let vault = ensure_vault_dirs(&app)?;
         ensure_git_repo(&vault)?;
-        list_fragments_in_vault(&vault)
+        list_fragments_in_vault(&vault, &lockbox_runtime)
     })
     .await
 }
 
 #[tauri::command]
-async fn set_vault_remote(app: tauri::AppHandle, remote_url: String) -> Result<VaultState, String> {
+async fn set_vault_remote(
+    app: tauri::AppHandle,
+    lockbox_runtime: tauri::State<'_, LockboxRuntime>,
+    remote_url: String,
+) -> Result<VaultState, String> {
+    let lockbox_runtime = lockbox_runtime.inner().clone();
     run_blocking(move || {
         let remote_url = remote_url.trim().to_string();
         if remote_url.is_empty() {
@@ -194,7 +296,7 @@ async fn set_vault_remote(app: tauri::AppHandle, remote_url: String) -> Result<V
             run_git(&vault, &["remote", "add", "origin", &remote_url])?;
         }
 
-        list_fragments_in_vault(&vault)
+        list_fragments_in_vault(&vault, &lockbox_runtime)
     })
     .await
 }
@@ -325,8 +427,10 @@ fn run_codex_review_task_blocking(
 #[tauri::command]
 async fn create_github_vault_repo(
     app: tauri::AppHandle,
+    lockbox_runtime: tauri::State<'_, LockboxRuntime>,
     repo_name: String,
 ) -> Result<VaultState, String> {
+    let lockbox_runtime = lockbox_runtime.inner().clone();
     run_blocking(move || {
         let repo_name = sanitize_repo_name(&repo_name)?;
         let vault = ensure_vault_dirs(&app)?;
@@ -335,6 +439,8 @@ async fn create_github_vault_repo(
         if default_remote(&vault).is_some() {
             return Err("当前 Vault 已经配置 Git remote。".to_string());
         }
+
+        commit_all_if_dirty(&vault, "configure git sync")?;
 
         run_gh_in(
             &vault,
@@ -354,12 +460,15 @@ async fn create_github_vault_repo(
             push_vault(&vault)?;
         }
 
-        list_fragments_in_vault(&vault)
+        list_fragments_in_vault(&vault, &lockbox_runtime)
     })
     .await
 }
 
-fn list_fragments_in_vault(vault: &Path) -> Result<VaultState, String> {
+fn list_fragments_in_vault(
+    vault: &Path,
+    lockbox_runtime: &LockboxRuntime,
+) -> Result<VaultState, String> {
     let mut files = Vec::new();
     collect_markdown_files(&vault.join("fragments"), &mut files)?;
     collect_markdown_files(&vault.join("archive"), &mut files)?;
@@ -370,21 +479,38 @@ fn list_fragments_in_vault(vault: &Path) -> Result<VaultState, String> {
         .filter_map(|path| read_fragment(path, &vault, &dirty_paths, None).ok())
         .collect::<Vec<_>>();
 
-    fragments.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    if let Some(master_key) = unlocked_lockbox_master_key(vault, lockbox_runtime) {
+        let mut lockbox_files = Vec::new();
+        collect_lockbox_files(&vault.join("lockbox").join("fragments"), &mut lockbox_files)?;
+        collect_lockbox_files(&vault.join("lockbox").join("archive"), &mut lockbox_files)?;
+
+        fragments.extend(lockbox_files.iter().filter_map(|path| {
+            read_lockbox_fragment(path, vault, &dirty_paths, &master_key, None).ok()
+        }));
+    }
+
+    fragments.sort_by(|a, b| {
+        b.pinned
+            .cmp(&a.pinned)
+            .then_with(|| b.created_at.cmp(&a.created_at))
+    });
 
     Ok(VaultState {
         vault_path: vault.display().to_string(),
         fragments,
         git: git_info(&vault),
+        lockbox: lockbox_state(vault, lockbox_runtime),
     })
 }
 
 #[tauri::command]
 async fn create_fragment(
     app: tauri::AppHandle,
+    lockbox_runtime: tauri::State<'_, LockboxRuntime>,
     content: String,
     tags: Option<Vec<String>>,
 ) -> Result<Fragment, String> {
+    let lockbox_runtime = lockbox_runtime.inner().clone();
     run_blocking(move || {
         let content = content.trim().to_string();
         if content.is_empty() {
@@ -392,6 +518,16 @@ async fn create_fragment(
         }
 
         let vault = ensure_vault_dirs(&app)?;
+        let normalized_tags = normalize_tags(tags.unwrap_or_default(), true);
+        if contains_lockbox_tag(&normalized_tags) {
+            return create_lockbox_fragment_in_vault(
+                &vault,
+                &lockbox_runtime,
+                &content,
+                normalized_tags,
+            );
+        }
+
         let now = Local::now();
         let suffix = unique_suffix();
         let id = format!("{}-{}", now.format("%Y%m%d-%H%M%S"), suffix);
@@ -408,9 +544,10 @@ async fn create_fragment(
             id: id.clone(),
             created_at: created_at.clone(),
             updated_at: created_at,
-            tags: normalize_tags(tags.unwrap_or_default(), true),
+            tags: normalized_tags,
             category: None,
             ai_status: Some("none".to_string()),
+            pinned: false,
             source: "desktop".to_string(),
         };
 
@@ -438,16 +575,34 @@ async fn create_fragment(
 #[tauri::command]
 async fn update_fragment_tags(
     app: tauri::AppHandle,
+    lockbox_runtime: tauri::State<'_, LockboxRuntime>,
     id: String,
     tags: Vec<String>,
 ) -> Result<Fragment, String> {
+    let lockbox_runtime = lockbox_runtime.inner().clone();
     run_blocking(move || {
         let vault = ensure_vault_dirs(&app)?;
+        let normalized_tags = normalize_tags(tags, false);
+
+        if let Some(lockbox_path) = find_lockbox_fragment_path(&vault, &id)? {
+            let master_key = require_unlocked_lockbox_master_key(&vault, &lockbox_runtime)?;
+            return update_lockbox_fragment_tags_in_vault(
+                &vault,
+                &lockbox_path,
+                &master_key,
+                normalized_tags,
+            );
+        }
+
         let path = find_fragment_path(&vault, &id)?.ok_or_else(|| format!("找不到片段 {}", id))?;
         let text = fs::read_to_string(&path).map_err(|error| error.to_string())?;
         let (mut frontmatter, body) = parse_fragment_text(&text)?;
 
-        let mut next_tags = normalize_tags(tags, false);
+        if contains_lockbox_tag(&normalized_tags) {
+            return move_public_fragment_to_lockbox_in_vault(&vault, &lockbox_runtime, &path);
+        }
+
+        let mut next_tags = normalized_tags;
         if next_tags.is_empty() {
             next_tags.push("inbox".to_string());
         }
@@ -478,21 +633,46 @@ async fn update_fragment_tags(
 #[tauri::command]
 async fn update_fragment(
     app: tauri::AppHandle,
+    lockbox_runtime: tauri::State<'_, LockboxRuntime>,
     id: String,
     content: String,
     tags: Option<Vec<String>>,
 ) -> Result<Fragment, String> {
+    let lockbox_runtime = lockbox_runtime.inner().clone();
     run_blocking(move || {
         if content.trim().is_empty() {
             return Err("片段内容不能为空".to_string());
         }
 
         let vault = ensure_vault_dirs(&app)?;
+        let normalized_tags = normalize_tags(tags.unwrap_or_default(), false);
+
+        if let Some(lockbox_path) = find_lockbox_fragment_path(&vault, &id)? {
+            let master_key = require_unlocked_lockbox_master_key(&vault, &lockbox_runtime)?;
+            return update_lockbox_fragment_in_vault(
+                &vault,
+                &lockbox_path,
+                &master_key,
+                content.trim(),
+                normalized_tags,
+            );
+        }
+
         let path = find_fragment_path(&vault, &id)?.ok_or_else(|| format!("找不到片段 {}", id))?;
         let text = fs::read_to_string(&path).map_err(|error| error.to_string())?;
         let (mut frontmatter, _) = parse_fragment_text(&text)?;
 
-        let mut next_tags = normalize_tags(tags.unwrap_or_default(), false);
+        if contains_lockbox_tag(&normalized_tags) {
+            return move_public_fragment_content_to_lockbox_in_vault(
+                &vault,
+                &lockbox_runtime,
+                &path,
+                content.trim(),
+                normalized_tags,
+            );
+        }
+
+        let mut next_tags = normalized_tags;
         if next_tags.is_empty() {
             next_tags.push("inbox".to_string());
         }
@@ -514,9 +694,19 @@ async fn update_fragment(
 }
 
 #[tauri::command]
-async fn archive_fragment(app: tauri::AppHandle, id: String) -> Result<Fragment, String> {
+async fn archive_fragment(
+    app: tauri::AppHandle,
+    lockbox_runtime: tauri::State<'_, LockboxRuntime>,
+    id: String,
+) -> Result<Fragment, String> {
+    let lockbox_runtime = lockbox_runtime.inner().clone();
     run_blocking(move || {
         let vault = ensure_vault_dirs(&app)?;
+        if let Some(lockbox_path) = find_lockbox_fragment_path(&vault, &id)? {
+            let master_key = require_unlocked_lockbox_master_key(&vault, &lockbox_runtime)?;
+            return archive_lockbox_fragment_in_vault(&vault, &lockbox_path, &master_key, &id);
+        }
+
         let path = find_fragment_path(&vault, &id)?.ok_or_else(|| format!("找不到片段 {}", id))?;
         let rel_path = relative_path(&vault, &path)?;
 
@@ -554,6 +744,48 @@ async fn archive_fragment(app: tauri::AppHandle, id: String) -> Result<Fragment,
         };
 
         read_fragment(&archived_path, &vault, &dirty, override_status)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn set_fragment_pinned(
+    app: tauri::AppHandle,
+    lockbox_runtime: tauri::State<'_, LockboxRuntime>,
+    id: String,
+    pinned: bool,
+) -> Result<Fragment, String> {
+    let lockbox_runtime = lockbox_runtime.inner().clone();
+    run_blocking(move || {
+        let vault = ensure_vault_dirs(&app)?;
+        if let Some(lockbox_path) = find_lockbox_fragment_path(&vault, &id)? {
+            let master_key = require_unlocked_lockbox_master_key(&vault, &lockbox_runtime)?;
+            return set_lockbox_fragment_pinned_in_vault(
+                &vault,
+                &lockbox_path,
+                &master_key,
+                pinned,
+            );
+        }
+
+        let path = find_fragment_path(&vault, &id)?.ok_or_else(|| format!("找不到片段 {}", id))?;
+        set_public_fragment_pinned_in_vault(&vault, &path, pinned)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn move_fragment_to_lockbox(
+    app: tauri::AppHandle,
+    lockbox_runtime: tauri::State<'_, LockboxRuntime>,
+    id: String,
+) -> Result<VaultState, String> {
+    let lockbox_runtime = lockbox_runtime.inner().clone();
+    run_blocking(move || {
+        let vault = ensure_vault_dirs(&app)?;
+        let path = find_fragment_path(&vault, &id)?.ok_or_else(|| format!("找不到片段 {}", id))?;
+        move_public_fragment_to_lockbox_in_vault(&vault, &lockbox_runtime, &path)?;
+        list_fragments_in_vault(&vault, &lockbox_runtime)
     })
     .await
 }
@@ -601,6 +833,168 @@ async fn read_fragment_image(app: tauri::AppHandle, path: String) -> Result<Stri
         let encoded = BASE64_STANDARD.encode(bytes);
 
         Ok(format!("data:{mime_type};base64,{encoded}"))
+    })
+    .await
+}
+
+#[tauri::command]
+async fn save_recovery_key(path: String, recovery_key: String) -> Result<(), String> {
+    run_blocking(move || {
+        if recovery_key.trim().is_empty() {
+            return Err("恢复密钥不能为空".to_string());
+        }
+
+        let path = PathBuf::from(path);
+        if path.as_os_str().is_empty() {
+            return Err("保存路径不能为空".to_string());
+        }
+        if path.is_dir() {
+            return Err("请选择文件保存路径，而不是文件夹。".to_string());
+        }
+
+        if let Some(parent) = path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
+            fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        }
+
+        let text = format!(
+            "Shard 恢复密钥\n\n{recovery_key}\n\n这是唯一能保留密匣内容的重置凭据。Shard 不保存恢复密钥明文，关闭后不会再次显示。\n"
+        );
+        fs::write(&path, text).map_err(|error| error.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
+async fn save_exported_image(path: String, bytes: Vec<u8>) -> Result<(), String> {
+    run_blocking(move || {
+        if bytes.is_empty() {
+            return Err("图片内容为空".to_string());
+        }
+
+        let path = PathBuf::from(path);
+        if path.as_os_str().is_empty() {
+            return Err("保存路径不能为空".to_string());
+        }
+        if path.is_dir() {
+            return Err("请选择文件保存路径，而不是文件夹。".to_string());
+        }
+
+        if let Some(parent) = path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
+            fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        }
+
+        fs::write(&path, bytes).map_err(|error| error.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
+async fn setup_lockbox(
+    app: tauri::AppHandle,
+    lockbox_runtime: tauri::State<'_, LockboxRuntime>,
+    password: String,
+) -> Result<LockboxSetupResult, String> {
+    let lockbox_runtime = lockbox_runtime.inner().clone();
+    run_blocking(move || {
+        let vault = ensure_vault_dirs(&app)?;
+        let recovery_key = setup_lockbox_in_vault(&vault, &lockbox_runtime, &password)?;
+        Ok(LockboxSetupResult {
+            recovery_key,
+            vault: list_fragments_in_vault(&vault, &lockbox_runtime)?,
+        })
+    })
+    .await
+}
+
+#[tauri::command]
+async fn unlock_lockbox(
+    app: tauri::AppHandle,
+    lockbox_runtime: tauri::State<'_, LockboxRuntime>,
+    password: String,
+) -> Result<VaultState, String> {
+    let lockbox_runtime = lockbox_runtime.inner().clone();
+    run_blocking(move || {
+        let vault = ensure_vault_dirs(&app)?;
+        unlock_lockbox_in_vault(&vault, &lockbox_runtime, &password)?;
+        list_fragments_in_vault(&vault, &lockbox_runtime)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn lock_lockbox(
+    app: tauri::AppHandle,
+    lockbox_runtime: tauri::State<'_, LockboxRuntime>,
+) -> Result<VaultState, String> {
+    let lockbox_runtime = lockbox_runtime.inner().clone();
+    run_blocking(move || {
+        let vault = ensure_vault_dirs(&app)?;
+        lock_lockbox_runtime(&lockbox_runtime);
+        list_fragments_in_vault(&vault, &lockbox_runtime)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn change_lockbox_password(
+    app: tauri::AppHandle,
+    lockbox_runtime: tauri::State<'_, LockboxRuntime>,
+    current_password: String,
+    new_password: String,
+) -> Result<VaultState, String> {
+    let lockbox_runtime = lockbox_runtime.inner().clone();
+    run_blocking(move || {
+        let vault = ensure_vault_dirs(&app)?;
+        change_lockbox_password_in_vault(
+            &vault,
+            &lockbox_runtime,
+            &current_password,
+            &new_password,
+        )?;
+        list_fragments_in_vault(&vault, &lockbox_runtime)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn reset_lockbox_password(
+    app: tauri::AppHandle,
+    lockbox_runtime: tauri::State<'_, LockboxRuntime>,
+    recovery_key: String,
+    new_password: String,
+) -> Result<LockboxSetupResult, String> {
+    let lockbox_runtime = lockbox_runtime.inner().clone();
+    run_blocking(move || {
+        let vault = ensure_vault_dirs(&app)?;
+        let recovery_key = reset_lockbox_password_in_vault(
+            &vault,
+            &lockbox_runtime,
+            &recovery_key,
+            &new_password,
+        )?;
+        Ok(LockboxSetupResult {
+            recovery_key,
+            vault: list_fragments_in_vault(&vault, &lockbox_runtime)?,
+        })
+    })
+    .await
+}
+
+#[tauri::command]
+async fn clear_lockbox(
+    app: tauri::AppHandle,
+    lockbox_runtime: tauri::State<'_, LockboxRuntime>,
+    confirmation: String,
+) -> Result<VaultState, String> {
+    let lockbox_runtime = lockbox_runtime.inner().clone();
+    run_blocking(move || {
+        if confirmation.trim() != "清空密匣" {
+            return Err("请输入“清空密匣”确认删除。".to_string());
+        }
+
+        let vault = ensure_vault_dirs(&app)?;
+        clear_lockbox_in_vault(&vault, &lockbox_runtime)?;
+        list_fragments_in_vault(&vault, &lockbox_runtime)
     })
     .await
 }
@@ -756,6 +1150,7 @@ fn ensure_vault_layout(vault: &Path) -> Result<(), String> {
     fs::create_dir_all(vault.join("fragments")).map_err(|error| error.to_string())?;
     fs::create_dir_all(vault.join("archive")).map_err(|error| error.to_string())?;
     fs::create_dir_all(vault.join("assets")).map_err(|error| error.to_string())?;
+    fs::create_dir_all(vault.join(".shard")).map_err(|error| error.to_string())?;
     Ok(())
 }
 
@@ -833,6 +1228,24 @@ fn collect_markdown_files(dir: &Path, files: &mut Vec<PathBuf>) -> Result<(), St
     Ok(())
 }
 
+fn collect_lockbox_files(dir: &Path, files: &mut Vec<PathBuf>) -> Result<(), String> {
+    if !dir.exists() {
+        return Ok(());
+    }
+
+    for entry in fs::read_dir(dir).map_err(|error| error.to_string())? {
+        let entry = entry.map_err(|error| error.to_string())?;
+        let path = entry.path();
+        if path.is_dir() {
+            collect_lockbox_files(&path, files)?;
+        } else if path.extension().and_then(|ext| ext.to_str()) == Some("shard") {
+            files.push(path);
+        }
+    }
+
+    Ok(())
+}
+
 fn read_fragment(
     path: &Path,
     vault: &Path,
@@ -869,6 +1282,8 @@ fn read_fragment(
         error,
         ai_status: frontmatter.ai_status.unwrap_or_else(|| "none".to_string()),
         archived,
+        lockbox: false,
+        pinned: frontmatter.pinned,
     })
 }
 
@@ -897,6 +1312,383 @@ fn write_fragment_file(
     fs::write(path, text).map_err(|error| error.to_string())
 }
 
+fn set_public_fragment_pinned_in_vault(
+    vault: &Path,
+    path: &Path,
+    pinned: bool,
+) -> Result<Fragment, String> {
+    let rel_path = relative_path(vault, path)?;
+    if rel_path.starts_with("archive/") && pinned {
+        return Err("归档片段不能置顶。".to_string());
+    }
+
+    let text = fs::read_to_string(path).map_err(|error| error.to_string())?;
+    let (mut frontmatter, body) = parse_fragment_text(&text)?;
+    frontmatter.pinned = pinned;
+    frontmatter.updated_at = Local::now().to_rfc3339();
+    write_fragment_file(path, &frontmatter, body.trim_start_matches('\n'))?;
+
+    let commit_message = if pinned {
+        format!("pin fragment {}", frontmatter.id)
+    } else {
+        format!("unpin fragment {}", frontmatter.id)
+    };
+    let commit_result = commit_path_if_git(vault, &rel_path, &commit_message);
+    let dirty = dirty_paths(vault);
+    let override_status = commit_override_status(commit_result);
+
+    read_fragment(path, vault, &dirty, override_status)
+}
+
+fn create_lockbox_fragment_in_vault(
+    vault: &Path,
+    lockbox_runtime: &LockboxRuntime,
+    content: &str,
+    tags: Vec<String>,
+) -> Result<Fragment, String> {
+    reject_lockbox_images(content)?;
+    let master_key = require_unlocked_lockbox_master_key(vault, lockbox_runtime)?;
+    let now = Local::now();
+    let suffix = unique_suffix();
+    let id = format!("{}-{}", now.format("%Y%m%d-%H%M%S"), suffix);
+    let created_at = now.to_rfc3339();
+    let dir = vault
+        .join("lockbox")
+        .join("fragments")
+        .join(now.format("%Y").to_string())
+        .join(now.format("%m").to_string());
+    fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+
+    let file_name = format!("{}-{}.shard", now.format("%Y-%m-%d-%H%M%S"), suffix);
+    let path = dir.join(file_name);
+    let frontmatter = FragmentFrontmatter {
+        id,
+        created_at: created_at.clone(),
+        updated_at: created_at,
+        tags: normalize_lockbox_tags(tags),
+        category: None,
+        ai_status: Some("none".to_string()),
+        pinned: false,
+        source: "desktop-lockbox".to_string(),
+    };
+
+    write_lockbox_fragment_file(&path, &master_key, &frontmatter, content)?;
+
+    let rel_path = relative_path(vault, &path)?;
+    let commit_result = commit_path_if_git(
+        vault,
+        &rel_path,
+        &format!(
+            "create lockbox fragment {}",
+            now.format("%Y-%m-%d %H:%M:%S")
+        ),
+    );
+    let dirty = dirty_paths(vault);
+    let override_status = commit_override_status(commit_result);
+
+    read_lockbox_fragment(&path, vault, &dirty, &master_key, override_status)
+}
+
+fn update_lockbox_fragment_in_vault(
+    vault: &Path,
+    path: &Path,
+    master_key: &[u8],
+    content: &str,
+    tags: Vec<String>,
+) -> Result<Fragment, String> {
+    reject_lockbox_images(content)?;
+    let mut payload = read_lockbox_payload(path, master_key)?;
+    payload.frontmatter.tags = normalize_lockbox_tags(tags);
+    payload.frontmatter.updated_at = Local::now().to_rfc3339();
+    payload.body = content.to_string();
+    write_lockbox_payload(path, master_key, &payload)?;
+
+    let dirty = dirty_paths(vault);
+    let override_status = if vault.join(".git").exists() {
+        Some(("sync_pending".to_string(), None))
+    } else {
+        Some(("saved".to_string(), None))
+    };
+
+    read_lockbox_fragment(path, vault, &dirty, master_key, override_status)
+}
+
+fn update_lockbox_fragment_tags_in_vault(
+    vault: &Path,
+    path: &Path,
+    master_key: &[u8],
+    tags: Vec<String>,
+) -> Result<Fragment, String> {
+    let mut payload = read_lockbox_payload(path, master_key)?;
+    payload.frontmatter.tags = normalize_lockbox_tags(tags);
+    payload.frontmatter.updated_at = Local::now().to_rfc3339();
+    write_lockbox_payload(path, master_key, &payload)?;
+
+    let rel_path = relative_path(vault, path)?;
+    let commit_result = commit_path_if_git(
+        vault,
+        &rel_path,
+        &format!("update lockbox fragment tags {}", payload.frontmatter.id),
+    );
+    let dirty = dirty_paths(vault);
+    let override_status = commit_override_status(commit_result);
+
+    read_lockbox_fragment(path, vault, &dirty, master_key, override_status)
+}
+
+fn set_lockbox_fragment_pinned_in_vault(
+    vault: &Path,
+    path: &Path,
+    master_key: &[u8],
+    pinned: bool,
+) -> Result<Fragment, String> {
+    let rel_path = relative_path(vault, path)?;
+    if rel_path.starts_with("lockbox/archive/") && pinned {
+        return Err("归档片段不能置顶。".to_string());
+    }
+
+    let mut payload = read_lockbox_payload(path, master_key)?;
+    payload.frontmatter.pinned = pinned;
+    payload.frontmatter.updated_at = Local::now().to_rfc3339();
+    write_lockbox_payload(path, master_key, &payload)?;
+
+    let commit_message = if pinned {
+        format!("pin lockbox fragment {}", payload.frontmatter.id)
+    } else {
+        format!("unpin lockbox fragment {}", payload.frontmatter.id)
+    };
+    let commit_result = commit_path_if_git(vault, &rel_path, &commit_message);
+    let dirty = dirty_paths(vault);
+    let override_status = commit_override_status(commit_result);
+
+    read_lockbox_fragment(path, vault, &dirty, master_key, override_status)
+}
+
+fn move_public_fragment_to_lockbox_in_vault(
+    vault: &Path,
+    lockbox_runtime: &LockboxRuntime,
+    path: &Path,
+) -> Result<Fragment, String> {
+    let text = fs::read_to_string(path).map_err(|error| error.to_string())?;
+    let (frontmatter, body) = parse_fragment_text(&text)?;
+    move_public_fragment_payload_to_lockbox_in_vault(
+        vault,
+        lockbox_runtime,
+        path,
+        body.trim_start_matches('\n'),
+        frontmatter.tags.clone(),
+        Some(frontmatter),
+    )
+}
+
+fn move_public_fragment_content_to_lockbox_in_vault(
+    vault: &Path,
+    lockbox_runtime: &LockboxRuntime,
+    path: &Path,
+    content: &str,
+    tags: Vec<String>,
+) -> Result<Fragment, String> {
+    let text = fs::read_to_string(path).map_err(|error| error.to_string())?;
+    let (frontmatter, _) = parse_fragment_text(&text)?;
+    move_public_fragment_payload_to_lockbox_in_vault(
+        vault,
+        lockbox_runtime,
+        path,
+        content,
+        tags,
+        Some(frontmatter),
+    )
+}
+
+fn move_public_fragment_payload_to_lockbox_in_vault(
+    vault: &Path,
+    lockbox_runtime: &LockboxRuntime,
+    public_path: &Path,
+    content: &str,
+    tags: Vec<String>,
+    existing_frontmatter: Option<FragmentFrontmatter>,
+) -> Result<Fragment, String> {
+    reject_lockbox_images(content)?;
+    let master_key = require_unlocked_lockbox_master_key(vault, lockbox_runtime)?;
+    let mut frontmatter = existing_frontmatter.ok_or_else(|| "片段缺少 frontmatter".to_string())?;
+    frontmatter.tags = normalize_lockbox_tags(tags);
+    frontmatter.updated_at = Local::now().to_rfc3339();
+    frontmatter.source = "desktop-lockbox".to_string();
+
+    let public_rel = public_path
+        .strip_prefix(vault.join("fragments"))
+        .or_else(|_| public_path.strip_prefix(vault.join("archive")))
+        .map_err(|error| error.to_string())?;
+    let target_root = if relative_path(vault, public_path)?.starts_with("archive/") {
+        vault.join("lockbox").join("archive")
+    } else {
+        vault.join("lockbox").join("fragments")
+    };
+    let mut lockbox_path = target_root.join(public_rel);
+    lockbox_path.set_extension("shard");
+
+    if let Some(parent) = lockbox_path.parent() {
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    write_lockbox_fragment_file(&lockbox_path, &master_key, &frontmatter, content)?;
+    fs::remove_file(public_path).map_err(|error| error.to_string())?;
+
+    let commit_result = commit_all_if_git(
+        vault,
+        &format!("move fragment {} to lockbox", frontmatter.id),
+    );
+    let dirty = dirty_paths(vault);
+    let override_status = commit_override_status(commit_result);
+
+    read_lockbox_fragment(&lockbox_path, vault, &dirty, &master_key, override_status)
+}
+
+fn archive_lockbox_fragment_in_vault(
+    vault: &Path,
+    path: &Path,
+    master_key: &[u8],
+    id: &str,
+) -> Result<Fragment, String> {
+    let rel_path = relative_path(vault, path)?;
+    if rel_path.starts_with("lockbox/archive/") {
+        let dirty = dirty_paths(vault);
+        return read_lockbox_fragment(path, vault, &dirty, master_key, None);
+    }
+
+    let active_root = vault.join("lockbox").join("fragments");
+    let archived_root = vault.join("lockbox").join("archive");
+    let active_rel = path
+        .strip_prefix(&active_root)
+        .map_err(|error| error.to_string())?;
+    let archived_path = archived_root.join(active_rel);
+
+    if let Some(parent) = archived_path.parent() {
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+
+    fs::rename(path, &archived_path)
+        .or_else(|_| {
+            fs::copy(path, &archived_path)
+                .map(|_| ())
+                .and_then(|_| fs::remove_file(path))
+        })
+        .map_err(|error| error.to_string())?;
+
+    let commit_result = commit_all_if_git(vault, &format!("archive lockbox fragment {}", id));
+    let dirty = dirty_paths(vault);
+    let override_status = commit_override_status(commit_result);
+
+    read_lockbox_fragment(&archived_path, vault, &dirty, master_key, override_status)
+}
+
+fn read_lockbox_fragment(
+    path: &Path,
+    vault: &Path,
+    dirty_paths: &HashSet<String>,
+    master_key: &[u8],
+    override_status: Option<(String, Option<String>)>,
+) -> Result<Fragment, String> {
+    let payload = read_lockbox_payload(path, master_key)?;
+    let rel_path = relative_path(vault, path)?;
+    let (git_status, error) = override_status.unwrap_or_else(|| {
+        if !vault.join(".git").exists() {
+            ("saved".to_string(), None)
+        } else if dirty_paths.contains(&rel_path) {
+            ("sync_pending".to_string(), None)
+        } else {
+            ("committed".to_string(), None)
+        }
+    });
+    let archived = rel_path.starts_with("lockbox/archive/");
+
+    Ok(Fragment {
+        id: payload.frontmatter.id,
+        content: payload.body.trim_start_matches('\n').to_string(),
+        created_at: payload.frontmatter.created_at,
+        updated_at: payload.frontmatter.updated_at,
+        tags: payload.frontmatter.tags,
+        category: payload.frontmatter.category,
+        path: rel_path,
+        git_status,
+        error,
+        ai_status: payload
+            .frontmatter
+            .ai_status
+            .unwrap_or_else(|| "none".to_string()),
+        archived,
+        lockbox: true,
+        pinned: payload.frontmatter.pinned,
+    })
+}
+
+fn write_lockbox_fragment_file(
+    path: &Path,
+    master_key: &[u8],
+    frontmatter: &FragmentFrontmatter,
+    body: &str,
+) -> Result<(), String> {
+    let payload = LockboxFragmentPayload {
+        frontmatter: FragmentFrontmatter {
+            id: frontmatter.id.clone(),
+            created_at: frontmatter.created_at.clone(),
+            updated_at: frontmatter.updated_at.clone(),
+            tags: frontmatter.tags.clone(),
+            category: frontmatter.category.clone(),
+            ai_status: frontmatter.ai_status.clone(),
+            pinned: frontmatter.pinned,
+            source: frontmatter.source.clone(),
+        },
+        body: body.trim_end().to_string(),
+    };
+    write_lockbox_payload(path, master_key, &payload)
+}
+
+fn write_lockbox_payload(
+    path: &Path,
+    master_key: &[u8],
+    payload: &LockboxFragmentPayload,
+) -> Result<(), String> {
+    let plaintext = serde_json::to_vec(payload).map_err(|error| error.to_string())?;
+    let (nonce, ciphertext) = encrypt_bytes(master_key, &plaintext)?;
+    let encrypted = LockboxEncryptedFragment {
+        version: LOCKBOX_VERSION,
+        id: payload.frontmatter.id.clone(),
+        nonce,
+        ciphertext,
+    };
+    let text = serde_json::to_string_pretty(&encrypted).map_err(|error| error.to_string())?;
+    fs::write(path, text).map_err(|error| error.to_string())
+}
+
+fn read_lockbox_payload(path: &Path, master_key: &[u8]) -> Result<LockboxFragmentPayload, String> {
+    let text = fs::read_to_string(path).map_err(|error| error.to_string())?;
+    let encrypted = serde_json::from_str::<LockboxEncryptedFragment>(&text)
+        .map_err(|error| error.to_string())?;
+    if encrypted.version != LOCKBOX_VERSION {
+        return Err("不支持的密匣片段版本。".to_string());
+    }
+
+    let plaintext = decrypt_bytes(master_key, &encrypted.nonce, &encrypted.ciphertext)?;
+    serde_json::from_slice(&plaintext).map_err(|error| error.to_string())
+}
+
+fn find_lockbox_fragment_path(vault: &Path, id: &str) -> Result<Option<PathBuf>, String> {
+    let mut files = Vec::new();
+    collect_lockbox_files(&vault.join("lockbox").join("fragments"), &mut files)?;
+    collect_lockbox_files(&vault.join("lockbox").join("archive"), &mut files)?;
+
+    for path in files {
+        let text = fs::read_to_string(&path).map_err(|error| error.to_string())?;
+        if let Ok(encrypted) = serde_json::from_str::<LockboxEncryptedFragment>(&text) {
+            if encrypted.id == id {
+                return Ok(Some(path));
+            }
+        }
+    }
+
+    Ok(None)
+}
+
 fn find_fragment_path(vault: &Path, id: &str) -> Result<Option<PathBuf>, String> {
     let mut files = Vec::new();
     collect_markdown_files(&vault.join("fragments"), &mut files)?;
@@ -910,6 +1702,401 @@ fn find_fragment_path(vault: &Path, id: &str) -> Result<Option<PathBuf>, String>
         }
     }
     Ok(None)
+}
+
+fn setup_lockbox_in_vault(
+    vault: &Path,
+    lockbox_runtime: &LockboxRuntime,
+    password: &str,
+) -> Result<String, String> {
+    validate_lockbox_password(password)?;
+    ensure_vault_layout(vault)?;
+    ensure_lockbox_layout(vault)?;
+    let manifest_path = lockbox_manifest_path(vault);
+    if manifest_path.exists() {
+        return Err("密匣已经设置。".to_string());
+    }
+
+    let master_key = random_bytes(LOCKBOX_MASTER_KEY_BYTES);
+    let recovery_key = generate_recovery_key();
+    let manifest = build_lockbox_manifest(password, &recovery_key, &master_key)?;
+    write_lockbox_manifest(vault, &manifest)?;
+    unlock_lockbox_runtime(lockbox_runtime, vault, &master_key);
+
+    commit_path_if_git(vault, ".shard/lockbox.json", "setup lockbox")
+        .or_else(|_| commit_all_if_git(vault, "setup lockbox").map(|_| None))
+        .ok();
+
+    Ok(recovery_key)
+}
+
+fn unlock_lockbox_in_vault(
+    vault: &Path,
+    lockbox_runtime: &LockboxRuntime,
+    password: &str,
+) -> Result<(), String> {
+    let manifest = read_lockbox_manifest(vault)?;
+    let master_key = unwrap_lockbox_master_key_with_password(&manifest, password)?;
+    unlock_lockbox_runtime(lockbox_runtime, vault, &master_key);
+    Ok(())
+}
+
+fn change_lockbox_password_in_vault(
+    vault: &Path,
+    lockbox_runtime: &LockboxRuntime,
+    current_password: &str,
+    new_password: &str,
+) -> Result<(), String> {
+    validate_lockbox_password(new_password)?;
+    let mut manifest = read_lockbox_manifest(vault)?;
+    let master_key = unwrap_lockbox_master_key_with_password(&manifest, current_password)?;
+    let (salt, nonce, encrypted_master_key) = wrap_master_key(new_password, &master_key)?;
+    manifest.password_salt = salt;
+    manifest.password_nonce = nonce;
+    manifest.password_encrypted_master_key = encrypted_master_key;
+    manifest.updated_at = Local::now().to_rfc3339();
+    write_lockbox_manifest(vault, &manifest)?;
+    unlock_lockbox_runtime(lockbox_runtime, vault, &master_key);
+    commit_path_if_git(vault, ".shard/lockbox.json", "change lockbox password").ok();
+    Ok(())
+}
+
+fn reset_lockbox_password_in_vault(
+    vault: &Path,
+    lockbox_runtime: &LockboxRuntime,
+    recovery_key: &str,
+    new_password: &str,
+) -> Result<String, String> {
+    validate_lockbox_password(new_password)?;
+    let mut manifest = read_lockbox_manifest(vault)?;
+    let master_key = unwrap_lockbox_master_key_with_recovery(&manifest, recovery_key)?;
+    let next_recovery_key = generate_recovery_key();
+    let (password_salt, password_nonce, password_encrypted_master_key) =
+        wrap_master_key(new_password, &master_key)?;
+    let (recovery_salt, recovery_nonce, recovery_encrypted_master_key) =
+        wrap_master_key(&normalize_recovery_key(&next_recovery_key), &master_key)?;
+
+    manifest.password_salt = password_salt;
+    manifest.password_nonce = password_nonce;
+    manifest.password_encrypted_master_key = password_encrypted_master_key;
+    manifest.recovery_salt = recovery_salt;
+    manifest.recovery_nonce = recovery_nonce;
+    manifest.recovery_encrypted_master_key = recovery_encrypted_master_key;
+    manifest.updated_at = Local::now().to_rfc3339();
+    write_lockbox_manifest(vault, &manifest)?;
+    unlock_lockbox_runtime(lockbox_runtime, vault, &master_key);
+    commit_path_if_git(vault, ".shard/lockbox.json", "reset lockbox password").ok();
+
+    Ok(next_recovery_key)
+}
+
+fn clear_lockbox_in_vault(vault: &Path, lockbox_runtime: &LockboxRuntime) -> Result<(), String> {
+    let manifest_path = lockbox_manifest_path(vault);
+    let lockbox_path = vault.join("lockbox");
+
+    if manifest_path.exists() {
+        fs::remove_file(&manifest_path).map_err(|error| error.to_string())?;
+    }
+    if lockbox_path.exists() {
+        fs::remove_dir_all(&lockbox_path).map_err(|error| error.to_string())?;
+    }
+    lock_lockbox_runtime(lockbox_runtime);
+    commit_all_if_git(vault, "clear lockbox").ok();
+    Ok(())
+}
+
+fn build_lockbox_manifest(
+    password: &str,
+    recovery_key: &str,
+    master_key: &[u8],
+) -> Result<LockboxManifest, String> {
+    let (password_salt, password_nonce, password_encrypted_master_key) =
+        wrap_master_key(password, master_key)?;
+    let (recovery_salt, recovery_nonce, recovery_encrypted_master_key) =
+        wrap_master_key(&normalize_recovery_key(recovery_key), master_key)?;
+    let now = Local::now().to_rfc3339();
+
+    Ok(LockboxManifest {
+        version: LOCKBOX_VERSION,
+        created_at: now.clone(),
+        updated_at: now,
+        password_salt,
+        password_nonce,
+        password_encrypted_master_key,
+        recovery_salt,
+        recovery_nonce,
+        recovery_encrypted_master_key,
+    })
+}
+
+fn wrap_master_key(secret: &str, master_key: &[u8]) -> Result<(String, String, String), String> {
+    let salt = random_bytes(LOCKBOX_SALT_BYTES);
+    let wrapping_key = derive_lockbox_key(secret, &salt)?;
+    let (nonce, encrypted_master_key) = encrypt_bytes(&wrapping_key, master_key)?;
+    Ok((BASE64_STANDARD.encode(salt), nonce, encrypted_master_key))
+}
+
+fn unwrap_lockbox_master_key_with_password(
+    manifest: &LockboxManifest,
+    password: &str,
+) -> Result<Vec<u8>, String> {
+    unwrap_lockbox_master_key(
+        password,
+        &manifest.password_salt,
+        &manifest.password_nonce,
+        &manifest.password_encrypted_master_key,
+    )
+    .map_err(|_| "密码不正确。".to_string())
+}
+
+fn unwrap_lockbox_master_key_with_recovery(
+    manifest: &LockboxManifest,
+    recovery_key: &str,
+) -> Result<Vec<u8>, String> {
+    unwrap_lockbox_master_key(
+        &normalize_recovery_key(recovery_key),
+        &manifest.recovery_salt,
+        &manifest.recovery_nonce,
+        &manifest.recovery_encrypted_master_key,
+    )
+    .map_err(|_| "恢复密钥不正确。".to_string())
+}
+
+fn unwrap_lockbox_master_key(
+    secret: &str,
+    salt: &str,
+    nonce: &str,
+    encrypted_master_key: &str,
+) -> Result<Vec<u8>, String> {
+    let salt = BASE64_STANDARD
+        .decode(salt)
+        .map_err(|error| error.to_string())?;
+    let wrapping_key = derive_lockbox_key(secret, &salt)?;
+    decrypt_bytes(&wrapping_key, nonce, encrypted_master_key)
+}
+
+fn derive_lockbox_key(secret: &str, salt: &[u8]) -> Result<Vec<u8>, String> {
+    if secret.trim().is_empty() {
+        return Err("密匣密码不能为空。".to_string());
+    }
+
+    let params = Params::new(19_456, 2, 1, Some(LOCKBOX_MASTER_KEY_BYTES))
+        .map_err(|error| error.to_string())?;
+    let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
+    let mut key = vec![0; LOCKBOX_MASTER_KEY_BYTES];
+    argon2
+        .hash_password_into(secret.as_bytes(), salt, &mut key)
+        .map_err(|error| error.to_string())?;
+    Ok(key)
+}
+
+fn encrypt_bytes(key: &[u8], plaintext: &[u8]) -> Result<(String, String), String> {
+    let cipher = Aes256Gcm::new_from_slice(key).map_err(|error| error.to_string())?;
+    let nonce_bytes = random_bytes(LOCKBOX_NONCE_BYTES);
+    let ciphertext = cipher
+        .encrypt(Nonce::from_slice(&nonce_bytes), plaintext)
+        .map_err(|_| "密匣加密失败。".to_string())?;
+
+    Ok((
+        BASE64_STANDARD.encode(nonce_bytes),
+        BASE64_STANDARD.encode(ciphertext),
+    ))
+}
+
+fn decrypt_bytes(key: &[u8], nonce: &str, ciphertext: &str) -> Result<Vec<u8>, String> {
+    let nonce_bytes = BASE64_STANDARD
+        .decode(nonce)
+        .map_err(|error| error.to_string())?;
+    let ciphertext = BASE64_STANDARD
+        .decode(ciphertext)
+        .map_err(|error| error.to_string())?;
+    let cipher = Aes256Gcm::new_from_slice(key).map_err(|error| error.to_string())?;
+    cipher
+        .decrypt(Nonce::from_slice(&nonce_bytes), ciphertext.as_ref())
+        .map_err(|_| "密匣解密失败。".to_string())
+}
+
+fn random_bytes(len: usize) -> Vec<u8> {
+    let mut bytes = vec![0; len];
+    OsRng.fill_bytes(&mut bytes);
+    bytes
+}
+
+fn validate_lockbox_password(password: &str) -> Result<(), String> {
+    if password.chars().count() < 8 {
+        return Err("密匣密码至少需要 8 个字符。".to_string());
+    }
+    Ok(())
+}
+
+fn generate_recovery_key() -> String {
+    let bytes = random_bytes(24);
+    let hex = to_hex(&bytes);
+    let groups = hex
+        .as_bytes()
+        .chunks(6)
+        .map(|chunk| String::from_utf8_lossy(chunk).to_string())
+        .collect::<Vec<_>>();
+    format!("shard-{}", groups.join("-"))
+}
+
+fn normalize_recovery_key(value: &str) -> String {
+    value
+        .chars()
+        .filter(|character| character.is_ascii_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect::<String>()
+}
+
+fn to_hex(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut output = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        output.push(HEX[(byte >> 4) as usize] as char);
+        output.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    output
+}
+
+fn lockbox_manifest_path(vault: &Path) -> PathBuf {
+    vault.join(".shard").join("lockbox.json")
+}
+
+fn read_lockbox_manifest(vault: &Path) -> Result<LockboxManifest, String> {
+    let path = lockbox_manifest_path(vault);
+    if !path.exists() {
+        return Err("密匣尚未设置。".to_string());
+    }
+    let text = fs::read_to_string(path).map_err(|error| error.to_string())?;
+    let manifest =
+        serde_json::from_str::<LockboxManifest>(&text).map_err(|error| error.to_string())?;
+    if manifest.version != LOCKBOX_VERSION {
+        return Err("不支持的密匣版本。".to_string());
+    }
+    Ok(manifest)
+}
+
+fn write_lockbox_manifest(vault: &Path, manifest: &LockboxManifest) -> Result<(), String> {
+    let path = lockbox_manifest_path(vault);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    let text = serde_json::to_string_pretty(manifest).map_err(|error| error.to_string())?;
+    fs::write(path, text).map_err(|error| error.to_string())
+}
+
+fn ensure_lockbox_layout(vault: &Path) -> Result<(), String> {
+    fs::create_dir_all(vault.join("lockbox").join("fragments"))
+        .map_err(|error| error.to_string())?;
+    fs::create_dir_all(vault.join("lockbox").join("archive")).map_err(|error| error.to_string())
+}
+
+fn lockbox_state(vault: &Path, lockbox_runtime: &LockboxRuntime) -> LockboxState {
+    let configured = lockbox_manifest_path(vault).exists();
+    let expires_at = lockbox_expires_at(vault, lockbox_runtime);
+    LockboxState {
+        configured,
+        unlocked: configured && expires_at.is_some(),
+        expires_at: expires_at.map(system_time_to_rfc3339),
+        ttl_seconds: LOCKBOX_TTL.as_secs(),
+    }
+}
+
+fn unlocked_lockbox_master_key(vault: &Path, lockbox_runtime: &LockboxRuntime) -> Option<Vec<u8>> {
+    let mut session = lockbox_runtime.lock().ok()?;
+    if session.vault_path.as_deref() != Some(vault) {
+        *session = LockboxSession::default();
+        return None;
+    }
+
+    let expires_at = session.expires_at?;
+    if SystemTime::now() >= expires_at {
+        *session = LockboxSession::default();
+        return None;
+    }
+
+    session.expires_at = Some(SystemTime::now() + LOCKBOX_TTL);
+    session.master_key.clone()
+}
+
+fn require_unlocked_lockbox_master_key(
+    vault: &Path,
+    lockbox_runtime: &LockboxRuntime,
+) -> Result<Vec<u8>, String> {
+    if !lockbox_manifest_path(vault).exists() {
+        return Err("lockbox_not_configured".to_string());
+    }
+    unlocked_lockbox_master_key(vault, lockbox_runtime).ok_or_else(|| "lockbox_locked".to_string())
+}
+
+fn lockbox_expires_at(vault: &Path, lockbox_runtime: &LockboxRuntime) -> Option<SystemTime> {
+    let mut session = lockbox_runtime.lock().ok()?;
+    if session.vault_path.as_deref() != Some(vault) {
+        *session = LockboxSession::default();
+        return None;
+    }
+    let expires_at = session.expires_at?;
+    if SystemTime::now() >= expires_at {
+        *session = LockboxSession::default();
+        return None;
+    }
+    Some(expires_at)
+}
+
+fn unlock_lockbox_runtime(lockbox_runtime: &LockboxRuntime, vault: &Path, master_key: &[u8]) {
+    if let Ok(mut session) = lockbox_runtime.lock() {
+        session.vault_path = Some(vault.to_path_buf());
+        session.master_key = Some(master_key.to_vec());
+        session.expires_at = Some(SystemTime::now() + LOCKBOX_TTL);
+    }
+}
+
+fn lock_lockbox_runtime(lockbox_runtime: &LockboxRuntime) {
+    if let Ok(mut session) = lockbox_runtime.lock() {
+        *session = LockboxSession::default();
+    }
+}
+
+fn system_time_to_rfc3339(value: SystemTime) -> String {
+    let datetime: chrono::DateTime<chrono::Utc> = value.into();
+    datetime.to_rfc3339()
+}
+
+fn contains_lockbox_tag(tags: &[String]) -> bool {
+    tags.iter().any(|tag| tag == LOCKBOX_TAG)
+}
+
+fn normalize_lockbox_tags(tags: Vec<String>) -> Vec<String> {
+    let mut next_tags = tags
+        .into_iter()
+        .filter_map(|tag| normalize_tag(&tag))
+        .filter(|tag| tag != LOCKBOX_TAG && tag != "inbox")
+        .collect::<Vec<_>>();
+    next_tags.sort();
+    next_tags.dedup();
+    next_tags
+}
+
+fn reject_lockbox_images(content: &str) -> Result<(), String> {
+    if content.lines().any(is_markdown_image_line) {
+        return Err("密匣暂不支持图片附件。请先移除图片，再保存到密匣。".to_string());
+    }
+    Ok(())
+}
+
+fn is_markdown_image_line(line: &str) -> bool {
+    let line = line.trim();
+    line.starts_with("![") && line.contains("](") && line.ends_with(')')
+}
+
+fn commit_override_status(
+    commit_result: Result<Option<()>, String>,
+) -> Option<(String, Option<String>)> {
+    match commit_result {
+        Ok(Some(_)) => Some(("committed".to_string(), None)),
+        Ok(None) => Some(("saved".to_string(), None)),
+        Err(error) => Some(("commit_failed".to_string(), Some(error))),
+    }
 }
 
 fn normalize_tag(tag: &str) -> Option<String> {
@@ -1002,7 +2189,9 @@ fn resolve_vault_asset_path(vault: &Path, raw_path: &str) -> Result<PathBuf, Str
         .join("assets")
         .canonicalize()
         .map_err(|error| error.to_string())?;
-    let image_path = candidate.canonicalize().map_err(|error| error.to_string())?;
+    let image_path = candidate
+        .canonicalize()
+        .map_err(|error| error.to_string())?;
 
     if !image_path.starts_with(&asset_root) {
         return Err("只能读取 vault assets 目录中的图片".to_string());
@@ -1112,6 +2301,8 @@ fn dirty_paths(vault: &Path) -> HashSet<String> {
             "fragments",
             "archive",
             "assets",
+            "lockbox",
+            ".shard",
         ],
     ) else {
         return paths;
@@ -1317,19 +2508,40 @@ fn codex_path() -> Result<PathBuf, String> {
 
 fn codex_review_prompt(request: &CodexReviewTaskRequest) -> String {
     let task_prompt = match request.task {
-        CodexReviewTask::Insight => {
-            "请只基于下面这些 Shard 片段做 AI 洞察。输出中文 Markdown，固定包含三个二级标题：核心主题、可能盲点、继续追问。每个标题下给 2-4 条短要点。不要虚构片段之外的事实，不要建议修改文件。"
-        }
+        CodexReviewTask::Insight => codex_insight_prompt(request.lens.unwrap_or(CodexInsightLens::Default)),
         CodexReviewTask::Walk => {
-            "请只基于下面这些 Shard 片段生成一次随机漫步。输出中文 Markdown，固定包含两个二级标题：漫步路径、意外连接。漫步路径用有序列表说明相邻片段之间的连接理由。不要虚构片段之外的事实，不要建议修改文件。"
+            "请只基于下面这些 Shard 笔记生成一次随机漫步。输出中文 Markdown，固定包含两个二级标题：漫步路径、意外连接。漫步路径用有序列表说明相邻笔记之间的连接理由。不要虚构笔记之外的事实，不要建议修改文件。"
         }
     };
 
     format!(
-        "{}\n\n运行约束：你正在只读 Shard vault；不要执行写入、删除、格式化、git、网络或外部副作用命令。\n\n片段：\n{}",
+        "{}\n\n共同约束：只基于给定笔记；每条判断尽量引用下方来源区可见的笔记编号，例如 [笔记 3]；不要使用“片段 3”这类说法；不要虚构笔记之外的事实；不要做心理诊断、人格定型、医疗/法律/财务建议；证据不足时直接说明。\n\n运行约束：你正在只读 Shard vault；不要执行写入、删除、格式化、git、网络或外部副作用命令。\n\n来源笔记：\n{}",
         task_prompt,
         codex_fragment_context(&request.fragments)
     )
+}
+
+fn codex_insight_prompt(lens: CodexInsightLens) -> &'static str {
+    match lens {
+        CodexInsightLens::Default => {
+            "当前视角：默认洞察。\n请挖掘这些 Shard 笔记背后反复出现的思维模式、主题簇和内在张力。输出中文 Markdown，严格使用三个二级标题：核心主题、反复模式、继续追问。每个标题下给 2-4 条短要点。"
+        }
+        CodexInsightLens::Values => {
+            "当前视角：价值澄清。\n请从笔记里的取舍、反复记录、情绪强度和行动倾向中，找出用户真正看重的东西。输出中文 Markdown，严格使用三个二级标题：高频价值、取舍线索、值得保留。每个标题下给 2-4 条短要点。"
+        }
+        CodexInsightLens::Reverse => {
+            "当前视角：逆向思考。\n请反过来审视笔记中的默认假设、遗漏条件、反例和可能误判。输出中文 Markdown，严格使用三个二级标题：默认假设、反向观察、反问清单。每个标题下给 2-4 条短要点。"
+        }
+        CodexInsightLens::SecondOrder => {
+            "当前视角：二阶思考。\n请识别笔记中的表层问题、上游原因和后续影响，避免只给一阶建议。输出中文 Markdown，严格使用三个二级标题：一阶问题、二阶影响、小实验。每个标题下给 2-4 条短要点。"
+        }
+        CodexInsightLens::Friction => {
+            "当前视角：阻滞定位。\n请找出笔记里反复卡住、回避、摇摆或互相冲突的地方，只用内容证据说明，不做心理诊断。输出中文 Markdown，严格使用三个二级标题：反复卡点、可能偏差、更稳做法。每个标题下给 2-4 条短要点。"
+        }
+        CodexInsightLens::Actions => {
+            "当前视角：行动线索。\n请把笔记中的想法压缩成可以继续推进的线索，优先提炼可验证问题和下一步小动作。输出中文 Markdown，严格使用三个二级标题：可执行线索、待验证问题、可写成新笔记。每个标题下给 2-4 条短要点。"
+        }
+    }
 }
 
 fn codex_fragment_context(fragments: &[CodexReviewFragment]) -> String {
@@ -1338,7 +2550,7 @@ fn codex_fragment_context(fragments: &[CodexReviewFragment]) -> String {
         .enumerate()
         .map(|(index, fragment)| {
             format!(
-                "### {}\n- id: {}\n- created_at: {}\n- path: {}\n- tags: {}\n\n{}\n",
+                "### 笔记 {}\n- id: {}\n- created_at: {}\n- path: {}\n- tags: {}\n\n{}\n",
                 index + 1,
                 fragment.id,
                 fragment.created_at,
@@ -1506,6 +2718,7 @@ fn relative_path(vault: &Path, path: &Path) -> Result<String, String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .manage(Arc::new(Mutex::new(LockboxSession::default())))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
@@ -1524,12 +2737,22 @@ pub fn run() {
             codex_agent_status,
             run_codex_review_task,
             create_github_vault_repo,
+            setup_lockbox,
+            unlock_lockbox,
+            lock_lockbox,
+            change_lockbox_password,
+            reset_lockbox_password,
+            clear_lockbox,
             create_fragment,
             update_fragment,
             update_fragment_tags,
             archive_fragment,
+            set_fragment_pinned,
+            move_fragment_to_lockbox,
             save_fragment_image,
             read_fragment_image,
+            save_recovery_key,
+            save_exported_image,
             set_window_controls_hidden,
             restore_window_frame,
             sync_vault
@@ -1569,5 +2792,78 @@ mod tests {
         let output = r#"{"type":"turn.completed"}"#;
 
         assert!(extract_codex_agent_message(output).is_err());
+    }
+
+    #[test]
+    fn lockbox_filters_private_fragments_until_unlocked() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let vault = tempdir.path();
+        let runtime = Arc::new(Mutex::new(LockboxSession::default()));
+
+        ensure_vault_layout(vault).unwrap();
+        setup_lockbox_in_vault(vault, &runtime, "correct horse").unwrap();
+        create_lockbox_fragment_in_vault(
+            vault,
+            &runtime,
+            "private note",
+            vec![
+                "inbox".to_string(),
+                LOCKBOX_TAG.to_string(),
+                "work".to_string(),
+            ],
+        )
+        .unwrap();
+
+        let unlocked = list_fragments_in_vault(vault, &runtime).unwrap();
+        assert_eq!(unlocked.fragments.len(), 1);
+        assert!(unlocked.fragments[0].lockbox);
+        assert_eq!(unlocked.fragments[0].tags, vec!["work".to_string()]);
+
+        lock_lockbox_runtime(&runtime);
+        let locked = list_fragments_in_vault(vault, &runtime).unwrap();
+        assert!(locked.fragments.is_empty());
+        assert!(locked.lockbox.configured);
+        assert!(!locked.lockbox.unlocked);
+
+        assert!(unlock_lockbox_in_vault(vault, &runtime, "wrong password").is_err());
+        unlock_lockbox_in_vault(vault, &runtime, "correct horse").unwrap();
+
+        let relisted = list_fragments_in_vault(vault, &runtime).unwrap();
+        assert_eq!(relisted.fragments.len(), 1);
+        assert_eq!(relisted.fragments[0].content, "private note");
+    }
+
+    #[test]
+    fn recovery_key_resets_lockbox_password_and_rotates_recovery() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let vault = tempdir.path();
+        let runtime = Arc::new(Mutex::new(LockboxSession::default()));
+
+        ensure_vault_layout(vault).unwrap();
+        let recovery_key = setup_lockbox_in_vault(vault, &runtime, "old password").unwrap();
+        create_lockbox_fragment_in_vault(
+            vault,
+            &runtime,
+            "reset survives",
+            vec![LOCKBOX_TAG.to_string()],
+        )
+        .unwrap();
+        lock_lockbox_runtime(&runtime);
+
+        let next_recovery =
+            reset_lockbox_password_in_vault(vault, &runtime, &recovery_key, "new password")
+                .unwrap();
+        assert_ne!(
+            normalize_recovery_key(&recovery_key),
+            normalize_recovery_key(&next_recovery)
+        );
+
+        lock_lockbox_runtime(&runtime);
+        assert!(unlock_lockbox_in_vault(vault, &runtime, "old password").is_err());
+        unlock_lockbox_in_vault(vault, &runtime, "new password").unwrap();
+
+        let state = list_fragments_in_vault(vault, &runtime).unwrap();
+        assert_eq!(state.fragments.len(), 1);
+        assert_eq!(state.fragments[0].content, "reset survives");
     }
 }

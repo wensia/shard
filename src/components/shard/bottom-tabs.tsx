@@ -1,6 +1,5 @@
 import {
   ArchiveIcon,
-  CalendarDaysIcon,
   GitBranchIcon,
   HelpCircleIcon,
   InboxIcon,
@@ -8,7 +7,6 @@ import {
   Maximize2Icon,
   MoreHorizontalIcon,
   RefreshCwIcon,
-  RouteIcon,
   SettingsIcon,
   SparklesIcon,
   TagIcon,
@@ -30,6 +28,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip"
 import shardAppIconUrl from "@/assets/shard-app-icon.png"
+import { dailyReviewCount, insightReviewCount } from "@/lib/review-workflows"
 import type { Fragment, FragmentFilter, GitInfo } from "@/types"
 
 interface BottomTabsProps {
@@ -54,9 +53,7 @@ const tabItems: Array<{
 }> = [
   { id: "inbox", label: "Inbox", fullLabel: "Inbox", icon: InboxIcon },
   { id: "tagged", label: "Tagged", fullLabel: "Tagged", icon: TagIcon },
-  { id: "dailyReview", label: "回顾", fullLabel: "每日回顾", icon: CalendarDaysIcon },
-  { id: "insight", label: "洞察", fullLabel: "AI 洞察", icon: SparklesIcon },
-  { id: "walk", label: "漫步", fullLabel: "随机漫步", icon: RouteIcon },
+  { id: "insight", label: "洞察", fullLabel: "洞察视角", icon: SparklesIcon },
   { id: "archive", label: "Archive", fullLabel: "Archive", icon: ArchiveIcon },
 ]
 
@@ -84,8 +81,9 @@ export function BottomTabs({
     tagged: activeFragments.filter((fragment) =>
       fragment.tags.some((tag) => tag !== "inbox")
     ).length,
-    dailyReview: activeFragments.length,
-    insight: activeFragments.length,
+    dailyReview: dailyReviewCount(fragments),
+    insight: insightReviewCount(fragments),
+    lockbox: 0,
     walk: activeFragments.length,
     archive: archivedFragments.length,
   }
@@ -153,7 +151,7 @@ export function BottomTabs({
           <div className="min-w-0 flex-1 overflow-x-auto rounded-[8px] bg-muted p-1">
             <nav
               aria-label="Fragment filters"
-              className="grid min-w-[456px] grid-cols-6 gap-1"
+              className="grid min-w-[304px] grid-cols-4 gap-1"
             >
               {tabItems.map((item) => {
                 const Icon = item.icon
