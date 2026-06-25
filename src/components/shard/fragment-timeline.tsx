@@ -28,7 +28,7 @@ interface FragmentTimelineProps {
 
 export function FragmentTimeline({
   editingFragmentId = null,
-  emptyMessage = "还没有片段。写下第一条，按 Cmd/Ctrl/Shift+Enter 保存。",
+  emptyMessage = "还没有片段。写下第一条，按 Cmd/Ctrl+Enter 保存。",
   fragments,
   isLoading,
   knownTags = [],

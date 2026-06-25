@@ -250,6 +250,40 @@ export function applyTaskMarkerDeletion(
   }
 }
 
+export function applyTaskLineBreak(
+  value: string,
+  selectionStart: number,
+  selectionEnd: number
+): TextEdit | null {
+  if (selectionStart !== selectionEnd) return null
+
+  const lineStart =
+    selectionStart === 0 ? 0 : value.lastIndexOf("\n", selectionStart - 1) + 1
+  const nextLineBreak = value.indexOf("\n", selectionStart)
+  const lineEnd = nextLineBreak === -1 ? value.length : nextLineBreak
+  const line = value.slice(lineStart, lineEnd)
+  const markerMatch = line.match(TASK_LINE_MARKER_PATTERN)
+  if (!markerMatch) return null
+
+  const [, indentation, listMarker, taskMarker] = markerMatch
+  const bodyStart =
+    lineStart + indentation.length + listMarker.length + taskMarker.length
+  if (selectionStart < bodyStart) return null
+
+  const nextLinePrefix = `${indentation}${getNextTaskListMarker(listMarker)}[ ] `
+  const nextCursor = selectionStart + 1 + nextLinePrefix.length
+
+  return {
+    content:
+      value.slice(0, selectionStart) +
+      "\n" +
+      nextLinePrefix +
+      value.slice(selectionEnd),
+    selectionEnd: nextCursor,
+    selectionStart: nextCursor,
+  }
+}
+
 export function toggleTaskLine(value: string, lineIndex: number) {
   const lines = value.split("\n")
   const currentLine = lines[lineIndex]
@@ -388,6 +422,14 @@ function getLinePrefix(format: LineFormat, index: number) {
     default:
       return "- "
   }
+}
+
+function getNextTaskListMarker(listMarker: string) {
+  const orderedMarker = listMarker.match(/^(\d+)([.)])(\s+)$/)
+  if (!orderedMarker) return listMarker
+
+  const [, number, delimiter, spacing] = orderedMarker
+  return `${Number(number) + 1}${delimiter}${spacing}`
 }
 
 export function getMarkdownImageAlt(fileName: string) {

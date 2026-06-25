@@ -3,14 +3,12 @@ import {
   BrainCircuitIcon,
   CalendarDaysIcon,
   CircleAlertIcon,
-  CircleDotIcon,
+  CompassIcon,
   GitBranchIcon,
   CheckIcon,
-  ListChecksIcon,
+  HeartHandshakeIcon,
   PlusIcon,
-  RefreshCwIcon,
   RouteIcon,
-  SaveIcon,
   ScaleIcon,
   SparklesIcon,
   RotateCcwIcon,
@@ -30,6 +28,7 @@ import {
 import {
   codexReviewFragments,
   dailyReviewFragments,
+  insightFragmentCharLimit,
   insightReviewFragments,
   randomWalkFragments,
   reviewFragmentSummary,
@@ -78,7 +77,8 @@ const modeMeta: Record<
   },
   insight: {
     title: "洞察视角",
-    description: "选择任意视角，让本机 Codex 只读分析当前范围内的片段。",
+    description:
+      "选择任意视角，让本机 Codex 只读分析全部未归档笔记（不含密匣与 AI 洞察）。",
     icon: SparklesIcon,
   },
   walk: {
@@ -98,7 +98,7 @@ const insightLenses: Array<{
   {
     id: "default",
     title: "默认洞察",
-    description: "挖掘片段背后反复出现的思维模式、关注点和内在张力。",
+    description: "挖掘笔记背后反复出现的思维模式、关注点和内在张力。",
     focus: "主题复盘",
     icon: BrainCircuitIcon,
   },
@@ -112,7 +112,7 @@ const insightLenses: Array<{
   {
     id: "reverse",
     title: "逆向思考",
-    description: "反过来审视片段中的默认假设、遗漏条件和可能误判。",
+    description: "反过来审视笔记中的默认假设、遗漏条件和可能误判。",
     focus: "假设检查",
     icon: RotateCcwIcon,
   },
@@ -124,18 +124,18 @@ const insightLenses: Array<{
     icon: GitBranchIcon,
   },
   {
-    id: "friction",
-    title: "阻滞定位",
-    description: "找出反复卡住、回避或摇摆的地方，只给内容证据和改进角度。",
-    focus: "卡点排查",
-    icon: CircleDotIcon,
+    id: "cbt",
+    title: "CBT 视角",
+    description: "识别笔记中的自动想法、认知陷阱，并生成更平衡的替代想法。",
+    focus: "思维校准",
+    icon: HeartHandshakeIcon,
   },
   {
-    id: "actions",
-    title: "行动线索",
-    description: "把片段里的想法压缩成可验证问题、下一步动作和可继续写的线索。",
-    focus: "行动整理",
-    icon: ListChecksIcon,
+    id: "mbti",
+    title: "MBTI 分析",
+    description: "从笔记内容中观察偏好倾向，生成非定型的人格视角分析。",
+    focus: "偏好识别",
+    icon: CompassIcon,
   },
 ]
 
@@ -148,7 +148,7 @@ const insightLensGroups: Array<{
   lensIds: CodexInsightLens[]
 }> = [
   { title: "思维复盘", lensIds: ["default", "reverse", "secondOrder"] },
-  { title: "自我觉察", lensIds: ["values", "friction", "actions"] },
+  { title: "自我觉察", lensIds: ["values", "cbt", "mbti"] },
 ]
 
 export function ReviewWorkspace({
@@ -170,7 +170,6 @@ export function ReviewWorkspace({
   vaultPath,
 }: ReviewWorkspaceProps) {
   const [dailySeed, setDailySeed] = useState(() => daySeed())
-  const [insightSeed, setInsightSeed] = useState(() => daySeed())
   const [walkSeed, setWalkSeed] = useState(() => daySeed() + 17)
   const [selectedInsightLens, setSelectedInsightLens] =
     useState<CodexInsightLens>("default")
@@ -188,8 +187,8 @@ export function ReviewWorkspace({
     [dailySeed, fragments]
   )
   const insightFragments = useMemo(
-    () => insightReviewFragments(fragments, insightSeed),
-    [fragments, insightSeed]
+    () => insightReviewFragments(fragments),
+    [fragments]
   )
   const walkFragments = useMemo(
     () => randomWalkFragments(fragments, walkSeed),
@@ -249,7 +248,12 @@ export function ReviewWorkspace({
     try {
       const result = await runCodexReviewTask(
         task,
-        codexReviewFragments(selectedFragments),
+        task === "insight"
+          ? codexReviewFragments(
+              selectedFragments,
+              insightFragmentCharLimit(selectedFragments.length)
+            )
+          : codexReviewFragments(selectedFragments),
         vaultPath,
         task === "insight" ? selectedInsightLens : undefined
       )
@@ -295,10 +299,6 @@ export function ReviewWorkspace({
         description={meta.description}
         onRefreshDaily={() => {
           setDailySeed((current) => current + 1)
-        }}
-        onRefreshInsight={() => {
-          setInsightSeed((current) => current + 1)
-          setInsightText("")
         }}
         onRefreshWalk={() => {
           setWalkSeed((current) => current + 1)
@@ -353,56 +353,47 @@ export function ReviewWorkspace({
                 />
               ) : null}
 
-              <div className="flex flex-col gap-[var(--shard-card-gap)]">
-                {displayFragments.map((fragment, index) => (
-                  <div
-                    className={[
-                      "grid gap-[var(--shard-space-3)]",
-                      mode === "insight"
-                        ? "grid-cols-[56px_minmax(0,1fr)]"
-                        : "grid-cols-[28px_minmax(0,1fr)]",
-                    ].join(" ")}
-                    key={fragment.id}
-                  >
-                    {mode === "walk" ? (
-                      <div className="flex flex-col items-center pt-[var(--shard-space-4)]">
-                        <span className="flex size-6 items-center justify-center rounded-full border border-border bg-background text-xs font-bold text-muted-foreground">
-                          {index + 1}
-                        </span>
-                        {index < displayFragments.length - 1 ? (
-                          <span
-                            aria-hidden="true"
-                            className="mt-[var(--shard-space-2)] h-full min-h-8 w-px bg-border"
-                          />
-                        ) : null}
-                      </div>
-                    ) : mode === "insight" ? (
-                      <div className="pt-[var(--shard-space-4)]">
-                        <span className="inline-flex h-6 items-center rounded-[var(--shard-radius-control)] border border-border bg-background px-2 text-[11px] leading-none font-bold text-muted-foreground">
-                          笔记 {index + 1}
-                        </span>
-                      </div>
-                    ) : (
-                      <span aria-hidden="true" />
-                    )}
-                    <FragmentCard
-                      fragment={fragment}
-                      isEditing={editingFragmentId === fragment.id}
-                      knownTags={knownTags}
-                      onArchive={onArchive}
-                      onCancelEdit={onCancelEdit}
-                      onEdit={onEdit}
-                      onExportImage={onExportImage}
-                      onMoveToLockbox={onMoveToLockbox}
-                      onOpenZen={onOpenZen}
-                      onPin={onPin}
-                      onSave={onSave}
-                      onToggleTask={onToggleTask}
-                      vaultPath={vaultPath}
-                    />
-                  </div>
-                ))}
-              </div>
+              {mode !== "insight" ? (
+                <div className="flex flex-col gap-[var(--shard-card-gap)]">
+                  {displayFragments.map((fragment, index) => (
+                    <div
+                      className="grid grid-cols-[28px_minmax(0,1fr)] gap-[var(--shard-space-3)]"
+                      key={fragment.id}
+                    >
+                      {mode === "walk" ? (
+                        <div className="flex flex-col items-center pt-[var(--shard-space-4)]">
+                          <span className="flex size-6 items-center justify-center rounded-full border border-border bg-background text-xs font-bold text-muted-foreground">
+                            {index + 1}
+                          </span>
+                          {index < displayFragments.length - 1 ? (
+                            <span
+                              aria-hidden="true"
+                              className="mt-[var(--shard-space-2)] h-full min-h-8 w-px bg-border"
+                            />
+                          ) : null}
+                        </div>
+                      ) : (
+                        <span aria-hidden="true" />
+                      )}
+                      <FragmentCard
+                        fragment={fragment}
+                        isEditing={editingFragmentId === fragment.id}
+                        knownTags={knownTags}
+                        onArchive={onArchive}
+                        onCancelEdit={onCancelEdit}
+                        onEdit={onEdit}
+                        onExportImage={onExportImage}
+                        onMoveToLockbox={onMoveToLockbox}
+                        onOpenZen={onOpenZen}
+                        onPin={onPin}
+                        onSave={onSave}
+                        onToggleTask={onToggleTask}
+                        vaultPath={vaultPath}
+                      />
+                    </div>
+                  ))}
+                </div>
+              ) : null}
             </div>
           </div>
         )}
@@ -416,66 +407,42 @@ interface ReviewHeaderProps {
   icon: typeof CalendarDaysIcon
   mode: ReviewMode
   onRefreshDaily: () => void
-  onRefreshInsight: () => void
   onRefreshWalk: () => void
   summary: string
   title: string
 }
 
 function ReviewHeader({
-  description,
-  icon: Icon,
   mode,
   onRefreshDaily,
-  onRefreshInsight,
   onRefreshWalk,
   summary,
   title,
 }: ReviewHeaderProps) {
   return (
-    <header className="shard-content-inset shrink-0 pb-[var(--shard-space-4)]">
-      <div className="shard-content-measure flex flex-col gap-[var(--shard-space-3)] border-b border-border pb-[var(--shard-space-4)]">
-        <div className="flex flex-wrap items-start justify-between gap-[var(--shard-space-3)]">
-          <div className="flex min-w-0 items-start gap-[var(--shard-space-3)]">
-            <span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-[var(--shard-radius-control)] border border-border bg-card text-[color:var(--shard-sapphire)]">
-              <Icon className="size-4 stroke-[1.75]" />
-            </span>
-            <div className="min-w-0">
-              <h1 className="text-lg leading-6 font-bold">{title}</h1>
-              <p className="mt-1 max-w-2xl text-sm leading-5 text-muted-foreground">
-                {description}
-              </p>
-            </div>
-          </div>
-
-          <div className="flex shrink-0 items-center gap-[var(--shard-space-2)]">
-            {mode === "dailyReview" ? (
-              <Button variant="outline" size="sm" onClick={onRefreshDaily}>
-                <RefreshCwIcon data-icon="inline-start" />
-                换一组
-              </Button>
-            ) : null}
-            {mode === "insight" ? (
-              <Button variant="outline" size="sm" onClick={onRefreshInsight}>
-                <RefreshCwIcon data-icon="inline-start" />
-                换范围
-              </Button>
-            ) : null}
-            {mode === "walk" ? (
-              <Button variant="outline" size="sm" onClick={onRefreshWalk}>
-                <RefreshCwIcon data-icon="inline-start" />
-                换路径
-              </Button>
-            ) : null}
-          </div>
+    <header className="shard-content-inset shrink-0 pb-[var(--shard-space-3)]">
+      <div className="shard-content-measure flex flex-wrap items-center justify-between gap-[var(--shard-space-3)] border-b border-border pb-[var(--shard-space-3)]">
+        <div className="flex min-w-0 items-center gap-[var(--shard-space-2)]">
+          <h1 className="truncate text-base leading-6 font-semibold">{title}</h1>
+          <Badge
+            className="shrink-0 border-border bg-muted text-muted-foreground"
+            variant="outline"
+          >
+            {summary}
+          </Badge>
         </div>
-
-        <Badge
-          className="border-border bg-muted text-muted-foreground"
-          variant="outline"
-        >
-          {summary}
-        </Badge>
+        <div className="flex shrink-0 items-center gap-[var(--shard-space-2)]">
+          {mode === "dailyReview" ? (
+            <Button variant="outline" size="sm" onClick={onRefreshDaily}>
+              换一组
+            </Button>
+          ) : null}
+          {mode === "walk" ? (
+            <Button variant="outline" size="sm" onClick={onRefreshWalk}>
+              换路径
+            </Button>
+          ) : null}
+        </div>
       </div>
     </header>
   )
@@ -611,12 +578,10 @@ function CodexPanel({
               size="sm"
               variant="outline"
             >
-              <SaveIcon data-icon="inline-start" />
               {isSaving ? "保存中" : "保存为片段"}
             </Button>
           ) : null}
           <Button disabled={!canRun || isChecking} onClick={onRun} size="sm">
-            <SparklesIcon data-icon="inline-start" />
             {actionLabel}
           </Button>
         </div>
@@ -636,7 +601,7 @@ function CodexPanel({
         />
       ) : (
         <div className="mt-[var(--shard-space-4)] text-sm leading-6 text-muted-foreground">
-          {isRunning ? "Codex 正在只读分析当前片段..." : "生成后会显示在这里。"}
+          {isRunning ? "Codex 正在只读分析所选笔记..." : "生成后会显示在这里。"}
         </div>
       )}
     </section>

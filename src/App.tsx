@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from "react"
-import { LockKeyholeIcon } from "lucide-react"
+import { LockKeyholeIcon, TagIcon } from "lucide-react"
 import { toast } from "sonner"
 
 import { BottomTabs } from "@/components/shard/bottom-tabs"
 import { CaptureBox } from "@/components/shard/capture-box"
 import { FragmentEditor } from "@/components/shard/fragment-editor"
 import { FragmentImageExporter } from "@/components/shard/fragment-image-exporter"
+import { FragmentSearchDialog } from "@/components/shard/fragment-search-dialog"
 import { FragmentTimeline } from "@/components/shard/fragment-timeline"
 import {
   LockboxDialog,
@@ -16,12 +17,19 @@ import { SidebarNav } from "@/components/shard/sidebar-nav"
 import { TaggedPanel, type TaggedSummary } from "@/components/shard/tagged-panel"
 import { VaultGuide } from "@/components/shard/vault-guide"
 import { Button } from "@/components/ui/button"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import { Toaster } from "@/components/ui/sonner"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import {
   archiveFragment,
   changeLockboxPassword,
-  clearLockbox,
   createFragment,
   DESKTOP_RUNTIME_MESSAGE,
   getApiErrorMessage,
@@ -72,8 +80,15 @@ function App() {
   const [editingVariant, setEditingVariant] =
     useState<EditingVariant>("inline")
   const [exportingFragment, setExportingFragment] = useState<Fragment | null>(null)
+  const [isArchivingLockboxFragment, setIsArchivingLockboxFragment] =
+    useState(false)
   const [isVaultGuideOpen, setIsVaultGuideOpen] = useState(false)
   const [needsVaultSetup, setNeedsVaultSetup] = useState(false)
+  const [pendingLockboxArchiveFragment, setPendingLockboxArchiveFragment] =
+    useState<Fragment | null>(null)
+  const [pendingLockboxMoveId, setPendingLockboxMoveId] = useState<string | null>(null)
+  const [isSearchDialogOpen, setIsSearchDialogOpen] = useState(false)
+  const [selectedLockboxTag, setSelectedLockboxTag] = useState<string | null>(null)
   const [selectedTag, setSelectedTag] = useState<string | null>(null)
 
   useEffect(() => {
@@ -123,7 +138,11 @@ function App() {
   }
 
   function applyVaultState(state: VaultState) {
-    setFragments(sortFragmentsForDisplay(state.fragments))
+    const visibleFragments = state.lockbox.unlocked
+      ? state.fragments
+      : publicFragments(state.fragments)
+
+    setFragments(sortFragmentsForDisplay(visibleFragments))
     setGit(state.git)
     setLockbox(state.lockbox)
     setVaultPath(state.vaultPath)
@@ -152,14 +171,12 @@ function App() {
         if (hasMarkdownImage(content)) {
           throw new Error("密匣暂不支持图片附件。请先移除图片，再保存到密匣。")
         }
-        if (!ensureLockboxReady()) {
-          throw new Error("请先解锁或设置密匣，然后再次保存。")
+        if (!ensureLockboxConfigured()) {
+          throw new Error("请先设置密匣，然后再次保存。")
         }
 
         const created = await createFragment(content, tags)
         setFragments((current) => [created, ...current])
-        setSelectedTag(null)
-        setFilter("lockbox")
         toast.success("已保存到密匣")
         void refreshFragments()
       } catch (error) {
@@ -258,8 +275,11 @@ function App() {
       if (hasMarkdownImage(content)) {
         throw new Error("密匣暂不支持图片附件。请先移除图片，再保存到密匣。")
       }
-      if (!ensureLockboxReady()) {
+      if (editsLockbox && !ensureLockboxReady()) {
         throw new Error("请先解锁或设置密匣，然后再次保存。")
+      }
+      if (movesToLockbox && !ensureLockboxConfigured()) {
+        throw new Error("请先设置密匣，然后再次保存。")
       }
     }
 
@@ -268,8 +288,7 @@ function App() {
       current.map((fragment) => (fragment.id === id ? updated : fragment))
     )
     if (movesToLockbox) {
-      setSelectedTag(null)
-      setFilter("lockbox")
+      closeEditor()
     }
     return updated
   }
@@ -322,9 +341,18 @@ function App() {
   async function handleArchiveFragment(fragment: Fragment) {
     if (fragment.archived) return
 
+    if (fragment.lockbox) {
+      setPendingLockboxArchiveFragment(fragment)
+      return
+    }
+
     const confirmed = window.confirm("确认归档这条片段？归档后可在 Archive 中查看。")
     if (!confirmed) return
 
+    await archiveFragmentWithFeedback(fragment)
+  }
+
+  async function archiveFragmentWithFeedback(fragment: Fragment) {
     try {
       const archived = await archiveFragment(fragment.id)
       setFragments((current) =>
@@ -336,10 +364,12 @@ function App() {
         closeEditor()
       }
       toast.success("已归档")
+      return true
     } catch (error) {
       toast.error("归档失败", {
         description: getApiErrorMessage(error),
       })
+      return false
     }
   }
 
@@ -389,33 +419,49 @@ function App() {
       })
       return
     }
-    if (!ensureLockboxReady()) {
-      toast.info("需要先解锁密匣")
-      return
-    }
 
     const confirmed = window.confirm(
       "移入密匣会把当前文件改为加密文件，但不会清理已经存在的 Git 历史提交。确认继续？"
     )
     if (!confirmed) return
 
+    if (!lockbox?.configured) {
+      setPendingLockboxMoveId(fragment.id)
+      openLockboxGate()
+      toast.info("设置密匣后会移入笔记")
+      return
+    }
+
+    await moveFragmentIntoLockbox(fragment.id)
+  }
+
+  async function moveFragmentIntoLockbox(
+    fragmentId: string,
+    successMessage = "已移入密匣"
+  ) {
     try {
-      const state = await moveFragmentToLockbox(fragment.id)
+      const state = await moveFragmentToLockbox(fragmentId)
       applyVaultState(state)
       closeEditor()
-      setSelectedTag(null)
-      setFilter("lockbox")
-      toast.success("已移入密匣")
+      toast.success(successMessage)
+      return true
     } catch (error) {
       toast.error("移入密匣失败", {
         description: getApiErrorMessage(error),
       })
+      return false
     }
   }
 
   function ensureLockboxReady() {
     if (isLockboxReady(lockbox)) return true
     openLockboxGate()
+    return false
+  }
+
+  function ensureLockboxConfigured() {
+    if (lockbox?.configured) return true
+    setLockboxDialogMode("setup")
     return false
   }
 
@@ -429,12 +475,14 @@ function App() {
       return
     }
     setSelectedTag(null)
+    setSelectedLockboxTag(null)
     setFilter("lockbox")
   }
 
   function showShortcuts() {
     toast.info("快捷键", {
-      description: "保存：Cmd/Ctrl/Shift + Enter。换行：Enter。编辑片段时按 Esc 退出。",
+      description:
+        "保存：Cmd/Ctrl + Enter。搜索：Cmd/Ctrl + K。换行：Enter 或 Shift+Enter。编辑片段时按 Esc 退出。",
     })
   }
 
@@ -460,6 +508,14 @@ function App() {
     const result = await setupLockbox(password)
     applyVaultState(result.vault)
     setRecoveryKey(result.recoveryKey)
+
+    if (pendingLockboxMoveId) {
+      const fragmentId = pendingLockboxMoveId
+      setPendingLockboxMoveId(null)
+      await moveFragmentIntoLockbox(fragmentId, "密匣已设置，笔记已移入")
+      return
+    }
+
     toast.success("密匣已设置")
   }
 
@@ -467,7 +523,16 @@ function App() {
     const state = await unlockLockbox(password)
     applyVaultState(state)
     setLockboxDialogMode(null)
+
+    if (pendingLockboxMoveId) {
+      const fragmentId = pendingLockboxMoveId
+      setPendingLockboxMoveId(null)
+      await moveFragmentIntoLockbox(fragmentId, "已解锁并移入密匣")
+      return
+    }
+
     setSelectedTag(null)
+    setSelectedLockboxTag(null)
     setFilter("lockbox")
     toast.success("密匣已解锁")
   }
@@ -477,6 +542,7 @@ function App() {
       const state = await lockLockbox()
       applyVaultState(state)
       closeEditor()
+      setSelectedLockboxTag(null)
       if (filter === "lockbox") {
         setFilter("tagged")
       }
@@ -514,23 +580,29 @@ function App() {
     const result = await resetLockboxPassword(nextRecoveryKey, newPassword)
     applyVaultState(result.vault)
     setRecoveryKey(result.recoveryKey)
+
+    if (pendingLockboxMoveId) {
+      const fragmentId = pendingLockboxMoveId
+      setPendingLockboxMoveId(null)
+      await moveFragmentIntoLockbox(fragmentId, "密匣密码已重置，笔记已移入")
+      return
+    }
+
     toast.success("密匣密码已重置")
   }
 
-  async function handleClearLockbox(confirmation: string) {
-    const state = await clearLockbox(confirmation)
-    applyVaultState(state)
-    setRecoveryKey(null)
+  function closeLockboxDialog() {
+    setPendingLockboxMoveId(null)
     setLockboxDialogMode(null)
-    if (filter === "lockbox") {
-      setFilter("tagged")
-    }
-    toast.success("密匣已清空")
+    setRecoveryKey(null)
   }
 
-  function closeLockboxDialog() {
-    setLockboxDialogMode(null)
-    setRecoveryKey(null)
+  function handleOpenSearchResult(fragment: Fragment) {
+    openZenEditor(fragment)
+  }
+
+  function openSearch() {
+    setIsSearchDialogOpen(true)
   }
 
   const publicOnlyFragments = useMemo(
@@ -558,14 +630,19 @@ function App() {
     [activeFragments]
   )
 
+  const lockboxTagSummaries = useMemo(
+    () => buildTagSummaries(lockboxFragments, []),
+    [lockboxFragments]
+  )
+
   const taggedFragments = useMemo(
-    () => activeFragments.filter(hasVisibleTag),
-    [activeFragments]
+    () => publicActiveFragments.filter(hasVisibleTag),
+    [publicActiveFragments]
   )
 
   const tagSummaries = useMemo(
-    () => buildTagSummaries(activeFragments, DEFAULT_PROJECT_TAGS),
-    [activeFragments]
+    () => buildTagSummaries(publicActiveFragments, DEFAULT_PROJECT_TAGS),
+    [publicActiveFragments]
   )
 
   useEffect(() => {
@@ -577,16 +654,34 @@ function App() {
     }
   }, [selectedTag, tagSummaries])
 
+  useEffect(() => {
+    if (!selectedLockboxTag) return
+    if (!lockbox?.unlocked) {
+      setSelectedLockboxTag(null)
+      return
+    }
+    if (
+      !lockboxTagSummaries.some((summary) => summary.tag === selectedLockboxTag)
+    ) {
+      setSelectedLockboxTag(null)
+    }
+  }, [lockbox?.unlocked, lockboxTagSummaries, selectedLockboxTag])
+
   const filteredFragments = useMemo(() => {
     switch (filter) {
       case "tagged":
         return selectedTag
-          ? activeFragments.filter((fragment) =>
+          ? publicActiveFragments.filter((fragment) =>
               fragment.tags.includes(selectedTag)
             )
           : taggedFragments
       case "lockbox":
-        return lockbox?.unlocked ? lockboxFragments : []
+        if (!lockbox?.unlocked) return []
+        return selectedLockboxTag
+          ? lockboxFragments.filter((fragment) =>
+              fragment.tags.includes(selectedLockboxTag)
+            )
+          : lockboxFragments
       case "archive":
         return archivedFragments
       case "dailyReview":
@@ -600,12 +695,12 @@ function App() {
         )
     }
   }, [
-    activeFragments,
     archivedFragments,
     filter,
     lockbox?.unlocked,
     lockboxFragments,
     publicActiveFragments,
+    selectedLockboxTag,
     selectedTag,
     taggedFragments,
   ])
@@ -616,13 +711,13 @@ function App() {
         new Set(
           DEFAULT_PROJECT_TAGS.concat(
             [LOCKBOX_TAG],
-            activeFragments
+            publicActiveFragments
               .flatMap((fragment) => fragment.tags)
               .filter((tag) => tag !== "inbox")
           )
         )
       ).sort((a, b) => a.localeCompare(b)),
-    [activeFragments]
+    [publicActiveFragments]
   )
 
   const editingFragment = useMemo(
@@ -637,8 +732,35 @@ function App() {
     filter === "dailyReview" || filter === "insight" || filter === "walk"
   const isVaultDialogOpen = isVaultGuideOpen || needsVaultSetup
   const isExportSheetOpen = exportingFragment !== null
-  const isBlockingDialogOpen =
-    isVaultDialogOpen || lockboxDialogMode !== null || isExportSheetOpen
+  const isLockboxArchiveConfirmOpen = pendingLockboxArchiveFragment !== null
+  const isModalBusy =
+    isVaultDialogOpen ||
+    lockboxDialogMode !== null ||
+    isExportSheetOpen ||
+    isLockboxArchiveConfirmOpen
+  const isBlockingDialogOpen = isModalBusy || isSearchDialogOpen
+
+  useEffect(() => {
+    function handleGlobalSearchShortcut(event: KeyboardEvent) {
+      const isSearchShortcut =
+        (event.metaKey || event.ctrlKey) &&
+        !event.altKey &&
+        event.key.toLowerCase() === "k"
+
+      if (!isSearchShortcut) return
+
+      event.preventDefault()
+      if (isModalBusy) return
+
+      openSearch()
+    }
+
+    window.addEventListener("keydown", handleGlobalSearchShortcut)
+
+    return () => {
+      window.removeEventListener("keydown", handleGlobalSearchShortcut)
+    }
+  }, [isModalBusy])
 
   return (
     <TooltipProvider>
@@ -654,6 +776,7 @@ function App() {
             isSyncing={isSyncing}
             onFilterChange={setFilter}
             onHelp={showHelp}
+            onOpenSearch={openSearch}
             onOpenSettings={() => setIsVaultGuideOpen(true)}
             onRestoreWindow={handleRestoreWindow}
             onShortcuts={showShortcuts}
@@ -692,9 +815,12 @@ function App() {
           {filter === "lockbox" ? (
             <LockboxHeader
               lockbox={lockbox}
+              selectedTag={selectedLockboxTag}
+              summaries={lockboxTagSummaries}
+              totalCount={lockboxFragments.length}
               onChangePassword={() => setLockboxDialogMode("change")}
-              onClear={() => setLockboxDialogMode("clear")}
               onLock={() => void handleLockLockbox()}
+              onSelectTag={setSelectedLockboxTag}
               onUnlock={openLockboxGate}
             />
           ) : null}
@@ -767,6 +893,7 @@ function App() {
             isSyncing={isSyncing}
             onFilterChange={setFilter}
             onHelp={showHelp}
+            onOpenSearch={openSearch}
             onOpenSettings={() => setIsVaultGuideOpen(true)}
             onRestoreWindow={handleRestoreWindow}
             onShortcuts={showShortcuts}
@@ -788,6 +915,30 @@ function App() {
         open={isExportSheetOpen}
         vaultPath={vaultPath}
       />
+      <FragmentSearchDialog
+        fragments={activeFragments}
+        open={isSearchDialogOpen}
+        onOpenChange={setIsSearchDialogOpen}
+        onOpenFragment={handleOpenSearchResult}
+        vaultPath={vaultPath}
+      />
+      <LockboxArchiveConfirmDialog
+        fragment={pendingLockboxArchiveFragment}
+        isArchiving={isArchivingLockboxFragment}
+        onCancel={() => setPendingLockboxArchiveFragment(null)}
+        onConfirm={() => {
+          if (!pendingLockboxArchiveFragment) return
+
+          setIsArchivingLockboxFragment(true)
+          void archiveFragmentWithFeedback(pendingLockboxArchiveFragment)
+            .then((archived) => {
+              if (archived) setPendingLockboxArchiveFragment(null)
+            })
+            .finally(() => {
+              setIsArchivingLockboxFragment(false)
+            })
+        }}
+      />
       <VaultGuide
         git={git}
         onClose={() => {
@@ -804,7 +955,6 @@ function App() {
         mode={lockboxDialogMode}
         recoveryKey={recoveryKey}
         onChangePassword={handleChangeLockboxPassword}
-        onClear={handleClearLockbox}
         onClose={closeLockboxDialog}
         onModeChange={setLockboxDialogMode}
         onReset={handleResetLockboxPassword}
@@ -818,57 +968,170 @@ function App() {
 
 export default App
 
+function LockboxArchiveConfirmDialog({
+  fragment,
+  isArchiving,
+  onCancel,
+  onConfirm,
+}: {
+  fragment: Fragment | null
+  isArchiving: boolean
+  onCancel: () => void
+  onConfirm: () => void
+}) {
+  return (
+    <Dialog
+      open={fragment !== null}
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen && !isArchiving) onCancel()
+      }}
+    >
+      <DialogContent
+        className="w-[min(420px,calc(100vw-32px))]"
+        showCloseButton={!isArchiving}
+      >
+        <DialogHeader>
+          <DialogTitle>确认归档密匣笔记</DialogTitle>
+          <DialogDescription>
+            这条笔记属于密匣。归档后会从密匣列表移除，并且不会出现在「归档/回收站」列表中。
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter className="flex-row justify-end">
+          <Button
+            disabled={isArchiving}
+            onClick={onCancel}
+            type="button"
+            variant="outline"
+          >
+            取消
+          </Button>
+          <Button
+            disabled={isArchiving}
+            onClick={onConfirm}
+            type="button"
+            variant="destructive"
+          >
+            {isArchiving ? "归档中" : "仍然归档"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 function LockboxHeader({
   lockbox,
+  selectedTag,
+  summaries,
+  totalCount,
   onChangePassword,
-  onClear,
   onLock,
+  onSelectTag,
   onUnlock,
 }: {
   lockbox: LockboxState | null
+  selectedTag: string | null
+  summaries: TaggedSummary[]
+  totalCount: number
   onChangePassword: () => void
-  onClear: () => void
   onLock: () => void
+  onSelectTag: (tag: string | null) => void
   onUnlock: () => void
 }) {
   return (
     <div className="shard-content-inset pb-[var(--shard-space-4)]">
-      <div className="shard-content-measure flex flex-wrap items-center justify-between gap-[var(--shard-space-3)] border-b border-border pb-[var(--shard-space-4)]">
-        <div className="flex min-w-0 items-center gap-[var(--shard-space-3)]">
-          <span className="flex size-8 shrink-0 items-center justify-center rounded-[var(--shard-radius-control)] border border-border bg-card text-[color:var(--shard-sapphire)]">
-            <LockKeyholeIcon className="size-4 stroke-[1.75]" />
-          </span>
-          <div className="min-w-0">
-            <h1 className="text-lg leading-6 font-bold">密匣</h1>
-            <p className="mt-1 text-sm leading-5 text-muted-foreground">
-              {lockbox?.unlocked
-                ? `已解锁${lockbox.expiresAt ? `至 ${formatLockboxExpiry(lockbox.expiresAt)}` : ""}`
-                : "需要密码访问。私密笔记不会出现在主页、回顾或普通统计中。"}
-            </p>
+      <div className="shard-content-measure border-b border-border pb-[var(--shard-space-4)]">
+        <div className="flex flex-wrap items-center justify-between gap-[var(--shard-space-3)]">
+          <div className="flex min-w-0 items-center gap-[var(--shard-space-3)]">
+            <span className="flex size-8 shrink-0 items-center justify-center rounded-[var(--shard-radius-control)] border border-border bg-card text-[color:var(--shard-sapphire)]">
+              <LockKeyholeIcon className="size-4 stroke-[1.75]" />
+            </span>
+            <div className="min-w-0">
+              <h1 className="text-lg leading-6 font-bold">密匣</h1>
+              <p className="mt-1 text-sm leading-5 text-muted-foreground">
+                {lockbox?.unlocked
+                  ? `已解锁${lockbox.expiresAt ? `至 ${formatLockboxExpiry(lockbox.expiresAt)}` : ""}`
+                  : "需要密码访问。私密笔记不会出现在主页、回顾或普通统计中。"}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex shrink-0 items-center gap-[var(--shard-space-2)]">
+            {lockbox?.unlocked ? (
+              <>
+                <Button onClick={onChangePassword} size="sm" variant="outline">
+                  修改密码
+                </Button>
+                <Button onClick={onLock} size="sm" variant="outline">
+                  上锁
+                </Button>
+              </>
+            ) : (
+              <Button onClick={onUnlock} size="sm">
+                解锁
+              </Button>
+            )}
           </div>
         </div>
 
-        <div className="flex shrink-0 items-center gap-[var(--shard-space-2)]">
-          {lockbox?.unlocked ? (
-            <>
-              <Button onClick={onChangePassword} size="sm" variant="outline">
-                修改密码
-              </Button>
-              <Button onClick={onLock} size="sm" variant="outline">
-                上锁
-              </Button>
-            </>
-          ) : (
-            <Button onClick={onUnlock} size="sm">
-              解锁
-            </Button>
-          )}
-          <Button onClick={onClear} size="sm" variant="ghost">
-            清空
-          </Button>
-        </div>
+        {lockbox?.unlocked ? (
+          <div className="mt-[var(--shard-space-3)] flex flex-col gap-[var(--shard-space-2)]">
+            <div className="flex h-[var(--shard-chip-height)] items-center gap-[var(--shard-space-2)] text-xs font-medium text-muted-foreground">
+              <TagIcon className="size-3.5 shrink-0 stroke-[1.75]" />
+              <span>{summaries.length} 子标签</span>
+              <span aria-hidden="true">·</span>
+              <span>{totalCount} 条</span>
+            </div>
+
+            <div className="shard-tag-filters flex max-h-[72px] flex-wrap content-start gap-[var(--shard-space-2)] overflow-y-auto pr-[var(--shard-space-1)]">
+              <LockboxTagFilterButton
+                active={selectedTag === null}
+                count={totalCount}
+                label="全部"
+                onClick={() => onSelectTag(null)}
+              />
+              {summaries.map((summary) => (
+                <LockboxTagFilterButton
+                  active={selectedTag === summary.tag}
+                  count={summary.count}
+                  key={summary.tag}
+                  label={`#${summary.tag}`}
+                  onClick={() => onSelectTag(summary.tag)}
+                />
+              ))}
+            </div>
+          </div>
+        ) : null}
       </div>
     </div>
+  )
+}
+
+function LockboxTagFilterButton({
+  active,
+  count,
+  label,
+  onClick,
+}: {
+  active: boolean
+  count: number
+  label: string
+  onClick: () => void
+}) {
+  return (
+    <button
+      aria-pressed={active}
+      className={[
+        "shard-tag max-w-full gap-[var(--shard-space-micro)] font-medium",
+        active ? "shard-tag-active" : "",
+      ].join(" ")}
+      onClick={onClick}
+      title={label}
+      type="button"
+    >
+      <span className="shard-chip-text truncate">{label}</span>
+      <span className="shard-chip-text shard-tag-count">{count}</span>
+    </button>
   )
 }
 

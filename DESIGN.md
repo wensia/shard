@@ -10,7 +10,7 @@ Visual concept: [docs/design/shard-main-screen-concept.png](docs/design/shard-ma
 Shard is a lightweight Markdown fragment capture desktop app. The UI must optimize for one loop:
 
 1. Type a fragment.
-2. Press Cmd+Enter, Ctrl+Enter, or Shift+Enter.
+2. Press Cmd+Enter or Ctrl+Enter.
 3. A Markdown file is created.
 4. A quiet paper card appears in the timeline.
 5. Git status updates in the background.
@@ -77,10 +77,10 @@ than a broad brand fill.
 
 Related accents keep semantic ownership:
 
-- Emerald means synced/success.
-- Amber means pending/warning.
-- Ruby means destructive/error.
-- Violet is reserved for secondary tag variety only.
+- Terracotta `#b6533c` means primary/focus/destructive.
+- Turquoise `#3e8c7d` means success/positive emphasis.
+- Peacock blue `#2e6e79` means info/secondary accent.
+- Warm amber `#be7c32` means pending/warning.
 
 ## Layout
 
@@ -159,8 +159,8 @@ Capture input:
   markers to the current line or every line in the active selection. Inline
   tools apply Markdown-style text markers to the active selection.
 - Must be focused on app launch.
-- `Enter` inserts a newline.
-- `Cmd+Enter`, `Ctrl+Enter`, or `Shift+Enter` creates a fragment unless IME
+- `Enter` or `Shift+Enter` inserts a newline.
+- `Cmd+Enter` or `Ctrl+Enter` creates a fragment unless IME
   composition is active.
 - Typing `#` or clicking the `#` button opens a compact tag popover in the
   capture box, positioned directly below the current text cursor.
@@ -331,6 +331,14 @@ user sees are the single source of truth, so the caret cannot drift from them.
 Mirror geometry is allowed only as a fallback where the layer has no
 measurable text (empty content, image attachment lines).
 
+Editor selection rule: the same visible layer paints tags, paints selection,
+and sits under the caret, so a drag selection has to repaint that highlight in
+real time. The textarea's `select` event stays silent while the pointer is
+still down, so the editor listens to the document `selectionchange` stream
+instead and repaints on every move, not only on release. Task checkboxes belong
+to this surface too: each aligns to the text line box and centers on its row, so
+the box never floats above or below the words it marks.
+
 ## Color Tokens
 
 Use semantic CSS variables. The current runtime values are:
@@ -354,10 +362,21 @@ Use semantic CSS variables. The current runtime values are:
 --shard-sapphire-text: var(--shard-accent-text);
 --shard-primary-rgb: 182 83 60;
 --shard-primary-soft-rgb: 222 150 129;
---shard-emerald: #148a4a;
---shard-amber: #b76a00;
---shard-ruby: #b42318;
---shard-editor-tag-fg: #5a3fb0;
+--shard-success: #3e8c7d;
+--shard-success-rgb: 62 140 125;
+--shard-info: #2e6e79;
+--shard-info-rgb: 46 110 121;
+--shard-warning: #be7c32;
+--shard-warning-rgb: 190 124 50;
+--shard-danger: #b6533c;
+--shard-danger-rgb: 182 83 60;
+--shard-emerald: var(--shard-success);
+--shard-emerald-rgb: 62 140 125;
+--shard-amber: var(--shard-warning);
+--shard-amber-rgb: 190 124 50;
+--shard-ruby: var(--shard-danger);
+--shard-ruby-rgb: 182 83 60;
+--shard-editor-tag-fg: var(--shard-info);
 
 --shard-radius-control: 6px;
 --shard-surface-radius: 12px;
@@ -477,8 +496,8 @@ Composition rules:
 Capture:
 
 - App launch focuses capture textarea.
-- `Enter` inserts a newline.
-- `Cmd+Enter`, `Ctrl+Enter`, or `Shift+Enter` creates a fragment.
+- `Enter` or `Shift+Enter` inserts a newline.
+- `Cmd+Enter` or `Ctrl+Enter` creates a fragment.
 - IME composition must not submit prematurely; save shortcuts are ignored while
   composition is active.
 - Empty or whitespace-only submit is ignored.
@@ -507,9 +526,9 @@ AI:
 
 Git:
 
-- `committed` green.
-- `sync pending` amber.
-- `commit failed` ruby/amber.
+- `committed` turquoise.
+- `sync pending` warm amber.
+- `commit failed` terracotta.
 - Git failure never removes the card or blocks more input.
 - Git / GitHub CLI / filesystem scans or writes / network calls / external processes must run in the background and must not block WKWebView or the UI thread.
 - Git setup, repository creation, and sync flows must drive local loading / disabled / `aria-busy` states asynchronously and preserve the user's current context after success unless the user explicitly closes or switches it.
@@ -534,7 +553,7 @@ Preferred:
 
 - Input remains primary.
 - Timeline area shows one quiet line:
-  `还没有片段。写下第一条，按 Cmd/Ctrl/Shift+Enter 保存。`
+  `还没有片段。写下第一条，按 Cmd/Ctrl+Enter 保存。`
 - No illustration required.
 
 ## Accessibility
@@ -576,7 +595,7 @@ If a generated component uses Base UI `render` composition, make sure custom com
 The main implementation success test is visual and behavioral:
 
 - The app opens to a focused capture box.
-- Cmd+Enter, Ctrl+Enter, or Shift+Enter creates a card.
+- Cmd+Enter or Ctrl+Enter creates a card.
 - Cards look like solid paper fragments.
 - The timeline stays readable with at least 24 fragments.
 - The UI remains useful without AI.

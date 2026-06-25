@@ -10,6 +10,7 @@ export interface TagSuggestion {
 
 interface TagCompletionPopoverProps {
   activeIndex: number
+  id: string
   left: number
   suggestions: TagSuggestion[]
   onHover: (index: number) => void
@@ -19,6 +20,7 @@ interface TagCompletionPopoverProps {
 
 export function TagCompletionPopover({
   activeIndex,
+  id,
   left,
   suggestions,
   onHover,
@@ -33,7 +35,10 @@ export function TagCompletionPopover({
 
   return (
     <div
+      aria-label="标签建议"
       className="absolute z-40 max-h-[240px] w-[200px] max-w-[calc(100%-1.5rem)] overflow-y-auto rounded-[var(--shard-surface-radius)] border border-[rgb(0_0_0/var(--shard-alpha-5))] bg-card p-[var(--shard-space-1)] text-card-foreground shadow-[0_6px_14px_rgb(0_0_0/var(--shard-alpha-5))]"
+      id={id}
+      role="listbox"
       style={{ left, top }}
     >
       {suggestions.length === 0 ? (
@@ -47,10 +52,12 @@ export function TagCompletionPopover({
 
           return (
             <button
+              aria-selected={isActive}
               className={[
-                "flex min-h-8 w-full items-center justify-between gap-[var(--shard-space-2)] rounded-[var(--shard-radius-control)] px-[var(--shard-space-2)] text-left transition-colors",
-                isActive ? "bg-muted/[var(--shard-alpha-55)]" : "",
+                "flex min-h-8 w-full items-center justify-between gap-[var(--shard-space-2)] rounded-[var(--shard-radius-control)] px-[var(--shard-space-2)] text-left transition-colors hover:bg-muted",
+                isActive ? "bg-muted text-foreground" : "",
               ].join(" ")}
+              id={getTagSuggestionOptionId(id, index)}
               key={`${item.kind}-${item.tag}`}
               onMouseDown={(event) => {
                 event.preventDefault()
@@ -58,6 +65,7 @@ export function TagCompletionPopover({
               }}
               onMouseEnter={() => onHover(index)}
               ref={isActive ? activeItemRef : null}
+              role="option"
               type="button"
             >
               <span className="flex min-w-0 flex-1 items-center gap-[var(--shard-space-micro)] text-xs leading-5 font-normal text-foreground">
@@ -77,6 +85,26 @@ export function TagCompletionPopover({
       )}
     </div>
   )
+}
+
+export function getBoundedTagSuggestionIndex(index: number, itemCount: number) {
+  if (itemCount <= 0) return 0
+  return Math.min(Math.max(index, 0), itemCount - 1)
+}
+
+export function getNextTagSuggestionIndex(
+  currentIndex: number,
+  direction: "next" | "previous",
+  itemCount: number
+) {
+  if (itemCount <= 0) return 0
+
+  const offset = direction === "next" ? 1 : -1
+  return (currentIndex + offset + itemCount) % itemCount
+}
+
+export function getTagSuggestionOptionId(popoverId: string, index: number) {
+  return `${popoverId}-option-${index}`
 }
 
 export function getTagCompletionPopoverPosition(

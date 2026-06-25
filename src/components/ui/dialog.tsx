@@ -53,7 +53,9 @@ function DialogContent({
       <DialogPrimitive.Popup
         data-slot="dialog-content"
         className={cn(
-          "fixed top-1/2 left-1/2 z-50 flex max-h-[calc(100dvh-32px)] -translate-x-1/2 -translate-y-1/2 flex-col gap-4 overflow-hidden rounded-[var(--shard-surface-radius)] border border-border bg-popover bg-clip-padding text-sm text-popover-foreground shadow-[0_16px_48px_rgb(0_0_0/var(--shard-alpha-21))] transition duration-150 ease-out data-ending-style:scale-[0.98] data-ending-style:opacity-0 data-starting-style:scale-[0.98] data-starting-style:opacity-0",
+          // One 24px frame, sections separated by a 24px rhythm. Padding lives
+          // only here so header/footer never double up the edge spacing.
+          "fixed top-1/2 left-1/2 z-50 flex max-h-[calc(100dvh-32px)] -translate-x-1/2 -translate-y-1/2 flex-col gap-[var(--shard-space-6)] overflow-hidden rounded-[var(--shard-surface-radius)] border border-border bg-popover bg-clip-padding p-[var(--shard-space-6)] text-sm text-popover-foreground shadow-[0_16px_48px_rgb(0_0_0/var(--shard-alpha-21))] transition duration-150 ease-out data-ending-style:scale-[0.98] data-ending-style:opacity-0 data-starting-style:scale-[0.98] data-starting-style:opacity-0",
           className
         )}
         {...props}
@@ -64,7 +66,9 @@ function DialogContent({
             data-slot="dialog-close"
             render={
               <Button
-                className="absolute top-3 right-3"
+                // 18px = space-6 frame − space-micro icon inset, so the X glyph
+                // box lands exactly on the content's top-right corner.
+                className="absolute top-[calc(var(--shard-space-6)-var(--shard-space-micro))] right-[calc(var(--shard-space-6)-var(--shard-space-micro))]"
                 size="icon-sm"
                 variant="ghost"
               />
@@ -83,7 +87,7 @@ function DialogHeader({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       data-slot="dialog-header"
-      className={cn("flex flex-col gap-0.5 p-4", className)}
+      className={cn("flex flex-col gap-[var(--shard-space-2)]", className)}
       {...props}
     />
   )
@@ -93,7 +97,10 @@ function DialogFooter({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       data-slot="dialog-footer"
-      className={cn("mt-auto flex flex-col gap-2 p-4", className)}
+      className={cn(
+        "mt-auto flex flex-col gap-[var(--shard-space-2)]",
+        className
+      )}
       {...props}
     />
   )
@@ -104,7 +111,7 @@ function DialogTitle({ className, ...props }: DialogPrimitive.Title.Props) {
     <DialogPrimitive.Title
       data-slot="dialog-title"
       className={cn(
-        "font-heading text-base font-medium text-foreground",
+        "font-heading text-base leading-6 font-semibold tracking-tight text-foreground",
         className
       )}
       {...props}
@@ -119,7 +126,10 @@ function DialogDescription({
   return (
     <DialogPrimitive.Description
       data-slot="dialog-description"
-      className={cn("text-sm text-muted-foreground", className)}
+      className={cn(
+        "text-sm leading-5 text-pretty text-muted-foreground",
+        className
+      )}
       {...props}
     />
   )

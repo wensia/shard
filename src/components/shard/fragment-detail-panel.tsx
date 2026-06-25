@@ -1,8 +1,6 @@
 import { useMemo, useState } from "react"
 import {
-  ArchiveIcon,
   CopyIcon,
-  PencilIcon,
   PlusIcon,
   SparklesIcon,
 } from "lucide-react"
@@ -10,7 +8,7 @@ import {
 import { StatusBadge } from "@/components/shard/status-badge"
 import { TagBadge } from "@/components/shard/tag-badge"
 import { Button } from "@/components/ui/button"
-import { FragmentContent } from "@/components/shard/fragment-content"
+import { FragmentBody } from "@/components/shard/fragment-body"
 import { Input } from "@/components/ui/input"
 import { Separator } from "@/components/ui/separator"
 import { normalizeTag, toggleTaskLine } from "@/lib/editor-format"
@@ -159,14 +157,15 @@ export function FragmentDetailPanel({
 
         <section className="flex flex-col gap-3">
           <h2 className="text-sm font-bold">内容</h2>
-          <div className="shard-memo-body min-h-28 rounded-md border border-border bg-muted/[var(--shard-alpha-55)] p-3 whitespace-pre-wrap">
-            <FragmentContent
-              content={fragment.content}
-              onTaskToggle={onUpdateContent ? toggleTask : undefined}
-              renderImages
-              vaultPath={vaultPath}
-            />
-          </div>
+          <FragmentBody
+            as="div"
+            className="min-h-28 rounded-md border border-border bg-muted/[var(--shard-alpha-55)] p-3"
+            content={fragment.content}
+            downloadableImages
+            onTaskToggle={onUpdateContent ? toggleTask : undefined}
+            renderImages
+            vaultPath={vaultPath}
+          />
         </section>
 
         <Separator />
@@ -187,11 +186,9 @@ export function FragmentDetailPanel({
 
       <div className="flex gap-3 border-t border-border p-5">
         <Button className="flex-1" variant="outline">
-          <ArchiveIcon data-icon="inline-start" />
           归档片段
         </Button>
         <Button className="flex-1" variant="outline">
-          <PencilIcon data-icon="inline-start" />
           编辑片段
         </Button>
       </div>

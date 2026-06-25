@@ -11,17 +11,15 @@ interface ExportImageTemplate {
   width: number
   minHeight: number
   maxHeight: number
-  outerPadding: number
   cardPadding: number
-  cardRadius: number
   background: string
-  card: string
-  border: string
+  footerBand: string
   text: string
   muted: string
   accent: string
-  tagBackground: string
-  tagText: string
+  headerMark: string
+  imageBg: string
+  heatmapInactive: string
   footerText: string
 }
 
@@ -34,9 +32,6 @@ interface MemoTextStyle {
   metaFontSize: number
   metaFontWeight: number
   metaLineHeight: number
-  tagFontSize: number
-  tagHeight: number
-  tagPaddingX: number
 }
 
 type ExportBlock =
@@ -50,74 +45,69 @@ type LoadedImages = Map<string, HTMLImageElement>
 const FONT_STACK =
   '"Barlow", "PingFang SC", "Microsoft YaHei", ui-sans-serif, system-ui, sans-serif'
 const EXPORT_MARK = "Shard"
+const EXPORT_CAPTION = "LOCAL MEMO · GIT VAULT"
 const MAX_IMAGE_HEIGHT = 260
-const TAG_GAP = 8
-const TAG_ROW_GAP = 8
-const TAG_TOP_GAP = 8
-const TAG_BODY_GAP = 12
-const HEADER_BODY_GAP = 22
-const PAPER_FOOTER_HEIGHT = 86
+const HEADER_BODY_GAP = 24
+const FOOTER_HEIGHT = 86
 
+// One refined minimal system in three moods: cool white, warm ivory, deep ink.
+// Every template is full-bleed with the same breathing room, a plain-date
+// header, a faint brand watermark, and a quiet footer carrying the activity
+// signature. Terracotta is the single accent across all three.
 export const EXPORT_IMAGE_TEMPLATES: ExportImageTemplate[] = [
   {
     id: "paper",
     label: "素白",
-    description: "纯白卡片、浅底脚注、适合分享",
+    description: "纯白底、克制留白、通用分享",
     width: 480,
     minHeight: 480,
     maxHeight: 1800,
-    outerPadding: 0,
     cardPadding: 28,
-    cardRadius: 0,
     background: "#ffffff",
-    card: "#ffffff",
-    border: "transparent",
+    footerBand: "#fbfbfb",
     text: "#111315",
     muted: "#9a9a9a",
     accent: "#b6533c",
-    tagBackground: "#f8f1ef",
-    tagText: "#743225",
+    headerMark: "#dedede",
+    imageBg: "#f1f3f3",
+    heatmapInactive: "#ecefed",
     footerText: "#9a9a9a",
   },
   {
     id: "focus",
-    label: "索引卡",
-    description: "紧凑结构、左侧色条、适合任务",
+    label: "暖白",
+    description: "宣纸暖调、柔和呼吸、适合长文",
     width: 480,
-    minHeight: 520,
+    minHeight: 480,
     maxHeight: 1800,
-    outerPadding: 24,
-    cardPadding: 20,
-    cardRadius: 12,
-    background: "#eef1f0",
-    card: "#fbfcfc",
-    border: "#cbd2d2",
-    text: "#171a1c",
-    muted: "#596364",
+    cardPadding: 28,
+    background: "#faf6ef",
+    footerBand: "#f4ece0",
+    text: "#2c2620",
+    muted: "#a99c8a",
     accent: "#b6533c",
-    tagBackground: "#ffffff",
-    tagText: "#743225",
-    footerText: "#747f80",
+    headerMark: "#e3d8c8",
+    imageBg: "#f0e7da",
+    heatmapInactive: "#ece1d2",
+    footerText: "#a99c8a",
   },
   {
     id: "night",
     label: "夜读",
-    description: "深色底、低亮度、适合长句",
+    description: "深墨底、低亮度、适合静读",
     width: 480,
-    minHeight: 520,
+    minHeight: 480,
     maxHeight: 1800,
-    outerPadding: 24,
-    cardPadding: 20,
-    cardRadius: 12,
-    background: "#111315",
-    card: "#191d1f",
-    border: "#343a3d",
-    text: "#f7f8f8",
-    muted: "#aeb7b7",
-    accent: "#de9681",
-    tagBackground: "#2a2220",
-    tagText: "#f1c0b2",
-    footerText: "#899194",
+    cardPadding: 28,
+    background: "#15181b",
+    footerBand: "#1c2023",
+    text: "#e9ebea",
+    muted: "#7f888b",
+    accent: "#db8d72",
+    headerMark: "#2e3438",
+    imageBg: "#23282a",
+    heatmapInactive: "#252b2f",
+    footerText: "#7f888b",
   },
 ]
 
@@ -141,13 +131,7 @@ export async function drawFragmentExportImage(
   const textStyle = readMemoTextStyle(template)
   const blocks = fragmentToBlocks(fragment)
   const images = await loadImages(blocks, vaultPath)
-  const logicalHeight = measureImageHeight(
-    fragment,
-    blocks,
-    images,
-    template,
-    textStyle
-  )
+  const logicalHeight = measureImageHeight(blocks, images, template, textStyle)
 
   canvas.width = template.width * pixelRatio
   canvas.height = logicalHeight * pixelRatio
@@ -218,9 +202,9 @@ function readMemoTextStyle(template: ExportImageTemplate): MemoTextStyle {
 
   return {
     bodyColor:
-      template.id === "night"
-        ? template.text
-        : readCssValue(root, "--shard-memo-content-color", template.text),
+      template.id === "paper"
+        ? readCssValue(root, "--shard-memo-content-color", template.text)
+        : template.text,
     bodyFontSize,
     bodyFontWeight: parseCssNumber(
       root.getPropertyValue("--shard-memo-font-weight"),
@@ -245,14 +229,10 @@ function readMemoTextStyle(template: ExportImageTemplate): MemoTextStyle {
       metaFontSize,
       20 / 13
     ),
-    tagFontSize: parseCssPx(root.getPropertyValue("--shard-tag-font-size"), 13),
-    tagHeight: parseCssPx(root.getPropertyValue("--shard-tag-height"), 28),
-    tagPaddingX: parseCssPx(root.getPropertyValue("--shard-tag-padding-x"), 11),
   }
 }
 
 function measureImageHeight(
-  fragment: Fragment,
   blocks: ExportBlock[],
   images: LoadedImages,
   template: ExportImageTemplate,
@@ -262,7 +242,7 @@ function measureImageHeight(
   const context = canvas.getContext("2d")
   if (!context) return template.minHeight
 
-  const layout = layoutMetrics(context, fragment, template, textStyle)
+  const layout = layoutMetrics(template, textStyle)
   const bodyHeight = renderBody(
     context,
     blocks,
@@ -276,11 +256,7 @@ function measureImageHeight(
       y: layout.bodyTop,
     }
   ).y
-  const fullHeight =
-    bodyHeight +
-    template.cardPadding +
-    layout.footerHeight +
-    template.outerPadding
+  const fullHeight = bodyHeight + template.cardPadding + layout.footerHeight
 
   return Math.min(Math.max(template.minHeight, fullHeight), template.maxHeight)
 }
@@ -298,31 +274,10 @@ function drawTemplate(
   context.fillStyle = template.background
   context.fillRect(0, 0, template.width, height)
 
-  const cardX = template.outerPadding
-  const cardY = template.outerPadding
-  const cardWidth = template.width - template.outerPadding * 2
-  const cardHeight = height - template.outerPadding * 2
-
-  roundedRect(context, cardX, cardY, cardWidth, cardHeight, template.cardRadius)
-  context.fillStyle = template.card
-  context.fill()
-  if (template.border !== "transparent") {
-    context.strokeStyle = template.border
-    context.lineWidth = 2
-    context.stroke()
-  }
-
-  if (template.id === "focus") {
-    roundedRect(context, cardX, cardY, 4, cardHeight, 2)
-    context.fillStyle = template.accent
-    context.fill()
-  }
-
-  const layout = layoutMetrics(context, fragment, template, textStyle)
+  const layout = layoutMetrics(template, textStyle)
   drawHeader(context, fragment, template, textStyle, layout)
 
-  const bodyMaxY =
-    height - template.outerPadding - template.cardPadding - layout.footerHeight
+  const bodyMaxY = height - template.cardPadding - layout.footerHeight
   const result = renderBody(
     context,
     blocks,
@@ -338,55 +293,29 @@ function drawTemplate(
   )
 
   if (result.truncated) {
-    setFont(
-      context,
-      textStyle.bodyFontSize,
-      600,
-      textStyle.bodyLetterSpacing
-    )
+    setFont(context, textStyle.bodyFontSize, 600, textStyle.bodyLetterSpacing)
     context.fillStyle = template.muted
     context.fillText("...", layout.contentX, bodyMaxY - textStyle.bodyLineHeight)
   }
 
-  drawFooter(context, fragment, template, textStyle, height)
+  drawFooter(context, template, textStyle, height)
 }
 
 function layoutMetrics(
-  context: CanvasRenderingContext2D,
-  fragment: Fragment,
   template: ExportImageTemplate,
   textStyle: MemoTextStyle
 ) {
-  const cardX = template.outerPadding
-  const contentX = cardX + template.cardPadding
-  const contentWidth =
-    template.width - (template.outerPadding + template.cardPadding) * 2
-  const headerTop = template.outerPadding + template.cardPadding
-  const tagRows = measureTagRows(
-    context,
-    template.id === "paper" ? [] : exportDisplayTags(fragment),
-    contentWidth,
-    textStyle
-  )
-  const tagsHeight =
-    tagRows.length > 0
-      ? TAG_TOP_GAP +
-        tagRows.length * textStyle.tagHeight +
-        (tagRows.length - 1) * TAG_ROW_GAP +
-        TAG_BODY_GAP
-      : 0
-  const bodyTop =
-    headerTop +
-    textStyle.metaLineHeight +
-    (tagsHeight > 0 ? tagsHeight : HEADER_BODY_GAP)
+  const contentX = template.cardPadding
+  const contentWidth = template.width - template.cardPadding * 2
+  const headerTop = template.cardPadding
+  const bodyTop = headerTop + textStyle.metaLineHeight + HEADER_BODY_GAP
 
   return {
     bodyTop,
     contentWidth,
     contentX,
-    footerHeight: template.id === "paper" ? PAPER_FOOTER_HEIGHT : 44,
+    footerHeight: FOOTER_HEIGHT,
     headerTop,
-    tagRows,
   }
 }
 
@@ -400,34 +329,20 @@ function drawHeader(
   setFont(context, textStyle.metaFontSize, textStyle.metaFontWeight)
   context.fillStyle = template.muted
   context.fillText(
-    template.id === "paper"
-      ? formatPlainExportDate(fragment.createdAt)
-      : formatExportDate(fragment.createdAt),
+    formatPlainExportDate(fragment.createdAt),
     layout.contentX,
     layout.headerTop
   )
 
-  if (template.id === "paper") {
-    setFont(context, textStyle.metaFontSize, 500)
-    context.textAlign = "right"
-    context.fillStyle = "#dedede"
-    context.fillText(
-      EXPORT_MARK,
-      layout.contentX + layout.contentWidth,
-      layout.headerTop
-    )
-    context.textAlign = "left"
-    return
-  }
-
-  drawTagRows(
-    context,
-    layout.tagRows,
-    layout.contentX,
-    layout.headerTop + textStyle.metaLineHeight + TAG_TOP_GAP,
-    template,
-    textStyle
+  setFont(context, textStyle.metaFontSize, 500)
+  context.textAlign = "right"
+  context.fillStyle = template.headerMark
+  context.fillText(
+    EXPORT_MARK,
+    layout.contentX + layout.contentWidth,
+    layout.headerTop
   )
+  context.textAlign = "left"
 }
 
 function renderBody(
@@ -552,7 +467,7 @@ function drawTaskCheckbox(
   if (!checked) return
 
   context.beginPath()
-  context.strokeStyle = template.id === "night" ? "#111315" : "#ffffff"
+  context.strokeStyle = template.id === "night" ? template.background : "#ffffff"
   context.lineWidth = 2
   context.lineCap = "round"
   context.lineJoin = "round"
@@ -574,9 +489,9 @@ function drawImageBlock(
   height: number
 ) {
   roundedRect(context, layout.contentX, y, width, height, 10)
-  context.fillStyle = template.id === "night" ? "#23282a" : "#f1f3f3"
+  context.fillStyle = template.imageBg
   context.fill()
-  context.strokeStyle = template.border
+  context.strokeStyle = template.headerMark
   context.lineWidth = 1
   context.stroke()
 
@@ -605,71 +520,13 @@ function drawImageBlock(
 
 function drawFooter(
   context: CanvasRenderingContext2D,
-  fragment: Fragment,
   template: ExportImageTemplate,
   textStyle: MemoTextStyle,
   height: number
 ) {
-  if (template.id === "paper") {
-    drawPaperFooter(context, template, textStyle, height)
-    return
-  }
-
-  const x = template.outerPadding + template.cardPadding
-  const top =
-    height - template.outerPadding - template.cardPadding - textStyle.metaLineHeight
-  const contentWidth =
-    template.width - (template.outerPadding + template.cardPadding) * 2
-
-  const dividerY = top - 12
-  context.beginPath()
-  context.moveTo(x, dividerY)
-  context.lineTo(x + contentWidth, dividerY)
-  context.strokeStyle = template.border
-  context.lineWidth = 1
-  context.stroke()
-
-  const glyphSize = Math.round(textStyle.metaLineHeight)
-  drawBrandMark(context, x, top, glyphSize, template)
-  setFont(context, textStyle.metaFontSize, 600)
-  context.fillStyle = template.footerText
-  context.fillText(EXPORT_MARK, x + glyphSize + 8, top + 1)
-  const brandWidth =
-    glyphSize + 8 + Math.ceil(context.measureText(EXPORT_MARK).width)
-
-  const labels = exportDisplayTags(fragment).map((tag) => `#${tag}`)
-  if (labels.length === 0) return
-
-  const gap = 12
-  const available = contentWidth - brandWidth - 32
-  const widths = labels.map((label) =>
-    Math.ceil(context.measureText(label).width)
-  )
-
-  let visible = labels.length
-  let total = sumWithGaps(widths, gap, visible)
-  while (visible > 1 && total > available) {
-    visible -= 1
-    total = sumWithGaps(widths, gap, visible)
-  }
-
-  context.fillStyle = template.accent
-  let cursor = x + contentWidth - total
-  for (let index = labels.length - visible; index < labels.length; index += 1) {
-    context.fillText(labels[index], cursor, top + 1)
-    cursor += widths[index] + gap
-  }
-}
-
-function drawPaperFooter(
-  context: CanvasRenderingContext2D,
-  template: ExportImageTemplate,
-  textStyle: MemoTextStyle,
-  height: number
-) {
-  const footerTop = height - PAPER_FOOTER_HEIGHT
-  context.fillStyle = "#fbfbfb"
-  context.fillRect(0, footerTop, template.width, PAPER_FOOTER_HEIGHT)
+  const footerTop = height - FOOTER_HEIGHT
+  context.fillStyle = template.footerBand
+  context.fillRect(0, footerTop, template.width, FOOTER_HEIGHT)
 
   const x = template.cardPadding
   const brandY = footerTop + 24
@@ -679,9 +536,9 @@ function drawPaperFooter(
 
   setFont(context, 11, 500)
   context.fillStyle = template.footerText
-  context.fillText("LOCAL MEMO · GIT VAULT", x, brandY + 22)
+  context.fillText(EXPORT_CAPTION, x, brandY + 22)
 
-  drawPaperHeatmap(
+  drawActivityGrid(
     context,
     template.width - template.cardPadding - 40,
     footerTop + 25,
@@ -689,7 +546,7 @@ function drawPaperFooter(
   )
 }
 
-function drawPaperHeatmap(
+function drawActivityGrid(
   context: CanvasRenderingContext2D,
   x: number,
   y: number,
@@ -702,7 +559,7 @@ function drawPaperHeatmap(
   for (let row = 0; row < 5; row += 1) {
     for (let column = 0; column < 6; column += 1) {
       const key = `${column}:${row}`
-      context.fillStyle = active.has(key) ? template.accent : "#ecefed"
+      context.fillStyle = active.has(key) ? template.accent : template.heatmapInactive
       context.globalAlpha = active.has(key) ? 0.42 : 1
       roundedRect(
         context,
@@ -716,106 +573,6 @@ function drawPaperHeatmap(
     }
   }
   context.globalAlpha = 1
-}
-
-function sumWithGaps(widths: number[], gap: number, count: number) {
-  if (count <= 0) return 0
-  const slice = widths.slice(widths.length - count)
-  return slice.reduce((sum, width) => sum + width, 0) + gap * (count - 1)
-}
-
-function drawBrandMark(
-  context: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  size: number,
-  template: ExportImageTemplate
-) {
-  roundedRect(context, x, y, size, size, 7)
-  context.fillStyle = template.id === "night" ? "#23282a" : "#ffffff"
-  context.fill()
-  context.strokeStyle = template.footerText
-  context.lineWidth = 1
-  context.stroke()
-
-  context.beginPath()
-  context.moveTo(x + size * 0.52, y + 4)
-  context.lineTo(x + size - 4, y + 4)
-  context.lineTo(x + size - 4, y + size * 0.48)
-  context.closePath()
-  context.fillStyle = template.accent
-  context.fill()
-}
-
-function measureTagRows(
-  context: CanvasRenderingContext2D,
-  tags: string[],
-  maxWidth: number,
-  textStyle: MemoTextStyle
-) {
-  if (tags.length === 0) return []
-
-  setFont(context, textStyle.tagFontSize, 500)
-  const rows: string[][] = []
-  let row: string[] = []
-  let rowWidth = 0
-
-  for (const tag of tags) {
-    const tagWidth = measureTagWidth(context, tag, textStyle)
-    const nextWidth = row.length === 0 ? tagWidth : rowWidth + TAG_GAP + tagWidth
-
-    if (row.length > 0 && nextWidth > maxWidth) {
-      rows.push(row)
-      row = [tag]
-      rowWidth = tagWidth
-      continue
-    }
-
-    row.push(tag)
-    rowWidth = nextWidth
-  }
-
-  if (row.length > 0) rows.push(row)
-  return rows
-}
-
-function drawTagRows(
-  context: CanvasRenderingContext2D,
-  rows: string[][],
-  x: number,
-  y: number,
-  template: ExportImageTemplate,
-  textStyle: MemoTextStyle
-) {
-  if (rows.length === 0) return
-
-  setFont(context, textStyle.tagFontSize, 500)
-  let rowY = y
-  for (const row of rows) {
-    let cursor = x
-    for (const tag of row) {
-      const width = measureTagWidth(context, tag, textStyle)
-      roundedRect(context, cursor, rowY, width, textStyle.tagHeight, 8)
-      context.fillStyle = template.tagBackground
-      context.fill()
-      context.fillStyle = template.tagText
-      context.fillText(
-        tag,
-        cursor + textStyle.tagPaddingX,
-        rowY + Math.round((textStyle.tagHeight - textStyle.tagFontSize) / 2) - 1
-      )
-      cursor += width + TAG_GAP
-    }
-    rowY += textStyle.tagHeight + TAG_ROW_GAP
-  }
-}
-
-function measureTagWidth(
-  context: CanvasRenderingContext2D,
-  tag: string,
-  textStyle: MemoTextStyle
-) {
-  return Math.ceil(context.measureText(tag).width) + textStyle.tagPaddingX * 2
 }
 
 function fragmentToBlocks(fragment: Fragment): ExportBlock[] {
@@ -879,19 +636,6 @@ function loadImageElement(source: string) {
 
 function canDrawImageSource(source: string) {
   return source.startsWith("data:") || source.startsWith("blob:")
-}
-
-function exportDisplayTags(fragment: Fragment) {
-  const labels: string[] = []
-  if (fragment.pinned) labels.push("置顶")
-  if (fragment.lockbox) labels.push("密匣")
-
-  const visibleTags = fragment.tags.filter((tag) => tag !== "inbox")
-  for (const tag of visibleTags) {
-    if (!labels.includes(tag)) labels.push(tag)
-  }
-
-  return labels
 }
 
 function stripTagsFromLine(line: string): string {
@@ -1034,23 +778,4 @@ function formatPlainExportDate(createdAt: string) {
     month: "2-digit",
     year: "numeric",
   })
-}
-
-function formatExportDate(createdAt: string) {
-  const date = new Date(createdAt)
-  if (Number.isNaN(date.getTime())) return ""
-
-  const day = date.toLocaleDateString("zh-CN", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-  })
-  const weekday = date.toLocaleDateString("zh-CN", { weekday: "short" })
-  const time = date.toLocaleTimeString("zh-CN", {
-    hour: "2-digit",
-    hour12: false,
-    minute: "2-digit",
-  })
-
-  return `${day} ${weekday} · ${time}`
 }

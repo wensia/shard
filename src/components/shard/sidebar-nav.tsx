@@ -6,6 +6,7 @@ import {
   Maximize2Icon,
   MoreHorizontalIcon,
   RefreshCwIcon,
+  SearchIcon,
   SettingsIcon,
   SparklesIcon,
   TagIcon,
@@ -36,6 +37,7 @@ interface SidebarNavProps {
   isSyncing: boolean
   onFilterChange: (filter: FragmentFilter) => void
   onHelp: () => void
+  onOpenSearch: () => void
   onOpenSettings: () => void
   onRestoreWindow: () => void
   onShortcuts: () => void
@@ -79,6 +81,9 @@ const SIDEBAR_COPY: Record<
     noCommit: string
     nav: Record<FragmentFilter, string>
     restoreWindow: string
+    search: string
+    searchPlaceholder: string
+    searchShortcut: string
     settings: string
     shortcuts: string
     stats: {
@@ -118,6 +123,9 @@ const SIDEBAR_COPY: Record<
       walk: "随机漫步",
     },
     restoreWindow: "还原窗口尺寸",
+    search: "搜索笔记",
+    searchPlaceholder: "搜索正文或标签",
+    searchShortcut: "⌘K",
     settings: "设置",
     shortcuts: "快捷键",
     stats: {
@@ -156,6 +164,9 @@ const SIDEBAR_COPY: Record<
       walk: "Random Walk",
     },
     restoreWindow: "Restore Window Size",
+    search: "Search notes",
+    searchPlaceholder: "Search body or tags",
+    searchShortcut: "⌘K",
     settings: "Settings",
     shortcuts: "Shortcuts",
     stats: {
@@ -207,6 +218,7 @@ export function SidebarNav({
   isSyncing,
   onFilterChange,
   onHelp,
+  onOpenSearch,
   onOpenSettings,
   onRestoreWindow,
   onShortcuts,
@@ -251,6 +263,26 @@ export function SidebarNav({
           <div className="text-xl leading-6 font-bold">Shard</div>
           <div className="text-xs font-medium text-muted-foreground">v0.1.0</div>
         </div>
+      </div>
+
+      <div className="px-[var(--shard-sidebar-inset)] pb-[var(--shard-space-4)]">
+        <button
+          aria-label={copy.search}
+          className="relative flex h-9 w-full items-center gap-[var(--shard-space-2)] rounded-[var(--shard-radius-control)] border border-sidebar-border bg-background px-[var(--shard-space-3)] text-left text-sm text-muted-foreground transition-colors hover:border-ring hover:text-sidebar-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/[var(--shard-alpha-34)] focus-visible:outline-none"
+          onClick={onOpenSearch}
+          type="button"
+        >
+          <SearchIcon
+            aria-hidden="true"
+            className="size-4 shrink-0 stroke-[1.75]"
+          />
+          <span className="min-w-0 flex-1 truncate">
+            {copy.searchPlaceholder}
+          </span>
+          <kbd className="rounded-[4px] border border-border bg-muted px-1.5 text-[10px] leading-4 font-semibold text-muted-foreground">
+            {copy.searchShortcut}
+          </kbd>
+        </button>
       </div>
 
       <div className="px-[var(--shard-sidebar-inset)] pb-[var(--shard-space-5)]">
@@ -384,7 +416,9 @@ export function SidebarNav({
                 <span>
                   {isSyncing ? copy.syncing : `Git ${gitStateLabel}`}
                 </span>
-                <span className="text-background/[var(--shard-alpha-55)]">{gitSummary}</span>
+                <span className="text-background/[var(--shard-alpha-55)]">
+                  {gitSummary}
+                </span>
                 <span className="max-w-64 truncate text-background/[var(--shard-alpha-55)]">
                   {vaultLabel}
                 </span>

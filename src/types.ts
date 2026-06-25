@@ -59,8 +59,8 @@ export type CodexInsightLens =
   | "values"
   | "reverse"
   | "secondOrder"
-  | "friction"
-  | "actions"
+  | "cbt"
+  | "mbti"
 
 export interface CodexReviewFragment {
   id: string

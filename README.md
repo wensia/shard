@@ -34,12 +34,12 @@ Shard 是一个本地优先的桌面端 Markdown 片段捕捉应用，目前只�
 Shard 只优化一个动作：快速捕捉灵感。
 
 1. 写下一段想法、摘录、任务或观察。
-2. 按 `Cmd+Enter`、`Ctrl+Enter`、`Shift+Enter`，或点击发送按钮保存。
+2. 按 `Cmd+Enter`、`Ctrl+Enter`，或点击发送按钮保存。
 3. Shard 在本地 vault 中生成独立 Markdown 文件。
 4. 新内容以灵感卡片的形式进入时间线。
 5. Git 在后台为这次记录留下提交痕迹。
 
-`Enter` 用于换行，AI 标签和整理能力只作为后置工作流，不阻塞捕捉。
+`Enter` 或 `Shift+Enter` 用于换行，AI 标签和整理能力只作为后置工作流，不阻塞捕捉。
 
 ## 主要功能
 

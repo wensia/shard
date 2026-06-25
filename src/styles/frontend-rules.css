@@ -45,6 +45,116 @@
   [contenteditable="true"] {
     caret-color: var(--shard-caret-color);
   }
+
+  * {
+    scrollbar-color: var(--border) transparent;
+    scrollbar-width: thin;
+  }
+
+  *::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  *::-webkit-scrollbar-track,
+  *::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+
+  *::-webkit-scrollbar-thumb {
+    min-height: 40px;
+    border: 2px solid transparent;
+    border-radius: 999px;
+    background-color: var(--border);
+    background-clip: content-box;
+  }
+
+  *::-webkit-scrollbar-thumb:hover {
+    background-color: var(--border);
+  }
+
+  [data-slot="scroll-area-scrollbar"] {
+    border: 0;
+    background: transparent;
+    padding: 2px;
+  }
+
+  [data-slot="scroll-area-scrollbar"][data-orientation="vertical"] {
+    width: 10px;
+  }
+
+  [data-slot="scroll-area-scrollbar"][data-orientation="horizontal"] {
+    height: 10px;
+  }
+
+  [data-slot="scroll-area-thumb"] {
+    border-radius: 999px;
+    background-color: var(--border);
+  }
+
+  [data-slot="scroll-area-thumb"]:hover,
+  [data-slot="scroll-area-scrollbar"]:hover [data-slot="scroll-area-thumb"] {
+    background-color: var(--border);
+  }
+
+  /*
+   * Password mask dots render with the field's font; Barlow/PingFang draw a
+   * small baseline-hugging bullet. Verdana's bullet glyph is large and
+   * vertically centered, so swap to it only once real input exists --
+   * :not(:placeholder-shown) keeps the placeholder in the app font.
+   */
+  input[type="password"]:not(:placeholder-shown) {
+    font-family: Verdana, var(--font-sans);
+    letter-spacing: 0.14em;
+  }
+}
+
+@layer components {
+  .cn-toast {
+    font-family: var(--font-sans) !important;
+    box-shadow: 0 8px 20px rgb(17 19 21 / var(--shard-alpha-8)) !important;
+  }
+
+  .cn-toast-description {
+    color: var(--muted-foreground) !important;
+  }
+
+  [data-rich-colors="true"].cn-toast .cn-toast-description {
+    color: currentColor !important;
+    opacity: var(--shard-alpha-89);
+  }
+
+  .cn-toast-success {
+    --success-bg: rgb(var(--shard-success-rgb) / var(--shard-alpha-8));
+    --success-border: rgb(var(--shard-success-rgb) / var(--shard-alpha-34));
+    --success-text: var(--shard-success);
+  }
+
+  .cn-toast-info {
+    --info-bg: rgb(var(--shard-info-rgb) / var(--shard-alpha-8));
+    --info-border: rgb(var(--shard-info-rgb) / var(--shard-alpha-34));
+    --info-text: var(--shard-info);
+  }
+
+  .cn-toast-warning {
+    --warning-bg: rgb(var(--shard-warning-rgb) / var(--shard-alpha-8));
+    --warning-border: rgb(var(--shard-warning-rgb) / var(--shard-alpha-34));
+    --warning-text: var(--shard-warning);
+  }
+
+  .cn-toast-error {
+    --error-bg: rgb(var(--shard-danger-rgb) / var(--shard-alpha-8));
+    --error-border: rgb(var(--shard-danger-rgb) / var(--shard-alpha-34));
+    --error-text: var(--shard-danger);
+  }
+
+  .cn-toast-loading {
+    color: var(--shard-info) !important;
+  }
+
+  .cn-toast-loading .sonner-loading-bar {
+    background: var(--shard-info);
+  }
 }
 
 @layer utilities {
@@ -134,6 +244,47 @@
     box-shadow: none;
   }
 
+  .shard-tag-success {
+    --shard-tag-bg: rgb(var(--shard-success-rgb) / var(--shard-alpha-8));
+    --shard-tag-hover: rgb(var(--shard-success-rgb) / var(--shard-alpha-13));
+    --shard-tag-fg: rgb(var(--shard-success-rgb) / var(--shard-alpha-89));
+    --shard-tag-fg-strong: var(--shard-success);
+    --shard-tag-ring: rgb(var(--shard-success-rgb) / var(--shard-alpha-13));
+    --shard-tag-active-bg: rgb(var(--shard-success-rgb) / var(--shard-alpha-21));
+    --shard-tag-active-ring: rgb(var(--shard-success-rgb) / var(--shard-alpha-34));
+  }
+
+  .shard-tag-info {
+    --shard-tag-bg: rgb(var(--shard-info-rgb) / var(--shard-alpha-8));
+    --shard-tag-hover: rgb(var(--shard-info-rgb) / var(--shard-alpha-13));
+    --shard-tag-fg: rgb(var(--shard-info-rgb) / var(--shard-alpha-89));
+    --shard-tag-fg-strong: var(--shard-info);
+    --shard-tag-ring: rgb(var(--shard-info-rgb) / var(--shard-alpha-13));
+    --shard-tag-active-bg: rgb(var(--shard-info-rgb) / var(--shard-alpha-21));
+    --shard-tag-active-ring: rgb(var(--shard-info-rgb) / var(--shard-alpha-34));
+  }
+
+  .shard-tag-warning {
+    --shard-tag-bg: rgb(var(--shard-warning-rgb) / var(--shard-alpha-8));
+    --shard-tag-hover: rgb(var(--shard-warning-rgb) / var(--shard-alpha-13));
+    --shard-tag-fg: rgb(var(--shard-warning-rgb) / var(--shard-alpha-89));
+    --shard-tag-fg-strong: var(--shard-warning);
+    --shard-tag-ring: rgb(var(--shard-warning-rgb) / var(--shard-alpha-13));
+    --shard-tag-active-bg: rgb(var(--shard-warning-rgb) / var(--shard-alpha-21));
+    --shard-tag-active-ring: rgb(var(--shard-warning-rgb) / var(--shard-alpha-34));
+  }
+
+  .shard-tag-danger,
+  .shard-tag-error {
+    --shard-tag-bg: rgb(var(--shard-danger-rgb) / var(--shard-alpha-8));
+    --shard-tag-hover: rgb(var(--shard-danger-rgb) / var(--shard-alpha-13));
+    --shard-tag-fg: rgb(var(--shard-danger-rgb) / var(--shard-alpha-89));
+    --shard-tag-fg-strong: var(--shard-danger);
+    --shard-tag-ring: rgb(var(--shard-danger-rgb) / var(--shard-alpha-13));
+    --shard-tag-active-bg: rgb(var(--shard-danger-rgb) / var(--shard-alpha-21));
+    --shard-tag-active-ring: rgb(var(--shard-danger-rgb) / var(--shard-alpha-34));
+  }
+
   .shard-tag-count {
     color: currentColor;
     opacity: var(--shard-alpha-55);
@@ -173,6 +324,10 @@
     text-rendering: optimizeLegibility;
   }
 
+  .shard-search-result-body {
+    line-height: 1.55;
+  }
+
   .shard-memo-meta {
     font-size: var(--shard-memo-meta-font-size);
     font-weight: var(--shard-memo-meta-font-weight);
@@ -193,6 +348,11 @@
     white-space: normal;
   }
 
+  .shard-search-result-body .shard-image-attachment-row {
+    margin-top: var(--shard-space-2);
+    margin-bottom: 0;
+  }
+
   .shard-image-attachment {
     --shard-image-attachment-size: 86px;
     --shard-image-attachment-radius: calc(
@@ -211,16 +371,45 @@
     vertical-align: top;
   }
 
+  .shard-search-result-body .shard-image-attachment {
+    --shard-image-attachment-size: 64px;
+  }
+
   .dark .shard-image-attachment {
     border-color: rgb(255 255 255 / var(--shard-alpha-21));
+  }
+
+  .shard-image-attachment-preview {
+    display: block;
+    width: 100%;
+    height: 100%;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    cursor: zoom-in;
+    font: inherit;
+    line-height: 0;
+  }
+
+  .shard-image-attachment-preview-readonly {
+    cursor: default;
+  }
+
+  .shard-image-attachment-preview:focus-visible {
+    border-radius: calc(var(--shard-image-attachment-radius) - 1px);
+    outline: 2px solid rgb(var(--shard-primary-rgb) / var(--shard-alpha-55));
+    outline-offset: -2px;
   }
 
   .shard-image-attachment img {
     display: block;
     width: 100%;
     height: 100%;
+    background: var(--card);
     border-radius: calc(var(--shard-image-attachment-radius) - 1px);
-    object-fit: cover;
+    object-fit: contain;
+    object-position: center;
   }
 
   .shard-image-attachment-placeholder {
@@ -258,9 +447,46 @@
   }
 
   .shard-image-attachment-remove svg {
+    display: block;
     width: 11px;
     height: 11px;
     stroke-width: 2;
+  }
+
+  .shard-image-preview-dialog {
+    width: fit-content;
+    max-width: min(1080px, calc(100vw - 48px));
+    max-height: calc(100dvh - 48px);
+  }
+
+  .shard-image-preview-actions {
+    flex-direction: row;
+    justify-content: flex-end;
+    padding-top: var(--shard-space-1);
+  }
+
+  .shard-image-preview-frame {
+    display: flex;
+    min-height: 0;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    border-radius: calc(var(--shard-surface-radius) - 4px);
+  }
+
+  .shard-image-preview-image {
+    display: block;
+    width: auto;
+    height: auto;
+    max-width: min(1080px, calc(100vw - 48px));
+    max-height: calc(100dvh - 118px);
+    border-radius: calc(var(--shard-surface-radius) - 4px);
+    box-shadow: inset 0 0 0 1px rgb(17 19 21 / var(--shard-alpha-13));
+    object-fit: contain;
+  }
+
+  .dark .shard-image-preview-image {
+    box-shadow: inset 0 0 0 1px rgb(255 255 255 / var(--shard-alpha-21));
   }
 
   .shard-task-marker {

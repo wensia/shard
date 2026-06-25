@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -12,9 +13,15 @@ import { Loader2Icon, SendHorizontalIcon, XIcon } from "lucide-react"
 import { toast } from "sonner"
 
 import { EditorToolbar } from "@/components/shard/editor-toolbar"
-import { FragmentContent } from "@/components/shard/fragment-content"
 import {
+  FragmentContent,
+  FragmentImageAttachment,
+} from "@/components/shard/fragment-content"
+import {
+  getBoundedTagSuggestionIndex,
+  getNextTagSuggestionIndex,
   getTagCompletionPopoverPosition,
+  getTagSuggestionOptionId,
   TagCompletionPopover,
   type TagSuggestion,
 } from "@/components/shard/tag-completion-popover"
@@ -24,15 +31,17 @@ import {
   applyActiveTagCompletion,
   applyInlineFormat,
   applyLineFormat,
+  applyTaskLineBreak,
   applyTagCompletion,
   applyTaskMarkerDeletion,
   extractTags,
   getActiveTag,
   getTagRanges,
-  insertMarkdownImage,
+  getMarkdownImageAlt,
   insertTagMarker,
   normalizeTag,
   normalizeTagList,
+  parseMarkdownImageLine,
   toggleTaskLine,
   type InlineFormat,
   type LineFormat,
@@ -45,6 +54,10 @@ import {
 } from "@/lib/api"
 import { getEditorCaretBox, type EditorCaretBox } from "@/lib/editor-caret"
 import { hasMarkdownImage, wantsLockbox } from "@/lib/lockbox"
+import {
+  buildTagSearchIndex,
+  getMatchingTagsBySearchQuery,
+} from "@/lib/tag-index"
 import type { Fragment } from "@/types"
 
 interface FragmentEditorProps {
@@ -58,6 +71,13 @@ interface FragmentEditorProps {
 
 type SaveState = "dirty" | "error" | "saved" | "saving"
 
+interface EditorImageAttachment {
+  alt: string
+  id: string
+  path: string
+  previewUrl?: string
+}
+
 export function FragmentEditor({
   fragment,
   knownTags,
@@ -70,6 +90,9 @@ export function FragmentEditor({
   const [caretEpoch, setCaretEpoch] = useState(0)
   const [customCaret, setCustomCaret] = useState<EditorCaretBox | null>(null)
   const [editorScrollTop, setEditorScrollTop] = useState(0)
+  const [imageAttachments, setImageAttachments] = useState<
+    EditorImageAttachment[]
+  >([])
   const [isEditorFocused, setIsEditorFocused] = useState(false)
   const [saveState, setSaveState] = useState<SaveState>("saved")
   const [selectionEnd, setSelectionEnd] = useState(0)
@@ -83,12 +106,14 @@ export function FragmentEditor({
     cursor: number
   } | null>(null)
   const isComposingRef = useRef(false)
+  const imageAttachmentsRef = useRef<EditorImageAttachment[]>([])
   const lastSavedContentRef = useRef("")
   const onSaveRef = useRef(onSave)
   const saveTimerRef = useRef<number | null>(null)
   const editorFrameRef = useRef<HTMLDivElement>(null)
   const lastPointerRef = useRef<PointerPoint | null>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const tagPopoverId = useId()
   const isZen = variant === "zen"
 
   const rawActiveTag = useMemo(
@@ -104,25 +129,24 @@ export function FragmentEditor({
     () => normalizeTagList(knownTags.filter((tag) => tag !== "inbox")),
     [knownTags]
   )
+  const tagSearchIndex = useMemo(
+    () => buildTagSearchIndex(normalizedKnownTags),
+    [normalizedKnownTags]
+  )
   const activeNewTag = activeTag ? normalizeTag(activeTag.query) : ""
+  const draftContent = useMemo(
+    () => buildContentWithImageAttachments(content, imageAttachments),
+    [content, imageAttachments]
+  )
   const tagSuggestions = useMemo<TagSuggestion[]>(() => {
     if (!activeTag) return []
 
     const query = activeNewTag
-    const matches = (
-      query
-        ? normalizedKnownTags.filter((tag) => tag.includes(query))
-        : normalizedKnownTags
+    const matches = getMatchingTagsBySearchQuery(
+      tagSearchIndex,
+      query,
+      MAX_TAG_SUGGESTIONS
     )
-      .slice()
-      .sort((a, b) => {
-        if (!query) return 0
-        const aStarts = a.startsWith(query) ? 0 : 1
-        const bStarts = b.startsWith(query) ? 0 : 1
-        if (aStarts !== bStarts) return aStarts - bStarts
-        return a.localeCompare(b)
-      })
-      .slice(0, MAX_TAG_SUGGESTIONS)
 
     const items: TagSuggestion[] = matches.map((tag) => ({
       kind: "existing",
@@ -134,8 +158,16 @@ export function FragmentEditor({
     }
 
     return items
-  }, [activeTag, activeNewTag, normalizedKnownTags])
+  }, [activeTag, activeNewTag, normalizedKnownTags, tagSearchIndex])
   const [activeSuggestionIndex, setActiveSuggestionIndex] = useState(0)
+  const boundedActiveSuggestionIndex = getBoundedTagSuggestionIndex(
+    activeSuggestionIndex,
+    tagSuggestions.length
+  )
+  const activeSuggestionOptionId =
+    activeTag && tagSuggestions.length > 0
+      ? getTagSuggestionOptionId(tagPopoverId, boundedActiveSuggestionIndex)
+      : undefined
 
   useEffect(() => {
     setActiveSuggestionIndex(0)
@@ -144,6 +176,16 @@ export function FragmentEditor({
   useEffect(() => {
     onSaveRef.current = onSave
   }, [onSave])
+
+  useEffect(() => {
+    imageAttachmentsRef.current = imageAttachments
+  }, [imageAttachments])
+
+  useEffect(() => {
+    return () => {
+      revokeEditorImagePreviewUrls(imageAttachmentsRef.current)
+    }
+  }, [])
 
   useEffect(() => {
     // React's onSelect stays silent while the mouse is still down, so drag
@@ -164,15 +206,27 @@ export function FragmentEditor({
   }, [])
 
   useEffect(() => {
-    if (!fragment) return
+    if (!fragment) {
+      revokeEditorImagePreviewUrls(imageAttachmentsRef.current)
+      imageAttachmentsRef.current = []
+      setImageAttachments([])
+      return
+    }
 
-    const cursor = fragment.content.length
-    setContent(fragment.content)
+    const draft = splitContentImageAttachments(fragment.content)
+    const cursor = draft.content.length
+    revokeEditorImagePreviewUrls(imageAttachmentsRef.current)
+    imageAttachmentsRef.current = draft.images
+    setContent(draft.content)
+    setImageAttachments(draft.images)
     setSelectionEnd(cursor)
     setSelectionStart(cursor)
-    setSuppressedActiveTag({ content: fragment.content, cursor })
+    setSuppressedActiveTag({ content: draft.content, cursor })
     setSaveState("saved")
-    lastSavedContentRef.current = fragment.content
+    lastSavedContentRef.current = buildContentWithImageAttachments(
+      draft.content,
+      draft.images
+    )
 
     requestAnimationFrame(() => {
       const textarea = textareaRef.current
@@ -231,7 +285,7 @@ export function FragmentEditor({
 
     clearSaveTimer()
 
-    if (content === lastSavedContentRef.current) {
+    if (draftContent === lastSavedContentRef.current) {
       setSaveState("saved")
       return
     }
@@ -241,11 +295,11 @@ export function FragmentEditor({
     if (!isZen) return
 
     saveTimerRef.current = window.setTimeout(() => {
-      void saveDraft(content)
+      void saveDraft(draftContent)
     }, 800)
 
     return clearSaveTimer
-  }, [content, fragment?.id, isZen])
+  }, [draftContent, fragment?.id, isZen])
 
   useEffect(() => {
     if (!fragment || !isZen || !isTauri()) return
@@ -271,8 +325,8 @@ export function FragmentEditor({
       return
     }
 
-    if (content !== lastSavedContentRef.current) {
-      const saved = await saveDraft(content)
+    if (draftContent !== lastSavedContentRef.current) {
+      const saved = await saveDraft(draftContent)
       if (!saved) return
     }
 
@@ -282,12 +336,12 @@ export function FragmentEditor({
   async function handleSubmit() {
     clearSaveTimer()
 
-    if (content === lastSavedContentRef.current) {
+    if (draftContent === lastSavedContentRef.current) {
       onClose()
       return
     }
 
-    const saved = await saveDraft(content)
+    const saved = await saveDraft(draftContent)
     if (saved) {
       onClose()
     }
@@ -298,7 +352,7 @@ export function FragmentEditor({
     const isCloseShortcut = event.key === "Escape"
     const isSaveShortcut =
       event.key === "Enter" &&
-      (event.metaKey || event.ctrlKey || event.shiftKey)
+      (event.metaKey || event.ctrlKey)
     const isComposing =
       isComposingRef.current ||
       nativeEvent.isComposing ||
@@ -335,7 +389,8 @@ export function FragmentEditor({
       if (event.key === "ArrowDown") {
         event.preventDefault()
         setActiveSuggestionIndex(
-          (current) => (current + 1) % tagSuggestions.length
+          (current) =>
+            getNextTagSuggestionIndex(current, "next", tagSuggestions.length)
         )
         return
       }
@@ -344,7 +399,11 @@ export function FragmentEditor({
         event.preventDefault()
         setActiveSuggestionIndex(
           (current) =>
-            (current - 1 + tagSuggestions.length) % tagSuggestions.length
+            getNextTagSuggestionIndex(
+              current,
+              "previous",
+              tagSuggestions.length
+            )
         )
         return
       }
@@ -356,10 +415,7 @@ export function FragmentEditor({
         !event.metaKey &&
         !event.shiftKey
       ) {
-        const item =
-          tagSuggestions[
-            Math.min(activeSuggestionIndex, tagSuggestions.length - 1)
-          ]
+        const item = tagSuggestions[boundedActiveSuggestionIndex]
         if (item) {
           event.preventDefault()
           applyTag(item.tag)
@@ -388,7 +444,27 @@ export function FragmentEditor({
       }
     }
 
-    // 复用主编辑框（capture-box）的保存快捷键：cmd/ctrl/shift + Enter 提交
+    if (
+      event.key === "Enter" &&
+      !event.altKey &&
+      !event.ctrlKey &&
+      !event.metaKey &&
+      isCollapsedCaret
+    ) {
+      const nextEdit = applyTaskLineBreak(
+        event.currentTarget.value,
+        event.currentTarget.selectionStart,
+        event.currentTarget.selectionEnd
+      )
+
+      if (nextEdit) {
+        event.preventDefault()
+        applyTextEdit(nextEdit)
+        return
+      }
+    }
+
+    // 复用主编辑框（capture-box）的保存快捷键：cmd/ctrl + Enter 提交
     if (isSaveShortcut) {
       event.preventDefault()
       void handleSubmit()
@@ -493,31 +569,50 @@ export function FragmentEditor({
   async function uploadImage(file: File) {
     const textarea = textareaRef.current
     if (!textarea || !fragment) return
-    const tags = normalizeTagList(["inbox", ...extractTags(content)])
-    if (fragment.lockbox || wantsLockbox(content, tags)) {
+    const tags = normalizeTagList(["inbox", ...extractTags(draftContent)])
+    if (fragment.lockbox || wantsLockbox(draftContent, tags)) {
       toast.error("密匣暂不支持图片附件", {
         description: "请先移除 #密匣，或在公开笔记中上传图片。",
       })
       return
     }
 
+    const previewUrl = URL.createObjectURL(file)
     try {
       const bytes = Array.from(new Uint8Array(await file.arrayBuffer()))
       const path = await saveFragmentImage(file.name, bytes)
-      applyTextEdit(
-        insertMarkdownImage(
-          content,
-          textarea.selectionStart,
-          textarea.selectionEnd,
-          file.name,
-          path
-        )
-      )
+      setImageAttachments((current) => [
+        ...current,
+        {
+          alt: getMarkdownImageAlt(file.name),
+          id: `${Date.now()}-${file.name}`,
+          path,
+          previewUrl,
+        },
+      ])
+      requestAnimationFrame(() => {
+        textareaRef.current?.focus()
+      })
     } catch (error) {
+      URL.revokeObjectURL(previewUrl)
       toast.error("图片上传失败", {
         description: getApiErrorMessage(error),
       })
     }
+  }
+
+  function removeImageAttachment(id: string) {
+    setImageAttachments((current) => {
+      const removedImage = current.find((image) => image.id === id)
+      if (removedImage?.previewUrl) {
+        URL.revokeObjectURL(removedImage.previewUrl)
+      }
+
+      return current.filter((image) => image.id !== id)
+    })
+    requestAnimationFrame(() => {
+      textareaRef.current?.focus()
+    })
   }
 
   function applyTextEdit(nextEdit: TextEdit) {
@@ -614,10 +709,32 @@ export function FragmentEditor({
   const fieldClass = isZen
     ? "h-full min-h-0 overflow-y-auto px-0 py-[var(--shard-space-4)]"
     : "min-h-[144px] max-h-[min(52dvh,520px)] overflow-y-auto rounded-t-[var(--shard-surface-radius)] rounded-b-none px-[var(--shard-composer-padding)] py-[var(--shard-composer-padding)]"
-  const canSubmit = saveState !== "saving" && content.trim().length > 0
+  const imageAttachmentRow =
+    imageAttachments.length > 0 ? (
+      <div
+        className={`shard-image-attachment-row ${
+          isZen
+            ? "px-0 pb-[var(--shard-space-4)]"
+            : "px-[var(--shard-composer-padding)] pb-[var(--shard-space-3)]"
+        }`}
+      >
+        {imageAttachments.map((image) => (
+          <FragmentImageAttachment
+            alt={image.alt}
+            key={image.id}
+            onRemove={() => removeImageAttachment(image.id)}
+            path={image.path}
+            src={image.previewUrl}
+            vaultPath={vaultPath}
+            wrapped={false}
+          />
+        ))}
+      </div>
+    ) : null
+  const canSubmit = saveState !== "saving" && draftContent.trim().length > 0
   const editorFrame = (
     <div
-      className={isZen ? "shard-content-measure relative h-full" : "relative"}
+      className={isZen ? "relative min-h-0 flex-1" : "relative"}
       ref={editorFrameRef}
     >
       {content ? (
@@ -633,7 +750,6 @@ export function FragmentEditor({
             content={content}
             highlightTags
             onTaskToggle={toggleTask}
-            renderImages
             selectionEnd={isEditorFocused ? selectionEnd : undefined}
             selectionStart={isEditorFocused ? selectionStart : undefined}
             vaultPath={vaultPath}
@@ -641,6 +757,10 @@ export function FragmentEditor({
         </div>
       ) : null}
       <Textarea
+        aria-activedescendant={activeSuggestionOptionId}
+        aria-autocomplete={activeTag ? "list" : undefined}
+        aria-controls={activeTag ? tagPopoverId : undefined}
+        aria-expanded={activeTag ? true : undefined}
         className={`shard-editor-field shard-editor-overlay-field relative z-10 resize-none border-0 bg-transparent shadow-none focus-visible:border-transparent focus-visible:ring-0 ${fieldClass}`}
         onChange={(event) => {
           const outsideTagEdit = getOutsideTagInputEdit(
@@ -703,7 +823,8 @@ export function FragmentEditor({
       ) : null}
       {activeTag ? (
         <TagCompletionPopover
-          activeIndex={activeSuggestionIndex}
+          activeIndex={boundedActiveSuggestionIndex}
+          id={tagPopoverId}
           left={tagPopoverPosition.left}
           onHover={setActiveSuggestionIndex}
           onSelect={applyTag}
@@ -718,6 +839,7 @@ export function FragmentEditor({
     return (
       <article className="relative flex flex-col rounded-[var(--shard-surface-radius)] border border-border bg-card p-0 shadow-[var(--shard-composer-shadow)] transition-colors focus-within:border-[color:var(--shard-sapphire)]">
         {editorFrame}
+        {imageAttachmentRow}
         <div className="shard-edge-action-row rounded-b-[var(--shard-surface-radius)] bg-card">
           <EditorToolbar
             disabled={saveState === "saving"}
@@ -780,7 +902,12 @@ export function FragmentEditor({
 
   return (
     <div className="fixed inset-0 z-50 grid grid-rows-[minmax(0,1fr)_auto] bg-background text-foreground">
-      <div className="shard-content-inset min-h-0">{editorFrame}</div>
+      <div className="shard-content-inset min-h-0">
+        <div className="shard-content-measure flex h-full min-h-0 flex-col">
+          {editorFrame}
+          {imageAttachmentRow}
+        </div>
+      </div>
 
       <footer className="shard-content-inset pb-[var(--shard-space-4)]">
         <div className="mx-auto w-fit max-w-full rounded-[var(--shard-surface-radius)] bg-card p-[var(--shard-space-3)] shadow-[var(--shard-composer-shadow)]">
@@ -826,6 +953,54 @@ interface PointerPoint {
 }
 
 const MAX_TAG_SUGGESTIONS = 8
+
+function splitContentImageAttachments(value: string) {
+  const contentLines: string[] = []
+  const images: EditorImageAttachment[] = []
+
+  value.split("\n").forEach((line, index) => {
+    const image = parseMarkdownImageLine(line)
+    if (!image) {
+      contentLines.push(line)
+      return
+    }
+
+    images.push({
+      alt: image.alt,
+      id: `${index}-${image.path}`,
+      path: image.path,
+    })
+  })
+
+  return {
+    content: contentLines.join("\n").trim(),
+    images,
+  }
+}
+
+function buildContentWithImageAttachments(
+  value: string,
+  images: EditorImageAttachment[]
+) {
+  const text = value.trim()
+  const imageMarkdown = images
+    .map((image) => `![${escapeMarkdownImageAlt(image.alt)}](${image.path})`)
+    .join("\n")
+
+  return [text, imageMarkdown].filter(Boolean).join("\n")
+}
+
+function escapeMarkdownImageAlt(alt: string) {
+  return alt.replace(/\\/g, "\\\\").replace(/]/g, "\\]")
+}
+
+function revokeEditorImagePreviewUrls(images: EditorImageAttachment[]) {
+  images.forEach((image) => {
+    if (image.previewUrl) {
+      URL.revokeObjectURL(image.previewUrl)
+    }
+  })
+}
 
 function shouldSuppressActiveTagAfterPointer(
   textarea: HTMLTextAreaElement,

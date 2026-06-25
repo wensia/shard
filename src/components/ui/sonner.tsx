@@ -18,6 +18,7 @@ const Toaster = ({ ...props }: ToasterProps) => {
       mobileOffset={{ bottom: 204, left: 16, right: 16 }}
       offset={{ bottom: 24, right: 24 }}
       position="bottom-right"
+      richColors
       icons={{
         success: (
           <CircleCheckIcon className="size-4" />
@@ -40,12 +41,18 @@ const Toaster = ({ ...props }: ToasterProps) => {
           "--normal-bg": "var(--popover)",
           "--normal-text": "var(--popover-foreground)",
           "--normal-border": "var(--border)",
-          "--border-radius": "var(--radius)",
+          "--border-radius": "var(--shard-radius-control)",
         } as React.CSSProperties
       }
       toastOptions={{
         classNames: {
+          description: "cn-toast-description",
+          error: "cn-toast-error",
+          info: "cn-toast-info",
+          loading: "cn-toast-loading",
+          success: "cn-toast-success",
           toast: "cn-toast",
+          warning: "cn-toast-warning",
         },
       }}
       {...props}

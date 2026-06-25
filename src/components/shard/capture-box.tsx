@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -15,7 +16,10 @@ import {
   FragmentImageAttachment,
 } from "@/components/shard/fragment-content"
 import {
+  getBoundedTagSuggestionIndex,
+  getNextTagSuggestionIndex,
   getTagCompletionPopoverPosition,
+  getTagSuggestionOptionId,
   TagCompletionPopover,
   type TagSuggestion,
 } from "@/components/shard/tag-completion-popover"
@@ -25,6 +29,7 @@ import {
   applyActiveTagCompletion,
   applyInlineFormat,
   applyLineFormat,
+  applyTaskLineBreak,
   applyTagCompletion,
   applyTaskMarkerDeletion,
   extractTags,
@@ -41,6 +46,10 @@ import {
 import { getApiErrorMessage, saveFragmentImage } from "@/lib/api"
 import { getEditorCaretBox, type EditorCaretBox } from "@/lib/editor-caret"
 import { wantsLockbox } from "@/lib/lockbox"
+import {
+  buildTagSearchIndex,
+  getMatchingTagsBySearchQuery,
+} from "@/lib/tag-index"
 
 interface CaptureBoxProps {
   collapseSignal: number
@@ -78,6 +87,7 @@ export function CaptureBox({
   const containerRef = useRef<HTMLDivElement>(null)
   const editorFrameRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const tagPopoverId = useId()
   const hasSkippedInitialFocusRef = useRef(false)
   const isComposingRef = useRef(false)
   const pendingImagesRef = useRef<PendingImage[]>([])
@@ -90,25 +100,20 @@ export function CaptureBox({
     () => normalizeTagList(knownTags.filter((tag) => tag !== "inbox")),
     [knownTags]
   )
+  const tagSearchIndex = useMemo(
+    () => buildTagSearchIndex(normalizedKnownTags),
+    [normalizedKnownTags]
+  )
   const activeNewTag = activeTag ? normalizeTag(activeTag.query) : ""
   const tagSuggestions = useMemo<TagSuggestion[]>(() => {
     if (!activeTag) return []
 
     const query = activeNewTag
-    const matches = (
-      query
-        ? normalizedKnownTags.filter((tag) => tag.includes(query))
-        : normalizedKnownTags
+    const matches = getMatchingTagsBySearchQuery(
+      tagSearchIndex,
+      query,
+      MAX_TAG_SUGGESTIONS
     )
-      .slice()
-      .sort((a, b) => {
-        if (!query) return 0
-        const aStarts = a.startsWith(query) ? 0 : 1
-        const bStarts = b.startsWith(query) ? 0 : 1
-        if (aStarts !== bStarts) return aStarts - bStarts
-        return a.localeCompare(b)
-      })
-      .slice(0, MAX_TAG_SUGGESTIONS)
 
     const items: TagSuggestion[] = matches.map((tag) => ({
       kind: "existing",
@@ -120,8 +125,16 @@ export function CaptureBox({
     }
 
     return items
-  }, [activeTag, activeNewTag, normalizedKnownTags])
+  }, [activeTag, activeNewTag, normalizedKnownTags, tagSearchIndex])
   const [activeSuggestionIndex, setActiveSuggestionIndex] = useState(0)
+  const boundedActiveSuggestionIndex = getBoundedTagSuggestionIndex(
+    activeSuggestionIndex,
+    tagSuggestions.length
+  )
+  const activeSuggestionOptionId =
+    activeTag && tagSuggestions.length > 0
+      ? getTagSuggestionOptionId(tagPopoverId, boundedActiveSuggestionIndex)
+      : undefined
   const canSubmit =
     (content.trim().length > 0 || pendingImages.length > 0) && !isCreating
 
@@ -432,7 +445,7 @@ export function CaptureBox({
     const nativeEvent = event.nativeEvent
     const isSaveShortcut =
       event.key === "Enter" &&
-      (event.metaKey || event.ctrlKey || event.shiftKey)
+      (event.metaKey || event.ctrlKey)
     const isComposing =
       isComposingRef.current ||
       nativeEvent.isComposing ||
@@ -472,7 +485,8 @@ export function CaptureBox({
       if (event.key === "ArrowDown") {
         event.preventDefault()
         setActiveSuggestionIndex(
-          (current) => (current + 1) % tagSuggestions.length
+          (current) =>
+            getNextTagSuggestionIndex(current, "next", tagSuggestions.length)
         )
         return
       }
@@ -481,7 +495,11 @@ export function CaptureBox({
         event.preventDefault()
         setActiveSuggestionIndex(
           (current) =>
-            (current - 1 + tagSuggestions.length) % tagSuggestions.length
+            getNextTagSuggestionIndex(
+              current,
+              "previous",
+              tagSuggestions.length
+            )
         )
         return
       }
@@ -493,10 +511,7 @@ export function CaptureBox({
         !event.metaKey &&
         !event.shiftKey
       ) {
-        const item =
-          tagSuggestions[
-            Math.min(activeSuggestionIndex, tagSuggestions.length - 1)
-          ]
+        const item = tagSuggestions[boundedActiveSuggestionIndex]
         if (item) {
           event.preventDefault()
           applyTag(item.tag)
@@ -516,6 +531,27 @@ export function CaptureBox({
       const nextEdit = applyActiveTagCompletion(
         event.currentTarget.value,
         event.currentTarget.selectionStart
+      )
+
+      if (nextEdit) {
+        event.preventDefault()
+        setIsEditorExpanded(true)
+        applyTextEdit(nextEdit)
+        return
+      }
+    }
+
+    if (
+      event.key === "Enter" &&
+      !event.altKey &&
+      !event.ctrlKey &&
+      !event.metaKey &&
+      isCollapsedCaret
+    ) {
+      const nextEdit = applyTaskLineBreak(
+        event.currentTarget.value,
+        event.currentTarget.selectionStart,
+        event.currentTarget.selectionEnd
       )
 
       if (nextEdit) {
@@ -611,6 +647,10 @@ export function CaptureBox({
           </div>
         ) : null}
         <Textarea
+          aria-activedescendant={activeSuggestionOptionId}
+          aria-autocomplete={activeTag ? "list" : undefined}
+          aria-controls={activeTag ? tagPopoverId : undefined}
+          aria-expanded={activeTag ? true : undefined}
           autoFocus
           className="shard-editor-field shard-editor-overlay-field relative z-10 resize-none overflow-hidden rounded-t-[var(--shard-surface-radius)] rounded-b-none border-0 bg-transparent px-[var(--shard-composer-padding)] py-[var(--shard-composer-padding)] shadow-none transition-[height] duration-200 ease-in-out placeholder:text-transparent focus-visible:border-transparent focus-visible:ring-0"
           onClick={(event) => {
@@ -679,7 +719,8 @@ export function CaptureBox({
       </div>
       {activeTag ? (
         <TagCompletionPopover
-          activeIndex={activeSuggestionIndex}
+          activeIndex={boundedActiveSuggestionIndex}
+          id={tagPopoverId}
           left={tagPopoverPosition.left}
           onHover={setActiveSuggestionIndex}
           onSelect={applyTag}

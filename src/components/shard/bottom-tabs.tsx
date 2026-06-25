@@ -7,6 +7,7 @@ import {
   Maximize2Icon,
   MoreHorizontalIcon,
   RefreshCwIcon,
+  SearchIcon,
   SettingsIcon,
   SparklesIcon,
   TagIcon,
@@ -38,6 +39,7 @@ interface BottomTabsProps {
   isSyncing: boolean
   onFilterChange: (filter: FragmentFilter) => void
   onHelp: () => void
+  onOpenSearch: () => void
   onOpenSettings: () => void
   onRestoreWindow: () => void
   onShortcuts: () => void
@@ -67,6 +69,7 @@ export function BottomTabs({
   isSyncing,
   onFilterChange,
   onHelp,
+  onOpenSearch,
   onOpenSettings,
   onRestoreWindow,
   onShortcuts,
@@ -199,6 +202,17 @@ export function BottomTabs({
               sideOffset={8}
             >
               <DropdownMenuGroup>
+                <DropdownMenuItem
+                  className={utilityMenuItemClass}
+                  onClick={() => {
+                    setIsMenuOpen(false)
+                    window.setTimeout(onOpenSearch, 0)
+                  }}
+                >
+                  <SearchIcon />
+                  搜索笔记
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
                 <DropdownMenuItem
                   className={utilityMenuItemClass}
                   disabled={isSyncing}

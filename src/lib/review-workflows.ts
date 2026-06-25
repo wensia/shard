@@ -1,7 +1,9 @@
 import type { CodexReviewFragment, Fragment } from "@/types"
 
 const DAILY_REVIEW_COUNT = 8
-const INSIGHT_REVIEW_COUNT = 28
+const MAX_INSIGHT_FRAGMENTS = 400
+const INSIGHT_CODEX_CHAR_BUDGET = 120000
+const MIN_INSIGHT_FRAGMENT_CHARS = 240
 const RANDOM_WALK_COUNT = 5
 const THREE_DAYS_MS = 3 * 24 * 60 * 60 * 1000
 const TWO_WEEKS_MS = 14 * 24 * 60 * 60 * 1000
@@ -32,22 +34,43 @@ export function dailyReviewCount(fragments: Fragment[], now = new Date()) {
   )
 }
 
-export function insightReviewFragments(
-  fragments: Fragment[],
-  seed: number,
-  now = new Date()
-) {
-  const candidates = dailyReviewCandidates(fragments, now).map(
-    (candidate) => candidate.fragment
-  )
+// 洞察覆盖全部未归档笔记，按时间正序方便模型观察演变；密匣笔记不出
+// vault（内容会发往 Codex 云端模型），AI 洞察输出自身也排除以免回音室
+export function insightReviewFragments(fragments: Fragment[]) {
+  const eligible = fragments
+    .map((fragment) => ({
+      fragment,
+      timestamp: new Date(fragment.createdAt).getTime(),
+    }))
+    .filter(
+      (candidate) =>
+        !candidate.fragment.archived &&
+        !candidate.fragment.lockbox &&
+        !candidate.fragment.tags.includes("ai/insight") &&
+        Number.isFinite(candidate.timestamp)
+    )
+    .sort((a, b) => a.timestamp - b.timestamp)
+    .map((candidate) => candidate.fragment)
 
-  return stablePick(candidates, seed, INSIGHT_REVIEW_COUNT, "insight-review")
+  if (eligible.length <= MAX_INSIGHT_FRAGMENTS) return eligible
+
+  return evenTimelineSample(eligible, MAX_INSIGHT_FRAGMENTS)
 }
 
-export function insightReviewCount(fragments: Fragment[], now = new Date()) {
-  return Math.min(
-    dailyReviewCandidates(fragments, now).length,
-    INSIGHT_REVIEW_COUNT
+export function insightReviewCount(fragments: Fragment[]) {
+  return insightReviewFragments(fragments).length
+}
+
+// 单条截断额度随笔记总量收缩，整体 prompt 控制在固定字符预算内
+export function insightFragmentCharLimit(count: number) {
+  if (count <= 0) return MAX_CODEX_FRAGMENT_CHARS
+
+  return Math.max(
+    MIN_INSIGHT_FRAGMENT_CHARS,
+    Math.min(
+      MAX_CODEX_FRAGMENT_CHARS,
+      Math.floor(INSIGHT_CODEX_CHAR_BUDGET / count)
+    )
   )
 }
 
@@ -58,11 +81,12 @@ export function randomWalkFragments(fragments: Fragment[], seed: number) {
 }
 
 export function codexReviewFragments(
-  fragments: Fragment[]
+  fragments: Fragment[],
+  maxChars = MAX_CODEX_FRAGMENT_CHARS
 ): CodexReviewFragment[] {
   return fragments.map((fragment) => ({
     id: fragment.id,
-    content: truncateForCodex(fragment.content.trim()),
+    content: truncateForCodex(fragment.content.trim(), maxChars),
     createdAt: fragment.createdAt,
     tags: fragment.tags,
     path: fragment.path,
@@ -258,9 +282,19 @@ function reviewTags(fragment: Fragment) {
   return fragment.tags.filter((tag) => tag !== "inbox")
 }
 
-function truncateForCodex(content: string) {
-  if (content.length <= MAX_CODEX_FRAGMENT_CHARS) return content
-  return `${content.slice(0, MAX_CODEX_FRAGMENT_CHARS).trimEnd()}\n...`
+function truncateForCodex(content: string, maxChars: number) {
+  if (content.length <= maxChars) return content
+  return `${content.slice(0, maxChars).trimEnd()}\n...`
+}
+
+// 时间轴均匀采样：保留首尾跨度，避免超大 vault 把 prompt 撑爆
+function evenTimelineSample(fragments: Fragment[], count: number) {
+  const step = fragments.length / count
+
+  return Array.from(
+    { length: count },
+    (_, index) => fragments[Math.min(Math.ceil((index + 1) * step) - 1, fragments.length - 1)]
+  )
 }
 
 function stableHash(value: string) {

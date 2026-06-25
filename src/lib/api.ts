@@ -130,10 +130,6 @@ export function resetLockboxPassword(recoveryKey: string, newPassword: string) {
   })
 }
 
-export function clearLockbox(confirmation: string) {
-  return desktopInvoke<VaultState>("clear_lockbox", { confirmation })
-}
-
 export function setVaultRemote(remoteUrl: string) {
   return desktopInvoke<VaultState>("set_vault_remote", { remoteUrl })
 }

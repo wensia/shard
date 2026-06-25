@@ -18,7 +18,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { Button } from "@/components/ui/button"
 import { FragmentEditor } from "@/components/shard/fragment-editor"
-import { FragmentContent } from "@/components/shard/fragment-content"
+import { FragmentBody } from "@/components/shard/fragment-body"
 import { TagBadge } from "@/components/shard/tag-badge"
 import type { Fragment } from "@/types"
 
@@ -101,15 +101,14 @@ export function FragmentCard({
               ))}
             </div>
           ) : null}
-          <p className="shard-memo-body whitespace-pre-wrap">
-            <FragmentContent
-              content={displayContent}
-              hideTags
-              onTaskToggle={(lineIndex) => onToggleTask?.(fragment, lineIndex)}
-              renderImages
-              vaultPath={vaultPath}
-            />
-          </p>
+          <FragmentBody
+            content={displayContent}
+            downloadableImages
+            hideTags
+            onTaskToggle={(lineIndex) => onToggleTask?.(fragment, lineIndex)}
+            renderImages
+            vaultPath={vaultPath}
+          />
         </div>
 
         <div className="flex shrink-0 items-center">

@@ -1,11 +1,5 @@
 import {
-  CopyIcon,
-  DownloadIcon,
-  KeyRoundIcon,
-  Loader2Icon,
   LockKeyholeIcon,
-  RotateCcwIcon,
-  Trash2Icon,
   XIcon,
 } from "lucide-react"
 import { useEffect, useMemo, useState, type FormEvent } from "react"
@@ -16,13 +10,12 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { getApiErrorMessage, saveRecoveryKey } from "@/lib/api"
 
-export type LockboxDialogMode = "change" | "clear" | "reset" | "setup" | "unlock"
+export type LockboxDialogMode = "change" | "reset" | "setup" | "unlock"
 
 interface LockboxDialogProps {
   mode: LockboxDialogMode | null
   recoveryKey: string | null
   onChangePassword: (currentPassword: string, newPassword: string) => Promise<void>
-  onClear: (confirmation: string) => Promise<void>
   onClose: () => void
   onModeChange: (mode: LockboxDialogMode) => void
   onReset: (recoveryKey: string, newPassword: string) => Promise<void>
@@ -34,14 +27,12 @@ export function LockboxDialog({
   mode,
   recoveryKey,
   onChangePassword,
-  onClear,
   onClose,
   onModeChange,
   onReset,
   onSetup,
   onUnlock,
 }: LockboxDialogProps) {
-  const [confirmation, setConfirmation] = useState("")
   const [currentPassword, setCurrentPassword] = useState("")
   const [error, setError] = useState("")
   const [isBusy, setIsBusy] = useState(false)
@@ -56,7 +47,6 @@ export function LockboxDialog({
   )
 
   useEffect(() => {
-    setConfirmation("")
     setCurrentPassword("")
     setError("")
     setIsBusy(false)
@@ -98,8 +88,7 @@ export function LockboxDialog({
     if (mode === "setup") return "设置密匣"
     if (mode === "unlock") return "解锁密匣"
     if (mode === "reset") return "重置密匣密码"
-    if (mode === "change") return "修改密匣密码"
-    return "清空密匣"
+    return "修改密匣密码"
   }
 
   return (
@@ -188,11 +177,9 @@ export function LockboxDialog({
                   type="button"
                   variant="ghost"
                 >
-                  <RotateCcwIcon data-icon="inline-start" />
                   忘记密码
                 </Button>
                 <Button disabled={isBusy || !password} type="submit">
-                  {isBusy ? <Loader2Icon className="animate-spin" data-icon="inline-start" /> : <KeyRoundIcon data-icon="inline-start" />}
                   {isBusy ? "解锁中" : "解锁"}
                 </Button>
               </div>
@@ -229,7 +216,6 @@ export function LockboxDialog({
                   返回解锁
                 </Button>
                 <Button disabled={isBusy || !recoveryInput} type="submit">
-                  {isBusy ? <Loader2Icon className="animate-spin" data-icon="inline-start" /> : <RotateCcwIcon data-icon="inline-start" />}
                   {isBusy ? "重置中" : "重置密码"}
                 </Button>
               </div>
@@ -259,38 +245,10 @@ export function LockboxDialog({
                 onRepeatPassword={setRepeatPassword}
               />
               <Button disabled={isBusy || !currentPassword} type="submit">
-                {isBusy ? <Loader2Icon className="animate-spin" data-icon="inline-start" /> : <KeyRoundIcon data-icon="inline-start" />}
                 {isBusy ? "修改中" : "修改密码"}
               </Button>
             </form>
-          ) : (
-            <form
-              className="grid gap-[var(--shard-space-3)]"
-              onSubmit={(event) => {
-                event.preventDefault()
-                void submit(() => onClear(confirmation))
-              }}
-            >
-              <p className="text-sm leading-6 text-muted-foreground">
-                这会删除密匣 manifest 和所有加密笔记。忘记密码且没有恢复密钥时，只有这个入口能重新设置密匣。
-              </p>
-              <Input
-                autoFocus
-                disabled={isBusy}
-                onChange={(event) => setConfirmation(event.currentTarget.value)}
-                placeholder="输入：清空密匣"
-                value={confirmation}
-              />
-              <Button
-                disabled={isBusy || confirmation !== "清空密匣"}
-                type="submit"
-                variant="destructive"
-              >
-                {isBusy ? <Loader2Icon className="animate-spin" data-icon="inline-start" /> : <Trash2Icon data-icon="inline-start" />}
-                {isBusy ? "清空中" : "清空密匣"}
-              </Button>
-            </form>
-          )}
+          ) : null}
 
           {error ? (
             <div className="rounded-[var(--shard-radius-control)] border border-[rgb(var(--shard-ruby-rgb)/var(--shard-alpha-34))] bg-[rgb(var(--shard-ruby-rgb)/var(--shard-alpha-8))] px-[var(--shard-space-3)] py-[var(--shard-space-2)] text-xs leading-5 text-[color:var(--shard-ruby)]">
@@ -332,7 +290,6 @@ function PasswordPairForm({
         onRepeatPassword={onRepeatPassword}
       />
       <Button disabled={isBusy} type="submit">
-        {isBusy ? <Loader2Icon className="animate-spin" data-icon="inline-start" /> : <KeyRoundIcon data-icon="inline-start" />}
         {isBusy ? busyLabel : submitLabel}
       </Button>
     </form>
@@ -427,7 +384,6 @@ function RecoveryKeyStep({
           type="button"
           variant="outline"
         >
-          <CopyIcon data-icon="inline-start" />
           复制
         </Button>
         <Button
@@ -438,11 +394,6 @@ function RecoveryKeyStep({
           type="button"
           variant="outline"
         >
-          {isDownloading ? (
-            <Loader2Icon className="animate-spin" data-icon="inline-start" />
-          ) : (
-            <DownloadIcon data-icon="inline-start" />
-          )}
           {isDownloading ? "下载中" : "下载"}
         </Button>
         <span className="min-w-[220px] flex-1 text-xs leading-5 text-muted-foreground">

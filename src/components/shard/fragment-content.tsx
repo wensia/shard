@@ -5,19 +5,33 @@ import {
   type MouseEvent,
   type ReactNode,
 } from "react"
-import { XIcon } from "lucide-react"
+import { DownloadIcon, Loader2Icon, XIcon } from "lucide-react"
+import { toast } from "sonner"
 
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import { Button } from "@/components/ui/button"
 import { getTagRanges, parseMarkdownImageLine } from "@/lib/editor-format"
-import { loadFragmentImageSrc } from "@/lib/fragment-images"
+import {
+  downloadFragmentImageAttachment,
+  loadFragmentImageSrc,
+} from "@/lib/fragment-images"
+import { getApiErrorMessage } from "@/lib/api"
 import { cn } from "@/lib/utils"
 
 interface FragmentContentProps {
   caretAligned?: boolean
   className?: string
   content: string
+  downloadableImages?: boolean
   hideTags?: boolean
   highlightTags?: boolean
   onTaskToggle?: (lineIndex: number) => void
+  previewImages?: boolean
   renderImages?: boolean
   selectionEnd?: number
   selectionStart?: number
@@ -31,9 +45,11 @@ export function FragmentContent({
   caretAligned = false,
   className,
   content,
+  downloadableImages = false,
   hideTags = false,
   highlightTags = false,
   onTaskToggle,
+  previewImages = true,
   renderImages = false,
   selectionEnd,
   selectionStart,
@@ -77,9 +93,11 @@ export function FragmentContent({
               currentLineStart,
               selectionRange,
               onTaskToggle,
+              previewImages,
               renderImages,
               vaultPath,
-              caretAligned
+              caretAligned,
+              downloadableImages
             )}
             {index < lastVisibleIndex && !entry.isImageLine ? "\n" : null}
           </Fragment>
@@ -111,16 +129,20 @@ function renderLine(
   lineStart: number,
   selectionRange: SelectionRange | null,
   onTaskToggle: ((lineIndex: number) => void) | undefined,
+  previewImages: boolean,
   renderImages: boolean,
   vaultPath: string | undefined,
-  caretAligned: boolean
+  caretAligned: boolean,
+  downloadableImages: boolean
 ): ReactNode {
   const image = renderImages ? parseMarkdownImageLine(line) : null
   if (image) {
     return (
       <FragmentImageAttachment
         alt={image.alt}
+        downloadable={downloadableImages}
         path={image.path}
+        previewable={previewImages}
         vaultPath={vaultPath}
       />
     )
@@ -186,8 +208,10 @@ function renderLine(
 
 interface FragmentImageAttachmentProps {
   alt: string
+  downloadable?: boolean
   onRemove?: () => void
   path: string
+  previewable?: boolean
   src?: string
   vaultPath?: string
   wrapped?: boolean
@@ -195,18 +219,24 @@ interface FragmentImageAttachmentProps {
 
 export function FragmentImageAttachment({
   alt,
+  downloadable = false,
   onRemove,
   path,
+  previewable = true,
   src,
   vaultPath,
   wrapped = true,
 }: FragmentImageAttachmentProps) {
   const label = alt ? `图片附件：${alt}` : "图片附件"
+  const previewLabel = alt ? `放大查看图片附件：${alt}` : "放大查看图片附件"
   const [imageSrc, setImageSrc] = useState(src ?? "")
+  const [isDownloading, setIsDownloading] = useState(false)
+  const [isPreviewOpen, setIsPreviewOpen] = useState(false)
 
   useEffect(() => {
     let isMounted = true
     setImageSrc(src ?? "")
+    if (!src) setIsPreviewOpen(false)
 
     if (src) return
 
@@ -223,24 +253,113 @@ export function FragmentImageAttachment({
     }
   }, [path, src, vaultPath])
 
+  useEffect(() => {
+    if (!imageSrc) setIsPreviewOpen(false)
+  }, [imageSrc])
+
+  async function downloadImage() {
+    if (isDownloading) return
+
+    setIsDownloading(true)
+    try {
+      const saved = await downloadFragmentImageAttachment(path, alt, vaultPath)
+      if (saved) {
+        toast.success("图片附件已下载")
+      }
+    } catch (error) {
+      toast.error("图片附件下载失败", {
+        description: getApiErrorMessage(error),
+      })
+    } finally {
+      setIsDownloading(false)
+    }
+  }
+
   const attachment = (
-    <span className="shard-image-attachment" title={label}>
-      {imageSrc ? (
-        <img alt={label} data-source-path={path} loading="lazy" src={imageSrc} />
-      ) : (
-        <span aria-hidden="true" className="shard-image-attachment-placeholder" />
-      )}
-      {onRemove ? (
-        <button
-          aria-label="移除图片附件"
-          className="shard-image-attachment-remove"
-          onClick={onRemove}
-          type="button"
-        >
-          <XIcon data-icon="inline-start" />
-        </button>
+    <>
+      <span className="shard-image-attachment" title={label}>
+        {imageSrc && previewable ? (
+          <button
+            aria-label={previewLabel}
+            className="shard-image-attachment-preview"
+            onClick={(event) => {
+              event.preventDefault()
+              event.stopPropagation()
+              setIsPreviewOpen(true)
+            }}
+            type="button"
+          >
+            <img
+              alt={label}
+              data-source-path={path}
+              loading="lazy"
+              src={imageSrc}
+            />
+          </button>
+        ) : imageSrc ? (
+          <span className="shard-image-attachment-preview shard-image-attachment-preview-readonly">
+            <img
+              alt={label}
+              data-source-path={path}
+              loading="lazy"
+              src={imageSrc}
+            />
+          </span>
+        ) : (
+          <span
+            aria-hidden="true"
+            className="shard-image-attachment-placeholder"
+          />
+        )}
+        {onRemove ? (
+          <button
+            aria-label="移除图片附件"
+            className="shard-image-attachment-remove"
+            onClick={onRemove}
+            type="button"
+          >
+            <XIcon data-icon="inline-start" />
+          </button>
+        ) : null}
+      </span>
+      {imageSrc && previewable ? (
+        <Dialog open={isPreviewOpen} onOpenChange={setIsPreviewOpen}>
+          <DialogContent className="shard-image-preview-dialog gap-[var(--shard-space-3)] p-3">
+            <DialogTitle className="sr-only">{label}</DialogTitle>
+            <div className="shard-image-preview-frame">
+              <img
+                alt={label}
+                className="shard-image-preview-image"
+                data-source-path={path}
+                src={imageSrc}
+              />
+            </div>
+            {downloadable ? (
+              <DialogFooter className="shard-image-preview-actions">
+                <Button
+                  disabled={isDownloading}
+                  onClick={() => {
+                    void downloadImage()
+                  }}
+                  type="button"
+                  variant="outline"
+                >
+                  {isDownloading ? (
+                    <Loader2Icon
+                      className="animate-spin"
+                      data-icon="inline-start"
+                    />
+                  ) : (
+                    <DownloadIcon data-icon="inline-start" />
+                  )}
+                  {isDownloading ? "下载中" : "下载图片"}
+                </Button>
+              </DialogFooter>
+            ) : null}
+          </DialogContent>
+        </Dialog>
       ) : null}
-    </span>
+    </>
   )
 
   return wrapped ? (

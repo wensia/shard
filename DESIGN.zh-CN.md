@@ -10,7 +10,7 @@
 Shard 是一个轻量级 Markdown 片段捕获桌面应用。UI 必须围绕一个循环优化：
 
 1. 输入一段片段。
-2. 按 Cmd+Enter、Ctrl+Enter 或 Shift+Enter。
+2. 按 Cmd+Enter 或 Ctrl+Enter。
 3. 创建一个 Markdown 文件。
 4. 时间线中出现一张安静的纸片卡片。
 5. Git 状态在后台更新。
@@ -69,10 +69,10 @@ Shard 应有一个主强调色，但必须保持克制。当前运行态使用�
 
 相关强调色保持语义归属：
 
-- Emerald 表示已同步/成功。
-- Amber 表示待处理/警告。
-- Ruby 表示破坏性/错误。
-- Violet 只保留给次级标签变化。
+- 陶土红 `#b6533c` 表示主色/焦点/破坏性。
+- 绿松石 `#3e8c7d` 表示成功/正向强调。
+- 孔雀蓝 `#2e6e79` 表示信息/次级点缀。
+- 暖琥珀 `#be7c32` 表示待处理/警告。
 
 ## 布局
 
@@ -132,8 +132,8 @@ Capture 输入：
 - Composer action inset：`--shard-space-3`。保存按钮：32px 正方形。底部工具栏最小高度由 action size 加两个相等 inset 推导。
 - 工具栏工具包括图片上传、标签、无序列表、有序列表、任务清单、粗体、下划线和高亮按钮。列表工具把 Markdown 标记应用到当前行或当前选区中的每一行。行内工具把 Markdown 风格标记应用到当前选区。
 - 应用启动时必须聚焦。
-- `Enter` 插入换行。
-- `Cmd+Enter`、`Ctrl+Enter` 或 `Shift+Enter` 创建片段，除非 IME composition 正在进行。
+- `Enter` 或 `Shift+Enter` 插入换行。
+- `Cmd+Enter` 或 `Ctrl+Enter` 创建片段，除非 IME composition 正在进行。
 - 输入 `#` 或点击 `#` 按钮，会在 capture box 中打开一个紧凑标签 popover，直接定位在当前文本光标下方。
 - 保存时提取 `#work` 这类内联标签，并和 `inbox` 一起写入片段 frontmatter。
 - 图片上传会插入 Markdown image 行，并在 capture、editor 和片段内容中渲染为紧凑方形附件。附件 chrome 必须保持安静，并使用同一套 radius/alpha 系统。
@@ -265,6 +265,8 @@ Composer 放置：capture box 是主要动作，因此不使用大的 32px 页�
 
 编辑器光标规则：原生 textarea caret 无法满足这个 surface——它的高度跟随引擎的 line box 而非字形——因此编辑器字段隐藏原生 caret，渲染 `.shard-custom-caret`（高度由 `--shard-caret-height-ratio` 决定，垂直居中于字形盒）。caret 位置必须用 Range API 在可见高亮层的 `data-text-start` span 上测量，禁止用离屏 textarea mirror 估算：用户看到的渲染字形就是唯一事实来源，caret 物理上不可能偏离它。mirror 几何只允许作为高亮层无可测文字时的兜底（空内容、图片附件行）。
 
+编辑器选区规则：渲染标签、渲染选区并承托 caret 的是同一个可见叠层，因此拖拽选区必须实时重绘这层高亮。textarea 的 `select` 事件在指针仍按下时不会触发，所以编辑器改为监听 document 的 `selectionchange` 流，在每一次移动时重绘，而不是松手后才显示。任务复选框也属于这个 surface：它对齐文字 line box、垂直居中于所在行，绝不浮在所标记文字的上方或下方。
+
 ## 颜色 Tokens
 
 使用语义 CSS 变量。当前运行态值如下：
@@ -288,10 +290,21 @@ Composer 放置：capture box 是主要动作，因此不使用大的 32px 页�
 --shard-sapphire-text: var(--shard-accent-text);
 --shard-primary-rgb: 182 83 60;
 --shard-primary-soft-rgb: 222 150 129;
---shard-emerald: #148a4a;
---shard-amber: #b76a00;
---shard-ruby: #b42318;
---shard-editor-tag-fg: #5a3fb0;
+--shard-success: #3e8c7d;
+--shard-success-rgb: 62 140 125;
+--shard-info: #2e6e79;
+--shard-info-rgb: 46 110 121;
+--shard-warning: #be7c32;
+--shard-warning-rgb: 190 124 50;
+--shard-danger: #b6533c;
+--shard-danger-rgb: 182 83 60;
+--shard-emerald: var(--shard-success);
+--shard-emerald-rgb: 62 140 125;
+--shard-amber: var(--shard-warning);
+--shard-amber-rgb: 190 124 50;
+--shard-ruby: var(--shard-danger);
+--shard-ruby-rgb: 182 83 60;
+--shard-editor-tag-fg: var(--shard-info);
 
 --shard-radius-control: 6px;
 --shard-surface-radius: 12px;
@@ -404,8 +417,8 @@ Shard 特定组件：
 Capture：
 
 - 应用启动时聚焦 capture textarea。
-- `Enter` 插入换行。
-- `Cmd+Enter`、`Ctrl+Enter` 或 `Shift+Enter` 创建片段。
+- `Enter` 或 `Shift+Enter` 插入换行。
+- `Cmd+Enter` 或 `Ctrl+Enter` 创建片段。
 - IME composition 不得提前提交；composition 活跃时忽略保存快捷键。
 - 空内容或仅空白内容提交会被忽略。
 - 提交后 textarea 立即清空。
@@ -433,9 +446,9 @@ AI：
 
 Git：
 
-- `committed` 为绿色。
-- `sync pending` 为 amber。
-- `commit failed` 为 ruby/amber。
+- `committed` 为绿松石。
+- `sync pending` 为暖琥珀。
+- `commit failed` 为陶土红。
 - Git 失败绝不移除卡片，也不阻塞继续输入。
 - Git / GitHub CLI / 文件系统扫描或读写 / 网络请求 / 外部进程必须后台执行，不得卡住 WKWebView 或 UI 线程。
 - 配置、创建仓库、同步等 Git 流程必须以异步状态驱动局部组件 loading / disabled / `aria-busy`，成功后保留用户当前上下文，除非用户明确选择关闭或切换。
@@ -460,7 +473,7 @@ Git：
 
 - 输入仍然是主要对象。
 - Timeline 区域显示一行安静文字：
-  `还没有片段。写下第一条，按 Cmd/Ctrl/Shift+Enter 保存。`
+  `还没有片段。写下第一条，按 Cmd/Ctrl+Enter 保存。`
 - 不需要插图。
 
 ## 可访问性
@@ -501,7 +514,7 @@ Git：
 主要实现成功标准是视觉和行为：
 
 - 应用打开后进入聚焦的 capture box。
-- Cmd+Enter、Ctrl+Enter 或 Shift+Enter 创建一张卡片。
+- Cmd+Enter 或 Ctrl+Enter 创建一张卡片。
 - 卡片看起来像实线纸片。
 - 时间线在至少 24 个片段时仍保持可读。
 - 没有 AI 时 UI 仍然有用。

@@ -609,14 +609,6 @@ export function VaultGuide({
                         type="submit"
                         variant="default"
                       >
-                        {activeAction === "github" ? (
-                          <Loader2Icon
-                            className="animate-spin"
-                            data-icon="inline-start"
-                          />
-                        ) : (
-                          <GitBranchIcon data-icon="inline-start" />
-                        )}
                         {isCreatingGithubRepo ? copy.createRepoBusy : copy.createRepo}
                       </Button>
                     </form>
@@ -643,14 +635,6 @@ export function VaultGuide({
                       type="submit"
                       variant="default"
                     >
-                      {activeAction === "remote" ? (
-                        <Loader2Icon
-                          className="animate-spin"
-                          data-icon="inline-start"
-                        />
-                      ) : (
-                        <GitBranchIcon data-icon="inline-start" />
-                      )}
                       {isConfiguringRemote ? copy.connectRemoteBusy : copy.connectRemote}
                     </Button>
                   </form>
