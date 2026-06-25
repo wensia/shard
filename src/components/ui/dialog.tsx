@@ -55,7 +55,7 @@ function DialogContent({
         className={cn(
           // One 24px frame, sections separated by a 24px rhythm. Padding lives
           // only here so header/footer never double up the edge spacing.
-          "fixed top-1/2 left-1/2 z-50 flex max-h-[calc(100dvh-32px)] -translate-x-1/2 -translate-y-1/2 flex-col gap-[var(--shard-space-6)] overflow-hidden rounded-[var(--shard-surface-radius)] border border-border bg-popover bg-clip-padding p-[var(--shard-space-6)] text-sm text-popover-foreground shadow-[0_16px_48px_rgb(0_0_0/var(--shard-alpha-21))] transition duration-150 ease-out data-ending-style:scale-[0.98] data-ending-style:opacity-0 data-starting-style:scale-[0.98] data-starting-style:opacity-0",
+          "fixed top-1/2 left-1/2 z-50 flex max-h-[calc(100dvh-32px)] -translate-x-1/2 -translate-y-1/2 flex-col gap-[var(--shard-space-6)] overflow-hidden rounded-[var(--shard-surface-radius)] border border-border bg-popover bg-clip-padding p-[var(--shard-space-6)] text-sm text-popover-foreground shadow-[0_16px_48px_rgb(0_0_0/var(--shard-alpha-21))] transition-[opacity,scale] duration-150 ease-out data-ending-style:scale-[0.98] data-ending-style:opacity-0 data-starting-style:scale-[0.98] data-starting-style:opacity-0",
           className
         )}
         {...props}
@@ -111,7 +111,7 @@ function DialogTitle({ className, ...props }: DialogPrimitive.Title.Props) {
     <DialogPrimitive.Title
       data-slot="dialog-title"
       className={cn(
-        "font-heading text-base leading-6 font-semibold tracking-tight text-foreground",
+        "font-heading text-base leading-6 font-semibold tracking-tight text-balance text-foreground",
         className
       )}
       {...props}

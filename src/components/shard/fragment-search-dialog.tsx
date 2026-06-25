@@ -26,6 +26,7 @@ import { FragmentBody } from "@/components/shard/fragment-body"
 import { Input } from "@/components/ui/input"
 import { searchFragments } from "@/lib/fragment-search"
 import { LOCKBOX_TAG } from "@/lib/lockbox"
+import { cn } from "@/lib/utils"
 import type { Fragment } from "@/types"
 
 const MAX_RESULTS = 40
@@ -201,7 +202,9 @@ export function FragmentSearchDialog({
             <>
               <div className="flex h-9 items-center justify-between border-b border-border px-[var(--shard-space-3)] text-xs font-semibold text-muted-foreground">
                 <span>{hasQuery ? "搜索结果" : "最近笔记"}</span>
-                <span>{formatResultCount(totalResultCount)}</span>
+                <span className="tabular-nums">
+                  {formatResultCount(totalResultCount)}
+                </span>
               </div>
               <div className="max-h-[min(58dvh,480px)] overflow-y-auto">
                 {items.map((item, index) => (
@@ -227,7 +230,7 @@ function SearchEmptyState({ message }: { message: string }) {
   return (
     <div className="flex min-h-[260px] flex-col items-center justify-center gap-[var(--shard-space-3)] px-[var(--shard-space-6)] text-center text-muted-foreground">
       <SearchIcon className="size-6 stroke-[1.6]" />
-      <p className="text-sm font-semibold">{message}</p>
+      <p className="text-sm font-semibold text-balance">{message}</p>
     </div>
   )
 }
@@ -275,10 +278,12 @@ function SearchResultButton({
         <span className="truncate">{fragment.path || fragment.id}</span>
       </div>
       <div
-        className={[
-          "flex items-center gap-1 text-[11px] leading-4 font-semibold text-muted-foreground transition-opacity group-hover:opacity-100",
-          isSelected ? "opacity-100" : "opacity-0",
-        ].join(" ")}
+        className={cn(
+          "flex items-center gap-1 text-[11px] leading-4 font-semibold text-muted-foreground transition-[opacity,filter,scale] duration-300 ease-[cubic-bezier(0.2,0,0,1)] group-hover:scale-100 group-hover:opacity-100 group-hover:blur-0",
+          isSelected
+            ? "scale-100 opacity-100 blur-0"
+            : "scale-[0.25] opacity-0 blur-[4px]"
+        )}
       >
         <CornerDownLeftIcon className="size-3.5 stroke-[1.75]" />
         打开
@@ -314,7 +319,7 @@ function SearchResultButton({
             )
           })}
           {visibleTags.length > 4 ? (
-            <span className="shard-chip text-muted-foreground">
+            <span className="shard-chip text-muted-foreground tabular-nums">
               +{visibleTags.length - 4}
             </span>
           ) : null}

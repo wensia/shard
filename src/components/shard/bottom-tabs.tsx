@@ -181,7 +181,7 @@ export function BottomTabs({
                     ) : null}
                     <Icon className="size-4 shrink-0" />
                     <span className="max-w-full truncate">{item.label}</span>
-                    <span className="absolute top-1 right-1 min-w-4 rounded-full bg-background px-1 text-[10px] leading-4 font-bold text-muted-foreground">
+                    <span className="absolute top-1 right-1 min-w-4 rounded-full bg-background px-1 text-[10px] leading-4 font-bold text-muted-foreground tabular-nums">
                       {counts[item.id]}
                     </span>
                   </button>

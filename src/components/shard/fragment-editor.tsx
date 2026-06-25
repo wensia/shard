@@ -870,7 +870,7 @@ export function FragmentEditor({
                   取消
                 </Button>
                 <Button
-                  className="shard-edge-action shard-edge-action-save size-8 rounded-full bg-[color:var(--shard-sapphire)] text-white hover:bg-[color:var(--shard-sapphire-hover)] disabled:bg-transparent disabled:text-muted-foreground"
+                  className="shard-edge-action shard-edge-action-save rounded-full bg-[color:var(--shard-sapphire)] text-white hover:bg-[color:var(--shard-sapphire-hover)] disabled:bg-transparent disabled:text-muted-foreground"
                   disabled={!canSubmit}
                   onMouseDown={(event) => {
                     event.preventDefault()
@@ -924,7 +924,7 @@ export function FragmentEditor({
                   className="mx-[var(--shard-space-1)] h-5 w-px bg-border/[var(--shard-alpha-55)]"
                 />
                 <Button
-                  className="shard-edge-action size-7 rounded-[var(--shard-radius-control)] text-muted-foreground"
+                  className="shard-edge-action rounded-[var(--shard-radius-control)] text-muted-foreground"
                   onMouseDown={(event) => {
                     event.preventDefault()
                     void handleClose()

@@ -33,6 +33,7 @@ import {
   randomWalkFragments,
   reviewFragmentSummary,
 } from "@/lib/review-workflows"
+import { cn } from "@/lib/utils"
 import type {
   CodexAgentStatus,
   CodexInsightLens,
@@ -362,7 +363,7 @@ export function ReviewWorkspace({
                     >
                       {mode === "walk" ? (
                         <div className="flex flex-col items-center pt-[var(--shard-space-4)]">
-                          <span className="flex size-6 items-center justify-center rounded-full border border-border bg-background text-xs font-bold text-muted-foreground">
+                          <span className="flex size-6 items-center justify-center rounded-full border border-border bg-background text-xs font-bold text-muted-foreground tabular-nums">
                             {index + 1}
                           </span>
                           {index < displayFragments.length - 1 ? (
@@ -423,7 +424,9 @@ function ReviewHeader({
     <header className="shard-content-inset shrink-0 pb-[var(--shard-space-3)]">
       <div className="shard-content-measure flex flex-wrap items-center justify-between gap-[var(--shard-space-3)] border-b border-border pb-[var(--shard-space-3)]">
         <div className="flex min-w-0 items-center gap-[var(--shard-space-2)]">
-          <h1 className="truncate text-base leading-6 font-semibold">{title}</h1>
+          <h1 className="truncate text-base leading-6 font-semibold text-balance">
+            {title}
+          </h1>
           <Badge
             className="shrink-0 border-border bg-muted text-muted-foreground"
             variant="outline"
@@ -462,14 +465,14 @@ function InsightLensGallery({
     >
       {insightLensGroups.map((group) => (
         <div key={group.title}>
-          <h2 className="px-1 text-xl leading-7 font-bold">{group.title}</h2>
+          <h2 className="px-1 text-xl leading-7 font-bold text-balance">
+            {group.title}
+          </h2>
           <div className="mt-[var(--shard-space-4)] grid gap-[var(--shard-space-3)] md:grid-cols-3">
             {group.lensIds.map((lensId) => {
               const lens = insightLensById[lensId]
               const Icon = lens.icon
               const isSelected = lens.id === selectedLens
-              const SelectIcon = isSelected ? CheckIcon : PlusIcon
-
               return (
                 <button
                   aria-pressed={isSelected}
@@ -497,20 +500,39 @@ function InsightLensGallery({
                     <span
                       aria-hidden="true"
                       className={[
-                        "flex size-8 shrink-0 items-center justify-center rounded-full transition-colors",
+                        "relative flex size-8 shrink-0 items-center justify-center rounded-full transition-colors",
                         isSelected
                           ? "bg-[color:var(--shard-sapphire)] text-white"
                           : "border border-border bg-background text-muted-foreground group-hover/lens:border-[color:var(--shard-sapphire)] group-hover/lens:text-[color:var(--shard-sapphire)]",
                       ].join(" ")}
                     >
-                      <SelectIcon className="size-4 stroke-[2]" />
+                      <span
+                        className={cn(
+                          "absolute inset-0 flex items-center justify-center transition-[opacity,filter,scale] duration-300 ease-[cubic-bezier(0.2,0,0,1)]",
+                          isSelected
+                            ? "scale-100 opacity-100 blur-0"
+                            : "scale-[0.25] opacity-0 blur-[4px]"
+                        )}
+                      >
+                        <CheckIcon className="size-4 stroke-[2]" />
+                      </span>
+                      <span
+                        className={cn(
+                          "flex items-center justify-center transition-[opacity,filter,scale] duration-300 ease-[cubic-bezier(0.2,0,0,1)]",
+                          isSelected
+                            ? "scale-[0.25] opacity-0 blur-[4px]"
+                            : "scale-100 opacity-100 blur-0"
+                        )}
+                      >
+                        <PlusIcon className="size-4 stroke-[2]" />
+                      </span>
                     </span>
                   </span>
 
-                  <span className="mt-[var(--shard-space-5)] block text-lg leading-6 font-bold">
+                  <span className="mt-[var(--shard-space-5)] block text-lg leading-6 font-bold text-balance">
                     {lens.title}
                   </span>
-                  <span className="mt-[var(--shard-space-3)] line-clamp-3 block text-sm leading-6 text-muted-foreground">
+                  <span className="mt-[var(--shard-space-3)] line-clamp-3 block text-sm leading-6 text-pretty text-muted-foreground">
                     {lens.description}
                   </span>
                   <span className="mt-auto pt-[var(--shard-space-5)] text-xs leading-4 text-muted-foreground">
@@ -559,7 +581,7 @@ function CodexPanel({
         <div className="min-w-0">
           <div className="flex items-center gap-[var(--shard-space-2)]">
             <BotIcon className="size-4 text-[color:var(--shard-sapphire)]" />
-            <h2 className="text-sm font-bold">{title}</h2>
+            <h2 className="text-sm font-bold text-balance">{title}</h2>
           </div>
           <div className="mt-1 text-xs leading-5 text-muted-foreground">
             {isChecking
@@ -590,7 +612,7 @@ function CodexPanel({
       {error ? (
         <div className="mt-[var(--shard-space-3)] flex gap-[var(--shard-space-2)] rounded-[var(--shard-radius-control)] border border-[rgb(var(--shard-ruby-rgb)/var(--shard-alpha-34))] bg-[rgb(var(--shard-ruby-rgb)/var(--shard-alpha-8))] px-[var(--shard-space-3)] py-[var(--shard-space-2)] text-xs leading-5 text-[color:var(--shard-ruby)]">
           <CircleAlertIcon className="mt-0.5 size-3.5 shrink-0" />
-          <span>{error}</span>
+          <span className="text-pretty">{error}</span>
         </div>
       ) : null}
 
@@ -600,7 +622,7 @@ function CodexPanel({
           content={result}
         />
       ) : (
-        <div className="mt-[var(--shard-space-4)] text-sm leading-6 text-muted-foreground">
+        <div className="mt-[var(--shard-space-4)] text-sm leading-6 text-pretty text-muted-foreground">
           {isRunning ? "Codex 正在只读分析所选笔记..." : "生成后会显示在这里。"}
         </div>
       )}
@@ -618,7 +640,7 @@ function ReviewEmpty({
   return (
     <div className="flex h-full flex-col items-center justify-center gap-3 text-center text-muted-foreground">
       <Icon className="size-8" />
-      <div className="text-sm font-semibold">{message}</div>
+      <div className="text-sm font-semibold text-balance">{message}</div>
     </div>
   )
 }

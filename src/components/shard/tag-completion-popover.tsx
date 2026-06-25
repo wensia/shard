@@ -54,7 +54,7 @@ export function TagCompletionPopover({
             <button
               aria-selected={isActive}
               className={[
-                "flex min-h-8 w-full items-center justify-between gap-[var(--shard-space-2)] rounded-[var(--shard-radius-control)] px-[var(--shard-space-2)] text-left transition-colors hover:bg-muted",
+                "flex min-h-10 w-full items-center justify-between gap-[var(--shard-space-2)] rounded-[var(--shard-radius-control)] px-[var(--shard-space-2)] text-left transition-[background-color,color,scale] duration-150 ease-out hover:bg-muted active:scale-[0.96]",
                 isActive ? "bg-muted text-foreground" : "",
               ].join(" ")}
               id={getTagSuggestionOptionId(id, index)}

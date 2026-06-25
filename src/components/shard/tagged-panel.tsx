@@ -31,9 +31,9 @@ export function TaggedPanel({
       <div className="shard-content-measure flex flex-col gap-[var(--shard-space-3)]">
         <div className="flex h-[var(--shard-chip-height)] items-center gap-[var(--shard-space-2)] text-xs font-medium text-muted-foreground">
           <TagIcon className="size-3.5 shrink-0 stroke-[1.75]" />
-          <span>{summaries.length} 标签</span>
+          <span className="tabular-nums">{summaries.length} 标签</span>
           <span aria-hidden="true">·</span>
-          <span>{totalCount} 条</span>
+          <span className="tabular-nums">{totalCount} 条</span>
         </div>
 
         <div className="shard-tag-filters flex max-h-[88px] flex-wrap content-start gap-[var(--shard-space-2)] overflow-y-auto pr-[var(--shard-space-1)]">

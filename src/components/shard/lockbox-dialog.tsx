@@ -118,12 +118,12 @@ export function LockboxDialog({
             </span>
             <div className="min-w-0">
               <h2
-                className="text-base leading-6 font-semibold"
+                className="text-base leading-6 font-semibold text-balance"
                 id="lockbox-dialog-title"
               >
                 {title()}
               </h2>
-              <p className="mt-1 text-xs leading-5 text-muted-foreground">
+              <p className="mt-1 text-xs leading-5 text-pretty text-muted-foreground">
                 本地加密，解锁后 15 分钟闲置自动上锁。
               </p>
             </div>
@@ -370,7 +370,7 @@ function RecoveryKeyStep({
 
   return (
     <div className="grid gap-[var(--shard-space-3)]">
-      <p className="text-sm leading-6 text-muted-foreground">
+      <p className="text-sm leading-6 text-pretty text-muted-foreground">
         这是唯一能保留密匣内容的重置凭据。Shard 不保存恢复密钥明文，关闭后不会再次显示。
       </p>
       <div className="rounded-[var(--shard-radius-control)] border border-border bg-background p-[var(--shard-space-3)] font-mono text-sm leading-6 break-all">
@@ -396,7 +396,7 @@ function RecoveryKeyStep({
         >
           {isDownloading ? "下载中" : "下载"}
         </Button>
-        <span className="min-w-[220px] flex-1 text-xs leading-5 text-muted-foreground">
+        <span className="min-w-[220px] flex-1 text-xs leading-5 text-pretty text-muted-foreground">
           输入最后一段 <span className="font-mono font-semibold">{code}</span> 确认已保存。
         </span>
       </div>

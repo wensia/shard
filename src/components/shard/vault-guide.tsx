@@ -494,7 +494,7 @@ export function VaultGuide({
               {copy.settingsTitle}
             </div>
             <h2
-              className="mt-1 text-lg leading-6 font-semibold"
+              className="mt-1 text-lg leading-6 font-semibold text-balance"
               id="vault-guide-title"
             >
               {copy.vaultTitle}
@@ -531,8 +531,10 @@ export function VaultGuide({
 
         <main className="grid min-h-0 flex-1 grid-rows-[auto_minmax(0,1fr)]">
           <section className="border-b border-border px-[var(--shard-space-5)] py-[var(--shard-space-4)] pr-[calc(var(--shard-space-8)+32px)]">
-            <h3 className="text-lg leading-6 font-semibold">{copy.vaultTitle}</h3>
-            <p className="mt-[var(--shard-space-2)] max-w-[620px] text-sm leading-6 text-muted-foreground">
+            <h3 className="text-lg leading-6 font-semibold text-balance">
+              {copy.vaultTitle}
+            </h3>
+            <p className="mt-[var(--shard-space-2)] max-w-[620px] text-sm leading-6 text-pretty text-muted-foreground">
               {needsRemote
                 ? copy.headlineNeedsRemote
                 : copy.headlineDefault}
@@ -546,10 +548,10 @@ export function VaultGuide({
             >
               <div className="flex items-start justify-between gap-[var(--shard-space-4)]">
                 <div className="min-w-0">
-                  <h3 className="text-base leading-6 font-semibold">
+                  <h3 className="text-base leading-6 font-semibold text-balance">
                     {copy.remoteTitle}
                   </h3>
-                  <p className="mt-1 text-sm leading-6 text-muted-foreground">
+                  <p className="mt-1 text-sm leading-6 text-pretty text-muted-foreground">
                     {needsRemote
                       ? copy.remoteNeeds
                       : copy.remoteReady}
@@ -578,7 +580,7 @@ export function VaultGuide({
                       <GitBranchIcon className="size-4" />
                       GitHub
                     </div>
-                    <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                    <p className="mt-1 text-xs leading-5 text-pretty text-muted-foreground">
                       {getGithubStatusText(githubStatus, isCheckingGithub, copy)}
                     </p>
                     <form
@@ -638,7 +640,7 @@ export function VaultGuide({
                       {isConfiguringRemote ? copy.connectRemoteBusy : copy.connectRemote}
                     </Button>
                   </form>
-                  <p className="text-xs leading-5 text-muted-foreground">
+                  <p className="text-xs leading-5 text-pretty text-muted-foreground">
                     {copy.manualRemoteHint}
                   </p>
                 </div>
@@ -656,10 +658,10 @@ export function VaultGuide({
             <div className="grid min-h-0 gap-[var(--shard-space-4)] lg:grid-rows-[minmax(0,1fr)_auto]">
               <section className="rounded-[var(--shard-surface-radius)] border border-border bg-card px-[var(--shard-space-4)] py-[var(--shard-space-4)]">
                 <div>
-                  <h3 className="text-base leading-6 font-semibold">
+                  <h3 className="text-base leading-6 font-semibold text-balance">
                     {copy.directoryTitle}
                   </h3>
-                  <p className="mt-1 text-sm leading-6 text-muted-foreground">
+                  <p className="mt-1 text-sm leading-6 text-pretty text-muted-foreground">
                     {copy.directoryDescription}
                   </p>
                 </div>
@@ -685,8 +687,10 @@ export function VaultGuide({
 
               <section className="rounded-[var(--shard-surface-radius)] border border-border bg-card px-[var(--shard-space-4)] py-[var(--shard-space-4)]">
                 <div>
-                  <h3 className="text-base leading-6 font-semibold">{copy.gitTitle}</h3>
-                  <p className="mt-1 text-sm leading-6 text-muted-foreground">
+                  <h3 className="text-base leading-6 font-semibold text-balance">
+                    {copy.gitTitle}
+                  </h3>
+                  <p className="mt-1 text-sm leading-6 text-pretty text-muted-foreground">
                     {copy.gitDescription}
                   </p>
                 </div>
@@ -795,7 +799,7 @@ function VaultActionButton({
 }: VaultActionButtonProps) {
   return (
     <button
-      className="grid min-h-[56px] grid-cols-[32px_minmax(0,1fr)] items-center gap-[var(--shard-space-3)] rounded-[var(--shard-radius-control)] border border-border bg-background px-[var(--shard-space-3)] text-left transition-colors hover:border-[color:var(--shard-sapphire)] hover:bg-[color:var(--shard-sapphire-soft)] disabled:pointer-events-none disabled:opacity-[var(--shard-alpha-55)]"
+      className="grid min-h-[56px] grid-cols-[32px_minmax(0,1fr)] items-center gap-[var(--shard-space-3)] rounded-[var(--shard-radius-control)] border border-border bg-background px-[var(--shard-space-3)] text-left transition-[background-color,border-color,scale] duration-150 ease-out hover:border-[color:var(--shard-sapphire)] hover:bg-[color:var(--shard-sapphire-soft)] active:scale-[0.96] disabled:pointer-events-none disabled:opacity-[var(--shard-alpha-55)]"
       disabled={disabled || active}
       onClick={onClick}
       type="button"
@@ -808,8 +812,10 @@ function VaultActionButton({
         )}
       </span>
       <span className="min-w-0">
-        <span className="block text-sm leading-5 font-semibold">{label}</span>
-        <span className="block truncate text-xs leading-4 text-muted-foreground">
+        <span className="block text-sm leading-5 font-semibold text-balance">
+          {label}
+        </span>
+        <span className="block truncate text-xs leading-4 text-pretty text-muted-foreground">
           {description}
         </span>
       </span>

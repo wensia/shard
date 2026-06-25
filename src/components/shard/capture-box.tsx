@@ -754,7 +754,7 @@ export function CaptureBox({
             onLineFormat={formatLines}
             trailing={
               <Button
-                className={`shard-edge-action shard-edge-action-save size-8 rounded-full bg-[color:var(--shard-sapphire)] text-white hover:bg-[color:var(--shard-sapphire-hover)] ${
+                className={`shard-edge-action shard-edge-action-save rounded-full bg-[color:var(--shard-sapphire)] text-white hover:bg-[color:var(--shard-sapphire-hover)] ${
                   isCreating
                     ? "disabled:bg-[color:var(--shard-sapphire)] disabled:text-white disabled:opacity-100"
                     : "disabled:bg-transparent disabled:text-muted-foreground"

@@ -209,6 +209,7 @@
   }
 
   .shard-tag {
+    position: relative;
     display: inline-flex;
     min-width: 0;
     height: var(--shard-tag-height);
@@ -224,7 +225,8 @@
     transition:
       background-color 140ms ease,
       color 140ms ease,
-      box-shadow 140ms ease;
+      box-shadow 140ms ease,
+      scale 140ms ease;
   }
 
   .shard-tag:hover {
@@ -242,6 +244,26 @@
     color: var(--shard-tag-muted-fg);
     background: var(--shard-tag-muted-bg);
     box-shadow: none;
+  }
+
+  .shard-tag:is(button) {
+    min-height: var(--shard-space-8);
+  }
+
+  .shard-tag:is(button)::after {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    min-width: calc(var(--shard-space-5) * 2);
+    width: 100%;
+    height: calc(var(--shard-space-5) * 2);
+    border-radius: inherit;
+    content: "";
+    transform: translate(-50%, -50%);
+  }
+
+  .shard-tag:is(button):active {
+    scale: 0.96;
   }
 
   .shard-tag-success {
@@ -287,6 +309,7 @@
 
   .shard-tag-count {
     color: currentColor;
+    font-variant-numeric: tabular-nums;
     opacity: var(--shard-alpha-55);
   }
 
@@ -330,6 +353,7 @@
 
   .shard-memo-meta {
     font-size: var(--shard-memo-meta-font-size);
+    font-variant-numeric: tabular-nums;
     font-weight: var(--shard-memo-meta-font-weight);
     letter-spacing: 0;
     line-height: var(--shard-memo-meta-line-height);
@@ -408,8 +432,14 @@
     height: 100%;
     background: var(--card);
     border-radius: calc(var(--shard-image-attachment-radius) - 1px);
+    outline: 1px solid rgb(0 0 0 / 0.1);
+    outline-offset: -1px;
     object-fit: contain;
     object-position: center;
+  }
+
+  .dark .shard-image-attachment img {
+    outline-color: rgb(255 255 255 / 0.1);
   }
 
   .shard-image-attachment-placeholder {
@@ -430,8 +460,8 @@
     top: var(--shard-space-1);
     right: var(--shard-space-1);
     display: flex;
-    width: 18px;
-    height: 18px;
+    width: var(--shard-space-6);
+    height: var(--shard-space-6);
     align-items: center;
     justify-content: center;
     border: 1px solid rgb(255 255 255 / var(--shard-alpha-89));
@@ -440,6 +470,30 @@
     color: white;
     cursor: pointer;
     opacity: var(--shard-alpha-89);
+    transition:
+      background-color 140ms ease,
+      opacity 140ms ease,
+      scale 140ms ease;
+  }
+
+  .shard-image-attachment-remove::after {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 40px;
+    height: 40px;
+    border-radius: 999px;
+    content: "";
+    transform: translate(-50%, -50%);
+  }
+
+  .shard-image-attachment-remove:active {
+    scale: 0.96;
+  }
+
+  .shard-image-attachment-remove:focus-visible {
+    outline: 2px solid rgb(var(--shard-primary-rgb) / var(--shard-alpha-55));
+    outline-offset: 2px;
   }
 
   .shard-image-attachment-remove:hover {
@@ -481,12 +535,13 @@
     max-width: min(1080px, calc(100vw - 48px));
     max-height: calc(100dvh - 118px);
     border-radius: calc(var(--shard-surface-radius) - 4px);
-    box-shadow: inset 0 0 0 1px rgb(17 19 21 / var(--shard-alpha-13));
+    outline: 1px solid rgb(0 0 0 / 0.1);
+    outline-offset: -1px;
     object-fit: contain;
   }
 
   .dark .shard-image-preview-image {
-    box-shadow: inset 0 0 0 1px rgb(255 255 255 / var(--shard-alpha-21));
+    outline-color: rgb(255 255 255 / 0.1);
   }
 
   .shard-task-marker {
@@ -680,7 +735,7 @@
 
   .shard-edge-action-row {
     --shard-edge-action-inset: var(--shard-space-3);
-    --shard-edge-action-size: 28px;
+    --shard-edge-action-size: 36px;
     min-height: calc(
       var(--shard-edge-action-size) + var(--shard-edge-action-inset) +
         var(--shard-edge-action-inset)
@@ -689,13 +744,25 @@
   }
 
   .shard-edge-action {
+    position: relative;
     width: var(--shard-edge-action-size, 28px);
     height: var(--shard-edge-action-size, 28px);
   }
 
+  .shard-edge-action::after {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: calc(var(--shard-space-5) * 2);
+    height: calc(var(--shard-space-5) * 2);
+    border-radius: inherit;
+    content: "";
+    transform: translate(-50%, -50%);
+  }
+
   .shard-edge-action-save {
-    width: 32px;
-    height: 32px;
+    width: calc(var(--shard-space-5) * 2);
+    height: calc(var(--shard-space-5) * 2);
     border-radius: 999px;
     box-shadow:
       0 1px 2px rgb(17 19 21 / var(--shard-alpha-13)),

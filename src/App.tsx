@@ -1047,8 +1047,8 @@ function LockboxHeader({
               <LockKeyholeIcon className="size-4 stroke-[1.75]" />
             </span>
             <div className="min-w-0">
-              <h1 className="text-lg leading-6 font-bold">密匣</h1>
-              <p className="mt-1 text-sm leading-5 text-muted-foreground">
+              <h1 className="text-lg leading-6 font-bold text-balance">密匣</h1>
+              <p className="mt-1 text-sm leading-5 text-pretty text-muted-foreground">
                 {lockbox?.unlocked
                   ? `已解锁${lockbox.expiresAt ? `至 ${formatLockboxExpiry(lockbox.expiresAt)}` : ""}`
                   : "需要密码访问。私密笔记不会出现在主页、回顾或普通统计中。"}
@@ -1078,9 +1078,9 @@ function LockboxHeader({
           <div className="mt-[var(--shard-space-3)] flex flex-col gap-[var(--shard-space-2)]">
             <div className="flex h-[var(--shard-chip-height)] items-center gap-[var(--shard-space-2)] text-xs font-medium text-muted-foreground">
               <TagIcon className="size-3.5 shrink-0 stroke-[1.75]" />
-              <span>{summaries.length} 子标签</span>
+              <span className="tabular-nums">{summaries.length} 子标签</span>
               <span aria-hidden="true">·</span>
-              <span>{totalCount} 条</span>
+              <span className="tabular-nums">{totalCount} 条</span>
             </div>
 
             <div className="shard-tag-filters flex max-h-[72px] flex-wrap content-start gap-[var(--shard-space-2)] overflow-y-auto pr-[var(--shard-space-1)]">

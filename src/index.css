@@ -227,7 +227,9 @@
     @apply bg-background text-foreground antialiased;
     }
   html {
-    @apply font-sans;
+    @apply font-sans antialiased;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
     height: 100%;
     overflow: hidden;
     }
@@ -240,5 +242,24 @@
   textarea,
   input {
     letter-spacing: 0;
+  }
+  h1,
+  h2,
+  h3,
+  [data-slot="dialog-title"] {
+    text-wrap: balance;
+  }
+  p:not(.shard-memo-body),
+  li,
+  blockquote,
+  [data-slot="dialog-description"] {
+    text-wrap: pretty;
+  }
+  img {
+    outline: 1px solid rgb(0 0 0 / 0.1);
+    outline-offset: -1px;
+  }
+  .dark img {
+    outline-color: rgb(255 255 255 / 0.1);
   }
 }

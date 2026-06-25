@@ -155,7 +155,7 @@ export function FragmentImageExporter({
                 aria-label={`${template.label}，${template.description}`}
                 aria-pressed={template.id === templateId}
                 className={cn(
-                  "grid min-w-0 content-start gap-[var(--shard-space-2)] rounded-[var(--shard-radius-control)] border bg-card p-[var(--shard-space-2)] transition-colors md:grid-cols-[56px_minmax(0,1fr)] md:items-center md:gap-[var(--shard-space-3)]",
+                  "grid min-w-0 content-start gap-[var(--shard-space-2)] rounded-[var(--shard-radius-control)] border bg-card p-[var(--shard-space-2)] transition-[background-color,border-color,color,scale] duration-150 ease-out active:scale-[0.96] md:grid-cols-[56px_minmax(0,1fr)] md:items-center md:gap-[var(--shard-space-3)]",
                   "hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/[var(--shard-alpha-34)] focus-visible:outline-none",
                   template.id === templateId
                     ? "border-[color:var(--shard-sapphire)] bg-[color:var(--shard-sapphire-soft)] text-[color:var(--shard-sapphire-text)]"
@@ -169,7 +169,7 @@ export function FragmentImageExporter({
                   active={template.id === templateId}
                   templateId={template.id}
                 />
-                <span className="truncate text-center text-xs leading-5 font-medium md:text-left">
+                <span className="truncate text-center text-xs leading-5 font-medium text-balance md:text-left">
                   {template.label}
                 </span>
               </button>

@@ -260,7 +260,7 @@ export function SidebarNav({
           src={shardAppIconUrl}
         />
         <div className="min-w-0">
-          <div className="text-xl leading-6 font-bold">Shard</div>
+          <div className="text-xl leading-6 font-bold text-balance">Shard</div>
           <div className="text-xs font-medium text-muted-foreground">v0.1.0</div>
         </div>
       </div>
@@ -367,7 +367,7 @@ export function SidebarNav({
               <span className="min-w-0 flex-1 truncate">
                 {copy.nav[item.id]}
               </span>
-              <span className="min-w-7 rounded-md bg-muted px-2 py-0.5 text-center text-xs font-semibold text-muted-foreground">
+              <span className="min-w-7 rounded-md bg-muted px-2 py-0.5 text-center text-xs font-semibold text-muted-foreground tabular-nums">
                 {counts[item.id]}
               </span>
             </button>

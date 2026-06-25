@@ -120,7 +120,7 @@ interface ToolbarButtonProps {
 function ToolbarButton({ disabled, icon, label, onClick }: ToolbarButtonProps) {
   return (
     <Button
-      className="shard-edge-action size-7 rounded-[var(--shard-radius-control)] text-muted-foreground"
+      className="shard-edge-action rounded-[var(--shard-radius-control)] text-muted-foreground"
       disabled={disabled}
       onMouseDown={(event) => {
         event.preventDefault()

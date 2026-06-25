@@ -93,7 +93,7 @@ export function FragmentTimeline({
         ) : fragments.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center gap-3 text-center text-muted-foreground">
             <InboxIcon className="size-8" />
-            <div className="text-sm font-semibold">
+            <div className="text-sm font-semibold text-balance">
               {emptyMessage}
             </div>
           </div>
