@@ -1,5 +1,6 @@
 import {
   ArchiveIcon,
+  GitBranchIcon,
   HelpCircleIcon,
   InboxIcon,
   KeyboardIcon,
@@ -37,6 +38,7 @@ interface SidebarNavProps {
   isSyncing: boolean
   onFilterChange: (filter: FragmentFilter) => void
   onHelp: () => void
+  onOpenMindMaps: () => void
   onOpenSearch: () => void
   onOpenSettings: () => void
   onRestoreWindow: () => void
@@ -218,6 +220,7 @@ export function SidebarNav({
   isSyncing,
   onFilterChange,
   onHelp,
+  onOpenMindMaps,
   onOpenSearch,
   onOpenSettings,
   onRestoreWindow,
@@ -460,6 +463,16 @@ export function SidebarNav({
               sideOffset={8}
             >
               <DropdownMenuGroup>
+                <DropdownMenuItem
+                  className={utilityMenuItemClass}
+                  onClick={() => {
+                    setIsUtilityMenuOpen(false)
+                    window.setTimeout(onOpenMindMaps, 0)
+                  }}
+                >
+                  <GitBranchIcon />
+                  思维导图
+                </DropdownMenuItem>
                 <DropdownMenuItem
                   className={utilityMenuItemClass}
                   onClick={() => {

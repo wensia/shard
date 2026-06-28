@@ -12,6 +12,7 @@ import {
   LockboxDialog,
   type LockboxDialogMode,
 } from "@/components/shard/lockbox-dialog"
+import { MindMapDialog } from "@/components/shard/mind-map-dialog"
 import { ReviewWorkspace } from "@/components/shard/review-workspace"
 import { SidebarNav } from "@/components/shard/sidebar-nav"
 import { TaggedPanel, type TaggedSummary } from "@/components/shard/tagged-panel"
@@ -91,6 +92,7 @@ function App() {
     string | null
   >(null)
   const [isSearchDialogOpen, setIsSearchDialogOpen] = useState(false)
+  const [isMindMapDialogOpen, setIsMindMapDialogOpen] = useState(false)
   const [selectedLockboxTag, setSelectedLockboxTag] = useState<string | null>(null)
   const [selectedTag, setSelectedTag] = useState<string | null>(null)
 
@@ -769,8 +771,10 @@ function App() {
     isVaultDialogOpen ||
     lockboxDialogMode !== null ||
     isExportSheetOpen ||
-    isLockboxArchiveConfirmOpen
-  const isBlockingDialogOpen = isModalBusy || isSearchDialogOpen
+    isLockboxArchiveConfirmOpen ||
+    isMindMapDialogOpen
+  const isBlockingDialogOpen =
+    isModalBusy || isSearchDialogOpen || isMindMapDialogOpen
 
   const timelineScrollTargetId =
     pendingScrollFragmentId &&
@@ -822,6 +826,7 @@ function App() {
             isSyncing={isSyncing}
             onFilterChange={setFilter}
             onHelp={showHelp}
+            onOpenMindMaps={() => setIsMindMapDialogOpen(true)}
             onOpenSearch={openSearch}
             onOpenSettings={() => setIsVaultGuideOpen(true)}
             onRestoreWindow={handleRestoreWindow}
@@ -941,6 +946,7 @@ function App() {
             isSyncing={isSyncing}
             onFilterChange={setFilter}
             onHelp={showHelp}
+            onOpenMindMaps={() => setIsMindMapDialogOpen(true)}
             onOpenSearch={openSearch}
             onOpenSettings={() => setIsVaultGuideOpen(true)}
             onRestoreWindow={handleRestoreWindow}
@@ -969,6 +975,10 @@ function App() {
         onOpenChange={setIsSearchDialogOpen}
         onOpenFragment={handleOpenSearchResult}
         vaultPath={vaultPath}
+      />
+      <MindMapDialog
+        open={isMindMapDialogOpen}
+        onOpenChange={setIsMindMapDialogOpen}
       />
       <LockboxArchiveConfirmDialog
         fragment={pendingLockboxArchiveFragment}

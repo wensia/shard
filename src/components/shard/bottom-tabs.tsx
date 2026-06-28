@@ -39,6 +39,7 @@ interface BottomTabsProps {
   isSyncing: boolean
   onFilterChange: (filter: FragmentFilter) => void
   onHelp: () => void
+  onOpenMindMaps: () => void
   onOpenSearch: () => void
   onOpenSettings: () => void
   onRestoreWindow: () => void
@@ -69,6 +70,7 @@ export function BottomTabs({
   isSyncing,
   onFilterChange,
   onHelp,
+  onOpenMindMaps,
   onOpenSearch,
   onOpenSettings,
   onRestoreWindow,
@@ -235,6 +237,16 @@ export function BottomTabs({
                   还原窗口尺寸
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  className={utilityMenuItemClass}
+                  onClick={() => {
+                    setIsMenuOpen(false)
+                    window.setTimeout(onOpenMindMaps, 0)
+                  }}
+                >
+                  <GitBranchIcon />
+                  思维导图
+                </DropdownMenuItem>
                 <DropdownMenuItem
                   className={utilityMenuItemClass}
                   onClick={() => {
