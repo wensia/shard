@@ -59,20 +59,23 @@ export function FragmentCard({
 
   if (isEditing && onSave) {
     return (
-      <FragmentEditor
-        fragment={fragment}
-        knownTags={knownTags}
-        onClose={() => onCancelEdit?.()}
-        onSave={onSave}
-        variant="inline"
-        vaultPath={vaultPath}
-      />
+      <div data-shard-fragment-id={fragment.id}>
+        <FragmentEditor
+          fragment={fragment}
+          knownTags={knownTags}
+          onClose={() => onCancelEdit?.()}
+          onSave={onSave}
+          variant="inline"
+          vaultPath={vaultPath}
+        />
+      </div>
     )
   }
 
   return (
     <article
       className="group flex flex-col rounded-[var(--shard-surface-radius)] bg-card px-[var(--shard-card-padding-x)] pt-[var(--shard-card-padding-y)] pb-[var(--shard-card-padding-bottom)]"
+      data-shard-fragment-id={fragment.id}
     >
       <div className="flex items-start gap-[var(--shard-card-gap)]">
         <div className="min-w-0 flex-1">

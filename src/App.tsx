@@ -87,6 +87,9 @@ function App() {
   const [pendingLockboxArchiveFragment, setPendingLockboxArchiveFragment] =
     useState<Fragment | null>(null)
   const [pendingLockboxMoveId, setPendingLockboxMoveId] = useState<string | null>(null)
+  const [pendingScrollFragmentId, setPendingScrollFragmentId] = useState<
+    string | null
+  >(null)
   const [isSearchDialogOpen, setIsSearchDialogOpen] = useState(false)
   const [selectedLockboxTag, setSelectedLockboxTag] = useState<string | null>(null)
   const [selectedTag, setSelectedTag] = useState<string | null>(null)
@@ -598,7 +601,36 @@ function App() {
   }
 
   function handleOpenSearchResult(fragment: Fragment) {
-    openZenEditor(fragment)
+    const visibleTag = getFirstVisibleTag(fragment)
+
+    setEditingVariant("inline")
+    setEditingFragmentId(null)
+    setSelectedLockboxTag(null)
+
+    if (fragment.archived) {
+      setSelectedTag(null)
+      setFilter("archive")
+    } else if (fragment.lockbox) {
+      if (!lockbox?.unlocked) {
+        openLockboxGate()
+        toast.info("请先解锁密匣后查看笔记")
+        return
+      }
+
+      setSelectedTag(null)
+      setFilter("lockbox")
+    } else if (fragment.tags.includes("inbox")) {
+      setSelectedTag(null)
+      setFilter("inbox")
+    } else if (visibleTag) {
+      setSelectedTag(visibleTag)
+      setFilter("tagged")
+    } else {
+      toast.warning("这条笔记当前不在时间线列表中")
+      return
+    }
+
+    setPendingScrollFragmentId(fragment.id)
   }
 
   function openSearch() {
@@ -739,6 +771,38 @@ function App() {
     isExportSheetOpen ||
     isLockboxArchiveConfirmOpen
   const isBlockingDialogOpen = isModalBusy || isSearchDialogOpen
+
+  useEffect(() => {
+    if (!pendingScrollFragmentId || isSearchDialogOpen || isReviewView) return
+    if (!filteredFragments.some((fragment) => fragment.id === pendingScrollFragmentId)) {
+      return
+    }
+
+    let retryFrame = 0
+    const frame = window.requestAnimationFrame(() => {
+      const didScroll = scrollTimelineToFragment(pendingScrollFragmentId)
+
+      if (didScroll) {
+        setPendingScrollFragmentId(null)
+        return
+      }
+
+      retryFrame = window.requestAnimationFrame(() => {
+        scrollTimelineToFragment(pendingScrollFragmentId)
+        setPendingScrollFragmentId(null)
+      })
+    })
+
+    return () => {
+      window.cancelAnimationFrame(frame)
+      if (retryFrame) window.cancelAnimationFrame(retryFrame)
+    }
+  }, [
+    filteredFragments,
+    isReviewView,
+    isSearchDialogOpen,
+    pendingScrollFragmentId,
+  ])
 
   useEffect(() => {
     function handleGlobalSearchShortcut(event: KeyboardEvent) {
@@ -1146,6 +1210,34 @@ function isGitSetupError(error: unknown) {
 
 function hasVisibleTag(fragment: Fragment) {
   return fragment.tags.some((tag) => tag !== "inbox" && tag !== LOCKBOX_TAG)
+}
+
+function getFirstVisibleTag(fragment: Fragment) {
+  return (
+    fragment.tags.find((tag) => tag !== "inbox" && tag !== LOCKBOX_TAG) ?? null
+  )
+}
+
+function scrollTimelineToFragment(fragmentId: string) {
+  const target = Array.from(
+    document.querySelectorAll<HTMLElement>("[data-shard-fragment-id]")
+  ).find(
+    (element) => element.getAttribute("data-shard-fragment-id") === fragmentId
+  )
+
+  if (!target) return false
+
+  const behavior: ScrollBehavior = window.matchMedia(
+    "(prefers-reduced-motion: reduce)"
+  ).matches
+    ? "auto"
+    : "smooth"
+
+  target.scrollIntoView({
+    behavior,
+    block: "center",
+  })
+  return true
 }
 
 function formatLockboxExpiry(expiresAt: string) {

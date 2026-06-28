@@ -8,13 +8,28 @@ function suppressEvent(event: Event) {
   event.stopPropagation();
 }
 
-function suppressSecondaryPointerAction(event: MouseEvent | PointerEvent) {
-  if (event.button !== 2) return;
+function allowsCustomContextMenu(event: Event) {
+  const target = event.target;
+  return (
+    target instanceof Element &&
+    Boolean(target.closest("[data-image-attachment-context-menu]"))
+  );
+}
+
+function suppressContextMenu(event: Event) {
+  if (allowsCustomContextMenu(event)) return;
 
   suppressEvent(event);
 }
 
-document.addEventListener("contextmenu", suppressEvent, { capture: true });
+function suppressSecondaryPointerAction(event: MouseEvent | PointerEvent) {
+  if (event.button !== 2) return;
+  if (allowsCustomContextMenu(event)) return;
+
+  suppressEvent(event);
+}
+
+document.addEventListener("contextmenu", suppressContextMenu, { capture: true });
 document.addEventListener("pointerdown", suppressSecondaryPointerAction, {
   capture: true,
 });

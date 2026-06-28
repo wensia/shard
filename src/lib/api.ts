@@ -77,6 +77,14 @@ export function readFragmentImage(path: string) {
   return desktopInvoke<string>("read_fragment_image", { path })
 }
 
+export function getFragmentImageFilePath(path: string) {
+  return desktopInvoke<string>("fragment_image_file_path", { path })
+}
+
+export function revealFragmentImageInDir(path: string) {
+  return desktopInvoke<void>("reveal_fragment_image_in_dir", { path })
+}
+
 export function saveRecoveryKey(path: string, recoveryKey: string) {
   return desktopInvoke<void>("save_recovery_key", { path, recoveryKey })
 }

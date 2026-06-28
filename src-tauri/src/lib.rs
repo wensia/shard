@@ -861,6 +861,29 @@ async fn read_fragment_image(app: tauri::AppHandle, path: String) -> Result<Stri
 }
 
 #[tauri::command]
+async fn fragment_image_file_path(app: tauri::AppHandle, path: String) -> Result<String, String> {
+    run_blocking(move || {
+        let vault = ensure_vault_dirs(&app)?;
+        let image_path = resolve_vault_asset_path(&vault, &path)?;
+
+        Ok(image_path.to_string_lossy().to_string())
+    })
+    .await
+}
+
+#[tauri::command]
+async fn reveal_fragment_image_in_dir(app: tauri::AppHandle, path: String) -> Result<(), String> {
+    run_blocking(move || {
+        let vault = ensure_vault_dirs(&app)?;
+        let image_path = resolve_vault_asset_path(&vault, &path)?;
+
+        tauri_plugin_opener::reveal_item_in_dir(&image_path)
+            .map_err(|error| error.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
 async fn save_recovery_key(path: String, recovery_key: String) -> Result<(), String> {
     run_blocking(move || {
         if recovery_key.trim().is_empty() {
@@ -3226,6 +3249,8 @@ pub fn run() {
             move_fragment_to_lockbox,
             save_fragment_image,
             read_fragment_image,
+            fragment_image_file_path,
+            reveal_fragment_image_in_dir,
             save_recovery_key,
             save_exported_image,
             set_window_controls_hidden,

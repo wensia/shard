@@ -5,6 +5,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type ClipboardEvent,
   type KeyboardEvent,
 } from "react"
 import { Loader2Icon, SendHorizontalIcon } from "lucide-react"
@@ -25,6 +26,7 @@ import {
 } from "@/components/shard/tag-completion-popover"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
+import { getClipboardImageFiles } from "@/lib/clipboard-images"
 import {
   applyActiveTagCompletion,
   applyInlineFormat,
@@ -412,6 +414,20 @@ export function CaptureBox({
     }
   }
 
+  function handlePaste(event: ClipboardEvent<HTMLTextAreaElement>) {
+    const imageFiles = getClipboardImageFiles(event)
+    if (imageFiles.length === 0) return
+
+    event.preventDefault()
+    void uploadPastedImages(imageFiles)
+  }
+
+  async function uploadPastedImages(files: File[]) {
+    for (const file of files) {
+      await uploadImage(file)
+    }
+  }
+
   function showCaretImmediately() {
     setCaretEpoch((current) => current + 1)
   }
@@ -679,6 +695,7 @@ export function CaptureBox({
           }}
           onKeyDown={handleKeyDown}
           onMouseDown={showCaretImmediately}
+          onPaste={handlePaste}
           onKeyUp={(event) => {
             syncSelection(event.currentTarget)
           }}

@@ -1,11 +1,19 @@
 import {
   Fragment,
   useEffect,
+  useRef,
   useState,
   type MouseEvent,
   type ReactNode,
 } from "react"
-import { DownloadIcon, Loader2Icon, XIcon } from "lucide-react"
+import { createPortal } from "react-dom"
+import {
+  CopyIcon,
+  DownloadIcon,
+  FolderOpenIcon,
+  Loader2Icon,
+  XIcon,
+} from "lucide-react"
 import { toast } from "sonner"
 
 import {
@@ -20,8 +28,17 @@ import {
   downloadFragmentImageAttachment,
   loadFragmentImageSrc,
 } from "@/lib/fragment-images"
-import { getApiErrorMessage } from "@/lib/api"
+import {
+  getApiErrorMessage,
+  getFragmentImageFilePath,
+  revealFragmentImageInDir,
+} from "@/lib/api"
 import { cn } from "@/lib/utils"
+
+interface ContextMenuPosition {
+  left: number
+  top: number
+}
 
 interface FragmentContentProps {
   caretAligned?: boolean
@@ -230,8 +247,15 @@ export function FragmentImageAttachment({
   const label = alt ? `图片附件：${alt}` : "图片附件"
   const previewLabel = alt ? `放大查看图片附件：${alt}` : "放大查看图片附件"
   const [imageSrc, setImageSrc] = useState(src ?? "")
+  const [contextMenuPosition, setContextMenuPosition] =
+    useState<ContextMenuPosition | null>(null)
   const [isDownloading, setIsDownloading] = useState(false)
   const [isPreviewOpen, setIsPreviewOpen] = useState(false)
+  const contextMenuRef = useRef<HTMLDivElement>(null)
+  const canUseFileActions =
+    Boolean(imageSrc) &&
+    isLocalImageAttachmentPath(path) &&
+    (downloadable || Boolean(vaultPath))
 
   useEffect(() => {
     let isMounted = true
@@ -257,6 +281,51 @@ export function FragmentImageAttachment({
     if (!imageSrc) setIsPreviewOpen(false)
   }, [imageSrc])
 
+  useEffect(() => {
+    if (!canUseFileActions) setContextMenuPosition(null)
+  }, [canUseFileActions])
+
+  useEffect(() => {
+    if (!contextMenuPosition) return
+
+    function closeContextMenu() {
+      setContextMenuPosition(null)
+    }
+
+    function handlePointerDown(event: PointerEvent) {
+      const target = event.target
+      if (
+        target instanceof Node &&
+        contextMenuRef.current?.contains(target)
+      ) {
+        return
+      }
+
+      closeContextMenu()
+    }
+
+    function handleKeyDown(event: globalThis.KeyboardEvent) {
+      if (event.key === "Escape") closeContextMenu()
+    }
+
+    requestAnimationFrame(() => {
+      contextMenuRef.current?.focus()
+    })
+    document.addEventListener("pointerdown", handlePointerDown)
+    document.addEventListener("keydown", handleKeyDown)
+    window.addEventListener("blur", closeContextMenu)
+    window.addEventListener("resize", closeContextMenu)
+    window.addEventListener("scroll", closeContextMenu, true)
+
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown)
+      document.removeEventListener("keydown", handleKeyDown)
+      window.removeEventListener("blur", closeContextMenu)
+      window.removeEventListener("resize", closeContextMenu)
+      window.removeEventListener("scroll", closeContextMenu, true)
+    }
+  }, [contextMenuPosition])
+
   async function downloadImage() {
     if (isDownloading) return
 
@@ -275,53 +344,164 @@ export function FragmentImageAttachment({
     }
   }
 
+  function openImageContextMenu(event: MouseEvent) {
+    if (!canUseFileActions) return
+
+    event.preventDefault()
+    event.stopPropagation()
+    setContextMenuPosition(
+      getContextMenuPosition(event.clientX, event.clientY)
+    )
+  }
+
+  function closeImageContextMenu() {
+    setContextMenuPosition(null)
+  }
+
+  async function copyImageFilePath() {
+    try {
+      const filePath =
+        getLocalImageFilePath(path, vaultPath) ??
+        (await getFragmentImageFilePath(path))
+      const clipboard = navigator.clipboard
+      if (!clipboard) {
+        throw new Error("当前环境不支持复制到剪贴板")
+      }
+
+      await clipboard.writeText(filePath)
+      toast.success("已复制图片文件路径", {
+        description: filePath,
+      })
+    } catch (error) {
+      toast.error("图片路径复制失败", {
+        description: getApiErrorMessage(error),
+      })
+    }
+  }
+
+  async function revealImageInDir() {
+    try {
+      await revealFragmentImageInDir(path)
+      toast.success("已打开图片所在目录")
+    } catch (error) {
+      toast.error("图片所在目录打开失败", {
+        description: getApiErrorMessage(error),
+      })
+    }
+  }
+
+  const attachmentNode = (
+    <span
+      className="shard-image-attachment"
+      data-image-attachment-context-menu={
+        canUseFileActions ? "true" : undefined
+      }
+      onContextMenu={openImageContextMenu}
+      title={label}
+    >
+      {imageSrc && previewable ? (
+        <button
+          aria-label={previewLabel}
+          className="shard-image-attachment-preview"
+          onClick={(event) => {
+            event.preventDefault()
+            event.stopPropagation()
+            setIsPreviewOpen(true)
+          }}
+          type="button"
+        >
+          <img
+            alt={label}
+            data-source-path={path}
+            loading="lazy"
+            src={imageSrc}
+          />
+        </button>
+      ) : imageSrc ? (
+        <span className="shard-image-attachment-preview shard-image-attachment-preview-readonly">
+          <img
+            alt={label}
+            data-source-path={path}
+            loading="lazy"
+            src={imageSrc}
+          />
+        </span>
+      ) : (
+        <span
+          aria-hidden="true"
+          className="shard-image-attachment-placeholder"
+        />
+      )}
+      {onRemove ? (
+        <button
+          aria-label="移除图片附件"
+          className="shard-image-attachment-remove"
+          onClick={onRemove}
+          type="button"
+        >
+          <XIcon data-icon="inline-start" />
+        </button>
+      ) : null}
+    </span>
+  )
+  const contextMenu =
+    contextMenuPosition && canUseFileActions
+      ? createPortal(
+          <div
+            className="fixed z-50 grid w-fit min-w-44 gap-0 rounded-[var(--shard-radius-control)] bg-popover p-[var(--shard-space-1)] text-popover-foreground shadow-[0_8px_20px_rgb(0_0_0/var(--shard-alpha-8))] ring-1 ring-foreground/[var(--shard-alpha-13)] outline-none"
+            onContextMenu={(event) => {
+              event.preventDefault()
+            }}
+            ref={contextMenuRef}
+            role="menu"
+            style={{
+              left: contextMenuPosition.left,
+              top: contextMenuPosition.top,
+            }}
+            tabIndex={-1}
+          >
+            <ImageAttachmentMenuItem
+              disabled={isDownloading}
+              icon={
+                isDownloading ? (
+                  <Loader2Icon
+                    className="animate-spin"
+                    data-icon="inline-start"
+                  />
+                ) : (
+                  <DownloadIcon data-icon="inline-start" />
+                )
+              }
+              label={isDownloading ? "下载中" : "下载图片"}
+              onClick={() => {
+                closeImageContextMenu()
+                void downloadImage()
+              }}
+            />
+            <ImageAttachmentMenuItem
+              icon={<FolderOpenIcon data-icon="inline-start" />}
+              label="打开所在目录"
+              onClick={() => {
+                closeImageContextMenu()
+                void revealImageInDir()
+              }}
+            />
+            <ImageAttachmentMenuItem
+              icon={<CopyIcon data-icon="inline-start" />}
+              label="复制文件路径"
+              onClick={() => {
+                closeImageContextMenu()
+                void copyImageFilePath()
+              }}
+            />
+          </div>,
+          document.body
+        )
+      : null
   const attachment = (
     <>
-      <span className="shard-image-attachment" title={label}>
-        {imageSrc && previewable ? (
-          <button
-            aria-label={previewLabel}
-            className="shard-image-attachment-preview"
-            onClick={(event) => {
-              event.preventDefault()
-              event.stopPropagation()
-              setIsPreviewOpen(true)
-            }}
-            type="button"
-          >
-            <img
-              alt={label}
-              data-source-path={path}
-              loading="lazy"
-              src={imageSrc}
-            />
-          </button>
-        ) : imageSrc ? (
-          <span className="shard-image-attachment-preview shard-image-attachment-preview-readonly">
-            <img
-              alt={label}
-              data-source-path={path}
-              loading="lazy"
-              src={imageSrc}
-            />
-          </span>
-        ) : (
-          <span
-            aria-hidden="true"
-            className="shard-image-attachment-placeholder"
-          />
-        )}
-        {onRemove ? (
-          <button
-            aria-label="移除图片附件"
-            className="shard-image-attachment-remove"
-            onClick={onRemove}
-            type="button"
-          >
-            <XIcon data-icon="inline-start" />
-          </button>
-        ) : null}
-      </span>
+      {attachmentNode}
+      {contextMenu}
       {imageSrc && previewable ? (
         <Dialog open={isPreviewOpen} onOpenChange={setIsPreviewOpen}>
           <DialogContent className="shard-image-preview-dialog gap-[var(--shard-space-3)] p-3">
@@ -367,6 +547,67 @@ export function FragmentImageAttachment({
   ) : (
     attachment
   )
+}
+
+interface ImageAttachmentMenuItemProps {
+  disabled?: boolean
+  icon: ReactNode
+  label: string
+  onClick: () => void
+}
+
+function ImageAttachmentMenuItem({
+  disabled = false,
+  icon,
+  label,
+  onClick,
+}: ImageAttachmentMenuItemProps) {
+  return (
+    <button
+      className="grid h-8 grid-cols-[14px_max-content] items-center gap-[var(--shard-space-2)] rounded-[var(--shard-radius-control)] px-[var(--shard-space-2)] text-left text-[13px] font-medium whitespace-nowrap text-popover-foreground outline-none select-none hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground disabled:pointer-events-none disabled:opacity-[var(--shard-alpha-55)] [&_svg]:size-3.5 [&_svg]:stroke-[1.65]"
+      disabled={disabled}
+      onClick={onClick}
+      role="menuitem"
+      type="button"
+    >
+      {icon}
+      <span>{label}</span>
+    </button>
+  )
+}
+
+function getContextMenuPosition(clientX: number, clientY: number) {
+  const menuWidth = 192
+  const menuHeight = 112
+  const inset = 8
+
+  return {
+    left: Math.max(inset, Math.min(clientX, window.innerWidth - menuWidth)),
+    top: Math.max(inset, Math.min(clientY, window.innerHeight - menuHeight)),
+  }
+}
+
+function isLocalImageAttachmentPath(path: string) {
+  const normalizedPath = path.trim()
+  return Boolean(
+    normalizedPath &&
+      !/^(?:[a-z][a-z\d+.-]*:|\/\/)/i.test(normalizedPath)
+  )
+}
+
+function getLocalImageFilePath(path: string, vaultPath?: string) {
+  const normalizedPath = path.trim()
+  if (!isLocalImageAttachmentPath(normalizedPath)) return null
+  if (isAbsolutePath(normalizedPath)) return normalizedPath
+  if (!vaultPath) return null
+
+  const base = vaultPath.replace(/[\\/]+$/u, "")
+  const relative = normalizedPath.replace(/^\.?[\\/]+/u, "")
+  return `${base}/${relative}`
+}
+
+function isAbsolutePath(path: string) {
+  return path.startsWith("/") || /^[a-z]:[\\/]/i.test(path)
 }
 
 interface TaskMarkerProps {

@@ -5,6 +5,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type ClipboardEvent,
   type KeyboardEvent,
   type MouseEvent,
 } from "react"
@@ -52,6 +53,7 @@ import {
   saveFragmentImage,
   setWindowControlsHidden,
 } from "@/lib/api"
+import { getClipboardImageFiles } from "@/lib/clipboard-images"
 import { getEditorCaretBox, type EditorCaretBox } from "@/lib/editor-caret"
 import { hasMarkdownImage, wantsLockbox } from "@/lib/lockbox"
 import {
@@ -601,6 +603,20 @@ export function FragmentEditor({
     }
   }
 
+  function handlePaste(event: ClipboardEvent<HTMLTextAreaElement>) {
+    const imageFiles = getClipboardImageFiles(event)
+    if (imageFiles.length === 0) return
+
+    event.preventDefault()
+    void uploadPastedImages(imageFiles)
+  }
+
+  async function uploadPastedImages(files: File[]) {
+    for (const file of files) {
+      await uploadImage(file)
+    }
+  }
+
   function removeImageAttachment(id: string) {
     setImageAttachments((current) => {
       const removedImage = current.find((image) => image.id === id)
@@ -790,6 +806,7 @@ export function FragmentEditor({
         }}
         onKeyDown={handleKeyDown}
         onMouseDown={rememberPointer}
+        onPaste={handlePaste}
         onKeyUp={(event) => {
           syncSelection(event.currentTarget)
         }}
