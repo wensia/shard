@@ -21,8 +21,10 @@ interface FragmentTimelineProps {
   onOpenZen?: (fragment: Fragment) => void
   onPin?: (fragment: Fragment) => void
   onScrollDown?: () => void
+  onScrollToFragmentComplete?: (fragmentId: string) => void
   onSave?: (id: string, content: string, tags: string[]) => Promise<Fragment>
   onToggleTask?: (fragment: Fragment, lineIndex: number) => void
+  scrollToFragmentId?: string | null
   vaultPath?: string
 }
 
@@ -40,11 +42,17 @@ export function FragmentTimeline({
   onOpenZen,
   onPin,
   onScrollDown,
+  onScrollToFragmentComplete,
   onSave,
   onToggleTask,
+  scrollToFragmentId = null,
   vaultPath,
 }: FragmentTimelineProps) {
   const lastScrollTopRef = useRef(0)
+  const programmaticScrollFrameRef = useRef<number | null>(null)
+  const programmaticScrollRef = useRef(false)
+  const programmaticScrollTimeoutRef = useRef<number | null>(null)
+  const viewportRef = useRef<HTMLDivElement>(null)
   const [usesWaterfallColumns, setUsesWaterfallColumns] = useState(() =>
     typeof window === "undefined"
       ? false
@@ -70,8 +78,64 @@ export function FragmentTimeline({
     }
   }, [])
 
+  useEffect(() => {
+    return () => {
+      if (programmaticScrollFrameRef.current !== null) {
+        window.cancelAnimationFrame(programmaticScrollFrameRef.current)
+      }
+      if (programmaticScrollTimeoutRef.current !== null) {
+        window.clearTimeout(programmaticScrollTimeoutRef.current)
+      }
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!scrollToFragmentId || isLoading) return
+
+    let retryFrame = 0
+    const frame = window.requestAnimationFrame(() => {
+      const didScroll = scrollFragmentIntoViewport(
+        viewportRef.current,
+        scrollToFragmentId,
+        beginProgrammaticViewportScroll
+      )
+
+      if (didScroll) {
+        onScrollToFragmentComplete?.(scrollToFragmentId)
+        return
+      }
+
+      retryFrame = window.requestAnimationFrame(() => {
+        const didRetryScroll = scrollFragmentIntoViewport(
+          viewportRef.current,
+          scrollToFragmentId,
+          beginProgrammaticViewportScroll
+        )
+
+        if (didRetryScroll) {
+          onScrollToFragmentComplete?.(scrollToFragmentId)
+        }
+      })
+    })
+
+    return () => {
+      window.cancelAnimationFrame(frame)
+      if (retryFrame) window.cancelAnimationFrame(retryFrame)
+    }
+  }, [
+    fragmentColumns,
+    isLoading,
+    onScrollToFragmentComplete,
+    scrollToFragmentId,
+  ])
+
   function handleViewportScroll(event: UIEvent<HTMLDivElement>) {
     const nextScrollTop = event.currentTarget.scrollTop
+
+    if (programmaticScrollRef.current) {
+      lastScrollTopRef.current = nextScrollTop
+      return
+    }
 
     if (nextScrollTop > lastScrollTopRef.current + 2) {
       onScrollDown?.()
@@ -80,11 +144,73 @@ export function FragmentTimeline({
     lastScrollTopRef.current = nextScrollTop
   }
 
+  function beginProgrammaticViewportScroll(
+    targetScrollTop: number,
+    behavior: ScrollBehavior
+  ) {
+    programmaticScrollRef.current = true
+
+    if (programmaticScrollFrameRef.current !== null) {
+      window.cancelAnimationFrame(programmaticScrollFrameRef.current)
+    }
+    if (programmaticScrollTimeoutRef.current !== null) {
+      window.clearTimeout(programmaticScrollTimeoutRef.current)
+    }
+
+    if (behavior === "auto") {
+      programmaticScrollFrameRef.current = window.requestAnimationFrame(
+        clearProgrammaticViewportScroll
+      )
+      return
+    }
+
+    function waitForSmoothScrollToSettle() {
+      const viewport = viewportRef.current
+      if (!viewport || Math.abs(viewport.scrollTop - targetScrollTop) <= 1) {
+        programmaticScrollFrameRef.current = window.requestAnimationFrame(
+          clearProgrammaticViewportScroll
+        )
+        return
+      }
+
+      programmaticScrollFrameRef.current = window.requestAnimationFrame(
+        waitForSmoothScrollToSettle
+      )
+    }
+
+    programmaticScrollFrameRef.current = window.requestAnimationFrame(
+      waitForSmoothScrollToSettle
+    )
+    programmaticScrollTimeoutRef.current = window.setTimeout(
+      clearProgrammaticViewportScroll,
+      700
+    )
+  }
+
+  function clearProgrammaticViewportScroll() {
+    if (programmaticScrollFrameRef.current !== null) {
+      window.cancelAnimationFrame(programmaticScrollFrameRef.current)
+    }
+    if (programmaticScrollTimeoutRef.current !== null) {
+      window.clearTimeout(programmaticScrollTimeoutRef.current)
+    }
+
+    const viewport = viewportRef.current
+    if (viewport) {
+      lastScrollTopRef.current = viewport.scrollTop
+    }
+
+    programmaticScrollRef.current = false
+    programmaticScrollFrameRef.current = null
+    programmaticScrollTimeoutRef.current = null
+  }
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <ScrollArea
         className="min-h-0 flex-1"
         onViewportScroll={handleViewportScroll}
+        viewportRef={viewportRef}
       >
         {isLoading ? (
           <div className="flex h-full items-center justify-center text-sm font-medium text-muted-foreground">
@@ -131,6 +257,56 @@ export function FragmentTimeline({
       </ScrollArea>
     </div>
   )
+}
+
+function scrollFragmentIntoViewport(
+  viewport: HTMLDivElement | null,
+  fragmentId: string,
+  beforeScroll: (targetScrollTop: number, behavior: ScrollBehavior) => void
+) {
+  if (!viewport) return false
+
+  const target = Array.from(
+    viewport.querySelectorAll<HTMLElement>("[data-shard-fragment-id]")
+  ).find(
+    (element) => element.getAttribute("data-shard-fragment-id") === fragmentId
+  )
+
+  if (!target) return false
+
+  const viewportRect = viewport.getBoundingClientRect()
+  const targetRect = target.getBoundingClientRect()
+  const topInset = getCssPx(viewport, "--shard-card-gap", 16)
+  const maxScrollTop = Math.max(0, viewport.scrollHeight - viewport.clientHeight)
+  const nextScrollTop = clamp(
+    viewport.scrollTop + targetRect.top - viewportRect.top - topInset,
+    0,
+    maxScrollTop
+  )
+  const behavior: ScrollBehavior = window.matchMedia(
+    "(prefers-reduced-motion: reduce)"
+  ).matches
+    ? "auto"
+    : "smooth"
+
+  beforeScroll(nextScrollTop, behavior)
+  viewport.scrollTo({
+    behavior,
+    top: nextScrollTop,
+  })
+
+  return true
+}
+
+function getCssPx(element: Element, property: string, fallback: number) {
+  const value = window.getComputedStyle(element).getPropertyValue(property)
+  const parsed = Number.parseFloat(value)
+
+  return Number.isFinite(parsed) ? parsed : fallback
+}
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(Math.max(value, min), max)
 }
 
 function splitIntoColumns(fragments: Fragment[], columnCount: number) {

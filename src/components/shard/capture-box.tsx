@@ -180,83 +180,6 @@ export function CaptureBox({
     }
   }, [])
 
-  useEffect(() => {
-    const scrollPositions = new WeakMap<EventTarget, number>()
-    let lastTouchY: number | null = null
-
-    function collapseEditor() {
-      setIsEditorExpanded(false)
-    }
-
-    function handleWheel(event: WheelEvent) {
-      if (event.deltaY > 0) {
-        collapseEditor()
-      }
-    }
-
-    function handleScroll(event: Event) {
-      const target = event.target
-      if (!target) return
-
-      const nextScrollTop = getScrollTop(target)
-      if (nextScrollTop === null) return
-
-      const currentScrollTop = scrollPositions.get(target) ?? nextScrollTop
-
-      if (nextScrollTop > currentScrollTop + 2) {
-        collapseEditor()
-      }
-
-      scrollPositions.set(target, nextScrollTop)
-    }
-
-    function handleTouchStart(event: TouchEvent) {
-      lastTouchY = event.touches[0]?.clientY ?? null
-    }
-
-    function handleTouchMove(event: TouchEvent) {
-      const nextTouchY = event.touches[0]?.clientY ?? null
-      if (nextTouchY === null || lastTouchY === null) {
-        lastTouchY = nextTouchY
-        return
-      }
-
-      if (nextTouchY < lastTouchY - 2) {
-        collapseEditor()
-      }
-
-      lastTouchY = nextTouchY
-    }
-
-    document.addEventListener("wheel", handleWheel, {
-      capture: true,
-      passive: true,
-    })
-    document.addEventListener("scroll", handleScroll, {
-      capture: true,
-      passive: true,
-    })
-    document.addEventListener("touchstart", handleTouchStart, {
-      capture: true,
-      passive: true,
-    })
-    document.addEventListener("touchmove", handleTouchMove, {
-      capture: true,
-      passive: true,
-    })
-
-    return () => {
-      document.removeEventListener("wheel", handleWheel, { capture: true })
-      document.removeEventListener("scroll", handleScroll, { capture: true })
-      document.removeEventListener("touchstart", handleTouchStart, {
-        capture: true,
-      })
-      document.removeEventListener("touchmove", handleTouchMove, {
-        capture: true,
-      })
-    }
-  }, [])
-
   useLayoutEffect(() => {
     resizeTextarea(textareaRef.current, isEditorExpanded)
   }, [content, isEditorExpanded])
@@ -906,18 +829,6 @@ function getTextareaContentHeight(textarea: HTMLTextAreaElement) {
 
   mirror.remove()
   return contentHeight
-}
-
-function getScrollTop(target: EventTarget | null) {
-  if (target === document) {
-    return document.scrollingElement?.scrollTop ?? null
-  }
-
-  if (target instanceof Element) {
-    return target.scrollTop
-  }
-
-  return null
 }
 
 function getTextareaRowsHeight(textarea: HTMLTextAreaElement, rows: number) {

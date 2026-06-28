@@ -38,6 +38,9 @@ docs/*
 !docs/design/
 docs/design/*
 !docs/design/shard-main-screen-concept.png
+!docs/dev/
+docs/dev/*
+!docs/dev/*.md
 /*.png
 src/assets/logo-concepts/
 

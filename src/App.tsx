@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import { LockKeyholeIcon, TagIcon } from "lucide-react"
 import { toast } from "sonner"
 
@@ -772,37 +772,19 @@ function App() {
     isLockboxArchiveConfirmOpen
   const isBlockingDialogOpen = isModalBusy || isSearchDialogOpen
 
-  useEffect(() => {
-    if (!pendingScrollFragmentId || isSearchDialogOpen || isReviewView) return
-    if (!filteredFragments.some((fragment) => fragment.id === pendingScrollFragmentId)) {
-      return
-    }
+  const timelineScrollTargetId =
+    pendingScrollFragmentId &&
+    !isSearchDialogOpen &&
+    !isReviewView &&
+    filteredFragments.some((fragment) => fragment.id === pendingScrollFragmentId)
+      ? pendingScrollFragmentId
+      : null
 
-    let retryFrame = 0
-    const frame = window.requestAnimationFrame(() => {
-      const didScroll = scrollTimelineToFragment(pendingScrollFragmentId)
-
-      if (didScroll) {
-        setPendingScrollFragmentId(null)
-        return
-      }
-
-      retryFrame = window.requestAnimationFrame(() => {
-        scrollTimelineToFragment(pendingScrollFragmentId)
-        setPendingScrollFragmentId(null)
-      })
-    })
-
-    return () => {
-      window.cancelAnimationFrame(frame)
-      if (retryFrame) window.cancelAnimationFrame(retryFrame)
-    }
-  }, [
-    filteredFragments,
-    isReviewView,
-    isSearchDialogOpen,
-    pendingScrollFragmentId,
-  ])
+  const handleTimelineScrollComplete = useCallback((fragmentId: string) => {
+    setPendingScrollFragmentId((current) =>
+      current === fragmentId ? null : current
+    )
+  }, [])
 
   useEffect(() => {
     function handleGlobalSearchShortcut(event: KeyboardEvent) {
@@ -941,10 +923,12 @@ function App() {
               onScrollDown={() => {
                 setComposerCollapseSignal((current) => current + 1)
               }}
+              onScrollToFragmentComplete={handleTimelineScrollComplete}
               onSave={handleUpdateFragment}
               onToggleTask={(fragment, lineIndex) => {
                 void handleToggleFragmentTask(fragment, lineIndex)
               }}
+              scrollToFragmentId={timelineScrollTargetId}
               vaultPath={vaultPath}
             />
           )}
@@ -1216,28 +1200,6 @@ function getFirstVisibleTag(fragment: Fragment) {
   return (
     fragment.tags.find((tag) => tag !== "inbox" && tag !== LOCKBOX_TAG) ?? null
   )
-}
-
-function scrollTimelineToFragment(fragmentId: string) {
-  const target = Array.from(
-    document.querySelectorAll<HTMLElement>("[data-shard-fragment-id]")
-  ).find(
-    (element) => element.getAttribute("data-shard-fragment-id") === fragmentId
-  )
-
-  if (!target) return false
-
-  const behavior: ScrollBehavior = window.matchMedia(
-    "(prefers-reduced-motion: reduce)"
-  ).matches
-    ? "auto"
-    : "smooth"
-
-  target.scrollIntoView({
-    behavior,
-    block: "center",
-  })
-  return true
 }
 
 function formatLockboxExpiry(expiresAt: string) {
