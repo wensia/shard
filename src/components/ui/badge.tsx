@@ -9,7 +9,8 @@ const badgeVariants = cva(
   {
     variants: {
       variant: {
-        default: "bg-primary text-primary-foreground [a]:hover:bg-primary/[var(--shard-alpha-89)]",
+        default:
+          "bg-primary text-primary-foreground [a]:hover:bg-[color-mix(in_oklch,var(--primary),var(--primary-foreground)_11%)]",
         secondary:
           "bg-secondary text-secondary-foreground [a]:hover:bg-secondary/[var(--shard-alpha-89)]",
         destructive:
