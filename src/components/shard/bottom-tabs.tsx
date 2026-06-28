@@ -192,6 +192,18 @@ export function BottomTabs({
             </nav>
           </div>
 
+          <Button
+            aria-label="思维导图"
+            onClick={onOpenMindMaps}
+            size="icon"
+            title="思维导图"
+            type="button"
+            variant="ghost"
+          >
+            <GitBranchIcon data-icon="inline-start" />
+            <span className="sr-only">思维导图</span>
+          </Button>
+
           <DropdownMenu open={isMenuOpen} onOpenChange={setIsMenuOpen}>
             <DropdownMenuTrigger render={<Button size="icon" variant="ghost" />}>
               <MoreHorizontalIcon data-icon="inline-start" />
@@ -237,16 +249,6 @@ export function BottomTabs({
                   还原窗口尺寸
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
-                <DropdownMenuItem
-                  className={utilityMenuItemClass}
-                  onClick={() => {
-                    setIsMenuOpen(false)
-                    window.setTimeout(onOpenMindMaps, 0)
-                  }}
-                >
-                  <GitBranchIcon />
-                  思维导图
-                </DropdownMenuItem>
                 <DropdownMenuItem
                   className={utilityMenuItemClass}
                   onClick={() => {

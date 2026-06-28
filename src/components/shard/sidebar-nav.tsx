@@ -80,6 +80,7 @@ const SIDEBAR_COPY: Record<
       synced: string
     }
     help: string
+    mindMaps: string
     noCommit: string
     nav: Record<FragmentFilter, string>
     restoreWindow: string
@@ -114,6 +115,7 @@ const SIDEBAR_COPY: Record<
       synced: "已同步",
     },
     help: "帮助",
+    mindMaps: "思维导图",
     noCommit: "无提交",
     nav: {
       archive: "归档",
@@ -155,6 +157,7 @@ const SIDEBAR_COPY: Record<
       synced: "Synced",
     },
     help: "Help",
+    mindMaps: "Mind maps",
     noCommit: "no commit",
     nav: {
       archive: "Archive",
@@ -439,6 +442,17 @@ export function SidebarNav({
             </TooltipTrigger>
             <TooltipContent side="top">{copy.restoreWindow}</TooltipContent>
           </Tooltip>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button onClick={onOpenMindMaps} size="icon" variant="ghost" />
+              }
+            >
+              <GitBranchIcon data-icon="inline-start" />
+              <span className="sr-only">{copy.mindMaps}</span>
+            </TooltipTrigger>
+            <TooltipContent side="top">{copy.mindMaps}</TooltipContent>
+          </Tooltip>
           <DropdownMenu
             open={isUtilityMenuOpen}
             onOpenChange={setIsUtilityMenuOpen}
@@ -463,16 +477,6 @@ export function SidebarNav({
               sideOffset={8}
             >
               <DropdownMenuGroup>
-                <DropdownMenuItem
-                  className={utilityMenuItemClass}
-                  onClick={() => {
-                    setIsUtilityMenuOpen(false)
-                    window.setTimeout(onOpenMindMaps, 0)
-                  }}
-                >
-                  <GitBranchIcon />
-                  思维导图
-                </DropdownMenuItem>
                 <DropdownMenuItem
                   className={utilityMenuItemClass}
                   onClick={() => {
