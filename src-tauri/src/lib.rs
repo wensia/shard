@@ -11,12 +11,13 @@ use rsa::{
     Oaep, RsaPrivateKey, RsaPublicKey,
 };
 use serde::{Deserialize, Serialize};
-use sha2::Sha256;
+use sha2::{Digest, Sha256};
 use std::{
-    collections::HashSet,
+    collections::{BTreeMap, HashSet},
     env, fs,
+    fs::File,
     io::Write,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     process::{Command, Stdio},
     sync::{Arc, Mutex},
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -34,6 +35,8 @@ const LOCKBOX_WRITE_KEY_BITS: usize = 2048;
 const LOCKBOX_SALT_BYTES: usize = 16;
 const LOCKBOX_NONCE_BYTES: usize = 12;
 const LOCKBOX_FRAGMENT_KEY_ALGORITHM: &str = "rsa-oaep-sha256-aes-256-gcm";
+const SHARD_MAP_KIND: &str = "shard.map";
+const SHARD_MAP_SCHEMA_VERSION: u32 = 1;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -156,6 +159,83 @@ struct LockboxSetupResult {
     vault: VaultState,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct MindMapSummary {
+    id: String,
+    title: String,
+    created_at: String,
+    updated_at: String,
+    path: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct MindMapReadResult {
+    file: ShardMapFile,
+    path: String,
+    last_saved_hash: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ShardMapFile {
+    kind: String,
+    schema_version: u32,
+    id: String,
+    title: String,
+    created_at: String,
+    updated_at: String,
+    saved_with_app_version: String,
+    revision: u64,
+    root_id: String,
+    has_protected_links: bool,
+    nodes: BTreeMap<String, ShardMapNode>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    viewport: Option<ShardMapViewport>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ShardMapViewport {
+    x: f64,
+    y: f64,
+    zoom: f64,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ShardMapNode {
+    id: String,
+    parent_id: Option<String>,
+    sort_key: String,
+    text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    note: Option<String>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    collapsed: bool,
+    created_at: String,
+    updated_at: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    links: Vec<ShardDocumentLink>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    style: Option<ShardMapNodeStyle>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ShardMapNodeStyle {
+    tone: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(tag = "targetType", rename_all = "camelCase", deny_unknown_fields)]
+enum ShardDocumentLink {
+    Fragment { id: String, target_id: String },
+    MarkdownPath { id: String, path: String },
+    Map { id: String, target_id: String },
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 struct LockboxManifest {
     version: u32,
@@ -248,6 +328,66 @@ async fn list_fragments(
     run_blocking(move || {
         let vault = ensure_vault_dirs(&app)?;
         list_fragments_in_vault(&vault, &lockbox_runtime)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn list_mind_maps(app: tauri::AppHandle) -> Result<Vec<MindMapSummary>, String> {
+    run_blocking(move || {
+        let vault = ensure_vault_dirs(&app)?;
+        list_mind_maps_in_vault(&vault)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn create_mind_map(
+    app: tauri::AppHandle,
+    title: String,
+    source_fragment_id: Option<String>,
+) -> Result<MindMapReadResult, String> {
+    run_blocking(move || {
+        let vault = ensure_vault_dirs(&app)?;
+        create_mind_map_in_vault(&vault, title, source_fragment_id)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn read_mind_map(app: tauri::AppHandle, id: String) -> Result<MindMapReadResult, String> {
+    run_blocking(move || {
+        let vault = ensure_vault_dirs(&app)?;
+        read_mind_map_in_vault(&vault, &id)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn write_mind_map(
+    app: tauri::AppHandle,
+    id: String,
+    file: ShardMapFile,
+    expected_revision: u64,
+    last_saved_hash: String,
+) -> Result<MindMapReadResult, String> {
+    run_blocking(move || {
+        let vault = ensure_vault_dirs(&app)?;
+        write_mind_map_in_vault(&vault, &id, file, expected_revision, &last_saved_hash)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn delete_mind_map(
+    app: tauri::AppHandle,
+    id: String,
+    expected_revision: u64,
+) -> Result<Vec<MindMapSummary>, String> {
+    run_blocking(move || {
+        let vault = ensure_vault_dirs(&app)?;
+        delete_mind_map_in_vault(&vault, &id, expected_revision)?;
+        list_mind_maps_in_vault(&vault)
     })
     .await
 }
@@ -529,6 +669,148 @@ fn list_fragments_in_vault(
         git: git_info(&vault),
         lockbox: lockbox_state(vault, lockbox_runtime),
     })
+}
+
+fn list_mind_maps_in_vault(vault: &Path) -> Result<Vec<MindMapSummary>, String> {
+    let mut files = Vec::new();
+    collect_mind_map_files(&vault.join("maps"), &mut files)?;
+
+    let mut summaries = files
+        .iter()
+        .filter_map(|path| read_mind_map_summary(path, vault).ok())
+        .collect::<Vec<_>>();
+
+    summaries.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    Ok(summaries)
+}
+
+fn create_mind_map_in_vault(
+    vault: &Path,
+    title: String,
+    source_fragment_id: Option<String>,
+) -> Result<MindMapReadResult, String> {
+    let title = title.trim();
+    if title.is_empty() {
+        return Err("思维导图标题不能为空。".to_string());
+    }
+
+    let now = Local::now();
+    let suffix = unique_suffix();
+    let id = format!("map-{}-{}", now.format("%Y%m%d-%H%M%S"), suffix);
+    let root_id = format!("node-{}", unique_suffix());
+    let created_at = now.to_rfc3339();
+    let mut links = Vec::new();
+
+    if let Some(fragment_id) = source_fragment_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+    {
+        ensure_public_fragment_id(vault, fragment_id)?;
+        links.push(ShardDocumentLink::Fragment {
+            id: format!("link-{}", unique_suffix()),
+            target_id: fragment_id.to_string(),
+        });
+    }
+
+    let root_node = ShardMapNode {
+        id: root_id.clone(),
+        parent_id: None,
+        sort_key: "m".to_string(),
+        text: title.to_string(),
+        note: None,
+        collapsed: false,
+        created_at: created_at.clone(),
+        updated_at: created_at.clone(),
+        links,
+        style: None,
+    };
+    let mut nodes = BTreeMap::new();
+    nodes.insert(root_id.clone(), root_node);
+
+    let file = ShardMapFile {
+        kind: SHARD_MAP_KIND.to_string(),
+        schema_version: SHARD_MAP_SCHEMA_VERSION,
+        id,
+        title: title.to_string(),
+        created_at: created_at.clone(),
+        updated_at: created_at,
+        saved_with_app_version: env!("CARGO_PKG_VERSION").to_string(),
+        revision: 1,
+        root_id,
+        has_protected_links: false,
+        nodes,
+        viewport: None,
+    };
+
+    let dir = vault
+        .join("maps")
+        .join(now.format("%Y").to_string())
+        .join(now.format("%m").to_string());
+    fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+    let path = dir.join(format!(
+        "{}-{}.shardmap.json",
+        now.format("%Y-%m-%d-%H%M%S"),
+        suffix
+    ));
+
+    validate_mind_map_file(vault, &file)?;
+    let text = canonical_mind_map_text(&file)?;
+    write_text_atomically(&path, &text)?;
+    write_mind_map_last_good(vault, &file)?;
+    mind_map_read_result(vault, &path, file, text)
+}
+
+fn read_mind_map_in_vault(vault: &Path, id: &str) -> Result<MindMapReadResult, String> {
+    let path = find_mind_map_path(vault, id)?.ok_or_else(|| format!("找不到思维导图 {id}"))?;
+    let (file, text) = read_mind_map_file(&path)?;
+    validate_mind_map_file(vault, &file)?;
+    mind_map_read_result(vault, &path, file, text)
+}
+
+fn write_mind_map_in_vault(
+    vault: &Path,
+    id: &str,
+    mut file: ShardMapFile,
+    expected_revision: u64,
+    last_saved_hash: &str,
+) -> Result<MindMapReadResult, String> {
+    if file.id != id {
+        return Err("导图 id 与写入目标不一致。".to_string());
+    }
+
+    let path = find_mind_map_path(vault, id)?.ok_or_else(|| format!("找不到思维导图 {id}"))?;
+    let (current_file, current_text) = read_mind_map_file(&path)?;
+    let current_hash = hash_text(&current_text);
+
+    if current_file.revision != expected_revision || current_hash != last_saved_hash {
+        let conflict_path = write_mind_map_conflict(vault, &file)?;
+        return Err(format!(
+            "导图已被外部修改，已另存冲突副本：{}",
+            relative_path(vault, &conflict_path)?
+        ));
+    }
+
+    file.kind = SHARD_MAP_KIND.to_string();
+    file.schema_version = SHARD_MAP_SCHEMA_VERSION;
+    file.saved_with_app_version = env!("CARGO_PKG_VERSION").to_string();
+    file.revision = expected_revision + 1;
+    file.updated_at = Local::now().to_rfc3339();
+    validate_mind_map_file(vault, &file)?;
+
+    let text = canonical_mind_map_text(&file)?;
+    write_text_atomically(&path, &text)?;
+    write_mind_map_last_good(vault, &file)?;
+    mind_map_read_result(vault, &path, file, text)
+}
+
+fn delete_mind_map_in_vault(vault: &Path, id: &str, expected_revision: u64) -> Result<(), String> {
+    let path = find_mind_map_path(vault, id)?.ok_or_else(|| format!("找不到思维导图 {id}"))?;
+    let (file, _) = read_mind_map_file(&path)?;
+    if file.revision != expected_revision {
+        return Err("导图已被外部修改，请重新打开后再删除。".to_string());
+    }
+    fs::remove_file(path).map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -877,8 +1159,7 @@ async fn reveal_fragment_image_in_dir(app: tauri::AppHandle, path: String) -> Re
         let vault = ensure_vault_dirs(&app)?;
         let image_path = resolve_vault_asset_path(&vault, &path)?;
 
-        tauri_plugin_opener::reveal_item_in_dir(&image_path)
-            .map_err(|error| error.to_string())
+        tauri_plugin_opener::reveal_item_in_dir(&image_path).map_err(|error| error.to_string())
     })
     .await
 }
@@ -1180,6 +1461,7 @@ fn ensure_vault_layout(vault: &Path) -> Result<(), String> {
     fs::create_dir_all(vault.join("fragments")).map_err(|error| error.to_string())?;
     fs::create_dir_all(vault.join("archive")).map_err(|error| error.to_string())?;
     fs::create_dir_all(vault.join("assets")).map_err(|error| error.to_string())?;
+    fs::create_dir_all(vault.join("maps")).map_err(|error| error.to_string())?;
     fs::create_dir_all(vault.join(".shard")).map_err(|error| error.to_string())?;
     Ok(())
 }
@@ -1274,6 +1556,282 @@ fn collect_lockbox_files(dir: &Path, files: &mut Vec<PathBuf>) -> Result<(), Str
     }
 
     Ok(())
+}
+
+fn collect_mind_map_files(dir: &Path, files: &mut Vec<PathBuf>) -> Result<(), String> {
+    if !dir.exists() {
+        return Ok(());
+    }
+
+    for entry in fs::read_dir(dir).map_err(|error| error.to_string())? {
+        let entry = entry.map_err(|error| error.to_string())?;
+        let path = entry.path();
+        if path.is_dir() {
+            if path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .map(|name| name.starts_with('.'))
+                .unwrap_or(false)
+            {
+                continue;
+            }
+            collect_mind_map_files(&path, files)?;
+        } else if is_mind_map_file(&path) {
+            files.push(path);
+        }
+    }
+
+    Ok(())
+}
+
+fn is_mind_map_file(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .map(|name| name.ends_with(".shardmap.json"))
+        .unwrap_or(false)
+}
+
+fn read_mind_map_summary(path: &Path, vault: &Path) -> Result<MindMapSummary, String> {
+    let (file, _) = read_mind_map_file(path)?;
+    Ok(MindMapSummary {
+        id: file.id,
+        title: file.title,
+        created_at: file.created_at,
+        updated_at: file.updated_at,
+        path: relative_path(vault, path)?,
+    })
+}
+
+fn read_mind_map_file(path: &Path) -> Result<(ShardMapFile, String), String> {
+    let text = fs::read_to_string(path).map_err(|error| error.to_string())?;
+    let file = serde_json::from_str::<ShardMapFile>(&text).map_err(|error| error.to_string())?;
+    Ok((file, text))
+}
+
+fn mind_map_read_result(
+    vault: &Path,
+    path: &Path,
+    file: ShardMapFile,
+    text: String,
+) -> Result<MindMapReadResult, String> {
+    Ok(MindMapReadResult {
+        file,
+        path: relative_path(vault, path)?,
+        last_saved_hash: hash_text(&text),
+    })
+}
+
+fn validate_mind_map_file(vault: &Path, file: &ShardMapFile) -> Result<(), String> {
+    if file.kind != SHARD_MAP_KIND {
+        return Err("不支持的导图文件类型。".to_string());
+    }
+    if file.schema_version != SHARD_MAP_SCHEMA_VERSION {
+        return Err("不支持的导图 schema 版本。".to_string());
+    }
+    if file.id.trim().is_empty() {
+        return Err("导图 id 不能为空。".to_string());
+    }
+    if file.title.trim().is_empty() {
+        return Err("导图标题不能为空。".to_string());
+    }
+    if file.has_protected_links {
+        return Err("当前版本不支持带密匣链接的明文导图。".to_string());
+    }
+    if !file.nodes.contains_key(&file.root_id) {
+        return Err("导图缺少 root 节点。".to_string());
+    }
+
+    for (node_id, node) in &file.nodes {
+        validate_mind_map_node(vault, file, node_id, node)?;
+    }
+
+    Ok(())
+}
+
+fn validate_mind_map_node(
+    vault: &Path,
+    file: &ShardMapFile,
+    node_id: &str,
+    node: &ShardMapNode,
+) -> Result<(), String> {
+    if node.id != node_id {
+        return Err(format!("节点 {} 的 id 与索引不一致。", node_id));
+    }
+    if node.id.trim().is_empty() {
+        return Err("节点 id 不能为空。".to_string());
+    }
+    if node.sort_key.trim().is_empty() {
+        return Err(format!("节点 {} 缺少 sortKey。", node.id));
+    }
+    if node.parent_id.is_none() && node.id != file.root_id {
+        return Err(format!("非 root 节点 {} 缺少 parentId。", node.id));
+    }
+    if let Some(parent_id) = node.parent_id.as_deref() {
+        if parent_id == node.id {
+            return Err(format!("节点 {} 不能把自己作为父节点。", node.id));
+        }
+        if !file.nodes.contains_key(parent_id) {
+            return Err(format!("节点 {} 指向不存在的父节点。", node.id));
+        }
+    }
+
+    for link in &node.links {
+        validate_document_link(vault, file, link)?;
+    }
+
+    Ok(())
+}
+
+fn validate_document_link(
+    vault: &Path,
+    file: &ShardMapFile,
+    link: &ShardDocumentLink,
+) -> Result<(), String> {
+    match link {
+        ShardDocumentLink::Fragment { id, target_id } => {
+            ensure_link_id(id)?;
+            ensure_public_fragment_id(vault, target_id)
+        }
+        ShardDocumentLink::MarkdownPath { id, path } => {
+            ensure_link_id(id)?;
+            ensure_public_markdown_path(vault, path).map(|_| ())
+        }
+        ShardDocumentLink::Map { id, target_id } => {
+            ensure_link_id(id)?;
+            if target_id.trim().is_empty() {
+                return Err("导图链接目标不能为空。".to_string());
+            }
+            if target_id != &file.id && find_mind_map_path(vault, target_id)?.is_none() {
+                return Err(format!("找不到被链接的导图 {}", target_id));
+            }
+            Ok(())
+        }
+    }
+}
+
+fn ensure_link_id(id: &str) -> Result<(), String> {
+    if id.trim().is_empty() {
+        Err("链接 id 不能为空。".to_string())
+    } else {
+        Ok(())
+    }
+}
+
+fn ensure_public_fragment_id(vault: &Path, fragment_id: &str) -> Result<(), String> {
+    if fragment_id.trim().is_empty() {
+        return Err("片段链接目标不能为空。".to_string());
+    }
+    if find_lockbox_fragment_path(vault, fragment_id)?.is_some() {
+        return Err("当前版本不允许明文导图链接密匣片段。".to_string());
+    }
+    if find_fragment_path(vault, fragment_id)?.is_none() {
+        return Err(format!("找不到公开片段 {}", fragment_id));
+    }
+    Ok(())
+}
+
+fn ensure_public_markdown_path(vault: &Path, rel_path: &str) -> Result<PathBuf, String> {
+    let trimmed = rel_path.trim();
+    if trimmed.is_empty() {
+        return Err("Markdown 路径不能为空。".to_string());
+    }
+    if trimmed.contains('\\') {
+        return Err("Markdown 路径必须使用 / 分隔。".to_string());
+    }
+    let path = Path::new(trimmed);
+    if path.is_absolute() {
+        return Err("Markdown 路径必须是 vault 内相对路径。".to_string());
+    }
+
+    for component in path.components() {
+        match component {
+            Component::Normal(value) => {
+                if value.to_str() == Some("lockbox") {
+                    return Err("当前版本不允许导图链接密匣路径。".to_string());
+                }
+            }
+            _ => {
+                return Err("Markdown 路径不能包含 . 或 ..。".to_string());
+            }
+        }
+    }
+
+    if path.extension().and_then(|ext| ext.to_str()) != Some("md") {
+        return Err("导图只能链接 Markdown 文件。".to_string());
+    }
+
+    let full_path = vault.join(path);
+    if !full_path.is_file() {
+        return Err(format!("找不到 Markdown 文件 {}", trimmed));
+    }
+    Ok(full_path)
+}
+
+fn find_mind_map_path(vault: &Path, id: &str) -> Result<Option<PathBuf>, String> {
+    let mut files = Vec::new();
+    collect_mind_map_files(&vault.join("maps"), &mut files)?;
+
+    for path in files {
+        if let Ok((file, _)) = read_mind_map_file(&path) {
+            if file.id == id {
+                return Ok(Some(path));
+            }
+        }
+    }
+
+    Ok(None)
+}
+
+fn canonical_mind_map_text(file: &ShardMapFile) -> Result<String, String> {
+    let text = serde_json::to_string_pretty(file).map_err(|error| error.to_string())?;
+    Ok(format!("{}\n", text))
+}
+
+fn hash_text(text: &str) -> String {
+    let digest = Sha256::digest(text.as_bytes());
+    digest.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+fn write_text_atomically(path: &Path, text: &str) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| "文件名无效。".to_string())?;
+    let temp_path = path.with_file_name(format!(".{}.tmp-{}", file_name, unique_suffix()));
+    {
+        let mut file = File::create(&temp_path).map_err(|error| error.to_string())?;
+        file.write_all(text.as_bytes())
+            .map_err(|error| error.to_string())?;
+        file.sync_all().map_err(|error| error.to_string())?;
+    }
+    fs::rename(&temp_path, path).map_err(|error| {
+        let _ = fs::remove_file(&temp_path);
+        error.to_string()
+    })
+}
+
+fn write_mind_map_last_good(vault: &Path, file: &ShardMapFile) -> Result<(), String> {
+    let text = canonical_mind_map_text(file)?;
+    let path = vault
+        .join("maps")
+        .join(".last-good")
+        .join(format!("{}.shardmap.json", file.id));
+    write_text_atomically(&path, &text)
+}
+
+fn write_mind_map_conflict(vault: &Path, file: &ShardMapFile) -> Result<PathBuf, String> {
+    let text = canonical_mind_map_text(file)?;
+    let timestamp = Local::now().format("%Y%m%d-%H%M%S").to_string();
+    let path = vault
+        .join("maps")
+        .join(".conflicts")
+        .join(format!("{}.conflict-{}.shardmap.json", file.id, timestamp));
+    write_text_atomically(&path, &text)?;
+    Ok(path)
 }
 
 fn read_fragment(
@@ -2408,8 +2966,8 @@ fn normalize_image_file_name(file_name: &str, bytes: &[u8]) -> Result<String, St
     }
 
     let mime_type = sniff_image_mime_type(bytes)?;
-    let extension = image_extension_for_mime_type(mime_type)
-        .ok_or_else(|| "不支持的图片格式".to_string())?;
+    let extension =
+        image_extension_for_mime_type(mime_type).ok_or_else(|| "不支持的图片格式".to_string())?;
 
     Ok(format!("{safe_name}.{extension}"))
 }
@@ -2583,6 +3141,7 @@ fn dirty_paths(vault: &Path) -> HashSet<String> {
             "fragments",
             "archive",
             "assets",
+            "maps",
             "lockbox",
             ".shard",
         ],
@@ -3229,6 +3788,11 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             list_fragments,
+            list_mind_maps,
+            create_mind_map,
+            read_mind_map,
+            write_mind_map,
+            delete_mind_map,
             set_vault_path,
             initialize_vault_git,
             set_vault_remote,
@@ -3306,10 +3870,82 @@ mod tests {
     fn appends_extension_when_uploaded_image_name_has_none() {
         let bytes = b"\x89PNG\r\n\x1a\nrest";
 
-        assert_eq!(
-            normalize_image_file_name("png", bytes).unwrap(),
-            "png.png"
-        );
+        assert_eq!(normalize_image_file_name("png", bytes).unwrap(), "png.png");
+    }
+
+    #[test]
+    fn creates_and_lists_mind_map_with_public_fragment_link() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let vault = tempdir.path();
+        ensure_vault_layout(vault).unwrap();
+        let fragment_id = write_public_test_fragment(vault, "linked public note");
+
+        let created =
+            create_mind_map_in_vault(vault, "Launch Plan".to_string(), Some(fragment_id.clone()))
+                .unwrap();
+
+        assert_eq!(created.file.kind, SHARD_MAP_KIND);
+        assert_eq!(created.file.schema_version, SHARD_MAP_SCHEMA_VERSION);
+        assert_eq!(created.file.revision, 1);
+        assert!(!created.last_saved_hash.is_empty());
+
+        let root = created.file.nodes.get(&created.file.root_id).unwrap();
+        assert_eq!(root.links.len(), 1);
+        match &root.links[0] {
+            ShardDocumentLink::Fragment { target_id, .. } => {
+                assert_eq!(target_id, &fragment_id);
+            }
+            _ => panic!("expected fragment link"),
+        }
+
+        let summaries = list_mind_maps_in_vault(vault).unwrap();
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(summaries[0].id, created.file.id);
+    }
+
+    #[test]
+    fn rejects_lockbox_fragment_links_in_plain_mind_maps() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let vault = tempdir.path();
+        let runtime = Arc::new(Mutex::new(LockboxSession::default()));
+
+        ensure_vault_layout(vault).unwrap();
+        setup_lockbox_in_vault(vault, &runtime, "correct horse").unwrap();
+        let private = create_lockbox_fragment_in_vault(
+            vault,
+            &runtime,
+            "private note",
+            vec![LOCKBOX_TAG.to_string()],
+        )
+        .unwrap();
+
+        let error = create_mind_map_in_vault(vault, "Private Map".to_string(), Some(private.id))
+            .unwrap_err();
+        assert!(error.contains("密匣片段"));
+    }
+
+    #[test]
+    fn conflicting_mind_map_write_creates_conflict_copy() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let vault = tempdir.path();
+        ensure_vault_layout(vault).unwrap();
+        let created = create_mind_map_in_vault(vault, "Draft".to_string(), None).unwrap();
+        let mut edited = created.file.clone();
+        edited.title = "Edited Draft".to_string();
+
+        let error = write_mind_map_in_vault(
+            vault,
+            &created.file.id,
+            edited,
+            created.file.revision,
+            "stale-hash",
+        )
+        .unwrap_err();
+
+        assert!(error.contains("冲突副本"));
+        let mut conflicts = Vec::new();
+        collect_mind_map_files(&vault.join("maps").join(".conflicts"), &mut conflicts).unwrap();
+        assert_eq!(conflicts.len(), 1);
     }
 
     #[test]
@@ -3415,5 +4051,25 @@ mod tests {
         let state = list_fragments_in_vault(vault, &runtime).unwrap();
         assert_eq!(state.fragments.len(), 1);
         assert_eq!(state.fragments[0].content, "reset survives");
+    }
+
+    fn write_public_test_fragment(vault: &Path, body: &str) -> String {
+        let now = Local::now();
+        let id = format!("test-{}", unique_suffix());
+        let dir = vault.join("fragments").join("tests");
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(format!("{}.md", id));
+        let frontmatter = FragmentFrontmatter {
+            id: id.clone(),
+            created_at: now.to_rfc3339(),
+            updated_at: now.to_rfc3339(),
+            tags: vec!["inbox".to_string()],
+            category: None,
+            ai_status: Some("none".to_string()),
+            pinned: false,
+            source: "test".to_string(),
+        };
+        write_fragment_file(&path, &frontmatter, body).unwrap();
+        id
     }
 }

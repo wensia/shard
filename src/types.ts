@@ -74,6 +74,79 @@ export interface CodexReviewTaskResult {
   text: string
 }
 
+export interface MindMapSummary {
+  id: string
+  title: string
+  createdAt: string
+  updatedAt: string
+  path: string
+}
+
+export interface MindMapReadResult {
+  file: ShardMapFile
+  path: string
+  lastSavedHash: string
+}
+
+export interface ShardMapFile {
+  kind: "shard.map"
+  schemaVersion: 1
+  id: string
+  title: string
+  createdAt: string
+  updatedAt: string
+  savedWithAppVersion: string
+  revision: number
+  rootId: string
+  hasProtectedLinks: false
+  nodes: Record<string, ShardMapNode>
+  viewport?: ShardMapViewport
+}
+
+export interface ShardMapViewport {
+  x: number
+  y: number
+  zoom: number
+}
+
+export interface ShardMapNode {
+  id: string
+  parentId: string | null
+  sortKey: string
+  text: string
+  note?: string
+  collapsed?: boolean
+  createdAt: string
+  updatedAt: string
+  links?: ShardDocumentLink[]
+  style?: {
+    tone?: "default" | "accent" | "success" | "warning"
+  }
+}
+
+export type ShardDocumentLink =
+  | ShardFragmentLink
+  | ShardMarkdownPathLink
+  | ShardMapLink
+
+export interface ShardFragmentLink {
+  id: string
+  targetType: "fragment"
+  targetId: string
+}
+
+export interface ShardMarkdownPathLink {
+  id: string
+  targetType: "markdownPath"
+  path: string
+}
+
+export interface ShardMapLink {
+  id: string
+  targetType: "map"
+  targetId: string
+}
+
 export interface VaultState {
   vaultPath: string
   fragments: Fragment[]

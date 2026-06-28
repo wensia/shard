@@ -10,6 +10,9 @@ import type {
   GithubCliInfo,
   GitInfo,
   LockboxSetupResult,
+  MindMapReadResult,
+  MindMapSummary,
+  ShardMapFile,
   VaultState,
 } from "@/types"
 
@@ -43,6 +46,42 @@ function desktopInvoke<T>(command: string, args?: Record<string, unknown>) {
 
 export function listFragments() {
   return desktopInvoke<VaultState>("list_fragments")
+}
+
+export function listMindMaps() {
+  return desktopInvoke<MindMapSummary[]>("list_mind_maps")
+}
+
+export function createMindMap(title: string, sourceFragmentId?: string) {
+  return desktopInvoke<MindMapReadResult>("create_mind_map", {
+    title,
+    sourceFragmentId: sourceFragmentId ?? null,
+  })
+}
+
+export function readMindMap(id: string) {
+  return desktopInvoke<MindMapReadResult>("read_mind_map", { id })
+}
+
+export function writeMindMap(
+  id: string,
+  file: ShardMapFile,
+  expectedRevision: number,
+  lastSavedHash: string
+) {
+  return desktopInvoke<MindMapReadResult>("write_mind_map", {
+    id,
+    file,
+    expectedRevision,
+    lastSavedHash,
+  })
+}
+
+export function deleteMindMap(id: string, expectedRevision: number) {
+  return desktopInvoke<MindMapSummary[]>("delete_mind_map", {
+    id,
+    expectedRevision,
+  })
 }
 
 export function createFragment(content: string, tags: string[]) {
