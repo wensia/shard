@@ -17,7 +17,15 @@ import { MindMapWorkspace } from "@/components/shard/mind-map-workspace"
 import { ReviewWorkspace } from "@/components/shard/review-workspace"
 import { SidebarNav } from "@/components/shard/sidebar-nav"
 import { TaggedPanel, type TaggedSummary } from "@/components/shard/tagged-panel"
-import { VaultGuide } from "@/components/shard/vault-guide"
+import {
+  VaultGuide,
+  type SettingsSection,
+} from "@/components/shard/vault-guide"
+import {
+  loadAppSettings,
+  saveAppSettings,
+  type AppSettings,
+} from "@/lib/app-settings"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -93,6 +101,9 @@ function App() {
   const [isArchivingLockboxFragment, setIsArchivingLockboxFragment] =
     useState(false)
   const [isVaultGuideOpen, setIsVaultGuideOpen] = useState(false)
+  const [appSettings, setAppSettings] = useState<AppSettings>(loadAppSettings)
+  const [settingsSection, setSettingsSection] =
+    useState<SettingsSection>("vault")
   const [needsVaultSetup, setNeedsVaultSetup] = useState(false)
   const [pendingLockboxArchiveFragment, setPendingLockboxArchiveFragment] =
     useState<Fragment | null>(null)
@@ -564,11 +575,21 @@ function App() {
     setFilter("lockbox")
   }
 
-  function showShortcuts() {
-    toast.info("快捷键", {
-      description:
-        "保存：Cmd/Ctrl + Enter。搜索：Cmd/Ctrl + K。禅模式：输入框内 Cmd/Ctrl + Shift + F。换行：Enter 或 Shift+Enter。编辑片段时按 Esc 退出。",
+  function updateAppSettings(patch: Partial<AppSettings>) {
+    setAppSettings((current) => {
+      const next = { ...current, ...patch }
+      saveAppSettings(next)
+      return next
     })
+  }
+
+  function openSettings(section: SettingsSection) {
+    setSettingsSection(section)
+    setIsVaultGuideOpen(true)
+  }
+
+  function showShortcuts() {
+    openSettings("shortcuts")
   }
 
   function showHelp() {
@@ -909,6 +930,55 @@ function App() {
     }
   }, [isModalBusy])
 
+  const autoSyncFailureNotifiedRef = useRef(false)
+  const autoSyncTickRef = useRef<() => void>(() => {})
+  autoSyncTickRef.current = () => {
+    if (
+      !appSettings.autoSyncEnabled ||
+      !git?.hasRemote ||
+      isSyncing ||
+      isCreating ||
+      isModalBusy ||
+      editingFragmentId !== null
+    ) {
+      return
+    }
+
+    setIsSyncing(true)
+    void syncVault()
+      .then((synced) => {
+        setGit(synced)
+        autoSyncFailureNotifiedRef.current = false
+        void refreshFragments()
+      })
+      .catch((error) => {
+        if (!autoSyncFailureNotifiedRef.current) {
+          autoSyncFailureNotifiedRef.current = true
+          toast.error("自动同步失败", {
+            description: getApiErrorMessage(error),
+          })
+        }
+      })
+      .finally(() => {
+        setIsSyncing(false)
+      })
+  }
+
+  useEffect(() => {
+    if (!appSettings.autoSyncEnabled) {
+      return
+    }
+
+    const timer = window.setInterval(
+      () => autoSyncTickRef.current(),
+      appSettings.autoSyncIntervalMinutes * 60_000
+    )
+
+    return () => {
+      window.clearInterval(timer)
+    }
+  }, [appSettings.autoSyncEnabled, appSettings.autoSyncIntervalMinutes])
+
   if (activeMindMapId) {
     return (
       <TooltipProvider>
@@ -938,7 +1008,7 @@ function App() {
             onHelp={showHelp}
             onOpenMindMaps={() => openMindMap()}
             onOpenSearch={openSearch}
-            onOpenSettings={() => setIsVaultGuideOpen(true)}
+            onOpenSettings={() => openSettings("vault")}
             onRestoreWindow={handleRestoreWindow}
             onShortcuts={showShortcuts}
             onSync={handleSync}
@@ -1065,7 +1135,7 @@ function App() {
             onHelp={showHelp}
             onOpenMindMaps={() => openMindMap()}
             onOpenSearch={openSearch}
-            onOpenSettings={() => setIsVaultGuideOpen(true)}
+            onOpenSettings={() => openSettings("vault")}
             onRestoreWindow={handleRestoreWindow}
             onShortcuts={showShortcuts}
             onSync={handleSync}
@@ -1122,7 +1192,13 @@ function App() {
         }}
       />
       <VaultGuide
+        autoSyncEnabled={appSettings.autoSyncEnabled}
+        autoSyncIntervalMinutes={appSettings.autoSyncIntervalMinutes}
         git={git}
+        initialSection={settingsSection}
+        isSyncing={isSyncing}
+        onAutoSyncChange={updateAppSettings}
+        onSync={() => void handleSync()}
         onClose={() => {
           if (!needsVaultSetup) {
             setIsVaultGuideOpen(false)

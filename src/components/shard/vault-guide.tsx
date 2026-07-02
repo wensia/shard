@@ -3,7 +3,9 @@ import {
   FolderOpenIcon,
   FolderPlusIcon,
   GitBranchIcon,
+  KeyboardIcon,
   Loader2Icon,
+  RefreshCwIcon,
   XIcon,
 } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
@@ -11,6 +13,10 @@ import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import {
+  AUTO_SYNC_INTERVAL_OPTIONS,
+  type AppSettings,
+} from "@/lib/app-settings"
 import {
   createGithubVaultRepo,
   getGithubCliStatus,
@@ -21,9 +27,17 @@ import {
 } from "@/lib/api"
 import type { GithubCliInfo, GitInfo, VaultState } from "@/types"
 
+export type SettingsSection = "git" | "shortcuts" | "vault"
+
 interface VaultGuideProps {
+  autoSyncEnabled: boolean
+  autoSyncIntervalMinutes: number
   git: GitInfo | null
+  initialSection: SettingsSection
+  isSyncing: boolean
+  onAutoSyncChange: (patch: Partial<AppSettings>) => void
   onClose: () => void
+  onSync: () => void
   onVaultState: (
     state: VaultState,
     options?: { resetView?: boolean }
@@ -37,6 +51,11 @@ type VaultAction = "create" | "github" | "git" | "open" | "remote" | null
 type SettingsLocale = "en" | "zh"
 
 interface SettingsCopy {
+  autoSyncDescription: string
+  autoSyncEnableLabel: string
+  autoSyncIntervalLabel: string
+  autoSyncNeedsRemote: string
+  autoSyncTitle: string
   close: string
   connectRemote: string
   connectRemoteBusy: string
@@ -63,6 +82,8 @@ interface SettingsCopy {
   initGitLabel: string
   manualDividerLabel: string
   manualRemoteHint: string
+  navGit: string
+  navShortcuts: string
   noVault: string
   openVaultDescription: string
   openVaultLabel: string
@@ -73,6 +94,8 @@ interface SettingsCopy {
   sideCurrent: string
   sideGit: string
   sideRemote: string
+  syncNow: string
+  syncNowBusy: string
   syncSetupTitle: string
   toastGithubCreated: string
   toastGithubCreatedDescription: string
@@ -87,12 +110,19 @@ interface SettingsCopy {
   toastVaultFailed: string
   toastVaultSwitched: string
   vaultTitle: string
+  autoSyncMinutes(minutes: number): string
   githubAuthenticated(account: string, protocol: string): string
   githubProtocol(protocol: string): string
 }
 
 const settingsCopy: Record<SettingsLocale, SettingsCopy> = {
   en: {
+    autoSyncDescription:
+      "Sync to the remote on a fixed interval. Skipped while you are editing or a dialog is open.",
+    autoSyncEnableLabel: "Enable auto sync",
+    autoSyncIntervalLabel: "Sync interval",
+    autoSyncNeedsRemote: "Connect a Git remote to enable auto sync.",
+    autoSyncTitle: "Auto sync",
     close: "Close",
     connectRemote: "Connect remote",
     connectRemoteBusy: "Connecting",
@@ -134,6 +164,8 @@ const settingsCopy: Record<SettingsLocale, SettingsCopy> = {
     manualDividerLabel: "Or connect a remote manually",
     manualRemoteHint:
       "The manual URL is saved as origin. You can also run git remote add origin <url> in the current folder.",
+    navGit: "Git sync",
+    navShortcuts: "Shortcuts",
     noVault: "No folder selected",
     openVaultDescription: "Open an existing ShardVault or Git repository.",
     openVaultLabel: "Choose folder",
@@ -151,6 +183,8 @@ const settingsCopy: Record<SettingsLocale, SettingsCopy> = {
     sideCurrent: "Folder",
     sideGit: "Local Git",
     sideRemote: "Remote",
+    syncNow: "Sync now",
+    syncNowBusy: "Syncing",
     syncSetupTitle: "Set up sync",
     toastGithubCreated: "Git sync configured",
     toastGithubCreatedDescription:
@@ -166,11 +200,18 @@ const settingsCopy: Record<SettingsLocale, SettingsCopy> = {
     toastVaultFailed: "Vault setup failed",
     toastVaultSwitched: "Vault switched",
     vaultTitle: "Vault",
+    autoSyncMinutes: (minutes) => `${minutes} min`,
     githubAuthenticated: (account, protocol) =>
       `Signed in as ${account}${protocol}. Shard can configure GitHub sync automatically.`,
     githubProtocol: (protocol) => `, Git protocol ${protocol}`,
   },
   zh: {
+    autoSyncDescription:
+      "按固定间隔在后台同步到远端；正在编辑或有弹窗时会自动跳过。",
+    autoSyncEnableLabel: "启用自动同步",
+    autoSyncIntervalLabel: "同步间隔",
+    autoSyncNeedsRemote: "连接 Git 远端后即可启用自动同步。",
+    autoSyncTitle: "自动同步",
     close: "关闭",
     connectRemote: "连接远端",
     connectRemoteBusy: "连接中",
@@ -207,6 +248,8 @@ const settingsCopy: Record<SettingsLocale, SettingsCopy> = {
     manualDividerLabel: "或手动连接远端",
     manualRemoteHint:
       "手动 URL 会保存为 origin。也可以在当前目录运行 git remote add origin <url>。",
+    navGit: "Git 同步",
+    navShortcuts: "快捷键",
     noVault: "未选择目录",
     openVaultDescription: "打开已有 ShardVault 或 Git 仓库。",
     openVaultLabel: "选择已有目录",
@@ -223,6 +266,8 @@ const settingsCopy: Record<SettingsLocale, SettingsCopy> = {
     sideCurrent: "目录",
     sideGit: "本地 Git",
     sideRemote: "远端",
+    syncNow: "立即同步",
+    syncNowBusy: "同步中",
     syncSetupTitle: "配置同步",
     toastGithubCreated: "Git 同步已配置",
     toastGithubCreatedDescription:
@@ -238,10 +283,31 @@ const settingsCopy: Record<SettingsLocale, SettingsCopy> = {
     toastVaultFailed: "Vault 设置失败",
     toastVaultSwitched: "Vault 已切换",
     vaultTitle: "Vault",
+    autoSyncMinutes: (minutes) => `${minutes} 分钟`,
     githubAuthenticated: (account, protocol) =>
       `已登录 ${account}${protocol}。Shard 可以自动配置 GitHub 同步。`,
     githubProtocol: (protocol) => `，Git 协议 ${protocol}`,
   },
+}
+
+const shortcutRows: Record<
+  SettingsLocale,
+  { keys: string[]; label: string }[]
+> = {
+  en: [
+    { keys: ["⌘", "Enter"], label: "Save fragment" },
+    { keys: ["⌘", "K"], label: "Search" },
+    { keys: ["⌘", "⇧", "F"], label: "Zen mode (in composer)" },
+    { keys: ["Enter"], label: "New line" },
+    { keys: ["Esc"], label: "Exit editing" },
+  ],
+  zh: [
+    { keys: ["⌘", "Enter"], label: "保存片段" },
+    { keys: ["⌘", "K"], label: "搜索" },
+    { keys: ["⌘", "⇧", "F"], label: "禅模式（输入框内）" },
+    { keys: ["Enter"], label: "换行" },
+    { keys: ["Esc"], label: "退出编辑" },
+  ],
 }
 
 function getPreferredSettingsLocale(): SettingsLocale {
@@ -254,8 +320,14 @@ function getPreferredSettingsLocale(): SettingsLocale {
 }
 
 export function VaultGuide({
+  autoSyncEnabled,
+  autoSyncIntervalMinutes,
   git,
+  initialSection,
+  isSyncing,
+  onAutoSyncChange,
   onClose,
+  onSync,
   onVaultState,
   open: isOpen,
   required,
@@ -266,8 +338,10 @@ export function VaultGuide({
   const [isCheckingGithub, setIsCheckingGithub] = useState(false)
   const [remoteUrl, setRemoteUrl] = useState("")
   const [repoName, setRepoName] = useState(defaultRepoName(vaultPath))
+  const [section, setSection] = useState<SettingsSection>(initialSection)
   const dialogRef = useRef<HTMLDivElement>(null)
-  const copy = settingsCopy[getPreferredSettingsLocale()]
+  const locale = getPreferredSettingsLocale()
+  const copy = settingsCopy[locale]
 
   const needsRemote = Boolean(vaultPath && git && !git.hasRemote)
   const isCreatingGithubRepo = activeAction === "github"
@@ -306,6 +380,12 @@ export function VaultGuide({
   useEffect(() => {
     setRepoName(defaultRepoName(vaultPath))
   }, [vaultPath])
+
+  useEffect(() => {
+    if (isOpen) {
+      setSection(initialSection)
+    }
+  }, [initialSection, isOpen])
 
   useEffect(() => {
     if (!isOpen || !needsRemote) {
@@ -458,14 +538,272 @@ export function VaultGuide({
     }
   }
 
+  const railSection = (
+    <section className="border-b border-border px-[var(--shard-space-6)] py-[var(--shard-space-5)]">
+      <div className="flex flex-col gap-[var(--shard-space-3)] sm:flex-row sm:items-start">
+        <RailStation
+          label={copy.sideCurrent}
+          tone={vaultPath ? "emerald" : "empty"}
+          value={vaultPath ? copy.folderSelected : copy.noVault}
+        />
+        <RailConnector />
+        <RailStation
+          detail={
+            git?.shortCommit
+              ? `${git.branch} · ${git.shortCommit}`
+              : git?.error || undefined
+          }
+          label={copy.sideGit}
+          tone={gitTone}
+          value={gitLabel}
+        />
+        <RailConnector />
+        <RailStation
+          detail={git?.hasRemote ? "origin" : undefined}
+          label={copy.sideRemote}
+          tone={remoteTone}
+          value={remoteLabel}
+        />
+      </div>
+      <p className="mt-[var(--shard-space-4)] text-xs leading-5 text-pretty text-muted-foreground">
+        {git?.hasRemote ? copy.remoteAlreadyConnected : copy.gitDescription}
+      </p>
+    </section>
+  )
+
+  const gitSetupSections = (
+    <>
+      {vaultPath && git?.status === "no_git" ? (
+        <section className="border-b border-border px-[var(--shard-space-6)] py-[var(--shard-space-5)]">
+          <VaultActionButton
+            active={activeAction === "git"}
+            disabled={isVaultActionBusy}
+            description={copy.initGitDescription}
+            icon={GitBranchIcon}
+            label={copy.initGitLabel}
+            onClick={() => void initializeGit()}
+          />
+        </section>
+      ) : null}
+
+      {needsRemote ? (
+        <section
+          aria-busy={isRemoteBusy}
+          className="border-b border-border px-[var(--shard-space-6)] py-[var(--shard-space-5)]"
+        >
+          <h3 className="text-sm leading-5 font-semibold">
+            {copy.syncSetupTitle}
+          </h3>
+          <p className="mt-[var(--shard-space-1)] text-xs leading-5 text-pretty text-muted-foreground">
+            {copy.headlineNeedsRemote}
+          </p>
+
+          {isRemoteBusy ? (
+            <div className="mt-[var(--shard-space-3)] flex items-center gap-[var(--shard-space-2)] rounded-[var(--shard-radius-control)] border border-border bg-background px-[var(--shard-space-3)] py-[var(--shard-space-2)] text-sm leading-5 text-muted-foreground">
+              <Loader2Icon className="size-4 animate-spin" />
+              <span>
+                {isCreatingGithubRepo ? copy.githubBusy : copy.remoteBusy}
+              </span>
+            </div>
+          ) : null}
+
+          <div className="mt-[var(--shard-space-4)]">
+            <div className="flex items-center gap-[var(--shard-space-2)] text-sm leading-5 font-semibold">
+              <GitBranchIcon className="size-4" />
+              GitHub
+            </div>
+            <p className="mt-1 text-xs leading-5 text-pretty text-muted-foreground">
+              {getGithubStatusText(githubStatus, isCheckingGithub, copy)}
+            </p>
+            <form
+              className="mt-[var(--shard-space-2)] grid gap-[var(--shard-space-2)] sm:grid-cols-[minmax(0,1fr)_max-content]"
+              onSubmit={(event) => {
+                event.preventDefault()
+                void createGithubRepo()
+              }}
+            >
+              <Input
+                autoCapitalize="none"
+                autoCorrect="off"
+                disabled={
+                  isRemoteBusy ||
+                  isCheckingGithub ||
+                  !githubStatus?.authenticated
+                }
+                onChange={(event) => setRepoName(event.target.value)}
+                spellCheck={false}
+                value={repoName}
+              />
+              <Button
+                disabled={
+                  isRemoteBusy ||
+                  isCheckingGithub ||
+                  !githubStatus?.authenticated
+                }
+                type="submit"
+                variant="default"
+              >
+                {isCreatingGithubRepo ? copy.createRepoBusy : copy.createRepo}
+              </Button>
+            </form>
+          </div>
+
+          <div className="mt-[var(--shard-space-4)] flex items-center gap-[var(--shard-space-3)]">
+            <span
+              aria-hidden="true"
+              className="h-px flex-1 rounded-full bg-border-visible opacity-[var(--shard-alpha-55)]"
+            />
+            <span className="text-[11px] leading-4 font-medium text-muted-foreground">
+              {copy.manualDividerLabel}
+            </span>
+            <span
+              aria-hidden="true"
+              className="h-px flex-1 rounded-full bg-border-visible opacity-[var(--shard-alpha-55)]"
+            />
+          </div>
+
+          <form
+            className="mt-[var(--shard-space-3)] grid gap-[var(--shard-space-2)] sm:grid-cols-[minmax(0,1fr)_max-content]"
+            onSubmit={(event) => {
+              event.preventDefault()
+              void configureRemote()
+            }}
+          >
+            <Input
+              autoCapitalize="none"
+              autoCorrect="off"
+              disabled={isRemoteBusy}
+              onChange={(event) => setRemoteUrl(event.target.value)}
+              placeholder="git@github.com:you/shard-vault.git"
+              spellCheck={false}
+              value={remoteUrl}
+            />
+            <Button disabled={isRemoteBusy} type="submit" variant="default">
+              {isConfiguringRemote
+                ? copy.connectRemoteBusy
+                : copy.connectRemote}
+            </Button>
+          </form>
+          <p className="mt-[var(--shard-space-2)] text-xs leading-5 text-pretty text-muted-foreground">
+            {copy.manualRemoteHint}
+          </p>
+        </section>
+      ) : null}
+    </>
+  )
+
+  const directorySection = (
+    <section className="border-b border-border px-[var(--shard-space-6)] py-[var(--shard-space-5)]">
+      <h3 className="text-sm leading-5 font-semibold">
+        {copy.directoryTitle}
+      </h3>
+      <p className="mt-[var(--shard-space-1)] text-xs leading-5 text-pretty text-muted-foreground">
+        {copy.directoryDescription}
+      </p>
+      <div className="mt-[var(--shard-space-3)] grid gap-[var(--shard-space-2)] sm:grid-cols-2">
+        <VaultActionButton
+          active={activeAction === "open"}
+          disabled={isVaultActionBusy}
+          description={copy.openVaultDescription}
+          icon={FolderOpenIcon}
+          label={copy.openVaultLabel}
+          onClick={() => void chooseVault(false)}
+        />
+        <VaultActionButton
+          active={activeAction === "create"}
+          disabled={isVaultActionBusy}
+          description={copy.createVaultDescription}
+          icon={FolderPlusIcon}
+          label={copy.createVaultLabel}
+          onClick={() => void chooseVault(true)}
+        />
+      </div>
+    </section>
+  )
+
+  if (required || !vaultPath) {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/[var(--shard-alpha-89)] px-[var(--shard-content-inset)] py-[var(--shard-space-4)] backdrop-blur-sm md:py-[var(--shard-space-5)]">
+        <div
+          aria-labelledby="vault-guide-title"
+          aria-modal="true"
+          className="flex max-h-[min(86dvh,720px)] w-full max-w-[620px] flex-col overflow-hidden rounded-[var(--shard-radius-panel)] border border-border bg-card shadow-[var(--shard-shadow-popover)] outline-none"
+          onKeyDown={(event) => {
+            if (event.key === "Escape" && !required) {
+              event.preventDefault()
+              onClose()
+            }
+          }}
+          ref={dialogRef}
+          role="dialog"
+          tabIndex={-1}
+        >
+          <header className="shrink-0 border-b border-border px-[var(--shard-space-6)] pt-[var(--shard-space-5)] pb-[var(--shard-space-4)]">
+            <div className="flex items-center justify-between gap-[var(--shard-space-3)]">
+              <span className="text-[11px] leading-4 font-semibold tracking-[0.08em] text-muted-foreground uppercase">
+                {copy.settingsTitle}
+                {vaultPath ? ` · ${copy.vaultTitle}` : ""}
+              </span>
+              {!required ? (
+                <Button
+                  className="-mt-1 -mr-2"
+                  onClick={onClose}
+                  size="icon-sm"
+                  type="button"
+                  variant="ghost"
+                >
+                  <XIcon data-icon="inline-start" />
+                  <span className="sr-only">{copy.close}</span>
+                </Button>
+              ) : null}
+            </div>
+            <h2
+              className="mt-[var(--shard-space-1)] text-lg leading-6 font-semibold text-balance"
+              id="vault-guide-title"
+            >
+              {vaultPath ? folderName : copy.vaultTitle}
+            </h2>
+            {vaultPath ? (
+              <p className="mt-[var(--shard-space-1)] font-mono text-xs leading-5 break-all text-muted-foreground select-all">
+                {vaultPath}
+              </p>
+            ) : (
+              <p className="mt-[var(--shard-space-2)] text-sm leading-6 text-pretty text-muted-foreground">
+                {copy.headlineDefault}
+              </p>
+            )}
+          </header>
+
+          <main className="min-h-0 flex-1 overflow-y-auto [&>section:last-child]:border-b-0">
+            {railSection}
+            {gitSetupSections}
+            {directorySection}
+          </main>
+        </div>
+      </div>
+    )
+  }
+
+  const navItems: { icon: typeof FolderOpenIcon; id: SettingsSection; label: string }[] = [
+    { icon: FolderOpenIcon, id: "vault", label: copy.vaultTitle },
+    { icon: GitBranchIcon, id: "git", label: copy.navGit },
+    { icon: KeyboardIcon, id: "shortcuts", label: copy.navShortcuts },
+  ]
+  const sectionTitle =
+    section === "git"
+      ? copy.navGit
+      : section === "shortcuts"
+        ? copy.navShortcuts
+        : copy.vaultTitle
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/[var(--shard-alpha-89)] px-[var(--shard-content-inset)] py-[var(--shard-space-4)] backdrop-blur-sm md:py-[var(--shard-space-5)]">
       <div
         aria-labelledby="vault-guide-title"
         aria-modal="true"
-        className="flex max-h-[min(86dvh,720px)] w-full max-w-[620px] flex-col overflow-hidden rounded-[var(--shard-radius-panel)] border border-border bg-card shadow-[var(--shard-shadow-popover)] outline-none"
+        className="flex max-h-[min(84dvh,640px)] min-h-[min(84dvh,520px)] w-full max-w-[760px] flex-col overflow-hidden rounded-[var(--shard-radius-panel)] border border-border bg-card shadow-[var(--shard-shadow-popover)] outline-none md:grid md:grid-cols-[168px_minmax(0,1fr)]"
         onKeyDown={(event) => {
-          if (event.key === "Escape" && !required) {
+          if (event.key === "Escape") {
             event.preventDefault()
             onClose()
           }
@@ -474,220 +812,171 @@ export function VaultGuide({
         role="dialog"
         tabIndex={-1}
       >
-        <header className="shrink-0 border-b border-border px-[var(--shard-space-6)] pt-[var(--shard-space-5)] pb-[var(--shard-space-4)]">
-          <div className="flex items-center justify-between gap-[var(--shard-space-3)]">
-            <span className="text-[11px] leading-4 font-semibold tracking-[0.08em] text-muted-foreground uppercase">
-              {copy.settingsTitle}
-              {vaultPath ? ` · ${copy.vaultTitle}` : ""}
-            </span>
-            {!required ? (
-              <Button
-                className="-mt-1 -mr-2"
-                onClick={onClose}
-                size="icon-sm"
-                type="button"
-                variant="ghost"
-              >
-                <XIcon data-icon="inline-start" />
-                <span className="sr-only">{copy.close}</span>
-              </Button>
-            ) : null}
+        <nav className="flex shrink-0 gap-[var(--shard-space-1)] overflow-x-auto border-b border-border bg-sidebar p-[var(--shard-space-2)] md:flex-col md:overflow-visible md:border-r md:border-b-0 md:p-[var(--shard-space-3)]">
+          <div className="hidden px-[var(--shard-space-3)] pt-[var(--shard-space-1)] pb-[var(--shard-space-2)] text-[11px] leading-4 font-semibold tracking-[0.08em] text-muted-foreground uppercase md:block">
+            {copy.settingsTitle}
           </div>
-          <h2
-            className="mt-[var(--shard-space-1)] text-lg leading-6 font-semibold text-balance"
-            id="vault-guide-title"
-          >
-            {vaultPath ? folderName : copy.vaultTitle}
-          </h2>
-          {vaultPath ? (
-            <p className="mt-[var(--shard-space-1)] font-mono text-xs leading-5 break-all text-muted-foreground select-all">
-              {vaultPath}
-            </p>
-          ) : (
-            <p className="mt-[var(--shard-space-2)] text-sm leading-6 text-pretty text-muted-foreground">
-              {copy.headlineDefault}
-            </p>
-          )}
-        </header>
-
-        <main className="min-h-0 flex-1 overflow-y-auto">
-          <section className="border-b border-border px-[var(--shard-space-6)] py-[var(--shard-space-5)]">
-            <div className="flex flex-col gap-[var(--shard-space-3)] sm:flex-row sm:items-start">
-              <RailStation
-                label={copy.sideCurrent}
-                tone={vaultPath ? "emerald" : "empty"}
-                value={vaultPath ? copy.folderSelected : copy.noVault}
-              />
-              <RailConnector />
-              <RailStation
-                detail={
-                  git?.shortCommit
-                    ? `${git.branch} · ${git.shortCommit}`
-                    : git?.error || undefined
-                }
-                label={copy.sideGit}
-                tone={gitTone}
-                value={gitLabel}
-              />
-              <RailConnector />
-              <RailStation
-                detail={git?.hasRemote ? "origin" : undefined}
-                label={copy.sideRemote}
-                tone={remoteTone}
-                value={remoteLabel}
-              />
-            </div>
-            <p className="mt-[var(--shard-space-4)] text-xs leading-5 text-pretty text-muted-foreground">
-              {git?.hasRemote
-                ? copy.remoteAlreadyConnected
-                : copy.gitDescription}
-            </p>
-          </section>
-
-          {vaultPath && git?.status === "no_git" ? (
-            <section className="border-b border-border px-[var(--shard-space-6)] py-[var(--shard-space-5)]">
-              <VaultActionButton
-                active={activeAction === "git"}
-                disabled={isVaultActionBusy}
-                description={copy.initGitDescription}
-                icon={GitBranchIcon}
-                label={copy.initGitLabel}
-                onClick={() => void initializeGit()}
-              />
-            </section>
-          ) : null}
-
-          {needsRemote ? (
-            <section
-              aria-busy={isRemoteBusy}
-              className="border-b border-border px-[var(--shard-space-6)] py-[var(--shard-space-5)]"
+          {navItems.map(({ icon: Icon, id, label }) => (
+            <button
+              className={[
+                "flex h-9 shrink-0 items-center gap-[var(--shard-space-2)] rounded-[var(--shard-radius-control)] px-[var(--shard-space-3)] text-sm font-medium transition-colors duration-150",
+                section === id
+                  ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                  : "text-muted-foreground hover:bg-sidebar-accent/[var(--shard-alpha-55)] hover:text-sidebar-foreground",
+              ].join(" ")}
+              key={id}
+              onClick={() => setSection(id)}
+              type="button"
             >
-              <h3 className="text-sm leading-5 font-semibold">
-                {copy.syncSetupTitle}
-              </h3>
-              <p className="mt-[var(--shard-space-1)] text-xs leading-5 text-pretty text-muted-foreground">
-                {copy.headlineNeedsRemote}
-              </p>
+              <Icon className="size-4 shrink-0 stroke-[1.75]" />
+              <span className="truncate">{label}</span>
+            </button>
+          ))}
+        </nav>
 
-              {isRemoteBusy ? (
-                <div className="mt-[var(--shard-space-3)] flex items-center gap-[var(--shard-space-2)] rounded-[var(--shard-radius-control)] border border-border bg-background px-[var(--shard-space-3)] py-[var(--shard-space-2)] text-sm leading-5 text-muted-foreground">
-                  <Loader2Icon className="size-4 animate-spin" />
-                  <span>
-                    {isCreatingGithubRepo ? copy.githubBusy : copy.remoteBusy}
-                  </span>
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+          <header className="flex shrink-0 items-center justify-between gap-[var(--shard-space-3)] border-b border-border px-[var(--shard-space-6)] py-[var(--shard-space-3)]">
+            <h2
+              className="text-base leading-6 font-semibold"
+              id="vault-guide-title"
+            >
+              {sectionTitle}
+            </h2>
+            <Button
+              className="-mr-2"
+              onClick={onClose}
+              size="icon-sm"
+              type="button"
+              variant="ghost"
+            >
+              <XIcon data-icon="inline-start" />
+              <span className="sr-only">{copy.close}</span>
+            </Button>
+          </header>
+
+          <main className="min-h-0 flex-1 overflow-y-auto [&>section:last-child]:border-b-0">
+            {section === "vault" ? (
+              <>
+                <section className="border-b border-border px-[var(--shard-space-6)] py-[var(--shard-space-5)]">
+                  <div className="text-[11px] leading-4 font-semibold tracking-[0.08em] text-muted-foreground uppercase">
+                    {copy.sideCurrent}
+                  </div>
+                  <div className="mt-[var(--shard-space-1)] text-base leading-6 font-semibold text-balance">
+                    {folderName}
+                  </div>
+                  <p className="mt-[var(--shard-space-1)] font-mono text-xs leading-5 break-all text-muted-foreground select-all">
+                    {vaultPath}
+                  </p>
+                </section>
+                {directorySection}
+              </>
+            ) : null}
+
+            {section === "git" ? (
+              <>
+                {railSection}
+                {gitSetupSections}
+                <section className="border-b border-border px-[var(--shard-space-6)] py-[var(--shard-space-5)]">
+                  <div className="flex items-start justify-between gap-[var(--shard-space-4)]">
+                    <div className="min-w-0">
+                      <h3 className="text-sm leading-5 font-semibold">
+                        {copy.autoSyncTitle}
+                      </h3>
+                      <p className="mt-[var(--shard-space-1)] text-xs leading-5 text-pretty text-muted-foreground">
+                        {copy.autoSyncDescription}
+                      </p>
+                    </div>
+                    <SwitchToggle
+                      checked={autoSyncEnabled}
+                      disabled={!git?.hasRemote}
+                      label={copy.autoSyncEnableLabel}
+                      onChange={(next) =>
+                        onAutoSyncChange({ autoSyncEnabled: next })
+                      }
+                    />
+                  </div>
+                  {git?.hasRemote ? (
+                    <div className="mt-[var(--shard-space-4)] flex flex-wrap items-center gap-[var(--shard-space-3)]">
+                      <span className="text-xs leading-5 font-medium text-muted-foreground">
+                        {copy.autoSyncIntervalLabel}
+                      </span>
+                      <div className="flex gap-[var(--shard-space-1)]">
+                        {AUTO_SYNC_INTERVAL_OPTIONS.map((minutes) => (
+                          <button
+                            className={[
+                              "h-8 rounded-[var(--shard-radius-control)] border px-[var(--shard-space-3)] text-xs font-medium transition-colors duration-150",
+                              minutes === autoSyncIntervalMinutes
+                                ? "border-[color:var(--shard-sapphire)] bg-[color:var(--shard-sapphire-soft)] text-[color:var(--shard-sapphire-text)]"
+                                : "border-border text-muted-foreground hover:border-ring hover:text-foreground",
+                              !autoSyncEnabled
+                                ? "pointer-events-none opacity-[var(--shard-alpha-55)]"
+                                : "",
+                            ].join(" ")}
+                            disabled={!autoSyncEnabled}
+                            key={minutes}
+                            onClick={() =>
+                              onAutoSyncChange({
+                                autoSyncIntervalMinutes: minutes,
+                              })
+                            }
+                            type="button"
+                          >
+                            {copy.autoSyncMinutes(minutes)}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="mt-[var(--shard-space-3)] text-xs leading-5 text-pretty text-muted-foreground">
+                      {copy.autoSyncNeedsRemote}
+                    </p>
+                  )}
+                  <div className="mt-[var(--shard-space-4)]">
+                    <Button
+                      disabled={isSyncing || !git?.hasRemote}
+                      onClick={onSync}
+                      size="sm"
+                      type="button"
+                      variant="outline"
+                    >
+                      {isSyncing ? (
+                        <Loader2Icon className="animate-spin" />
+                      ) : (
+                        <RefreshCwIcon />
+                      )}
+                      {isSyncing ? copy.syncNowBusy : copy.syncNow}
+                    </Button>
+                  </div>
+                </section>
+              </>
+            ) : null}
+
+            {section === "shortcuts" ? (
+              <section className="border-b border-border px-[var(--shard-space-6)] py-[var(--shard-space-3)]">
+                <div className="divide-y divide-border">
+                  {shortcutRows[locale].map((row) => (
+                    <div
+                      className="flex items-center justify-between gap-[var(--shard-space-4)] py-[var(--shard-space-3)]"
+                      key={row.label}
+                    >
+                      <span className="text-sm leading-5">{row.label}</span>
+                      <span className="flex shrink-0 items-center gap-[var(--shard-space-1)]">
+                        {row.keys.map((key) => (
+                          <kbd
+                            className="rounded-[4px] border border-border bg-muted px-1.5 text-[10px] leading-4 font-semibold text-muted-foreground"
+                            key={key}
+                          >
+                            {key}
+                          </kbd>
+                        ))}
+                      </span>
+                    </div>
+                  ))}
                 </div>
-              ) : null}
-
-              <div className="mt-[var(--shard-space-4)]">
-                <div className="flex items-center gap-[var(--shard-space-2)] text-sm leading-5 font-semibold">
-                  <GitBranchIcon className="size-4" />
-                  GitHub
-                </div>
-                <p className="mt-1 text-xs leading-5 text-pretty text-muted-foreground">
-                  {getGithubStatusText(githubStatus, isCheckingGithub, copy)}
-                </p>
-                <form
-                  className="mt-[var(--shard-space-2)] grid gap-[var(--shard-space-2)] sm:grid-cols-[minmax(0,1fr)_max-content]"
-                  onSubmit={(event) => {
-                    event.preventDefault()
-                    void createGithubRepo()
-                  }}
-                >
-                  <Input
-                    autoCapitalize="none"
-                    autoCorrect="off"
-                    disabled={
-                      isRemoteBusy ||
-                      isCheckingGithub ||
-                      !githubStatus?.authenticated
-                    }
-                    onChange={(event) => setRepoName(event.target.value)}
-                    spellCheck={false}
-                    value={repoName}
-                  />
-                  <Button
-                    disabled={
-                      isRemoteBusy ||
-                      isCheckingGithub ||
-                      !githubStatus?.authenticated
-                    }
-                    type="submit"
-                    variant="default"
-                  >
-                    {isCreatingGithubRepo ? copy.createRepoBusy : copy.createRepo}
-                  </Button>
-                </form>
-              </div>
-
-              <div className="mt-[var(--shard-space-4)] flex items-center gap-[var(--shard-space-3)]">
-                <span
-                  aria-hidden="true"
-                  className="h-px flex-1 rounded-full bg-border-visible opacity-[var(--shard-alpha-55)]"
-                />
-                <span className="text-[11px] leading-4 font-medium text-muted-foreground">
-                  {copy.manualDividerLabel}
-                </span>
-                <span
-                  aria-hidden="true"
-                  className="h-px flex-1 rounded-full bg-border-visible opacity-[var(--shard-alpha-55)]"
-                />
-              </div>
-
-              <form
-                className="mt-[var(--shard-space-3)] grid gap-[var(--shard-space-2)] sm:grid-cols-[minmax(0,1fr)_max-content]"
-                onSubmit={(event) => {
-                  event.preventDefault()
-                  void configureRemote()
-                }}
-              >
-                <Input
-                  autoCapitalize="none"
-                  autoCorrect="off"
-                  disabled={isRemoteBusy}
-                  onChange={(event) => setRemoteUrl(event.target.value)}
-                  placeholder="git@github.com:you/shard-vault.git"
-                  spellCheck={false}
-                  value={remoteUrl}
-                />
-                <Button disabled={isRemoteBusy} type="submit" variant="default">
-                  {isConfiguringRemote
-                    ? copy.connectRemoteBusy
-                    : copy.connectRemote}
-                </Button>
-              </form>
-              <p className="mt-[var(--shard-space-2)] text-xs leading-5 text-pretty text-muted-foreground">
-                {copy.manualRemoteHint}
-              </p>
-            </section>
-          ) : null}
-
-          <section className="px-[var(--shard-space-6)] py-[var(--shard-space-5)]">
-            <h3 className="text-sm leading-5 font-semibold">
-              {copy.directoryTitle}
-            </h3>
-            <p className="mt-[var(--shard-space-1)] text-xs leading-5 text-pretty text-muted-foreground">
-              {copy.directoryDescription}
-            </p>
-            <div className="mt-[var(--shard-space-3)] grid gap-[var(--shard-space-2)] sm:grid-cols-2">
-              <VaultActionButton
-                active={activeAction === "open"}
-                disabled={isVaultActionBusy}
-                description={copy.openVaultDescription}
-                icon={FolderOpenIcon}
-                label={copy.openVaultLabel}
-                onClick={() => void chooseVault(false)}
-              />
-              <VaultActionButton
-                active={activeAction === "create"}
-                disabled={isVaultActionBusy}
-                description={copy.createVaultDescription}
-                icon={FolderPlusIcon}
-                label={copy.createVaultLabel}
-                onClick={() => void chooseVault(true)}
-              />
-            </div>
-          </section>
-        </main>
+              </section>
+            ) : null}
+          </main>
+        </div>
       </div>
     </div>
   )
@@ -790,6 +1079,46 @@ function RailStation({ detail, label, tone, value }: RailStationProps) {
         ) : null}
       </span>
     </div>
+  )
+}
+
+interface SwitchToggleProps {
+  checked: boolean
+  disabled?: boolean
+  label: string
+  onChange: (checked: boolean) => void
+}
+
+function SwitchToggle({
+  checked,
+  disabled = false,
+  label,
+  onChange,
+}: SwitchToggleProps) {
+  return (
+    <button
+      aria-checked={checked}
+      aria-label={label}
+      className={[
+        "relative h-6 w-10 shrink-0 rounded-full transition-colors duration-150 ease-out",
+        "after:absolute after:-inset-2 after:content-['']",
+        checked ? "bg-[color:var(--shard-sapphire)]" : "bg-[color:var(--input)]",
+        disabled ? "pointer-events-none opacity-[var(--shard-alpha-55)]" : "",
+      ].join(" ")}
+      disabled={disabled}
+      onClick={() => onChange(!checked)}
+      role="switch"
+      type="button"
+    >
+      <span
+        className={[
+          "absolute top-[2px] left-[2px] block size-5 rounded-full bg-white",
+          "shadow-[0_1px_2px_rgb(17_19_21/var(--shard-alpha-13))]",
+          "transition-transform duration-150 ease-out",
+          checked ? "translate-x-[16px]" : "translate-x-0",
+        ].join(" ")}
+      />
+    </button>
   )
 }
 
