@@ -43,7 +43,8 @@ export function FragmentImageExporter({
   vaultPath,
 }: FragmentImageExporterProps) {
   const [templateId, setTemplateId] = useState<ExportImageTemplateId>("paper")
-  const [showCreatedAt, setShowCreatedAt] = useState(true)
+  const [showCreatedDate, setShowCreatedDate] = useState(true)
+  const [showCreatedTime, setShowCreatedTime] = useState(false)
   const [isPreviewing, setIsPreviewing] = useState(false)
   const [isExporting, setIsExporting] = useState(false)
   const [isCopying, setIsCopying] = useState(false)
@@ -69,7 +70,8 @@ export function FragmentImageExporter({
         drawFragmentExportImage(previewCanvas, {
           fragment,
           pixelRatio: getCanvasPixelRatio(),
-          showCreatedAt,
+          showCreatedDate,
+          showCreatedTime,
           templateId,
           vaultPath,
         })
@@ -87,14 +89,23 @@ export function FragmentImageExporter({
     return () => {
       cancelled = true
     }
-  }, [fragment, open, previewCanvas, showCreatedAt, templateId, vaultPath])
+  }, [
+    fragment,
+    open,
+    previewCanvas,
+    showCreatedDate,
+    showCreatedTime,
+    templateId,
+    vaultPath,
+  ])
 
   async function renderExportBlob(targetFragment: Fragment) {
     const canvas = document.createElement("canvas")
     await drawFragmentExportImage(canvas, {
       fragment: targetFragment,
       pixelRatio: 2,
-      showCreatedAt,
+      showCreatedDate,
+      showCreatedTime,
       templateId,
       vaultPath,
     })
@@ -235,28 +246,18 @@ export function FragmentImageExporter({
         </div>
 
         <DialogFooter className="flex-row items-center justify-between border-t border-border p-[var(--shard-space-4)]">
-          <button
-            aria-checked={showCreatedAt}
-            className="flex items-center gap-[var(--shard-space-2)] rounded-[var(--shard-radius-control)] px-[var(--shard-space-2)] py-[var(--shard-space-1)] text-sm leading-5 text-muted-foreground transition-colors duration-150 hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/[var(--shard-alpha-34)] focus-visible:outline-none"
-            onClick={() => setShowCreatedAt((current) => !current)}
-            role="checkbox"
-            type="button"
-          >
-            <span
-              aria-hidden="true"
-              className={cn(
-                "flex size-4 shrink-0 items-center justify-center rounded-[calc(var(--shard-radius-control)-2px)] border-[1.4px] transition-colors duration-150",
-                showCreatedAt
-                  ? "border-[color:var(--shard-sapphire)] bg-[color:var(--shard-sapphire)] text-white"
-                  : "border-muted-foreground bg-transparent"
-              )}
-            >
-              {showCreatedAt ? (
-                <CheckIcon className="size-3 stroke-[2.5]" />
-              ) : null}
-            </span>
-            显示创建时间
-          </button>
+          <div className="flex items-center gap-[var(--shard-space-1)]">
+            <FooterCheckbox
+              checked={showCreatedDate}
+              label="创建日期"
+              onChange={setShowCreatedDate}
+            />
+            <FooterCheckbox
+              checked={showCreatedTime}
+              label="创建时间"
+              onChange={setShowCreatedTime}
+            />
+          </div>
           <div className="flex items-center gap-[var(--shard-space-2)]">
             <Button
               disabled={isBusy}
@@ -290,6 +291,39 @@ export function FragmentImageExporter({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  )
+}
+
+function FooterCheckbox({
+  checked,
+  label,
+  onChange,
+}: {
+  checked: boolean
+  label: string
+  onChange: (checked: boolean) => void
+}) {
+  return (
+    <button
+      aria-checked={checked}
+      className="flex items-center gap-[var(--shard-space-2)] rounded-[var(--shard-radius-control)] px-[var(--shard-space-2)] py-[var(--shard-space-1)] text-sm leading-5 text-muted-foreground transition-colors duration-150 hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/[var(--shard-alpha-34)] focus-visible:outline-none"
+      onClick={() => onChange(!checked)}
+      role="checkbox"
+      type="button"
+    >
+      <span
+        aria-hidden="true"
+        className={cn(
+          "flex size-4 shrink-0 items-center justify-center rounded-[calc(var(--shard-radius-control)-2px)] border-[1.4px] transition-colors duration-150",
+          checked
+            ? "border-[color:var(--shard-sapphire)] bg-[color:var(--shard-sapphire)] text-white"
+            : "border-muted-foreground bg-transparent"
+        )}
+      >
+        {checked ? <CheckIcon className="size-3 stroke-[2.5]" /> : null}
+      </span>
+      {label}
+    </button>
   )
 }
 

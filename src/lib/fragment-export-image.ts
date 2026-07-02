@@ -117,12 +117,14 @@ export async function drawFragmentExportImage(
     fragment,
     pixelRatio = 1,
     templateId,
-    showCreatedAt = true,
+    showCreatedDate = true,
+    showCreatedTime = false,
     vaultPath,
   }: {
     fragment: Fragment
     pixelRatio?: number
-    showCreatedAt?: boolean
+    showCreatedDate?: boolean
+    showCreatedTime?: boolean
     templateId: ExportImageTemplateId
     vaultPath?: string
   }
@@ -144,16 +146,22 @@ export async function drawFragmentExportImage(
     throw new Error("无法创建图片画布。")
   }
 
+  const headerStamp = [
+    showCreatedDate ? formatPlainExportDate(fragment.createdAt) : "",
+    showCreatedTime ? formatPlainExportTime(fragment.createdAt) : "",
+  ]
+    .filter(Boolean)
+    .join(" ")
+
   context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0)
   drawTemplate(
     context,
-    fragment,
     blocks,
     images,
     template,
     textStyle,
     logicalHeight,
-    showCreatedAt
+    headerStamp
   )
 }
 
@@ -266,20 +274,19 @@ function measureImageHeight(
 
 function drawTemplate(
   context: CanvasRenderingContext2D,
-  fragment: Fragment,
   blocks: ExportBlock[],
   images: LoadedImages,
   template: ExportImageTemplate,
   textStyle: MemoTextStyle,
   height: number,
-  showCreatedAt: boolean
+  headerStamp: string
 ) {
   context.clearRect(0, 0, template.width, height)
   context.fillStyle = template.background
   context.fillRect(0, 0, template.width, height)
 
   const layout = layoutMetrics(template, textStyle)
-  drawHeader(context, fragment, template, textStyle, layout, showCreatedAt)
+  drawHeader(context, template, textStyle, layout, headerStamp)
 
   const bodyMaxY = height - template.cardPadding - layout.footerHeight
   const result = renderBody(
@@ -325,20 +332,15 @@ function layoutMetrics(
 
 function drawHeader(
   context: CanvasRenderingContext2D,
-  fragment: Fragment,
   template: ExportImageTemplate,
   textStyle: MemoTextStyle,
   layout: ReturnType<typeof layoutMetrics>,
-  showCreatedAt: boolean
+  stamp: string
 ) {
-  if (showCreatedAt) {
+  if (stamp) {
     setFont(context, textStyle.metaFontSize, textStyle.metaFontWeight)
     context.fillStyle = template.muted
-    context.fillText(
-      formatPlainExportDate(fragment.createdAt),
-      layout.contentX,
-      layout.headerTop
-    )
+    context.fillText(stamp, layout.contentX, layout.headerTop)
   }
 
   setFont(context, textStyle.metaFontSize, 500)
@@ -784,5 +786,16 @@ function formatPlainExportDate(createdAt: string) {
     day: "2-digit",
     month: "2-digit",
     year: "numeric",
+  })
+}
+
+function formatPlainExportTime(createdAt: string) {
+  const date = new Date(createdAt)
+  if (Number.isNaN(date.getTime())) return ""
+
+  return date.toLocaleTimeString("zh-CN", {
+    hour: "2-digit",
+    hour12: false,
+    minute: "2-digit",
   })
 }
