@@ -1,6 +1,6 @@
 import { isTauri } from "@tauri-apps/api/core"
 import { save } from "@tauri-apps/plugin-dialog"
-import { CopyIcon, ImageIcon, Loader2Icon } from "lucide-react"
+import { ImageIcon, Loader2Icon } from "lucide-react"
 import { useEffect, useMemo, useState } from "react"
 import { toast } from "sonner"
 
@@ -248,11 +248,7 @@ export function FragmentImageExporter({
             type="button"
             variant="outline"
           >
-            {isCopying ? (
-              <Loader2Icon className="size-4 animate-spin" />
-            ) : (
-              <CopyIcon className="size-4" />
-            )}
+            {isCopying ? <Loader2Icon className="size-4 animate-spin" /> : null}
             {isCopying ? "复制中" : "复制图片"}
           </Button>
           <Button
