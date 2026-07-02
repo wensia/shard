@@ -1,6 +1,6 @@
 [package]
 name = "shard"
-version = "0.1.2"
+version = "0.1.3"
 description = "A lightweight Markdown fragment capture app powered by Git."
 authors = ["panyuhang"]
 edition = "2021"
