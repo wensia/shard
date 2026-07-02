@@ -1002,7 +1002,10 @@ export function FragmentEditor({
 
   return (
     <div className="fixed inset-0 z-50 grid grid-rows-[minmax(0,1fr)_auto] bg-background text-foreground">
-      <div className="shard-content-inset min-h-0">
+      <div
+        className="shard-content-inset min-h-0 pt-[var(--shard-top-inset)]"
+        data-tauri-drag-region
+      >
         <div className="shard-content-measure flex h-full min-h-0 flex-col">
           {editorFrame}
           {imageAttachmentRow}

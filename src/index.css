@@ -100,7 +100,7 @@
     --chart-4: var(--palette-amber);
     --chart-5: #6f6760;
     --radius: 6px;
-    --sidebar: #ffffff;
+    --sidebar: var(--background);
     --sidebar-foreground: var(--palette-ink);
     --sidebar-primary: var(--palette-clay);
     --sidebar-primary-foreground: #ffffff;
@@ -161,7 +161,10 @@
     --shard-sidebar-inset: var(--shard-space-4);
     --shard-content-inset: var(--shard-space-4);
     --shard-content-inset-lg: var(--shard-space-6);
-    --shard-composer-top-gap: var(--shard-space-1);
+    /* Shared top datum below the macOS overlay traffic lights (13 * 4px).
+       Sidebar header and composer both align to this line. */
+    --shard-top-inset: 52px;
+    --shard-composer-top-gap: var(--shard-top-inset);
     --shard-composer-bottom-gap: var(--shard-space-4);
     --shard-composer-padding: var(--shard-space-4);
     --shard-card-padding-x: var(--shard-space-4);
@@ -236,7 +239,7 @@
     --chart-3: #2e6e79;
     --chart-4: #be7c32;
     --chart-5: oklch(0.708 0 0);
-    --sidebar: oklch(0.205 0 0);
+    --sidebar: var(--background);
     --sidebar-foreground: oklch(0.985 0 0);
     --sidebar-primary: #de9681;
     --sidebar-primary-foreground: oklch(0.145 0 0);

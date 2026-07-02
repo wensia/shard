@@ -10,6 +10,9 @@
  * - control radius = 4px; surface radius = 6px; large panel cap = 8px
  * - chip height = 24px = 6 * 4px
  * - card gap = composer padding = 16px
+ * - top inset = 52px = 13 * 4px: shared top datum under the macOS overlay
+ *   traffic lights; sidebar header and composer top edge both align to it,
+ *   and full-screen views reserve it as a data-tauri-drag-region strip
  * - heatmap width = 12 columns * 12px + 11 gaps * 5px = 199px
  * - text never scales with viewport width; layout absorbs responsive pressure
  * - editor caret is custom (glyph-height, centered on the line). Its position

@@ -947,7 +947,10 @@ function App() {
         </div>
         <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
           {isInboxView ? (
-            <div className="px-[var(--shard-content-inset)] pt-[var(--shard-composer-top-gap)] pb-[var(--shard-composer-bottom-gap)] lg:px-[var(--shard-content-inset-lg)]">
+            <div
+              className="px-[var(--shard-content-inset)] pt-[var(--shard-composer-top-gap)] pb-[var(--shard-composer-bottom-gap)] lg:px-[var(--shard-content-inset-lg)]"
+              data-tauri-drag-region
+            >
               <CaptureBox
                 collapseSignal={composerCollapseSignal}
                 isCreating={isCreating}
@@ -960,6 +963,7 @@ function App() {
             <div
               aria-hidden="true"
               className="h-[var(--shard-composer-top-gap)] shrink-0"
+              data-tauri-drag-region
             />
           )}
 

@@ -256,8 +256,11 @@ export function SidebarNav({
   const heatmap = buildSidebarHeatmap(activeFragments, language)
 
   return (
-    <aside className="flex h-full min-h-0 flex-col border-r border-border bg-sidebar">
-      <div className="flex items-center gap-[var(--shard-space-3)] px-[var(--shard-sidebar-inset)] pt-[var(--shard-space-8)] pb-[var(--shard-space-6)]">
+    <aside className="flex h-full min-h-0 flex-col bg-sidebar">
+      <div
+        className="flex items-center gap-[var(--shard-space-3)] px-[var(--shard-sidebar-inset)] pt-[var(--shard-top-inset)] pb-[var(--shard-space-6)]"
+        data-tauri-drag-region
+      >
         <img
           alt=""
           aria-hidden="true"
@@ -274,7 +277,7 @@ export function SidebarNav({
       <div className="px-[var(--shard-sidebar-inset)] pb-[var(--shard-space-4)]">
         <button
           aria-label={copy.search}
-          className="relative flex h-9 w-full items-center gap-[var(--shard-space-2)] rounded-[var(--shard-radius-control)] border border-sidebar-border bg-background px-[var(--shard-space-3)] text-left text-sm text-muted-foreground transition-colors hover:border-ring hover:text-sidebar-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/[var(--shard-alpha-34)] focus-visible:outline-none"
+          className="relative flex h-9 w-full items-center gap-[var(--shard-space-2)] rounded-[var(--shard-radius-control)] border border-sidebar-border bg-card px-[var(--shard-space-3)] text-left text-sm text-muted-foreground transition-colors hover:border-ring hover:text-sidebar-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/[var(--shard-alpha-34)] focus-visible:outline-none"
           onClick={onOpenSearch}
           type="button"
         >

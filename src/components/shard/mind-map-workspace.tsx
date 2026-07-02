@@ -271,6 +271,11 @@ export function MindMapWorkspace({
 
   return (
     <div className="fixed inset-0 z-50 flex min-h-0 flex-col overflow-hidden bg-white text-foreground">
+      <div
+        aria-hidden="true"
+        className="h-[var(--shard-top-inset)] shrink-0"
+        data-tauri-drag-region
+      />
       <main className="min-h-0 flex-1 overflow-hidden bg-white">
         {isLoading ? (
           <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
