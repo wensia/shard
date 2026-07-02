@@ -1,6 +1,6 @@
 import { isTauri } from "@tauri-apps/api/core"
 import { save } from "@tauri-apps/plugin-dialog"
-import { ImageIcon, Loader2Icon } from "lucide-react"
+import { CheckIcon, ImageIcon, Loader2Icon } from "lucide-react"
 import { useEffect, useMemo, useState } from "react"
 import { toast } from "sonner"
 
@@ -43,6 +43,7 @@ export function FragmentImageExporter({
   vaultPath,
 }: FragmentImageExporterProps) {
   const [templateId, setTemplateId] = useState<ExportImageTemplateId>("paper")
+  const [showCreatedAt, setShowCreatedAt] = useState(true)
   const [isPreviewing, setIsPreviewing] = useState(false)
   const [isExporting, setIsExporting] = useState(false)
   const [isCopying, setIsCopying] = useState(false)
@@ -68,6 +69,7 @@ export function FragmentImageExporter({
         drawFragmentExportImage(previewCanvas, {
           fragment,
           pixelRatio: getCanvasPixelRatio(),
+          showCreatedAt,
           templateId,
           vaultPath,
         })
@@ -85,13 +87,14 @@ export function FragmentImageExporter({
     return () => {
       cancelled = true
     }
-  }, [fragment, open, previewCanvas, templateId, vaultPath])
+  }, [fragment, open, previewCanvas, showCreatedAt, templateId, vaultPath])
 
   async function renderExportBlob(targetFragment: Fragment) {
     const canvas = document.createElement("canvas")
     await drawFragmentExportImage(canvas, {
       fragment: targetFragment,
       pixelRatio: 2,
+      showCreatedAt,
       templateId,
       vaultPath,
     })
@@ -231,35 +234,59 @@ export function FragmentImageExporter({
           </div>
         </div>
 
-        <DialogFooter className="flex-row justify-end border-t border-border p-[var(--shard-space-4)]">
-          <Button
-            disabled={isBusy}
-            onClick={onClose}
-            type="button"
-            variant="outline"
-          >
-            取消
-          </Button>
-          <Button
-            disabled={isBusy || isPreviewing || !fragment}
-            onClick={() => {
-              void handleCopy()
-            }}
-            type="button"
-            variant="outline"
-          >
-            {isCopying ? <Loader2Icon className="size-4 animate-spin" /> : null}
-            {isCopying ? "复制中" : "复制图片"}
-          </Button>
-          <Button
-            disabled={isBusy || isPreviewing || !fragment}
-            onClick={() => {
-              void handleExport()
-            }}
+        <DialogFooter className="flex-row items-center justify-between border-t border-border p-[var(--shard-space-4)]">
+          <button
+            aria-checked={showCreatedAt}
+            className="flex items-center gap-[var(--shard-space-2)] rounded-[var(--shard-radius-control)] px-[var(--shard-space-2)] py-[var(--shard-space-1)] text-sm leading-5 text-muted-foreground transition-colors duration-150 hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/[var(--shard-alpha-34)] focus-visible:outline-none"
+            onClick={() => setShowCreatedAt((current) => !current)}
+            role="checkbox"
             type="button"
           >
-            {isExporting ? "保存中" : "保存图片"}
-          </Button>
+            <span
+              aria-hidden="true"
+              className={cn(
+                "flex size-4 shrink-0 items-center justify-center rounded-[calc(var(--shard-radius-control)-2px)] border-[1.4px] transition-colors duration-150",
+                showCreatedAt
+                  ? "border-[color:var(--shard-sapphire)] bg-[color:var(--shard-sapphire)] text-white"
+                  : "border-muted-foreground bg-transparent"
+              )}
+            >
+              {showCreatedAt ? (
+                <CheckIcon className="size-3 stroke-[2.5]" />
+              ) : null}
+            </span>
+            显示创建时间
+          </button>
+          <div className="flex items-center gap-[var(--shard-space-2)]">
+            <Button
+              disabled={isBusy}
+              onClick={onClose}
+              type="button"
+              variant="outline"
+            >
+              取消
+            </Button>
+            <Button
+              disabled={isBusy || isPreviewing || !fragment}
+              onClick={() => {
+                void handleCopy()
+              }}
+              type="button"
+              variant="outline"
+            >
+              {isCopying ? <Loader2Icon className="size-4 animate-spin" /> : null}
+              {isCopying ? "复制中" : "复制图片"}
+            </Button>
+            <Button
+              disabled={isBusy || isPreviewing || !fragment}
+              onClick={() => {
+                void handleExport()
+              }}
+              type="button"
+            >
+              {isExporting ? "保存中" : "保存图片"}
+            </Button>
+          </div>
         </DialogFooter>
       </DialogContent>
     </Dialog>

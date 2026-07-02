@@ -117,10 +117,12 @@ export async function drawFragmentExportImage(
     fragment,
     pixelRatio = 1,
     templateId,
+    showCreatedAt = true,
     vaultPath,
   }: {
     fragment: Fragment
     pixelRatio?: number
+    showCreatedAt?: boolean
     templateId: ExportImageTemplateId
     vaultPath?: string
   }
@@ -150,7 +152,8 @@ export async function drawFragmentExportImage(
     images,
     template,
     textStyle,
-    logicalHeight
+    logicalHeight,
+    showCreatedAt
   )
 }
 
@@ -268,14 +271,15 @@ function drawTemplate(
   images: LoadedImages,
   template: ExportImageTemplate,
   textStyle: MemoTextStyle,
-  height: number
+  height: number,
+  showCreatedAt: boolean
 ) {
   context.clearRect(0, 0, template.width, height)
   context.fillStyle = template.background
   context.fillRect(0, 0, template.width, height)
 
   const layout = layoutMetrics(template, textStyle)
-  drawHeader(context, fragment, template, textStyle, layout)
+  drawHeader(context, fragment, template, textStyle, layout, showCreatedAt)
 
   const bodyMaxY = height - template.cardPadding - layout.footerHeight
   const result = renderBody(
@@ -324,15 +328,18 @@ function drawHeader(
   fragment: Fragment,
   template: ExportImageTemplate,
   textStyle: MemoTextStyle,
-  layout: ReturnType<typeof layoutMetrics>
+  layout: ReturnType<typeof layoutMetrics>,
+  showCreatedAt: boolean
 ) {
-  setFont(context, textStyle.metaFontSize, textStyle.metaFontWeight)
-  context.fillStyle = template.muted
-  context.fillText(
-    formatPlainExportDate(fragment.createdAt),
-    layout.contentX,
-    layout.headerTop
-  )
+  if (showCreatedAt) {
+    setFont(context, textStyle.metaFontSize, textStyle.metaFontWeight)
+    context.fillStyle = template.muted
+    context.fillText(
+      formatPlainExportDate(fragment.createdAt),
+      layout.contentX,
+      layout.headerTop
+    )
+  }
 
   setFont(context, textStyle.metaFontSize, 500)
   context.textAlign = "right"
