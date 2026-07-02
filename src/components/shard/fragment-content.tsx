@@ -23,7 +23,11 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
-import { getTagRanges, parseMarkdownImageLine } from "@/lib/editor-format"
+import {
+  getTagRanges,
+  isMarkdownHorizontalRuleLine,
+  parseMarkdownImageLine,
+} from "@/lib/editor-format"
 import {
   downloadFragmentImageAttachment,
   loadFragmentImageSrc,
@@ -161,6 +165,18 @@ function renderLine(
         path={image.path}
         previewable={previewImages}
         vaultPath={vaultPath}
+      />
+    )
+  }
+
+  if (isMarkdownHorizontalRuleLine(line)) {
+    return (
+      <FragmentDivider
+        caretAligned={caretAligned}
+        keyPrefix={`rule-${lineIndex}`}
+        line={line}
+        lineStart={lineStart}
+        selectionRange={selectionRange}
       />
     )
   }
@@ -688,6 +704,44 @@ function TaskMarker({
         {checkbox}
       </button>
     </span>
+  )
+}
+
+interface FragmentDividerProps {
+  caretAligned: boolean
+  keyPrefix: string
+  line: string
+  lineStart: number
+  selectionRange: SelectionRange | null
+}
+
+function FragmentDivider({
+  caretAligned,
+  keyPrefix,
+  line,
+  lineStart,
+  selectionRange,
+}: FragmentDividerProps) {
+  if (caretAligned) {
+    return (
+      <span className="shard-fragment-divider-editor">
+        <span className="shard-fragment-divider-editor-measure">
+          {renderSelectedText(line, lineStart, keyPrefix, selectionRange)}
+        </span>
+        <span
+          aria-hidden="true"
+          className="shard-fragment-divider-editor-line"
+        />
+      </span>
+    )
+  }
+
+  return (
+    <span
+      aria-label="分割线"
+      className="shard-fragment-divider"
+      role="separator"
+    />
   )
 }
 

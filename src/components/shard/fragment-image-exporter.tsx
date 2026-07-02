@@ -1,6 +1,6 @@
 import { isTauri } from "@tauri-apps/api/core"
 import { save } from "@tauri-apps/plugin-dialog"
-import { ImageIcon, Loader2Icon } from "lucide-react"
+import { CopyIcon, ImageIcon, Loader2Icon } from "lucide-react"
 import { useEffect, useMemo, useState } from "react"
 import { toast } from "sonner"
 
@@ -21,7 +21,11 @@ import {
   fragmentExportFileName,
   type ExportImageTemplateId,
 } from "@/lib/fragment-export-image"
-import { getApiErrorMessage, saveExportedImage } from "@/lib/api"
+import {
+  copyExportedImage,
+  getApiErrorMessage,
+  saveExportedImage,
+} from "@/lib/api"
 import { cn } from "@/lib/utils"
 import type { Fragment } from "@/types"
 
@@ -41,6 +45,7 @@ export function FragmentImageExporter({
   const [templateId, setTemplateId] = useState<ExportImageTemplateId>("paper")
   const [isPreviewing, setIsPreviewing] = useState(false)
   const [isExporting, setIsExporting] = useState(false)
+  const [isCopying, setIsCopying] = useState(false)
   const [previewCanvas, setPreviewCanvas] = useState<HTMLCanvasElement | null>(
     null
   )
@@ -50,6 +55,7 @@ export function FragmentImageExporter({
       EXPORT_IMAGE_TEMPLATES[0],
     [templateId]
   )
+  const isBusy = isExporting || isCopying
 
   useEffect(() => {
     if (!open || !fragment || !previewCanvas) return
@@ -81,20 +87,49 @@ export function FragmentImageExporter({
     }
   }, [fragment, open, previewCanvas, templateId, vaultPath])
 
+  async function renderExportBlob(targetFragment: Fragment) {
+    const canvas = document.createElement("canvas")
+    await drawFragmentExportImage(canvas, {
+      fragment: targetFragment,
+      pixelRatio: 2,
+      templateId,
+      vaultPath,
+    })
+    return canvasToPngBlob(canvas)
+  }
+
+  async function handleCopy() {
+    if (!fragment) return
+
+    setIsCopying(true)
+    try {
+      await nextPaint()
+      const blob = await renderExportBlob(fragment)
+      const bytes = await blobToBytes(blob)
+
+      if (isTauri()) {
+        await copyExportedImage(bytes)
+      } else {
+        await copyBlobImage(blob)
+      }
+
+      toast.success("分享图片已复制")
+    } catch (error) {
+      toast.error("复制分享图片失败", {
+        description: getApiErrorMessage(error),
+      })
+    } finally {
+      setIsCopying(false)
+    }
+  }
+
   async function handleExport() {
     if (!fragment) return
 
     setIsExporting(true)
     try {
       await nextPaint()
-      const canvas = document.createElement("canvas")
-      await drawFragmentExportImage(canvas, {
-        fragment,
-        pixelRatio: 2,
-        templateId,
-        vaultPath,
-      })
-      const blob = await canvasToPngBlob(canvas)
+      const blob = await renderExportBlob(fragment)
       const fileName = fragmentExportFileName(fragment, templateId)
 
       if (isTauri()) {
@@ -106,7 +141,8 @@ export function FragmentImageExporter({
 
         if (!path) return
 
-        await saveExportedImage(path, await blobToBytes(blob))
+        const bytes = await blobToBytes(blob)
+        await saveExportedImage(path, bytes)
         toast.success("分享图片已保存")
         onClose()
         return
@@ -197,7 +233,7 @@ export function FragmentImageExporter({
 
         <DialogFooter className="flex-row justify-end border-t border-border p-[var(--shard-space-4)]">
           <Button
-            disabled={isExporting}
+            disabled={isBusy}
             onClick={onClose}
             type="button"
             variant="outline"
@@ -205,7 +241,22 @@ export function FragmentImageExporter({
             取消
           </Button>
           <Button
-            disabled={isExporting || isPreviewing || !fragment}
+            disabled={isBusy || isPreviewing || !fragment}
+            onClick={() => {
+              void handleCopy()
+            }}
+            type="button"
+            variant="outline"
+          >
+            {isCopying ? (
+              <Loader2Icon className="size-4 animate-spin" />
+            ) : (
+              <CopyIcon className="size-4" />
+            )}
+            {isCopying ? "复制中" : "复制图片"}
+          </Button>
+          <Button
+            disabled={isBusy || isPreviewing || !fragment}
             onClick={() => {
               void handleExport()
             }}
@@ -217,6 +268,19 @@ export function FragmentImageExporter({
       </DialogContent>
     </Dialog>
   )
+}
+
+async function copyBlobImage(blob: Blob) {
+  const clipboard = navigator.clipboard
+  if (!clipboard?.write || typeof ClipboardItem === "undefined") {
+    throw new Error("当前环境不支持复制图片。")
+  }
+
+  await clipboard.write([
+    new ClipboardItem({
+      [blob.type || "image/png"]: blob,
+    }),
+  ])
 }
 
 const TEMPLATE_PREVIEWS: Record<

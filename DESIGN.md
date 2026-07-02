@@ -70,8 +70,9 @@ than a broad brand fill.
   primary emphasis.
 - Do not use the accent as a full sidebar, app header, page background, or
   default color for every button.
-- Keep `--primary` available for shadcn's ink-style primary controls; use
-  `--shard-accent` for Shard-specific emphasis.
+- Keep `--solid` available for ordinary shadcn filled controls; reserve
+  `--primary` / `--shard-accent` for state, focus, selection, and destructive
+  semantics.
 - Existing components still reference `--shard-sapphire` and related variables;
   these are compatibility aliases that mirror `--shard-accent`.
 
@@ -145,7 +146,9 @@ Capture input:
   side.
 - Default editor height is 2 text rows; user activation expands it to 4 rows.
   Downward timeline scroll collapses short content back to 2 rows. Longer
-  content always grows to its measured content height.
+  content grows to the measured content height until it reaches the available
+  app viewport height minus the composer gap and toolbar chrome, then scrolls
+  inside the textarea.
 - Desktop top offset: `--shard-composer-top-gap` from the main content
   viewport top, kept tight so the composer sits near the sidebar divider.
 - Placeholder: `想到什么，写什么...`
@@ -309,8 +312,8 @@ tokens before a component adds a new one.
 --shard-caret-width: 1.5px;
 ```
 
-Heatmap math: `12 columns * 12px + 11 gaps * 5px = 199px`, fitting the
-sidebar's 200px inner width after 20px side insets.
+Heatmap math: `12 columns * 12px + 11 gaps * 5px = 199px`, fitting within the
+sidebar's inner width after 16px side insets.
 
 Composer placement: the capture box is the primary action, so it does not use
 the large 32px page-section inset. Its top gap stays tight against the main
@@ -344,13 +347,19 @@ the box never floats above or below the words it marks.
 Use semantic CSS variables. The current runtime values are:
 
 ```css
---background: #f7f8f8;
---foreground: #111315;
+--background: #fbfaf8;
+--foreground: #2f2f2f;
 --card: #ffffff;
---muted: #f1f3f3;
---border: #d8dddd;
---border-strong: #aeb7b7;
---muted-foreground: #687173;
+--muted: #f1eee9;
+--border: #efece7;
+--border-visible: #d8d3cc;
+--border-strong: var(--border-visible);
+--muted-foreground: #6f6760;
+
+--primary: #b6533c;
+--primary-subtle: #f8ede9;
+--solid: #2f2f2f;
+--solid-foreground: #ffffff;
 
 --shard-accent: #b6533c;
 --shard-accent-hover: #96432f;
@@ -378,18 +387,22 @@ Use semantic CSS variables. The current runtime values are:
 --shard-ruby-rgb: 182 83 60;
 --shard-editor-tag-fg: var(--shard-info);
 
---shard-radius-control: 6px;
---shard-surface-radius: 12px;
+--shard-radius-control: 4px;
+--shard-radius-card: 6px;
+--shard-radius-panel: 8px;
+--shard-surface-radius: var(--shard-radius-card);
 ```
 
 Radius:
 
 - App panels: 0
-- Composer and fragment cards: `--shard-surface-radius`
+- Controls: `--shard-radius-control`
+- Composer, fragment cards, popovers, and dialogs: `--shard-surface-radius`
+- Large panels: `--shard-radius-panel`
 - Inputs inside surfaces: inherit the parent surface radius where they form the
   surface edge
-- Buttons: 6px
-- Badges: 5px or pill only when shadcn default requires it
+- Buttons and inputs: 4px
+- Badges and status tags: 4px
 
 Borders:
 

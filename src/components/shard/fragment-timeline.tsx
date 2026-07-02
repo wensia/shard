@@ -2,8 +2,9 @@ import { useEffect, useMemo, useRef, useState, type UIEvent } from "react"
 import { InboxIcon } from "lucide-react"
 
 import { FragmentCard } from "@/components/shard/fragment-card"
+import { MindMapTimelineCard } from "@/components/shard/mind-map-timeline-card"
 import { ScrollArea } from "@/components/ui/scroll-area"
-import type { Fragment } from "@/types"
+import type { Fragment, MindMapSummary } from "@/types"
 
 const WIDE_TIMELINE_QUERY = "(min-width: 96rem)"
 
@@ -13,10 +14,12 @@ interface FragmentTimelineProps {
   fragments: Fragment[]
   isLoading: boolean
   knownTags?: string[]
+  mindMaps?: MindMapSummary[]
   onArchive?: (fragment: Fragment) => void
   onCancelEdit?: () => void
   onEdit?: (fragment: Fragment) => void
   onExportImage?: (fragment: Fragment) => void
+  onOpenMindMap?: (map: MindMapSummary) => void
   onMoveToLockbox?: (fragment: Fragment) => void
   onOpenZen?: (fragment: Fragment) => void
   onPin?: (fragment: Fragment) => void
@@ -34,10 +37,12 @@ export function FragmentTimeline({
   fragments,
   isLoading,
   knownTags = [],
+  mindMaps = [],
   onArchive,
   onCancelEdit,
   onEdit,
   onExportImage,
+  onOpenMindMap,
   onMoveToLockbox,
   onOpenZen,
   onPin,
@@ -49,18 +54,27 @@ export function FragmentTimeline({
   vaultPath,
 }: FragmentTimelineProps) {
   const lastScrollTopRef = useRef(0)
+  const highlightFrameRef = useRef<number | null>(null)
+  const highlightTimeoutRef = useRef<number | null>(null)
   const programmaticScrollFrameRef = useRef<number | null>(null)
   const programmaticScrollRef = useRef(false)
   const programmaticScrollTimeoutRef = useRef<number | null>(null)
   const viewportRef = useRef<HTMLDivElement>(null)
+  const [highlightedFragmentId, setHighlightedFragmentId] = useState<
+    string | null
+  >(null)
   const [usesWaterfallColumns, setUsesWaterfallColumns] = useState(() =>
     typeof window === "undefined"
       ? false
       : window.matchMedia(WIDE_TIMELINE_QUERY).matches
   )
-  const fragmentColumns = useMemo(
-    () => splitIntoColumns(fragments, usesWaterfallColumns ? 2 : 1),
-    [fragments, usesWaterfallColumns]
+  const timelineItems = useMemo(
+    () => buildTimelineItems(fragments, mindMaps),
+    [fragments, mindMaps]
+  )
+  const timelineColumns = useMemo(
+    () => splitIntoColumns(timelineItems, usesWaterfallColumns ? 2 : 1),
+    [timelineItems, usesWaterfallColumns]
   )
 
   useEffect(() => {
@@ -80,6 +94,12 @@ export function FragmentTimeline({
 
   useEffect(() => {
     return () => {
+      if (highlightFrameRef.current !== null) {
+        window.cancelAnimationFrame(highlightFrameRef.current)
+      }
+      if (highlightTimeoutRef.current !== null) {
+        window.clearTimeout(highlightTimeoutRef.current)
+      }
       if (programmaticScrollFrameRef.current !== null) {
         window.cancelAnimationFrame(programmaticScrollFrameRef.current)
       }
@@ -97,7 +117,13 @@ export function FragmentTimeline({
       const didScroll = scrollFragmentIntoViewport(
         viewportRef.current,
         scrollToFragmentId,
-        beginProgrammaticViewportScroll
+        (targetScrollTop, behavior) => {
+          beginProgrammaticViewportScroll(
+            targetScrollTop,
+            behavior,
+            scrollToFragmentId
+          )
+        }
       )
 
       if (didScroll) {
@@ -109,7 +135,13 @@ export function FragmentTimeline({
         const didRetryScroll = scrollFragmentIntoViewport(
           viewportRef.current,
           scrollToFragmentId,
-          beginProgrammaticViewportScroll
+          (targetScrollTop, behavior) => {
+            beginProgrammaticViewportScroll(
+              targetScrollTop,
+              behavior,
+              scrollToFragmentId
+            )
+          }
         )
 
         if (didRetryScroll) {
@@ -123,10 +155,10 @@ export function FragmentTimeline({
       if (retryFrame) window.cancelAnimationFrame(retryFrame)
     }
   }, [
-    fragmentColumns,
     isLoading,
     onScrollToFragmentComplete,
     scrollToFragmentId,
+    timelineColumns,
   ])
 
   function handleViewportScroll(event: UIEvent<HTMLDivElement>) {
@@ -146,7 +178,8 @@ export function FragmentTimeline({
 
   function beginProgrammaticViewportScroll(
     targetScrollTop: number,
-    behavior: ScrollBehavior
+    behavior: ScrollBehavior,
+    fragmentId: string
   ) {
     programmaticScrollRef.current = true
 
@@ -159,7 +192,7 @@ export function FragmentTimeline({
 
     if (behavior === "auto") {
       programmaticScrollFrameRef.current = window.requestAnimationFrame(
-        clearProgrammaticViewportScroll
+        () => clearProgrammaticViewportScroll(fragmentId)
       )
       return
     }
@@ -168,7 +201,7 @@ export function FragmentTimeline({
       const viewport = viewportRef.current
       if (!viewport || Math.abs(viewport.scrollTop - targetScrollTop) <= 1) {
         programmaticScrollFrameRef.current = window.requestAnimationFrame(
-          clearProgrammaticViewportScroll
+          () => clearProgrammaticViewportScroll(fragmentId)
         )
         return
       }
@@ -182,12 +215,12 @@ export function FragmentTimeline({
       waitForSmoothScrollToSettle
     )
     programmaticScrollTimeoutRef.current = window.setTimeout(
-      clearProgrammaticViewportScroll,
+      () => clearProgrammaticViewportScroll(fragmentId),
       700
     )
   }
 
-  function clearProgrammaticViewportScroll() {
+  function clearProgrammaticViewportScroll(fragmentId: string) {
     if (programmaticScrollFrameRef.current !== null) {
       window.cancelAnimationFrame(programmaticScrollFrameRef.current)
     }
@@ -203,6 +236,28 @@ export function FragmentTimeline({
     programmaticScrollRef.current = false
     programmaticScrollFrameRef.current = null
     programmaticScrollTimeoutRef.current = null
+    flashFragmentCard(fragmentId)
+  }
+
+  function flashFragmentCard(fragmentId: string) {
+    if (highlightFrameRef.current !== null) {
+      window.cancelAnimationFrame(highlightFrameRef.current)
+    }
+    if (highlightTimeoutRef.current !== null) {
+      window.clearTimeout(highlightTimeoutRef.current)
+    }
+
+    setHighlightedFragmentId(null)
+    highlightFrameRef.current = window.requestAnimationFrame(() => {
+      setHighlightedFragmentId(fragmentId)
+      highlightFrameRef.current = null
+    })
+    highlightTimeoutRef.current = window.setTimeout(() => {
+      setHighlightedFragmentId((current) =>
+        current === fragmentId ? null : current
+      )
+      highlightTimeoutRef.current = null
+    }, 1400)
   }
 
   return (
@@ -216,7 +271,7 @@ export function FragmentTimeline({
           <div className="flex h-full items-center justify-center text-sm font-medium text-muted-foreground">
             正在读取 Shard vault...
           </div>
-        ) : fragments.length === 0 ? (
+        ) : timelineItems.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center gap-3 text-center text-muted-foreground">
             <InboxIcon className="size-8" />
             <div className="text-sm font-semibold text-balance">
@@ -226,29 +281,38 @@ export function FragmentTimeline({
         ) : (
           <div className="shard-content-inset pb-[var(--shard-space-8)]">
             <div className="shard-content-measure grid grid-cols-1 items-start gap-[var(--shard-card-gap)] 2xl:grid-cols-2">
-              {fragmentColumns.map((column, columnIndex) => (
+              {timelineColumns.map((column, columnIndex) => (
                 <div
                   className="flex min-w-0 flex-col gap-[var(--shard-card-gap)]"
                   key={columnIndex}
                 >
-                  {column.map((fragment) => (
-                    <FragmentCard
-                      fragment={fragment}
-                      isEditing={editingFragmentId === fragment.id}
-                      key={fragment.id}
-                      knownTags={knownTags}
-                      onArchive={onArchive}
-                      onCancelEdit={onCancelEdit}
-                      onEdit={onEdit}
-                      onExportImage={onExportImage}
-                      onMoveToLockbox={onMoveToLockbox}
-                      onOpenZen={onOpenZen}
-                      onPin={onPin}
-                      onSave={onSave}
-                      onToggleTask={onToggleTask}
-                      vaultPath={vaultPath}
-                    />
-                  ))}
+                  {column.map((item) =>
+                    item.kind === "fragment" ? (
+                      <FragmentCard
+                        fragment={item.fragment}
+                        isHighlighted={highlightedFragmentId === item.fragment.id}
+                        isEditing={editingFragmentId === item.fragment.id}
+                        key={item.id}
+                        knownTags={knownTags}
+                        onArchive={onArchive}
+                        onCancelEdit={onCancelEdit}
+                        onEdit={onEdit}
+                        onExportImage={onExportImage}
+                        onMoveToLockbox={onMoveToLockbox}
+                        onOpenZen={onOpenZen}
+                        onPin={onPin}
+                        onSave={onSave}
+                        onToggleTask={onToggleTask}
+                        vaultPath={vaultPath}
+                      />
+                    ) : (
+                      <MindMapTimelineCard
+                        key={item.id}
+                        map={item.map}
+                        onOpen={onOpenMindMap}
+                      />
+                    )
+                  )}
                 </div>
               ))}
             </div>
@@ -309,11 +373,52 @@ function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max)
 }
 
-function splitIntoColumns(fragments: Fragment[], columnCount: number) {
-  const columns = Array.from({ length: columnCount }, () => [] as Fragment[])
+type TimelineItem =
+  | {
+      id: string
+      kind: "fragment"
+      fragment: Fragment
+      pinned: boolean
+      timestamp: string
+    }
+  | {
+      id: string
+      kind: "mindMap"
+      map: MindMapSummary
+      pinned: false
+      timestamp: string
+    }
 
-  fragments.forEach((fragment, index) => {
-    columns[index % columnCount].push(fragment)
+function buildTimelineItems(
+  fragments: Fragment[],
+  mindMaps: MindMapSummary[]
+): TimelineItem[] {
+  return [
+    ...fragments.map((fragment) => ({
+      id: `fragment:${fragment.id}`,
+      kind: "fragment" as const,
+      fragment,
+      pinned: fragment.pinned,
+      timestamp: fragment.createdAt,
+    })),
+    ...mindMaps.map((map) => ({
+      id: `mind-map:${map.id}`,
+      kind: "mindMap" as const,
+      map,
+      pinned: false as const,
+      timestamp: map.createdAt,
+    })),
+  ].sort((a, b) => {
+    if (a.pinned !== b.pinned) return a.pinned ? -1 : 1
+    return b.timestamp.localeCompare(a.timestamp)
+  })
+}
+
+function splitIntoColumns(items: TimelineItem[], columnCount: number) {
+  const columns = Array.from({ length: columnCount }, () => [] as TimelineItem[])
+
+  items.forEach((item, index) => {
+    columns[index % columnCount].push(item)
   })
 
   return columns

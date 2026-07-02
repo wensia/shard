@@ -132,6 +132,10 @@ export function saveExportedImage(path: string, bytes: number[]) {
   return desktopInvoke<void>("save_exported_image", { path, bytes })
 }
 
+export function copyExportedImage(bytes: number[]) {
+  return desktopInvoke<void>("copy_exported_image", { bytes })
+}
+
 export function setWindowControlsHidden(hidden: boolean) {
   return desktopInvoke<void>("set_window_controls_hidden", { hidden })
 }

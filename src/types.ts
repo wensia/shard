@@ -79,6 +79,7 @@ export interface MindMapSummary {
   title: string
   createdAt: string
   updatedAt: string
+  nodeCount: number
   path: string
 }
 

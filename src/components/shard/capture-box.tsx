@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useId,
   useLayoutEffect,
@@ -37,6 +38,7 @@ import {
   extractTags,
   getActiveTag,
   getMarkdownImageAlt,
+  insertHorizontalRule,
   insertTagMarker,
   normalizeTag,
   normalizeTagList,
@@ -58,6 +60,7 @@ interface CaptureBoxProps {
   isCreating: boolean
   knownTags: string[]
   onCreate: (content: string, tags: string[]) => void | Promise<void>
+  onOpenZen?: (content: string) => void
 }
 
 interface PendingImage {
@@ -73,10 +76,12 @@ export function CaptureBox({
   isCreating,
   knownTags,
   onCreate,
+  onOpenZen,
 }: CaptureBoxProps) {
   const [content, setContent] = useState("")
   const [caretEpoch, setCaretEpoch] = useState(0)
   const [customCaret, setCustomCaret] = useState<EditorCaretBox | null>(null)
+  const [editorScrollTop, setEditorScrollTop] = useState(0)
   const [isEditorExpanded, setIsEditorExpanded] = useState(false)
   const [pendingImages, setPendingImages] = useState<PendingImage[]>([])
   const [selectionStart, setSelectionStart] = useState(0)
@@ -140,6 +145,19 @@ export function CaptureBox({
   const canSubmit =
     (content.trim().length > 0 || pendingImages.length > 0) && !isCreating
 
+  const syncTextareaGeometry = useCallback(() => {
+    const textarea = textareaRef.current
+    resizeTextarea(
+      textarea,
+      isEditorExpanded,
+      containerRef.current,
+      editorFrameRef.current
+    )
+    if (textarea) {
+      setEditorScrollTop(textarea.scrollTop)
+    }
+  }, [isEditorExpanded])
+
   useEffect(() => {
     setActiveSuggestionIndex(0)
   }, [activeNewTag])
@@ -181,8 +199,25 @@ export function CaptureBox({
   }, [])
 
   useLayoutEffect(() => {
-    resizeTextarea(textareaRef.current, isEditorExpanded)
-  }, [content, isEditorExpanded])
+    syncTextareaGeometry()
+  }, [content, pendingImages.length, syncTextareaGeometry])
+
+  useEffect(() => {
+    function handleViewportResize() {
+      syncTextareaGeometry()
+    }
+
+    window.addEventListener("resize", handleViewportResize)
+    window.visualViewport?.addEventListener("resize", handleViewportResize)
+
+    return () => {
+      window.removeEventListener("resize", handleViewportResize)
+      window.visualViewport?.removeEventListener(
+        "resize",
+        handleViewportResize
+      )
+    }
+  }, [syncTextareaGeometry])
 
   useLayoutEffect(() => {
     const textarea = textareaRef.current
@@ -199,7 +234,14 @@ export function CaptureBox({
     }
 
     setCustomCaret(getEditorCaretBox(textarea, frame, selectionStart))
-  }, [content, isEditorExpanded, isEditorFocused, selectionEnd, selectionStart])
+  }, [
+    content,
+    editorScrollTop,
+    isEditorExpanded,
+    isEditorFocused,
+    selectionEnd,
+    selectionStart,
+  ])
 
   useLayoutEffect(() => {
     if (!activeTag || !textareaRef.current || !containerRef.current) return
@@ -217,7 +259,7 @@ export function CaptureBox({
 
       return isSamePosition ? currentPosition : nextPosition
     })
-  }, [activeTag, content, selectionStart])
+  }, [activeTag, content, editorScrollTop, selectionStart])
 
   async function submit() {
     if (isCreating) return
@@ -308,6 +350,45 @@ export function CaptureBox({
     applyTextEdit(nextEdit)
   }
 
+  function insertDivider() {
+    const textarea = textareaRef.current
+    if (!textarea) return
+
+    setIsEditorExpanded(true)
+    applyTextEdit(
+      insertHorizontalRule(
+        content,
+        textarea.selectionStart,
+        textarea.selectionEnd
+      )
+    )
+  }
+
+  function openZenEditor() {
+    if (!onOpenZen) return
+
+    if (pendingImages.length > 0) {
+      toast.warning("带图片的草稿暂不能切换到禅模式", {
+        description: "请先保存当前片段，或移除图片后再进入禅模式。",
+      })
+      return
+    }
+
+    const draftContent = textareaRef.current?.value ?? content
+    onOpenZen(draftContent)
+    setContent("")
+    setIsEditorExpanded(false)
+    setSelectionStart(0)
+    setSelectionEnd(0)
+    requestAnimationFrame(() => {
+      const textarea = textareaRef.current
+      if (!textarea) return
+
+      textarea.value = ""
+      textarea.setSelectionRange(0, 0)
+    })
+  }
+
   async function uploadImage(file: File) {
     const textarea = textareaRef.current
     if (!textarea) return
@@ -385,6 +466,12 @@ export function CaptureBox({
     const isSaveShortcut =
       event.key === "Enter" &&
       (event.metaKey || event.ctrlKey)
+    const isZenShortcut =
+      !!onOpenZen &&
+      (event.metaKey || event.ctrlKey) &&
+      event.shiftKey &&
+      !event.altKey &&
+      event.key.toLowerCase() === "f"
     const isComposing =
       isComposingRef.current ||
       nativeEvent.isComposing ||
@@ -392,6 +479,14 @@ export function CaptureBox({
       nativeEvent.keyCode === 229
 
     if (isComposing) {
+      return
+    }
+
+    if (isZenShortcut) {
+      event.preventDefault()
+      if (!isCreating) {
+        openZenEditor()
+      }
       return
     }
 
@@ -573,16 +668,26 @@ export function CaptureBox({
         {content ? (
           <div
             aria-hidden="true"
-            className="shard-editor-highlight-layer shard-memo-tags px-[var(--shard-composer-padding)] py-[var(--shard-composer-padding)]"
+            className="shard-editor-highlight-layer shard-memo-tags"
           >
-            <FragmentContent
-              caretAligned
-              content={content}
-              highlightTags
-              onTaskToggle={toggleTask}
-              selectionEnd={isEditorFocused ? selectionEnd : undefined}
-              selectionStart={isEditorFocused ? selectionStart : undefined}
-            />
+            <div
+              className="px-[var(--shard-composer-padding)] py-[var(--shard-composer-padding)]"
+              style={{
+                transform:
+                  editorScrollTop > 0
+                    ? `translateY(-${editorScrollTop}px)`
+                    : undefined,
+              }}
+            >
+              <FragmentContent
+                caretAligned
+                content={content}
+                highlightTags
+                onTaskToggle={toggleTask}
+                selectionEnd={isEditorFocused ? selectionEnd : undefined}
+                selectionStart={isEditorFocused ? selectionStart : undefined}
+              />
+            </div>
           </div>
         ) : null}
         <Textarea
@@ -624,6 +729,9 @@ export function CaptureBox({
           }}
           onSelect={(event) => {
             syncSelection(event.currentTarget)
+          }}
+          onScroll={(event) => {
+            setEditorScrollTop(event.currentTarget.scrollTop)
           }}
           onBlur={() => {
             setIsEditorFocused(false)
@@ -690,8 +798,10 @@ export function CaptureBox({
             disabled={isCreating}
             onImageUpload={uploadImage}
             onInlineFormat={formatInline}
+            onInsertHorizontalRule={insertDivider}
             onInsertTag={insertTag}
             onLineFormat={formatLines}
+            onOpenZen={onOpenZen ? openZenEditor : undefined}
             trailing={
               <Button
                 className={`shard-edge-action shard-edge-action-save rounded-full bg-[color:var(--shard-sapphire)] text-white hover:bg-[color:var(--shard-sapphire-hover)] ${
@@ -779,7 +889,9 @@ const TEXTAREA_MIRROR_PROPERTIES = [
 
 function resizeTextarea(
   textarea: HTMLTextAreaElement | null,
-  isExpanded: boolean
+  isExpanded: boolean,
+  container: HTMLDivElement | null,
+  editorFrame: HTMLDivElement | null
 ) {
   if (!textarea) return
 
@@ -788,10 +900,65 @@ function resizeTextarea(
     : CAPTURE_COLLAPSED_ROWS
   const minimumHeight = getTextareaRowsHeight(textarea, targetRows)
   const contentHeight = getTextareaContentHeight(textarea)
-  const nextHeight = Math.max(contentHeight, minimumHeight)
+  const maximumHeight = getCaptureTextareaMaxHeight(container, editorFrame)
+  const boundedMinimumHeight =
+    maximumHeight === null
+      ? minimumHeight
+      : Math.min(minimumHeight, maximumHeight)
+  const nextHeight =
+    maximumHeight === null
+      ? Math.max(contentHeight, minimumHeight)
+      : Math.min(Math.max(contentHeight, boundedMinimumHeight), maximumHeight)
+  const isScrollable = contentHeight > nextHeight + 1
 
-  textarea.style.minHeight = `${minimumHeight}px`
+  textarea.style.minHeight = `${boundedMinimumHeight}px`
+  if (maximumHeight === null) {
+    textarea.style.removeProperty("max-height")
+  } else {
+    textarea.style.maxHeight = `${maximumHeight}px`
+  }
   textarea.style.height = `${nextHeight}px`
+  textarea.style.overflowY = isScrollable ? "auto" : "hidden"
+
+  if (!isScrollable && textarea.scrollTop !== 0) {
+    textarea.scrollTop = 0
+  }
+}
+
+function getCaptureTextareaMaxHeight(
+  container: HTMLDivElement | null,
+  editorFrame: HTMLDivElement | null
+) {
+  if (!container || !editorFrame) return null
+
+  const containerRect = container.getBoundingClientRect()
+  const editorFrameRect = editorFrame.getBoundingClientRect()
+  const viewportBottom = getCaptureViewportBottom(container)
+  const rootStyles = window.getComputedStyle(document.documentElement)
+  const bottomGap = toPixelValue(
+    rootStyles.getPropertyValue("--shard-composer-bottom-gap"),
+    16
+  )
+  const composerChromeHeight = Math.max(
+    0,
+    containerRect.height - editorFrameRect.height
+  )
+
+  return Math.max(
+    1,
+    Math.floor(
+      viewportBottom - containerRect.top - bottomGap - composerChromeHeight
+    )
+  )
+}
+
+function getCaptureViewportBottom(container: HTMLDivElement) {
+  const mainColumn = container.closest("section")
+  if (mainColumn instanceof HTMLElement) {
+    return mainColumn.getBoundingClientRect().bottom
+  }
+
+  return window.visualViewport?.height ?? window.innerHeight
 }
 
 function getTextareaContentHeight(textarea: HTMLTextAreaElement) {

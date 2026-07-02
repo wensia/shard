@@ -6,6 +6,7 @@ import {
   useRef,
   useState,
   type ClipboardEvent,
+  type FocusEvent,
   type KeyboardEvent,
   type MouseEvent,
 } from "react"
@@ -39,6 +40,7 @@ import {
   getActiveTag,
   getTagRanges,
   getMarkdownImageAlt,
+  insertHorizontalRule,
   insertTagMarker,
   normalizeTag,
   normalizeTagList,
@@ -62,10 +64,18 @@ import {
 } from "@/lib/tag-index"
 import type { Fragment } from "@/types"
 
+export interface FragmentEditorDraft {
+  content: string
+  id: number
+}
+
 interface FragmentEditorProps {
+  commitOnBlur?: boolean
+  draft?: FragmentEditorDraft | null
   fragment: Fragment | null
   knownTags: string[]
   onClose: () => void
+  onCreate?: (content: string, tags: string[]) => Promise<void>
   onSave: (id: string, content: string, tags: string[]) => Promise<Fragment>
   variant?: "inline" | "zen"
   vaultPath?: string
@@ -81,9 +91,12 @@ interface EditorImageAttachment {
 }
 
 export function FragmentEditor({
+  commitOnBlur = false,
+  draft = null,
   fragment,
   knownTags,
   onClose,
+  onCreate,
   onSave,
   variant = "zen",
   vaultPath,
@@ -110,13 +123,17 @@ export function FragmentEditor({
   const isComposingRef = useRef(false)
   const imageAttachmentsRef = useRef<EditorImageAttachment[]>([])
   const lastSavedContentRef = useRef("")
+  const onCreateRef = useRef(onCreate)
   const onSaveRef = useRef(onSave)
+  const blurCommitTimerRef = useRef<number | null>(null)
   const saveTimerRef = useRef<number | null>(null)
   const editorFrameRef = useRef<HTMLDivElement>(null)
   const lastPointerRef = useRef<PointerPoint | null>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const tagPopoverId = useId()
   const isZen = variant === "zen"
+  const isDraft = fragment === null && draft !== null
+  const isOpen = fragment !== null || draft !== null
 
   const rawActiveTag = useMemo(
     () => getActiveTag(content, selectionStart),
@@ -180,11 +197,16 @@ export function FragmentEditor({
   }, [onSave])
 
   useEffect(() => {
+    onCreateRef.current = onCreate
+  }, [onCreate])
+
+  useEffect(() => {
     imageAttachmentsRef.current = imageAttachments
   }, [imageAttachments])
 
   useEffect(() => {
     return () => {
+      clearBlurCommitTimer()
       revokeEditorImagePreviewUrls(imageAttachmentsRef.current)
     }
   }, [])
@@ -208,27 +230,34 @@ export function FragmentEditor({
   }, [])
 
   useEffect(() => {
-    if (!fragment) {
+    if (!fragment && !draft) {
       revokeEditorImagePreviewUrls(imageAttachmentsRef.current)
       imageAttachmentsRef.current = []
+      setContent("")
       setImageAttachments([])
+      setSelectionEnd(0)
+      setSelectionStart(0)
+      setSaveState("saved")
+      lastSavedContentRef.current = ""
       return
     }
 
-    const draft = splitContentImageAttachments(fragment.content)
-    const cursor = draft.content.length
+    const sourceContent = fragment?.content ?? draft?.content ?? ""
+    const nextDraft = splitContentImageAttachments(sourceContent)
+    const cursor = nextDraft.content.length
     revokeEditorImagePreviewUrls(imageAttachmentsRef.current)
-    imageAttachmentsRef.current = draft.images
-    setContent(draft.content)
-    setImageAttachments(draft.images)
+    imageAttachmentsRef.current = nextDraft.images
+    setContent(nextDraft.content)
+    setImageAttachments(nextDraft.images)
     setSelectionEnd(cursor)
     setSelectionStart(cursor)
-    setSuppressedActiveTag({ content: draft.content, cursor })
-    setSaveState("saved")
-    lastSavedContentRef.current = buildContentWithImageAttachments(
-      draft.content,
-      draft.images
+    setSuppressedActiveTag({ content: nextDraft.content, cursor })
+    const initialContent = buildContentWithImageAttachments(
+      nextDraft.content,
+      nextDraft.images
     )
+    lastSavedContentRef.current = fragment ? initialContent : ""
+    setSaveState(fragment || !initialContent ? "saved" : "dirty")
 
     requestAnimationFrame(() => {
       const textarea = textareaRef.current
@@ -245,7 +274,7 @@ export function FragmentEditor({
       setSelectionEnd(cursor)
       setIsEditorFocused(true)
     })
-  }, [fragment?.id])
+  }, [draft?.id, fragment?.id])
 
   useLayoutEffect(() => {
     const textarea = textareaRef.current
@@ -283,7 +312,7 @@ export function FragmentEditor({
   }, [activeTag, content, editorScrollTop, selectionStart])
 
   useEffect(() => {
-    if (!fragment) return
+    if (!isOpen) return
 
     clearSaveTimer()
 
@@ -294,17 +323,17 @@ export function FragmentEditor({
 
     setSaveState("dirty")
 
-    if (!isZen) return
+    if (!isZen || isDraft) return
 
     saveTimerRef.current = window.setTimeout(() => {
       void saveDraft(draftContent)
     }, 800)
 
     return clearSaveTimer
-  }, [draftContent, fragment?.id, isZen])
+  }, [draft?.id, draftContent, fragment?.id, isDraft, isOpen, isZen])
 
   useEffect(() => {
-    if (!fragment || !isZen || !isTauri()) return
+    if (!isOpen || !isZen || !isTauri()) return
 
     void setWindowControlsHidden(true).catch((error) => {
       console.warn("Unable to hide window controls for zen editor", error)
@@ -315,11 +344,12 @@ export function FragmentEditor({
         console.warn("Unable to restore window controls", error)
       })
     }
-  }, [fragment?.id, isZen])
+  }, [draft?.id, fragment?.id, isOpen, isZen])
 
-  if (!fragment) return null
+  if (!isOpen) return null
 
   async function handleClose() {
+    clearBlurCommitTimer()
     clearSaveTimer()
 
     if (!isZen) {
@@ -336,6 +366,7 @@ export function FragmentEditor({
   }
 
   async function handleSubmit() {
+    clearBlurCommitTimer()
     clearSaveTimer()
 
     if (draftContent === lastSavedContentRef.current) {
@@ -347,6 +378,25 @@ export function FragmentEditor({
     if (saved) {
       onClose()
     }
+  }
+
+  function handleEditorBlur(event: FocusEvent<HTMLElement>) {
+    if (!commitOnBlur || isZen) return
+
+    const editorElement = event.currentTarget
+    const nextFocused = event.relatedTarget
+    if (nextFocused instanceof Node && editorElement.contains(nextFocused)) return
+
+    clearBlurCommitTimer()
+    blurCommitTimerRef.current = window.setTimeout(() => {
+      blurCommitTimerRef.current = null
+      const activeElement = document.activeElement
+      if (activeElement instanceof Node && editorElement.contains(activeElement)) {
+        return
+      }
+
+      void handleSubmit()
+    }, 0)
   }
 
   function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
@@ -493,7 +543,6 @@ export function FragmentEditor({
   }
 
   async function saveDraft(nextContent: string) {
-    if (!fragment) return false
     if (nextContent.trim().length === 0) {
       setSaveState("error")
       toast.error("片段内容不能为空")
@@ -504,16 +553,26 @@ export function FragmentEditor({
 
     try {
       const tags = normalizeTagList(["inbox", ...extractTags(nextContent)])
-      if ((fragment.lockbox || wantsLockbox(nextContent, tags)) && hasMarkdownImage(nextContent)) {
+      const editsLockbox = Boolean(fragment?.lockbox)
+      if ((editsLockbox || wantsLockbox(nextContent, tags)) && hasMarkdownImage(nextContent)) {
         throw new Error("密匣暂不支持图片附件。请先移除图片，再保存到密匣。")
       }
-      await onSaveRef.current(fragment.id, nextContent, tags)
+      if (isDraft) {
+        if (!onCreateRef.current) {
+          throw new Error("当前编辑器缺少创建入口。")
+        }
+        await onCreateRef.current(nextContent, tags)
+      } else if (fragment) {
+        await onSaveRef.current(fragment.id, nextContent, tags)
+      } else {
+        return false
+      }
       lastSavedContentRef.current = nextContent
       setSaveState("saved")
       return true
     } catch (error) {
       setSaveState("error")
-      toast.error("自动保存失败", {
+      toast.error(isDraft ? "保存失败" : "自动保存失败", {
         description: getApiErrorMessage(error),
       })
       return false
@@ -568,11 +627,25 @@ export function FragmentEditor({
     )
   }
 
+  function insertDivider() {
+    const textarea = textareaRef.current
+    if (!textarea) return
+
+    setSuppressedActiveTag(null)
+    applyTextEdit(
+      insertHorizontalRule(
+        content,
+        textarea.selectionStart,
+        textarea.selectionEnd
+      )
+    )
+  }
+
   async function uploadImage(file: File) {
     const textarea = textareaRef.current
-    if (!textarea || !fragment) return
+    if (!textarea) return
     const tags = normalizeTagList(["inbox", ...extractTags(draftContent)])
-    if (fragment.lockbox || wantsLockbox(draftContent, tags)) {
+    if (fragment?.lockbox || wantsLockbox(draftContent, tags)) {
       toast.error("密匣暂不支持图片附件", {
         description: "请先移除 #密匣，或在公开笔记中上传图片。",
       })
@@ -661,6 +734,12 @@ export function FragmentEditor({
     if (saveTimerRef.current === null) return
     window.clearTimeout(saveTimerRef.current)
     saveTimerRef.current = null
+  }
+
+  function clearBlurCommitTimer() {
+    if (blurCommitTimerRef.current === null) return
+    window.clearTimeout(blurCommitTimerRef.current)
+    blurCommitTimerRef.current = null
   }
 
   function syncSelection(textarea: HTMLTextAreaElement) {
@@ -854,7 +933,10 @@ export function FragmentEditor({
 
   if (!isZen) {
     return (
-      <article className="relative flex flex-col rounded-[var(--shard-surface-radius)] border border-border bg-card p-0 shadow-[var(--shard-composer-shadow)] transition-colors focus-within:border-[color:var(--shard-sapphire)]">
+      <article
+        className="relative flex flex-col rounded-[var(--shard-surface-radius)] border border-border bg-card p-0 shadow-[var(--shard-composer-shadow)] transition-colors focus-within:border-[color:var(--shard-sapphire)]"
+        onBlurCapture={handleEditorBlur}
+      >
         {editorFrame}
         {imageAttachmentRow}
         <div className="shard-edge-action-row rounded-b-[var(--shard-surface-radius)] bg-card">
@@ -862,6 +944,7 @@ export function FragmentEditor({
             disabled={saveState === "saving"}
             onImageUpload={uploadImage}
             onInlineFormat={formatInline}
+            onInsertHorizontalRule={insertDivider}
             onInsertTag={insertTag}
             onLineFormat={formatLines}
             trailing={
@@ -932,6 +1015,7 @@ export function FragmentEditor({
             disabled={saveState === "saving"}
             onImageUpload={uploadImage}
             onInlineFormat={formatInline}
+            onInsertHorizontalRule={insertDivider}
             onInsertTag={insertTag}
             onLineFormat={formatLines}
             trailing={

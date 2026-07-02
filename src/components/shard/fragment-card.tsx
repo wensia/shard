@@ -1,7 +1,6 @@
 import {
   ArchiveIcon,
   LockKeyholeIcon,
-  Maximize2Icon,
   MoreHorizontalIcon,
   PencilLineIcon,
   PinIcon,
@@ -19,11 +18,14 @@ import {
 import { Button } from "@/components/ui/button"
 import { FragmentEditor } from "@/components/shard/fragment-editor"
 import { FragmentBody } from "@/components/shard/fragment-body"
+import { ShardZenIcon } from "@/components/shard/shard-zen-icon"
 import { TagBadge } from "@/components/shard/tag-badge"
+import { cn } from "@/lib/utils"
 import type { Fragment } from "@/types"
 
 interface FragmentCardProps {
   fragment: Fragment
+  isHighlighted?: boolean
   isEditing?: boolean
   knownTags?: string[]
   onArchive?: (fragment: Fragment) => void
@@ -40,6 +42,7 @@ interface FragmentCardProps {
 
 export function FragmentCard({
   fragment,
+  isHighlighted = false,
   isEditing = false,
   knownTags = [],
   onArchive,
@@ -59,8 +62,12 @@ export function FragmentCard({
 
   if (isEditing && onSave) {
     return (
-      <div data-shard-fragment-id={fragment.id}>
+      <div
+        className={cn(isHighlighted && "shard-fragment-card-highlight")}
+        data-shard-fragment-id={fragment.id}
+      >
         <FragmentEditor
+          commitOnBlur
           fragment={fragment}
           knownTags={knownTags}
           onClose={() => onCancelEdit?.()}
@@ -74,7 +81,10 @@ export function FragmentCard({
 
   return (
     <article
-      className="group flex flex-col rounded-[var(--shard-surface-radius)] bg-card px-[var(--shard-card-padding-x)] pt-[var(--shard-card-padding-y)] pb-[var(--shard-card-padding-bottom)]"
+      className={cn(
+        "group flex flex-col rounded-[var(--shard-surface-radius)] bg-card px-[var(--shard-card-padding-x)] pt-[var(--shard-card-padding-y)] pb-[var(--shard-card-padding-bottom)]",
+        isHighlighted && "shard-fragment-card-highlight"
+      )}
       data-shard-fragment-id={fragment.id}
     >
       <div className="flex items-start gap-[var(--shard-card-gap)]">
@@ -106,6 +116,7 @@ export function FragmentCard({
           ) : null}
           <FragmentBody
             content={displayContent}
+            contentClassName="shard-fragment-card-content"
             downloadableImages
             hideTags
             onTaskToggle={(lineIndex) => onToggleTask?.(fragment, lineIndex)}
@@ -140,7 +151,7 @@ export function FragmentCard({
                     className="grid h-8 grid-cols-[14px_max-content] gap-[var(--shard-space-2)] px-[var(--shard-space-2)] text-[13px] font-medium whitespace-nowrap [&_svg]:size-3.5 [&_svg]:stroke-[1.65]"
                     onClick={() => onOpenZen(fragment)}
                   >
-                    <Maximize2Icon />
+                    <ShardZenIcon />
                     禅模式
                   </DropdownMenuItem>
                 ) : null}

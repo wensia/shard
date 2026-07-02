@@ -7,18 +7,22 @@ import {
   ListIcon,
   ListOrderedIcon,
   ListTodoIcon,
+  SeparatorHorizontalIcon,
   UnderlineIcon,
 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
+import { ShardZenIcon } from "@/components/shard/shard-zen-icon"
 import type { InlineFormat, LineFormat } from "@/lib/editor-format"
 
 interface EditorToolbarProps {
   disabled?: boolean
   onImageUpload: (file: File) => void | Promise<void>
   onInlineFormat: (format: InlineFormat) => void
+  onInsertHorizontalRule: () => void
   onInsertTag: () => void
   onLineFormat: (format: LineFormat) => void
+  onOpenZen?: () => void
   trailing?: ReactNode
 }
 
@@ -26,8 +30,10 @@ export function EditorToolbar({
   disabled = false,
   onImageUpload,
   onInlineFormat,
+  onInsertHorizontalRule,
   onInsertTag,
   onLineFormat,
+  onOpenZen,
   trailing,
 }: EditorToolbarProps) {
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -82,6 +88,12 @@ export function EditorToolbar({
           label="复选框"
           onClick={() => onLineFormat("task")}
         />
+        <ToolbarButton
+          disabled={disabled}
+          icon={<SeparatorHorizontalIcon data-icon="inline-start" />}
+          label="分割线"
+          onClick={onInsertHorizontalRule}
+        />
         <ToolbarDivider />
         <ToolbarButton
           disabled={disabled}
@@ -101,6 +113,22 @@ export function EditorToolbar({
           label="荧光笔"
           onClick={() => onInlineFormat("highlight")}
         />
+        {onOpenZen ? (
+          <>
+            <ToolbarDivider />
+            <ToolbarButton
+              disabled={disabled}
+              icon={
+                <ShardZenIcon
+                  className="size-[18px]"
+                  data-icon="inline-start"
+                />
+              }
+              label="禅模式"
+              onClick={onOpenZen}
+            />
+          </>
+        ) : null}
       </div>
 
       {trailing ? (

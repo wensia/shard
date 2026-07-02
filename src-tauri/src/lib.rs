@@ -26,6 +26,7 @@ use tauri::Manager;
 
 const DEFAULT_WINDOW_WIDTH: f64 = 1180.0;
 const DEFAULT_WINDOW_HEIGHT: f64 = 820.0;
+const DEFAULT_WINDOW_TITLE: &str = "Shard";
 const LOCKBOX_TAG: &str = "密匣";
 const LOCKBOX_TTL: Duration = Duration::from_secs(15 * 60);
 const LOCKBOX_VERSION: u32 = 1;
@@ -37,6 +38,8 @@ const LOCKBOX_NONCE_BYTES: usize = 12;
 const LOCKBOX_FRAGMENT_KEY_ALGORITHM: &str = "rsa-oaep-sha256-aes-256-gcm";
 const SHARD_MAP_KIND: &str = "shard.map";
 const SHARD_MAP_SCHEMA_VERSION: u32 = 1;
+const SHARD_MAP_MAX_NODES: usize = 400;
+const SHARD_MAP_MAX_NODE_TEXT_CHARS: usize = 2_000;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -166,6 +169,7 @@ struct MindMapSummary {
     title: String,
     created_at: String,
     updated_at: String,
+    node_count: usize,
     path: String,
 }
 
@@ -697,7 +701,8 @@ fn create_mind_map_in_vault(
     let now = Local::now();
     let suffix = unique_suffix();
     let id = format!("map-{}-{}", now.format("%Y%m%d-%H%M%S"), suffix);
-    let root_id = format!("node-{}", unique_suffix());
+    let root_id = format!("node-{}-root", suffix);
+    let first_branch_id = format!("node-{}-branch", suffix);
     let created_at = now.to_rfc3339();
     let mut links = Vec::new();
 
@@ -725,8 +730,21 @@ fn create_mind_map_in_vault(
         links,
         style: None,
     };
+    let first_branch = ShardMapNode {
+        id: first_branch_id.clone(),
+        parent_id: Some(root_id.clone()),
+        sort_key: "m".to_string(),
+        text: String::new(),
+        note: None,
+        collapsed: false,
+        created_at: created_at.clone(),
+        updated_at: created_at.clone(),
+        links: Vec::new(),
+        style: None,
+    };
     let mut nodes = BTreeMap::new();
     nodes.insert(root_id.clone(), root_node);
+    nodes.insert(first_branch_id, first_branch);
 
     let file = ShardMapFile {
         kind: SHARD_MAP_KIND.to_string(),
@@ -1219,6 +1237,49 @@ async fn save_exported_image(path: String, bytes: Vec<u8>) -> Result<(), String>
 }
 
 #[tauri::command]
+async fn copy_exported_image(bytes: Vec<u8>) -> Result<(), String> {
+    run_blocking(move || {
+        if bytes.is_empty() {
+            return Err("图片内容为空".to_string());
+        }
+        if sniff_image_mime_type(&bytes)? != "image/png" {
+            return Err("只能复制 PNG 图片".to_string());
+        }
+
+        copy_png_to_clipboard(bytes)
+    })
+    .await
+}
+
+#[cfg(target_os = "macos")]
+fn copy_png_to_clipboard(bytes: Vec<u8>) -> Result<(), String> {
+    use objc2_app_kit::{NSPasteboard, NSPasteboardType, NSPasteboardTypePNG};
+    use objc2_foundation::{NSArray, NSData};
+
+    let data = NSData::with_bytes(&bytes);
+    let pasteboard = NSPasteboard::generalPasteboard();
+    pasteboard.clearContents();
+
+    let png_type = unsafe { NSPasteboardTypePNG };
+    let types = NSArray::<NSPasteboardType>::from_slice(&[png_type]);
+    unsafe {
+        pasteboard.declareTypes_owner(&types, None);
+    }
+
+    let did_write = pasteboard.setData_forType(Some(&data), png_type);
+    if did_write {
+        Ok(())
+    } else {
+        Err("写入系统剪贴板失败".to_string())
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn copy_png_to_clipboard(_bytes: Vec<u8>) -> Result<(), String> {
+    Err("当前桌面平台暂不支持复制 PNG 图片。".to_string())
+}
+
+#[tauri::command]
 async fn setup_lockbox(
     app: tauri::AppHandle,
     lockbox_runtime: tauri::State<'_, LockboxRuntime>,
@@ -1327,6 +1388,10 @@ fn set_window_controls_hidden(window: tauri::Window, hidden: bool) -> Result<(),
             control.setHidden(hidden);
         }
     }
+
+    window
+        .set_title(if hidden { "" } else { DEFAULT_WINDOW_TITLE })
+        .map_err(|error| error.to_string())?;
 
     Ok(())
 }
@@ -1593,11 +1658,13 @@ fn is_mind_map_file(path: &Path) -> bool {
 
 fn read_mind_map_summary(path: &Path, vault: &Path) -> Result<MindMapSummary, String> {
     let (file, _) = read_mind_map_file(path)?;
+    validate_mind_map_file(vault, &file)?;
     Ok(MindMapSummary {
         id: file.id,
         title: file.title,
         created_at: file.created_at,
         updated_at: file.updated_at,
+        node_count: file.nodes.len(),
         path: relative_path(vault, path)?,
     })
 }
@@ -1640,11 +1707,78 @@ fn validate_mind_map_file(vault: &Path, file: &ShardMapFile) -> Result<(), Strin
     if !file.nodes.contains_key(&file.root_id) {
         return Err("导图缺少 root 节点。".to_string());
     }
+    if file.nodes.len() > SHARD_MAP_MAX_NODES {
+        return Err(format!(
+            "导图节点数量不能超过 {}。",
+            SHARD_MAP_MAX_NODES
+        ));
+    }
+    if file
+        .nodes
+        .get(&file.root_id)
+        .and_then(|node| node.parent_id.as_ref())
+        .is_some()
+    {
+        return Err("root 节点的 parentId 必须为空。".to_string());
+    }
 
     for (node_id, node) in &file.nodes {
         validate_mind_map_node(vault, file, node_id, node)?;
     }
 
+    validate_mind_map_tree_shape(file)?;
+
+    Ok(())
+}
+
+fn validate_mind_map_tree_shape(file: &ShardMapFile) -> Result<(), String> {
+    let mut sibling_sort_keys = HashSet::new();
+
+    for node in file.nodes.values() {
+        let parent_key = node.parent_id.as_deref().unwrap_or("__root__");
+        let sibling_key = format!("{}\u{0}{}", parent_key, node.sort_key);
+        if !sibling_sort_keys.insert(sibling_key) {
+            return Err(format!(
+                "同级节点存在重复 sortKey：{}。",
+                node.sort_key
+            ));
+        }
+    }
+
+    let mut visited = HashSet::new();
+    let mut visiting = HashSet::new();
+    visit_mind_map_node(file, &file.root_id, &mut visiting, &mut visited)?;
+
+    if visited.len() != file.nodes.len() {
+        return Err("导图包含无法从 root 到达的节点。".to_string());
+    }
+
+    Ok(())
+}
+
+fn visit_mind_map_node(
+    file: &ShardMapFile,
+    node_id: &str,
+    visiting: &mut HashSet<String>,
+    visited: &mut HashSet<String>,
+) -> Result<(), String> {
+    if visited.contains(node_id) {
+        return Ok(());
+    }
+    if !visiting.insert(node_id.to_string()) {
+        return Err("导图包含循环父子关系。".to_string());
+    }
+
+    for child in file
+        .nodes
+        .values()
+        .filter(|node| node.parent_id.as_deref() == Some(node_id))
+    {
+        visit_mind_map_node(file, &child.id, visiting, visited)?;
+    }
+
+    visiting.remove(node_id);
+    visited.insert(node_id.to_string());
     Ok(())
 }
 
@@ -1662,6 +1796,9 @@ fn validate_mind_map_node(
     }
     if node.sort_key.trim().is_empty() {
         return Err(format!("节点 {} 缺少 sortKey。", node.id));
+    }
+    if node.text.chars().count() > SHARD_MAP_MAX_NODE_TEXT_CHARS {
+        return Err(format!("节点 {} 文本过长。", node.id));
     }
     if node.parent_id.is_none() && node.id != file.root_id {
         return Err(format!("非 root 节点 {} 缺少 parentId。", node.id));
@@ -3817,6 +3954,7 @@ pub fn run() {
             reveal_fragment_image_in_dir,
             save_recovery_key,
             save_exported_image,
+            copy_exported_image,
             set_window_controls_hidden,
             restore_window_frame,
             sync_vault
@@ -3891,6 +4029,14 @@ mod tests {
 
         let root = created.file.nodes.get(&created.file.root_id).unwrap();
         assert_eq!(root.links.len(), 1);
+        let root_children = created
+            .file
+            .nodes
+            .values()
+            .filter(|node| node.parent_id.as_deref() == Some(created.file.root_id.as_str()))
+            .collect::<Vec<_>>();
+        assert_eq!(root_children.len(), 1);
+        assert_eq!(root_children[0].text, "");
         match &root.links[0] {
             ShardDocumentLink::Fragment { target_id, .. } => {
                 assert_eq!(target_id, &fragment_id);
@@ -3901,6 +4047,27 @@ mod tests {
         let summaries = list_mind_maps_in_vault(vault).unwrap();
         assert_eq!(summaries.len(), 1);
         assert_eq!(summaries[0].id, created.file.id);
+        assert_eq!(summaries[0].node_count, 2);
+    }
+
+    #[test]
+    fn rejects_invalid_mind_map_tree_shape() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let vault = tempdir.path();
+        ensure_vault_layout(vault).unwrap();
+        let created = create_mind_map_in_vault(vault, "Draft".to_string(), None).unwrap();
+        let mut edited = created.file.clone();
+        let child_id = edited
+            .nodes
+            .values()
+            .find(|node| node.parent_id.as_deref() == Some(edited.root_id.as_str()))
+            .unwrap()
+            .id
+            .clone();
+        edited.nodes.get_mut(&edited.root_id).unwrap().parent_id = Some(child_id);
+
+        let error = validate_mind_map_file(vault, &edited).unwrap_err();
+        assert!(error.contains("root 节点"));
     }
 
     #[test]

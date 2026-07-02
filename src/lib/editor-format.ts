@@ -33,6 +33,8 @@ const UNORDERED_LIST_MARKER_PATTERN =
 const TASK_LINE_MARKER_PATTERN =
   /^(\s*)((?:[-*+]|\d+[.)])\s+)(\[[ xX]\]\s*)/
 const MARKDOWN_IMAGE_LINE_PATTERN = /^\s*!\[([^\]\n]*)\]\(([^)\n]+)\)\s*$/
+const MARKDOWN_HORIZONTAL_RULE_LINE_PATTERN =
+  /^\s{0,3}(?:-{3,}|\*{3,}|_{3,})\s*$/
 const ORDERED_LIST_PREFIX_PATTERN = /^\d+[.)]\s+$/
 const TRAILING_TAG_PUNCTUATION = /[),.?!;:，。！？；：、\]}>"'”’]+$/g
 const TRAILING_TAG_PUNCTUATION_CHAR = /[),.?!;:，。！？；：、\]}>"'”’]/u
@@ -158,6 +160,27 @@ export function applyInlineFormat(
     content,
     selectionEnd: selectionEnd + markers.open.length + markers.close.length,
     selectionStart,
+  }
+}
+
+export function insertHorizontalRule(
+  value: string,
+  selectionStart: number,
+  selectionEnd: number
+): TextEdit {
+  const rangeStart = Math.min(selectionStart, selectionEnd)
+  const rangeEnd = Math.max(selectionStart, selectionEnd)
+  const before = value.slice(0, rangeStart)
+  const after = value.slice(rangeEnd)
+  const markdown = `${getHorizontalRulePrefix(before)}---${getHorizontalRuleSuffix(
+    after
+  )}`
+  const cursor = before.length + markdown.length
+
+  return {
+    content: before + markdown + after,
+    selectionEnd: cursor,
+    selectionStart: cursor,
   }
 }
 
@@ -451,6 +474,22 @@ function normalizeMarkdownImagePath(rawPath: string) {
   }
 
   return path.replace(/\\([\\()])/g, "$1").trim()
+}
+
+export function isMarkdownHorizontalRuleLine(line: string) {
+  return MARKDOWN_HORIZONTAL_RULE_LINE_PATTERN.test(line)
+}
+
+function getHorizontalRulePrefix(before: string) {
+  if (before.length === 0 || before.endsWith("\n\n")) return ""
+  if (before.endsWith("\n")) return "\n"
+  return "\n\n"
+}
+
+function getHorizontalRuleSuffix(after: string) {
+  if (after.startsWith("\n\n")) return ""
+  if (after.startsWith("\n")) return "\n"
+  return "\n\n"
 }
 
 function trimTrailingWhitespace(value: string, start: number, end: number) {

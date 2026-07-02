@@ -55,7 +55,7 @@ function DialogContent({
         className={cn(
           // One 24px frame, sections separated by a 24px rhythm. Padding lives
           // only here so header/footer never double up the edge spacing.
-          "fixed top-1/2 left-1/2 z-50 flex max-h-[calc(100dvh-32px)] -translate-x-1/2 -translate-y-1/2 flex-col gap-[var(--shard-space-6)] overflow-hidden rounded-[var(--shard-surface-radius)] border border-border bg-popover bg-clip-padding p-[var(--shard-space-6)] text-sm text-popover-foreground shadow-[0_16px_48px_rgb(0_0_0/var(--shard-alpha-21))] transition-[opacity,scale] duration-150 ease-out data-ending-style:scale-[0.98] data-ending-style:opacity-0 data-starting-style:scale-[0.98] data-starting-style:opacity-0",
+          "fixed top-1/2 left-1/2 z-50 flex max-h-[calc(100svh-2rem)] max-w-[calc(100vw-2rem)] -translate-x-1/2 -translate-y-1/2 flex-col gap-[var(--shard-space-6)] overflow-hidden rounded-[var(--shard-surface-radius)] bg-popover bg-clip-padding p-[var(--shard-space-6)] text-sm text-popover-foreground shadow-popover transition-[opacity,scale] duration-150 ease-out data-ending-style:scale-[0.98] data-ending-style:opacity-0 data-starting-style:scale-[0.98] data-starting-style:opacity-0 sm:max-h-[calc(100svh-3rem)] sm:max-w-[calc(100vw-3rem)]",
           className
         )}
         {...props}

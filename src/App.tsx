@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { LockKeyholeIcon, TagIcon } from "lucide-react"
 import { toast } from "sonner"
 
@@ -13,6 +13,7 @@ import {
   type LockboxDialogMode,
 } from "@/components/shard/lockbox-dialog"
 import { MindMapDialog } from "@/components/shard/mind-map-dialog"
+import { MindMapWorkspace } from "@/components/shard/mind-map-workspace"
 import { ReviewWorkspace } from "@/components/shard/review-workspace"
 import { SidebarNav } from "@/components/shard/sidebar-nav"
 import { TaggedPanel, type TaggedSummary } from "@/components/shard/tagged-panel"
@@ -35,6 +36,7 @@ import {
   DESKTOP_RUNTIME_MESSAGE,
   getApiErrorMessage,
   listFragments,
+  listMindMaps,
   lockLockbox,
   moveFragmentToLockbox,
   pinFragment,
@@ -58,11 +60,17 @@ import type {
   FragmentFilter,
   GitInfo,
   LockboxState,
+  MindMapSummary,
   VaultState,
 } from "@/types"
 
 const DEFAULT_PROJECT_TAGS: readonly string[] = ["日程"]
+const LOCKBOX_IDLE_TIMEOUT_MS = 3 * 60 * 1000
 type EditingVariant = "inline" | "zen"
+interface ZenDraft {
+  content: string
+  id: number
+}
 
 function App() {
   const [fragments, setFragments] = useState<Fragment[]>([])
@@ -80,6 +88,7 @@ function App() {
   const [editingFragmentId, setEditingFragmentId] = useState<string | null>(null)
   const [editingVariant, setEditingVariant] =
     useState<EditingVariant>("inline")
+  const [zenDraft, setZenDraft] = useState<ZenDraft | null>(null)
   const [exportingFragment, setExportingFragment] = useState<Fragment | null>(null)
   const [isArchivingLockboxFragment, setIsArchivingLockboxFragment] =
     useState(false)
@@ -93,18 +102,62 @@ function App() {
   >(null)
   const [isSearchDialogOpen, setIsSearchDialogOpen] = useState(false)
   const [isMindMapDialogOpen, setIsMindMapDialogOpen] = useState(false)
+  const [activeMindMapId, setActiveMindMapId] = useState<string | null>(null)
+  const [mindMaps, setMindMaps] = useState<MindMapSummary[]>([])
   const [selectedLockboxTag, setSelectedLockboxTag] = useState<string | null>(null)
   const [selectedTag, setSelectedTag] = useState<string | null>(null)
+  const filterRef = useRef(filter)
 
   useEffect(() => {
     void refreshFragments()
+    void refreshMindMaps()
   }, [])
+
+  useEffect(() => {
+    filterRef.current = filter
+  }, [filter])
 
   // 离开「标签」区域（标签面板 / 密匣视图）即重新上锁，再次进入需要密码
   useEffect(() => {
     if (filter === "tagged" || filter === "lockbox") return
     if (!lockbox?.unlocked) return
     void autoLockLockbox()
+  }, [filter, lockbox?.unlocked])
+
+  // 密匣页 3 分钟无操作后自动上锁，并回到标签页。
+  useEffect(() => {
+    if (filter !== "lockbox" || !lockbox?.unlocked) return
+
+    let timeoutId = window.setTimeout(() => {
+      void autoLockLockbox({ returnToTagged: true })
+    }, LOCKBOX_IDLE_TIMEOUT_MS)
+
+    const resetTimer = () => {
+      window.clearTimeout(timeoutId)
+      timeoutId = window.setTimeout(() => {
+        void autoLockLockbox({ returnToTagged: true })
+      }, LOCKBOX_IDLE_TIMEOUT_MS)
+    }
+
+    const activityEvents = [
+      "focusin",
+      "input",
+      "keydown",
+      "pointerdown",
+      "touchstart",
+      "wheel",
+    ] as const
+
+    activityEvents.forEach((eventName) => {
+      window.addEventListener(eventName, resetTimer, { capture: true })
+    })
+
+    return () => {
+      window.clearTimeout(timeoutId)
+      activityEvents.forEach((eventName) => {
+        window.removeEventListener(eventName, resetTimer, { capture: true })
+      })
+    }
   }, [filter, lockbox?.unlocked])
 
   async function refreshFragments() {
@@ -139,6 +192,21 @@ function App() {
       })
     } finally {
       setIsLoading(false)
+    }
+  }
+
+  async function refreshMindMaps() {
+    try {
+      setMindMaps(await listMindMaps())
+    } catch (error) {
+      const message = getApiErrorMessage(error)
+      if (message === DESKTOP_RUNTIME_MESSAGE || isVaultNotConfigured(error)) {
+        setMindMaps([])
+        return
+      }
+      toast.error("读取思维导图失败", {
+        description: message,
+      })
     }
   }
 
@@ -299,17 +367,29 @@ function App() {
   }
 
   function openInlineEditor(fragment: Fragment) {
+    setZenDraft(null)
     setEditingVariant("inline")
     setEditingFragmentId(fragment.id)
   }
 
   function openZenEditor(fragment: Fragment) {
+    setZenDraft(null)
     setEditingVariant("zen")
     setEditingFragmentId(fragment.id)
   }
 
+  function openZenDraft(content: string) {
+    setEditingFragmentId(null)
+    setEditingVariant("zen")
+    setZenDraft({
+      content,
+      id: Date.now(),
+    })
+  }
+
   function closeEditor() {
     setEditingFragmentId(null)
+    setZenDraft(null)
   }
 
   async function handleToggleFragmentTask(fragment: Fragment, lineIndex: number) {
@@ -487,7 +567,7 @@ function App() {
   function showShortcuts() {
     toast.info("快捷键", {
       description:
-        "保存：Cmd/Ctrl + Enter。搜索：Cmd/Ctrl + K。换行：Enter 或 Shift+Enter。编辑片段时按 Esc 退出。",
+        "保存：Cmd/Ctrl + Enter。搜索：Cmd/Ctrl + K。禅模式：输入框内 Cmd/Ctrl + Shift + F。换行：Enter 或 Shift+Enter。编辑片段时按 Esc 退出。",
     })
   }
 
@@ -559,10 +639,17 @@ function App() {
     }
   }
 
-  async function autoLockLockbox() {
+  async function autoLockLockbox(
+    options: { returnToTagged?: boolean } = {}
+  ) {
     try {
       const state = await lockLockbox()
       applyVaultState(state)
+      if (options.returnToTagged && filterRef.current === "lockbox") {
+        closeEditor()
+        setSelectedLockboxTag(null)
+        setFilter("tagged")
+      }
     } catch {
       // 静默失败：下次进入密匣仍需密码，必要时可手动上锁
     }
@@ -637,6 +724,16 @@ function App() {
 
   function openSearch() {
     setIsSearchDialogOpen(true)
+  }
+
+  function openMindMap(map?: MindMapSummary) {
+    if (!map) {
+      setIsMindMapDialogOpen(true)
+      return
+    }
+
+    setIsMindMapDialogOpen(false)
+    setActiveMindMapId(map.id)
   }
 
   const publicOnlyFragments = useMemo(
@@ -812,6 +909,19 @@ function App() {
     }
   }, [isModalBusy])
 
+  if (activeMindMapId) {
+    return (
+      <TooltipProvider>
+        <MindMapWorkspace
+          mapId={activeMindMapId}
+          onClose={() => setActiveMindMapId(null)}
+          onMapsChange={setMindMaps}
+        />
+        <Toaster />
+      </TooltipProvider>
+    )
+  }
+
   return (
     <TooltipProvider>
       <main
@@ -826,7 +936,7 @@ function App() {
             isSyncing={isSyncing}
             onFilterChange={setFilter}
             onHelp={showHelp}
-            onOpenMindMaps={() => setIsMindMapDialogOpen(true)}
+            onOpenMindMaps={() => openMindMap()}
             onOpenSearch={openSearch}
             onOpenSettings={() => setIsVaultGuideOpen(true)}
             onRestoreWindow={handleRestoreWindow}
@@ -843,6 +953,7 @@ function App() {
                 isCreating={isCreating}
                 knownTags={knownTags}
                 onCreate={handleCreate}
+                onOpenZen={openZenDraft}
               />
             </div>
           ) : (
@@ -918,11 +1029,13 @@ function App() {
               fragments={filteredFragments}
               isLoading={isLoading}
               knownTags={knownTags}
+              mindMaps={isInboxView ? mindMaps : []}
               onArchive={handleArchiveFragment}
               onCancelEdit={closeEditor}
               onEdit={openInlineEditor}
               onExportImage={setExportingFragment}
               onMoveToLockbox={handleMoveFragmentToLockbox}
+              onOpenMindMap={openMindMap}
               onOpenZen={openZenEditor}
               onPin={handlePinFragment}
               onScrollDown={() => {
@@ -946,7 +1059,7 @@ function App() {
             isSyncing={isSyncing}
             onFilterChange={setFilter}
             onHelp={showHelp}
-            onOpenMindMaps={() => setIsMindMapDialogOpen(true)}
+            onOpenMindMaps={() => openMindMap()}
             onOpenSearch={openSearch}
             onOpenSettings={() => setIsVaultGuideOpen(true)}
             onRestoreWindow={handleRestoreWindow}
@@ -957,9 +1070,11 @@ function App() {
         </div>
       </main>
       <FragmentEditor
+        draft={editingVariant === "zen" ? zenDraft : null}
         fragment={editingVariant === "zen" ? editingFragment : null}
         knownTags={knownTags}
         onClose={closeEditor}
+        onCreate={handleCreate}
         onSave={handleUpdateFragment}
         vaultPath={vaultPath}
       />
@@ -978,7 +1093,12 @@ function App() {
       />
       <MindMapDialog
         open={isMindMapDialogOpen}
+        onMapsChange={setMindMaps}
         onOpenChange={setIsMindMapDialogOpen}
+        onOpenMap={(mapId) => {
+          setIsMindMapDialogOpen(false)
+          setActiveMindMapId(mapId)
+        }}
       />
       <LockboxArchiveConfirmDialog
         fragment={pendingLockboxArchiveFragment}

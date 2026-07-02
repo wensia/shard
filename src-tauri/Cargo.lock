@@ -3388,13 +3388,14 @@ dependencies = [
 
 [[package]]
 name = "shard"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "aes-gcm",
  "argon2",
  "base64 0.22.1",
  "chrono",
  "objc2-app-kit",
+ "objc2-foundation",
  "rand",
  "rsa",
  "serde",

@@ -64,7 +64,7 @@ Shard 应有一个主强调色，但必须保持克制。当前运行态使用�
 - 视觉占比：首屏约 3%-5%。
 - 强调色用于焦点/编辑卡片边框、focus ring、链接、AI 建议强调、细微侧边栏选中指示、已勾选任务框，以及少量主强调。
 - 不要把强调色用作完整侧边栏、应用顶部栏、页面背景，或每个按钮的默认颜色。
-- 保留 `--primary` 给 shadcn 的 ink-style 主按钮控件；Shard 特定强调使用 `--shard-accent`。
+- 保留 `--solid` 给普通 shadcn filled 控件；`--primary` / `--shard-accent` 只用于状态、焦点、选中和破坏性语义。
 - 当前组件仍在引用 `--shard-sapphire` 及相关变量；这些是映射到 `--shard-accent` 的兼容别名。
 
 相关强调色保持语义归属：
@@ -125,7 +125,7 @@ Capture 输入：
 
 - 居中的 composer card，最大宽度 `--shard-content-max-width`，surface radius 为 `--shard-surface-radius`，使用细微边框和非常轻的阴影。
 - Composer 内部使用无边框 textarea，四周使用 `--shard-composer-padding`。
-- 默认编辑器高度为 2 行文字；用户激活后展开到 4 行。向下滚动时间线会把短内容折叠回 2 行。较长内容始终增长到测量出的内容高度。
+- 默认编辑器高度为 2 行文字；用户激活后展开到 4 行。向下滚动时间线会把短内容折叠回 2 行。较长内容会增长到测量出的内容高度，直到达到应用 viewport 扣除 composer 间距和工具栏 chrome 后的可用高度，之后在 textarea 内部滚动。
 - 桌面顶部偏移：从主内容 viewport 顶部起 `--shard-composer-top-gap`。
 - Placeholder：`想到什么，写什么...`
 - 底部工具栏使用 `src/styles/frontend-rules.css` 中可复用的 `.shard-edge-action-row` 规则：同一个 inset token 控制左右 padding 和底部 padding，让边缘动作拥有相等的侧边和底部间距。
@@ -257,7 +257,7 @@ Shard 使用一套小而可测量的几何系统。组件添加新值之前，�
 --shard-caret-width: 1.5px;
 ```
 
-Heatmap 计算：`12 columns * 12px + 11 gaps * 5px = 199px`，适配侧边栏 20px 左右 inset 后的 200px 内部宽度。
+Heatmap 计算：`12 columns * 12px + 11 gaps * 5px = 199px`，适配侧边栏 16px 左右 inset 后的内部宽度。
 
 Composer 放置：capture box 是主要动作，因此不使用大的 32px 页面区块 inset。它的顶部和底部间距保持在 16px 网格上，让写作 surface 靠近窗口边缘但不贴边。
 
@@ -272,13 +272,19 @@ Composer 放置：capture box 是主要动作，因此不使用大的 32px 页�
 使用语义 CSS 变量。当前运行态值如下：
 
 ```css
---background: #f7f8f8;
---foreground: #111315;
+--background: #fbfaf8;
+--foreground: #2f2f2f;
 --card: #ffffff;
---muted: #f1f3f3;
---border: #d8dddd;
---border-strong: #aeb7b7;
---muted-foreground: #687173;
+--muted: #f1eee9;
+--border: #efece7;
+--border-visible: #d8d3cc;
+--border-strong: var(--border-visible);
+--muted-foreground: #6f6760;
+
+--primary: #b6533c;
+--primary-subtle: #f8ede9;
+--solid: #2f2f2f;
+--solid-foreground: #ffffff;
 
 --shard-accent: #b6533c;
 --shard-accent-hover: #96432f;
@@ -306,17 +312,21 @@ Composer 放置：capture box 是主要动作，因此不使用大的 32px 页�
 --shard-ruby-rgb: 182 83 60;
 --shard-editor-tag-fg: var(--shard-info);
 
---shard-radius-control: 6px;
---shard-surface-radius: 12px;
+--shard-radius-control: 4px;
+--shard-radius-card: 6px;
+--shard-radius-panel: 8px;
+--shard-surface-radius: var(--shard-radius-card);
 ```
 
 Radius：
 
 - App panels：0
-- Composer 和片段卡片：`--shard-surface-radius`
+- Controls：`--shard-radius-control`
+- Composer、片段卡片、popover 和 dialog：`--shard-surface-radius`
+- 大面板：`--shard-radius-panel`
 - Surface 内的 inputs：当它们构成 surface 边缘时继承父 surface radius
-- Buttons：6px
-- Badges：5px，或在 shadcn 默认要求时使用 pill
+- Buttons 和 inputs：4px
+- Badges 和状态 tags：4px
 
 Borders：
 
