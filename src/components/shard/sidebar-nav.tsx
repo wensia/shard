@@ -29,6 +29,7 @@ import {
 } from "@/components/ui/tooltip"
 import shardAppIconUrl from "@/assets/shard-app-icon.png"
 import { dailyReviewCount, insightReviewCount } from "@/lib/review-workflows"
+import { useAppVersion } from "@/lib/use-app-version"
 import type { Fragment, FragmentFilter, GitInfo } from "@/types"
 
 interface SidebarNavProps {
@@ -232,6 +233,7 @@ export function SidebarNav({
   vaultPath,
 }: SidebarNavProps) {
   const [isUtilityMenuOpen, setIsUtilityMenuOpen] = useState(false)
+  const appVersion = useAppVersion()
   const language = getSidebarLanguage()
   const copy = SIDEBAR_COPY[language]
   const activeFragments = fragments.filter((fragment) => !fragment.archived)
@@ -270,7 +272,9 @@ export function SidebarNav({
         />
         <div className="min-w-0">
           <div className="text-xl leading-6 font-bold text-balance">Shard</div>
-          <div className="text-xs font-medium text-muted-foreground">v0.1.0</div>
+          <div className="text-xs font-medium text-muted-foreground">
+            {appVersion ? `v${appVersion}` : "\u00A0"}
+          </div>
         </div>
       </div>
 

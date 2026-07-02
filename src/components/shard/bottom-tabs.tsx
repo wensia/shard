@@ -30,6 +30,7 @@ import {
 } from "@/components/ui/tooltip"
 import shardAppIconUrl from "@/assets/shard-app-icon.png"
 import { dailyReviewCount, insightReviewCount } from "@/lib/review-workflows"
+import { useAppVersion } from "@/lib/use-app-version"
 import type { Fragment, FragmentFilter, GitInfo } from "@/types"
 
 interface BottomTabsProps {
@@ -79,6 +80,7 @@ export function BottomTabs({
   vaultPath,
 }: BottomTabsProps) {
   const [isMenuOpen, setIsMenuOpen] = useState(false)
+  const appVersion = useAppVersion()
   const activeFragments = fragments.filter((fragment) => !fragment.archived)
   const archivedFragments = fragments.filter((fragment) => fragment.archived)
   const counts: Record<FragmentFilter, number> = {
@@ -111,7 +113,9 @@ export function BottomTabs({
               src={shardAppIconUrl}
             />
             <span className="font-bold">Shard</span>
-            <span className="text-muted-foreground">v0.1.0</span>
+            {appVersion ? (
+              <span className="text-muted-foreground">v{appVersion}</span>
+            ) : null}
           </div>
 
           <div className="flex min-w-0 items-center justify-end gap-2 text-muted-foreground">
