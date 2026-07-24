@@ -199,6 +199,12 @@ export interface Debt {
   repayments: Repayment[]
 }
 
+/** 对应 Rust `TursoConfigView`：不含 token 明文，只回传是否已配置。 */
+export interface TursoConfigView {
+  url: string | null
+  hasToken: boolean
+}
+
 // —— 以下类型纯前端派生，没有对应的 Rust struct ——
 
 export type DebtUrgency = "overdue" | "dueSoon" | "settled" | "noDueDate" | "normal"

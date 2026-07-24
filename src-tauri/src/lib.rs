@@ -70,10 +70,17 @@ struct VaultState {
     lockbox: LockboxState,
 }
 
-#[derive(Debug, Serialize, Deserialize, Default)]
+#[derive(Debug, Serialize, Deserialize, Default, Clone)]
 #[serde(rename_all = "camelCase")]
 struct AppConfig {
     vault_path: Option<String>,
+    /// Turso/libSQL 云端库地址（形如 `libsql://<db>.turso.io`）。为空则记账模块
+    /// 退化为纯本地 libSQL 文件，离线可用、不做云同步。
+    #[serde(default)]
+    turso_url: Option<String>,
+    /// Turso 云端 auth token。与 `turso_url` 同时存在时启用 embedded replica。
+    #[serde(default)]
+    turso_auth_token: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -420,12 +427,9 @@ async fn set_vault_path(
         if initialize_git {
             ensure_git_repo(&vault)?;
         }
-        write_app_config(
-            &app,
-            &AppConfig {
-                vault_path: Some(vault.display().to_string()),
-            },
-        )?;
+        let mut config = read_app_config(&app)?;
+        config.vault_path = Some(vault.display().to_string());
+        write_app_config(&app, &config)?;
         lock_lockbox_runtime(&lockbox_runtime);
 
         list_fragments_in_vault(&vault, &lockbox_runtime)
@@ -3918,6 +3922,7 @@ fn relative_path(vault: &Path, path: &Path) -> Result<String, String> {
 pub fn run() {
     tauri::Builder::default()
         .manage(Arc::new(Mutex::new(LockboxSession::default())))
+        .manage(debt::DebtDb::default())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
@@ -3968,7 +3973,9 @@ pub fn run() {
             debt::set_debt_archived,
             debt::delete_debt,
             debt::add_repayment,
-            debt::delete_repayment
+            debt::delete_repayment,
+            debt::get_turso_config,
+            debt::set_turso_config
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -15,6 +15,7 @@ import type {
   MindMapReadResult,
   MindMapSummary,
   ShardMapFile,
+  TursoConfigView,
   VaultState,
 } from "@/types"
 
@@ -283,4 +284,20 @@ export function addRepayment(input: {
 
 export function deleteRepayment(debtId: string, repaymentId: string) {
   return desktopInvoke<Debt>("delete_repayment", { debtId, repaymentId })
+}
+
+/** 读取记账模块当前的 Turso 云端配置（不含 token 明文）。 */
+export function getTursoConfig() {
+  return desktopInvoke<TursoConfigView>("get_turso_config")
+}
+
+/**
+ * 配置记账模块的 Turso 云端同步。`token` 传 `undefined` 表示保留原值，传空串
+ * 表示清除；`url` 为空/undefined 时退化为纯本地 libSQL（不同步）。
+ */
+export function setTursoConfig(input: { url?: string | null; token?: string }) {
+  return desktopInvoke<TursoConfigView>("set_turso_config", {
+    url: input.url ?? null,
+    token: input.token,
+  })
 }

@@ -31,7 +31,9 @@ base64 = "0.22"
 rand = "0.8"
 rsa = { version = "0.9", features = ["sha2"] }
 sha2 = "0.10"
-rusqlite = { version = "0.37", features = ["bundled"] }
+# 记账（债务追踪）模块的存储后端：libSQL（Turso）。默认 features 已含
+# core/replication/remote，支持 embedded replica（本地文件 + 远程同步）。
+libsql = "0.9"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2-app-kit = { version = "0.3.2", default-features = false, features = [
@@ -50,3 +52,4 @@ objc2-foundation = { version = "0.3.2", default-features = false, features = [
 
 [dev-dependencies]
 tempfile = "3"
+tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread"] }
