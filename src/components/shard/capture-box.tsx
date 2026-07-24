@@ -10,7 +10,6 @@ import {
   type KeyboardEvent,
 } from "react"
 import { Loader2Icon, SendHorizontalIcon } from "lucide-react"
-import { toast } from "sonner"
 
 import { EditorToolbar } from "@/components/shard/editor-toolbar"
 import {
@@ -25,8 +24,8 @@ import {
   TagCompletionPopover,
   type TagSuggestion,
 } from "@/components/shard/tag-completion-popover"
-import { Button } from "@/components/ui/button"
-import { Textarea } from "@/components/ui/textarea"
+import { Button } from "@astryxdesign/core/Button"
+import { useToast } from "@astryxdesign/core/Toast"
 import { getClipboardImageFiles } from "@/lib/clipboard-images"
 import {
   applyActiveTagCompletion,
@@ -78,6 +77,7 @@ export function CaptureBox({
   onCreate,
   onOpenZen,
 }: CaptureBoxProps) {
+  const toast = useToast()
   const [content, setContent] = useState("")
   const [caretEpoch, setCaretEpoch] = useState(0)
   const [customCaret, setCustomCaret] = useState<EditorCaretBox | null>(null)
@@ -266,8 +266,9 @@ export function CaptureBox({
 
     const draftTags = normalizeTagList(["inbox", ...extractTags(content)])
     if (wantsLockbox(content, draftTags) && pendingImages.length > 0) {
-      toast.error("密匣暂不支持图片附件", {
-        description: "请先移除图片，再保存到密匣，避免附件写入公开 assets 目录。",
+      toast({
+        body: "密匣暂不支持图片附件：请先移除图片，再保存到密匣，避免附件写入公开 assets 目录。",
+        type: "error",
       })
       setIsEditorExpanded(true)
       return
@@ -278,8 +279,9 @@ export function CaptureBox({
       for (const image of pendingImages) {
         const path = await saveFragmentImage(image.fileName, image.bytes).catch(
           (error) => {
-            toast.error("图片保存失败", {
-              description: getApiErrorMessage(error),
+            toast({
+              body: `图片保存失败：${getApiErrorMessage(error)}`,
+              type: "error",
             })
             throw error
           }
@@ -368,8 +370,9 @@ export function CaptureBox({
     if (!onOpenZen) return
 
     if (pendingImages.length > 0) {
-      toast.warning("带图片的草稿暂不能切换到禅模式", {
-        description: "请先保存当前片段，或移除图片后再进入禅模式。",
+      toast({
+        body: "带图片的草稿暂不能切换到禅模式：请先保存当前片段，或移除图片后再进入禅模式。",
+        type: "error",
       })
       return
     }
@@ -411,8 +414,9 @@ export function CaptureBox({
         textarea.focus()
       })
     } catch (error) {
-      toast.error("图片上传失败", {
-        description: getApiErrorMessage(error),
+      toast({
+        body: `图片上传失败：${getApiErrorMessage(error)}`,
+        type: "error",
       })
       URL.revokeObjectURL(previewUrl)
     }
@@ -690,7 +694,7 @@ export function CaptureBox({
             </div>
           </div>
         ) : null}
-        <Textarea
+        <textarea
           aria-activedescendant={activeSuggestionOptionId}
           aria-autocomplete={activeTag ? "list" : undefined}
           aria-controls={activeTag ? tagPopoverId : undefined}
@@ -739,7 +743,7 @@ export function CaptureBox({
           placeholder="想到什么，写什么..."
           ref={textareaRef}
           value={content}
-        />
+        ></textarea>
         {!content ? (
           <span
             aria-hidden="true"
@@ -809,23 +813,24 @@ export function CaptureBox({
                     ? "disabled:bg-[color:var(--shard-sapphire)] disabled:text-white disabled:opacity-100"
                     : "disabled:bg-transparent disabled:text-muted-foreground"
                 }`}
-                disabled={!canSubmit}
+                icon={
+                  isCreating ? (
+                    <Loader2Icon
+                      className="animate-spin"
+                      data-icon="inline-start"
+                    />
+                  ) : (
+                    <SendHorizontalIcon data-icon="inline-start" />
+                  )
+                }
+                isDisabled={!canSubmit}
+                isIconOnly
+                label={isCreating ? "保存中" : "保存片段"}
                 onClick={() => void submit()}
-                size="icon-sm"
+                size="sm"
                 type="button"
-              >
-                {isCreating ? (
-                  <Loader2Icon
-                    className="animate-spin"
-                    data-icon="inline-start"
-                  />
-                ) : (
-                  <SendHorizontalIcon data-icon="inline-start" />
-                )}
-                <span className="sr-only">
-                  {isCreating ? "保存中" : "保存片段"}
-                </span>
-              </Button>
+                variant="primary"
+              />
             }
           />
         </div>

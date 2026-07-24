@@ -15,19 +15,9 @@ import {
 } from "lucide-react"
 import { Fragment as ReactFragment, useState } from "react"
 
-import { Button } from "@/components/ui/button"
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuGroup,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip"
+import { Button } from "@astryxdesign/core/Button"
+import { DropdownMenu } from "@astryxdesign/core/DropdownMenu"
+import { Tooltip } from "@astryxdesign/core/Tooltip"
 import shardAppIconUrl from "@/assets/shard-app-icon.png"
 import { dailyReviewCount, insightReviewCount } from "@/lib/review-workflows"
 import { useAppVersion } from "@/lib/use-app-version"
@@ -63,9 +53,6 @@ const navItems: Array<{
   { id: "insight", icon: SparklesIcon },
   { id: "archive", icon: ArchiveIcon },
 ]
-
-const utilityMenuItemClass =
-  "grid h-8 grid-cols-[16px_1fr] gap-2 px-2 text-[13px] font-medium whitespace-nowrap [&_svg]:size-3.5 [&_svg]:stroke-[1.65]"
 
 type SidebarLanguage = "en" | "zh"
 
@@ -457,26 +444,36 @@ export function SidebarNav({
 
       <div className="mt-auto px-[var(--shard-sidebar-inset)] pt-[var(--shard-space-6)] pb-[var(--shard-space-5)]">
         <div className="flex items-center justify-between">
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  className="relative"
-                  disabled={isSyncing}
-                  onClick={onSync}
-                  size="icon"
-                  variant="ghost"
-                />
-              }
-            >
-              <RefreshCwIcon
-                className={isSyncing ? "animate-spin" : ""}
-                data-icon="inline-start"
+          <Tooltip
+            content={
+              <div className="flex flex-col gap-1">
+                <span>
+                  {isSyncing ? copy.syncing : `Git ${gitStateLabel}`}
+                </span>
+                <span className="text-background/[var(--shard-alpha-55)]">
+                  {gitSummary}
+                </span>
+                <span className="max-w-64 truncate text-background/[var(--shard-alpha-55)]">
+                  {vaultLabel}
+                </span>
+              </div>
+            }
+            placement="above"
+          >
+            <div className="relative">
+              <Button
+                icon={<RefreshCwIcon className={isSyncing ? "animate-spin" : ""} />}
+                isDisabled={isSyncing}
+                isIconOnly
+                label={copy.syncGitVault}
+                onClick={onSync}
+                size="sm"
+                variant="ghost"
               />
               <span
                 aria-hidden="true"
                 className={[
-                  "absolute top-2 right-2 size-1.5 rounded-full ring-1 ring-sidebar",
+                  "pointer-events-none absolute top-2 right-2 size-1.5 rounded-full ring-1 ring-sidebar",
                   git?.status === "error" ? "bg-[color:var(--shard-ruby)]" : "",
                   git?.status === "dirty" || isMissingRemote
                     ? "bg-[color:var(--shard-amber)]"
@@ -489,90 +486,48 @@ export function SidebarNav({
                     : "",
                 ].join(" ")}
               />
-              <span className="sr-only">{copy.syncGitVault}</span>
-            </TooltipTrigger>
-            <TooltipContent side="top">
-              <div className="flex flex-col gap-1">
-                <span>
-                  {isSyncing ? copy.syncing : `Git ${gitStateLabel}`}
-                </span>
-                <span className="text-background/[var(--shard-alpha-55)]">
-                  {gitSummary}
-                </span>
-                <span className="max-w-64 truncate text-background/[var(--shard-alpha-55)]">
-                  {vaultLabel}
-                </span>
-              </div>
-            </TooltipContent>
+            </div>
           </Tooltip>
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button onClick={onRestoreWindow} size="icon" variant="ghost" />
-              }
-            >
-              <Maximize2Icon data-icon="inline-start" />
-              <span className="sr-only">{copy.restoreWindow}</span>
-            </TooltipTrigger>
-            <TooltipContent side="top">{copy.restoreWindow}</TooltipContent>
+          <Tooltip content={copy.restoreWindow} placement="above">
+            <Button
+              icon={<Maximize2Icon />}
+              isIconOnly
+              label={copy.restoreWindow}
+              onClick={onRestoreWindow}
+              size="sm"
+              variant="ghost"
+            />
           </Tooltip>
           <DropdownMenu
-            open={isUtilityMenuOpen}
+            button={{
+              icon: <MoreHorizontalIcon />,
+              isIconOnly: true,
+              label: copy.aria.utilityMenu,
+              size: "sm",
+              variant: "ghost",
+            }}
+            isMenuOpen={isUtilityMenuOpen}
+            items={[
+              {
+                icon: <SettingsIcon />,
+                label: copy.settings,
+                onClick: () => window.setTimeout(onOpenSettings, 0),
+              },
+              {
+                icon: <KeyboardIcon />,
+                label: copy.shortcuts,
+                onClick: () => window.setTimeout(onShortcuts, 0),
+              },
+              {
+                icon: <HelpCircleIcon />,
+                label: copy.help,
+                onClick: () => window.setTimeout(onHelp, 0),
+              },
+            ]}
+            menuWidth={160}
             onOpenChange={setIsUtilityMenuOpen}
-          >
-            <DropdownMenuTrigger
-              render={
-                <Button
-                  aria-label={copy.aria.utilityMenu}
-                  size="icon"
-                  title={copy.aria.utilityMenu}
-                  variant="ghost"
-                />
-              }
-            >
-              <MoreHorizontalIcon data-icon="inline-start" />
-              <span className="sr-only">{copy.aria.utilityMenu}</span>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent
-              align="end"
-              className="w-40"
-              side="top"
-              sideOffset={8}
-            >
-              <DropdownMenuGroup>
-                <DropdownMenuItem
-                  className={utilityMenuItemClass}
-                  onClick={() => {
-                    setIsUtilityMenuOpen(false)
-                    window.setTimeout(onOpenSettings, 0)
-                  }}
-                >
-                  <SettingsIcon />
-                  {copy.settings}
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  className={utilityMenuItemClass}
-                  onClick={() => {
-                    setIsUtilityMenuOpen(false)
-                    window.setTimeout(onShortcuts, 0)
-                  }}
-                >
-                  <KeyboardIcon />
-                  {copy.shortcuts}
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  className={utilityMenuItemClass}
-                  onClick={() => {
-                    setIsUtilityMenuOpen(false)
-                    window.setTimeout(onHelp, 0)
-                  }}
-                >
-                  <HelpCircleIcon />
-                  {copy.help}
-                </DropdownMenuItem>
-              </DropdownMenuGroup>
-            </DropdownMenuContent>
-          </DropdownMenu>
+            placement="above"
+          />
         </div>
       </div>
     </aside>

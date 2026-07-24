@@ -9,14 +9,8 @@ import {
   Trash2Icon,
 } from "lucide-react"
 
-import { Button } from "@/components/ui/button"
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuGroup,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
+import { DropdownMenu, DropdownMenuItem } from "@astryxdesign/core/DropdownMenu"
+
 import { DebtStatusBadge } from "@/components/shard/debt-status-badge"
 import { TagBadge } from "@/components/shard/tag-badge"
 import { centsToYuanLabel, computeDebtUrgency, describeDueDate } from "@/lib/debt"
@@ -31,9 +25,6 @@ interface DebtCardProps {
   onRegisterRepayment: (debt: Debt) => void
   onToggleArchive: (debt: Debt) => void
 }
-
-const debtMenuItemClass =
-  "grid h-8 grid-cols-[14px_max-content] gap-[var(--shard-space-2)] px-[var(--shard-space-2)] text-[13px] font-medium whitespace-nowrap [&_svg]:size-3.5 [&_svg]:stroke-[1.65]"
 
 export function DebtCard({
   debt,
@@ -83,47 +74,35 @@ export function DebtCard({
           onClick={(event) => event.stopPropagation()}
         >
           <DebtStatusBadge urgency={urgency} />
-          <DropdownMenu>
-            <DropdownMenuTrigger render={<Button size="icon-sm" variant="ghost" />}>
-              <MoreHorizontalIcon
-                className="size-4 stroke-[1.65]"
-                data-icon="inline-start"
-              />
-              <span className="sr-only">债务操作</span>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-fit min-w-0">
-              <DropdownMenuGroup>
-                <DropdownMenuItem
-                  className={debtMenuItemClass}
-                  onClick={() => onEdit(debt)}
-                >
-                  <PencilLineIcon />
-                  编辑
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  className={debtMenuItemClass}
-                  onClick={() => onRegisterRepayment(debt)}
-                >
-                  <HandCoinsIcon />
-                  登记还款
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  className={debtMenuItemClass}
-                  onClick={() => onToggleArchive(debt)}
-                >
-                  {debt.archived ? <ArchiveRestoreIcon /> : <ArchiveIcon />}
-                  {debt.archived ? "取消归档" : "归档"}
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  className={debtMenuItemClass}
-                  onClick={() => onDelete(debt)}
-                  variant="destructive"
-                >
-                  <Trash2Icon />
-                  删除
-                </DropdownMenuItem>
-              </DropdownMenuGroup>
-            </DropdownMenuContent>
+          <DropdownMenu
+            button={{
+              icon: <MoreHorizontalIcon />,
+              isIconOnly: true,
+              label: "债务操作",
+              size: "sm",
+              variant: "ghost",
+            }}
+          >
+            <DropdownMenuItem
+              icon={PencilLineIcon}
+              label="编辑"
+              onClick={() => onEdit(debt)}
+            />
+            <DropdownMenuItem
+              icon={HandCoinsIcon}
+              label="登记还款"
+              onClick={() => onRegisterRepayment(debt)}
+            />
+            <DropdownMenuItem
+              icon={debt.archived ? ArchiveRestoreIcon : ArchiveIcon}
+              label={debt.archived ? "取消归档" : "归档"}
+              onClick={() => onToggleArchive(debt)}
+            />
+            <DropdownMenuItem
+              icon={Trash2Icon}
+              label="删除"
+              onClick={() => onDelete(debt)}
+            />
           </DropdownMenu>
         </div>
       </div>

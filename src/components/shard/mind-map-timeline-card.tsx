@@ -6,17 +6,11 @@ import {
   PencilLineIcon,
   Share2Icon,
 } from "lucide-react"
-import { toast } from "sonner"
+
+import { DropdownMenu, DropdownMenuItem } from "@astryxdesign/core/DropdownMenu"
+import { useToast } from "@astryxdesign/core/Toast"
 
 import { MindMapPreview } from "@/components/shard/mind-map-preview"
-import { Button } from "@/components/ui/button"
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuGroup,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
 import { getApiErrorMessage, readMindMap } from "@/lib/api"
 import type { MindMapReadResult, MindMapSummary } from "@/types"
 
@@ -25,10 +19,8 @@ interface MindMapTimelineCardProps {
   onOpen?: (map: MindMapSummary) => void
 }
 
-const mindMapMenuItemClass =
-  "grid h-8 grid-cols-[14px_max-content] gap-[var(--shard-space-2)] px-[var(--shard-space-2)] text-[13px] font-medium whitespace-nowrap [&_svg]:size-3.5 [&_svg]:stroke-[1.65]"
-
 export function MindMapTimelineCard({ map, onOpen }: MindMapTimelineCardProps) {
+  const toast = useToast()
   const cardRef = useRef<HTMLElement | null>(null)
   const [readResult, setReadResult] = useState<MindMapReadResult | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -70,10 +62,11 @@ export function MindMapTimelineCard({ map, onOpen }: MindMapTimelineCardProps) {
       }
 
       await clipboard.writeText(`${map.title}\n${map.path}`)
-      toast.success("已复制思维导图信息")
+      toast({ body: "已复制思维导图信息" })
     } catch (unknownError) {
-      toast.error("分享思维导图失败", {
-        description: getApiErrorMessage(unknownError),
+      toast({
+        body: `分享思维导图失败：${getApiErrorMessage(unknownError)}`,
+        type: "error",
       })
     }
   }
@@ -112,35 +105,25 @@ export function MindMapTimelineCard({ map, onOpen }: MindMapTimelineCardProps) {
           className="flex shrink-0 items-center"
           onClick={(event) => event.stopPropagation()}
         >
-          <DropdownMenu>
-            <DropdownMenuTrigger render={<Button size="icon-sm" variant="ghost" />}>
-              <MoreHorizontalIcon
-                className="size-4 stroke-[1.65]"
-                data-icon="inline-start"
-              />
-              <span className="sr-only">思维导图操作</span>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent
-              align="end"
-              className="w-fit min-w-0"
-            >
-              <DropdownMenuGroup>
-                <DropdownMenuItem
-                  className={mindMapMenuItemClass}
-                  onClick={() => onOpen?.(map)}
-                >
-                  <PencilLineIcon />
-                  编辑
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  className={mindMapMenuItemClass}
-                  onClick={() => void shareMindMap()}
-                >
-                  <Share2Icon />
-                  分享
-                </DropdownMenuItem>
-              </DropdownMenuGroup>
-            </DropdownMenuContent>
+          <DropdownMenu
+            button={{
+              icon: <MoreHorizontalIcon />,
+              isIconOnly: true,
+              label: "思维导图操作",
+              size: "sm",
+              variant: "ghost",
+            }}
+          >
+            <DropdownMenuItem
+              icon={PencilLineIcon}
+              label="编辑"
+              onClick={() => onOpen?.(map)}
+            />
+            <DropdownMenuItem
+              icon={Share2Icon}
+              label="分享"
+              onClick={() => void shareMindMap()}
+            />
           </DropdownMenu>
         </div>
       </div>

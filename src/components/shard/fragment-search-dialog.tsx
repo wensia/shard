@@ -3,7 +3,6 @@ import {
   FileTextIcon,
   LockKeyholeIcon,
   SearchIcon,
-  XIcon,
 } from "lucide-react"
 import {
   useDeferredValue,
@@ -14,16 +13,10 @@ import {
   type KeyboardEvent,
 } from "react"
 
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog"
-import { Button } from "@/components/ui/button"
+import { Dialog, DialogHeader } from "@astryxdesign/core/Dialog"
+import { Layout, LayoutContent } from "@astryxdesign/core/Layout"
+import { TextInput } from "@astryxdesign/core/TextInput"
 import { FragmentBody } from "@/components/shard/fragment-body"
-import { Input } from "@/components/ui/input"
 import { searchFragments } from "@/lib/fragment-search"
 import { LOCKBOX_TAG } from "@/lib/lockbox"
 import { cn } from "@/lib/utils"
@@ -141,87 +134,77 @@ export function FragmentSearchDialog({
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent
-        className="w-[min(720px,calc(100vw-32px))] gap-0 rounded-lg border-border bg-popover p-0 shadow-popover"
-        showCloseButton={false}
-        style={{
-          top: "clamp(16px, 10dvh, 80px)",
-          translate: "-50% 0",
-        }}
-      >
-        <DialogHeader className="sr-only">
-          <DialogTitle>搜索笔记</DialogTitle>
-          <DialogDescription>
-            搜索未归档笔记的正文和标签。
-          </DialogDescription>
-        </DialogHeader>
+    <Dialog
+      isOpen={open}
+      onOpenChange={onOpenChange}
+      padding={0}
+      position={{ top: "clamp(16px, 10dvh, 80px)" }}
+      width="min(720px, calc(100vw - 32px))"
+    >
+      <Layout
+        header={
+          <DialogHeader
+            className="sr-only"
+            subtitle="搜索未归档笔记的正文和标签。"
+            title="搜索笔记"
+          />
+        }
+        content={
+          <LayoutContent isScrollable={false} padding={0}>
+            <div className="border-b border-border p-[var(--shard-space-3)]">
+              <TextInput
+                aria-controls={SEARCH_RESULTS_ID}
+                aria-expanded={items.length > 0}
+                hasClear
+                isLabelHidden
+                label="搜索笔记"
+                onChange={setQuery}
+                onKeyDown={handleKeyDown}
+                placeholder="搜索正文或标签"
+                ref={inputRef}
+                role="combobox"
+                size="lg"
+                startIcon={<SearchIcon />}
+                value={query}
+              />
+            </div>
 
-        <div className="relative border-b border-border">
-          <SearchIcon
-            aria-hidden="true"
-            className="pointer-events-none absolute top-1/2 left-[var(--shard-space-4)] size-4 -translate-y-1/2 text-muted-foreground"
-          />
-          <Input
-            aria-controls={SEARCH_RESULTS_ID}
-            aria-expanded={items.length > 0}
-            aria-label="搜索笔记"
-            className="h-12 rounded-none border-0 bg-transparent pr-10 pl-11 text-[15px] focus-visible:border-transparent focus-visible:ring-0"
-            onChange={(event) => setQuery(event.currentTarget.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="搜索正文或标签"
-            ref={inputRef}
-            role="combobox"
-            value={query}
-          />
-          {query ? (
-            <Button
-              aria-label="清空搜索"
-              className="absolute top-1/2 right-[var(--shard-space-2)] -translate-y-1/2"
-              onClick={clearSearch}
-              size="icon-xs"
-              type="button"
-              variant="ghost"
+            <div
+              aria-busy={isSearching}
+              className="min-h-[260px] overflow-hidden bg-popover"
+              id={SEARCH_RESULTS_ID}
+              role="listbox"
             >
-              <XIcon />
-            </Button>
-          ) : null}
-        </div>
-
-        <div
-          aria-busy={isSearching}
-          className="min-h-[260px] overflow-hidden bg-popover"
-          id={SEARCH_RESULTS_ID}
-          role="listbox"
-        >
-          {fragments.length === 0 ? (
-            <SearchEmptyState message="还没有可搜索的笔记。" />
-          ) : items.length === 0 ? (
-            <SearchEmptyState message="没有匹配的笔记。" />
-          ) : (
-            <>
-              <div className="flex h-9 items-center justify-between border-b border-border px-[var(--shard-space-3)] text-xs font-semibold text-muted-foreground">
-                <span>{hasQuery ? "搜索结果" : "最近笔记"}</span>
-                <span className="tabular-nums">
-                  {formatResultCount(totalResultCount)}
-                </span>
-              </div>
-              <div className="max-h-[min(58dvh,480px)] overflow-y-auto">
-                {items.map((item, index) => (
-                  <SearchResultButton
-                    isSelected={index === selectedIndex}
-                    item={item}
-                    key={item.fragment.id}
-                    onMouseEnter={() => setSelectedIndex(index)}
-                    onOpen={handleOpenFragment}
-                    vaultPath={vaultPath}
-                  />
-                ))}
-              </div>
-            </>
-          )}
-        </div>
-      </DialogContent>
+              {fragments.length === 0 ? (
+                <SearchEmptyState message="还没有可搜索的笔记。" />
+              ) : items.length === 0 ? (
+                <SearchEmptyState message="没有匹配的笔记。" />
+              ) : (
+                <>
+                  <div className="flex h-9 items-center justify-between border-b border-border px-[var(--shard-space-3)] text-xs font-semibold text-muted-foreground">
+                    <span>{hasQuery ? "搜索结果" : "最近笔记"}</span>
+                    <span className="tabular-nums">
+                      {formatResultCount(totalResultCount)}
+                    </span>
+                  </div>
+                  <div className="max-h-[min(58dvh,480px)] overflow-y-auto">
+                    {items.map((item, index) => (
+                      <SearchResultButton
+                        isSelected={index === selectedIndex}
+                        item={item}
+                        key={item.fragment.id}
+                        onMouseEnter={() => setSelectedIndex(index)}
+                        onOpen={handleOpenFragment}
+                        vaultPath={vaultPath}
+                      />
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+          </LayoutContent>
+        }
+      />
     </Dialog>
   )
 }

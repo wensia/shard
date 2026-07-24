@@ -1,16 +1,10 @@
 import { useMemo, useState } from "react"
 import { HandCoinsIcon, PlusIcon, RefreshCwIcon } from "lucide-react"
-import { toast } from "sonner"
 
-import { Button } from "@/components/ui/button"
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog"
+import { AlertDialog } from "@astryxdesign/core/AlertDialog"
+import { Button } from "@astryxdesign/core/Button"
+import { useToast } from "@astryxdesign/core/Toast"
+
 import { DebtCard } from "@/components/shard/debt-card"
 import { DebtContactSummaryPanel } from "@/components/shard/debt-contact-summary-panel"
 import { DebtDetailSheet } from "@/components/shard/debt-detail-sheet"
@@ -48,6 +42,7 @@ type DebtView = "timeline" | "contacts"
 type FormDialogState = { mode: "create" } | { mode: "edit"; debt: Debt }
 
 export function DebtWorkspace({ debts, onDebtsChange }: DebtWorkspaceProps) {
+  const toast = useToast()
   const [view, setView] = useState<DebtView>("timeline")
   const [archiveFilter, setArchiveFilter] = useState<ArchiveFilter>("active")
   const [directionFilter, setDirectionFilter] = useState<DirectionFilter>("all")
@@ -105,7 +100,10 @@ export function DebtWorkspace({ debts, onDebtsChange }: DebtWorkspaceProps) {
     try {
       onDebtsChange(await listDebts())
     } catch (error) {
-      toast.error("读取债务记录失败", { description: getApiErrorMessage(error) })
+      toast({
+        body: `读取债务记录失败：${getApiErrorMessage(error)}`,
+        type: "error",
+      })
     } finally {
       setIsRefreshing(false)
     }
@@ -123,7 +121,7 @@ export function DebtWorkspace({ debts, onDebtsChange }: DebtWorkspaceProps) {
     const created = await createDebt(values)
     upsertDebt(created)
     setFormDialog(null)
-    toast.success("已创建")
+    toast({ body: "已创建" })
   }
 
   async function handleUpdate(id: string, values: DebtFormValues) {
@@ -137,17 +135,18 @@ export function DebtWorkspace({ debts, onDebtsChange }: DebtWorkspaceProps) {
     })
     upsertDebt(updated)
     setFormDialog(null)
-    toast.success("已保存修改")
+    toast({ body: "已保存修改" })
   }
 
   async function handleToggleArchive(debt: Debt) {
     try {
       const updated = await setDebtArchived(debt.id, !debt.archived)
       upsertDebt(updated)
-      toast.success(updated.archived ? "已归档" : "已取消归档")
+      toast({ body: updated.archived ? "已归档" : "已取消归档" })
     } catch (error) {
-      toast.error(debt.archived ? "取消归档失败" : "归档失败", {
-        description: getApiErrorMessage(error),
+      toast({
+        body: `${debt.archived ? "取消归档失败" : "归档失败"}：${getApiErrorMessage(error)}`,
+        type: "error",
       })
     }
   }
@@ -160,10 +159,10 @@ export function DebtWorkspace({ debts, onDebtsChange }: DebtWorkspaceProps) {
       const nextDebts = await deleteDebt(deletingDebt.id)
       onDebtsChange(nextDebts)
       if (detailDebtId === deletingDebt.id) setDetailDebtId(null)
-      toast.success("已删除该债务")
+      toast({ body: "已删除该债务" })
       setDeletingDebt(null)
     } catch (error) {
-      toast.error("删除失败", { description: getApiErrorMessage(error) })
+      toast({ body: `删除失败：${getApiErrorMessage(error)}`, type: "error" })
     } finally {
       setIsDeleting(false)
     }
@@ -173,16 +172,19 @@ export function DebtWorkspace({ debts, onDebtsChange }: DebtWorkspaceProps) {
     const updated = await addRepayment({ debtId, ...values })
     upsertDebt(updated)
     setRepaymentDebt(null)
-    toast.success("已登记还款")
+    toast({ body: "已登记还款" })
   }
 
   async function handleDeleteRepayment(debtId: string, repaymentId: string) {
     try {
       const updated = await deleteRepayment(debtId, repaymentId)
       upsertDebt(updated)
-      toast.success("已撤销还款")
+      toast({ body: "已撤销还款" })
     } catch (error) {
-      toast.error("撤销还款失败", { description: getApiErrorMessage(error) })
+      toast({
+        body: `撤销还款失败：${getApiErrorMessage(error)}`,
+        type: "error",
+      })
     }
   }
 
@@ -208,19 +210,20 @@ export function DebtWorkspace({ debts, onDebtsChange }: DebtWorkspaceProps) {
 
           <div className="flex min-w-0 flex-1 items-center justify-end gap-[var(--shard-space-2)]">
             <Button
-              aria-label="刷新债务列表"
-              disabled={isRefreshing}
+              icon={<RefreshCwIcon className={isRefreshing ? "animate-spin" : ""} />}
+              isDisabled={isRefreshing}
+              isIconOnly
+              label="刷新债务列表"
               onClick={() => void refresh()}
-              size="icon"
-              type="button"
+              size="sm"
               variant="ghost"
-            >
-              <RefreshCwIcon className={isRefreshing ? "animate-spin" : ""} />
-            </Button>
-            <Button onClick={() => setFormDialog({ mode: "create" })} type="button">
-              <PlusIcon data-icon="inline-start" />
-              新增债务
-            </Button>
+            />
+            <Button
+              icon={<PlusIcon />}
+              label="新增债务"
+              onClick={() => setFormDialog({ mode: "create" })}
+              variant="primary"
+            />
           </div>
         </div>
       </div>
@@ -300,12 +303,11 @@ export function DebtWorkspace({ debts, onDebtsChange }: DebtWorkspaceProps) {
               </div>
               <p className="text-sm">点击右上角"新增债务"开始记录第一笔。</p>
               <Button
+                icon={<PlusIcon />}
+                label="新增债务"
                 onClick={() => setFormDialog({ mode: "create" })}
-                type="button"
-              >
-                <PlusIcon data-icon="inline-start" />
-                新增债务
-              </Button>
+                variant="primary"
+              />
             </div>
           ) : (
             <div className="flex flex-col gap-[var(--shard-space-3)]">
@@ -411,33 +413,23 @@ function DebtDeleteConfirmDialog({
   const repaymentCount = debt?.repayments.length ?? 0
 
   return (
-    <Dialog
-      open={debt !== null}
+    <AlertDialog
+      actionLabel={isDeleting ? "删除中" : "确定删除"}
+      actionVariant="destructive"
+      cancelLabel="取消"
+      description={
+        repaymentCount > 0
+          ? `该债务有 ${repaymentCount} 笔还款记录，删除后将一并清除且无法恢复。`
+          : "删除后无法恢复。"
+      }
+      isActionLoading={isDeleting}
+      isOpen={debt !== null}
+      onAction={onConfirm}
       onOpenChange={(nextOpen) => {
         if (!nextOpen && !isDeleting) onCancel()
       }}
-    >
-      <DialogContent
-        className="w-[min(420px,calc(100vw-32px))]"
-        showCloseButton={!isDeleting}
-      >
-        <DialogHeader>
-          <DialogTitle>确定删除这笔债务？</DialogTitle>
-          <DialogDescription>
-            {repaymentCount > 0
-              ? `该债务有 ${repaymentCount} 笔还款记录，删除后将一并清除且无法恢复。`
-              : "删除后无法恢复。"}
-          </DialogDescription>
-        </DialogHeader>
-        <DialogFooter className="flex-row justify-end gap-[var(--shard-space-2)]">
-          <Button disabled={isDeleting} onClick={onCancel} type="button" variant="outline">
-            取消
-          </Button>
-          <Button disabled={isDeleting} onClick={onConfirm} type="button" variant="destructive">
-            {isDeleting ? "删除中" : "确定删除"}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+      title="确定删除这笔债务？"
+      width={420}
+    />
   )
 }

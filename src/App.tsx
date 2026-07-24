@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { LockKeyholeIcon, TagIcon } from "lucide-react"
-import { toast } from "sonner"
+import { useToast } from "@astryxdesign/core/Toast"
 
 import { BottomTabs } from "@/components/shard/bottom-tabs"
 import { CaptureBox } from "@/components/shard/capture-box"
@@ -28,15 +28,9 @@ import {
   saveAppSettings,
   type AppSettings,
 } from "@/lib/app-settings"
-import { Button } from "@/components/ui/button"
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog"
+import { Button } from "@astryxdesign/core/Button"
+import { Dialog, DialogHeader } from "@astryxdesign/core/Dialog"
+import { Layout, LayoutFooter } from "@astryxdesign/core/Layout"
 import { ToastViewport } from "@astryxdesign/core/Toast"
 import {
   archiveFragment,
@@ -84,6 +78,7 @@ interface ZenDraft {
 }
 
 function App() {
+  const toast = useToast()
   const [fragments, setFragments] = useState<Fragment[]>([])
   const [git, setGit] = useState<GitInfo | null>(null)
   const [vaultPath, setVaultPath] = useState("")
@@ -205,9 +200,7 @@ function App() {
         return
       }
 
-      toast.error("读取 Shard vault 失败", {
-        description: message,
-      })
+      toast({ body: `${"读取 Shard vault 失败"}：${message}`, type: "error" })
     } finally {
       setIsLoading(false)
     }
@@ -222,9 +215,7 @@ function App() {
         setMindMaps([])
         return
       }
-      toast.error("读取思维导图失败", {
-        description: message,
-      })
+      toast({ body: `${"读取思维导图失败"}：${message}`, type: "error" })
     }
   }
 
@@ -237,9 +228,7 @@ function App() {
         setDebts([])
         return
       }
-      toast.error("读取债务记录失败", {
-        description: message,
-      })
+      toast({ body: `${"读取债务记录失败"}：${message}`, type: "error" })
     }
   }
 
@@ -286,13 +275,11 @@ function App() {
 
         const created = await createFragment(content, tags)
         setFragments((current) => [created, ...current])
-        toast.success("已保存到密匣")
+        toast({ body: "已保存到密匣" })
         void refreshFragments()
       } catch (error) {
         const message = getApiErrorMessage(error)
-        toast.error("创建密匣片段失败", {
-          description: message,
-        })
+        toast({ body: `${"创建密匣片段失败"}：${message}`, type: "error" })
         throw new Error(message)
       } finally {
         setIsCreating(false)
@@ -328,11 +315,9 @@ function App() {
         )
       )
       if (created.gitStatus === "commit_failed") {
-        toast.warning("片段已保存，但 Git commit 失败", {
-          description: created.error ?? "可以继续记录，之后再处理 Git 配置。",
-        })
+        toast({ body: `${"片段已保存，但 Git commit 失败"}：${created.error ?? "可以继续记录，之后再处理 Git 配置。"}` })
       } else {
-        toast.success("片段已保存")
+        toast({ body: "片段已保存" })
       }
       void refreshFragments()
     } catch (error) {
@@ -340,9 +325,7 @@ function App() {
       setFragments((current) =>
         current.filter((fragment) => fragment.id !== optimisticId)
       )
-      toast.error("创建片段失败", {
-        description: message,
-      })
+      toast({ body: `${"创建片段失败"}：${message}`, type: "error" })
       throw new Error(message)
     } finally {
       setIsCreating(false)
@@ -354,21 +337,17 @@ function App() {
     try {
       const synced = await syncVault()
       setGit(synced)
-      toast.success("同步完成")
+      toast({ body: "同步完成" })
       void refreshFragments()
     } catch (error) {
       if (isGitSetupError(error)) {
         setIsVaultGuideOpen(true)
         void refreshFragments()
-        toast.warning("需要完成 Git 配置", {
-          description: getApiErrorMessage(error),
-        })
+        toast({ body: `${"需要完成 Git 配置"}：${getApiErrorMessage(error)}` })
         return
       }
 
-      toast.error("同步失败", {
-        description: getApiErrorMessage(error),
-      })
+      toast({ body: `${"同步失败"}：${getApiErrorMessage(error)}`, type: "error" })
     } finally {
       setIsSyncing(false)
     }
@@ -453,9 +432,7 @@ function App() {
           currentFragment.id === fragment.id ? fragment : currentFragment
         )
       )
-      toast.error("更新复选框失败", {
-        description: getApiErrorMessage(error),
-      })
+      toast({ body: `${"更新复选框失败"}：${getApiErrorMessage(error)}`, type: "error" })
     }
   }
 
@@ -484,12 +461,10 @@ function App() {
       if (editingFragmentId === fragment.id) {
         closeEditor()
       }
-      toast.success("已归档")
+      toast({ body: "已归档" })
       return true
     } catch (error) {
-      toast.error("归档失败", {
-        description: getApiErrorMessage(error),
-      })
+      toast({ body: `${"归档失败"}：${getApiErrorMessage(error)}`, type: "error" })
       return false
     }
   }
@@ -517,7 +492,7 @@ function App() {
           )
         )
       )
-      toast.success(nextPinned ? "已置顶" : "已取消置顶")
+      toast({ body: nextPinned ? "已置顶" : "已取消置顶" })
     } catch (error) {
       setFragments((current) =>
         sortFragmentsForDisplay(
@@ -526,18 +501,14 @@ function App() {
           )
         )
       )
-      toast.error(nextPinned ? "置顶失败" : "取消置顶失败", {
-        description: getApiErrorMessage(error),
-      })
+      toast({ body: `${nextPinned ? "置顶失败" : "取消置顶失败"}：${getApiErrorMessage(error)}`, type: "error" })
     }
   }
 
   async function handleMoveFragmentToLockbox(fragment: Fragment) {
     if (fragment.lockbox || fragment.archived) return
     if (hasMarkdownImage(fragment.content)) {
-      toast.error("密匣暂不支持图片附件", {
-        description: "请先移除图片，再移入密匣，避免附件留在公开 assets 目录。",
-      })
+      toast({ body: `${"密匣暂不支持图片附件"}：${"请先移除图片，再移入密匣，避免附件留在公开 assets 目录。"}`, type: "error" })
       return
     }
 
@@ -549,7 +520,7 @@ function App() {
     if (!lockbox?.configured) {
       setPendingLockboxMoveId(fragment.id)
       openLockboxGate()
-      toast.info("设置密匣后会移入笔记")
+      toast({ body: "设置密匣后会移入笔记" })
       return
     }
 
@@ -564,12 +535,10 @@ function App() {
       const state = await moveFragmentToLockbox(fragmentId)
       applyVaultState(state)
       closeEditor()
-      toast.success(successMessage)
+      toast({ body: successMessage })
       return true
     } catch (error) {
-      toast.error("移入密匣失败", {
-        description: getApiErrorMessage(error),
-      })
+      toast({ body: `${"移入密匣失败"}：${getApiErrorMessage(error)}`, type: "error" })
       return false
     }
   }
@@ -618,20 +587,15 @@ function App() {
   }
 
   function showHelp() {
-    toast.info("帮助", {
-      description:
-        "先在 Inbox 写片段，用 #标签归类。需要持久化和同步时，在设置里选择或创建 vault。",
-    })
+    toast({ body: `${"帮助"}：${"先在 Inbox 写片段，用 #标签归类。需要持久化和同步时，在设置里选择或创建 vault。"}` })
   }
 
   async function handleRestoreWindow() {
     try {
       await restoreWindowFrame()
-      toast.success("已还原窗口尺寸")
+      toast({ body: "已还原窗口尺寸" })
     } catch (error) {
-      toast.error("还原窗口尺寸失败", {
-        description: getApiErrorMessage(error),
-      })
+      toast({ body: `${"还原窗口尺寸失败"}：${getApiErrorMessage(error)}`, type: "error" })
     }
   }
 
@@ -647,7 +611,7 @@ function App() {
       return
     }
 
-    toast.success("密匣已设置")
+    toast({ body: "密匣已设置" })
   }
 
   async function handleUnlockLockbox(password: string) {
@@ -665,7 +629,7 @@ function App() {
     setSelectedTag(null)
     setSelectedLockboxTag(null)
     setFilter("lockbox")
-    toast.success("密匣已解锁")
+    toast({ body: "密匣已解锁" })
   }
 
   async function handleLockLockbox() {
@@ -677,11 +641,9 @@ function App() {
       if (filter === "lockbox") {
         setFilter("tagged")
       }
-      toast.success("密匣已上锁")
+      toast({ body: "密匣已上锁" })
     } catch (error) {
-      toast.error("密匣上锁失败", {
-        description: getApiErrorMessage(error),
-      })
+      toast({ body: `${"密匣上锁失败"}：${getApiErrorMessage(error)}`, type: "error" })
     }
   }
 
@@ -708,7 +670,7 @@ function App() {
     const state = await changeLockboxPassword(currentPassword, newPassword)
     applyVaultState(state)
     setLockboxDialogMode(null)
-    toast.success("密匣密码已修改")
+    toast({ body: "密匣密码已修改" })
   }
 
   async function handleResetLockboxPassword(
@@ -726,7 +688,7 @@ function App() {
       return
     }
 
-    toast.success("密匣密码已重置")
+    toast({ body: "密匣密码已重置" })
   }
 
   function closeLockboxDialog() {
@@ -750,7 +712,7 @@ function App() {
     } else if (fragment.lockbox) {
       if (!lockbox?.unlocked) {
         openLockboxGate()
-        toast.info("请先解锁密匣后查看笔记")
+        toast({ body: "请先解锁密匣后查看笔记" })
         return
       }
 
@@ -764,7 +726,7 @@ function App() {
       setSelectedTag(visibleTag)
       setFilter("tagged")
     } else {
-      toast.warning("这条笔记当前不在时间线列表中")
+      toast({ body: "这条笔记当前不在时间线列表中" })
       return
     }
 
@@ -780,18 +742,18 @@ function App() {
     if (!tag) return false
 
     if (/\s/.test(tag)) {
-      toast.error("标签不能包含空格")
+      toast({ body: "标签不能包含空格", type: "error" })
       return false
     }
 
     if (tag === "inbox" || tag === LOCKBOX_TAG) {
-      toast.error(`#${tag} 是保留标签，不能新建`)
+      toast({ body: `#${tag} 是保留标签，不能新建`, type: "error" })
       return false
     }
 
     if (inboxTagSummaries.some((summary) => summary.tag === tag)) {
       setSelectedInboxTag(tag)
-      toast.info(`标签 #${tag} 已存在`)
+      toast({ body: `标签 #${tag} 已存在` })
       return true
     }
 
@@ -799,9 +761,7 @@ function App() {
       customTags: [...appSettings.customTags, tag],
     })
     setSelectedInboxTag(tag)
-    toast.success(`标签 #${tag} 已创建`, {
-      description: `写片段时输入 #${tag} 即可归入这个标签。`,
-    })
+    toast({ body: `${`标签 #${tag} 已创建`}：${`写片段时输入 #${tag} 即可归入这个标签。`}` })
     return true
   }
 
@@ -1051,9 +1011,7 @@ function App() {
       .catch((error) => {
         if (!autoSyncFailureNotifiedRef.current) {
           autoSyncFailureNotifiedRef.current = true
-          toast.error("自动同步失败", {
-            description: getApiErrorMessage(error),
-          })
+          toast({ body: `${"自动同步失败"}：${getApiErrorMessage(error)}`, type: "error" })
         }
       })
       .finally(() => {
@@ -1352,40 +1310,38 @@ function LockboxArchiveConfirmDialog({
 }) {
   return (
     <Dialog
-      open={fragment !== null}
-      onOpenChange={(nextOpen) => {
+      isOpen={fragment !== null}
+      onOpenChange={(nextOpen: boolean) => {
         if (!nextOpen && !isArchiving) onCancel()
       }}
+      purpose={isArchiving ? "required" : "form"}
+      width={420}
     >
-      <DialogContent
-        className="w-[min(420px,calc(100vw-32px))]"
-        showCloseButton={!isArchiving}
-      >
-        <DialogHeader>
-          <DialogTitle>确认归档密匣笔记</DialogTitle>
-          <DialogDescription>
-            这条笔记属于密匣。归档后会从密匣列表移除，并且不会出现在「归档/回收站」列表中。
-          </DialogDescription>
-        </DialogHeader>
-        <DialogFooter className="flex-row justify-end">
-          <Button
-            disabled={isArchiving}
-            onClick={onCancel}
-            type="button"
-            variant="outline"
-          >
-            取消
-          </Button>
-          <Button
-            disabled={isArchiving}
-            onClick={onConfirm}
-            type="button"
-            variant="destructive"
-          >
-            {isArchiving ? "归档中" : "仍然归档"}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
+      <Layout
+        header={
+          <DialogHeader
+            onOpenChange={isArchiving ? undefined : () => onCancel()}
+            subtitle="这条笔记属于密匣。归档后会从密匣列表移除，并且不会出现在「归档/回收站」列表中。"
+            title="确认归档密匣笔记"
+          />
+        }
+        footer={
+          <LayoutFooter hasDivider>
+            <Button
+              isDisabled={isArchiving}
+              label="取消"
+              onClick={onCancel}
+              variant="secondary"
+            />
+            <Button
+              isDisabled={isArchiving}
+              label={isArchiving ? "归档中" : "仍然归档"}
+              onClick={onConfirm}
+              variant="destructive"
+            />
+          </LayoutFooter>
+        }
+      />
     </Dialog>
   )
 }
@@ -1430,17 +1386,11 @@ function LockboxHeader({
           <div className="flex shrink-0 items-center gap-[var(--shard-space-2)]">
             {lockbox?.unlocked ? (
               <>
-                <Button onClick={onChangePassword} size="sm" variant="outline">
-                  修改密码
-                </Button>
-                <Button onClick={onLock} size="sm" variant="outline">
-                  上锁
-                </Button>
+                <Button label="修改密码" onClick={onChangePassword} size="sm" variant="secondary" />
+                <Button label="上锁" onClick={onLock} size="sm" variant="secondary" />
               </>
             ) : (
-              <Button onClick={onUnlock} size="sm">
-                解锁
-              </Button>
+              <Button label="解锁" onClick={onUnlock} size="sm" variant="primary" />
             )}
           </div>
         </div>

@@ -8,18 +8,13 @@ import {
   RefreshCwIcon,
   Share2Icon,
 } from "lucide-react"
-import { toast } from "sonner"
+
+import { Button } from "@astryxdesign/core/Button"
+import { DropdownMenu, DropdownMenuItem } from "@astryxdesign/core/DropdownMenu"
+import { TextInput } from "@astryxdesign/core/TextInput"
+import { useToast } from "@astryxdesign/core/Toast"
 
 import { MindMapPreview } from "@/components/shard/mind-map-preview"
-import { Button } from "@/components/ui/button"
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuGroup,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
-import { Input } from "@/components/ui/input"
 import {
   createMindMap,
   getApiErrorMessage,
@@ -35,10 +30,8 @@ interface MindMapPanelProps {
 
 const CARD_PREVIEW_HEIGHT = 168
 
-const mindMapMenuItemClass =
-  "grid h-8 grid-cols-[14px_max-content] gap-[var(--shard-space-2)] px-[var(--shard-space-2)] text-[13px] font-medium whitespace-nowrap [&_svg]:size-3.5 [&_svg]:stroke-[1.65]"
-
 export function MindMapPanel({ onMapsChange, onOpenMap }: MindMapPanelProps) {
+  const toast = useToast()
   const [maps, setMaps] = useState<MindMapSummary[]>([])
   const [title, setTitle] = useState("")
   const [isCreating, setIsCreating] = useState(false)
@@ -54,8 +47,9 @@ export function MindMapPanel({ onMapsChange, onOpenMap }: MindMapPanelProps) {
     try {
       updateMaps(await listMindMaps())
     } catch (error) {
-      toast.error("读取思维导图失败", {
-        description: getApiErrorMessage(error),
+      toast({
+        body: `读取思维导图失败：${getApiErrorMessage(error)}`,
+        type: "error",
       })
     } finally {
       setIsLoading(false)
@@ -82,11 +76,12 @@ export function MindMapPanel({ onMapsChange, onOpenMap }: MindMapPanelProps) {
         },
         ...maps,
       ])
-      toast.success("思维导图已创建")
+      toast({ body: "思维导图已创建" })
       onOpenMap(created.file.id)
     } catch (error) {
-      toast.error("创建思维导图失败", {
-        description: getApiErrorMessage(error),
+      toast({
+        body: `创建思维导图失败：${getApiErrorMessage(error)}`,
+        type: "error",
       })
     } finally {
       setIsCreating(false)
@@ -118,34 +113,38 @@ export function MindMapPanel({ onMapsChange, onOpenMap }: MindMapPanelProps) {
 
           <div className="flex min-w-0 flex-1 items-center justify-end gap-[var(--shard-space-2)]">
             <Button
-              aria-label="刷新思维导图列表"
-              disabled={isLoading}
+              icon={<RefreshCwIcon />}
+              isDisabled={isLoading}
+              isIconOnly
+              isLoading={isLoading}
+              label="刷新思维导图列表"
               onClick={() => void refreshMindMaps()}
-              size="icon"
+              size="sm"
               type="button"
               variant="ghost"
-            >
-              <RefreshCwIcon className={isLoading ? "animate-spin" : ""} />
-            </Button>
+            />
             <form
               className="flex min-w-0 items-center gap-[var(--shard-space-2)] sm:max-w-[320px]"
               onSubmit={handleCreate}
             >
-              <Input
-                aria-label="思维导图标题"
-                disabled={isCreating}
-                onChange={(event) => setTitle(event.target.value)}
-                placeholder="新建导图标题"
-                value={title}
+              <div className="min-w-0 flex-1">
+                <TextInput
+                  isDisabled={isCreating}
+                  isLabelHidden
+                  label="思维导图标题"
+                  onChange={(value) => setTitle(value)}
+                  placeholder="新建导图标题"
+                  value={title}
+                  width="100%"
+                />
+              </div>
+              <Button
+                icon={<PlusIcon />}
+                isDisabled={!title.trim() || isCreating}
+                isLoading={isCreating}
+                label="新建"
+                type="submit"
               />
-              <Button disabled={!title.trim() || isCreating} type="submit">
-                {isCreating ? (
-                  <Loader2Icon className="animate-spin" data-icon="inline-start" />
-                ) : (
-                  <PlusIcon data-icon="inline-start" />
-                )}
-                新建
-              </Button>
             </form>
           </div>
         </div>
@@ -189,6 +188,7 @@ function MindMapGridCard({
   map: MindMapSummary
   onOpen: () => void
 }) {
+  const toast = useToast()
   const cardRef = useRef<HTMLElement | null>(null)
   const [readResult, setReadResult] = useState<MindMapReadResult | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -229,10 +229,11 @@ function MindMapGridCard({
       }
 
       await clipboard.writeText(`${map.title}\n${map.path}`)
-      toast.success("已复制思维导图信息")
+      toast({ body: "已复制思维导图信息" })
     } catch (unknownError) {
-      toast.error("分享思维导图失败", {
-        description: getApiErrorMessage(unknownError),
+      toast({
+        body: `分享思维导图失败：${getApiErrorMessage(unknownError)}`,
+        type: "error",
       })
     }
   }
@@ -279,35 +280,21 @@ function MindMapGridCard({
           className="flex shrink-0 items-center"
           onClick={(event) => event.stopPropagation()}
         >
-          <DropdownMenu>
-            <DropdownMenuTrigger render={<Button size="icon-sm" variant="ghost" />}>
-              <MoreHorizontalIcon
-                className="size-4 stroke-[1.65]"
-                data-icon="inline-start"
-              />
-              <span className="sr-only">思维导图操作</span>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent
-              align="end"
-              className="w-fit min-w-0"
-            >
-              <DropdownMenuGroup>
-                <DropdownMenuItem
-                  className={mindMapMenuItemClass}
-                  onClick={onOpen}
-                >
-                  <PencilLineIcon />
-                  编辑
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  className={mindMapMenuItemClass}
-                  onClick={() => void shareMindMap()}
-                >
-                  <Share2Icon />
-                  分享
-                </DropdownMenuItem>
-              </DropdownMenuGroup>
-            </DropdownMenuContent>
+          <DropdownMenu
+            button={{
+              icon: <MoreHorizontalIcon />,
+              isIconOnly: true,
+              label: "思维导图操作",
+              size: "sm",
+              variant: "ghost",
+            }}
+          >
+            <DropdownMenuItem icon={PencilLineIcon} label="编辑" onClick={onOpen} />
+            <DropdownMenuItem
+              icon={Share2Icon}
+              label="分享"
+              onClick={() => void shareMindMap()}
+            />
           </DropdownMenu>
         </div>
       </div>

@@ -2,17 +2,12 @@ import { isTauri } from "@tauri-apps/api/core"
 import { save } from "@tauri-apps/plugin-dialog"
 import { CheckIcon, ImageIcon, Loader2Icon } from "lucide-react"
 import { useEffect, useMemo, useState } from "react"
-import { toast } from "sonner"
 
-import { Button } from "@/components/ui/button"
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog"
+import { Button } from "@astryxdesign/core/Button"
+import { Dialog, DialogHeader } from "@astryxdesign/core/Dialog"
+import { Layout, LayoutContent, LayoutFooter } from "@astryxdesign/core/Layout"
+import { useToast } from "@astryxdesign/core/Toast"
+
 import {
   EXPORT_IMAGE_TEMPLATES,
   blobToBytes,
@@ -42,6 +37,7 @@ export function FragmentImageExporter({
   open,
   vaultPath,
 }: FragmentImageExporterProps) {
+  const toast = useToast()
   const [templateId, setTemplateId] = useState<ExportImageTemplateId>("paper")
   const [showCreatedDate, setShowCreatedDate] = useState(true)
   const [showCreatedTime, setShowCreatedTime] = useState(false)
@@ -78,8 +74,9 @@ export function FragmentImageExporter({
       )
       .catch((error) => {
         if (cancelled) return
-        toast.error("预览生成失败", {
-          description: getApiErrorMessage(error),
+        toast({
+          body: `预览生成失败：${getApiErrorMessage(error)}`,
+          type: "error",
         })
       })
       .finally(() => {
@@ -127,10 +124,11 @@ export function FragmentImageExporter({
         await copyBlobImage(blob)
       }
 
-      toast.success("分享图片已复制")
+      toast({ body: "分享图片已复制" })
     } catch (error) {
-      toast.error("复制分享图片失败", {
-        description: getApiErrorMessage(error),
+      toast({
+        body: `复制分享图片失败：${getApiErrorMessage(error)}`,
+        type: "error",
       })
     } finally {
       setIsCopying(false)
@@ -157,17 +155,18 @@ export function FragmentImageExporter({
 
         const bytes = await blobToBytes(blob)
         await saveExportedImage(path, bytes)
-        toast.success("分享图片已保存")
+        toast({ body: "分享图片已保存" })
         onClose()
         return
       }
 
       downloadBlob(blob, fileName)
-      toast.success("分享图片已下载")
+      toast({ body: "分享图片已下载" })
       onClose()
     } catch (error) {
-      toast.error("保存分享图片失败", {
-        description: getApiErrorMessage(error),
+      toast({
+        body: `保存分享图片失败：${getApiErrorMessage(error)}`,
+        type: "error",
       })
     } finally {
       setIsExporting(false)
@@ -176,120 +175,130 @@ export function FragmentImageExporter({
 
   return (
     <Dialog
-      open={open}
+      isOpen={open}
+      maxHeight="min(860px, calc(100dvh - 32px))"
       onOpenChange={(nextOpen) => {
         if (!nextOpen) onClose()
       }}
+      padding={0}
+      width="min(1040px, calc(100vw - 32px))"
     >
-      <DialogContent
-        className="h-[min(860px,calc(100dvh-32px))] w-[min(1040px,calc(100vw-32px))] gap-0 p-0"
-      >
-        <DialogHeader className="border-b border-border px-[var(--shard-space-5)] py-[var(--shard-space-4)] pr-12">
-          <div className="flex min-w-0 items-center gap-[var(--shard-space-3)]">
-            <span className="flex size-8 shrink-0 items-center justify-center rounded-[var(--shard-radius-control)] border border-border bg-background text-[color:var(--shard-sapphire)]">
-              <ImageIcon className="size-4 stroke-[1.75]" />
-            </span>
-            <div className="min-w-0">
-              <DialogTitle>分享</DialogTitle>
-              <DialogDescription>
-                {activeTemplate.label} · PNG
-              </DialogDescription>
-            </div>
-          </div>
-        </DialogHeader>
+      <Layout
+        header={
+          <DialogHeader
+            hasDivider
+            onOpenChange={(nextOpen) => {
+              if (!nextOpen) onClose()
+            }}
+            startContent={
+              <span className="flex size-8 shrink-0 items-center justify-center rounded-[var(--shard-radius-control)] border border-border bg-background text-[color:var(--shard-sapphire)]">
+                <ImageIcon className="size-4 stroke-[1.75]" />
+              </span>
+            }
+            subtitle={`${activeTemplate.label} · PNG`}
+            title="分享"
+          />
+        }
+        height="fill"
+        style={{ height: "min(860px, calc(100dvh - 32px))" }}
+        content={
+          <LayoutContent isScrollable={false} padding={0}>
+            <div className="grid min-h-0 flex-1 grid-rows-[auto_minmax(0,1fr)] overflow-hidden md:grid-cols-[184px_minmax(0,1fr)] md:grid-rows-1">
+              <div className="grid grid-cols-3 content-start gap-[var(--shard-space-2)] border-b border-border p-[var(--shard-space-3)] md:grid-cols-1 md:border-r md:border-b-0">
+                {EXPORT_IMAGE_TEMPLATES.map((template) => (
+                  <button
+                    aria-label={`${template.label}，${template.description}`}
+                    aria-pressed={template.id === templateId}
+                    className={cn(
+                      "grid min-w-0 content-start gap-[var(--shard-space-2)] rounded-[var(--shard-radius-control)] border bg-card p-[var(--shard-space-2)] transition-[background-color,border-color,color,scale] duration-150 ease-out active:scale-[0.96] md:grid-cols-[56px_minmax(0,1fr)] md:items-center md:gap-[var(--shard-space-3)]",
+                      "hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/[var(--shard-alpha-34)] focus-visible:outline-none",
+                      template.id === templateId
+                        ? "border-[color:var(--shard-sapphire)] bg-[color:var(--shard-sapphire-soft)] text-[color:var(--shard-sapphire-text)]"
+                        : "border-border text-foreground"
+                    )}
+                    key={template.id}
+                    onClick={() => setTemplateId(template.id)}
+                    type="button"
+                  >
+                    <TemplateThumbnail
+                      active={template.id === templateId}
+                      templateId={template.id}
+                    />
+                    <span className="truncate text-center text-xs leading-5 font-medium text-balance md:text-left">
+                      {template.label}
+                    </span>
+                  </button>
+                ))}
+              </div>
 
-        <div className="grid min-h-0 flex-1 grid-rows-[auto_minmax(0,1fr)] overflow-hidden md:grid-cols-[184px_minmax(0,1fr)] md:grid-rows-1">
-          <div className="grid grid-cols-3 content-start gap-[var(--shard-space-2)] border-b border-border p-[var(--shard-space-3)] md:grid-cols-1 md:border-r md:border-b-0">
-            {EXPORT_IMAGE_TEMPLATES.map((template) => (
-              <button
-                aria-label={`${template.label}，${template.description}`}
-                aria-pressed={template.id === templateId}
-                className={cn(
-                  "grid min-w-0 content-start gap-[var(--shard-space-2)] rounded-[var(--shard-radius-control)] border bg-card p-[var(--shard-space-2)] transition-[background-color,border-color,color,scale] duration-150 ease-out active:scale-[0.96] md:grid-cols-[56px_minmax(0,1fr)] md:items-center md:gap-[var(--shard-space-3)]",
-                  "hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/[var(--shard-alpha-34)] focus-visible:outline-none",
-                  template.id === templateId
-                    ? "border-[color:var(--shard-sapphire)] bg-[color:var(--shard-sapphire-soft)] text-[color:var(--shard-sapphire-text)]"
-                    : "border-border text-foreground"
-                )}
-                key={template.id}
-                onClick={() => setTemplateId(template.id)}
-                type="button"
+              <div
+                aria-busy={isPreviewing}
+                className="min-h-0 overflow-auto bg-background p-[var(--shard-space-4)] md:p-[var(--shard-space-5)]"
               >
-                <TemplateThumbnail
-                  active={template.id === templateId}
-                  templateId={template.id}
-                />
-                <span className="truncate text-center text-xs leading-5 font-medium text-balance md:text-left">
-                  {template.label}
-                </span>
-              </button>
-            ))}
-          </div>
-
-          <div
-            aria-busy={isPreviewing}
-            className="min-h-0 overflow-auto bg-background p-[var(--shard-space-4)] md:p-[var(--shard-space-5)]"
-          >
-            <div className="relative flex h-full min-h-[320px] w-full items-start justify-center md:items-center">
-              {isPreviewing ? (
-                <div className="absolute inset-0 z-10 flex items-center justify-center bg-background/[var(--shard-alpha-55)]">
-                  <Loader2Icon className="size-5 animate-spin text-muted-foreground" />
+                <div className="relative flex h-full min-h-[320px] w-full items-start justify-center md:items-center">
+                  {isPreviewing ? (
+                    <div className="absolute inset-0 z-10 flex items-center justify-center bg-background/[var(--shard-alpha-55)]">
+                      <Loader2Icon className="size-5 animate-spin text-muted-foreground" />
+                    </div>
+                  ) : null}
+                  <canvas
+                    aria-label="分享图片预览"
+                    className="block h-auto max-h-full w-auto max-w-full rounded-[var(--shard-surface-radius)] border border-border bg-card shadow-[0_8px_20px_rgb(0_0_0/var(--shard-alpha-8))]"
+                    ref={setPreviewCanvas}
+                  />
                 </div>
-              ) : null}
-              <canvas
-                aria-label="分享图片预览"
-                className="block h-auto max-h-full w-auto max-w-full rounded-[var(--shard-surface-radius)] border border-border bg-card shadow-[0_8px_20px_rgb(0_0_0/var(--shard-alpha-8))]"
-                ref={setPreviewCanvas}
+              </div>
+            </div>
+          </LayoutContent>
+        }
+        footer={
+          <LayoutFooter
+            className="flex-row items-center justify-between"
+            hasDivider
+            padding={4}
+          >
+            <div className="flex items-center gap-[var(--shard-space-1)]">
+              <FooterCheckbox
+                checked={showCreatedDate}
+                label="创建日期"
+                onChange={setShowCreatedDate}
+              />
+              <FooterCheckbox
+                checked={showCreatedTime}
+                label="创建时间"
+                onChange={setShowCreatedTime}
               />
             </div>
-          </div>
-        </div>
-
-        <DialogFooter className="flex-row items-center justify-between border-t border-border p-[var(--shard-space-4)]">
-          <div className="flex items-center gap-[var(--shard-space-1)]">
-            <FooterCheckbox
-              checked={showCreatedDate}
-              label="创建日期"
-              onChange={setShowCreatedDate}
-            />
-            <FooterCheckbox
-              checked={showCreatedTime}
-              label="创建时间"
-              onChange={setShowCreatedTime}
-            />
-          </div>
-          <div className="flex items-center gap-[var(--shard-space-2)]">
-            <Button
-              disabled={isBusy}
-              onClick={onClose}
-              type="button"
-              variant="outline"
-            >
-              取消
-            </Button>
-            <Button
-              disabled={isBusy || isPreviewing || !fragment}
-              onClick={() => {
-                void handleCopy()
-              }}
-              type="button"
-              variant="outline"
-            >
-              {isCopying ? <Loader2Icon className="size-4 animate-spin" /> : null}
-              {isCopying ? "复制中" : "复制图片"}
-            </Button>
-            <Button
-              disabled={isBusy || isPreviewing || !fragment}
-              onClick={() => {
-                void handleExport()
-              }}
-              type="button"
-            >
-              {isExporting ? "保存中" : "保存图片"}
-            </Button>
-          </div>
-        </DialogFooter>
-      </DialogContent>
+            <div className="flex items-center gap-[var(--shard-space-2)]">
+              <Button
+                isDisabled={isBusy}
+                label="取消"
+                onClick={onClose}
+                variant="secondary"
+              />
+              <Button
+                icon={
+                  isCopying ? <Loader2Icon className="animate-spin" /> : undefined
+                }
+                isDisabled={isBusy || isPreviewing || !fragment}
+                label={isCopying ? "复制中" : "复制图片"}
+                onClick={() => {
+                  void handleCopy()
+                }}
+                variant="secondary"
+              />
+              <Button
+                isDisabled={isBusy || isPreviewing || !fragment}
+                label={isExporting ? "保存中" : "保存图片"}
+                onClick={() => {
+                  void handleExport()
+                }}
+                variant="primary"
+              />
+            </div>
+          </LayoutFooter>
+        }
+      />
     </Dialog>
   )
 }

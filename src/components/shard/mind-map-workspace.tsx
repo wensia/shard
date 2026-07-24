@@ -8,11 +8,12 @@ import {
   SaveIcon,
   XIcon,
 } from "lucide-react"
-import { toast } from "sonner"
+
+import { Button } from "@astryxdesign/core/Button"
+import { useToast } from "@astryxdesign/core/Toast"
 
 import { MindMapCanvasEditor } from "@/components/shard/mind-map-canvas-editor"
 import { MindMapOutlineEditor } from "@/components/shard/mind-map-outline-editor"
-import { Button } from "@/components/ui/button"
 import {
   getApiErrorMessage,
   listMindMaps,
@@ -43,6 +44,7 @@ export function MindMapWorkspace({
   onClose,
   onMapsChange,
 }: MindMapWorkspaceProps) {
+  const toast = useToast()
   const [readResult, setReadResult] = useState<MindMapReadResult | null>(null)
   const [draftFile, setDraftFile] = useState<ShardMapFile | null>(null)
   const [view, setView] = useState<MindMapWorkspaceView>("map")
@@ -134,7 +136,7 @@ export function MindMapWorkspace({
         setAutoSaveError(null)
         await refreshSummaries()
         if (mode === "manual") {
-          toast.success("思维导图已保存")
+          toast({ body: "思维导图已保存" })
         }
       } catch (unknownError) {
         const message = getApiErrorMessage(unknownError)
@@ -143,13 +145,13 @@ export function MindMapWorkspace({
           setConflict({ draft: draftFile, message })
         }
         if (mode === "manual") {
-          toast.error("保存思维导图失败", { description: message })
+          toast({ body: `保存思维导图失败：${message}`, type: "error" })
         }
       } finally {
         setSaveMode(null)
       }
     },
-    [draftFile, isSaving, readResult, refreshSummaries]
+    [draftFile, isSaving, readResult, refreshSummaries, toast]
   )
 
   const closeWorkspace = useCallback(() => {
@@ -183,8 +185,8 @@ export function MindMapWorkspace({
 
   const keepDiskVersion = useCallback(async () => {
     await loadMap()
-    toast.success("已载入磁盘版本")
-  }, [loadMap])
+    toast({ body: "已载入磁盘版本" })
+  }, [loadMap, toast])
 
   const keepMyVersion = useCallback(async () => {
     if (!readResult || !conflict || isSaving) return
@@ -203,15 +205,16 @@ export function MindMapWorkspace({
       setDraftFile(saved.file)
       setConflict(null)
       await refreshSummaries()
-      toast.success("已保存我的版本")
+      toast({ body: "已保存我的版本" })
     } catch (unknownError) {
-      toast.error("保存我的版本失败", {
-        description: getApiErrorMessage(unknownError),
+      toast({
+        body: `保存我的版本失败：${getApiErrorMessage(unknownError)}`,
+        type: "error",
       })
     } finally {
       setSaveMode(null)
     }
-  }, [conflict, isSaving, readResult, refreshSummaries])
+  }, [conflict, isSaving, readResult, refreshSummaries, toast])
 
   useEffect(() => {
     void loadMap()
@@ -324,22 +327,19 @@ export function MindMapWorkspace({
               </p>
             </div>
             <Button
-              disabled={isSaving}
+              isDisabled={isSaving}
+              label="保留我的版本"
               onClick={() => void keepMyVersion()}
               size="sm"
-              type="button"
-            >
-              保留我的版本
-            </Button>
+              variant="primary"
+            />
             <Button
-              disabled={isSaving}
+              isDisabled={isSaving}
+              label="保留磁盘版本"
               onClick={() => void keepDiskVersion()}
               size="sm"
-              type="button"
-              variant="outline"
-            >
-              保留磁盘版本
-            </Button>
+              variant="secondary"
+            />
           </div>
         </div>
       ) : null}
@@ -347,54 +347,40 @@ export function MindMapWorkspace({
       <footer className="shard-content-inset shrink-0 pb-[var(--shard-space-4)]">
         <div className="mx-auto flex w-fit max-w-full items-center gap-[var(--shard-space-2)] rounded-[var(--shard-surface-radius)] bg-card p-[var(--shard-space-3)] shadow-[var(--shard-composer-shadow)]">
           <Button
-            aria-label="退出思维导图"
+            icon={<XIcon />}
+            isIconOnly
+            label="退出思维导图"
             onClick={closeWorkspace}
-            size="icon-sm"
-            title="退出思维导图"
-            type="button"
+            size="sm"
+            tooltip="退出思维导图"
             variant="ghost"
-          >
-            <XIcon data-icon="inline-start" />
-          </Button>
+          />
 
           {draftFile ? (
             <Button
-              aria-label={view === "map" ? "切换到大纲视图" : "切换到思维导图视图"}
+              icon={view === "map" ? <ListTreeIcon /> : <GitBranchIcon />}
+              isIconOnly
+              label={view === "map" ? "切换到大纲视图" : "切换到思维导图视图"}
               onClick={() => setView(view === "map" ? "outline" : "map")}
-              size="icon-sm"
-              title={view === "map" ? "切换到大纲视图" : "切换到思维导图视图"}
-              type="button"
+              size="sm"
+              tooltip={view === "map" ? "切换到大纲视图" : "切换到思维导图视图"}
               variant="ghost"
-            >
-              {view === "map" ? (
-                <ListTreeIcon data-icon="inline-start" />
-              ) : (
-                <GitBranchIcon data-icon="inline-start" />
-              )}
-              <span className="sr-only">
-                {view === "map" ? "切换到大纲视图" : "切换到思维导图视图"}
-              </span>
-            </Button>
+            />
           ) : null}
 
           <span className="min-w-20 text-right text-xs text-muted-foreground">
             {saveStatusText}
           </span>
           <Button
-            disabled={!isDirty || isSaving || !draftFile}
+            icon={isSaving ? <Loader2Icon className="animate-spin" /> : <SaveIcon />}
+            isDisabled={!isDirty || isSaving || !draftFile}
+            isIconOnly
+            label={isSaving ? saveStatusText : "保存思维导图"}
             onClick={() => void save("manual")}
-            size="icon-sm"
-            title={isSaving ? saveStatusText : "保存思维导图"}
-            type="button"
+            size="sm"
+            tooltip={isSaving ? saveStatusText : "保存思维导图"}
             variant="ghost"
-          >
-            {isSaving ? (
-              <Loader2Icon className="animate-spin" data-icon="inline-start" />
-            ) : (
-              <SaveIcon data-icon="inline-start" />
-            )}
-            <span className="sr-only">{isSaving ? saveStatusText : "保存思维导图"}</span>
-          </Button>
+          />
         </div>
       </footer>
     </div>

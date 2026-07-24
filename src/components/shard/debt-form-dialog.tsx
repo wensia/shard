@@ -1,17 +1,14 @@
 import { useEffect, useId, useState, type FormEvent } from "react"
-import { ArrowDownLeftIcon, ArrowUpRightIcon, Loader2Icon } from "lucide-react"
+import { ArrowDownLeftIcon, ArrowUpRightIcon } from "lucide-react"
 
-import { Button } from "@/components/ui/button"
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog"
-import { Input } from "@/components/ui/input"
-import { Textarea } from "@/components/ui/textarea"
+import { Button } from "@astryxdesign/core/Button"
+import type { ISODateString } from "@astryxdesign/core/Calendar"
+import { DateInput } from "@astryxdesign/core/DateInput"
+import { Dialog, DialogHeader } from "@astryxdesign/core/Dialog"
+import { Layout, LayoutContent, LayoutFooter } from "@astryxdesign/core/Layout"
+import { TextArea } from "@astryxdesign/core/TextArea"
+import { TextInput } from "@astryxdesign/core/TextInput"
+
 import { TagBadge } from "@/components/shard/tag-badge"
 import { getApiErrorMessage } from "@/lib/api"
 import { yuanInputToCents } from "@/lib/debt"
@@ -46,6 +43,7 @@ export function DebtFormDialog({
   onOpenChange,
   onSubmit,
 }: DebtFormDialogProps) {
+  const formId = useId()
   const counterpartyListId = useId()
   const [direction, setDirection] = useState<DebtDirection>("borrow_in")
   const [counterparty, setCounterparty] = useState("")
@@ -125,159 +123,167 @@ export function DebtFormDialog({
     }
   }
 
+  function handleDialogOpenChange(nextOpen: boolean) {
+    if (!isSubmitting) onOpenChange(nextOpen)
+  }
+
   return (
     <Dialog
-      open={open}
-      onOpenChange={(nextOpen) => {
-        if (!isSubmitting) onOpenChange(nextOpen)
-      }}
+      isOpen={open}
+      onOpenChange={handleDialogOpenChange}
+      width="min(480px, calc(100vw - 32px))"
     >
-      <DialogContent className="w-[min(480px,calc(100vw-32px))]">
-        <DialogHeader>
-          <DialogTitle>{mode === "create" ? "新增债务" : "编辑债务"}</DialogTitle>
-          <DialogDescription>
-            {mode === "create"
-              ? "记录一笔借入或借出的债务，支持分次还款与到期提醒。"
-              : "方向创建后不可修改，录错方向请删除后重新登记。"}
-          </DialogDescription>
-        </DialogHeader>
-
-        <form className="flex flex-col gap-[var(--shard-space-4)]" onSubmit={handleSubmit}>
-          <div className="flex flex-col gap-[var(--shard-space-2)]">
-            <span className="text-xs font-semibold text-muted-foreground">方向</span>
-            <div className="grid grid-cols-2 gap-[var(--shard-space-2)]">
-              <button
-                className={directionButtonClass(direction === "borrow_in", mode === "edit")}
-                disabled={mode === "edit"}
-                onClick={() => setDirection("borrow_in")}
-                type="button"
-              >
-                <ArrowDownLeftIcon className="size-4 shrink-0 stroke-[1.75]" />
-                借入（我欠别人）
-              </button>
-              <button
-                className={directionButtonClass(direction === "lend_out", mode === "edit")}
-                disabled={mode === "edit"}
-                onClick={() => setDirection("lend_out")}
-                type="button"
-              >
-                <ArrowUpRightIcon className="size-4 shrink-0 stroke-[1.75]" />
-                借出（别人欠我）
-              </button>
-            </div>
-          </div>
-
-          <label className="flex flex-col gap-[var(--shard-space-2)] text-xs font-semibold text-muted-foreground">
-            对方
-            <Input
-              list={counterpartyListId}
-              onChange={(event) => setCounterparty(event.target.value)}
-              placeholder="姓名或称呼"
-              value={counterparty}
-            />
-            <datalist id={counterpartyListId}>
-              {knownCounterparties.map((name) => (
-                <option key={name} value={name} />
-              ))}
-            </datalist>
-          </label>
-
-          <div className="grid grid-cols-2 gap-[var(--shard-space-3)]">
-            <label className="flex flex-col gap-[var(--shard-space-2)] text-xs font-semibold text-muted-foreground">
-              本金（元）
-              <Input
-                inputMode="decimal"
-                onChange={(event) => setPrincipalYuan(event.target.value)}
-                placeholder="0.00"
-                value={principalYuan}
-              />
-            </label>
-            <label className="flex flex-col gap-[var(--shard-space-2)] text-xs font-semibold text-muted-foreground">
-              到期日
-              <Input
-                onChange={(event) => setDueDate(event.target.value)}
-                type="date"
-                value={dueDate}
-              />
-            </label>
-          </div>
-
-          <label className="flex flex-col gap-[var(--shard-space-2)] text-xs font-semibold text-muted-foreground">
-            备注
-            <Textarea
-              onChange={(event) => setNote(event.target.value)}
-              placeholder="可选"
-              value={note}
-            />
-          </label>
-
-          <div className="flex flex-col gap-[var(--shard-space-2)]">
-            <span className="text-xs font-semibold text-muted-foreground">标签</span>
-            {tags.length > 0 ? (
-              <div className="flex flex-wrap gap-[var(--shard-space-2)]">
-                {tags.map((tag) => (
-                  <TagBadge key={tag} removable onRemove={removeTag} tag={tag} />
-                ))}
+      <Layout
+        header={
+          <DialogHeader
+            hasDivider
+            onOpenChange={handleDialogOpenChange}
+            subtitle={
+              mode === "create"
+                ? "记录一笔借入或借出的债务，支持分次还款与到期提醒。"
+                : "方向创建后不可修改，录错方向请删除后重新登记。"
+            }
+            title={mode === "create" ? "新增债务" : "编辑债务"}
+          />
+        }
+        content={
+          <LayoutContent>
+            <form
+              className="flex flex-col gap-[var(--shard-space-4)]"
+              id={formId}
+              onSubmit={handleSubmit}
+            >
+              <div className="flex flex-col gap-[var(--shard-space-2)]">
+                <span className="text-xs font-semibold text-muted-foreground">方向</span>
+                <div className="grid grid-cols-2 gap-[var(--shard-space-2)]">
+                  <button
+                    className={directionButtonClass(direction === "borrow_in", mode === "edit")}
+                    disabled={mode === "edit"}
+                    onClick={() => setDirection("borrow_in")}
+                    type="button"
+                  >
+                    <ArrowDownLeftIcon className="size-4 shrink-0 stroke-[1.75]" />
+                    借入（我欠别人）
+                  </button>
+                  <button
+                    className={directionButtonClass(direction === "lend_out", mode === "edit")}
+                    disabled={mode === "edit"}
+                    onClick={() => setDirection("lend_out")}
+                    type="button"
+                  >
+                    <ArrowUpRightIcon className="size-4 shrink-0 stroke-[1.75]" />
+                    借出（别人欠我）
+                  </button>
+                </div>
               </div>
-            ) : null}
-            <div className="flex flex-wrap gap-[var(--shard-space-2)]">
-              {QUICK_TAGS.map((tag) => (
-                <button
-                  className={[
-                    "shard-tag gap-[var(--shard-space-micro)] font-medium",
-                    tags.includes(tag) ? "shard-tag-active" : "",
-                  ].join(" ")}
-                  key={tag}
-                  onClick={() => (tags.includes(tag) ? removeTag(tag) : addTag(tag))}
-                  type="button"
-                >
-                  <span className="shard-chip-text">{tag}</span>
-                </button>
-              ))}
-            </div>
-            <div className="flex gap-[var(--shard-space-2)]">
-              <Input
-                onChange={(event) => setTagDraft(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") {
-                    event.preventDefault()
-                    addTag(tagDraft)
-                  }
-                }}
-                placeholder="自定义标签，回车添加"
-                value={tagDraft}
+
+              <TextInput
+                hasClear
+                label="对方"
+                onChange={setCounterparty}
+                placeholder="姓名或称呼"
+                value={counterparty}
+                {...({ list: counterpartyListId } as Record<"list", string>)}
               />
-              <Button
-                disabled={!tagDraft.trim()}
-                onClick={() => addTag(tagDraft)}
-                type="button"
-                variant="outline"
-              >
-                添加
-              </Button>
-            </div>
-          </div>
+              <datalist id={counterpartyListId}>
+                {knownCounterparties.map((name) => (
+                  <option key={name} value={name} />
+                ))}
+              </datalist>
 
-          {error ? <p className="text-sm text-destructive">{error}</p> : null}
+              <div className="grid grid-cols-2 gap-[var(--shard-space-3)]">
+                <TextInput
+                  label="本金（元）"
+                  onChange={setPrincipalYuan}
+                  placeholder="0.00"
+                  value={principalYuan}
+                />
+                <DateInput
+                  hasClear
+                  label="到期日"
+                  onChange={(value) => setDueDate(value ?? "")}
+                  value={dueDate ? (dueDate as ISODateString) : undefined}
+                />
+              </div>
 
-          <DialogFooter className="flex-row justify-end gap-[var(--shard-space-2)]">
+              <TextArea
+                label="备注"
+                onChange={setNote}
+                placeholder="可选"
+                value={note}
+              />
+
+              <div className="flex flex-col gap-[var(--shard-space-2)]">
+                <span className="text-xs font-semibold text-muted-foreground">标签</span>
+                {tags.length > 0 ? (
+                  <div className="flex flex-wrap gap-[var(--shard-space-2)]">
+                    {tags.map((tag) => (
+                      <TagBadge key={tag} removable onRemove={removeTag} tag={tag} />
+                    ))}
+                  </div>
+                ) : null}
+                <div className="flex flex-wrap gap-[var(--shard-space-2)]">
+                  {QUICK_TAGS.map((tag) => (
+                    <button
+                      className={[
+                        "shard-tag gap-[var(--shard-space-micro)] font-medium",
+                        tags.includes(tag) ? "shard-tag-active" : "",
+                      ].join(" ")}
+                      key={tag}
+                      onClick={() => (tags.includes(tag) ? removeTag(tag) : addTag(tag))}
+                      type="button"
+                    >
+                      <span className="shard-chip-text">{tag}</span>
+                    </button>
+                  ))}
+                </div>
+                <div className="flex gap-[var(--shard-space-2)]">
+                  <TextInput
+                    isLabelHidden
+                    label="自定义标签"
+                    onChange={setTagDraft}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault()
+                        addTag(tagDraft)
+                      }
+                    }}
+                    placeholder="自定义标签，回车添加"
+                    value={tagDraft}
+                  />
+                  <Button
+                    isDisabled={!tagDraft.trim()}
+                    label="添加"
+                    onClick={() => addTag(tagDraft)}
+                    type="button"
+                    variant="secondary"
+                  />
+                </div>
+              </div>
+
+              {error ? <p className="text-sm text-destructive">{error}</p> : null}
+            </form>
+          </LayoutContent>
+        }
+        footer={
+          <LayoutFooter className="flex justify-end gap-[var(--shard-space-2)]" hasDivider>
             <Button
-              disabled={isSubmitting}
+              isDisabled={isSubmitting}
+              label="取消"
               onClick={() => onOpenChange(false)}
               type="button"
-              variant="outline"
-            >
-              取消
-            </Button>
-            <Button disabled={isSubmitting} type="submit">
-              {isSubmitting ? (
-                <Loader2Icon className="animate-spin" data-icon="inline-start" />
-              ) : null}
-              {mode === "create" ? "新增债务" : "保存修改"}
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
+              variant="secondary"
+            />
+            <Button
+              form={formId}
+              isLoading={isSubmitting}
+              label={mode === "create" ? "新增债务" : "保存修改"}
+              type="submit"
+              variant="primary"
+            />
+          </LayoutFooter>
+        }
+      />
     </Dialog>
   )
 }

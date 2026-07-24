@@ -9,7 +9,7 @@ import {
 } from "react"
 import { GripVerticalIcon } from "lucide-react"
 
-import { Button } from "@/components/ui/button"
+import { Button } from "@astryxdesign/core/Button"
 import {
   fitMindMapLayout,
   layoutMindMap,
@@ -483,21 +483,20 @@ export function MindMapCanvasEditor({
       canEditSelectedNode &&
       !isDraggingNode ? (
         <Button
-          aria-label="拖拽移动节点"
           className="absolute z-20 cursor-grab bg-card/95 text-muted-foreground shadow-popover active:cursor-grabbing"
+          icon={<GripVerticalIcon />}
+          isIconOnly
+          label="拖拽移动节点"
           onPointerDown={(event) => startNodeDrag(event, selectedNode.id)}
-          size="icon-xs"
-          static
+          size="sm"
           style={{
             left: Math.max(8, selectedEditorRect.left - 30),
             top: selectedEditorRect.top + selectedEditorRect.height / 2 - 12,
           }}
-          title="拖拽移动节点"
+          tooltip="拖拽移动节点"
           type="button"
-          variant="outline"
-        >
-          <GripVerticalIcon data-icon="inline-start" />
-        </Button>
+          variant="secondary"
+        />
       ) : null}
 
       {selectedNode && selectedEditorRect && canEditSelectedNode && !isDraggingNode ? (

@@ -3,11 +3,11 @@ import {
   XIcon,
 } from "lucide-react"
 import { useEffect, useMemo, useState, type FormEvent } from "react"
-import { toast } from "sonner"
 import { save } from "@tauri-apps/plugin-dialog"
 
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
+import { Button } from "@astryxdesign/core/Button"
+import { TextInput } from "@astryxdesign/core/TextInput"
+import { useToast } from "@astryxdesign/core/Toast"
 import { getApiErrorMessage, saveRecoveryKey } from "@/lib/api"
 
 export type LockboxDialogMode = "change" | "reset" | "setup" | "unlock"
@@ -101,15 +101,15 @@ export function LockboxDialog({
       >
         <Button
           className="absolute top-[var(--shard-space-3)] right-[var(--shard-space-3)]"
-          disabled={isBusy || Boolean(recoveryKey)}
+          icon={<XIcon data-icon="inline-start" />}
+          isDisabled={isBusy || Boolean(recoveryKey)}
+          isIconOnly
+          label="关闭密匣弹窗"
           onClick={onClose}
-          size="icon-sm"
+          size="sm"
           type="button"
           variant="ghost"
-        >
-          <XIcon data-icon="inline-start" />
-          <span className="sr-only">关闭密匣弹窗</span>
-        </Button>
+        />
 
         <header className="border-b border-border px-[var(--shard-space-5)] py-[var(--shard-space-4)] pr-[calc(var(--shard-space-8)+32px)]">
           <div className="flex items-center gap-[var(--shard-space-3)]">
@@ -162,26 +162,30 @@ export function LockboxDialog({
                 void submit(() => onUnlock(password))
               }}
             >
-              <Input
-                autoFocus
-                disabled={isBusy}
-                onChange={(event) => setPassword(event.currentTarget.value)}
+              <TextInput
+                hasAutoFocus
+                isDisabled={isBusy}
+                isLabelHidden
+                label="密匣密码"
+                onChange={(value) => setPassword(value)}
                 placeholder="密匣密码"
                 type="password"
                 value={password}
               />
               <div className="flex items-center justify-between gap-[var(--shard-space-3)]">
                 <Button
-                  disabled={isBusy}
+                  isDisabled={isBusy}
+                  label="忘记密码"
                   onClick={() => onModeChange("reset")}
                   type="button"
                   variant="ghost"
-                >
-                  忘记密码
-                </Button>
-                <Button disabled={isBusy || !password} type="submit">
-                  {isBusy ? "解锁中" : "解锁"}
-                </Button>
+                />
+                <Button
+                  isDisabled={isBusy || !password}
+                  label={isBusy ? "解锁中" : "解锁"}
+                  type="submit"
+                  variant="primary"
+                />
               </div>
             </form>
           ) : mode === "reset" ? (
@@ -193,9 +197,11 @@ export function LockboxDialog({
                 void submit(() => onReset(recoveryInput, newPassword))
               }}
             >
-              <Input
-                disabled={isBusy}
-                onChange={(event) => setRecoveryInput(event.currentTarget.value)}
+              <TextInput
+                isDisabled={isBusy}
+                isLabelHidden
+                label="恢复密钥"
+                onChange={(value) => setRecoveryInput(value)}
                 placeholder="恢复密钥"
                 value={recoveryInput}
               />
@@ -208,16 +214,18 @@ export function LockboxDialog({
               />
               <div className="flex justify-between gap-[var(--shard-space-3)]">
                 <Button
-                  disabled={isBusy}
+                  isDisabled={isBusy}
+                  label="返回解锁"
                   onClick={() => onModeChange("unlock")}
                   type="button"
                   variant="ghost"
-                >
-                  返回解锁
-                </Button>
-                <Button disabled={isBusy || !recoveryInput} type="submit">
-                  {isBusy ? "重置中" : "重置密码"}
-                </Button>
+                />
+                <Button
+                  isDisabled={isBusy || !recoveryInput}
+                  label={isBusy ? "重置中" : "重置密码"}
+                  type="submit"
+                  variant="primary"
+                />
               </div>
             </form>
           ) : mode === "change" ? (
@@ -229,10 +237,12 @@ export function LockboxDialog({
                 void submit(() => onChangePassword(currentPassword, newPassword))
               }}
             >
-              <Input
-                autoFocus
-                disabled={isBusy}
-                onChange={(event) => setCurrentPassword(event.currentTarget.value)}
+              <TextInput
+                hasAutoFocus
+                isDisabled={isBusy}
+                isLabelHidden
+                label="当前密码"
+                onChange={(value) => setCurrentPassword(value)}
                 placeholder="当前密码"
                 type="password"
                 value={currentPassword}
@@ -244,9 +254,12 @@ export function LockboxDialog({
                 onNewPassword={setNewPassword}
                 onRepeatPassword={setRepeatPassword}
               />
-              <Button disabled={isBusy || !currentPassword} type="submit">
-                {isBusy ? "修改中" : "修改密码"}
-              </Button>
+              <Button
+                isDisabled={isBusy || !currentPassword}
+                label={isBusy ? "修改中" : "修改密码"}
+                type="submit"
+                variant="primary"
+              />
             </form>
           ) : null}
 
@@ -289,9 +302,12 @@ function PasswordPairForm({
         onNewPassword={onNewPassword}
         onRepeatPassword={onRepeatPassword}
       />
-      <Button disabled={isBusy} type="submit">
-        {isBusy ? busyLabel : submitLabel}
-      </Button>
+      <Button
+        isDisabled={isBusy}
+        label={isBusy ? busyLabel : submitLabel}
+        type="submit"
+        variant="primary"
+      />
     </form>
   )
 }
@@ -311,17 +327,21 @@ function PasswordPairFields({
 }) {
   return (
     <>
-      <Input
-        autoFocus
-        disabled={isBusy}
-        onChange={(event) => onNewPassword(event.currentTarget.value)}
+      <TextInput
+        hasAutoFocus
+        isDisabled={isBusy}
+        isLabelHidden
+        label="新密码，至少 8 个字符"
+        onChange={(value) => onNewPassword(value)}
         placeholder="新密码，至少 8 个字符"
         type="password"
         value={newPassword}
       />
-      <Input
-        disabled={isBusy}
-        onChange={(event) => onRepeatPassword(event.currentTarget.value)}
+      <TextInput
+        isDisabled={isBusy}
+        isLabelHidden
+        label="再次输入新密码"
+        onChange={(value) => onRepeatPassword(value)}
         placeholder="再次输入新密码"
         type="password"
         value={repeatPassword}
@@ -343,6 +363,7 @@ function RecoveryKeyStep({
   setRecoveryVerify: (value: string) => void
   onClose: () => void
 }) {
+  const toast = useToast()
   const [isDownloading, setIsDownloading] = useState(false)
   const confirmed = recoveryVerify.trim().toLowerCase() === code.toLowerCase()
 
@@ -358,10 +379,11 @@ function RecoveryKeyStep({
       if (!path) return
 
       await saveRecoveryKey(path, recoveryKey)
-      toast.success("恢复密钥已下载")
+      toast({ body: "恢复密钥已下载" })
     } catch (error) {
-      toast.error("下载恢复密钥失败", {
-        description: getApiErrorMessage(error),
+      toast({
+        body: `下载恢复密钥失败：${getApiErrorMessage(error)}`,
+        type: "error",
       })
     } finally {
       setIsDownloading(false)
@@ -378,36 +400,40 @@ function RecoveryKeyStep({
       </div>
       <div className="flex flex-wrap items-center gap-[var(--shard-space-2)]">
         <Button
+          label="复制"
           onClick={() => {
             void navigator.clipboard?.writeText(recoveryKey)
           }}
           type="button"
-          variant="outline"
-        >
-          复制
-        </Button>
+          variant="secondary"
+        />
         <Button
-          disabled={isDownloading}
+          isDisabled={isDownloading}
+          label={isDownloading ? "下载中" : "下载"}
           onClick={() => {
             void downloadRecoveryKey()
           }}
           type="button"
-          variant="outline"
-        >
-          {isDownloading ? "下载中" : "下载"}
-        </Button>
+          variant="secondary"
+        />
         <span className="min-w-[220px] flex-1 text-xs leading-5 text-pretty text-muted-foreground">
           输入最后一段 <span className="font-mono font-semibold">{code}</span> 确认已保存。
         </span>
       </div>
-      <Input
-        onChange={(event) => setRecoveryVerify(event.currentTarget.value)}
+      <TextInput
+        isLabelHidden
+        label="确认恢复密钥"
+        onChange={(value) => setRecoveryVerify(value)}
         placeholder={code}
         value={recoveryVerify}
       />
-      <Button disabled={!confirmed} onClick={onClose} type="button">
-        我已保存恢复密钥
-      </Button>
+      <Button
+        isDisabled={!confirmed}
+        label="我已保存恢复密钥"
+        onClick={onClose}
+        type="button"
+        variant="primary"
+      />
     </div>
   )
 }

@@ -9,14 +9,15 @@ import {
   XIcon,
 } from "lucide-react"
 
-import { Button } from "@/components/ui/button"
+import { Button } from "@astryxdesign/core/Button"
+import { HStack } from "@astryxdesign/core/HStack"
+import { Stack } from "@astryxdesign/core/Stack"
+
 import {
   Sheet,
   SheetContent,
-  SheetDescription,
   SheetFooter,
   SheetHeader,
-  SheetTitle,
 } from "@/components/ui/sheet"
 import { DebtStatusBadge } from "@/components/shard/debt-status-badge"
 import { TagBadge } from "@/components/shard/tag-badge"
@@ -53,6 +54,10 @@ export function DebtDetailSheet({
     ? Math.min(100, Math.max(0, (debt.paidCents / debt.principalCents) * 100))
     : 0
 
+  function handleOpenChange(nextOpen: boolean) {
+    if (!nextOpen) onClose()
+  }
+
   function handleRevokeRepayment(repaymentId: string) {
     if (!debt) return
     if (!window.confirm("确定要撤销这笔还款记录吗？")) return
@@ -60,35 +65,27 @@ export function DebtDetailSheet({
   }
 
   return (
-    <Sheet
-      open={debt !== null}
-      onOpenChange={(nextOpen) => {
-        if (!nextOpen) onClose()
-      }}
-    >
-      <SheetContent className="flex w-full flex-col gap-0 sm:max-w-md" side="right">
-        {debt ? (
-          <>
-            <SheetHeader className="border-b border-border">
-              <div className="flex items-center gap-[var(--shard-space-2)] pr-[var(--shard-space-6)]">
-                <span className="flex size-8 shrink-0 items-center justify-center rounded-[var(--shard-radius-control)] border border-border bg-background text-muted-foreground">
-                  {isLendOut ? (
-                    <ArrowUpRightIcon className="size-4 stroke-[1.75]" />
-                  ) : (
-                    <ArrowDownLeftIcon className="size-4 stroke-[1.75]" />
-                  )}
-                </span>
-                <div className="min-w-0 flex-1">
-                  <SheetTitle className="truncate">{debt.counterparty}</SheetTitle>
-                  <SheetDescription>
-                    {isLendOut ? "借出（别人欠我）" : "借入（我欠别人）"}
-                  </SheetDescription>
-                </div>
-              </div>
-            </SheetHeader>
+    <Sheet isOpen={debt !== null} onOpenChange={handleOpenChange}>
+      {debt ? (
+        <>
+          <SheetHeader
+            endContent={
+              <span className="flex size-8 shrink-0 items-center justify-center rounded-[var(--shard-radius-control)] border border-border bg-background text-muted-foreground">
+                {isLendOut ? (
+                  <ArrowUpRightIcon className="size-4 stroke-[1.75]" />
+                ) : (
+                  <ArrowDownLeftIcon className="size-4 stroke-[1.75]" />
+                )}
+              </span>
+            }
+            onOpenChange={handleOpenChange}
+            subtitle={isLendOut ? "借出（别人欠我）" : "借入（我欠别人）"}
+            title={debt.counterparty}
+          />
 
-            <div className="flex min-h-0 flex-1 flex-col gap-[var(--shard-space-4)] overflow-y-auto p-4">
-              <div className="flex flex-wrap items-center gap-[var(--shard-space-2)]">
+          <SheetContent>
+            <Stack gap={4}>
+              <HStack gap={2} vAlign="center" wrap="wrap">
                 <DebtStatusBadge urgency={urgency} />
                 {dueLabel ? (
                   <span className="text-xs text-muted-foreground">{dueLabel}</span>
@@ -98,7 +95,7 @@ export function DebtDetailSheet({
                     已归档
                   </span>
                 ) : null}
-              </div>
+              </HStack>
 
               <div className="rounded-[var(--shard-radius-control)] border border-border bg-background p-[var(--shard-space-3)]">
                 <div className="grid grid-cols-3 gap-[var(--shard-space-2)]">
@@ -130,14 +127,14 @@ export function DebtDetailSheet({
               ) : null}
 
               {debt.tags.length > 0 ? (
-                <div className="shard-card-tags flex flex-wrap gap-[var(--shard-space-2)]">
+                <HStack className="shard-card-tags" gap={2} wrap="wrap">
                   {debt.tags.map((tag) => (
                     <TagBadge key={tag} tag={tag} />
                   ))}
-                </div>
+                </HStack>
               ) : null}
 
-              <div className="min-h-0 flex-1">
+              <div>
                 <div className="text-xs font-semibold text-muted-foreground">
                   还款记录 · {debt.repayments.length} 笔
                 </div>
@@ -162,57 +159,53 @@ export function DebtDetailSheet({
                           </div>
                         </div>
                         <Button
-                          aria-label="撤销这笔还款"
                           className="shrink-0"
+                          icon={<XIcon />}
+                          isIconOnly
+                          label="撤销这笔还款"
                           onClick={() => handleRevokeRepayment(repayment.id)}
-                          size="icon-xs"
-                          type="button"
+                          size="sm"
                           variant="ghost"
-                        >
-                          <XIcon />
-                        </Button>
+                        />
                       </li>
                     ))}
                   </ul>
                 )}
               </div>
-            </div>
+            </Stack>
+          </SheetContent>
 
-            <SheetFooter className="border-t border-border">
-              <div className="flex flex-wrap gap-[var(--shard-space-2)]">
-                <Button
-                  className="flex-1"
-                  onClick={() => onRegisterRepayment(debt)}
-                  type="button"
-                >
-                  <HandCoinsIcon data-icon="inline-start" />
-                  登记还款
-                </Button>
-                <Button onClick={() => onEdit(debt)} type="button" variant="outline">
-                  <PencilLineIcon data-icon="inline-start" />
-                  编辑
-                </Button>
-                <Button
-                  onClick={() => onToggleArchive(debt)}
-                  type="button"
-                  variant="outline"
-                >
-                  {debt.archived ? (
-                    <ArchiveRestoreIcon data-icon="inline-start" />
-                  ) : (
-                    <ArchiveIcon data-icon="inline-start" />
-                  )}
-                  {debt.archived ? "取消归档" : "归档"}
-                </Button>
-                <Button onClick={() => onDelete(debt)} type="button" variant="destructive">
-                  <Trash2Icon data-icon="inline-start" />
-                  删除
-                </Button>
-              </div>
-            </SheetFooter>
-          </>
-        ) : null}
-      </SheetContent>
+          <SheetFooter>
+            <HStack gap={2} wrap="wrap">
+              <Button
+                className="flex-1"
+                icon={<HandCoinsIcon />}
+                label="登记还款"
+                onClick={() => onRegisterRepayment(debt)}
+                variant="primary"
+              />
+              <Button
+                icon={<PencilLineIcon />}
+                label="编辑"
+                onClick={() => onEdit(debt)}
+                variant="secondary"
+              />
+              <Button
+                icon={debt.archived ? <ArchiveRestoreIcon /> : <ArchiveIcon />}
+                label={debt.archived ? "取消归档" : "归档"}
+                onClick={() => onToggleArchive(debt)}
+                variant="secondary"
+              />
+              <Button
+                icon={<Trash2Icon />}
+                label="删除"
+                onClick={() => onDelete(debt)}
+                variant="destructive"
+              />
+            </HStack>
+          </SheetFooter>
+        </>
+      ) : null}
     </Sheet>
   )
 }

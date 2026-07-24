@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
@@ -20,18 +21,12 @@ import {
   SaveIcon,
   Trash2Icon,
 } from "lucide-react"
-import { toast } from "sonner"
 
-import { Button } from "@/components/ui/button"
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog"
-import { Input } from "@/components/ui/input"
+import { Button } from "@astryxdesign/core/Button"
+import { Dialog, DialogHeader } from "@astryxdesign/core/Dialog"
+import { Layout, LayoutContent, LayoutFooter } from "@astryxdesign/core/Layout"
+import { TextInput } from "@astryxdesign/core/TextInput"
+import { useToast } from "@astryxdesign/core/Toast"
 import {
   createMindMap,
   getApiErrorMessage,
@@ -66,6 +61,12 @@ type ConflictState = {
   draft: ShardMapFile
 }
 
+// astryx 的 toast() 只有单个 body，没有独立的 title/description 两段式插槽，
+// 这里把原来 sonner 的 title + description 拼成一行文案。
+function toastText(title: string, description?: string) {
+  return description ? `${title}：${description}` : title
+}
+
 export function MindMapDialog({
   initialMapId = null,
   open,
@@ -73,6 +74,8 @@ export function MindMapDialog({
   onOpenChange,
   onOpenMap,
 }: MindMapDialogProps) {
+  const toast = useToast()
+  const createFormId = useId()
   const [maps, setMaps] = useState<MindMapSummary[]>([])
   const [selectedMap, setSelectedMap] = useState<MindMapReadResult | null>(null)
   const [draftFile, setDraftFile] = useState<ShardMapFile | null>(null)
@@ -139,8 +142,9 @@ export function MindMapDialog({
         setDraftFile(null)
       }
     } catch (error) {
-      toast.error("读取思维导图失败", {
-        description: getApiErrorMessage(error),
+      toast({
+        body: toastText("读取思维导图失败", getApiErrorMessage(error)),
+        type: "error",
       })
     } finally {
       setIsLoading(false)
@@ -158,11 +162,12 @@ export function MindMapDialog({
       selectReadResult(created, true)
       setTitle("")
       upsertSummary(created)
-      toast.success("思维导图已创建")
+      toast({ body: "思维导图已创建" })
       onOpenMap?.(created.file.id)
     } catch (error) {
-      toast.error("创建思维导图失败", {
-        description: getApiErrorMessage(error),
+      toast({
+        body: toastText("创建思维导图失败", getApiErrorMessage(error)),
+        type: "error",
       })
     } finally {
       setIsCreating(false)
@@ -183,8 +188,9 @@ export function MindMapDialog({
     try {
       selectReadResult(await readMindMap(summary.id), false)
     } catch (error) {
-      toast.error("打开思维导图失败", {
-        description: getApiErrorMessage(error),
+      toast({
+        body: toastText("打开思维导图失败", getApiErrorMessage(error)),
+        type: "error",
       })
     } finally {
       setIsReadingId(null)
@@ -196,8 +202,9 @@ export function MindMapDialog({
     try {
       selectReadResult(await readMindMap(id), false)
     } catch (error) {
-      toast.error("打开思维导图失败", {
-        description: getApiErrorMessage(error),
+      toast({
+        body: toastText("打开思维导图失败", getApiErrorMessage(error)),
+        type: "error",
       })
     } finally {
       setIsReadingId(null)
@@ -218,13 +225,13 @@ export function MindMapDialog({
       )
       selectReadResult(saved, false)
       upsertSummary(saved)
-      toast.success("思维导图已保存")
+      toast({ body: "思维导图已保存" })
     } catch (error) {
       const message = getApiErrorMessage(error)
       if (message.includes("冲突副本")) {
         setConflict({ message, draft: draftFile })
       }
-      toast.error("保存思维导图失败", { description: message })
+      toast({ body: toastText("保存思维导图失败", message), type: "error" })
     } finally {
       setIsSaving(false)
     }
@@ -237,10 +244,11 @@ export function MindMapDialog({
     try {
       selectReadResult(await readMindMap(selectedMap.file.id), false)
       setConflict(null)
-      toast.success("已载入磁盘版本")
+      toast({ body: "已载入磁盘版本" })
     } catch (error) {
-      toast.error("载入磁盘版本失败", {
-        description: getApiErrorMessage(error),
+      toast({
+        body: toastText("载入磁盘版本失败", getApiErrorMessage(error)),
+        type: "error",
       })
     } finally {
       setIsReadingId(null)
@@ -262,10 +270,11 @@ export function MindMapDialog({
       selectReadResult(saved, false)
       upsertSummary(saved)
       setConflict(null)
-      toast.success("已保存我的版本")
+      toast({ body: "已保存我的版本" })
     } catch (error) {
-      toast.error("保存我的版本失败", {
-        description: getApiErrorMessage(error),
+      toast({
+        body: toastText("保存我的版本失败", getApiErrorMessage(error)),
+        type: "error",
       })
     } finally {
       setIsSaving(false)
@@ -369,307 +378,321 @@ export function MindMapDialog({
   }
 
   return (
-    <Dialog open={open} onOpenChange={requestClose}>
-      <DialogContent className="flex max-h-[min(760px,calc(100dvh-32px))] w-[min(1040px,calc(100vw-32px))] flex-col gap-[var(--shard-space-5)]">
-        <DialogHeader>
-          <DialogTitle>思维导图</DialogTitle>
-          <DialogDescription>Structures / Maps</DialogDescription>
-        </DialogHeader>
-
-        <form
-          className="flex min-w-0 items-center gap-[var(--shard-space-2)]"
-          onSubmit={handleCreate}
-        >
-          <Input
-            aria-label="思维导图标题"
-            disabled={isCreating}
-            onChange={(event) => setTitle(event.target.value)}
-            placeholder="新建导图标题"
-            value={title}
+    <Dialog
+      isOpen={open}
+      onOpenChange={requestClose}
+      maxHeight="min(760px, calc(100dvh - 32px))"
+      width="min(1040px, calc(100vw - 32px))"
+    >
+      <Layout
+        header={
+          <DialogHeader
+            hasDivider
+            onOpenChange={requestClose}
+            subtitle="Structures / Maps"
+            title="思维导图"
           />
-          <Button disabled={!title.trim() || isCreating} type="submit">
-            {isCreating ? (
-              <Loader2Icon className="animate-spin" data-icon="inline-start" />
-            ) : (
-              <GitBranchIcon data-icon="inline-start" />
-            )}
-            新建
-          </Button>
-        </form>
-
-        <div className="grid min-h-0 flex-1 gap-[var(--shard-space-4)] md:grid-cols-[minmax(190px,260px)_1fr]">
-          <section
-            aria-busy={isLoading}
-            className="min-h-0 border-r border-border pr-[var(--shard-space-4)]"
+        }
+        content={
+          <LayoutContent
+            className="flex h-full min-h-0 flex-col gap-[var(--shard-space-4)]"
+            isScrollable={false}
           >
-            <div className="mb-[var(--shard-space-2)] flex items-center justify-between gap-[var(--shard-space-2)]">
-              <div className="text-xs font-semibold text-muted-foreground">
-                {maps.length} 份导图
-              </div>
+            <form
+              className="flex min-w-0 items-center gap-[var(--shard-space-2)]"
+              id={createFormId}
+              onSubmit={handleCreate}
+            >
+              <TextInput
+                isDisabled={isCreating}
+                isLabelHidden
+                label="思维导图标题"
+                onChange={setTitle}
+                placeholder="新建导图标题"
+                value={title}
+              />
               <Button
-                aria-label="刷新思维导图列表"
-                disabled={isLoading}
-                onClick={() => void refreshMindMaps()}
-                size="icon-sm"
-                type="button"
-                variant="ghost"
+                icon={<GitBranchIcon />}
+                isDisabled={!title.trim()}
+                isLoading={isCreating}
+                label="新建"
+                type="submit"
+                variant="primary"
+              />
+            </form>
+
+            <div className="grid min-h-0 flex-1 gap-[var(--shard-space-4)] md:grid-cols-[minmax(190px,260px)_1fr]">
+              <section
+                aria-busy={isLoading}
+                className="min-h-0 border-r border-border pr-[var(--shard-space-4)]"
               >
-                <RefreshCwIcon className={isLoading ? "animate-spin" : ""} />
-              </Button>
-            </div>
-
-            <div className="flex max-h-[520px] min-h-0 flex-col gap-[var(--shard-space-1)] overflow-y-auto pr-[var(--shard-space-1)]">
-              {isLoading && maps.length === 0 ? (
-                <div className="flex h-24 items-center justify-center text-sm text-muted-foreground">
-                  正在读取...
-                </div>
-              ) : maps.length === 0 ? (
-                <div className="flex h-24 items-center justify-center text-center text-sm text-muted-foreground">
-                  还没有思维导图
-                </div>
-              ) : (
-                maps.map((summary) => {
-                  const selected = selectedMap?.file.id === summary.id
-
-                  return (
-                    <button
-                      aria-pressed={selected}
-                      className={[
-                        "flex min-w-0 items-start gap-[var(--shard-space-2)] rounded-[var(--shard-radius-control)] px-[var(--shard-space-2)] py-[var(--shard-space-2)] text-left transition-colors",
-                        selected
-                          ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                          : "hover:bg-muted",
-                      ].join(" ")}
-                      key={summary.id}
-                      onClick={() => void handleSelectMap(summary)}
-                      type="button"
-                    >
-                      {isReadingId === summary.id ? (
-                        <Loader2Icon className="mt-0.5 size-3.5 shrink-0 animate-spin" />
-                      ) : (
-                        <FileJsonIcon className="mt-0.5 size-3.5 shrink-0 stroke-[1.75]" />
-                      )}
-                      <span className="min-w-0 flex-1">
-                        <span className="block truncate text-sm font-semibold">
-                          {summary.title}
-                        </span>
-                        <span className="mt-0.5 block truncate text-xs text-muted-foreground">
-                          {summary.nodeCount} 节点 · {formatMapTime(summary.updatedAt)}
-                        </span>
-                      </span>
-                    </button>
-                  )
-                })
-              )}
-            </div>
-          </section>
-
-          <section className="min-h-0 min-w-0">
-            {draftFile && selectedMap ? (
-              <div className="flex min-h-0 flex-col gap-[var(--shard-space-3)]">
-                <div className="flex min-w-0 items-start justify-between gap-[var(--shard-space-3)]">
-                  <div className="min-w-0 flex-1">
-                    <Input
-                      aria-label="导图标题"
-                      className="h-9 border-transparent bg-transparent px-0 text-lg font-semibold shadow-none focus-visible:border-border focus-visible:px-2"
-                      onChange={(event) => handleTitleChange(event.target.value)}
-                      value={draftFile.title}
-                    />
-                    <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-[var(--shard-space-2)] gap-y-1 text-xs text-muted-foreground">
-                      <span>revision {selectedMap.file.revision}</span>
-                      <span aria-hidden="true">·</span>
-                      <span>{Object.keys(draftFile.nodes).length} 节点</span>
-                      <span aria-hidden="true">·</span>
-                      <span className="truncate">{selectedMap.path}</span>
-                    </div>
+                <div className="mb-[var(--shard-space-2)] flex items-center justify-between gap-[var(--shard-space-2)]">
+                  <div className="text-xs font-semibold text-muted-foreground">
+                    {maps.length} 份导图
                   </div>
                   <Button
-                    disabled={!isDirty || isSaving}
-                    onClick={() => void handleSave()}
+                    icon={<RefreshCwIcon />}
+                    isDisabled={isLoading}
+                    isIconOnly
+                    isLoading={isLoading}
+                    label="刷新思维导图列表"
+                    onClick={() => void refreshMindMaps()}
+                    size="sm"
                     type="button"
-                  >
-                    {isSaving ? (
-                      <Loader2Icon className="animate-spin" data-icon="inline-start" />
-                    ) : (
-                      <SaveIcon data-icon="inline-start" />
-                    )}
-                    保存
-                  </Button>
+                    variant="ghost"
+                  />
                 </div>
 
-                {conflict ? (
-                  <div className="rounded-[var(--shard-radius-control)] border border-destructive/30 bg-destructive/5 p-[var(--shard-space-3)]">
-                    <div className="flex items-start gap-[var(--shard-space-2)]">
-                      <AlertTriangleIcon className="mt-0.5 size-4 shrink-0 text-destructive" />
+                <div className="flex max-h-[520px] min-h-0 flex-col gap-[var(--shard-space-1)] overflow-y-auto pr-[var(--shard-space-1)]">
+                  {isLoading && maps.length === 0 ? (
+                    <div className="flex h-24 items-center justify-center text-sm text-muted-foreground">
+                      正在读取...
+                    </div>
+                  ) : maps.length === 0 ? (
+                    <div className="flex h-24 items-center justify-center text-center text-sm text-muted-foreground">
+                      还没有思维导图
+                    </div>
+                  ) : (
+                    maps.map((summary) => {
+                      const selected = selectedMap?.file.id === summary.id
+
+                      return (
+                        <button
+                          aria-pressed={selected}
+                          className={[
+                            "flex min-w-0 items-start gap-[var(--shard-space-2)] rounded-[var(--shard-radius-control)] px-[var(--shard-space-2)] py-[var(--shard-space-2)] text-left transition-colors",
+                            selected
+                              ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                              : "hover:bg-muted",
+                          ].join(" ")}
+                          key={summary.id}
+                          onClick={() => void handleSelectMap(summary)}
+                          type="button"
+                        >
+                          {isReadingId === summary.id ? (
+                            <Loader2Icon className="mt-0.5 size-3.5 shrink-0 animate-spin" />
+                          ) : (
+                            <FileJsonIcon className="mt-0.5 size-3.5 shrink-0 stroke-[1.75]" />
+                          )}
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate text-sm font-semibold">
+                              {summary.title}
+                            </span>
+                            <span className="mt-0.5 block truncate text-xs text-muted-foreground">
+                              {summary.nodeCount} 节点 · {formatMapTime(summary.updatedAt)}
+                            </span>
+                          </span>
+                        </button>
+                      )
+                    })
+                  )}
+                </div>
+              </section>
+
+              <section className="min-h-0 min-w-0">
+                {draftFile && selectedMap ? (
+                  <div className="flex min-h-0 flex-col gap-[var(--shard-space-3)]">
+                    <div className="flex min-w-0 items-start justify-between gap-[var(--shard-space-3)]">
                       <div className="min-w-0 flex-1">
-                        <div className="text-sm font-semibold">检测到保存冲突</div>
-                        <p className="mt-1 break-words text-xs text-muted-foreground">
-                          {conflict.message}
-                        </p>
-                        <div className="mt-[var(--shard-space-2)] flex flex-wrap gap-[var(--shard-space-2)]">
-                          <Button
-                            disabled={isSaving}
-                            onClick={() => void keepMyVersion()}
-                            size="sm"
-                            type="button"
-                          >
-                            保留我的版本
-                          </Button>
-                          <Button
-                            disabled={isSaving}
-                            onClick={() => void keepDiskVersion()}
-                            size="sm"
-                            type="button"
-                            variant="outline"
-                          >
-                            保留磁盘版本
-                          </Button>
+                        <TextInput
+                          isLabelHidden
+                          label="导图标题"
+                          onChange={handleTitleChange}
+                          value={draftFile.title}
+                        />
+                        <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-[var(--shard-space-2)] gap-y-1 text-xs text-muted-foreground">
+                          <span>revision {selectedMap.file.revision}</span>
+                          <span aria-hidden="true">·</span>
+                          <span>{Object.keys(draftFile.nodes).length} 节点</span>
+                          <span aria-hidden="true">·</span>
+                          <span className="truncate">{selectedMap.path}</span>
                         </div>
+                      </div>
+                      <Button
+                        icon={<SaveIcon />}
+                        isDisabled={!isDirty}
+                        isLoading={isSaving}
+                        label="保存"
+                        onClick={() => void handleSave()}
+                        type="button"
+                        variant="primary"
+                      />
+                    </div>
+
+                    {conflict ? (
+                      <div className="rounded-[var(--shard-radius-control)] border border-destructive/30 bg-destructive/5 p-[var(--shard-space-3)]">
+                        <div className="flex items-start gap-[var(--shard-space-2)]">
+                          <AlertTriangleIcon className="mt-0.5 size-4 shrink-0 text-destructive" />
+                          <div className="min-w-0 flex-1">
+                            <div className="text-sm font-semibold">检测到保存冲突</div>
+                            <p className="mt-1 break-words text-xs text-muted-foreground">
+                              {conflict.message}
+                            </p>
+                            <div className="mt-[var(--shard-space-2)] flex flex-wrap gap-[var(--shard-space-2)]">
+                              <Button
+                                isDisabled={isSaving}
+                                label="保留我的版本"
+                                onClick={() => void keepMyVersion()}
+                                size="sm"
+                                type="button"
+                                variant="primary"
+                              />
+                              <Button
+                                isDisabled={isSaving}
+                                label="保留磁盘版本"
+                                onClick={() => void keepDiskVersion()}
+                                size="sm"
+                                type="button"
+                                variant="secondary"
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ) : null}
+
+                    <div
+                      aria-busy={isSaving}
+                      className="min-h-0 flex-1 overflow-y-auto rounded-[var(--shard-radius-control)] border border-border bg-card p-[var(--shard-space-3)]"
+                    >
+                      <div className="flex flex-col gap-[var(--shard-space-1)]">
+                        {rows.map(({ node, depth }) => {
+                          const isRoot = node.id === draftFile.rootId
+
+                          return (
+                            <div
+                              className="group grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-[var(--shard-space-2)] rounded-[var(--shard-radius-control)] py-1 pr-1 hover:bg-muted/70"
+                              key={node.id}
+                              style={{ paddingLeft: `${Math.min(depth, 8) * 18}px` }}
+                            >
+                              <div className="flex min-w-0 items-center gap-[var(--shard-space-2)]">
+                                <span
+                                  aria-hidden="true"
+                                  className={[
+                                    "size-1.5 shrink-0 rounded-full",
+                                    isRoot ? "bg-primary" : "bg-muted-foreground/45",
+                                  ].join(" ")}
+                                />
+                                <TextInput
+                                  isLabelHidden
+                                  label={isRoot ? "根节点" : "导图节点"}
+                                  onChange={(value) =>
+                                    draftFile &&
+                                    updateDraft(
+                                      updateMindMapNodeText(draftFile, node.id, value)
+                                    )
+                                  }
+                                  onKeyDown={(event) => handleNodeKeyDown(event, node.id)}
+                                  placeholder={isRoot ? "根节点" : "输入分支"}
+                                  ref={(element) => {
+                                    inputRefs.current[node.id] = element
+                                  }}
+                                  value={node.text}
+                                />
+                              </div>
+                              <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100">
+                                <Button
+                                  icon={<PlusIcon />}
+                                  isIconOnly
+                                  label="添加子节点"
+                                  onClick={() => handleAddChild(node.id)}
+                                  size="sm"
+                                  type="button"
+                                  variant="ghost"
+                                />
+                                <Button
+                                  icon={<ArrowUpIcon />}
+                                  isDisabled={isRoot}
+                                  isIconOnly
+                                  label="上移"
+                                  onClick={() =>
+                                    updateDraft(moveMindMapNode(draftFile, node.id, "up"))
+                                  }
+                                  size="sm"
+                                  type="button"
+                                  variant="ghost"
+                                />
+                                <Button
+                                  icon={<ArrowDownIcon />}
+                                  isDisabled={isRoot}
+                                  isIconOnly
+                                  label="下移"
+                                  onClick={() =>
+                                    updateDraft(moveMindMapNode(draftFile, node.id, "down"))
+                                  }
+                                  size="sm"
+                                  type="button"
+                                  variant="ghost"
+                                />
+                                <Button
+                                  icon={<ArrowRightIcon />}
+                                  isDisabled={isRoot}
+                                  isIconOnly
+                                  label="缩进"
+                                  onClick={() => {
+                                    updateDraft(indentMindMapNode(draftFile, node.id))
+                                    setFocusNodeId(node.id)
+                                  }}
+                                  size="sm"
+                                  type="button"
+                                  variant="ghost"
+                                />
+                                <Button
+                                  icon={<ArrowLeftIcon />}
+                                  isDisabled={isRoot}
+                                  isIconOnly
+                                  label="反缩进"
+                                  onClick={() => {
+                                    updateDraft(outdentMindMapNode(draftFile, node.id))
+                                    setFocusNodeId(node.id)
+                                  }}
+                                  size="sm"
+                                  type="button"
+                                  variant="ghost"
+                                />
+                                <Button
+                                  icon={<Trash2Icon />}
+                                  isDisabled={isRoot}
+                                  isIconOnly
+                                  label="删除节点"
+                                  onClick={() => handleDeleteNode(node.id)}
+                                  size="sm"
+                                  type="button"
+                                  variant="ghost"
+                                />
+                              </div>
+                            </div>
+                          )
+                        })}
                       </div>
                     </div>
                   </div>
-                ) : null}
-
-                <div
-                  aria-busy={isSaving}
-                  className="min-h-0 flex-1 overflow-y-auto rounded-[var(--shard-radius-control)] border border-border bg-card p-[var(--shard-space-3)]"
-                >
-                  <div className="flex flex-col gap-[var(--shard-space-1)]">
-                    {rows.map(({ node, depth }) => {
-                      const isRoot = node.id === draftFile.rootId
-
-                      return (
-                        <div
-                          className="group grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-[var(--shard-space-2)] rounded-[var(--shard-radius-control)] py-1 pr-1 hover:bg-muted/70"
-                          key={node.id}
-                          style={{ paddingLeft: `${Math.min(depth, 8) * 18}px` }}
-                        >
-                          <div className="flex min-w-0 items-center gap-[var(--shard-space-2)]">
-                            <span
-                              aria-hidden="true"
-                              className={[
-                                "size-1.5 shrink-0 rounded-full",
-                                isRoot ? "bg-primary" : "bg-muted-foreground/45",
-                              ].join(" ")}
-                            />
-                            <Input
-                              aria-label={isRoot ? "根节点" : "导图节点"}
-                              className="h-8 min-w-0 border-transparent bg-transparent shadow-none focus-visible:border-border"
-                              onChange={(event) =>
-                                draftFile &&
-                                updateDraft(
-                                  updateMindMapNodeText(
-                                    draftFile,
-                                    node.id,
-                                    event.target.value
-                                  )
-                                )
-                              }
-                              onKeyDown={(event) => handleNodeKeyDown(event, node.id)}
-                              placeholder={isRoot ? "根节点" : "输入分支"}
-                              ref={(element) => {
-                                inputRefs.current[node.id] = element
-                              }}
-                              value={node.text}
-                            />
-                          </div>
-                          <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100">
-                            <Button
-                              aria-label="添加子节点"
-                              onClick={() => handleAddChild(node.id)}
-                              size="icon-sm"
-                              type="button"
-                              variant="ghost"
-                            >
-                              <PlusIcon />
-                            </Button>
-                            <Button
-                              aria-label="上移"
-                              disabled={isRoot}
-                              onClick={() => updateDraft(moveMindMapNode(draftFile, node.id, "up"))}
-                              size="icon-sm"
-                              type="button"
-                              variant="ghost"
-                            >
-                              <ArrowUpIcon />
-                            </Button>
-                            <Button
-                              aria-label="下移"
-                              disabled={isRoot}
-                              onClick={() => updateDraft(moveMindMapNode(draftFile, node.id, "down"))}
-                              size="icon-sm"
-                              type="button"
-                              variant="ghost"
-                            >
-                              <ArrowDownIcon />
-                            </Button>
-                            <Button
-                              aria-label="缩进"
-                              disabled={isRoot}
-                              onClick={() => {
-                                updateDraft(indentMindMapNode(draftFile, node.id))
-                                setFocusNodeId(node.id)
-                              }}
-                              size="icon-sm"
-                              type="button"
-                              variant="ghost"
-                            >
-                              <ArrowRightIcon />
-                            </Button>
-                            <Button
-                              aria-label="反缩进"
-                              disabled={isRoot}
-                              onClick={() => {
-                                updateDraft(outdentMindMapNode(draftFile, node.id))
-                                setFocusNodeId(node.id)
-                              }}
-                              size="icon-sm"
-                              type="button"
-                              variant="ghost"
-                            >
-                              <ArrowLeftIcon />
-                            </Button>
-                            <Button
-                              aria-label="删除节点"
-                              disabled={isRoot}
-                              onClick={() => handleDeleteNode(node.id)}
-                              size="icon-sm"
-                              type="button"
-                              variant="ghost"
-                            >
-                              <Trash2Icon />
-                            </Button>
-                          </div>
-                        </div>
-                      )
-                    })}
+                ) : (
+                  <div className="flex h-full min-h-[340px] flex-col items-center justify-center gap-[var(--shard-space-2)] text-center text-muted-foreground">
+                    <GitBranchIcon className="size-7 stroke-[1.5]" />
+                    <div className="text-sm font-semibold text-foreground">
+                      新建或选择一份导图
+                    </div>
                   </div>
-                </div>
-              </div>
-            ) : (
-              <div className="flex h-full min-h-[340px] flex-col items-center justify-center gap-[var(--shard-space-2)] text-center text-muted-foreground">
-                <GitBranchIcon className="size-7 stroke-[1.5]" />
-                <div className="text-sm font-semibold text-foreground">
-                  新建或选择一份导图
-                </div>
-              </div>
-            )}
-          </section>
-        </div>
-
-        <DialogFooter className="flex-row justify-between">
-          <div className="text-xs text-muted-foreground">
-            {isDirty ? "有未保存修改" : selectedMap ? "已保存" : ""}
-          </div>
-          <Button
-            onClick={() => requestClose(false)}
-            type="button"
-            variant="outline"
-          >
-            关闭
-          </Button>
-        </DialogFooter>
-      </DialogContent>
+                )}
+              </section>
+            </div>
+          </LayoutContent>
+        }
+        footer={
+          <LayoutFooter className="flex justify-between" hasDivider>
+            <div className="text-xs text-muted-foreground">
+              {isDirty ? "有未保存修改" : selectedMap ? "已保存" : ""}
+            </div>
+            <Button
+              label="关闭"
+              onClick={() => requestClose(false)}
+              type="button"
+              variant="secondary"
+            />
+          </LayoutFooter>
+        }
+      />
     </Dialog>
   )
 }

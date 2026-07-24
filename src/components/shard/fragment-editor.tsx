@@ -12,7 +12,6 @@ import {
 } from "react"
 import { isTauri } from "@tauri-apps/api/core"
 import { Loader2Icon, SendHorizontalIcon, XIcon } from "lucide-react"
-import { toast } from "sonner"
 
 import { EditorToolbar } from "@/components/shard/editor-toolbar"
 import {
@@ -27,8 +26,8 @@ import {
   TagCompletionPopover,
   type TagSuggestion,
 } from "@/components/shard/tag-completion-popover"
-import { Button } from "@/components/ui/button"
-import { Textarea } from "@/components/ui/textarea"
+import { Button } from "@astryxdesign/core/Button"
+import { useToast } from "@astryxdesign/core/Toast"
 import {
   applyActiveTagCompletion,
   applyInlineFormat,
@@ -101,6 +100,7 @@ export function FragmentEditor({
   variant = "zen",
   vaultPath,
 }: FragmentEditorProps) {
+  const toast = useToast()
   const [content, setContent] = useState("")
   const [caretEpoch, setCaretEpoch] = useState(0)
   const [customCaret, setCustomCaret] = useState<EditorCaretBox | null>(null)
@@ -545,7 +545,7 @@ export function FragmentEditor({
   async function saveDraft(nextContent: string) {
     if (nextContent.trim().length === 0) {
       setSaveState("error")
-      toast.error("片段内容不能为空")
+      toast({ body: "片段内容不能为空", type: "error" })
       return false
     }
 
@@ -572,8 +572,9 @@ export function FragmentEditor({
       return true
     } catch (error) {
       setSaveState("error")
-      toast.error(isDraft ? "保存失败" : "自动保存失败", {
-        description: getApiErrorMessage(error),
+      toast({
+        body: `${isDraft ? "保存失败" : "自动保存失败"}：${getApiErrorMessage(error)}`,
+        type: "error",
       })
       return false
     }
@@ -646,8 +647,9 @@ export function FragmentEditor({
     if (!textarea) return
     const tags = normalizeTagList(["inbox", ...extractTags(draftContent)])
     if (fragment?.lockbox || wantsLockbox(draftContent, tags)) {
-      toast.error("密匣暂不支持图片附件", {
-        description: "请先移除 #密匣，或在公开笔记中上传图片。",
+      toast({
+        body: "密匣暂不支持图片附件：请先移除 #密匣，或在公开笔记中上传图片。",
+        type: "error",
       })
       return
     }
@@ -670,8 +672,9 @@ export function FragmentEditor({
       })
     } catch (error) {
       URL.revokeObjectURL(previewUrl)
-      toast.error("图片上传失败", {
-        description: getApiErrorMessage(error),
+      toast({
+        body: `图片上传失败：${getApiErrorMessage(error)}`,
+        type: "error",
       })
     }
   }
@@ -851,7 +854,7 @@ export function FragmentEditor({
           />
         </div>
       ) : null}
-      <Textarea
+      <textarea
         aria-activedescendant={activeSuggestionOptionId}
         aria-autocomplete={activeTag ? "list" : undefined}
         aria-controls={activeTag ? tagPopoverId : undefined}
@@ -958,7 +961,8 @@ export function FragmentEditor({
                 </span>
                 <Button
                   className="h-8 rounded-[var(--shard-radius-control)] px-[var(--shard-space-2)] text-muted-foreground"
-                  disabled={saveState === "saving"}
+                  isDisabled={saveState === "saving"}
+                  label="取消"
                   onMouseDown={(event) => {
                     event.preventDefault()
                     void handleClose()
@@ -966,32 +970,31 @@ export function FragmentEditor({
                   size="sm"
                   type="button"
                   variant="ghost"
-                >
-                  取消
-                </Button>
+                />
                 <Button
                   className="shard-edge-action shard-edge-action-save rounded-full bg-[color:var(--shard-sapphire)] text-white hover:bg-[color:var(--shard-sapphire-hover)] disabled:bg-transparent disabled:text-muted-foreground"
-                  disabled={!canSubmit}
+                  icon={
+                    saveState === "saving" ? (
+                      <Loader2Icon
+                        className="animate-spin"
+                        data-icon="inline-start"
+                      />
+                    ) : (
+                      <SendHorizontalIcon data-icon="inline-start" />
+                    )
+                  }
+                  isDisabled={!canSubmit}
+                  isIconOnly
+                  label={saveState === "saving" ? "保存中" : "保存修改"}
                   onMouseDown={(event) => {
                     event.preventDefault()
                     void handleSubmit()
                   }}
-                  size="icon-sm"
-                  title={saveState === "saving" ? "保存中" : "保存修改"}
+                  size="sm"
+                  tooltip={saveState === "saving" ? "保存中" : "保存修改"}
                   type="button"
-                >
-                  {saveState === "saving" ? (
-                    <Loader2Icon
-                      className="animate-spin"
-                      data-icon="inline-start"
-                    />
-                  ) : (
-                    <SendHorizontalIcon data-icon="inline-start" />
-                  )}
-                  <span className="sr-only">
-                    {saveState === "saving" ? "保存中" : "保存修改"}
-                  </span>
-                </Button>
+                  variant="primary"
+                />
               </>
             }
           />
@@ -1029,18 +1032,18 @@ export function FragmentEditor({
                 />
                 <Button
                   className="shard-edge-action rounded-[var(--shard-radius-control)] text-muted-foreground"
+                  icon={<XIcon data-icon="inline-start" />}
+                  isIconOnly
+                  label="退出编辑"
                   onMouseDown={(event) => {
                     event.preventDefault()
                     void handleClose()
                   }}
-                  size="icon-sm"
-                  title="退出编辑"
+                  size="sm"
+                  tooltip="退出编辑"
                   type="button"
                   variant="ghost"
-                >
-                  <XIcon data-icon="inline-start" />
-                  <span className="sr-only">退出编辑</span>
-                </Button>
+                />
               </>
             }
           />

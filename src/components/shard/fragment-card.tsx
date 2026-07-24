@@ -8,14 +8,8 @@ import {
   Share2Icon,
 } from "lucide-react"
 
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuGroup,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
-import { Button } from "@/components/ui/button"
+import { DropdownMenu, DropdownMenuItem } from "@astryxdesign/core/DropdownMenu"
+
 import { FragmentEditor } from "@/components/shard/fragment-editor"
 import { FragmentBody } from "@/components/shard/fragment-body"
 import { ShardZenIcon } from "@/components/shard/shard-zen-icon"
@@ -126,69 +120,54 @@ export function FragmentCard({
         </div>
 
         <div className="flex shrink-0 items-center">
-          <DropdownMenu>
-            <DropdownMenuTrigger render={<Button size="icon-sm" variant="ghost" />}>
-              <MoreHorizontalIcon
-                className="size-4 stroke-[1.65]"
-                data-icon="inline-start"
+          <DropdownMenu
+            button={{
+              icon: <MoreHorizontalIcon />,
+              isIconOnly: true,
+              label: "片段操作",
+              size: "sm",
+              variant: "ghost",
+            }}
+          >
+            <DropdownMenuItem
+              icon={PencilLineIcon}
+              label="编辑"
+              onClick={() => onEdit?.(fragment)}
+            />
+            {onOpenZen ? (
+              <DropdownMenuItem
+                icon={<ShardZenIcon />}
+                label="禅模式"
+                onClick={() => onOpenZen(fragment)}
               />
-              <span className="sr-only">片段操作</span>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-fit min-w-0">
-              <DropdownMenuGroup>
-                <DropdownMenuItem
-                  className="grid h-8 grid-cols-[14px_max-content] gap-[var(--shard-space-2)] px-[var(--shard-space-2)] text-[13px] font-medium whitespace-nowrap [&_svg]:size-3.5 [&_svg]:stroke-[1.65]"
-                  onClick={() => onEdit?.(fragment)}
-                >
-                  <PencilLineIcon />
-                  编辑
-                </DropdownMenuItem>
-                {onOpenZen ? (
-                  <DropdownMenuItem
-                    className="grid h-8 grid-cols-[14px_max-content] gap-[var(--shard-space-2)] px-[var(--shard-space-2)] text-[13px] font-medium whitespace-nowrap [&_svg]:size-3.5 [&_svg]:stroke-[1.65]"
-                    onClick={() => onOpenZen(fragment)}
-                  >
-                    <ShardZenIcon />
-                    禅模式
-                  </DropdownMenuItem>
-                ) : null}
-                {onPin ? (
-                  <DropdownMenuItem
-                    className="grid h-8 grid-cols-[14px_max-content] gap-[var(--shard-space-2)] px-[var(--shard-space-2)] text-[13px] font-medium whitespace-nowrap [&_svg]:size-3.5 [&_svg]:stroke-[1.65]"
-                    disabled={fragment.archived}
-                    onClick={() => onPin(fragment)}
-                  >
-                    {fragment.pinned ? <PinOffIcon /> : <PinIcon />}
-                    {fragment.pinned ? "取消置顶" : "置顶"}
-                  </DropdownMenuItem>
-                ) : null}
-                <DropdownMenuItem
-                  className="grid h-8 grid-cols-[14px_max-content] gap-[var(--shard-space-2)] px-[var(--shard-space-2)] text-[13px] font-medium whitespace-nowrap [&_svg]:size-3.5 [&_svg]:stroke-[1.65]"
-                  onClick={() => onExportImage?.(fragment)}
-                >
-                  <Share2Icon />
-                  分享
-                </DropdownMenuItem>
-                {!fragment.lockbox ? (
-                  <DropdownMenuItem
-                    className="grid h-8 grid-cols-[14px_max-content] gap-[var(--shard-space-2)] px-[var(--shard-space-2)] text-[13px] font-medium whitespace-nowrap [&_svg]:size-3.5 [&_svg]:stroke-[1.65]"
-                    disabled={fragment.archived}
-                    onClick={() => onMoveToLockbox?.(fragment)}
-                  >
-                    <LockKeyholeIcon />
-                    移入密匣
-                  </DropdownMenuItem>
-                ) : null}
-                <DropdownMenuItem
-                  className="grid h-8 grid-cols-[14px_max-content] gap-[var(--shard-space-2)] px-[var(--shard-space-2)] text-[13px] font-medium whitespace-nowrap [&_svg]:size-3.5 [&_svg]:stroke-[1.65]"
-                  disabled={fragment.archived}
-                  onClick={() => onArchive?.(fragment)}
-                >
-                  <ArchiveIcon />
-                  {fragment.archived ? "已归档" : "归档"}
-                </DropdownMenuItem>
-              </DropdownMenuGroup>
-            </DropdownMenuContent>
+            ) : null}
+            {onPin ? (
+              <DropdownMenuItem
+                icon={fragment.pinned ? PinOffIcon : PinIcon}
+                isDisabled={fragment.archived}
+                label={fragment.pinned ? "取消置顶" : "置顶"}
+                onClick={() => onPin(fragment)}
+              />
+            ) : null}
+            <DropdownMenuItem
+              icon={Share2Icon}
+              label="分享"
+              onClick={() => onExportImage?.(fragment)}
+            />
+            {!fragment.lockbox ? (
+              <DropdownMenuItem
+                icon={LockKeyholeIcon}
+                isDisabled={fragment.archived}
+                label="移入密匣"
+                onClick={() => onMoveToLockbox?.(fragment)}
+              />
+            ) : null}
+            <DropdownMenuItem
+              icon={ArchiveIcon}
+              isDisabled={fragment.archived}
+              label={fragment.archived ? "已归档" : "归档"}
+              onClick={() => onArchive?.(fragment)}
+            />
           </DropdownMenu>
         </div>
       </div>

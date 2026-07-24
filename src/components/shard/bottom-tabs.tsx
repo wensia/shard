@@ -15,20 +15,8 @@ import {
 } from "lucide-react"
 import { useState } from "react"
 
-import { Button } from "@/components/ui/button"
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuGroup,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip"
+import { DropdownMenu } from "@astryxdesign/core/DropdownMenu"
+import { Tooltip } from "@astryxdesign/core/Tooltip"
 import shardAppIconUrl from "@/assets/shard-app-icon.png"
 import { dailyReviewCount, insightReviewCount } from "@/lib/review-workflows"
 import { useAppVersion } from "@/lib/use-app-version"
@@ -62,9 +50,6 @@ const tabItems: Array<{
   { id: "insight", label: "洞察", fullLabel: "洞察视角", icon: SparklesIcon },
   { id: "archive", label: "Archive", fullLabel: "Archive", icon: ArchiveIcon },
 ]
-
-const utilityMenuItemClass =
-  "grid h-8 grid-cols-[16px_1fr] gap-2 px-2 text-[13px] font-medium whitespace-nowrap [&_svg]:size-3.5 [&_svg]:stroke-[1.65]"
 
 export function BottomTabs({
   activeFilter,
@@ -148,13 +133,13 @@ export function BottomTabs({
               <span className="truncate">{git?.shortCommit || "no commit"}</span>
             </div>
 
-            <Tooltip>
-              <TooltipTrigger className="hidden max-w-[180px] truncate text-left sm:block">
+            <Tooltip
+              content={vaultPath || "Vault not loaded"}
+              placement="above"
+            >
+              <span className="hidden max-w-[180px] truncate text-left sm:block">
                 {vaultPath || "Vault not loaded"}
-              </TooltipTrigger>
-              <TooltipContent side="top">
-                {vaultPath || "Vault not loaded"}
-              </TooltipContent>
+              </span>
             </Tooltip>
           </div>
         </div>
@@ -199,104 +184,66 @@ export function BottomTabs({
             </nav>
           </div>
 
-          <DropdownMenu open={isMenuOpen} onOpenChange={setIsMenuOpen}>
-            <DropdownMenuTrigger render={<Button size="icon" variant="ghost" />}>
-              <MoreHorizontalIcon data-icon="inline-start" />
-              <span className="sr-only">更多操作</span>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent
-              align="end"
-              className="w-40"
-              side="top"
-              sideOffset={8}
-            >
-              <DropdownMenuGroup>
-                <DropdownMenuItem
-                  className={utilityMenuItemClass}
-                  onClick={() => {
-                    setIsMenuOpen(false)
-                    window.setTimeout(onOpenSearch, 0)
-                  }}
-                >
-                  <SearchIcon />
-                  搜索笔记
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  className={utilityMenuItemClass}
-                  onClick={() => {
-                    setIsMenuOpen(false)
-                    window.setTimeout(onOpenMindMaps, 0)
-                  }}
-                >
-                  <GitBranchIcon />
-                  思维导图
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  className={utilityMenuItemClass}
-                  onClick={() => {
-                    setIsMenuOpen(false)
-                    window.setTimeout(onOpenDebts, 0)
-                  }}
-                >
-                  <HandCoinsIcon />
-                  债务
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem
-                  className={utilityMenuItemClass}
-                  disabled={isSyncing}
-                  onClick={() => {
-                    setIsMenuOpen(false)
-                    window.setTimeout(onSync, 0)
-                  }}
-                >
+          <DropdownMenu
+            button={{
+              icon: <MoreHorizontalIcon />,
+              isIconOnly: true,
+              label: "更多操作",
+              size: "sm",
+              variant: "ghost",
+            }}
+            isMenuOpen={isMenuOpen}
+            items={[
+              {
+                icon: <SearchIcon />,
+                label: "搜索笔记",
+                onClick: () => window.setTimeout(onOpenSearch, 0),
+              },
+              {
+                icon: <GitBranchIcon />,
+                label: "思维导图",
+                onClick: () => window.setTimeout(onOpenMindMaps, 0),
+              },
+              {
+                icon: <HandCoinsIcon />,
+                label: "债务",
+                onClick: () => window.setTimeout(onOpenDebts, 0),
+              },
+              { type: "divider" },
+              {
+                icon: (
                   <RefreshCwIcon className={isSyncing ? "animate-spin" : ""} />
-                  {isSyncing ? "同步中" : "同步 Git vault"}
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  className={utilityMenuItemClass}
-                  onClick={() => {
-                    setIsMenuOpen(false)
-                    window.setTimeout(onRestoreWindow, 0)
-                  }}
-                >
-                  <Maximize2Icon />
-                  还原窗口尺寸
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem
-                  className={utilityMenuItemClass}
-                  onClick={() => {
-                    setIsMenuOpen(false)
-                    window.setTimeout(onOpenSettings, 0)
-                  }}
-                >
-                  <SettingsIcon />
-                  设置
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  className={utilityMenuItemClass}
-                  onClick={() => {
-                    setIsMenuOpen(false)
-                    window.setTimeout(onShortcuts, 0)
-                  }}
-                >
-                  <KeyboardIcon />
-                  快捷键
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  className={utilityMenuItemClass}
-                  onClick={() => {
-                    setIsMenuOpen(false)
-                    window.setTimeout(onHelp, 0)
-                  }}
-                >
-                  <HelpCircleIcon />
-                  帮助
-                </DropdownMenuItem>
-              </DropdownMenuGroup>
-            </DropdownMenuContent>
-          </DropdownMenu>
+                ),
+                isDisabled: isSyncing,
+                label: isSyncing ? "同步中" : "同步 Git vault",
+                onClick: () => window.setTimeout(onSync, 0),
+              },
+              {
+                icon: <Maximize2Icon />,
+                label: "还原窗口尺寸",
+                onClick: () => window.setTimeout(onRestoreWindow, 0),
+              },
+              { type: "divider" },
+              {
+                icon: <SettingsIcon />,
+                label: "设置",
+                onClick: () => window.setTimeout(onOpenSettings, 0),
+              },
+              {
+                icon: <KeyboardIcon />,
+                label: "快捷键",
+                onClick: () => window.setTimeout(onShortcuts, 0),
+              },
+              {
+                icon: <HelpCircleIcon />,
+                label: "帮助",
+                onClick: () => window.setTimeout(onHelp, 0),
+              },
+            ]}
+            menuWidth={160}
+            onOpenChange={setIsMenuOpen}
+            placement="above"
+          />
         </div>
       </div>
     </footer>

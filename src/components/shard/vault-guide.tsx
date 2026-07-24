@@ -9,10 +9,10 @@ import {
   XIcon,
 } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
-import { toast } from "sonner"
 
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
+import { Button } from "@astryxdesign/core/Button"
+import { TextInput } from "@astryxdesign/core/TextInput"
+import { useToast } from "@astryxdesign/core/Toast"
 import {
   AUTO_SYNC_INTERVAL_OPTIONS,
   type AppSettings,
@@ -90,6 +90,8 @@ interface SettingsCopy {
   remoteAlreadyConnected: string
   remoteBusy: string
   remoteStatus: Record<"connected" | "connecting" | "creating" | "missing" | "pending", string>
+  remoteUrlLabel: string
+  repoNameLabel: string
   settingsTitle: string
   sideCurrent: string
   sideGit: string
@@ -179,6 +181,8 @@ const settingsCopy: Record<SettingsLocale, SettingsCopy> = {
       missing: "Not configured",
       pending: "Pending",
     },
+    remoteUrlLabel: "Git remote URL",
+    repoNameLabel: "GitHub repository name",
     settingsTitle: "Settings",
     sideCurrent: "Folder",
     sideGit: "Local Git",
@@ -262,6 +266,8 @@ const settingsCopy: Record<SettingsLocale, SettingsCopy> = {
       missing: "未配置",
       pending: "待配置",
     },
+    remoteUrlLabel: "Git 远端 URL",
+    repoNameLabel: "GitHub 仓库名",
     settingsTitle: "设置",
     sideCurrent: "目录",
     sideGit: "本地 Git",
@@ -340,6 +346,7 @@ export function VaultGuide({
   const [repoName, setRepoName] = useState(defaultRepoName(vaultPath))
   const [section, setSection] = useState<SettingsSection>(initialSection)
   const dialogRef = useRef<HTMLDivElement>(null)
+  const toast = useToast()
   const locale = getPreferredSettingsLocale()
   const copy = settingsCopy[locale]
 
@@ -465,10 +472,13 @@ export function VaultGuide({
 
       const state = await setVaultPath(path, initializeGit)
       onVaultState(state, { resetView: true })
-      toast.success(initializeGit ? copy.toastVaultCreated : copy.toastVaultSwitched)
+      toast({
+        body: initializeGit ? copy.toastVaultCreated : copy.toastVaultSwitched,
+      })
     } catch (error) {
-      toast.error(copy.toastVaultFailed, {
-        description: getApiErrorMessage(error),
+      toast({
+        body: `${copy.toastVaultFailed}: ${getApiErrorMessage(error)}`,
+        type: "error",
       })
     } finally {
       setActiveAction(null)
@@ -481,10 +491,11 @@ export function VaultGuide({
     try {
       const state = await initializeVaultGit()
       onVaultState(state)
-      toast.success(copy.toastGitInitialized)
+      toast({ body: copy.toastGitInitialized })
     } catch (error) {
-      toast.error(copy.toastGitInitializeFailed, {
-        description: getApiErrorMessage(error),
+      toast({
+        body: `${copy.toastGitInitializeFailed}: ${getApiErrorMessage(error)}`,
+        type: "error",
       })
     } finally {
       setActiveAction(null)
@@ -494,7 +505,7 @@ export function VaultGuide({
   async function configureRemote() {
     const nextRemoteUrl = remoteUrl.trim()
     if (!nextRemoteUrl) {
-      toast.error(copy.toastRemoteRequired)
+      toast({ body: copy.toastRemoteRequired, type: "error" })
       return
     }
 
@@ -504,10 +515,11 @@ export function VaultGuide({
       const state = await setVaultRemote(nextRemoteUrl)
       onVaultState(state)
       setRemoteUrl("")
-      toast.success(copy.toastRemoteConfigured)
+      toast({ body: copy.toastRemoteConfigured })
     } catch (error) {
-      toast.error(copy.toastRemoteFailed, {
-        description: getApiErrorMessage(error),
+      toast({
+        body: `${copy.toastRemoteFailed}: ${getApiErrorMessage(error)}`,
+        type: "error",
       })
     } finally {
       setActiveAction(null)
@@ -517,7 +529,7 @@ export function VaultGuide({
   async function createGithubRepo() {
     const nextRepoName = repoName.trim()
     if (!nextRepoName) {
-      toast.error(copy.toastRepoRequired)
+      toast({ body: copy.toastRepoRequired, type: "error" })
       return
     }
 
@@ -526,12 +538,13 @@ export function VaultGuide({
     try {
       const state = await createGithubVaultRepo(nextRepoName)
       onVaultState(state)
-      toast.success(copy.toastGithubCreated, {
-        description: copy.toastGithubCreatedDescription,
+      toast({
+        body: `${copy.toastGithubCreated}: ${copy.toastGithubCreatedDescription}`,
       })
     } catch (error) {
-      toast.error(copy.toastGithubFailed, {
-        description: getApiErrorMessage(error),
+      toast({
+        body: `${copy.toastGithubFailed}: ${getApiErrorMessage(error)}`,
+        type: "error",
       })
     } finally {
       setActiveAction(null)
@@ -622,29 +635,27 @@ export function VaultGuide({
                 void createGithubRepo()
               }}
             >
-              <Input
-                autoCapitalize="none"
-                autoCorrect="off"
-                disabled={
+              <TextInput
+                isDisabled={
                   isRemoteBusy ||
                   isCheckingGithub ||
                   !githubStatus?.authenticated
                 }
-                onChange={(event) => setRepoName(event.target.value)}
-                spellCheck={false}
+                isLabelHidden
+                label={copy.repoNameLabel}
+                onChange={(value) => setRepoName(value)}
                 value={repoName}
               />
               <Button
-                disabled={
+                isDisabled={
                   isRemoteBusy ||
                   isCheckingGithub ||
                   !githubStatus?.authenticated
                 }
+                label={isCreatingGithubRepo ? copy.createRepoBusy : copy.createRepo}
                 type="submit"
-                variant="default"
-              >
-                {isCreatingGithubRepo ? copy.createRepoBusy : copy.createRepo}
-              </Button>
+                variant="primary"
+              />
             </form>
           </div>
 
@@ -669,20 +680,22 @@ export function VaultGuide({
               void configureRemote()
             }}
           >
-            <Input
-              autoCapitalize="none"
-              autoCorrect="off"
-              disabled={isRemoteBusy}
-              onChange={(event) => setRemoteUrl(event.target.value)}
+            <TextInput
+              isDisabled={isRemoteBusy}
+              isLabelHidden
+              label={copy.remoteUrlLabel}
+              onChange={(value) => setRemoteUrl(value)}
               placeholder="git@github.com:you/shard-vault.git"
-              spellCheck={false}
               value={remoteUrl}
             />
-            <Button disabled={isRemoteBusy} type="submit" variant="default">
-              {isConfiguringRemote
-                ? copy.connectRemoteBusy
-                : copy.connectRemote}
-            </Button>
+            <Button
+              isDisabled={isRemoteBusy}
+              label={
+                isConfiguringRemote ? copy.connectRemoteBusy : copy.connectRemote
+              }
+              type="submit"
+              variant="primary"
+            />
           </form>
           <p className="mt-[var(--shard-space-2)] text-xs leading-5 text-pretty text-muted-foreground">
             {copy.manualRemoteHint}
@@ -747,14 +760,14 @@ export function VaultGuide({
               {!required ? (
                 <Button
                   className="-mt-1 -mr-2"
+                  icon={<XIcon data-icon="inline-start" />}
+                  isIconOnly
+                  label={copy.close}
                   onClick={onClose}
-                  size="icon-sm"
+                  size="sm"
                   type="button"
                   variant="ghost"
-                >
-                  <XIcon data-icon="inline-start" />
-                  <span className="sr-only">{copy.close}</span>
-                </Button>
+                />
               ) : null}
             </div>
             <h2
@@ -844,14 +857,14 @@ export function VaultGuide({
             </h2>
             <Button
               className="-mr-2"
+              icon={<XIcon data-icon="inline-start" />}
+              isIconOnly
+              label={copy.close}
               onClick={onClose}
-              size="icon-sm"
+              size="sm"
               type="button"
               variant="ghost"
-            >
-              <XIcon data-icon="inline-start" />
-              <span className="sr-only">{copy.close}</span>
-            </Button>
+            />
           </header>
 
           <main className="min-h-0 flex-1 overflow-y-auto [&>section:last-child]:border-b-0">
@@ -933,19 +946,20 @@ export function VaultGuide({
                   )}
                   <div className="mt-[var(--shard-space-4)]">
                     <Button
-                      disabled={isSyncing || !git?.hasRemote}
+                      icon={
+                        isSyncing ? (
+                          <Loader2Icon className="animate-spin" />
+                        ) : (
+                          <RefreshCwIcon />
+                        )
+                      }
+                      isDisabled={isSyncing || !git?.hasRemote}
+                      label={isSyncing ? copy.syncNowBusy : copy.syncNow}
                       onClick={onSync}
                       size="sm"
                       type="button"
-                      variant="outline"
-                    >
-                      {isSyncing ? (
-                        <Loader2Icon className="animate-spin" />
-                      ) : (
-                        <RefreshCwIcon />
-                      )}
-                      {isSyncing ? copy.syncNowBusy : copy.syncNow}
-                    </Button>
+                      variant="secondary"
+                    />
                   </div>
                 </section>
               </>

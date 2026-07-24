@@ -3,7 +3,6 @@ import { InboxIcon } from "lucide-react"
 
 import { FragmentCard } from "@/components/shard/fragment-card"
 import { MindMapTimelineCard } from "@/components/shard/mind-map-timeline-card"
-import { ScrollArea } from "@/components/ui/scroll-area"
 import type { Fragment, MindMapSummary } from "@/types"
 
 const WIDE_TIMELINE_QUERY = "(min-width: 96rem)"
@@ -262,10 +261,10 @@ export function FragmentTimeline({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <ScrollArea
-        className="min-h-0 flex-1"
-        onViewportScroll={handleViewportScroll}
-        viewportRef={viewportRef}
+      <div
+        className="min-h-0 flex-1 overflow-y-auto"
+        onScroll={handleViewportScroll}
+        ref={viewportRef}
       >
         {isLoading ? (
           <div className="flex h-full items-center justify-center text-sm font-medium text-muted-foreground">
@@ -318,7 +317,7 @@ export function FragmentTimeline({
             </div>
           </div>
         )}
-      </ScrollArea>
+      </div>
     </div>
   )
 }

@@ -15,11 +15,11 @@ import {
 } from "lucide-react"
 import { useEffect, useMemo, useState } from "react"
 
+import { Badge } from "@astryxdesign/core/Badge"
+import { Button } from "@astryxdesign/core/Button"
+
 import { FragmentCard } from "@/components/shard/fragment-card"
 import { MarkdownDocument } from "@/components/shard/markdown-document"
-import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
-import { ScrollArea } from "@/components/ui/scroll-area"
 import {
   getCodexAgentStatus,
   getApiErrorMessage,
@@ -307,7 +307,7 @@ export function ReviewWorkspace({
         }}
       />
 
-      <ScrollArea className="min-h-0 flex-1">
+      <div className="min-h-0 flex-1 overflow-y-auto">
         {isLoading ? (
           <ReviewEmpty icon={MetaIcon} message="正在读取 Shard vault..." />
         ) : displayFragments.length === 0 ? (
@@ -398,7 +398,7 @@ export function ReviewWorkspace({
             </div>
           </div>
         )}
-      </ScrollArea>
+      </div>
     </div>
   )
 }
@@ -427,23 +427,14 @@ function ReviewHeader({
           <h1 className="truncate text-base leading-6 font-semibold text-balance">
             {title}
           </h1>
-          <Badge
-            className="shrink-0 border-border bg-muted text-muted-foreground"
-            variant="outline"
-          >
-            {summary}
-          </Badge>
+          <Badge className="shrink-0" label={summary} />
         </div>
         <div className="flex shrink-0 items-center gap-[var(--shard-space-2)]">
           {mode === "dailyReview" ? (
-            <Button variant="outline" size="sm" onClick={onRefreshDaily}>
-              换一组
-            </Button>
+            <Button label="换一组" size="sm" onClick={onRefreshDaily} />
           ) : null}
           {mode === "walk" ? (
-            <Button variant="outline" size="sm" onClick={onRefreshWalk}>
-              换路径
-            </Button>
+            <Button label="换路径" size="sm" onClick={onRefreshWalk} />
           ) : null}
         </div>
       </div>
@@ -595,17 +586,19 @@ function CodexPanel({
         <div className="flex shrink-0 items-center gap-[var(--shard-space-2)]">
           {onSave ? (
             <Button
-              disabled={isSaving || isRunning}
+              isDisabled={isSaving || isRunning}
+              label={isSaving ? "保存中" : "保存为片段"}
               onClick={() => void onSave()}
               size="sm"
-              variant="outline"
-            >
-              {isSaving ? "保存中" : "保存为片段"}
-            </Button>
+            />
           ) : null}
-          <Button disabled={!canRun || isChecking} onClick={onRun} size="sm">
-            {actionLabel}
-          </Button>
+          <Button
+            isDisabled={!canRun || isChecking}
+            label={actionLabel}
+            onClick={onRun}
+            size="sm"
+            variant="primary"
+          />
         </div>
       </div>
 
