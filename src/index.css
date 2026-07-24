@@ -12,6 +12,16 @@
        "非状态强调色"）。--solid/--solid-foreground 是旧 shadcn Button 的"墨色实心"
        角色，Phase 3 删除 ui/button.tsx 后这两个 token 会变成未使用的遗留，先保留
        定义避免野指针，不强行现在清理。 */
+
+    /* 主色：kiln 孔雀蓝(peacock #2e6e79)接管 astryx neutral 默认的中性灰黑强调色。
+       只需覆盖这 5 个 astryx 原生 token——Button primary/焦点环/选中态等组件都
+       直接消费它们，--primary/--ring/--sidebar-primary 等 Shard 语义 token 通过
+       var(--color-accent) 间接引用会自动跟随，不需要逐个改。 */
+    --color-accent: #2e6e79;
+    --color-accent-muted: color-mix(in srgb, #2e6e79 14%, white);
+    --color-text-accent: #2e6e79;
+    --color-icon-accent: #2e6e79;
+    --color-on-accent: #ffffff;
     --background: var(--color-background-body);
     --foreground: var(--color-text-primary);
     --card: var(--color-background-card);
@@ -62,8 +72,8 @@
     --shard-sapphire-soft: var(--shard-accent-soft);
     --shard-sapphire-text: var(--shard-accent-text);
     --shard-ink-rgb: 47 47 47;
-    --shard-primary-rgb: 182 83 60;
-    --shard-primary-soft-rgb: 222 150 129;
+    --shard-primary-rgb: 46 110 121;
+    --shard-primary-soft-rgb: 120 180 189;
     --shard-success: var(--success);
     --shard-success-rgb: 62 140 125;
     --shard-info: var(--info);
@@ -166,9 +176,9 @@
     --card-foreground: oklch(0.985 0 0);
     --popover: oklch(0.205 0 0);
     --popover-foreground: oklch(0.985 0 0);
-    --primary: #de9681;
+    --primary: #78b4bd;
     --primary-foreground: oklch(0.145 0 0);
-    --primary-subtle: rgb(222 150 129 / var(--shard-alpha-21));
+    --primary-subtle: rgb(120 180 189 / var(--shard-alpha-21));
     --solid: oklch(0.985 0 0);
     --solid-foreground: oklch(0.205 0 0);
     --secondary: oklch(0.269 0 0);
@@ -184,7 +194,7 @@
     --border: oklch(1 0 0 / 10%);
     --border-visible: oklch(1 0 0 / 18%);
     --input: oklch(1 0 0 / 15%);
-    --ring: #de9681;
+    --ring: #78b4bd;
     --chart-1: #de9681;
     --chart-2: #3e8c7d;
     --chart-3: #2e6e79;
@@ -192,12 +202,12 @@
     --chart-5: oklch(0.708 0 0);
     --sidebar: var(--background);
     --sidebar-foreground: oklch(0.985 0 0);
-    --sidebar-primary: #de9681;
+    --sidebar-primary: #78b4bd;
     --sidebar-primary-foreground: oklch(0.145 0 0);
     --sidebar-accent: oklch(0.269 0 0);
     --sidebar-accent-foreground: oklch(0.985 0 0);
     --sidebar-border: oklch(1 0 0 / 10%);
-    --sidebar-ring: #de9681;
+    --sidebar-ring: #78b4bd;
     --shard-composer-shadow: none;
     --shard-memo-content-color: oklch(0.985 0 0);
     --shard-tag-bg: rgb(var(--shard-primary-rgb) / var(--shard-alpha-21));
