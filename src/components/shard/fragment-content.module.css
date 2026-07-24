@@ -1,0 +1,62 @@
+/* Fragment content renderer: the image-attachment right-click context menu
+   and its menu items need :hover/:focus/:disabled rules and a spin keyframe
+   that inline style cannot express. */
+
+.contextMenu {
+  position: fixed;
+  z-index: 50;
+  display: grid;
+  width: fit-content;
+  min-width: 176px;
+  gap: 0;
+  border-radius: var(--shard-radius-panel);
+  background: var(--popover);
+  padding: var(--shard-space-1);
+  color: var(--popover-foreground);
+  box-shadow: var(--shard-shadow-popover);
+  outline: none;
+}
+
+.menuItem {
+  display: grid;
+  grid-template-columns: 14px max-content;
+  align-items: center;
+  height: 32px;
+  gap: var(--shard-space-2);
+  border-radius: var(--shard-radius-control);
+  padding-inline: var(--shard-space-2);
+  text-align: left;
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  color: var(--popover-foreground);
+  outline: none;
+  user-select: none;
+}
+
+.menuItem:hover,
+.menuItem:focus {
+  background: var(--accent);
+  color: var(--accent-foreground);
+}
+
+.menuItem:disabled {
+  pointer-events: none;
+  opacity: var(--shard-alpha-55);
+}
+
+.menuItem svg {
+  width: 14px;
+  height: 14px;
+  stroke-width: 1.65;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.spin {
+  animation: spin 1s linear infinite;
+}

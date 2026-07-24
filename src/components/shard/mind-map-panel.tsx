@@ -11,6 +11,9 @@ import {
 
 import { Button } from "@astryxdesign/core/Button"
 import { DropdownMenu, DropdownMenuItem } from "@astryxdesign/core/DropdownMenu"
+import { Grid } from "@astryxdesign/core/Grid"
+import { HStack } from "@astryxdesign/core/HStack"
+import { Stack } from "@astryxdesign/core/Stack"
 import { TextInput } from "@astryxdesign/core/TextInput"
 import { useToast } from "@astryxdesign/core/Toast"
 
@@ -22,6 +25,8 @@ import {
   readMindMap,
 } from "@/lib/api"
 import type { MindMapReadResult, MindMapSummary } from "@/types"
+
+import styles from "./mind-map-panel.module.css"
 
 interface MindMapPanelProps {
   onMapsChange?: (maps: MindMapSummary[]) => void
@@ -94,24 +99,64 @@ export function MindMapPanel({ onMapsChange, onOpenMap }: MindMapPanelProps) {
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <div className="shard-content-inset pb-[var(--shard-space-4)]">
-        <div className="shard-content-measure flex flex-wrap items-center justify-between gap-[var(--shard-space-3)]">
-          <div className="flex min-w-0 items-center gap-[var(--shard-space-3)]">
-            <span className="flex size-8 shrink-0 items-center justify-center rounded-[var(--shard-radius-control)] border border-border bg-card text-[color:var(--shard-sapphire)]">
-              <GitBranchIcon className="size-4 stroke-[1.75]" />
+    <Stack minHeight={0} style={{ flex: "1 1 0%" }}>
+      <div className="shard-content-inset" style={{ paddingBottom: "var(--shard-space-4)" }}>
+        <HStack
+          className="shard-content-measure"
+          gap={3}
+          hAlign="between"
+          vAlign="center"
+          wrap="wrap"
+        >
+          <HStack gap={3} style={{ minWidth: 0 }} vAlign="center">
+            <span
+              style={{
+                alignItems: "center",
+                background: "var(--card)",
+                border: "1px solid var(--border)",
+                borderRadius: "var(--shard-radius-control)",
+                color: "var(--shard-sapphire)",
+                display: "flex",
+                flexShrink: 0,
+                height: 32,
+                justifyContent: "center",
+                width: 32,
+              }}
+            >
+              <GitBranchIcon size={16} strokeWidth={1.75} />
             </span>
-            <div className="min-w-0">
-              <h1 className="text-lg leading-6 font-bold text-balance">
+            <div style={{ minWidth: 0 }}>
+              <h1
+                style={{
+                  fontSize: 18,
+                  fontWeight: 700,
+                  lineHeight: "24px",
+                  margin: 0,
+                  textWrap: "balance",
+                }}
+              >
                 思维导图
               </h1>
-              <p className="mt-1 text-sm leading-5 text-muted-foreground">
+              <p
+                style={{
+                  color: "var(--muted-foreground)",
+                  fontSize: 14,
+                  lineHeight: "20px",
+                  margin: 0,
+                  marginTop: 4,
+                }}
+              >
                 {maps.length} 份导图
               </p>
             </div>
-          </div>
+          </HStack>
 
-          <div className="flex min-w-0 flex-1 items-center justify-end gap-[var(--shard-space-2)]">
+          <HStack
+            gap={2}
+            hAlign="end"
+            style={{ flex: "1 1 0%", minWidth: 0 }}
+            vAlign="center"
+          >
             <Button
               icon={<RefreshCwIcon />}
               isDisabled={isLoading}
@@ -124,10 +169,16 @@ export function MindMapPanel({ onMapsChange, onOpenMap }: MindMapPanelProps) {
               variant="ghost"
             />
             <form
-              className="flex min-w-0 items-center gap-[var(--shard-space-2)] sm:max-w-[320px]"
+              className={styles.createForm}
               onSubmit={handleCreate}
+              style={{
+                alignItems: "center",
+                display: "flex",
+                gap: "var(--shard-space-2)",
+                minWidth: 0,
+              }}
             >
-              <div className="min-w-0 flex-1">
+              <div style={{ flex: "1 1 0%", minWidth: 0 }}>
                 <TextInput
                   isDisabled={isCreating}
                   isLabelHidden
@@ -146,26 +197,52 @@ export function MindMapPanel({ onMapsChange, onOpenMap }: MindMapPanelProps) {
                 type="submit"
               />
             </form>
-          </div>
-        </div>
+          </HStack>
+        </HStack>
       </div>
 
-      <div className="shard-content-inset min-h-0 flex-1 overflow-y-auto pb-[var(--shard-space-6)]">
+      <div
+        className="shard-content-inset"
+        style={{
+          flex: "1 1 0%",
+          minHeight: 0,
+          overflowY: "auto",
+          paddingBottom: "var(--shard-space-6)",
+        }}
+      >
         <div className="shard-content-measure">
           {isLoading && maps.length === 0 ? (
-            <div className="flex h-32 items-center justify-center text-sm text-muted-foreground">
+            <div
+              style={{
+                alignItems: "center",
+                color: "var(--muted-foreground)",
+                display: "flex",
+                fontSize: 14,
+                height: 128,
+                justifyContent: "center",
+              }}
+            >
               正在读取...
             </div>
           ) : maps.length === 0 ? (
-            <div className="flex h-48 flex-col items-center justify-center gap-[var(--shard-space-2)] text-center text-muted-foreground">
-              <GitBranchIcon className="size-7 stroke-[1.5]" />
-              <div className="text-sm font-semibold text-foreground">
+            <Stack
+              gap={2}
+              hAlign="center"
+              style={{ color: "var(--muted-foreground)", height: 192, textAlign: "center" }}
+              vAlign="center"
+            >
+              <GitBranchIcon
+                size={28}
+                strokeWidth={1.5}
+                style={{ color: "var(--muted-foreground)" }}
+              />
+              <div style={{ color: "var(--foreground)", fontSize: 14, fontWeight: 600 }}>
                 还没有思维导图
               </div>
-              <p className="text-sm">在上方输入标题即可新建第一份导图。</p>
-            </div>
+              <p style={{ fontSize: 14, margin: 0 }}>在上方输入标题即可新建第一份导图。</p>
+            </Stack>
           ) : (
-            <div className="grid grid-cols-[repeat(auto-fill,minmax(min(260px,100%),1fr))] gap-[var(--shard-space-4)]">
+            <Grid columns={{ minWidth: 260 }} gap={4}>
               {maps.map((map) => (
                 <MindMapGridCard
                   key={map.id}
@@ -173,11 +250,11 @@ export function MindMapPanel({ onMapsChange, onOpenMap }: MindMapPanelProps) {
                   onOpen={() => onOpenMap(map.id)}
                 />
               ))}
-            </div>
+            </Grid>
           )}
         </div>
       </div>
-    </div>
+    </Stack>
   )
 }
 
@@ -239,25 +316,43 @@ function MindMapGridCard({
   }
 
   return (
-    <article
-      className="group flex cursor-pointer flex-col rounded-[var(--shard-surface-radius)] bg-card p-[var(--shard-space-3)] shadow-card transition-shadow hover:shadow-card-hover"
-      onClick={onOpen}
-      ref={cardRef}
-    >
+    <article className={styles.card} onClick={onOpen} ref={cardRef}>
       {readResult ? (
         <MindMapPreview file={readResult.file} height={CARD_PREVIEW_HEIGHT} />
       ) : (
         <div
-          className="flex items-center justify-center rounded-[var(--shard-radius-control)] bg-background text-xs text-muted-foreground"
-          style={{ height: CARD_PREVIEW_HEIGHT }}
+          style={{
+            alignItems: "center",
+            background: "var(--background)",
+            borderRadius: "var(--shard-radius-control)",
+            color: "var(--muted-foreground)",
+            display: "flex",
+            fontSize: 12,
+            height: CARD_PREVIEW_HEIGHT,
+            justifyContent: "center",
+          }}
         >
           {isLoading ? (
-            <span className="inline-flex items-center gap-[var(--shard-space-2)]">
-              <Loader2Icon className="size-3.5 animate-spin" />
+            <span
+              style={{
+                alignItems: "center",
+                display: "inline-flex",
+                gap: "var(--shard-space-2)",
+              }}
+            >
+              <Loader2Icon className={styles.spinner} size={14} />
               正在渲染导图
             </span>
           ) : error ? (
-            <span className="max-w-full truncate px-[var(--shard-space-3)]">
+            <span
+              style={{
+                maxWidth: "100%",
+                overflow: "hidden",
+                paddingInline: "var(--shard-space-3)",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
               无法读取导图预览
             </span>
           ) : (
@@ -266,19 +361,44 @@ function MindMapGridCard({
         </div>
       )}
 
-      <div className="mt-[var(--shard-space-3)] flex min-w-0 items-start justify-between gap-[var(--shard-space-2)]">
-        <div className="min-w-0 flex-1">
-          <h2 className="truncate text-sm leading-5 font-semibold text-foreground">
+      <HStack
+        gap={2}
+        hAlign="between"
+        style={{ marginTop: "var(--shard-space-3)", minWidth: 0 }}
+        vAlign="start"
+      >
+        <div style={{ flex: "1 1 0%", minWidth: 0 }}>
+          <h2
+            style={{
+              color: "var(--foreground)",
+              fontSize: 14,
+              fontWeight: 600,
+              lineHeight: "20px",
+              margin: 0,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
             {map.title}
           </h2>
-          <div className="mt-0.5 truncate text-xs text-muted-foreground">
+          <div
+            style={{
+              color: "var(--muted-foreground)",
+              fontSize: 12,
+              marginTop: 2,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
             {map.nodeCount} 节点 · {formatMapTime(map.updatedAt)}
           </div>
         </div>
 
         <div
-          className="flex shrink-0 items-center"
           onClick={(event) => event.stopPropagation()}
+          style={{ alignItems: "center", display: "flex", flexShrink: 0 }}
         >
           <DropdownMenu
             button={{
@@ -297,7 +417,7 @@ function MindMapGridCard({
             />
           </DropdownMenu>
         </div>
-      </div>
+      </HStack>
     </article>
   )
 }

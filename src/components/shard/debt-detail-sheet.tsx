@@ -10,6 +10,7 @@ import {
 } from "lucide-react"
 
 import { Button } from "@astryxdesign/core/Button"
+import { Grid } from "@astryxdesign/core/Grid"
 import { HStack } from "@astryxdesign/core/HStack"
 import { Stack } from "@astryxdesign/core/Stack"
 
@@ -70,11 +71,24 @@ export function DebtDetailSheet({
         <>
           <SheetHeader
             endContent={
-              <span className="flex size-8 shrink-0 items-center justify-center rounded-[var(--shard-radius-control)] border border-border bg-background text-muted-foreground">
+              <span
+                style={{
+                  display: "flex",
+                  width: 32,
+                  height: 32,
+                  flexShrink: 0,
+                  alignItems: "center",
+                  justifyContent: "center",
+                  borderRadius: "var(--shard-radius-control)",
+                  border: "1px solid var(--border)",
+                  background: "var(--background)",
+                  color: "var(--muted-foreground)",
+                }}
+              >
                 {isLendOut ? (
-                  <ArrowUpRightIcon className="size-4 stroke-[1.75]" />
+                  <ArrowUpRightIcon size={16} strokeWidth={1.75} />
                 ) : (
-                  <ArrowDownLeftIcon className="size-4 stroke-[1.75]" />
+                  <ArrowDownLeftIcon size={16} strokeWidth={1.75} />
                 )}
               </span>
             }
@@ -88,39 +102,80 @@ export function DebtDetailSheet({
               <HStack gap={2} vAlign="center" wrap="wrap">
                 <DebtStatusBadge urgency={urgency} />
                 {dueLabel ? (
-                  <span className="text-xs text-muted-foreground">{dueLabel}</span>
+                  <span style={{ fontSize: "0.75rem", color: "var(--muted-foreground)" }}>
+                    {dueLabel}
+                  </span>
                 ) : null}
                 {debt.archived ? (
-                  <span className="text-xs font-medium text-muted-foreground">
+                  <span
+                    style={{
+                      fontSize: "0.75rem",
+                      fontWeight: 500,
+                      color: "var(--muted-foreground)",
+                    }}
+                  >
                     已归档
                   </span>
                 ) : null}
               </HStack>
 
-              <div className="rounded-[var(--shard-radius-control)] border border-border bg-background p-[var(--shard-space-3)]">
-                <div className="grid grid-cols-3 gap-[var(--shard-space-2)]">
+              <div
+                style={{
+                  borderRadius: "var(--shard-radius-control)",
+                  border: "1px solid var(--border)",
+                  background: "var(--background)",
+                  padding: "var(--shard-space-3)",
+                }}
+              >
+                <Grid columns={3} gap={2}>
                   <AmountStat label="本金" value={centsToYuanLabel(debt.principalCents)} />
                   <AmountStat label="已还" value={centsToYuanLabel(debt.paidCents)} />
                   <AmountStat
-                    className={
-                      debt.settled ? "text-[color:var(--shard-emerald)]" : "text-foreground"
-                    }
+                    color={debt.settled ? "var(--shard-emerald)" : "var(--foreground)"}
                     label="剩余"
                     value={centsToYuanLabel(debt.remainingCents)}
                   />
-                </div>
-                <div className="mt-[var(--shard-space-3)] h-1.5 overflow-hidden rounded-full bg-muted">
+                </Grid>
+                <div
+                  style={{
+                    marginTop: "var(--shard-space-3)",
+                    height: 6,
+                    overflow: "hidden",
+                    borderRadius: 9999,
+                    background: "var(--muted)",
+                  }}
+                >
                   <div
-                    className="h-full rounded-full bg-[color:var(--shard-sapphire)]"
-                    style={{ width: `${progressPercent}%` }}
+                    style={{
+                      height: "100%",
+                      borderRadius: 9999,
+                      background: "var(--shard-sapphire)",
+                      width: `${progressPercent}%`,
+                    }}
                   />
                 </div>
               </div>
 
               {debt.note ? (
                 <div>
-                  <div className="text-xs font-semibold text-muted-foreground">备注</div>
-                  <p className="mt-1 text-sm whitespace-pre-wrap text-foreground">
+                  <div
+                    style={{
+                      fontSize: "0.75rem",
+                      fontWeight: 600,
+                      color: "var(--muted-foreground)",
+                    }}
+                  >
+                    备注
+                  </div>
+                  <p
+                    style={{
+                      margin: 0,
+                      marginTop: "var(--shard-space-1)",
+                      fontSize: "0.875rem",
+                      whiteSpace: "pre-wrap",
+                      color: "var(--foreground)",
+                    }}
+                  >
                     {debt.note}
                   </p>
                 </div>
@@ -135,41 +190,77 @@ export function DebtDetailSheet({
               ) : null}
 
               <div>
-                <div className="text-xs font-semibold text-muted-foreground">
+                <div
+                  style={{
+                    fontSize: "0.75rem",
+                    fontWeight: 600,
+                    color: "var(--muted-foreground)",
+                  }}
+                >
                   还款记录 · {debt.repayments.length} 笔
                 </div>
                 {debt.repayments.length === 0 ? (
-                  <p className="mt-[var(--shard-space-2)] text-sm text-muted-foreground">
+                  <p
+                    style={{
+                      margin: 0,
+                      marginTop: "var(--shard-space-2)",
+                      fontSize: "0.875rem",
+                      color: "var(--muted-foreground)",
+                    }}
+                  >
                     还没有登记过还款。
                   </p>
                 ) : (
-                  <ul className="mt-[var(--shard-space-2)] flex flex-col gap-[var(--shard-space-2)]">
+                  <Stack as="ul" gap={2} style={{ marginTop: "var(--shard-space-2)", listStyle: "none", padding: 0 }}>
                     {debt.repayments.map((repayment) => (
-                      <li
-                        className="flex items-start justify-between gap-[var(--shard-space-2)] rounded-[var(--shard-radius-control)] border border-border bg-background px-[var(--shard-space-3)] py-[var(--shard-space-2)]"
+                      <HStack
+                        as="li"
+                        gap={2}
+                        hAlign="between"
                         key={repayment.id}
+                        style={{
+                          borderRadius: "var(--shard-radius-control)",
+                          border: "1px solid var(--border)",
+                          background: "var(--background)",
+                          paddingInline: "var(--shard-space-3)",
+                          paddingBlock: "var(--shard-space-2)",
+                        }}
+                        vAlign="start"
                       >
-                        <div className="min-w-0">
-                          <div className="text-sm font-semibold tabular-nums text-foreground">
+                        <div style={{ minWidth: 0 }}>
+                          <div
+                            style={{
+                              fontSize: "0.875rem",
+                              fontWeight: 600,
+                              fontVariantNumeric: "tabular-nums",
+                              color: "var(--foreground)",
+                            }}
+                          >
                             {centsToYuanLabel(repayment.amountCents)}
                           </div>
-                          <div className="mt-0.5 text-xs text-muted-foreground">
+                          <div
+                            style={{
+                              marginTop: 2,
+                              fontSize: "0.75rem",
+                              color: "var(--muted-foreground)",
+                            }}
+                          >
                             {repayment.paidOn}
                             {repayment.note ? ` · ${repayment.note}` : ""}
                           </div>
                         </div>
                         <Button
-                          className="shrink-0"
                           icon={<XIcon />}
                           isIconOnly
                           label="撤销这笔还款"
                           onClick={() => handleRevokeRepayment(repayment.id)}
                           size="sm"
+                          style={{ flexShrink: 0 }}
                           variant="ghost"
                         />
-                      </li>
+                      </HStack>
                     ))}
-                  </ul>
+                  </Stack>
                 )}
               </div>
             </Stack>
@@ -178,10 +269,10 @@ export function DebtDetailSheet({
           <SheetFooter>
             <HStack gap={2} wrap="wrap">
               <Button
-                className="flex-1"
                 icon={<HandCoinsIcon />}
                 label="登记还款"
                 onClick={() => onRegisterRepayment(debt)}
+                style={{ flex: "1 1 auto" }}
                 variant="primary"
               />
               <Button
@@ -211,18 +302,30 @@ export function DebtDetailSheet({
 }
 
 function AmountStat({
-  className,
+  color,
   label,
   value,
 }: {
-  className?: string
+  color?: string
   label: string
   value: string
 }) {
   return (
-    <div className="min-w-0">
-      <div className="text-[11px] font-medium text-muted-foreground">{label}</div>
-      <div className={`truncate text-sm font-semibold tabular-nums ${className ?? ""}`}>
+    <div style={{ minWidth: 0 }}>
+      <div style={{ fontSize: 11, fontWeight: 500, color: "var(--muted-foreground)" }}>
+        {label}
+      </div>
+      <div
+        style={{
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+          fontSize: "0.875rem",
+          fontWeight: 600,
+          fontVariantNumeric: "tabular-nums",
+          color: color ?? "var(--foreground)",
+        }}
+      >
         {value}
       </div>
     </div>

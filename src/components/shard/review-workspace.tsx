@@ -17,6 +17,8 @@ import { useEffect, useMemo, useState } from "react"
 
 import { Badge } from "@astryxdesign/core/Badge"
 import { Button } from "@astryxdesign/core/Button"
+import { Grid } from "@astryxdesign/core/Grid"
+import { HStack, Stack, StackItem } from "@astryxdesign/core/Stack"
 
 import { FragmentCard } from "@/components/shard/fragment-card"
 import { MarkdownDocument } from "@/components/shard/markdown-document"
@@ -41,6 +43,8 @@ import type {
   Fragment,
   FragmentFilter,
 } from "@/types"
+
+import styles from "./review-workspace.module.css"
 
 type ReviewMode = Extract<FragmentFilter, "dailyReview" | "insight" | "walk">
 
@@ -288,7 +292,7 @@ export function ReviewWorkspace({
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    <Stack minHeight={0} style={{ flex: 1 }}>
       <ReviewHeader
         icon={MetaIcon}
         mode={mode}
@@ -307,14 +311,17 @@ export function ReviewWorkspace({
         }}
       />
 
-      <div className="min-h-0 flex-1 overflow-y-auto">
+      <StackItem size="fill" isScrollable>
         {isLoading ? (
           <ReviewEmpty icon={MetaIcon} message="正在读取 Shard vault..." />
         ) : displayFragments.length === 0 ? (
           <ReviewEmpty icon={MetaIcon} message="还没有可回顾的片段。" />
         ) : (
-          <div className="shard-content-inset pb-[var(--shard-space-8)]">
-            <div className="shard-content-measure flex flex-col gap-[var(--shard-card-gap)]">
+          <div
+            className="shard-content-inset"
+            style={{ paddingBottom: "var(--shard-space-8)" }}
+          >
+            <Stack className="shard-content-measure" gap={4}>
               {mode === "insight" ? (
                 <>
                   <InsightLensGallery
@@ -355,24 +362,52 @@ export function ReviewWorkspace({
               ) : null}
 
               {mode !== "insight" ? (
-                <div className="flex flex-col gap-[var(--shard-card-gap)]">
+                <Stack gap={4}>
                   {displayFragments.map((fragment, index) => (
                     <div
-                      className="grid grid-cols-[28px_minmax(0,1fr)] gap-[var(--shard-space-3)]"
                       key={fragment.id}
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "28px minmax(0,1fr)",
+                        gap: "var(--shard-space-3)",
+                      }}
                     >
                       {mode === "walk" ? (
-                        <div className="flex flex-col items-center pt-[var(--shard-space-4)]">
-                          <span className="flex size-6 items-center justify-center rounded-full border border-border bg-background text-xs font-bold text-muted-foreground tabular-nums">
+                        <Stack
+                          hAlign="center"
+                          style={{ paddingTop: "var(--shard-space-4)" }}
+                        >
+                          <span
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              width: 24,
+                              height: 24,
+                              borderRadius: "9999px",
+                              border: "1px solid var(--border)",
+                              background: "var(--background)",
+                              fontSize: "var(--font-size-xs)",
+                              fontWeight: 700,
+                              color: "var(--muted-foreground)",
+                              fontVariantNumeric: "tabular-nums",
+                            }}
+                          >
                             {index + 1}
                           </span>
                           {index < displayFragments.length - 1 ? (
                             <span
                               aria-hidden="true"
-                              className="mt-[var(--shard-space-2)] h-full min-h-8 w-px bg-border"
+                              style={{
+                                marginTop: "var(--shard-space-2)",
+                                height: "100%",
+                                minHeight: 32,
+                                width: 1,
+                                background: "var(--border)",
+                              }}
                             />
                           ) : null}
-                        </div>
+                        </Stack>
                       ) : (
                         <span aria-hidden="true" />
                       )}
@@ -393,13 +428,13 @@ export function ReviewWorkspace({
                       />
                     </div>
                   ))}
-                </div>
+                </Stack>
               ) : null}
-            </div>
+            </Stack>
           </div>
         )}
-      </div>
-    </div>
+      </StackItem>
+    </Stack>
   )
 }
 
@@ -421,23 +456,47 @@ function ReviewHeader({
   title,
 }: ReviewHeaderProps) {
   return (
-    <header className="shard-content-inset shrink-0 pb-[var(--shard-space-3)]">
-      <div className="shard-content-measure flex flex-wrap items-center justify-between gap-[var(--shard-space-3)] border-b border-border pb-[var(--shard-space-3)]">
-        <div className="flex min-w-0 items-center gap-[var(--shard-space-2)]">
-          <h1 className="truncate text-base leading-6 font-semibold text-balance">
+    <header
+      className="shard-content-inset"
+      style={{ flexShrink: 0, paddingBottom: "var(--shard-space-3)" }}
+    >
+      <HStack
+        className="shard-content-measure"
+        wrap="wrap"
+        hAlign="between"
+        vAlign="center"
+        gap={3}
+        style={{
+          borderBottom: "1px solid var(--border)",
+          paddingBottom: "var(--shard-space-3)",
+        }}
+      >
+        <HStack gap={2} vAlign="center" style={{ minWidth: 0 }}>
+          <h1
+            style={{
+              minWidth: 0,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+              fontSize: "var(--font-size-base)",
+              lineHeight: "24px",
+              fontWeight: 600,
+              textWrap: "balance",
+            }}
+          >
             {title}
           </h1>
-          <Badge className="shrink-0" label={summary} />
-        </div>
-        <div className="flex shrink-0 items-center gap-[var(--shard-space-2)]">
+          <Badge style={{ flexShrink: 0 }} label={summary} />
+        </HStack>
+        <HStack gap={2} vAlign="center" style={{ flexShrink: 0 }}>
           {mode === "dailyReview" ? (
             <Button label="换一组" size="sm" onClick={onRefreshDaily} />
           ) : null}
           {mode === "walk" ? (
             <Button label="换路径" size="sm" onClick={onRefreshWalk} />
           ) : null}
-        </div>
-      </div>
+        </HStack>
+      </HStack>
     </header>
   )
 }
@@ -450,16 +509,25 @@ function InsightLensGallery({
   onSelect: (lens: CodexInsightLens) => void
 }) {
   return (
-    <section
-      aria-label="洞察视角选择"
-      className="flex flex-col gap-[var(--shard-space-8)]"
-    >
+    <Stack as="section" aria-label="洞察视角选择" gap={8}>
       {insightLensGroups.map((group) => (
         <div key={group.title}>
-          <h2 className="px-1 text-xl leading-7 font-bold text-balance">
+          <h2
+            style={{
+              paddingInline: 4,
+              fontSize: "var(--font-size-xl)",
+              lineHeight: "28px",
+              fontWeight: 700,
+              textWrap: "balance",
+            }}
+          >
             {group.title}
           </h2>
-          <div className="mt-[var(--shard-space-4)] grid gap-[var(--shard-space-3)] md:grid-cols-3">
+          <Grid
+            columns={{ minWidth: 220, max: 3 }}
+            gap={3}
+            style={{ marginTop: "var(--shard-space-4)" }}
+          >
             {group.lensIds.map((lensId) => {
               const lens = insightLensById[lensId]
               const Icon = lens.icon
@@ -467,75 +535,106 @@ function InsightLensGallery({
               return (
                 <button
                   aria-pressed={isSelected}
-                  className={[
-                    "group/lens flex min-h-[176px] flex-col rounded-[var(--shard-surface-radius)] border p-[var(--shard-space-5)] text-left outline-none transition-colors focus-visible:ring-3 focus-visible:ring-ring/[var(--shard-alpha-34)]",
-                    isSelected
-                      ? "border-[rgb(var(--shard-primary-rgb)/var(--shard-alpha-34))] bg-[rgb(var(--shard-primary-rgb)/var(--shard-alpha-5))]"
-                      : "border-border bg-card hover:border-[rgb(var(--shard-primary-rgb)/var(--shard-alpha-21))]",
-                  ].join(" ")}
+                  className={cn(
+                    styles.lensCard,
+                    isSelected && styles.lensCardSelected
+                  )}
                   key={lens.id}
                   onClick={() => onSelect(lens.id)}
                   type="button"
                 >
-                  <span className="flex items-start justify-between gap-[var(--shard-space-4)]">
+                  <span
+                    style={{
+                      display: "flex",
+                      alignItems: "flex-start",
+                      justifyContent: "space-between",
+                      gap: "var(--shard-space-4)",
+                    }}
+                  >
                     <span
-                      className={[
-                        "flex size-11 items-center justify-center rounded-[var(--shard-radius-control)] border bg-background transition-colors",
-                        isSelected
-                          ? "border-[rgb(var(--shard-primary-rgb)/var(--shard-alpha-21))] text-[color:var(--shard-sapphire)]"
-                          : "border-transparent text-foreground group-hover/lens:border-border",
-                      ].join(" ")}
+                      className={cn(
+                        styles.lensIconWrap,
+                        isSelected && styles.lensIconWrapSelected
+                      )}
                     >
-                      <Icon className="size-6 stroke-[1.75]" />
+                      <Icon size={24} strokeWidth={1.75} />
                     </span>
                     <span
                       aria-hidden="true"
-                      className={[
-                        "relative flex size-8 shrink-0 items-center justify-center rounded-full transition-colors",
-                        isSelected
-                          ? "bg-[color:var(--shard-sapphire)] text-white"
-                          : "border border-border bg-background text-muted-foreground group-hover/lens:border-[color:var(--shard-sapphire)] group-hover/lens:text-[color:var(--shard-sapphire)]",
-                      ].join(" ")}
+                      className={cn(
+                        styles.checkToggle,
+                        isSelected && styles.checkToggleSelected
+                      )}
                     >
                       <span
                         className={cn(
-                          "absolute inset-0 flex items-center justify-center transition-[opacity,filter,scale] duration-300 ease-[cubic-bezier(0.2,0,0,1)]",
+                          styles.crossfadeLayer,
+                          styles.crossfadeCheck,
                           isSelected
-                            ? "scale-100 opacity-100 blur-0"
-                            : "scale-[0.25] opacity-0 blur-[4px]"
+                            ? styles.crossfadeVisible
+                            : styles.crossfadeHidden
                         )}
                       >
-                        <CheckIcon className="size-4 stroke-[2]" />
+                        <CheckIcon size={16} strokeWidth={2} />
                       </span>
                       <span
                         className={cn(
-                          "flex items-center justify-center transition-[opacity,filter,scale] duration-300 ease-[cubic-bezier(0.2,0,0,1)]",
+                          styles.crossfadeLayer,
                           isSelected
-                            ? "scale-[0.25] opacity-0 blur-[4px]"
-                            : "scale-100 opacity-100 blur-0"
+                            ? styles.crossfadeHidden
+                            : styles.crossfadeVisible
                         )}
                       >
-                        <PlusIcon className="size-4 stroke-[2]" />
+                        <PlusIcon size={16} strokeWidth={2} />
                       </span>
                     </span>
                   </span>
 
-                  <span className="mt-[var(--shard-space-5)] block text-lg leading-6 font-bold text-balance">
+                  <span
+                    style={{
+                      marginTop: "var(--shard-space-5)",
+                      display: "block",
+                      fontSize: "var(--font-size-lg)",
+                      lineHeight: "24px",
+                      fontWeight: 700,
+                      textWrap: "balance",
+                    }}
+                  >
                     {lens.title}
                   </span>
-                  <span className="mt-[var(--shard-space-3)] line-clamp-3 block text-sm leading-6 text-pretty text-muted-foreground">
+                  <span
+                    style={{
+                      marginTop: "var(--shard-space-3)",
+                      display: "-webkit-box",
+                      WebkitBoxOrient: "vertical",
+                      WebkitLineClamp: 3,
+                      overflow: "hidden",
+                      fontSize: "var(--font-size-sm)",
+                      lineHeight: "24px",
+                      textWrap: "pretty",
+                      color: "var(--muted-foreground)",
+                    }}
+                  >
                     {lens.description}
                   </span>
-                  <span className="mt-auto pt-[var(--shard-space-5)] text-xs leading-4 text-muted-foreground">
+                  <span
+                    style={{
+                      marginTop: "auto",
+                      paddingTop: "var(--shard-space-5)",
+                      fontSize: "var(--font-size-xs)",
+                      lineHeight: "16px",
+                      color: "var(--muted-foreground)",
+                    }}
+                  >
                     适合：{lens.focus}
                   </span>
                 </button>
               )
             })}
-          </div>
+          </Grid>
         </div>
       ))}
-    </section>
+    </Stack>
   )
 }
 
@@ -567,14 +666,36 @@ function CodexPanel({
   title,
 }: CodexPanelProps) {
   return (
-    <section className="rounded-[var(--shard-surface-radius)] border border-border bg-card p-[var(--shard-card-padding-x)]">
-      <div className="flex flex-wrap items-center justify-between gap-[var(--shard-space-3)]">
-        <div className="min-w-0">
-          <div className="flex items-center gap-[var(--shard-space-2)]">
-            <BotIcon className="size-4 text-[color:var(--shard-sapphire)]" />
-            <h2 className="text-sm font-bold text-balance">{title}</h2>
-          </div>
-          <div className="mt-1 text-xs leading-5 text-muted-foreground">
+    <section
+      style={{
+        borderRadius: "var(--shard-surface-radius)",
+        border: "1px solid var(--border)",
+        background: "var(--card)",
+        padding: "var(--shard-card-padding-x)",
+      }}
+    >
+      <HStack wrap="wrap" hAlign="between" vAlign="center" gap={3}>
+        <div style={{ minWidth: 0 }}>
+          <HStack gap={2} vAlign="center">
+            <BotIcon size={16} style={{ color: "var(--shard-sapphire)" }} />
+            <h2
+              style={{
+                fontSize: "var(--font-size-sm)",
+                fontWeight: 700,
+                textWrap: "balance",
+              }}
+            >
+              {title}
+            </h2>
+          </HStack>
+          <div
+            style={{
+              marginTop: 4,
+              fontSize: "var(--font-size-xs)",
+              lineHeight: "20px",
+              color: "var(--muted-foreground)",
+            }}
+          >
             {isChecking
               ? "正在检测 Codex CLI..."
               : status?.installed
@@ -583,7 +704,7 @@ function CodexPanel({
           </div>
         </div>
 
-        <div className="flex shrink-0 items-center gap-[var(--shard-space-2)]">
+        <HStack gap={2} vAlign="center" style={{ flexShrink: 0 }}>
           {onSave ? (
             <Button
               isDisabled={isSaving || isRunning}
@@ -599,23 +720,47 @@ function CodexPanel({
             size="sm"
             variant="primary"
           />
-        </div>
-      </div>
+        </HStack>
+      </HStack>
 
       {error ? (
-        <div className="mt-[var(--shard-space-3)] flex gap-[var(--shard-space-2)] rounded-[var(--shard-radius-control)] border border-[rgb(var(--shard-ruby-rgb)/var(--shard-alpha-34))] bg-[rgb(var(--shard-ruby-rgb)/var(--shard-alpha-8))] px-[var(--shard-space-3)] py-[var(--shard-space-2)] text-xs leading-5 text-[color:var(--shard-ruby)]">
-          <CircleAlertIcon className="mt-0.5 size-3.5 shrink-0" />
-          <span className="text-pretty">{error}</span>
-        </div>
+        <HStack
+          gap={2}
+          paddingInline={3}
+          paddingBlock={2}
+          style={{
+            marginTop: "var(--shard-space-3)",
+            borderRadius: "var(--shard-radius-control)",
+            border:
+              "1px solid rgb(var(--shard-ruby-rgb) / var(--shard-alpha-34))",
+            background: "rgb(var(--shard-ruby-rgb) / var(--shard-alpha-8))",
+            fontSize: "var(--font-size-xs)",
+            lineHeight: "20px",
+            color: "var(--shard-ruby)",
+          }}
+        >
+          <CircleAlertIcon
+            size={14}
+            style={{ marginTop: 2, flexShrink: 0 }}
+          />
+          <span style={{ textWrap: "pretty" }}>{error}</span>
+        </HStack>
       ) : null}
 
       {result ? (
-        <MarkdownDocument
-          className="mt-[var(--shard-space-4)]"
-          content={result}
-        />
+        <div style={{ marginTop: "var(--shard-space-4)" }}>
+          <MarkdownDocument content={result} />
+        </div>
       ) : (
-        <div className="mt-[var(--shard-space-4)] text-sm leading-6 text-pretty text-muted-foreground">
+        <div
+          style={{
+            marginTop: "var(--shard-space-4)",
+            fontSize: "var(--font-size-sm)",
+            lineHeight: "24px",
+            textWrap: "pretty",
+            color: "var(--muted-foreground)",
+          }}
+        >
           {isRunning ? "Codex 正在只读分析所选笔记..." : "生成后会显示在这里。"}
         </div>
       )}
@@ -631,10 +776,24 @@ function ReviewEmpty({
   message: string
 }) {
   return (
-    <div className="flex h-full flex-col items-center justify-center gap-3 text-center text-muted-foreground">
-      <Icon className="size-8" />
-      <div className="text-sm font-semibold text-balance">{message}</div>
-    </div>
+    <Stack
+      height="100%"
+      hAlign="center"
+      vAlign="center"
+      gap={3}
+      style={{ textAlign: "center", color: "var(--muted-foreground)" }}
+    >
+      <Icon size={32} />
+      <div
+        style={{
+          fontSize: "var(--font-size-sm)",
+          fontWeight: 600,
+          textWrap: "balance",
+        }}
+      >
+        {message}
+      </div>
+    </Stack>
   )
 }
 

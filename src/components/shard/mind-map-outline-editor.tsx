@@ -17,7 +17,11 @@ import {
 } from "lucide-react"
 
 import { Button } from "@astryxdesign/core/Button"
+import { Stack } from "@astryxdesign/core/Stack"
 import { TextInput } from "@astryxdesign/core/TextInput"
+
+import { cn } from "@/lib/utils"
+import styles from "./mind-map-outline-editor.module.css"
 import {
   addMindMapChild,
   addMindMapSibling,
@@ -202,8 +206,16 @@ export function MindMapOutlineEditor({
   }
 
   return (
-    <div className="min-h-0 flex-1 overflow-y-auto bg-background p-[var(--shard-space-5)]">
-      <div className="mx-auto flex max-w-4xl flex-col gap-[var(--shard-space-1)]">
+    <div
+      style={{
+        minHeight: 0,
+        flex: "1 1 auto",
+        overflowY: "auto",
+        background: "var(--background)",
+        padding: "var(--shard-space-5)",
+      }}
+    >
+      <Stack gap={1} maxWidth={896} style={{ marginInline: "auto" }}>
         {rows.map(({ node, depth }) => {
           const isRoot = node.id === file.rootId
           const selected = selectedNodeId === node.id
@@ -212,13 +224,11 @@ export function MindMapOutlineEditor({
 
           return (
             <div
-              className={[
-                "group grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-[var(--shard-space-2)] rounded-[var(--shard-radius-control)] py-1 pr-1 transition-colors",
-                activeDropMode === "inside" || selected
-                  ? "bg-[var(--shard-accent-soft)]"
-                  : "hover:bg-muted/70",
-                draggingNodeId === node.id ? "opacity-50" : "",
-              ].join(" ")}
+              className={cn(
+                styles.row,
+                (activeDropMode === "inside" || selected) && styles.rowActive,
+                draggingNodeId === node.id && styles.rowDragging
+              )}
               key={node.id}
               onDragLeave={(event) => handleDragLeave(event, node.id)}
               onDragOver={(event) => handleDragOver(event, node.id)}
@@ -228,13 +238,13 @@ export function MindMapOutlineEditor({
                 paddingLeft: `${Math.min(depth, 10) * 22}px`,
               }}
             >
-              <div className="flex min-w-0 items-center gap-[var(--shard-space-2)]">
+              <div className={styles.rowMain}>
                 {isRoot ? (
-                  <span aria-hidden="true" className="size-6 shrink-0" />
+                  <span aria-hidden="true" style={{ width: 24, height: 24, flexShrink: 0 }} />
                 ) : (
                   <Button
                     aria-grabbed={draggingNodeId === node.id}
-                    className="-ml-1 cursor-grab text-muted-foreground opacity-0 active:cursor-grabbing group-focus-within:opacity-100 group-hover:opacity-100"
+                    className={styles.dragHandle}
                     draggable
                     icon={<GripVerticalIcon />}
                     isIconOnly
@@ -249,14 +259,19 @@ export function MindMapOutlineEditor({
                 )}
                 <span
                   aria-hidden="true"
-                  className={[
-                    "size-1.5 shrink-0 rounded-full",
-                    isRoot ? "bg-primary" : "bg-muted-foreground/45",
-                  ].join(" ")}
+                  style={{
+                    width: 6,
+                    height: 6,
+                    flexShrink: 0,
+                    borderRadius: 9999,
+                    background: isRoot
+                      ? "var(--primary)"
+                      : "color-mix(in oklab, var(--muted-foreground) 45%, transparent)",
+                  }}
                 />
-                <div className="min-w-0 flex-1">
+                <div style={{ minWidth: 0, flex: "1 1 auto" }}>
                   <TextInput
-                    className="border-transparent bg-transparent shadow-none focus-visible:border-border"
+                    className={styles.nodeInputFocusRing}
                     isLabelHidden
                     label={isRoot ? "根节点" : "导图节点"}
                     onChange={(value) =>
@@ -268,11 +283,16 @@ export function MindMapOutlineEditor({
                     ref={(element) => {
                       inputRefs.current[node.id] = element
                     }}
+                    style={{
+                      borderColor: "transparent",
+                      background: "transparent",
+                      boxShadow: "none",
+                    }}
                     value={node.text}
                   />
                 </div>
               </div>
-              <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100">
+              <div className={styles.actionsRow}>
                 <Button
                   icon={<PlusIcon />}
                   isIconOnly
@@ -342,7 +362,7 @@ export function MindMapOutlineEditor({
             </div>
           )
         })}
-      </div>
+      </Stack>
     </div>
   )
 }

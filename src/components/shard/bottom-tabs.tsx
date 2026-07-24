@@ -16,11 +16,15 @@ import {
 import { useState } from "react"
 
 import { DropdownMenu } from "@astryxdesign/core/DropdownMenu"
+import { HStack } from "@astryxdesign/core/HStack"
+import { Stack } from "@astryxdesign/core/Stack"
 import { Tooltip } from "@astryxdesign/core/Tooltip"
 import shardAppIconUrl from "@/assets/shard-app-icon.png"
 import { dailyReviewCount, insightReviewCount } from "@/lib/review-workflows"
 import { useAppVersion } from "@/lib/use-app-version"
 import type { Fragment, FragmentFilter, GitInfo } from "@/types"
+
+import styles from "./bottom-tabs.module.css"
 
 interface BottomTabsProps {
   activeFilter: FragmentFilter
@@ -87,68 +91,118 @@ export function BottomTabs({
   const isMissingRemote = Boolean(
     git && git.status !== "no_git" && !git.hasRemote
   )
+  const gitDotColor = getGitStatusDotColor(git, isMissingRemote)
 
   return (
-    <footer className="shrink-0 border-t border-border bg-sidebar px-4 pt-2.5 pb-3">
-      <div className="mx-auto flex w-full max-w-[720px] flex-col gap-2">
-        <div className="flex h-7 min-w-0 items-center justify-between gap-3 text-xs">
-          <div className="flex min-w-0 items-center gap-2 text-sidebar-foreground">
+    <footer
+      style={{
+        flexShrink: 0,
+        borderTop: "1px solid var(--border)",
+        background: "var(--sidebar)",
+        paddingInline: "var(--shard-space-4)",
+        paddingTop: "10px",
+        paddingBottom: "var(--shard-space-3)",
+      }}
+    >
+      <Stack gap={2} width="100%" maxWidth={720} style={{ marginInline: "auto" }}>
+        <HStack
+          gap={3}
+          hAlign="between"
+          vAlign="center"
+          style={{ height: 28, minWidth: 0, fontSize: "var(--font-size-sm)" }}
+        >
+          <HStack
+            gap={2}
+            vAlign="center"
+            style={{ minWidth: 0, color: "var(--sidebar-foreground)" }}
+          >
             <img
               alt=""
               aria-hidden="true"
-              className="size-4 shrink-0 rounded-[var(--shard-radius-control)] object-contain"
               draggable={false}
               src={shardAppIconUrl}
+              style={{
+                width: 16,
+                height: 16,
+                flexShrink: 0,
+                borderRadius: "var(--shard-radius-control)",
+                objectFit: "contain",
+              }}
             />
-            <span className="font-bold">Shard</span>
+            <span style={{ fontWeight: 700 }}>Shard</span>
             {appVersion ? (
-              <span className="text-muted-foreground">v{appVersion}</span>
+              <span style={{ color: "var(--muted-foreground)" }}>
+                v{appVersion}
+              </span>
             ) : null}
-          </div>
+          </HStack>
 
-          <div className="flex min-w-0 items-center justify-end gap-2 text-muted-foreground">
-            <div className="flex shrink-0 items-center gap-1.5 font-semibold text-sidebar-foreground">
+          <HStack
+            gap={2}
+            hAlign="end"
+            vAlign="center"
+            style={{ minWidth: 0, color: "var(--muted-foreground)" }}
+          >
+            <HStack
+              gap={1.5}
+              vAlign="center"
+              style={{
+                flexShrink: 0,
+                fontWeight: 600,
+                color: "var(--sidebar-foreground)",
+              }}
+            >
               <span
-                className={[
-                  "size-2 rounded-full",
-                  git?.status === "error" ? "bg-[color:var(--shard-ruby)]" : "",
-                  git?.status === "dirty" || isMissingRemote
-                    ? "bg-[color:var(--shard-amber)]"
-                    : "",
-                  !git || (git.status === "ready" && git.hasRemote)
-                    ? "bg-[color:var(--shard-emerald)]"
-                    : "",
-                  git?.status === "no_git"
-                    ? "bg-muted-foreground/[var(--shard-alpha-55)]"
-                    : "",
-                ].join(" ")}
+                aria-hidden="true"
+                style={{
+                  width: 8,
+                  height: 8,
+                  borderRadius: 9999,
+                  background: gitDotColor,
+                }}
               />
               {gitStateLabel}
-            </div>
+            </HStack>
 
-            <div className="hidden min-w-0 items-center gap-1.5 sm:flex">
-              <GitBranchIcon className="size-3.5 shrink-0" />
-              <span className="truncate">{git?.branch || "main"}</span>
+            <div className={styles.branchInfo}>
+              <GitBranchIcon style={{ width: 14, height: 14, flexShrink: 0 }} />
+              <span className={styles.truncate}>{git?.branch || "main"}</span>
               <span>·</span>
-              <span className="truncate">{git?.shortCommit || "no commit"}</span>
+              <span className={styles.truncate}>
+                {git?.shortCommit || "no commit"}
+              </span>
             </div>
 
             <Tooltip
               content={vaultPath || "Vault not loaded"}
               placement="above"
             >
-              <span className="hidden max-w-[180px] truncate text-left sm:block">
+              <span className={`${styles.vaultPath} ${styles.truncate}`}>
                 {vaultPath || "Vault not loaded"}
               </span>
             </Tooltip>
-          </div>
-        </div>
+          </HStack>
+        </HStack>
 
-        <div className="flex items-center gap-2">
-          <div className="min-w-0 flex-1 overflow-x-auto rounded-[8px] bg-muted p-1">
+        <HStack gap={2} vAlign="center">
+          <div
+            style={{
+              minWidth: 0,
+              flex: "1 1 0%",
+              overflowX: "auto",
+              borderRadius: 8,
+              background: "var(--muted)",
+              padding: "var(--shard-space-1)",
+            }}
+          >
             <nav
               aria-label="Fragment filters"
-              className="grid min-w-[304px] grid-cols-4 gap-1"
+              style={{
+                display: "grid",
+                minWidth: 304,
+                gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+                gap: "var(--shard-space-1)",
+              }}
             >
               {tabItems.map((item) => {
                 const Icon = item.icon
@@ -157,12 +211,9 @@ export function BottomTabs({
                 return (
                   <button
                     aria-label={item.fullLabel}
-                    className={[
-                      "relative flex h-12 min-w-0 flex-col items-center justify-center gap-0.5 rounded-[6px] px-1.5 text-[11px] leading-none font-semibold transition-colors",
-                      isActive
-                        ? "bg-card text-foreground shadow-card"
-                        : "text-muted-foreground hover:bg-card/[var(--shard-alpha-55)] hover:text-foreground",
-                    ].join(" ")}
+                    className={`${styles.tab} ${
+                      isActive ? styles.tabActive : styles.tabInactive
+                    }`}
                     key={item.id}
                     onClick={() => onFilterChange(item.id)}
                     type="button"
@@ -170,12 +221,39 @@ export function BottomTabs({
                     {isActive ? (
                       <span
                         aria-hidden="true"
-                        className="absolute inset-x-3 top-1 h-0.5 rounded-full bg-[color:var(--shard-sapphire)]"
+                        style={{
+                          position: "absolute",
+                          insetInline: "var(--shard-space-3)",
+                          top: "var(--shard-space-1)",
+                          height: 2,
+                          borderRadius: 9999,
+                          background: "var(--shard-sapphire)",
+                        }}
                       />
                     ) : null}
-                    <Icon className="size-4 shrink-0" />
-                    <span className="max-w-full truncate">{item.label}</span>
-                    <span className="absolute top-1 right-1 min-w-4 rounded-full bg-background px-1 text-[10px] leading-4 font-bold text-muted-foreground tabular-nums">
+                    <Icon style={{ width: 16, height: 16, flexShrink: 0 }} />
+                    <span
+                      className={styles.truncate}
+                      style={{ maxWidth: "100%" }}
+                    >
+                      {item.label}
+                    </span>
+                    <span
+                      style={{
+                        position: "absolute",
+                        top: "var(--shard-space-1)",
+                        right: "var(--shard-space-1)",
+                        minWidth: 16,
+                        borderRadius: 9999,
+                        background: "var(--background)",
+                        paddingInline: "var(--shard-space-1)",
+                        fontSize: 10,
+                        lineHeight: "16px",
+                        fontWeight: 700,
+                        color: "var(--muted-foreground)",
+                        fontVariantNumeric: "tabular-nums",
+                      }}
+                    >
                       {counts[item.id]}
                     </span>
                   </button>
@@ -212,7 +290,7 @@ export function BottomTabs({
               { type: "divider" },
               {
                 icon: (
-                  <RefreshCwIcon className={isSyncing ? "animate-spin" : ""} />
+                  <RefreshCwIcon className={isSyncing ? styles.spin : undefined} />
                 ),
                 isDisabled: isSyncing,
                 label: isSyncing ? "同步中" : "同步 Git vault",
@@ -244,8 +322,8 @@ export function BottomTabs({
             onOpenChange={setIsMenuOpen}
             placement="above"
           />
-        </div>
-      </div>
+        </HStack>
+      </Stack>
     </footer>
   )
 }
@@ -257,4 +335,16 @@ function getGitStateLabel(git: GitInfo | null) {
   if (git.status === "dirty") return "Pending"
   if (git.status === "error") return "Error"
   return "Synced"
+}
+
+function getGitStatusDotColor(git: GitInfo | null, isMissingRemote: boolean) {
+  if (git?.status === "error") return "var(--shard-ruby)"
+  if (git?.status === "dirty" || isMissingRemote) return "var(--shard-amber)"
+  if (!git || (git.status === "ready" && git.hasRemote)) {
+    return "var(--shard-emerald)"
+  }
+  if (git.status === "no_git") {
+    return "color-mix(in oklab, var(--muted-foreground) calc(var(--shard-alpha-55) * 100%), transparent)"
+  }
+  return "var(--shard-emerald)"
 }

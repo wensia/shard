@@ -36,6 +36,8 @@ import {
 } from "@/lib/api"
 import { cn } from "@/lib/utils"
 
+import styles from "./fragment-content.module.css"
+
 interface ContextMenuPosition {
   left: number
   top: number
@@ -463,7 +465,7 @@ export function FragmentImageAttachment({
     contextMenuPosition && canUseFileActions
       ? createPortal(
           <div
-            className="fixed z-50 grid w-fit min-w-44 gap-0 rounded-lg bg-popover p-[var(--shard-space-1)] text-popover-foreground shadow-popover outline-none"
+            className={styles.contextMenu}
             onContextMenu={(event) => {
               event.preventDefault()
             }}
@@ -480,7 +482,7 @@ export function FragmentImageAttachment({
               icon={
                 isDownloading ? (
                   <Loader2Icon
-                    className="animate-spin"
+                    className={styles.spin}
                     data-icon="inline-start"
                   />
                 ) : (
@@ -545,7 +547,7 @@ export function FragmentImageAttachment({
                   <Button
                     icon={
                       isDownloading ? (
-                        <Loader2Icon className="animate-spin" />
+                        <Loader2Icon className={styles.spin} />
                       ) : (
                         <DownloadIcon />
                       )
@@ -588,7 +590,7 @@ function ImageAttachmentMenuItem({
 }: ImageAttachmentMenuItemProps) {
   return (
     <button
-      className="grid h-8 grid-cols-[14px_max-content] items-center gap-[var(--shard-space-2)] rounded-[var(--shard-radius-control)] px-[var(--shard-space-2)] text-left text-[13px] font-medium whitespace-nowrap text-popover-foreground outline-none select-none hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground disabled:pointer-events-none disabled:opacity-[var(--shard-alpha-55)] [&_svg]:size-3.5 [&_svg]:stroke-[1.65]"
+      className={styles.menuItem}
       disabled={disabled}
       onClick={onClick}
       role="menuitem"

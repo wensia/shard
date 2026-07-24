@@ -1,3 +1,5 @@
+import type { CSSProperties } from "react"
+
 import { FragmentContent } from "@/components/shard/fragment-content"
 import { cn } from "@/lib/utils"
 
@@ -46,11 +48,20 @@ export function FragmentBody({
       vaultPath={vaultPath}
     />
   )
-  const bodyClassName = cn("shard-memo-body whitespace-pre-wrap", className)
+  const bodyClassName = cn("shard-memo-body", className)
+  const bodyStyle: CSSProperties = { whiteSpace: "pre-wrap" }
 
   if (as === "div") {
-    return <div className={bodyClassName}>{body}</div>
+    return (
+      <div className={bodyClassName} style={bodyStyle}>
+        {body}
+      </div>
+    )
   }
 
-  return <p className={bodyClassName}>{body}</p>
+  return (
+    <p className={bodyClassName} style={{ ...bodyStyle, margin: 0 }}>
+      {body}
+    </p>
+  )
 }

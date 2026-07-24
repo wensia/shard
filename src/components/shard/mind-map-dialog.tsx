@@ -23,7 +23,9 @@ import {
 } from "lucide-react"
 
 import { Button } from "@astryxdesign/core/Button"
+import { Center } from "@astryxdesign/core/Center"
 import { Dialog, DialogHeader } from "@astryxdesign/core/Dialog"
+import { HStack, Stack } from "@astryxdesign/core/Stack"
 import { Layout, LayoutContent, LayoutFooter } from "@astryxdesign/core/Layout"
 import { TextInput } from "@astryxdesign/core/TextInput"
 import { useToast } from "@astryxdesign/core/Toast"
@@ -47,6 +49,7 @@ import {
   updateMindMapTitle,
 } from "@/lib/mind-map-tree"
 import type { MindMapReadResult, MindMapSummary, ShardMapFile } from "@/types"
+import styles from "./mind-map-dialog.module.css"
 
 interface MindMapDialogProps {
   initialMapId?: string | null
@@ -395,13 +398,24 @@ export function MindMapDialog({
         }
         content={
           <LayoutContent
-            className="flex h-full min-h-0 flex-col gap-[var(--shard-space-4)]"
             isScrollable={false}
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: "var(--shard-space-4)",
+              height: "100%",
+              minHeight: 0,
+            }}
           >
             <form
-              className="flex min-w-0 items-center gap-[var(--shard-space-2)]"
               id={createFormId}
               onSubmit={handleCreate}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "var(--shard-space-2)",
+                minWidth: 0,
+              }}
             >
               <TextInput
                 isDisabled={isCreating}
@@ -421,13 +435,28 @@ export function MindMapDialog({
               />
             </form>
 
-            <div className="grid min-h-0 flex-1 gap-[var(--shard-space-4)] md:grid-cols-[minmax(190px,260px)_1fr]">
+            <div className={styles.splitGrid}>
               <section
                 aria-busy={isLoading}
-                className="min-h-0 border-r border-border pr-[var(--shard-space-4)]"
+                style={{
+                  minHeight: 0,
+                  borderRight: "1px solid var(--border)",
+                  paddingRight: "var(--shard-space-4)",
+                }}
               >
-                <div className="mb-[var(--shard-space-2)] flex items-center justify-between gap-[var(--shard-space-2)]">
-                  <div className="text-xs font-semibold text-muted-foreground">
+                <HStack
+                  gap={2}
+                  hAlign="between"
+                  style={{ marginBottom: "var(--shard-space-2)" }}
+                  vAlign="center"
+                >
+                  <div
+                    style={{
+                      fontSize: 12,
+                      fontWeight: 600,
+                      color: "var(--muted-foreground)",
+                    }}
+                  >
                     {maps.length} 份导图
                   </div>
                   <Button
@@ -441,17 +470,34 @@ export function MindMapDialog({
                     type="button"
                     variant="ghost"
                   />
-                </div>
+                </HStack>
 
-                <div className="flex max-h-[520px] min-h-0 flex-col gap-[var(--shard-space-1)] overflow-y-auto pr-[var(--shard-space-1)]">
+                <Stack
+                  gap={1}
+                  isScrollable
+                  style={{
+                    maxHeight: 520,
+                    paddingRight: "var(--shard-space-1)",
+                  }}
+                >
                   {isLoading && maps.length === 0 ? (
-                    <div className="flex h-24 items-center justify-center text-sm text-muted-foreground">
+                    <Center
+                      height={96}
+                      style={{ fontSize: 14, color: "var(--muted-foreground)" }}
+                    >
                       正在读取...
-                    </div>
+                    </Center>
                   ) : maps.length === 0 ? (
-                    <div className="flex h-24 items-center justify-center text-center text-sm text-muted-foreground">
+                    <Center
+                      height={96}
+                      style={{
+                        fontSize: 14,
+                        textAlign: "center",
+                        color: "var(--muted-foreground)",
+                      }}
+                    >
                       还没有思维导图
-                    </div>
+                    </Center>
                   ) : (
                     maps.map((summary) => {
                       const selected = selectedMap?.file.id === summary.id
@@ -460,25 +506,51 @@ export function MindMapDialog({
                         <button
                           aria-pressed={selected}
                           className={[
-                            "flex min-w-0 items-start gap-[var(--shard-space-2)] rounded-[var(--shard-radius-control)] px-[var(--shard-space-2)] py-[var(--shard-space-2)] text-left transition-colors",
-                            selected
-                              ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                              : "hover:bg-muted",
+                            styles.mapRow,
+                            selected ? styles.mapRowSelected : "",
                           ].join(" ")}
                           key={summary.id}
                           onClick={() => void handleSelectMap(summary)}
                           type="button"
                         >
                           {isReadingId === summary.id ? (
-                            <Loader2Icon className="mt-0.5 size-3.5 shrink-0 animate-spin" />
+                            <Loader2Icon
+                              className={styles.spin}
+                              size={14}
+                              strokeWidth={1.75}
+                              style={{ marginTop: 2, flexShrink: 0 }}
+                            />
                           ) : (
-                            <FileJsonIcon className="mt-0.5 size-3.5 shrink-0 stroke-[1.75]" />
+                            <FileJsonIcon
+                              size={14}
+                              strokeWidth={1.75}
+                              style={{ marginTop: 2, flexShrink: 0 }}
+                            />
                           )}
-                          <span className="min-w-0 flex-1">
-                            <span className="block truncate text-sm font-semibold">
+                          <span style={{ minWidth: 0, flex: "1 1 0%" }}>
+                            <span
+                              style={{
+                                display: "block",
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                                whiteSpace: "nowrap",
+                                fontSize: 14,
+                                fontWeight: 600,
+                              }}
+                            >
                               {summary.title}
                             </span>
-                            <span className="mt-0.5 block truncate text-xs text-muted-foreground">
+                            <span
+                              style={{
+                                marginTop: 2,
+                                display: "block",
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                                whiteSpace: "nowrap",
+                                fontSize: 12,
+                                color: "var(--muted-foreground)",
+                              }}
+                            >
                               {summary.nodeCount} 节点 · {formatMapTime(summary.updatedAt)}
                             </span>
                           </span>
@@ -486,26 +558,54 @@ export function MindMapDialog({
                       )
                     })
                   )}
-                </div>
+                </Stack>
               </section>
 
-              <section className="min-h-0 min-w-0">
+              <section style={{ minHeight: 0, minWidth: 0 }}>
                 {draftFile && selectedMap ? (
-                  <div className="flex min-h-0 flex-col gap-[var(--shard-space-3)]">
-                    <div className="flex min-w-0 items-start justify-between gap-[var(--shard-space-3)]">
-                      <div className="min-w-0 flex-1">
+                  <Stack gap={3} style={{ minHeight: 0 }}>
+                    <HStack
+                      gap={3}
+                      hAlign="between"
+                      style={{ minWidth: 0 }}
+                      vAlign="start"
+                    >
+                      <div style={{ minWidth: 0, flex: "1 1 0%" }}>
                         <TextInput
                           isLabelHidden
                           label="导图标题"
                           onChange={handleTitleChange}
                           value={draftFile.title}
                         />
-                        <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-[var(--shard-space-2)] gap-y-1 text-xs text-muted-foreground">
+                        <div
+                          style={{
+                            marginTop: 4,
+                            display: "flex",
+                            flexWrap: "wrap",
+                            alignItems: "center",
+                            minWidth: 0,
+                            columnGap: "var(--shard-space-2)",
+                            rowGap: 4,
+                            fontSize: 12,
+                            color: "var(--muted-foreground)",
+                          }}
+                        >
                           <span>revision {selectedMap.file.revision}</span>
                           <span aria-hidden="true">·</span>
                           <span>{Object.keys(draftFile.nodes).length} 节点</span>
                           <span aria-hidden="true">·</span>
-                          <span className="truncate">{selectedMap.path}</span>
+                          <span
+                            style={{
+                              display: "inline-block",
+                              maxWidth: "100%",
+                              minWidth: 0,
+                              overflow: "hidden",
+                              textOverflow: "ellipsis",
+                              whiteSpace: "nowrap",
+                            }}
+                          >
+                            {selectedMap.path}
+                          </span>
                         </div>
                       </div>
                       <Button
@@ -517,18 +617,47 @@ export function MindMapDialog({
                         type="button"
                         variant="primary"
                       />
-                    </div>
+                    </HStack>
 
                     {conflict ? (
-                      <div className="rounded-[var(--shard-radius-control)] border border-destructive/30 bg-destructive/5 p-[var(--shard-space-3)]">
-                        <div className="flex items-start gap-[var(--shard-space-2)]">
-                          <AlertTriangleIcon className="mt-0.5 size-4 shrink-0 text-destructive" />
-                          <div className="min-w-0 flex-1">
-                            <div className="text-sm font-semibold">检测到保存冲突</div>
-                            <p className="mt-1 break-words text-xs text-muted-foreground">
+                      <div
+                        style={{
+                          borderRadius: "var(--shard-radius-control)",
+                          border:
+                            "1px solid color-mix(in srgb, var(--destructive) 30%, transparent)",
+                          background:
+                            "color-mix(in srgb, var(--destructive) 5%, transparent)",
+                          padding: "var(--shard-space-3)",
+                        }}
+                      >
+                        <HStack gap={2} vAlign="start">
+                          <AlertTriangleIcon
+                            size={16}
+                            style={{
+                              marginTop: 2,
+                              flexShrink: 0,
+                              color: "var(--destructive)",
+                            }}
+                          />
+                          <div style={{ minWidth: 0, flex: "1 1 0%" }}>
+                            <div style={{ fontSize: 14, fontWeight: 600 }}>
+                              检测到保存冲突
+                            </div>
+                            <p
+                              style={{
+                                marginTop: 4,
+                                overflowWrap: "break-word",
+                                fontSize: 12,
+                                color: "var(--muted-foreground)",
+                              }}
+                            >
                               {conflict.message}
                             </p>
-                            <div className="mt-[var(--shard-space-2)] flex flex-wrap gap-[var(--shard-space-2)]">
+                            <HStack
+                              gap={2}
+                              style={{ marginTop: "var(--shard-space-2)" }}
+                              wrap="wrap"
+                            >
                               <Button
                                 isDisabled={isSaving}
                                 label="保留我的版本"
@@ -545,33 +674,56 @@ export function MindMapDialog({
                                 type="button"
                                 variant="secondary"
                               />
-                            </div>
+                            </HStack>
                           </div>
-                        </div>
+                        </HStack>
                       </div>
                     ) : null}
 
                     <div
                       aria-busy={isSaving}
-                      className="min-h-0 flex-1 overflow-y-auto rounded-[var(--shard-radius-control)] border border-border bg-card p-[var(--shard-space-3)]"
+                      style={{
+                        minHeight: 0,
+                        flex: "1 1 auto",
+                        overflowY: "auto",
+                        borderRadius: "var(--shard-radius-control)",
+                        border: "1px solid var(--border)",
+                        background: "var(--card)",
+                        padding: "var(--shard-space-3)",
+                      }}
                     >
-                      <div className="flex flex-col gap-[var(--shard-space-1)]">
+                      <Stack gap={1}>
                         {rows.map(({ node, depth }) => {
                           const isRoot = node.id === draftFile.rootId
 
                           return (
                             <div
-                              className="group grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-[var(--shard-space-2)] rounded-[var(--shard-radius-control)] py-1 pr-1 hover:bg-muted/70"
+                              className={styles.nodeRow}
                               key={node.id}
-                              style={{ paddingLeft: `${Math.min(depth, 8) * 18}px` }}
+                              style={{
+                                display: "grid",
+                                gridTemplateColumns: "minmax(0, 1fr) auto",
+                                alignItems: "center",
+                                minWidth: 0,
+                                gap: "var(--shard-space-2)",
+                                borderRadius: "var(--shard-radius-control)",
+                                paddingBlock: 4,
+                                paddingRight: 4,
+                                paddingLeft: `${Math.min(depth, 8) * 18}px`,
+                              }}
                             >
-                              <div className="flex min-w-0 items-center gap-[var(--shard-space-2)]">
+                              <HStack gap={2} style={{ minWidth: 0 }} vAlign="center">
                                 <span
                                   aria-hidden="true"
-                                  className={[
-                                    "size-1.5 shrink-0 rounded-full",
-                                    isRoot ? "bg-primary" : "bg-muted-foreground/45",
-                                  ].join(" ")}
+                                  style={{
+                                    width: 6,
+                                    height: 6,
+                                    flexShrink: 0,
+                                    borderRadius: 999,
+                                    background: isRoot
+                                      ? "var(--primary)"
+                                      : "color-mix(in srgb, var(--muted-foreground) 45%, transparent)",
+                                  }}
                                 />
                                 <TextInput
                                   isLabelHidden
@@ -589,8 +741,12 @@ export function MindMapDialog({
                                   }}
                                   value={node.text}
                                 />
-                              </div>
-                              <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100">
+                              </HStack>
+                              <HStack
+                                className={styles.nodeActions}
+                                gap={0.5}
+                                vAlign="center"
+                              >
                                 <Button
                                   icon={<PlusIcon />}
                                   isIconOnly
@@ -660,28 +816,41 @@ export function MindMapDialog({
                                   type="button"
                                   variant="ghost"
                                 />
-                              </div>
+                              </HStack>
                             </div>
                           )
                         })}
-                      </div>
+                      </Stack>
                     </div>
-                  </div>
+                  </Stack>
                 ) : (
-                  <div className="flex h-full min-h-[340px] flex-col items-center justify-center gap-[var(--shard-space-2)] text-center text-muted-foreground">
-                    <GitBranchIcon className="size-7 stroke-[1.5]" />
-                    <div className="text-sm font-semibold text-foreground">
+                  <Stack
+                    gap={2}
+                    hAlign="center"
+                    style={{
+                      height: "100%",
+                      minHeight: 340,
+                      textAlign: "center",
+                      color: "var(--muted-foreground)",
+                    }}
+                    vAlign="center"
+                  >
+                    <GitBranchIcon size={28} strokeWidth={1.5} />
+                    <div style={{ fontSize: 14, fontWeight: 600, color: "var(--foreground)" }}>
                       新建或选择一份导图
                     </div>
-                  </div>
+                  </Stack>
                 )}
               </section>
             </div>
           </LayoutContent>
         }
         footer={
-          <LayoutFooter className="flex justify-between" hasDivider>
-            <div className="text-xs text-muted-foreground">
+          <LayoutFooter
+            hasDivider
+            style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}
+          >
+            <div style={{ fontSize: 12, color: "var(--muted-foreground)" }}>
               {isDirty ? "有未保存修改" : selectedMap ? "已保存" : ""}
             </div>
             <Button

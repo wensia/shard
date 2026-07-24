@@ -13,15 +13,24 @@ import {
   SparklesIcon,
   TagIcon,
 } from "lucide-react"
-import { Fragment as ReactFragment, useState } from "react"
+import {
+  Fragment as ReactFragment,
+  useState,
+  type CSSProperties,
+} from "react"
 
 import { Button } from "@astryxdesign/core/Button"
 import { DropdownMenu } from "@astryxdesign/core/DropdownMenu"
+import { Grid } from "@astryxdesign/core/Grid"
+import { HStack } from "@astryxdesign/core/HStack"
+import { Stack } from "@astryxdesign/core/Stack"
 import { Tooltip } from "@astryxdesign/core/Tooltip"
 import shardAppIconUrl from "@/assets/shard-app-icon.png"
 import { dailyReviewCount, insightReviewCount } from "@/lib/review-workflows"
 import { useAppVersion } from "@/lib/use-app-version"
 import type { Fragment, FragmentFilter, GitInfo } from "@/types"
+
+import styles from "./sidebar-nav.module.css"
 
 interface SidebarNavProps {
   activeFilter: FragmentFilter
@@ -213,6 +222,30 @@ const MONTH_LABELS: Record<SidebarLanguage, readonly string[]> = {
   ],
 }
 
+const TOOLTIP_DIM_COLOR =
+  "color-mix(in oklab, var(--background) calc(var(--shard-alpha-55) * 100%), transparent)"
+
+const NAV_COUNT_BADGE_STYLE: CSSProperties = {
+  minWidth: 28,
+  borderRadius: "var(--shard-radius-card)",
+  background: "var(--muted)",
+  paddingInline: 8,
+  paddingBlock: 2,
+  textAlign: "center",
+  fontSize: 12,
+  fontWeight: 600,
+  color: "var(--muted-foreground)",
+  fontVariantNumeric: "tabular-nums",
+}
+
+const NAV_LABEL_STYLE: CSSProperties = {
+  minWidth: 0,
+  flex: "1 1 auto",
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
+}
+
 export function SidebarNav({
   activeFilter,
   fragments,
@@ -259,87 +292,150 @@ export function SidebarNav({
   const heatmap = buildSidebarHeatmap(activeFragments, language)
 
   return (
-    <aside className="flex h-full min-h-0 flex-col bg-sidebar">
-      <div
-        className="flex items-center gap-[var(--shard-space-3)] px-[var(--shard-sidebar-inset)] pt-[var(--shard-top-inset)] pb-[var(--shard-space-6)]"
-        data-tauri-drag-region
+    <Stack
+      as="aside"
+      height="100%"
+      minHeight={0}
+      style={{ background: "var(--sidebar)" }}
+    >
+      <HStack
+        data-tauri-drag-region="true"
+        gap={3}
+        vAlign="center"
+        style={{
+          paddingInline: "var(--shard-sidebar-inset)",
+          paddingTop: "var(--shard-top-inset)",
+          paddingBottom: "var(--shard-space-6)",
+        }}
       >
         <img
           alt=""
           aria-hidden="true"
-          className="size-8 shrink-0 rounded-[var(--shard-radius-control)] object-contain"
           draggable={false}
           src={shardAppIconUrl}
+          style={{
+            width: 32,
+            height: 32,
+            flexShrink: 0,
+            borderRadius: "var(--shard-radius-control)",
+            objectFit: "contain",
+          }}
         />
-        <div className="min-w-0">
-          <div className="text-xl leading-6 font-bold text-balance">Shard</div>
-          <div className="text-xs font-medium text-muted-foreground">
+        <div style={{ minWidth: 0 }}>
+          <div
+            style={{
+              fontSize: 20,
+              lineHeight: "24px",
+              fontWeight: 700,
+              textWrap: "balance",
+            }}
+          >
+            Shard
+          </div>
+          <div
+            style={{
+              fontSize: 12,
+              fontWeight: 500,
+              color: "var(--muted-foreground)",
+            }}
+          >
             {appVersion ? `v${appVersion}` : "\u00A0"}
           </div>
         </div>
-      </div>
+      </HStack>
 
-      <div className="px-[var(--shard-sidebar-inset)] pb-[var(--shard-space-4)]">
+      <div
+        style={{
+          paddingInline: "var(--shard-sidebar-inset)",
+          paddingBottom: "var(--shard-space-4)",
+        }}
+      >
         <button
           aria-label={copy.search}
-          className="relative flex h-9 w-full items-center gap-[var(--shard-space-2)] rounded-[var(--shard-radius-control)] border border-sidebar-border bg-card px-[var(--shard-space-3)] text-left text-sm text-muted-foreground transition-colors hover:border-ring hover:text-sidebar-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/[var(--shard-alpha-34)] focus-visible:outline-none"
+          className={styles.searchButton}
           onClick={onOpenSearch}
           type="button"
         >
           <SearchIcon
             aria-hidden="true"
-            className="size-4 shrink-0 stroke-[1.75]"
+            size={16}
+            strokeWidth={1.75}
+            style={{ flexShrink: 0 }}
           />
-          <span className="min-w-0 flex-1 truncate">
-            {copy.searchPlaceholder}
-          </span>
-          <kbd className="rounded-[4px] border border-border bg-muted px-1.5 text-[10px] leading-4 font-semibold text-muted-foreground">
+          <span style={NAV_LABEL_STYLE}>{copy.searchPlaceholder}</span>
+          <kbd
+            style={{
+              borderRadius: 4,
+              border: "1px solid var(--border)",
+              background: "var(--muted)",
+              paddingInline: 6,
+              fontSize: 10,
+              lineHeight: "16px",
+              fontWeight: 600,
+              color: "var(--muted-foreground)",
+            }}
+          >
             {copy.searchShortcut}
           </kbd>
         </button>
       </div>
 
-      <div className="px-[var(--shard-sidebar-inset)] pb-[var(--shard-space-5)]">
-        <div
-          aria-label={copy.aria.stats}
-          className="grid grid-cols-3 gap-[var(--shard-space-2)]"
-        >
+      <div
+        style={{
+          paddingInline: "var(--shard-sidebar-inset)",
+          paddingBottom: "var(--shard-space-5)",
+        }}
+      >
+        <Grid aria-label={copy.aria.stats} columns={3} gap={2}>
           <SidebarStat
             label={copy.stats.fragments}
             value={activeFragments.length}
           />
           <SidebarStat label={copy.stats.tags} value={heatmap.tagCount} />
           <SidebarStat label={copy.stats.days} value={heatmap.daySpan} />
-        </div>
+        </Grid>
 
         <div
           aria-label={copy.aria.heatmap}
-          className="mt-[var(--shard-space-4)]"
           role="img"
+          style={{ marginTop: "var(--shard-space-4)" }}
         >
           <div className="shard-heatmap-grid">
             {heatmap.cells.map((cell) => (
               <span
                 aria-label={formatHeatmapCellLabel(cell, language)}
-                className={[
-                  "size-[var(--shard-heatmap-cell)] rounded-[calc(var(--shard-radius-control)/2)]",
-                  HEATMAP_LEVEL_CLASSES[cell.level],
-                  cell.isToday
-                    ? "ring-1 ring-[rgb(0_0_0/var(--shard-alpha-21))]"
-                    : "",
-                ].join(" ")}
                 key={cell.key}
+                style={{
+                  width: "var(--shard-heatmap-cell)",
+                  height: "var(--shard-heatmap-cell)",
+                  borderRadius: "calc(var(--shard-radius-control) / 2)",
+                  background: HEATMAP_LEVEL_BACKGROUNDS[cell.level],
+                  boxShadow: cell.isToday
+                    ? "0 0 0 1px rgb(0 0 0 / var(--shard-alpha-21))"
+                    : undefined,
+                }}
                 title={formatHeatmapCellLabel(cell, language)}
               />
             ))}
           </div>
 
-          <div className="relative mt-[var(--shard-space-2)] h-3 text-[10px] leading-3 font-medium text-muted-foreground">
+          <div
+            style={{
+              position: "relative",
+              marginTop: "var(--shard-space-2)",
+              height: 12,
+              fontSize: 10,
+              lineHeight: "12px",
+              fontWeight: 500,
+              color: "var(--muted-foreground)",
+            }}
+          >
             {heatmap.monthLabels.map((month) => (
               <span
-                className="absolute whitespace-nowrap"
                 key={`${month.column}-${month.label}`}
                 style={{
+                  position: "absolute",
+                  whiteSpace: "nowrap",
                   left: `calc(${month.column} * (var(--shard-heatmap-cell) + var(--shard-heatmap-column-gap)))`,
                 }}
               >
@@ -350,10 +446,7 @@ export function SidebarNav({
         </div>
       </div>
 
-      <nav
-        aria-label={copy.aria.filters}
-        className="flex flex-col gap-[var(--shard-space-1)] px-[var(--shard-space-3)]"
-      >
+      <Stack as="nav" aria-label={copy.aria.filters} gap={1} paddingInline={3}>
         {navItems.map((item) => {
           const Icon = item.icon
           const isActive =
@@ -363,54 +456,43 @@ export function SidebarNav({
             <ReactFragment key={item.id}>
               <button
                 aria-current={isActive ? "page" : undefined}
-                className={[
-                  "relative flex h-10 items-center gap-[var(--shard-space-3)] rounded-[var(--shard-radius-control)] px-[var(--shard-space-3)] text-left text-sm font-semibold transition-colors",
-                  isActive
-                    ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                    : "text-sidebar-foreground hover:bg-sidebar-accent/[var(--shard-alpha-55)]",
-                ].join(" ")}
+                className={`${styles.navItem} ${
+                  isActive ? styles.navItemActive : styles.navItemInactive
+                }`}
                 onClick={() => onFilterChange(item.id)}
                 type="button"
               >
                 {isActive ? (
-                  <span
-                    aria-hidden="true"
-                    className="absolute top-[var(--shard-space-2)] bottom-[var(--shard-space-2)] left-[var(--shard-space-1)] w-0.5 rounded-full bg-[color:var(--shard-sapphire)]"
-                  />
+                  <span aria-hidden="true" className={styles.activeIndicator} />
                 ) : null}
-                <Icon className="size-4 shrink-0 stroke-[1.75]" />
-                <span className="min-w-0 flex-1 truncate">
-                  {copy.nav[item.id]}
-                </span>
-                <span className="min-w-7 rounded-md bg-muted px-2 py-0.5 text-center text-xs font-semibold text-muted-foreground tabular-nums">
-                  {counts[item.id]}
-                </span>
+                <Icon size={16} strokeWidth={1.75} style={{ flexShrink: 0 }} />
+                <span style={NAV_LABEL_STYLE}>{copy.nav[item.id]}</span>
+                <span style={NAV_COUNT_BADGE_STYLE}>{counts[item.id]}</span>
               </button>
               {item.id === "inbox" ? (
                 <button
                   aria-current={mindMapViewActive ? "page" : undefined}
-                  className={[
-                    "relative flex h-9 items-center gap-[var(--shard-space-2)] rounded-[var(--shard-radius-control)] pr-[var(--shard-space-3)] pl-[calc(var(--shard-space-3)+var(--shard-space-6))] text-left text-[13px] font-medium transition-colors",
+                  className={`${styles.navSubItem} ${
                     mindMapViewActive
-                      ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                      : "text-sidebar-foreground hover:bg-sidebar-accent/[var(--shard-alpha-55)]",
-                  ].join(" ")}
+                      ? styles.navSubItemActive
+                      : styles.navSubItemInactive
+                  }`}
                   onClick={onOpenMindMaps}
                   type="button"
                 >
                   {mindMapViewActive ? (
                     <span
                       aria-hidden="true"
-                      className="absolute top-[var(--shard-space-2)] bottom-[var(--shard-space-2)] left-[var(--shard-space-1)] w-0.5 rounded-full bg-[color:var(--shard-sapphire)]"
+                      className={styles.activeIndicator}
                     />
                   ) : null}
-                  <GitBranchIcon className="size-3.5 shrink-0 stroke-[1.75]" />
-                  <span className="min-w-0 flex-1 truncate">
-                    {copy.mindMaps}
-                  </span>
-                  <span className="min-w-7 rounded-md bg-muted px-2 py-0.5 text-center text-xs font-semibold text-muted-foreground tabular-nums">
-                    {mindMapCount}
-                  </span>
+                  <GitBranchIcon
+                    size={14}
+                    strokeWidth={1.75}
+                    style={{ flexShrink: 0 }}
+                  />
+                  <span style={NAV_LABEL_STYLE}>{copy.mindMaps}</span>
+                  <span style={NAV_COUNT_BADGE_STYLE}>{mindMapCount}</span>
                 </button>
               ) : null}
             </ReactFragment>
@@ -419,50 +501,59 @@ export function SidebarNav({
 
         <button
           aria-current={debtViewActive ? "page" : undefined}
-          className={[
-            "relative flex h-10 items-center gap-[var(--shard-space-3)] rounded-[var(--shard-radius-control)] px-[var(--shard-space-3)] text-left text-sm font-semibold transition-colors",
-            debtViewActive
-              ? "bg-sidebar-accent text-sidebar-accent-foreground"
-              : "text-sidebar-foreground hover:bg-sidebar-accent/[var(--shard-alpha-55)]",
-          ].join(" ")}
+          className={`${styles.navItem} ${
+            debtViewActive ? styles.navItemActive : styles.navItemInactive
+          }`}
           onClick={onOpenDebts}
           type="button"
         >
           {debtViewActive ? (
-            <span
-              aria-hidden="true"
-              className="absolute top-[var(--shard-space-2)] bottom-[var(--shard-space-2)] left-[var(--shard-space-1)] w-0.5 rounded-full bg-[color:var(--shard-sapphire)]"
-            />
+            <span aria-hidden="true" className={styles.activeIndicator} />
           ) : null}
-          <HandCoinsIcon className="size-4 shrink-0 stroke-[1.75]" />
-          <span className="min-w-0 flex-1 truncate">{copy.debts}</span>
-          <span className="min-w-7 rounded-md bg-muted px-2 py-0.5 text-center text-xs font-semibold text-muted-foreground tabular-nums">
-            {debtCount}
-          </span>
+          <HandCoinsIcon size={16} strokeWidth={1.75} style={{ flexShrink: 0 }} />
+          <span style={NAV_LABEL_STYLE}>{copy.debts}</span>
+          <span style={NAV_COUNT_BADGE_STYLE}>{debtCount}</span>
         </button>
-      </nav>
+      </Stack>
 
-      <div className="mt-auto px-[var(--shard-sidebar-inset)] pt-[var(--shard-space-6)] pb-[var(--shard-space-5)]">
-        <div className="flex items-center justify-between">
+      <div
+        style={{
+          marginTop: "auto",
+          paddingInline: "var(--shard-sidebar-inset)",
+          paddingTop: "var(--shard-space-6)",
+          paddingBottom: "var(--shard-space-5)",
+        }}
+      >
+        <HStack hAlign="between" vAlign="center">
           <Tooltip
             content={
-              <div className="flex flex-col gap-1">
+              <Stack gap={1}>
                 <span>
                   {isSyncing ? copy.syncing : `Git ${gitStateLabel}`}
                 </span>
-                <span className="text-background/[var(--shard-alpha-55)]">
-                  {gitSummary}
-                </span>
-                <span className="max-w-64 truncate text-background/[var(--shard-alpha-55)]">
+                <span style={{ color: TOOLTIP_DIM_COLOR }}>{gitSummary}</span>
+                <span
+                  style={{
+                    maxWidth: 256,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                    color: TOOLTIP_DIM_COLOR,
+                  }}
+                >
                   {vaultLabel}
                 </span>
-              </div>
+              </Stack>
             }
             placement="above"
           >
-            <div className="relative">
+            <div style={{ position: "relative" }}>
               <Button
-                icon={<RefreshCwIcon className={isSyncing ? "animate-spin" : ""} />}
+                icon={
+                  <RefreshCwIcon
+                    className={isSyncing ? styles.spin : undefined}
+                  />
+                }
                 isDisabled={isSyncing}
                 isIconOnly
                 label={copy.syncGitVault}
@@ -472,19 +563,17 @@ export function SidebarNav({
               />
               <span
                 aria-hidden="true"
-                className={[
-                  "pointer-events-none absolute top-2 right-2 size-1.5 rounded-full ring-1 ring-sidebar",
-                  git?.status === "error" ? "bg-[color:var(--shard-ruby)]" : "",
-                  git?.status === "dirty" || isMissingRemote
-                    ? "bg-[color:var(--shard-amber)]"
-                    : "",
-                  !git || (git.status === "ready" && git.hasRemote)
-                    ? "bg-[color:var(--shard-emerald)]"
-                    : "",
-                  git?.status === "no_git"
-                    ? "bg-muted-foreground/[var(--shard-alpha-55)]"
-                    : "",
-                ].join(" ")}
+                style={{
+                  position: "absolute",
+                  top: 8,
+                  right: 8,
+                  width: 6,
+                  height: 6,
+                  borderRadius: 9999,
+                  background: getGitStatusDotColor(git, isMissingRemote),
+                  boxShadow: "0 0 0 1px var(--sidebar)",
+                  pointerEvents: "none",
+                }}
               />
             </div>
           </Tooltip>
@@ -528,9 +617,9 @@ export function SidebarNav({
             onOpenChange={setIsUtilityMenuOpen}
             placement="above"
           />
-        </div>
+        </HStack>
       </div>
-    </aside>
+    </Stack>
   )
 }
 
@@ -555,6 +644,18 @@ function getGitStateLabel(
   return copy.gitState.synced
 }
 
+function getGitStatusDotColor(git: GitInfo | null, isMissingRemote: boolean) {
+  if (git?.status === "error") return "var(--shard-ruby)"
+  if (git?.status === "dirty" || isMissingRemote) return "var(--shard-amber)"
+  if (!git || (git.status === "ready" && git.hasRemote)) {
+    return "var(--shard-emerald)"
+  }
+  if (git?.status === "no_git") {
+    return "color-mix(in oklab, var(--muted-foreground) calc(var(--shard-alpha-55) * 100%), transparent)"
+  }
+  return "var(--shard-emerald)"
+}
+
 interface SidebarStatProps {
   label: string
   value: number
@@ -562,14 +663,34 @@ interface SidebarStatProps {
 
 function SidebarStat({ label, value }: SidebarStatProps) {
   return (
-    <div className="min-w-0 px-[var(--shard-space-1)] py-[var(--shard-space-2)] text-center">
-      <div className="text-[21px] leading-6 font-medium tracking-normal text-sidebar-foreground tabular-nums">
+    <Stack
+      paddingInline={1}
+      paddingBlock={2}
+      style={{ minWidth: 0, textAlign: "center" }}
+    >
+      <div
+        style={{
+          fontSize: 21,
+          lineHeight: "24px",
+          fontWeight: 500,
+          color: "var(--sidebar-foreground)",
+          fontVariantNumeric: "tabular-nums",
+        }}
+      >
         {value}
       </div>
-      <div className="mt-[var(--shard-space-1)] text-[11px] leading-3 font-medium tracking-normal text-muted-foreground">
+      <div
+        style={{
+          marginTop: "var(--shard-space-1)",
+          fontSize: 11,
+          lineHeight: "12px",
+          fontWeight: 500,
+          color: "var(--muted-foreground)",
+        }}
+      >
         {label}
       </div>
-    </div>
+    </Stack>
   )
 }
 
@@ -595,11 +716,11 @@ interface SidebarHeatmap {
 
 const HEATMAP_COLUMNS = 12
 const HEATMAP_ROWS = 7
-const HEATMAP_LEVEL_CLASSES = [
-  "bg-border",
-  "bg-[color-mix(in_srgb,var(--shard-sapphire)_24%,transparent)]",
-  "bg-[color-mix(in_srgb,var(--shard-sapphire)_52%,transparent)]",
-  "bg-[color-mix(in_srgb,var(--shard-sapphire)_82%,transparent)]",
+const HEATMAP_LEVEL_BACKGROUNDS = [
+  "var(--border)",
+  "color-mix(in srgb, var(--shard-sapphire) 24%, transparent)",
+  "color-mix(in srgb, var(--shard-sapphire) 52%, transparent)",
+  "color-mix(in srgb, var(--shard-sapphire) 82%, transparent)",
 ] as const
 function buildSidebarHeatmap(
   fragments: Fragment[],

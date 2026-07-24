@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react"
 
 import { Button } from "@astryxdesign/core/Button"
 import { Dialog, DialogHeader } from "@astryxdesign/core/Dialog"
+import { HStack } from "@astryxdesign/core/HStack"
 import { Layout, LayoutContent, LayoutFooter } from "@astryxdesign/core/Layout"
 import { useToast } from "@astryxdesign/core/Toast"
 
@@ -23,6 +24,7 @@ import {
 } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import type { Fragment } from "@/types"
+import styles from "@/components/shard/fragment-image-exporter.module.css"
 
 interface FragmentImageExporterProps {
   fragment: Fragment | null
@@ -191,8 +193,21 @@ export function FragmentImageExporter({
               if (!nextOpen) onClose()
             }}
             startContent={
-              <span className="flex size-8 shrink-0 items-center justify-center rounded-[var(--shard-radius-control)] border border-border bg-background text-[color:var(--shard-sapphire)]">
-                <ImageIcon className="size-4 stroke-[1.75]" />
+              <span
+                style={{
+                  display: "flex",
+                  width: 32,
+                  height: 32,
+                  flexShrink: 0,
+                  alignItems: "center",
+                  justifyContent: "center",
+                  borderRadius: "var(--shard-radius-control)",
+                  border: "1px solid var(--border)",
+                  background: "var(--background)",
+                  color: "var(--shard-sapphire)",
+                }}
+              >
+                <ImageIcon size={16} strokeWidth={1.75} />
               </span>
             }
             subtitle={`${activeTemplate.label} · PNG`}
@@ -203,18 +218,15 @@ export function FragmentImageExporter({
         style={{ height: "min(860px, calc(100dvh - 32px))" }}
         content={
           <LayoutContent isScrollable={false} padding={0}>
-            <div className="grid min-h-0 flex-1 grid-rows-[auto_minmax(0,1fr)] overflow-hidden md:grid-cols-[184px_minmax(0,1fr)] md:grid-rows-1">
-              <div className="grid grid-cols-3 content-start gap-[var(--shard-space-2)] border-b border-border p-[var(--shard-space-3)] md:grid-cols-1 md:border-r md:border-b-0">
+            <div className={styles.body}>
+              <div className={styles.templateList}>
                 {EXPORT_IMAGE_TEMPLATES.map((template) => (
                   <button
                     aria-label={`${template.label}，${template.description}`}
                     aria-pressed={template.id === templateId}
                     className={cn(
-                      "grid min-w-0 content-start gap-[var(--shard-space-2)] rounded-[var(--shard-radius-control)] border bg-card p-[var(--shard-space-2)] transition-[background-color,border-color,color,scale] duration-150 ease-out active:scale-[0.96] md:grid-cols-[56px_minmax(0,1fr)] md:items-center md:gap-[var(--shard-space-3)]",
-                      "hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/[var(--shard-alpha-34)] focus-visible:outline-none",
-                      template.id === templateId
-                        ? "border-[color:var(--shard-sapphire)] bg-[color:var(--shard-sapphire-soft)] text-[color:var(--shard-sapphire-text)]"
-                        : "border-border text-foreground"
+                      styles.templateButton,
+                      template.id === templateId && styles.templateButtonActive
                     )}
                     key={template.id}
                     onClick={() => setTemplateId(template.id)}
@@ -224,26 +236,27 @@ export function FragmentImageExporter({
                       active={template.id === templateId}
                       templateId={template.id}
                     />
-                    <span className="truncate text-center text-xs leading-5 font-medium text-balance md:text-left">
+                    <span className={styles.templateLabel}>
                       {template.label}
                     </span>
                   </button>
                 ))}
               </div>
 
-              <div
-                aria-busy={isPreviewing}
-                className="min-h-0 overflow-auto bg-background p-[var(--shard-space-4)] md:p-[var(--shard-space-5)]"
-              >
-                <div className="relative flex h-full min-h-[320px] w-full items-start justify-center md:items-center">
+              <div aria-busy={isPreviewing} className={styles.previewArea}>
+                <div className={styles.previewFrame}>
                   {isPreviewing ? (
-                    <div className="absolute inset-0 z-10 flex items-center justify-center bg-background/[var(--shard-alpha-55)]">
-                      <Loader2Icon className="size-5 animate-spin text-muted-foreground" />
+                    <div className={styles.previewOverlay}>
+                      <Loader2Icon
+                        className={styles.spin}
+                        size={20}
+                        style={{ color: "var(--muted-foreground)" }}
+                      />
                     </div>
                   ) : null}
                   <canvas
                     aria-label="分享图片预览"
-                    className="block h-auto max-h-full w-auto max-w-full rounded-[var(--shard-surface-radius)] border border-border bg-card shadow-[0_8px_20px_rgb(0_0_0/var(--shard-alpha-8))]"
+                    className={styles.previewCanvas}
                     ref={setPreviewCanvas}
                   />
                 </div>
@@ -252,50 +265,50 @@ export function FragmentImageExporter({
           </LayoutContent>
         }
         footer={
-          <LayoutFooter
-            className="flex-row items-center justify-between"
-            hasDivider
-            padding={4}
-          >
-            <div className="flex items-center gap-[var(--shard-space-1)]">
-              <FooterCheckbox
-                checked={showCreatedDate}
-                label="创建日期"
-                onChange={setShowCreatedDate}
-              />
-              <FooterCheckbox
-                checked={showCreatedTime}
-                label="创建时间"
-                onChange={setShowCreatedTime}
-              />
-            </div>
-            <div className="flex items-center gap-[var(--shard-space-2)]">
-              <Button
-                isDisabled={isBusy}
-                label="取消"
-                onClick={onClose}
-                variant="secondary"
-              />
-              <Button
-                icon={
-                  isCopying ? <Loader2Icon className="animate-spin" /> : undefined
-                }
-                isDisabled={isBusy || isPreviewing || !fragment}
-                label={isCopying ? "复制中" : "复制图片"}
-                onClick={() => {
-                  void handleCopy()
-                }}
-                variant="secondary"
-              />
-              <Button
-                isDisabled={isBusy || isPreviewing || !fragment}
-                label={isExporting ? "保存中" : "保存图片"}
-                onClick={() => {
-                  void handleExport()
-                }}
-                variant="primary"
-              />
-            </div>
+          <LayoutFooter hasDivider padding={4}>
+            <HStack hAlign="between" vAlign="center">
+              <HStack gap={1}>
+                <FooterCheckbox
+                  checked={showCreatedDate}
+                  label="创建日期"
+                  onChange={setShowCreatedDate}
+                />
+                <FooterCheckbox
+                  checked={showCreatedTime}
+                  label="创建时间"
+                  onChange={setShowCreatedTime}
+                />
+              </HStack>
+              <HStack gap={2}>
+                <Button
+                  isDisabled={isBusy}
+                  label="取消"
+                  onClick={onClose}
+                  variant="secondary"
+                />
+                <Button
+                  icon={
+                    isCopying ? (
+                      <Loader2Icon className={styles.spin} />
+                    ) : undefined
+                  }
+                  isDisabled={isBusy || isPreviewing || !fragment}
+                  label={isCopying ? "复制中" : "复制图片"}
+                  onClick={() => {
+                    void handleCopy()
+                  }}
+                  variant="secondary"
+                />
+                <Button
+                  isDisabled={isBusy || isPreviewing || !fragment}
+                  label={isExporting ? "保存中" : "保存图片"}
+                  onClick={() => {
+                    void handleExport()
+                  }}
+                  variant="primary"
+                />
+              </HStack>
+            </HStack>
           </LayoutFooter>
         }
       />
@@ -315,7 +328,7 @@ function FooterCheckbox({
   return (
     <button
       aria-checked={checked}
-      className="flex items-center gap-[var(--shard-space-2)] rounded-[var(--shard-radius-control)] px-[var(--shard-space-2)] py-[var(--shard-space-1)] text-sm leading-5 text-muted-foreground transition-colors duration-150 hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/[var(--shard-alpha-34)] focus-visible:outline-none"
+      className={styles.footerCheckbox}
       onClick={() => onChange(!checked)}
       role="checkbox"
       type="button"
@@ -323,13 +336,11 @@ function FooterCheckbox({
       <span
         aria-hidden="true"
         className={cn(
-          "flex size-4 shrink-0 items-center justify-center rounded-[calc(var(--shard-radius-control)-2px)] border-[1.4px] transition-colors duration-150",
-          checked
-            ? "border-[color:var(--shard-sapphire)] bg-[color:var(--shard-sapphire)] text-white"
-            : "border-muted-foreground bg-transparent"
+          styles.footerCheckboxBox,
+          checked && styles.footerCheckboxBoxChecked
         )}
       >
-        {checked ? <CheckIcon className="size-3 stroke-[2.5]" /> : null}
+        {checked ? <CheckIcon size={12} strokeWidth={2.5} /> : null}
       </span>
       {label}
     </button>
@@ -402,52 +413,116 @@ function TemplateThumbnail({
   return (
     <span
       aria-hidden
-      className={cn(
-        "relative mx-auto block aspect-[3/4] h-[72px] overflow-hidden rounded-[calc(var(--shard-radius-control)-2px)] border md:h-[74px]"
-      )}
+      className={styles.thumbnail}
       style={{
         backgroundColor: palette.surface,
         borderColor: active ? "var(--shard-sapphire)" : palette.border,
       }}
     >
       <span
-        className="absolute top-[10%] left-[14%] h-0.5 w-[30%] rounded-full"
-        style={{ backgroundColor: palette.mark }}
+        style={{
+          position: "absolute",
+          top: "10%",
+          left: "14%",
+          height: 2,
+          width: "30%",
+          borderRadius: 9999,
+          backgroundColor: palette.mark,
+        }}
       />
       <span
-        className="absolute top-[10%] right-[14%] h-0.5 w-[18%] rounded-full"
-        style={{ backgroundColor: palette.mark }}
+        style={{
+          position: "absolute",
+          top: "10%",
+          right: "14%",
+          height: 2,
+          width: "18%",
+          borderRadius: 9999,
+          backgroundColor: palette.mark,
+        }}
       />
       <span
-        className="absolute top-[28%] left-[14%] h-0.5 w-[62%] rounded-full"
-        style={{ backgroundColor: palette.ink }}
+        style={{
+          position: "absolute",
+          top: "28%",
+          left: "14%",
+          height: 2,
+          width: "62%",
+          borderRadius: 9999,
+          backgroundColor: palette.ink,
+        }}
       />
       <span
-        className="absolute top-[39%] left-[14%] h-0.5 w-[52%] rounded-full"
-        style={{ backgroundColor: palette.ink }}
+        style={{
+          position: "absolute",
+          top: "39%",
+          left: "14%",
+          height: 2,
+          width: "52%",
+          borderRadius: 9999,
+          backgroundColor: palette.ink,
+        }}
       />
       <span
-        className="absolute top-[50%] left-[14%] h-0.5 w-[42%] rounded-full"
-        style={{ backgroundColor: palette.ink }}
+        style={{
+          position: "absolute",
+          top: "50%",
+          left: "14%",
+          height: 2,
+          width: "42%",
+          borderRadius: 9999,
+          backgroundColor: palette.ink,
+        }}
       />
       <span
-        className="absolute inset-x-0 bottom-0 h-[28%]"
-        style={{ backgroundColor: palette.band }}
+        style={{
+          position: "absolute",
+          insetInline: 0,
+          bottom: 0,
+          height: "28%",
+          backgroundColor: palette.band,
+        }}
       >
         <span
-          className="absolute top-[26%] left-[14%] h-0.5 w-[26%] rounded-full"
-          style={{ backgroundColor: palette.accent }}
+          style={{
+            position: "absolute",
+            top: "26%",
+            left: "14%",
+            height: 2,
+            width: "26%",
+            borderRadius: 9999,
+            backgroundColor: palette.accent,
+          }}
         />
         <span
-          className="absolute top-[52%] left-[14%] h-px w-[36%] rounded-full opacity-70"
-          style={{ backgroundColor: palette.mark }}
+          style={{
+            position: "absolute",
+            top: "52%",
+            left: "14%",
+            height: 1,
+            width: "36%",
+            borderRadius: 9999,
+            opacity: 0.7,
+            backgroundColor: palette.mark,
+          }}
         />
-        <span className="absolute right-[14%] bottom-[24%] grid grid-cols-3 gap-[1.5px]">
+        <span
+          style={{
+            position: "absolute",
+            right: "14%",
+            bottom: "24%",
+            display: "grid",
+            gridTemplateColumns: "repeat(3, 1fr)",
+            gap: "1.5px",
+          }}
+        >
           {Array.from({ length: 9 }).map((_, index) => (
             <span
-              className="size-0.5 rounded-[1px]"
               key={index}
               style={{
+                height: 2,
+                width: 2,
+                borderRadius: 1,
                 backgroundColor:
                   index === 4 || index === 7 ? palette.accent : palette.grid,
                 opacity: index === 4 || index === 7 ? 0.42 : 1,

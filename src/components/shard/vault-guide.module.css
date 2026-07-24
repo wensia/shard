@@ -1,0 +1,326 @@
+/*
+ * vault-guide.module.css
+ *
+ * Scoped styles for VaultGuide. Only holds rules that plain inline style
+ * cannot express: responsive breakpoints (the old Tailwind sm:/md: prefixes),
+ * hover/active/disabled pseudo-classes, the last-child border reset, and the
+ * two keyframe animations (spin / pulse) that used to come from Tailwind's
+ * animate-spin / animate-pulse utilities.
+ *
+ * Everything else (colors, radii, shadows, one-off spacing, typography) is
+ * applied as inline style directly in vault-guide.tsx, referencing Shard's
+ * existing CSS custom properties from src/index.css.
+ */
+
+/* ---------- Overlay + panel shell ---------- */
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--background) 89%, transparent);
+  padding-inline: var(--shard-content-inset);
+  padding-block: var(--shard-space-4);
+  backdrop-filter: blur(4px);
+}
+
+@media (min-width: 768px) {
+  .overlay {
+    padding-block: var(--shard-space-5);
+  }
+}
+
+.panelBase {
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: var(--shard-radius-panel);
+  border: 1px solid var(--border);
+  background: var(--card);
+  box-shadow: var(--shard-shadow-popover);
+  outline: none;
+}
+
+.panelSolo {
+  max-height: min(86dvh, 720px);
+  max-width: 620px;
+}
+
+.panelFull {
+  max-height: min(84dvh, 640px);
+  min-height: min(84dvh, 520px);
+  max-width: 760px;
+}
+
+@media (min-width: 768px) {
+  .panelFull {
+    display: grid;
+    grid-template-columns: 168px minmax(0, 1fr);
+  }
+}
+
+.headerBlock {
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--border);
+  padding: var(--shard-space-5) var(--shard-space-6) var(--shard-space-4);
+}
+
+/* Shared by every <section> in the guide body: bottom border + inset. */
+.sectionPad {
+  border-bottom: 1px solid var(--border);
+  padding: var(--shard-space-5) var(--shard-space-6);
+}
+
+.sectionPadCompact {
+  border-bottom: 1px solid var(--border);
+  padding: var(--shard-space-3) var(--shard-space-6);
+}
+
+.mainScroll {
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow-y: auto;
+}
+
+.mainScroll > section:last-child {
+  border-bottom: none;
+}
+
+/* ---------- Sidebar nav (settings dialog) ---------- */
+
+.navRail {
+  display: flex;
+  flex-shrink: 0;
+  gap: var(--shard-space-1);
+  overflow-x: auto;
+  border-bottom: 1px solid var(--border);
+  background: var(--sidebar);
+  padding: var(--shard-space-2);
+}
+
+@media (min-width: 768px) {
+  .navRail {
+    flex-direction: column;
+    overflow: visible;
+    border-bottom: none;
+    border-right: 1px solid var(--border);
+    padding: var(--shard-space-3);
+  }
+}
+
+.navEyebrow {
+  display: none;
+  padding: var(--shard-space-1) var(--shard-space-3) var(--shard-space-2);
+  font-size: 11px;
+  line-height: 16px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+
+@media (min-width: 768px) {
+  .navEyebrow {
+    display: block;
+  }
+}
+
+.navButton {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--shard-space-2);
+  height: 36px;
+  border-radius: var(--shard-radius-control);
+  border: none;
+  padding-inline: var(--shard-space-3);
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--muted-foreground);
+  background: transparent;
+  cursor: pointer;
+  transition: background-color 150ms ease-out, color 150ms ease-out;
+}
+
+.navButton:hover {
+  background: color-mix(in srgb, var(--sidebar-accent) 55%, transparent);
+  color: var(--sidebar-foreground);
+}
+
+/* ---------- Rail (folder / git / remote) status row ---------- */
+
+.railRow {
+  display: flex;
+  flex-direction: column;
+  gap: var(--shard-space-3);
+}
+
+@media (min-width: 640px) {
+  .railRow {
+    flex-direction: row;
+    align-items: flex-start;
+  }
+}
+
+.railConnector {
+  display: none;
+  margin-top: 8px;
+  height: 1px;
+  min-width: 16px;
+  flex: 1 1 auto;
+  border-radius: 9999px;
+  background: var(--border-visible);
+  opacity: var(--shard-alpha-55);
+}
+
+@media (min-width: 640px) {
+  .railConnector {
+    display: block;
+  }
+}
+
+.railStation {
+  display: flex;
+  min-width: 0;
+  flex-shrink: 0;
+  align-items: flex-start;
+  gap: var(--shard-space-2);
+}
+
+@media (min-width: 640px) {
+  .railStation {
+    max-width: 200px;
+    flex-shrink: 1;
+  }
+}
+
+/* ---------- Forms / grids ---------- */
+
+.formGrid {
+  display: grid;
+  gap: var(--shard-space-2);
+}
+
+@media (min-width: 640px) {
+  .formGrid {
+    grid-template-columns: minmax(0, 1fr) max-content;
+  }
+}
+
+.directoryGrid {
+  display: grid;
+  gap: var(--shard-space-2);
+}
+
+@media (min-width: 640px) {
+  .directoryGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* ---------- Buttons with hover/active/disabled states ---------- */
+
+.actionButton {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr);
+  align-items: center;
+  gap: var(--shard-space-3);
+  min-height: 56px;
+  width: 100%;
+  border-radius: var(--shard-radius-control);
+  border: 1px solid var(--border);
+  background: var(--background);
+  padding-inline: var(--shard-space-3);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background-color 150ms ease-out,
+    border-color 150ms ease-out,
+    scale 150ms ease-out;
+}
+
+.actionButton:hover:not(:disabled) {
+  border-color: var(--shard-sapphire);
+  background: var(--shard-sapphire-soft);
+}
+
+.actionButton:active:not(:disabled) {
+  scale: 0.96;
+}
+
+.actionButton:disabled {
+  pointer-events: none;
+  opacity: var(--shard-alpha-55);
+}
+
+.intervalButton {
+  height: 32px;
+  border-radius: var(--shard-radius-control);
+  border: 1px solid var(--border);
+  padding-inline: var(--shard-space-3);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted-foreground);
+  background: transparent;
+  cursor: pointer;
+  transition: border-color 150ms ease-out, color 150ms ease-out;
+}
+
+.intervalButton:hover:not(:disabled) {
+  border-color: var(--ring);
+  color: var(--foreground);
+}
+
+.intervalButton:disabled {
+  pointer-events: none;
+  opacity: var(--shard-alpha-55);
+}
+
+/* ---------- Icon animations (used to be Tailwind's animate-spin/pulse) ---------- */
+
+@keyframes shardVaultGuideSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.spin {
+  animation: shardVaultGuideSpin 1s linear infinite;
+}
+
+@keyframes shardVaultGuidePulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+.pulseDot {
+  animation: shardVaultGuidePulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pulseDot {
+    animation: none;
+  }
+}
+
+/* ---------- Shortcut key badges ---------- */
+
+.kbdKey {
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: var(--muted);
+  padding-inline: 6px;
+  font-size: 10px;
+  line-height: 16px;
+  font-weight: 600;
+  color: var(--muted-foreground);
+}

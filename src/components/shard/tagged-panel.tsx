@@ -1,4 +1,7 @@
 import { LockKeyholeIcon, TagIcon } from "lucide-react"
+
+import { HStack } from "@astryxdesign/core/HStack"
+import { Stack } from "@astryxdesign/core/Stack"
 import type { LockboxState } from "@/types"
 
 export interface TaggedSummary {
@@ -27,28 +30,64 @@ export function TaggedPanel({
   onSelectTag,
 }: TaggedPanelProps) {
   return (
-    <div className="shard-content-inset pb-[var(--shard-space-4)]">
-      <div className="shard-content-measure flex flex-col gap-[var(--shard-space-3)]">
-        <div className="flex h-[var(--shard-chip-height)] items-center gap-[var(--shard-space-2)] text-xs font-medium text-muted-foreground">
-          <TagIcon className="size-3.5 shrink-0 stroke-[1.75]" />
-          <span className="tabular-nums">{summaries.length} 标签</span>
+    <div
+      className="shard-content-inset"
+      style={{ paddingBottom: "var(--shard-space-4)" }}
+    >
+      <Stack className="shard-content-measure" gap={3}>
+        <HStack
+          gap={2}
+          style={{
+            height: "var(--shard-chip-height)",
+            fontSize: "0.75rem",
+            fontWeight: 500,
+            color: "var(--muted-foreground)",
+          }}
+          vAlign="center"
+        >
+          <TagIcon size={14} strokeWidth={1.75} style={{ flexShrink: 0 }} />
+          <span style={{ fontVariantNumeric: "tabular-nums" }}>
+            {summaries.length} 标签
+          </span>
           <span aria-hidden="true">·</span>
-          <span className="tabular-nums">{totalCount} 条</span>
-        </div>
+          <span style={{ fontVariantNumeric: "tabular-nums" }}>
+            {totalCount} 条
+          </span>
+        </HStack>
 
-        <div className="shard-tag-filters flex max-h-[88px] flex-wrap content-start gap-[var(--shard-space-2)] overflow-y-auto pr-[var(--shard-space-1)]">
+        <div
+          className="shard-tag-filters"
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            alignContent: "start",
+            gap: "var(--shard-space-2)",
+            maxHeight: 88,
+            overflowY: "auto",
+            paddingRight: "var(--shard-space-1)",
+          }}
+        >
           <button
             aria-pressed={isLockboxActive}
-            className={[
-              "shard-tag shard-tag-lockbox max-w-full gap-[var(--shard-space-micro)] font-medium",
-              isLockboxActive ? "shard-tag-active" : "",
-            ].join(" ")}
+            className={["shard-tag", "shard-tag-lockbox", isLockboxActive ? "shard-tag-active" : ""]
+              .join(" ")
+              .trim()}
             onClick={onOpenLockbox}
+            style={{
+              maxWidth: "100%",
+              gap: "var(--shard-space-micro)",
+              fontWeight: 500,
+            }}
             title="密匣"
             type="button"
           >
-            <LockKeyholeIcon className="size-3.5 stroke-[1.75]" />
-            <span className="shard-chip-text truncate">密匣</span>
+            <LockKeyholeIcon size={14} strokeWidth={1.75} />
+            <span
+              className="shard-chip-text"
+              style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+            >
+              密匣
+            </span>
             <span className="shard-chip-text shard-tag-count">
               {lockbox?.unlocked ? "已解锁" : lockbox?.configured ? "已上锁" : "设置"}
             </span>
@@ -69,7 +108,7 @@ export function TaggedPanel({
             />
           ))}
         </div>
-      </div>
+      </Stack>
     </div>
   )
 }
@@ -90,22 +129,23 @@ export function TagFilterButton({
   return (
     <button
       aria-pressed={active}
-      className={[
-        "shard-tag max-w-full gap-[var(--shard-space-micro)] font-medium",
-        active
-          ? "shard-tag-active"
-          : "",
-      ].join(" ")}
+      className={["shard-tag", active ? "shard-tag-active" : ""].join(" ").trim()}
       onClick={onClick}
+      style={{
+        maxWidth: "100%",
+        gap: "var(--shard-space-micro)",
+        fontWeight: 500,
+      }}
       title={label}
       type="button"
     >
-      <span className="shard-chip-text truncate">{label}</span>
       <span
-        className="shard-chip-text shard-tag-count"
+        className="shard-chip-text"
+        style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
       >
-        {count}
+        {label}
       </span>
+      <span className="shard-chip-text shard-tag-count">{count}</span>
     </button>
   )
 }

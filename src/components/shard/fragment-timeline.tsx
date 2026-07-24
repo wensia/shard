@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useRef, useState, type UIEvent } from "react"
 import { InboxIcon } from "lucide-react"
 
+import { Grid } from "@astryxdesign/core/Grid"
+import { Stack } from "@astryxdesign/core/Stack"
+
 import { FragmentCard } from "@/components/shard/fragment-card"
 import { MindMapTimelineCard } from "@/components/shard/mind-map-timeline-card"
 import type { Fragment, MindMapSummary } from "@/types"
@@ -260,31 +263,58 @@ export function FragmentTimeline({
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    <div style={{ display: "flex", minHeight: 0, flex: 1, flexDirection: "column" }}>
       <div
-        className="min-h-0 flex-1 overflow-y-auto"
         onScroll={handleViewportScroll}
         ref={viewportRef}
+        style={{ minHeight: 0, flex: 1, overflowY: "auto" }}
       >
         {isLoading ? (
-          <div className="flex h-full items-center justify-center text-sm font-medium text-muted-foreground">
+          <div
+            style={{
+              display: "flex",
+              height: "100%",
+              alignItems: "center",
+              justifyContent: "center",
+              fontSize: "var(--font-size-sm)",
+              fontWeight: "var(--font-weight-medium)",
+              color: "var(--muted-foreground)",
+            }}
+          >
             正在读取 Shard vault...
           </div>
         ) : timelineItems.length === 0 ? (
-          <div className="flex h-full flex-col items-center justify-center gap-3 text-center text-muted-foreground">
-            <InboxIcon className="size-8" />
-            <div className="text-sm font-semibold text-balance">
+          <Stack
+            gap={3}
+            hAlign="center"
+            height="100%"
+            style={{ textAlign: "center", color: "var(--muted-foreground)" }}
+            vAlign="center"
+          >
+            <InboxIcon size={32} />
+            <div
+              style={{
+                fontSize: "var(--font-size-sm)",
+                fontWeight: "var(--font-weight-semibold)",
+                textWrap: "balance",
+              }}
+            >
               {emptyMessage}
             </div>
-          </div>
+          </Stack>
         ) : (
-          <div className="shard-content-inset pb-[var(--shard-space-8)]">
-            <div className="shard-content-measure grid grid-cols-1 items-start gap-[var(--shard-card-gap)] 2xl:grid-cols-2">
+          <div
+            className="shard-content-inset"
+            style={{ paddingBottom: "var(--shard-space-8)" }}
+          >
+            <Grid
+              align="start"
+              className="shard-content-measure"
+              columns={usesWaterfallColumns ? 2 : 1}
+              gap={4}
+            >
               {timelineColumns.map((column, columnIndex) => (
-                <div
-                  className="flex min-w-0 flex-col gap-[var(--shard-card-gap)]"
-                  key={columnIndex}
-                >
+                <Stack gap={4} key={columnIndex} style={{ minWidth: 0 }}>
                   {column.map((item) =>
                     item.kind === "fragment" ? (
                       <FragmentCard
@@ -312,9 +342,9 @@ export function FragmentTimeline({
                       />
                     )
                   )}
-                </div>
+                </Stack>
               ))}
-            </div>
+            </Grid>
           </div>
         )}
       </div>

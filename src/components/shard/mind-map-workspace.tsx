@@ -10,6 +10,8 @@ import {
 } from "lucide-react"
 
 import { Button } from "@astryxdesign/core/Button"
+import { HStack } from "@astryxdesign/core/HStack"
+import { Stack } from "@astryxdesign/core/Stack"
 import { useToast } from "@astryxdesign/core/Toast"
 
 import { MindMapCanvasEditor } from "@/components/shard/mind-map-canvas-editor"
@@ -22,6 +24,8 @@ import {
   writeMindMap,
 } from "@/lib/api"
 import type { MindMapReadResult, MindMapSummary, ShardMapFile } from "@/types"
+
+import styles from "./mind-map-workspace.module.css"
 
 interface MindMapWorkspaceProps {
   mapId: string
@@ -275,20 +279,59 @@ export function MindMapWorkspace({
   }, [autoSaveError, conflict, draftFile, isDirty, isSaving, readResult, save])
 
   return (
-    <div className="fixed inset-0 z-50 flex min-h-0 flex-col overflow-hidden bg-background text-foreground">
+    <Stack
+      minHeight={0}
+      style={{
+        background: "var(--background)",
+        color: "var(--foreground)",
+        inset: 0,
+        overflow: "hidden",
+        position: "fixed",
+        zIndex: 50,
+      }}
+    >
       <div
         aria-hidden="true"
-        className="h-[var(--shard-top-inset)] shrink-0"
         data-tauri-drag-region
+        style={{ flexShrink: 0, height: "var(--shard-top-inset)" }}
       />
-      <main className="min-h-0 flex-1 overflow-hidden bg-background">
+      <main
+        style={{
+          background: "var(--background)",
+          flex: "1 1 0%",
+          minHeight: 0,
+          overflow: "hidden",
+        }}
+      >
         {isLoading ? (
-          <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-            <Loader2Icon className="mr-[var(--shard-space-2)] size-4 animate-spin" />
+          <div
+            style={{
+              alignItems: "center",
+              color: "var(--muted-foreground)",
+              display: "flex",
+              fontSize: 14,
+              height: "100%",
+              justifyContent: "center",
+            }}
+          >
+            <Loader2Icon
+              className={styles.spinner}
+              size={16}
+              style={{ marginRight: "var(--shard-space-2)" }}
+            />
             正在打开思维导图
           </div>
         ) : error ? (
-          <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+          <div
+            style={{
+              alignItems: "center",
+              color: "var(--muted-foreground)",
+              display: "flex",
+              fontSize: 14,
+              height: "100%",
+              justifyContent: "center",
+            }}
+          >
             {error}
           </div>
         ) : draftFile ? (
@@ -317,12 +360,38 @@ export function MindMapWorkspace({
       </main>
 
       {conflict ? (
-        <div className="shard-content-inset shrink-0 pb-[var(--shard-space-2)]">
-          <div className="mx-auto flex max-w-4xl items-start gap-[var(--shard-space-2)] rounded-[var(--shard-radius-control)] border border-destructive/30 bg-destructive/5 px-[var(--shard-space-3)] py-[var(--shard-space-3)]">
-            <AlertTriangleIcon className="mt-0.5 size-4 shrink-0 text-destructive" />
-            <div className="min-w-0 flex-1">
-              <div className="text-sm font-semibold">检测到保存冲突</div>
-              <p className="mt-1 break-words text-xs text-muted-foreground">
+        <div
+          className="shard-content-inset"
+          style={{ flexShrink: 0, paddingBottom: "var(--shard-space-2)" }}
+        >
+          <HStack
+            gap={2}
+            paddingBlock={3}
+            paddingInline={3}
+            style={{
+              background: "color-mix(in srgb, var(--destructive) 5%, transparent)",
+              border: "1px solid color-mix(in srgb, var(--destructive) 30%, transparent)",
+              borderRadius: "var(--shard-radius-control)",
+              marginInline: "auto",
+              maxWidth: 896,
+            }}
+            vAlign="start"
+          >
+            <AlertTriangleIcon
+              size={16}
+              style={{ color: "var(--destructive)", flexShrink: 0, marginTop: 2 }}
+            />
+            <div style={{ flex: "1 1 0%", minWidth: 0 }}>
+              <div style={{ fontSize: 14, fontWeight: 600 }}>检测到保存冲突</div>
+              <p
+                style={{
+                  color: "var(--muted-foreground)",
+                  fontSize: 12,
+                  margin: 0,
+                  marginTop: 4,
+                  overflowWrap: "break-word",
+                }}
+              >
                 {conflict.message}
               </p>
             </div>
@@ -340,12 +409,28 @@ export function MindMapWorkspace({
               size="sm"
               variant="secondary"
             />
-          </div>
+          </HStack>
         </div>
       ) : null}
 
-      <footer className="shard-content-inset shrink-0 pb-[var(--shard-space-4)]">
-        <div className="mx-auto flex w-fit max-w-full items-center gap-[var(--shard-space-2)] rounded-[var(--shard-surface-radius)] bg-card p-[var(--shard-space-3)] shadow-[var(--shard-composer-shadow)]">
+      <footer
+        className="shard-content-inset"
+        style={{ flexShrink: 0, paddingBottom: "var(--shard-space-4)" }}
+      >
+        <HStack
+          gap={2}
+          maxWidth="100%"
+          paddingBlock={3}
+          paddingInline={3}
+          style={{
+            background: "var(--card)",
+            borderRadius: "var(--shard-surface-radius)",
+            boxShadow: "var(--shard-composer-shadow)",
+            marginInline: "auto",
+          }}
+          vAlign="center"
+          width="fit-content"
+        >
           <Button
             icon={<XIcon />}
             isIconOnly
@@ -368,11 +453,24 @@ export function MindMapWorkspace({
             />
           ) : null}
 
-          <span className="min-w-20 text-right text-xs text-muted-foreground">
+          <span
+            style={{
+              color: "var(--muted-foreground)",
+              fontSize: 12,
+              minWidth: 80,
+              textAlign: "right",
+            }}
+          >
             {saveStatusText}
           </span>
           <Button
-            icon={isSaving ? <Loader2Icon className="animate-spin" /> : <SaveIcon />}
+            icon={
+              isSaving ? (
+                <Loader2Icon className={styles.spinner} />
+              ) : (
+                <SaveIcon />
+              )
+            }
             isDisabled={!isDirty || isSaving || !draftFile}
             isIconOnly
             label={isSaving ? saveStatusText : "保存思维导图"}
@@ -381,8 +479,8 @@ export function MindMapWorkspace({
             tooltip={isSaving ? saveStatusText : "保存思维导图"}
             variant="ghost"
           />
-        </div>
+        </HStack>
       </footer>
-    </div>
+    </Stack>
   )
 }

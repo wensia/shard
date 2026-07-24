@@ -6,6 +6,7 @@ import {
   useRef,
   useState,
   type ClipboardEvent,
+  type CSSProperties,
   type FocusEvent,
   type KeyboardEvent,
   type MouseEvent,
@@ -62,6 +63,7 @@ import {
   getMatchingTagsBySearchQuery,
 } from "@/lib/tag-index"
 import type { Fragment } from "@/types"
+import styles from "./fragment-editor.module.css"
 
 export interface FragmentEditorDraft {
   content: string
@@ -801,21 +803,40 @@ export function FragmentEditor({
     })
   }
 
-  const editorPaddingClass = isZen
-    ? "px-0 py-[var(--shard-space-4)]"
-    : "px-[var(--shard-composer-padding)] py-[var(--shard-composer-padding)]"
-  const fieldClass = isZen
-    ? "h-full min-h-0 overflow-y-auto px-0 py-[var(--shard-space-4)]"
-    : "min-h-[144px] max-h-[min(52dvh,520px)] overflow-y-auto rounded-t-[var(--shard-surface-radius)] rounded-b-none px-[var(--shard-composer-padding)] py-[var(--shard-composer-padding)]"
+  // 高亮层要和 textarea 用完全相同的内边距才能像素级对齐，两者都从这份
+  // editorPadding 派生，避免各写一份 padding 字符串导致后续改一处漏一处。
+  const editorPadding: CSSProperties = isZen
+    ? { paddingInline: 0, paddingBlock: "var(--shard-space-4)" }
+    : {
+        paddingInline: "var(--shard-composer-padding)",
+        paddingBlock: "var(--shard-composer-padding)",
+      }
+  const fieldStyle: CSSProperties = isZen
+    ? {
+        height: "100%",
+        minHeight: 0,
+        overflowY: "auto",
+        ...editorPadding,
+      }
+    : {
+        minHeight: 144,
+        maxHeight: "min(52dvh, 520px)",
+        overflowY: "auto",
+        borderTopLeftRadius: "var(--shard-surface-radius)",
+        borderTopRightRadius: "var(--shard-surface-radius)",
+        borderBottomLeftRadius: 0,
+        borderBottomRightRadius: 0,
+        ...editorPadding,
+      }
+  const imageRowStyle: CSSProperties = isZen
+    ? { paddingInline: 0, paddingBottom: "var(--shard-space-4)" }
+    : {
+        paddingInline: "var(--shard-composer-padding)",
+        paddingBottom: "var(--shard-space-3)",
+      }
   const imageAttachmentRow =
     imageAttachments.length > 0 ? (
-      <div
-        className={`shard-image-attachment-row ${
-          isZen
-            ? "px-0 pb-[var(--shard-space-4)]"
-            : "px-[var(--shard-composer-padding)] pb-[var(--shard-space-3)]"
-        }`}
-      >
+      <div className="shard-image-attachment-row" style={imageRowStyle}>
         {imageAttachments.map((image) => (
           <FragmentImageAttachment
             alt={image.alt}
@@ -832,14 +853,18 @@ export function FragmentEditor({
   const canSubmit = saveState !== "saving" && draftContent.trim().length > 0
   const editorFrame = (
     <div
-      className={isZen ? "relative min-h-0 flex-1" : "relative"}
       ref={editorFrameRef}
+      style={{
+        position: "relative",
+        ...(isZen ? { minHeight: 0, flex: "1 1 auto" } : {}),
+      }}
     >
       {content ? (
         <div
           aria-hidden="true"
-          className={`shard-editor-highlight-layer shard-memo-tags ${editorPaddingClass}`}
+          className="shard-editor-highlight-layer shard-memo-tags"
           style={{
+            ...editorPadding,
             transform: `translateY(-${editorScrollTop}px)`,
           }}
         >
@@ -859,7 +884,17 @@ export function FragmentEditor({
         aria-autocomplete={activeTag ? "list" : undefined}
         aria-controls={activeTag ? tagPopoverId : undefined}
         aria-expanded={activeTag ? true : undefined}
-        className={`shard-editor-field shard-editor-overlay-field relative z-10 resize-none border-0 bg-transparent shadow-none focus-visible:border-transparent focus-visible:ring-0 ${fieldClass}`}
+        className="shard-editor-field shard-editor-overlay-field"
+        style={{
+          position: "relative",
+          zIndex: 10,
+          resize: "none",
+          border: "none",
+          background: "transparent",
+          boxShadow: "none",
+          outline: "none",
+          ...fieldStyle,
+        }}
         onChange={(event) => {
           const outsideTagEdit = getOutsideTagInputEdit(
             content,
@@ -937,12 +972,19 @@ export function FragmentEditor({
   if (!isZen) {
     return (
       <article
-        className="relative flex flex-col rounded-[var(--shard-surface-radius)] border border-border bg-card p-0 shadow-[var(--shard-composer-shadow)] transition-colors focus-within:border-[color:var(--shard-sapphire)]"
+        className={styles.composerFrame}
         onBlurCapture={handleEditorBlur}
       >
         {editorFrame}
         {imageAttachmentRow}
-        <div className="shard-edge-action-row rounded-b-[var(--shard-surface-radius)] bg-card">
+        <div
+          className="shard-edge-action-row"
+          style={{
+            borderBottomLeftRadius: "var(--shard-surface-radius)",
+            borderBottomRightRadius: "var(--shard-surface-radius)",
+            background: "var(--card)",
+          }}
+        >
           <EditorToolbar
             disabled={saveState === "saving"}
             onImageUpload={uploadImage}
@@ -954,13 +996,32 @@ export function FragmentEditor({
               <>
                 <span
                   aria-hidden="true"
-                  className="mx-[var(--shard-space-1)] h-5 w-px bg-border/[var(--shard-alpha-55)]"
+                  style={{
+                    marginInline: "var(--shard-space-1)",
+                    height: 20,
+                    width: 1,
+                    background: "var(--border)",
+                    opacity: "var(--shard-alpha-55)",
+                  }}
                 />
-                <span className="px-[var(--shard-space-1)] text-sm font-medium text-muted-foreground tabular-nums">
+                <span
+                  style={{
+                    paddingInline: "var(--shard-space-1)",
+                    fontSize: 14,
+                    fontWeight: 500,
+                    color: "var(--muted-foreground)",
+                    fontVariantNumeric: "tabular-nums",
+                  }}
+                >
                   {content.trim().length}
                 </span>
                 <Button
-                  className="h-8 rounded-[var(--shard-radius-control)] px-[var(--shard-space-2)] text-muted-foreground"
+                  style={{
+                    height: 32,
+                    borderRadius: "var(--shard-radius-control)",
+                    paddingInline: "var(--shard-space-2)",
+                    color: "var(--muted-foreground)",
+                  }}
                   isDisabled={saveState === "saving"}
                   label="取消"
                   onMouseDown={(event) => {
@@ -972,11 +1033,11 @@ export function FragmentEditor({
                   variant="ghost"
                 />
                 <Button
-                  className="shard-edge-action shard-edge-action-save rounded-full bg-[color:var(--shard-sapphire)] text-white hover:bg-[color:var(--shard-sapphire-hover)] disabled:bg-transparent disabled:text-muted-foreground"
+                  className={`shard-edge-action shard-edge-action-save ${styles.saveButton}`}
                   icon={
                     saveState === "saving" ? (
                       <Loader2Icon
-                        className="animate-spin"
+                        className={styles.spin}
                         data-icon="inline-start"
                       />
                     ) : (
@@ -1004,19 +1065,51 @@ export function FragmentEditor({
   }
 
   return (
-    <div className="fixed inset-0 z-50 grid grid-rows-[minmax(0,1fr)_auto] bg-background text-foreground">
+    <div
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 50,
+        display: "grid",
+        gridTemplateRows: "minmax(0, 1fr) auto",
+        background: "var(--background)",
+        color: "var(--foreground)",
+      }}
+    >
       <div
-        className="shard-content-inset min-h-0 pt-[var(--shard-top-inset)]"
+        className="shard-content-inset"
         data-tauri-drag-region
+        style={{ minHeight: 0, paddingTop: "var(--shard-top-inset)" }}
       >
-        <div className="shard-content-measure flex h-full min-h-0 flex-col">
+        <div
+          className="shard-content-measure"
+          style={{
+            display: "flex",
+            height: "100%",
+            minHeight: 0,
+            flexDirection: "column",
+          }}
+        >
           {editorFrame}
           {imageAttachmentRow}
         </div>
       </div>
 
-      <footer className="shard-content-inset pb-[var(--shard-space-4)]">
-        <div className="mx-auto w-fit max-w-full rounded-[var(--shard-surface-radius)] bg-card p-[var(--shard-space-3)] shadow-[var(--shard-composer-shadow)]">
+      <footer
+        className="shard-content-inset"
+        style={{ paddingBottom: "var(--shard-space-4)" }}
+      >
+        <div
+          style={{
+            marginInline: "auto",
+            width: "fit-content",
+            maxWidth: "100%",
+            borderRadius: "var(--shard-surface-radius)",
+            background: "var(--card)",
+            padding: "var(--shard-space-3)",
+            boxShadow: "var(--shard-composer-shadow)",
+          }}
+        >
           <EditorToolbar
             disabled={saveState === "saving"}
             onImageUpload={uploadImage}
@@ -1028,10 +1121,16 @@ export function FragmentEditor({
               <>
                 <span
                   aria-hidden="true"
-                  className="mx-[var(--shard-space-1)] h-5 w-px bg-border/[var(--shard-alpha-55)]"
+                  style={{
+                    marginInline: "var(--shard-space-1)",
+                    height: 20,
+                    width: 1,
+                    background: "var(--border)",
+                    opacity: "var(--shard-alpha-55)",
+                  }}
                 />
                 <Button
-                  className="shard-edge-action rounded-[var(--shard-radius-control)] text-muted-foreground"
+                  className="shard-edge-action"
                   icon={<XIcon data-icon="inline-start" />}
                   isIconOnly
                   label="退出编辑"
@@ -1040,6 +1139,10 @@ export function FragmentEditor({
                     void handleClose()
                   }}
                   size="sm"
+                  style={{
+                    borderRadius: "var(--shard-radius-control)",
+                    color: "var(--muted-foreground)",
+                  }}
                   tooltip="退出编辑"
                   type="button"
                   variant="ghost"

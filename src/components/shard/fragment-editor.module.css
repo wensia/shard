@@ -1,0 +1,52 @@
+/* fragment-editor.tsx 专属样式。
+   只放内联 style 做不到的部分（伪类 / 动画），几何测量相关的坐标计算
+   （光标位置、滚动同步等）完全不在这里，仍然是 lib/editor-caret.ts 里的
+   JS 逻辑，本文件不涉及。
+   - .composerFrame 需要 :focus-within 切换描边色。
+   - .saveButton 需要 :hover / :disabled 两个交互态背景色，Button 组件
+     自身的 primary 变体样式可能和这里的自定义配色同优先级，用 !important
+     保证覆盖生效（等价于原来 Tailwind utilities 层必定覆盖组件样式的效果）。
+   - .spin 补回 Tailwind animate-spin 工具类卸载后缺失的加载动画。 */
+
+.composerFrame {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--shard-surface-radius);
+  border: 1px solid var(--border);
+  background: var(--card);
+  padding: 0;
+  box-shadow: var(--shard-composer-shadow);
+  transition: border-color 140ms ease;
+}
+
+.composerFrame:focus-within {
+  border-color: var(--shard-sapphire);
+}
+
+.saveButton {
+  background: var(--shard-sapphire) !important;
+  color: white !important;
+}
+
+.saveButton:hover:not(:disabled) {
+  background: var(--shard-sapphire-hover) !important;
+}
+
+.saveButton:disabled {
+  background: transparent !important;
+  color: var(--muted-foreground) !important;
+}
+
+@keyframes fragment-editor-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.spin {
+  animation: fragment-editor-spin 1s linear infinite;
+}

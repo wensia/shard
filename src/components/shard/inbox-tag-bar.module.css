@@ -1,0 +1,8 @@
+/* inbox-tag-bar.tsx 专属样式。
+   唯一必须用 CSS Module 才能表达的部分：新建标签输入框的 ::placeholder
+   伪元素颜色——内联 style 无法定位伪元素，其余布局/间距/圆角全部走
+   Stack/HStack 与内联 style，参见 inbox-tag-bar.tsx。 */
+
+.tagInput::placeholder {
+  color: var(--muted-foreground);
+}

@@ -6,7 +6,6 @@ import {
   shouldUseCompactMindMapText,
   type MindMapLayoutNode,
 } from "@/lib/mind-map-layout"
-import { cn } from "@/lib/utils"
 import type { ShardMapFile } from "@/types"
 
 interface MindMapPreviewProps {
@@ -52,18 +51,21 @@ export function MindMapPreview({
 
   return (
     <div
-      className={cn(
-        "min-w-0 overflow-hidden rounded-[var(--shard-radius-control)] bg-background",
-        className
-      )}
+      className={className}
       ref={containerRef}
-      style={{ height }}
+      style={{
+        background: "var(--background)",
+        borderRadius: "var(--shard-radius-control)",
+        height,
+        minWidth: 0,
+        overflow: "hidden",
+      }}
     >
       <svg
         aria-label="思维导图预览"
-        className="block size-full"
         preserveAspectRatio="xMidYMid meet"
         role="img"
+        style={{ display: "block", height: "100%", width: "100%" }}
         viewBox={fit.viewBox}
       >
         <g fill="none" stroke="var(--border)" strokeWidth="1.4">
@@ -85,9 +87,9 @@ export function MindMapPreview({
 
           return (
             <g
-              className={onNodeClick ? "cursor-pointer" : undefined}
               key={layoutNode.id}
               onClick={() => onNodeClick?.(layoutNode.id)}
+              style={{ cursor: onNodeClick ? "pointer" : undefined }}
             >
               {selected ? (
                 <rect

@@ -8,11 +8,15 @@ import {
 } from "lucide-react"
 
 import { DropdownMenu, DropdownMenuItem } from "@astryxdesign/core/DropdownMenu"
+import { HStack } from "@astryxdesign/core/HStack"
+import { Stack } from "@astryxdesign/core/Stack"
 import { useToast } from "@astryxdesign/core/Toast"
 
 import { MindMapPreview } from "@/components/shard/mind-map-preview"
 import { getApiErrorMessage, readMindMap } from "@/lib/api"
 import type { MindMapReadResult, MindMapSummary } from "@/types"
+
+import styles from "./mind-map-timeline-card.module.css"
 
 interface MindMapTimelineCardProps {
   map: MindMapSummary
@@ -72,38 +76,73 @@ export function MindMapTimelineCard({ map, onOpen }: MindMapTimelineCardProps) {
   }
 
   return (
-    <article
-      className="group flex cursor-pointer flex-col rounded-[var(--shard-surface-radius)] bg-card px-[var(--shard-card-padding-x)] pt-[var(--shard-card-padding-y)] pb-[var(--shard-card-padding-bottom)]"
+    <Stack
+      as="article"
       onClick={() => onOpen?.(map)}
       ref={cardRef}
+      style={{
+        cursor: "pointer",
+        borderRadius: "var(--shard-surface-radius)",
+        background: "var(--card)",
+        paddingInline: "var(--shard-card-padding-x)",
+        paddingTop: "var(--shard-card-padding-y)",
+        paddingBottom: "var(--shard-card-padding-bottom)",
+      }}
     >
-      <div className="flex items-start gap-[var(--shard-card-gap)]">
-        <div className="min-w-0 flex-1">
-          <div className="mb-[var(--shard-space-3)] flex min-w-0 flex-wrap items-center gap-x-[var(--shard-space-2)] gap-y-1">
+      <HStack gap={4} vAlign="start">
+        <div style={{ minWidth: 0, flex: "1 1 0%" }}>
+          <div
+            style={{
+              marginBottom: "var(--shard-space-3)",
+              display: "flex",
+              minWidth: 0,
+              flexWrap: "wrap",
+              alignItems: "center",
+              columnGap: "var(--shard-space-2)",
+              rowGap: "var(--shard-space-1)",
+            }}
+          >
             <time
-              className="shard-memo-meta text-muted-foreground"
+              className="shard-memo-meta"
               dateTime={map.createdAt}
+              style={{ color: "var(--muted-foreground)" }}
             >
               {formatCreatedTime(map.createdAt)}
             </time>
-            <div className="shard-card-tags flex flex-wrap gap-[var(--shard-space-2)]">
-              <span className="shard-tag shard-tag-muted border-0 py-0 font-medium shadow-none">
-                <GitBranchIcon className="size-3.5 stroke-[1.75]" />
+            <HStack className="shard-card-tags" gap={2} wrap="wrap">
+              <span
+                className="shard-tag shard-tag-muted"
+                style={{ fontWeight: 500 }}
+              >
+                <GitBranchIcon strokeWidth={1.75} style={{ width: 14, height: 14 }} />
                 思维导图
               </span>
-              <span className="shard-tag shard-tag-muted border-0 py-0 font-medium shadow-none">
+              <span
+                className="shard-tag shard-tag-muted"
+                style={{ fontWeight: 500 }}
+              >
                 {map.nodeCount} 节点
               </span>
-            </div>
+            </HStack>
           </div>
-          <h2 className="truncate text-base leading-6 font-semibold text-foreground">
+          <h2
+            style={{
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+              fontSize: 16,
+              lineHeight: "24px",
+              fontWeight: 600,
+              color: "var(--foreground)",
+            }}
+          >
             {map.title}
           </h2>
         </div>
 
         <div
-          className="flex shrink-0 items-center"
           onClick={(event) => event.stopPropagation()}
+          style={{ display: "flex", flexShrink: 0, alignItems: "center" }}
         >
           <DropdownMenu
             button={{
@@ -126,23 +165,45 @@ export function MindMapTimelineCard({ map, onOpen }: MindMapTimelineCardProps) {
             />
           </DropdownMenu>
         </div>
-      </div>
+      </HStack>
 
-      <div className="mt-[var(--shard-space-3)]">
+      <div style={{ marginTop: "var(--shard-space-3)" }}>
         {readResult ? (
           <MindMapPreview file={readResult.file} height={previewHeight} />
         ) : (
           <div
-            className="flex items-center justify-center rounded-[var(--shard-radius-control)] bg-background text-xs text-muted-foreground"
-            style={{ height: previewHeight }}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              borderRadius: "var(--shard-radius-control)",
+              background: "var(--background)",
+              fontSize: "var(--font-size-sm)",
+              color: "var(--muted-foreground)",
+              height: previewHeight,
+            }}
           >
             {isLoading ? (
-              <span className="inline-flex items-center gap-[var(--shard-space-2)]">
-                <Loader2Icon className="size-3.5 animate-spin" />
+              <span
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "var(--shard-space-2)",
+                }}
+              >
+                <Loader2Icon className={styles.spin} style={{ width: 14, height: 14 }} />
                 正在渲染导图
               </span>
             ) : error ? (
-              <span className="max-w-full truncate px-[var(--shard-space-3)]">
+              <span
+                style={{
+                  maxWidth: "100%",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                  paddingInline: "var(--shard-space-3)",
+                }}
+              >
                 无法读取导图预览
               </span>
             ) : (
@@ -153,11 +214,17 @@ export function MindMapTimelineCard({ map, onOpen }: MindMapTimelineCardProps) {
       </div>
 
       {map.updatedAt !== map.createdAt ? (
-        <div className="mt-[var(--shard-space-2)] text-xs text-muted-foreground">
+        <div
+          style={{
+            marginTop: "var(--shard-space-2)",
+            fontSize: "var(--font-size-sm)",
+            color: "var(--muted-foreground)",
+          }}
+        >
           编辑于 {formatCreatedTime(map.updatedAt)}
         </div>
       ) : null}
-    </article>
+    </Stack>
   )
 }
 

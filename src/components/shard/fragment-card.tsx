@@ -9,6 +9,8 @@ import {
 } from "lucide-react"
 
 import { DropdownMenu, DropdownMenuItem } from "@astryxdesign/core/DropdownMenu"
+import { HStack } from "@astryxdesign/core/HStack"
+import { Stack } from "@astryxdesign/core/Stack"
 
 import { FragmentEditor } from "@/components/shard/fragment-editor"
 import { FragmentBody } from "@/components/shard/fragment-body"
@@ -74,39 +76,60 @@ export function FragmentCard({
   }
 
   return (
-    <article
-      className={cn(
-        "group flex flex-col rounded-[var(--shard-surface-radius)] bg-card px-[var(--shard-card-padding-x)] pt-[var(--shard-card-padding-y)] pb-[var(--shard-card-padding-bottom)]",
-        isHighlighted && "shard-fragment-card-highlight"
-      )}
+    <Stack
+      as="article"
+      className={cn(isHighlighted && "shard-fragment-card-highlight")}
       data-shard-fragment-id={fragment.id}
+      style={{
+        borderRadius: "var(--shard-surface-radius)",
+        background: "var(--card)",
+        paddingInline: "var(--shard-card-padding-x)",
+        paddingTop: "var(--shard-card-padding-y)",
+        paddingBottom: "var(--shard-card-padding-bottom)",
+      }}
     >
-      <div className="flex items-start gap-[var(--shard-card-gap)]">
-        <div className="min-w-0 flex-1">
+      <HStack gap={4} vAlign="start">
+        <div style={{ minWidth: 0, flex: "1 1 0%" }}>
           <time
-            className="shard-memo-meta mb-[var(--shard-space-2)] block text-muted-foreground"
+            className="shard-memo-meta"
             dateTime={fragment.createdAt}
+            style={{
+              display: "block",
+              marginBottom: "var(--shard-space-2)",
+              color: "var(--muted-foreground)",
+            }}
           >
             {createdTime}
           </time>
           {fragment.pinned || fragment.lockbox || displayTags.length > 0 ? (
-            <div className="shard-card-tags mb-[var(--shard-space-3)] flex flex-wrap gap-[var(--shard-space-2)]">
+            <HStack
+              className="shard-card-tags"
+              gap={2}
+              style={{ marginBottom: "var(--shard-space-3)" }}
+              wrap="wrap"
+            >
               {fragment.pinned ? (
-                <span className="shard-tag shard-tag-muted border-0 py-0 font-medium shadow-none">
-                  <PinIcon className="size-3.5 stroke-[1.75]" />
+                <span
+                  className="shard-tag shard-tag-muted"
+                  style={{ fontWeight: 500 }}
+                >
+                  <PinIcon strokeWidth={1.75} style={{ width: 14, height: 14 }} />
                   置顶
                 </span>
               ) : null}
               {fragment.lockbox ? (
-                <span className="shard-tag shard-tag-lockbox border-0 py-0 font-medium shadow-none">
-                  <LockKeyholeIcon className="size-3.5 stroke-[1.75]" />
+                <span
+                  className="shard-tag shard-tag-lockbox"
+                  style={{ fontWeight: 500 }}
+                >
+                  <LockKeyholeIcon strokeWidth={1.75} style={{ width: 14, height: 14 }} />
                   密匣
                 </span>
               ) : null}
               {displayTags.map((tag) => (
                 <TagBadge key={tag} tag={tag} />
               ))}
-            </div>
+            </HStack>
           ) : null}
           <FragmentBody
             content={displayContent}
@@ -119,7 +142,7 @@ export function FragmentCard({
           />
         </div>
 
-        <div className="flex shrink-0 items-center">
+        <div style={{ display: "flex", flexShrink: 0, alignItems: "center" }}>
           <DropdownMenu
             button={{
               icon: <MoreHorizontalIcon />,
@@ -170,8 +193,8 @@ export function FragmentCard({
             />
           </DropdownMenu>
         </div>
-      </div>
-    </article>
+      </HStack>
+    </Stack>
   )
 }
 

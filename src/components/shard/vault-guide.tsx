@@ -8,9 +8,13 @@ import {
   RefreshCwIcon,
   XIcon,
 } from "lucide-react"
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useRef, useState, type CSSProperties } from "react"
 
 import { Button } from "@astryxdesign/core/Button"
+import { Divider } from "@astryxdesign/core/Divider"
+import { HStack } from "@astryxdesign/core/HStack"
+import { Stack } from "@astryxdesign/core/Stack"
+import { Switch } from "@astryxdesign/core/Switch"
 import { TextInput } from "@astryxdesign/core/TextInput"
 import { useToast } from "@astryxdesign/core/Toast"
 import {
@@ -26,6 +30,46 @@ import {
   setVaultRemote,
 } from "@/lib/api"
 import type { GithubCliInfo, GitInfo, VaultState } from "@/types"
+
+import styles from "./vault-guide.module.css"
+
+/*
+ * Shared inline-style objects for text/spacing patterns that repeat verbatim
+ * across sections. Kept as plain style objects (not a CSS utility layer) so
+ * each still reads as "real CSS for this exact spot" — just deduplicated.
+ */
+const eyebrowStyle: CSSProperties = {
+  fontSize: 11,
+  lineHeight: "16px",
+  fontWeight: 600,
+  letterSpacing: "0.08em",
+  textTransform: "uppercase",
+  color: "var(--muted-foreground)",
+}
+
+const sectionTitleStyle: CSSProperties = {
+  fontSize: 14,
+  lineHeight: "20px",
+  fontWeight: 600,
+}
+
+const sectionDescriptionStyle: CSSProperties = {
+  marginTop: "var(--shard-space-1)",
+  fontSize: 12,
+  lineHeight: "20px",
+  textWrap: "pretty",
+  color: "var(--muted-foreground)",
+}
+
+const monoPathStyle: CSSProperties = {
+  marginTop: "var(--shard-space-1)",
+  fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+  fontSize: 12,
+  lineHeight: "20px",
+  wordBreak: "break-all",
+  color: "var(--muted-foreground)",
+  userSelect: "all",
+}
 
 export type SettingsSection = "git" | "shortcuts" | "vault"
 
@@ -552,8 +596,8 @@ export function VaultGuide({
   }
 
   const railSection = (
-    <section className="border-b border-border px-[var(--shard-space-6)] py-[var(--shard-space-5)]">
-      <div className="flex flex-col gap-[var(--shard-space-3)] sm:flex-row sm:items-start">
+    <section className={styles.sectionPad}>
+      <div className={styles.railRow}>
         <RailStation
           label={copy.sideCurrent}
           tone={vaultPath ? "emerald" : "empty"}
@@ -578,7 +622,7 @@ export function VaultGuide({
           value={remoteLabel}
         />
       </div>
-      <p className="mt-[var(--shard-space-4)] text-xs leading-5 text-pretty text-muted-foreground">
+      <p style={{ ...sectionDescriptionStyle, marginTop: "var(--shard-space-4)" }}>
         {git?.hasRemote ? copy.remoteAlreadyConnected : copy.gitDescription}
       </p>
     </section>
@@ -587,7 +631,7 @@ export function VaultGuide({
   const gitSetupSections = (
     <>
       {vaultPath && git?.status === "no_git" ? (
-        <section className="border-b border-border px-[var(--shard-space-6)] py-[var(--shard-space-5)]">
+        <section className={styles.sectionPad}>
           <VaultActionButton
             active={activeAction === "git"}
             disabled={isVaultActionBusy}
@@ -600,40 +644,61 @@ export function VaultGuide({
       ) : null}
 
       {needsRemote ? (
-        <section
-          aria-busy={isRemoteBusy}
-          className="border-b border-border px-[var(--shard-space-6)] py-[var(--shard-space-5)]"
-        >
-          <h3 className="text-sm leading-5 font-semibold">
-            {copy.syncSetupTitle}
-          </h3>
-          <p className="mt-[var(--shard-space-1)] text-xs leading-5 text-pretty text-muted-foreground">
-            {copy.headlineNeedsRemote}
-          </p>
+        <section aria-busy={isRemoteBusy} className={styles.sectionPad}>
+          <h3 style={sectionTitleStyle}>{copy.syncSetupTitle}</h3>
+          <p style={sectionDescriptionStyle}>{copy.headlineNeedsRemote}</p>
 
           {isRemoteBusy ? (
-            <div className="mt-[var(--shard-space-3)] flex items-center gap-[var(--shard-space-2)] rounded-[var(--shard-radius-control)] border border-border bg-background px-[var(--shard-space-3)] py-[var(--shard-space-2)] text-sm leading-5 text-muted-foreground">
-              <Loader2Icon className="size-4 animate-spin" />
+            <HStack
+              gap={2}
+              vAlign="center"
+              paddingInline={3}
+              paddingBlock={2}
+              style={{
+                marginTop: "var(--shard-space-3)",
+                borderRadius: "var(--shard-radius-control)",
+                border: "1px solid var(--border)",
+                background: "var(--background)",
+                fontSize: 14,
+                lineHeight: "20px",
+                color: "var(--muted-foreground)",
+              }}
+            >
+              <Loader2Icon
+                className={styles.spin}
+                size={16}
+                style={{ flexShrink: 0 }}
+              />
               <span>
                 {isCreatingGithubRepo ? copy.githubBusy : copy.remoteBusy}
               </span>
-            </div>
+            </HStack>
           ) : null}
 
-          <div className="mt-[var(--shard-space-4)]">
-            <div className="flex items-center gap-[var(--shard-space-2)] text-sm leading-5 font-semibold">
-              <GitBranchIcon className="size-4" />
+          <div style={{ marginTop: "var(--shard-space-4)" }}>
+            <HStack
+              gap={2}
+              vAlign="center"
+              style={{ fontSize: 14, lineHeight: "20px", fontWeight: 600 }}
+            >
+              <GitBranchIcon size={16} style={{ flexShrink: 0 }} />
               GitHub
-            </div>
-            <p className="mt-1 text-xs leading-5 text-pretty text-muted-foreground">
+            </HStack>
+            <p
+              style={{
+                ...sectionDescriptionStyle,
+                marginTop: "var(--shard-space-1)",
+              }}
+            >
               {getGithubStatusText(githubStatus, isCheckingGithub, copy)}
             </p>
             <form
-              className="mt-[var(--shard-space-2)] grid gap-[var(--shard-space-2)] sm:grid-cols-[minmax(0,1fr)_max-content]"
+              className={styles.formGrid}
               onSubmit={(event) => {
                 event.preventDefault()
                 void createGithubRepo()
               }}
+              style={{ marginTop: "var(--shard-space-2)" }}
             >
               <TextInput
                 isDisabled={
@@ -659,26 +724,19 @@ export function VaultGuide({
             </form>
           </div>
 
-          <div className="mt-[var(--shard-space-4)] flex items-center gap-[var(--shard-space-3)]">
-            <span
-              aria-hidden="true"
-              className="h-px flex-1 rounded-full bg-border-visible opacity-[var(--shard-alpha-55)]"
-            />
-            <span className="text-[11px] leading-4 font-medium text-muted-foreground">
-              {copy.manualDividerLabel}
-            </span>
-            <span
-              aria-hidden="true"
-              className="h-px flex-1 rounded-full bg-border-visible opacity-[var(--shard-alpha-55)]"
-            />
-          </div>
+          <Divider
+            label={copy.manualDividerLabel}
+            style={{ marginTop: "var(--shard-space-4)" }}
+            variant="strong"
+          />
 
           <form
-            className="mt-[var(--shard-space-3)] grid gap-[var(--shard-space-2)] sm:grid-cols-[minmax(0,1fr)_max-content]"
+            className={styles.formGrid}
             onSubmit={(event) => {
               event.preventDefault()
               void configureRemote()
             }}
+            style={{ marginTop: "var(--shard-space-3)" }}
           >
             <TextInput
               isDisabled={isRemoteBusy}
@@ -697,7 +755,12 @@ export function VaultGuide({
               variant="primary"
             />
           </form>
-          <p className="mt-[var(--shard-space-2)] text-xs leading-5 text-pretty text-muted-foreground">
+          <p
+            style={{
+              ...sectionDescriptionStyle,
+              marginTop: "var(--shard-space-2)",
+            }}
+          >
             {copy.manualRemoteHint}
           </p>
         </section>
@@ -706,14 +769,13 @@ export function VaultGuide({
   )
 
   const directorySection = (
-    <section className="border-b border-border px-[var(--shard-space-6)] py-[var(--shard-space-5)]">
-      <h3 className="text-sm leading-5 font-semibold">
-        {copy.directoryTitle}
-      </h3>
-      <p className="mt-[var(--shard-space-1)] text-xs leading-5 text-pretty text-muted-foreground">
-        {copy.directoryDescription}
-      </p>
-      <div className="mt-[var(--shard-space-3)] grid gap-[var(--shard-space-2)] sm:grid-cols-2">
+    <section className={styles.sectionPad}>
+      <h3 style={sectionTitleStyle}>{copy.directoryTitle}</h3>
+      <p style={sectionDescriptionStyle}>{copy.directoryDescription}</p>
+      <div
+        className={styles.directoryGrid}
+        style={{ marginTop: "var(--shard-space-3)" }}
+      >
         <VaultActionButton
           active={activeAction === "open"}
           disabled={isVaultActionBusy}
@@ -736,11 +798,11 @@ export function VaultGuide({
 
   if (required || !vaultPath) {
     return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/[var(--shard-alpha-89)] px-[var(--shard-content-inset)] py-[var(--shard-space-4)] backdrop-blur-sm md:py-[var(--shard-space-5)]">
+      <div className={styles.overlay}>
         <div
           aria-labelledby="vault-guide-title"
           aria-modal="true"
-          className="flex max-h-[min(86dvh,720px)] w-full max-w-[620px] flex-col overflow-hidden rounded-[var(--shard-radius-panel)] border border-border bg-card shadow-[var(--shard-shadow-popover)] outline-none"
+          className={`${styles.panelBase} ${styles.panelSolo}`}
           onKeyDown={(event) => {
             if (event.key === "Escape" && !required) {
               event.preventDefault()
@@ -751,43 +813,55 @@ export function VaultGuide({
           role="dialog"
           tabIndex={-1}
         >
-          <header className="shrink-0 border-b border-border px-[var(--shard-space-6)] pt-[var(--shard-space-5)] pb-[var(--shard-space-4)]">
-            <div className="flex items-center justify-between gap-[var(--shard-space-3)]">
-              <span className="text-[11px] leading-4 font-semibold tracking-[0.08em] text-muted-foreground uppercase">
+          <header className={styles.headerBlock}>
+            <HStack gap={3} hAlign="between" vAlign="center">
+              <span style={eyebrowStyle}>
                 {copy.settingsTitle}
                 {vaultPath ? ` · ${copy.vaultTitle}` : ""}
               </span>
               {!required ? (
                 <Button
-                  className="-mt-1 -mr-2"
                   icon={<XIcon data-icon="inline-start" />}
                   isIconOnly
                   label={copy.close}
                   onClick={onClose}
                   size="sm"
+                  style={{ marginTop: -4, marginRight: -8 }}
                   type="button"
                   variant="ghost"
                 />
               ) : null}
-            </div>
+            </HStack>
             <h2
-              className="mt-[var(--shard-space-1)] text-lg leading-6 font-semibold text-balance"
               id="vault-guide-title"
+              style={{
+                marginTop: "var(--shard-space-1)",
+                fontSize: 18,
+                lineHeight: "24px",
+                fontWeight: 600,
+                textWrap: "balance",
+              }}
             >
               {vaultPath ? folderName : copy.vaultTitle}
             </h2>
             {vaultPath ? (
-              <p className="mt-[var(--shard-space-1)] font-mono text-xs leading-5 break-all text-muted-foreground select-all">
-                {vaultPath}
-              </p>
+              <p style={monoPathStyle}>{vaultPath}</p>
             ) : (
-              <p className="mt-[var(--shard-space-2)] text-sm leading-6 text-pretty text-muted-foreground">
+              <p
+                style={{
+                  marginTop: "var(--shard-space-2)",
+                  fontSize: 14,
+                  lineHeight: "24px",
+                  textWrap: "pretty",
+                  color: "var(--muted-foreground)",
+                }}
+              >
                 {copy.headlineDefault}
               </p>
             )}
           </header>
 
-          <main className="min-h-0 flex-1 overflow-y-auto [&>section:last-child]:border-b-0">
+          <main className={styles.mainScroll}>
             {railSection}
             {gitSetupSections}
             {directorySection}
@@ -810,11 +884,11 @@ export function VaultGuide({
         : copy.vaultTitle
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/[var(--shard-alpha-89)] px-[var(--shard-content-inset)] py-[var(--shard-space-4)] backdrop-blur-sm md:py-[var(--shard-space-5)]">
+    <div className={styles.overlay}>
       <div
         aria-labelledby="vault-guide-title"
         aria-modal="true"
-        className="flex max-h-[min(84dvh,640px)] min-h-[min(84dvh,520px)] w-full max-w-[760px] flex-col overflow-hidden rounded-[var(--shard-radius-panel)] border border-border bg-card shadow-[var(--shard-shadow-popover)] outline-none md:grid md:grid-cols-[168px_minmax(0,1fr)]"
+        className={`${styles.panelBase} ${styles.panelFull}`}
         onKeyDown={(event) => {
           if (event.key === "Escape") {
             event.preventDefault()
@@ -825,61 +899,93 @@ export function VaultGuide({
         role="dialog"
         tabIndex={-1}
       >
-        <nav className="flex shrink-0 gap-[var(--shard-space-1)] overflow-x-auto border-b border-border bg-sidebar p-[var(--shard-space-2)] md:flex-col md:overflow-visible md:border-r md:border-b-0 md:p-[var(--shard-space-3)]">
-          <div className="hidden px-[var(--shard-space-3)] pt-[var(--shard-space-1)] pb-[var(--shard-space-2)] text-[11px] leading-4 font-semibold tracking-[0.08em] text-muted-foreground uppercase md:block">
-            {copy.settingsTitle}
-          </div>
-          {navItems.map(({ icon: Icon, id, label }) => (
-            <button
-              className={[
-                "flex h-9 shrink-0 items-center gap-[var(--shard-space-2)] rounded-[var(--shard-radius-control)] px-[var(--shard-space-3)] text-sm font-medium transition-colors duration-150",
-                section === id
-                  ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                  : "text-muted-foreground hover:bg-sidebar-accent/[var(--shard-alpha-55)] hover:text-sidebar-foreground",
-              ].join(" ")}
-              key={id}
-              onClick={() => setSection(id)}
-              type="button"
-            >
-              <Icon className="size-4 shrink-0 stroke-[1.75]" />
-              <span className="truncate">{label}</span>
-            </button>
-          ))}
+        <nav className={styles.navRail}>
+          <div className={styles.navEyebrow}>{copy.settingsTitle}</div>
+          {navItems.map(({ icon: Icon, id, label }) => {
+            const isActive = section === id
+            return (
+              <button
+                className={styles.navButton}
+                key={id}
+                onClick={() => setSection(id)}
+                style={
+                  isActive
+                    ? {
+                        background: "var(--sidebar-accent)",
+                        color: "var(--sidebar-accent-foreground)",
+                      }
+                    : undefined
+                }
+                type="button"
+              >
+                <Icon size={16} strokeWidth={1.75} style={{ flexShrink: 0 }} />
+                <span
+                  style={{
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {label}
+                </span>
+              </button>
+            )
+          })}
         </nav>
 
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          <header className="flex shrink-0 items-center justify-between gap-[var(--shard-space-3)] border-b border-border px-[var(--shard-space-6)] py-[var(--shard-space-3)]">
+        <Stack
+          style={{
+            minHeight: 0,
+            minWidth: 0,
+            flexGrow: 1,
+            flexShrink: 1,
+            flexBasis: 0,
+          }}
+        >
+          <HStack
+            as="header"
+            gap={3}
+            hAlign="between"
+            paddingBlock={3}
+            paddingInline={6}
+            style={{ borderBottom: "1px solid var(--border)", flexShrink: 0 }}
+            vAlign="center"
+          >
             <h2
-              className="text-base leading-6 font-semibold"
               id="vault-guide-title"
+              style={{ fontSize: 16, lineHeight: "24px", fontWeight: 600 }}
             >
               {sectionTitle}
             </h2>
             <Button
-              className="-mr-2"
               icon={<XIcon data-icon="inline-start" />}
               isIconOnly
               label={copy.close}
               onClick={onClose}
               size="sm"
+              style={{ marginRight: -8 }}
               type="button"
               variant="ghost"
             />
-          </header>
+          </HStack>
 
-          <main className="min-h-0 flex-1 overflow-y-auto [&>section:last-child]:border-b-0">
+          <main className={styles.mainScroll}>
             {section === "vault" ? (
               <>
-                <section className="border-b border-border px-[var(--shard-space-6)] py-[var(--shard-space-5)]">
-                  <div className="text-[11px] leading-4 font-semibold tracking-[0.08em] text-muted-foreground uppercase">
-                    {copy.sideCurrent}
-                  </div>
-                  <div className="mt-[var(--shard-space-1)] text-base leading-6 font-semibold text-balance">
+                <section className={styles.sectionPad}>
+                  <div style={eyebrowStyle}>{copy.sideCurrent}</div>
+                  <div
+                    style={{
+                      marginTop: "var(--shard-space-1)",
+                      fontSize: 16,
+                      lineHeight: "24px",
+                      fontWeight: 600,
+                      textWrap: "balance",
+                    }}
+                  >
                     {folderName}
                   </div>
-                  <p className="mt-[var(--shard-space-1)] font-mono text-xs leading-5 break-all text-muted-foreground select-all">
-                    {vaultPath}
-                  </p>
+                  <p style={monoPathStyle}>{vaultPath}</p>
                 </section>
                 {directorySection}
               </>
@@ -889,66 +995,87 @@ export function VaultGuide({
               <>
                 {railSection}
                 {gitSetupSections}
-                <section className="border-b border-border px-[var(--shard-space-6)] py-[var(--shard-space-5)]">
-                  <div className="flex items-start justify-between gap-[var(--shard-space-4)]">
-                    <div className="min-w-0">
-                      <h3 className="text-sm leading-5 font-semibold">
-                        {copy.autoSyncTitle}
-                      </h3>
-                      <p className="mt-[var(--shard-space-1)] text-xs leading-5 text-pretty text-muted-foreground">
+                <section className={styles.sectionPad}>
+                  <HStack gap={4} hAlign="between" vAlign="start">
+                    <div style={{ minWidth: 0 }}>
+                      <h3 style={sectionTitleStyle}>{copy.autoSyncTitle}</h3>
+                      <p style={sectionDescriptionStyle}>
                         {copy.autoSyncDescription}
                       </p>
                     </div>
-                    <SwitchToggle
-                      checked={autoSyncEnabled}
-                      disabled={!git?.hasRemote}
+                    <Switch
+                      isDisabled={!git?.hasRemote}
+                      isLabelHidden
                       label={copy.autoSyncEnableLabel}
                       onChange={(next) =>
                         onAutoSyncChange({ autoSyncEnabled: next })
                       }
+                      value={autoSyncEnabled}
                     />
-                  </div>
+                  </HStack>
                   {git?.hasRemote ? (
-                    <div className="mt-[var(--shard-space-4)] flex flex-wrap items-center gap-[var(--shard-space-3)]">
-                      <span className="text-xs leading-5 font-medium text-muted-foreground">
+                    <HStack
+                      gap={3}
+                      style={{ marginTop: "var(--shard-space-4)" }}
+                      vAlign="center"
+                      wrap="wrap"
+                    >
+                      <span
+                        style={{
+                          fontSize: 12,
+                          lineHeight: "20px",
+                          fontWeight: 500,
+                          color: "var(--muted-foreground)",
+                        }}
+                      >
                         {copy.autoSyncIntervalLabel}
                       </span>
-                      <div className="flex gap-[var(--shard-space-1)]">
-                        {AUTO_SYNC_INTERVAL_OPTIONS.map((minutes) => (
-                          <button
-                            className={[
-                              "h-8 rounded-[var(--shard-radius-control)] border px-[var(--shard-space-3)] text-xs font-medium transition-colors duration-150",
-                              minutes === autoSyncIntervalMinutes
-                                ? "border-[color:var(--shard-sapphire)] bg-[color:var(--shard-sapphire-soft)] text-[color:var(--shard-sapphire-text)]"
-                                : "border-border text-muted-foreground hover:border-ring hover:text-foreground",
-                              !autoSyncEnabled
-                                ? "pointer-events-none opacity-[var(--shard-alpha-55)]"
-                                : "",
-                            ].join(" ")}
-                            disabled={!autoSyncEnabled}
-                            key={minutes}
-                            onClick={() =>
-                              onAutoSyncChange({
-                                autoSyncIntervalMinutes: minutes,
-                              })
-                            }
-                            type="button"
-                          >
-                            {copy.autoSyncMinutes(minutes)}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
+                      <HStack gap={1}>
+                        {AUTO_SYNC_INTERVAL_OPTIONS.map((minutes) => {
+                          const isSelected =
+                            minutes === autoSyncIntervalMinutes
+                          return (
+                            <button
+                              className={styles.intervalButton}
+                              disabled={!autoSyncEnabled}
+                              key={minutes}
+                              onClick={() =>
+                                onAutoSyncChange({
+                                  autoSyncIntervalMinutes: minutes,
+                                })
+                              }
+                              style={
+                                isSelected
+                                  ? {
+                                      borderColor: "var(--shard-sapphire)",
+                                      background: "var(--shard-sapphire-soft)",
+                                      color: "var(--shard-sapphire-text)",
+                                    }
+                                  : undefined
+                              }
+                              type="button"
+                            >
+                              {copy.autoSyncMinutes(minutes)}
+                            </button>
+                          )
+                        })}
+                      </HStack>
+                    </HStack>
                   ) : (
-                    <p className="mt-[var(--shard-space-3)] text-xs leading-5 text-pretty text-muted-foreground">
+                    <p
+                      style={{
+                        ...sectionDescriptionStyle,
+                        marginTop: "var(--shard-space-3)",
+                      }}
+                    >
                       {copy.autoSyncNeedsRemote}
                     </p>
                   )}
-                  <div className="mt-[var(--shard-space-4)]">
+                  <div style={{ marginTop: "var(--shard-space-4)" }}>
                     <Button
                       icon={
                         isSyncing ? (
-                          <Loader2Icon className="animate-spin" />
+                          <Loader2Icon className={styles.spin} />
                         ) : (
                           <RefreshCwIcon />
                         )
@@ -966,31 +1093,37 @@ export function VaultGuide({
             ) : null}
 
             {section === "shortcuts" ? (
-              <section className="border-b border-border px-[var(--shard-space-6)] py-[var(--shard-space-3)]">
-                <div className="divide-y divide-border">
-                  {shortcutRows[locale].map((row) => (
-                    <div
-                      className="flex items-center justify-between gap-[var(--shard-space-4)] py-[var(--shard-space-3)]"
+              <section className={styles.sectionPadCompact}>
+                <div>
+                  {shortcutRows[locale].map((row, index) => (
+                    <HStack
+                      gap={4}
+                      hAlign="between"
                       key={row.label}
+                      paddingBlock={3}
+                      style={{
+                        borderTop:
+                          index === 0 ? "none" : "1px solid var(--border)",
+                      }}
+                      vAlign="center"
                     >
-                      <span className="text-sm leading-5">{row.label}</span>
-                      <span className="flex shrink-0 items-center gap-[var(--shard-space-1)]">
+                      <span style={{ fontSize: 14, lineHeight: "20px" }}>
+                        {row.label}
+                      </span>
+                      <HStack gap={1} style={{ flexShrink: 0 }} vAlign="center">
                         {row.keys.map((key) => (
-                          <kbd
-                            className="rounded-[4px] border border-border bg-muted px-1.5 text-[10px] leading-4 font-semibold text-muted-foreground"
-                            key={key}
-                          >
+                          <kbd className={styles.kbdKey} key={key}>
                             {key}
                           </kbd>
                         ))}
-                      </span>
-                    </div>
+                      </HStack>
+                    </HStack>
                   ))}
                 </div>
               </section>
             ) : null}
           </main>
-        </div>
+        </Stack>
       </div>
     </div>
   )
@@ -1048,23 +1181,32 @@ function getGithubStatusText(
 
 type StationTone = "amber" | "emerald" | "empty" | "info" | "ruby"
 
-const stationDotClass: Record<StationTone, string> = {
-  amber:
-    "bg-[color:var(--shard-amber)] shadow-[0_0_0_3px_rgb(var(--shard-amber-rgb)/var(--shard-alpha-13))]",
-  emerald:
-    "bg-[color:var(--shard-emerald)] shadow-[0_0_0_3px_rgb(var(--shard-emerald-rgb)/var(--shard-alpha-13))]",
-  empty: "border-[1.5px] border-muted-foreground/[var(--shard-alpha-55)]",
-  info: "animate-pulse bg-[color:var(--shard-info)] shadow-[0_0_0_3px_rgb(var(--shard-info-rgb)/var(--shard-alpha-13))] motion-reduce:animate-none",
-  ruby: "bg-[color:var(--shard-ruby)] shadow-[0_0_0_3px_rgb(var(--shard-ruby-rgb)/var(--shard-alpha-13))]",
+const stationToneStyle: Record<StationTone, CSSProperties> = {
+  amber: {
+    background: "var(--shard-amber)",
+    boxShadow: "0 0 0 3px rgb(var(--shard-amber-rgb) / var(--shard-alpha-13))",
+  },
+  emerald: {
+    background: "var(--shard-emerald)",
+    boxShadow:
+      "0 0 0 3px rgb(var(--shard-emerald-rgb) / var(--shard-alpha-13))",
+  },
+  empty: {
+    border:
+      "1.5px solid color-mix(in srgb, var(--muted-foreground) 55%, transparent)",
+  },
+  info: {
+    background: "var(--shard-info)",
+    boxShadow: "0 0 0 3px rgb(var(--shard-info-rgb) / var(--shard-alpha-13))",
+  },
+  ruby: {
+    background: "var(--shard-ruby)",
+    boxShadow: "0 0 0 3px rgb(var(--shard-ruby-rgb) / var(--shard-alpha-13))",
+  },
 }
 
 function RailConnector() {
-  return (
-    <span
-      aria-hidden="true"
-      className="mt-2 hidden h-px min-w-[16px] flex-1 rounded-full bg-border-visible opacity-[var(--shard-alpha-55)] sm:block"
-    />
-  )
+  return <span aria-hidden="true" className={styles.railConnector} />
 }
 
 interface RailStationProps {
@@ -1076,63 +1218,61 @@ interface RailStationProps {
 
 function RailStation({ detail, label, tone, value }: RailStationProps) {
   return (
-    <div className="flex min-w-0 shrink-0 items-start gap-[var(--shard-space-2)] sm:max-w-[200px] sm:shrink">
+    <div className={styles.railStation}>
       <span
         aria-hidden="true"
-        className={`mt-[3px] size-2.5 shrink-0 rounded-full ${stationDotClass[tone]}`}
+        className={tone === "info" ? styles.pulseDot : undefined}
+        style={{
+          marginTop: 3,
+          width: 10,
+          height: 10,
+          flexShrink: 0,
+          borderRadius: "9999px",
+          ...stationToneStyle[tone],
+        }}
       />
-      <span className="min-w-0">
-        <span className="block text-[11px] leading-4 font-semibold text-muted-foreground">
+      <span style={{ minWidth: 0 }}>
+        <span
+          style={{
+            display: "block",
+            fontSize: 11,
+            lineHeight: "16px",
+            fontWeight: 600,
+            color: "var(--muted-foreground)",
+          }}
+        >
           {label}
         </span>
-        <span className="block text-sm leading-5 font-semibold">{value}</span>
+        <span
+          style={{
+            display: "block",
+            fontSize: 14,
+            lineHeight: "20px",
+            fontWeight: 600,
+          }}
+        >
+          {value}
+        </span>
         {detail ? (
-          <span className="block truncate font-mono text-xs leading-4 text-muted-foreground tabular-nums">
+          <span
+            style={{
+              display: "block",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+              fontFamily:
+                "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+              fontSize: 12,
+              lineHeight: "16px",
+              color: "var(--muted-foreground)",
+              fontVariantNumeric: "tabular-nums",
+            }}
+          >
             {detail}
           </span>
         ) : null}
       </span>
     </div>
-  )
-}
-
-interface SwitchToggleProps {
-  checked: boolean
-  disabled?: boolean
-  label: string
-  onChange: (checked: boolean) => void
-}
-
-function SwitchToggle({
-  checked,
-  disabled = false,
-  label,
-  onChange,
-}: SwitchToggleProps) {
-  return (
-    <button
-      aria-checked={checked}
-      aria-label={label}
-      className={[
-        "relative h-6 w-10 shrink-0 rounded-full transition-colors duration-150 ease-out",
-        "after:absolute after:-inset-2 after:content-['']",
-        checked ? "bg-[color:var(--shard-sapphire)]" : "bg-[color:var(--input)]",
-        disabled ? "pointer-events-none opacity-[var(--shard-alpha-55)]" : "",
-      ].join(" ")}
-      disabled={disabled}
-      onClick={() => onChange(!checked)}
-      role="switch"
-      type="button"
-    >
-      <span
-        className={[
-          "absolute top-[2px] left-[2px] block size-5 rounded-full bg-white",
-          "shadow-xs",
-          "transition-transform duration-150 ease-out",
-          checked ? "translate-x-[16px]" : "translate-x-0",
-        ].join(" ")}
-      />
-    </button>
   )
 }
 
@@ -1155,23 +1295,52 @@ function VaultActionButton({
 }: VaultActionButtonProps) {
   return (
     <button
-      className="grid min-h-[56px] grid-cols-[32px_minmax(0,1fr)] items-center gap-[var(--shard-space-3)] rounded-[var(--shard-radius-control)] border border-border bg-background px-[var(--shard-space-3)] text-left transition-[background-color,border-color,scale] duration-150 ease-out hover:border-[color:var(--shard-sapphire)] hover:bg-[color:var(--shard-sapphire-soft)] active:scale-[0.96] disabled:pointer-events-none disabled:opacity-[var(--shard-alpha-55)]"
+      className={styles.actionButton}
       disabled={disabled || active}
       onClick={onClick}
       type="button"
     >
-      <span className="flex size-8 items-center justify-center rounded-[var(--shard-radius-control)] bg-muted text-muted-foreground">
+      <span
+        style={{
+          display: "flex",
+          width: 32,
+          height: 32,
+          alignItems: "center",
+          justifyContent: "center",
+          borderRadius: "var(--shard-radius-control)",
+          background: "var(--muted)",
+          color: "var(--muted-foreground)",
+        }}
+      >
         {active ? (
-          <Loader2Icon className="size-4 animate-spin" />
+          <Loader2Icon className={styles.spin} size={16} />
         ) : (
-          <Icon className="size-4" />
+          <Icon size={16} />
         )}
       </span>
-      <span className="min-w-0">
-        <span className="block text-sm leading-5 font-semibold text-balance">
+      <span style={{ minWidth: 0 }}>
+        <span
+          style={{
+            display: "block",
+            fontSize: 14,
+            lineHeight: "20px",
+            fontWeight: 600,
+            textWrap: "balance",
+          }}
+        >
           {label}
         </span>
-        <span className="block truncate text-xs leading-4 text-pretty text-muted-foreground">
+        <span
+          style={{
+            display: "block",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+            fontSize: 12,
+            lineHeight: "16px",
+            color: "var(--muted-foreground)",
+          }}
+        >
           {description}
         </span>
       </span>

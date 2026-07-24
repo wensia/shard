@@ -1,0 +1,25 @@
+/*
+ * debt-card.tsx 专属样式。
+ *
+ * 唯一需要真正的 CSS 文件（而不是内联 style）的原因：卡片默认阴影在 hover
+ * 时要切换成更深的阴影（原 Tailwind 的 `shadow-card` -> `hover:shadow-card-hover`），
+ * 这是一个 :hover 伪类场景，内联 style 表达不了，因此按约定新建同名 CSS Module。
+ * 其余布局用 astryx 的 HStack/Grid + 内联 style 完成，见 debt-card.tsx。
+ */
+
+.card {
+  display: flex;
+  cursor: pointer;
+  flex-direction: column;
+  gap: var(--shard-space-3);
+  border-radius: var(--shard-surface-radius);
+  background: var(--card);
+  padding-inline: var(--shard-card-padding-x);
+  padding-block: var(--shard-card-padding-y);
+  box-shadow: var(--shard-shadow-card);
+  transition: box-shadow 150ms ease;
+}
+
+.card:hover {
+  box-shadow: var(--shard-shadow-card-hover);
+}

@@ -11,6 +11,7 @@ import {
   TagFilterButton,
   type TaggedSummary,
 } from "@/components/shard/tagged-panel"
+import styles from "./inbox-tag-bar.module.css"
 
 interface InboxTagBarProps {
   selectedTag: string | null
@@ -56,9 +57,20 @@ export function InboxTagBar({
   }
 
   return (
-    <div className="shard-content-inset pb-[var(--shard-space-3)]">
+    <div className="shard-content-inset" style={{ paddingBottom: "var(--shard-space-3)" }}>
       <div className="shard-content-measure">
-        <div className="shard-tag-filters flex max-h-[88px] flex-wrap content-start gap-[var(--shard-space-2)] overflow-y-auto pr-[var(--shard-space-1)]">
+        <div
+          className="shard-tag-filters"
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            alignContent: "flex-start",
+            gap: "var(--shard-space-2)",
+            maxHeight: 88,
+            overflowY: "auto",
+            paddingRight: "var(--shard-space-1)",
+          }}
+        >
           <TagFilterButton
             active={selectedTag === null}
             count={totalCount}
@@ -76,15 +88,24 @@ export function InboxTagBar({
           ))}
           {isCreating ? (
             <form
-              className="shard-tag max-w-full gap-[var(--shard-space-micro)] font-medium"
+              className="shard-tag"
               onSubmit={handleSubmit}
+              style={{
+                maxWidth: "100%",
+                gap: "var(--shard-space-micro)",
+                fontWeight: 500,
+              }}
             >
-              <span aria-hidden="true" className="shard-chip-text text-muted-foreground">
+              <span
+                aria-hidden="true"
+                className="shard-chip-text"
+                style={{ color: "var(--muted-foreground)" }}
+              >
                 #
               </span>
               <input
                 aria-label="新标签名"
-                className="shard-chip-text w-[88px] min-w-0 border-none bg-transparent p-0 outline-none placeholder:text-muted-foreground"
+                className={`shard-chip-text ${styles.tagInput}`}
                 onBlur={() => {
                   if (!draft.trim()) closeCreator()
                 }}
@@ -92,10 +113,19 @@ export function InboxTagBar({
                 onKeyDown={handleKeyDown}
                 placeholder="新标签"
                 ref={inputRef}
+                style={{
+                  width: 88,
+                  minWidth: 0,
+                  border: "none",
+                  background: "transparent",
+                  padding: 0,
+                  outline: "none",
+                }}
                 value={draft}
               />
               <button
-                className="shard-chip-text shrink-0 font-medium text-primary"
+                className="shard-chip-text"
+                style={{ flexShrink: 0, fontWeight: 500, color: "var(--primary)" }}
                 type="submit"
               >
                 新建
@@ -103,13 +133,27 @@ export function InboxTagBar({
             </form>
           ) : (
             <button
-              className="shard-tag max-w-full gap-[var(--shard-space-micro)] font-medium"
+              className="shard-tag"
               onClick={() => setIsCreating(true)}
+              style={{
+                maxWidth: "100%",
+                gap: "var(--shard-space-micro)",
+                fontWeight: 500,
+              }}
               title="新建标签"
               type="button"
             >
-              <PlusIcon className="size-3.5 shrink-0 stroke-[1.75]" />
-              <span className="shard-chip-text truncate">新建标签</span>
+              <PlusIcon size={14} strokeWidth={1.75} style={{ flexShrink: 0 }} />
+              <span
+                className="shard-chip-text"
+                style={{
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                新建标签
+              </span>
             </button>
           )}
         </div>

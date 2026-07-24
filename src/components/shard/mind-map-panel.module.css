@@ -1,0 +1,38 @@
+/* Create-map form needs a min-width breakpoint (sm:max-w-320px), the map
+   card needs a :hover shadow transition, and the loading spinner needs a
+   @keyframes animation — none of these are expressible via inline style. */
+
+.createForm {
+  min-width: 0;
+}
+
+@media (width >= 40rem) {
+  .createForm {
+    max-width: 320px;
+  }
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  cursor: pointer;
+  border-radius: var(--shard-surface-radius);
+  background: var(--card);
+  padding: var(--shard-space-3);
+  box-shadow: var(--shard-shadow-card);
+  transition: box-shadow 150ms ease-out;
+}
+
+.card:hover {
+  box-shadow: var(--shard-shadow-card-hover);
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.spinner {
+  animation: spin 1s linear infinite;
+}

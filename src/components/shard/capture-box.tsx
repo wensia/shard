@@ -25,6 +25,7 @@ import {
   type TagSuggestion,
 } from "@/components/shard/tag-completion-popover"
 import { Button } from "@astryxdesign/core/Button"
+import { HStack } from "@astryxdesign/core/HStack"
 import { useToast } from "@astryxdesign/core/Toast"
 import { getClipboardImageFiles } from "@/lib/clipboard-images"
 import {
@@ -53,6 +54,8 @@ import {
   buildTagSearchIndex,
   getMatchingTagsBySearchQuery,
 } from "@/lib/tag-index"
+
+import styles from "./capture-box.module.css"
 
 interface CaptureBoxProps {
   collapseSignal: number
@@ -665,18 +668,19 @@ export function CaptureBox({
 
   return (
     <div
-      className="shard-content-measure relative rounded-[var(--shard-surface-radius)] border border-border bg-card p-0 shadow-[var(--shard-composer-shadow)] transition-colors focus-within:border-[color:var(--shard-sapphire)]"
+      className={`shard-content-measure ${styles.composer}`}
       ref={containerRef}
     >
-      <div className="relative" ref={editorFrameRef}>
+      <div ref={editorFrameRef} style={{ position: "relative" }}>
         {content ? (
           <div
             aria-hidden="true"
             className="shard-editor-highlight-layer shard-memo-tags"
           >
             <div
-              className="px-[var(--shard-composer-padding)] py-[var(--shard-composer-padding)]"
               style={{
+                paddingInline: "var(--shard-composer-padding)",
+                paddingBlock: "var(--shard-composer-padding)",
                 transform:
                   editorScrollTop > 0
                     ? `translateY(-${editorScrollTop}px)`
@@ -700,7 +704,7 @@ export function CaptureBox({
           aria-controls={activeTag ? tagPopoverId : undefined}
           aria-expanded={activeTag ? true : undefined}
           autoFocus
-          className="shard-editor-field shard-editor-overlay-field relative z-10 resize-none overflow-hidden rounded-t-[var(--shard-surface-radius)] rounded-b-none border-0 bg-transparent px-[var(--shard-composer-padding)] py-[var(--shard-composer-padding)] shadow-none transition-[height] duration-200 ease-in-out placeholder:text-transparent focus-visible:border-transparent focus-visible:ring-0"
+          className={`shard-editor-field shard-editor-overlay-field ${styles.textareaField}`}
           onClick={(event) => {
             setIsEditorExpanded(true)
             syncSelection(event.currentTarget)
@@ -782,7 +786,13 @@ export function CaptureBox({
       ) : null}
 
       {pendingImages.length > 0 ? (
-        <div className="shard-image-attachment-row px-[var(--shard-composer-padding)] pb-[var(--shard-space-3)]">
+        <div
+          className="shard-image-attachment-row"
+          style={{
+            paddingInline: "var(--shard-composer-padding)",
+            paddingBottom: "var(--shard-space-3)",
+          }}
+        >
           {pendingImages.map((image) => (
             <FragmentImageAttachment
               alt={image.alt}
@@ -796,8 +806,15 @@ export function CaptureBox({
         </div>
       ) : null}
 
-      <div className="shard-edge-action-row rounded-b-[var(--shard-surface-radius)] bg-card">
-        <div className="min-w-0 flex-1">
+      <div
+        className="shard-edge-action-row"
+        style={{
+          borderRadius:
+            "0 0 var(--shard-surface-radius) var(--shard-surface-radius)",
+          background: "var(--card)",
+        }}
+      >
+        <div style={{ minWidth: 0, flex: "1 1 0%" }}>
           <EditorToolbar
             disabled={isCreating}
             onImageUpload={uploadImage}
@@ -808,15 +825,13 @@ export function CaptureBox({
             onOpenZen={onOpenZen ? openZenEditor : undefined}
             trailing={
               <Button
-                className={`shard-edge-action shard-edge-action-save rounded-full bg-[color:var(--shard-sapphire)] text-white hover:bg-[color:var(--shard-sapphire-hover)] ${
-                  isCreating
-                    ? "disabled:bg-[color:var(--shard-sapphire)] disabled:text-white disabled:opacity-100"
-                    : "disabled:bg-transparent disabled:text-muted-foreground"
-                }`}
+                className={`shard-edge-action shard-edge-action-save ${
+                  styles.saveButton
+                } ${isCreating ? "" : styles.saveButtonIdle}`}
                 icon={
                   isCreating ? (
                     <Loader2Icon
-                      className="animate-spin"
+                      className={styles.spin}
                       data-icon="inline-start"
                     />
                   ) : (
@@ -836,10 +851,22 @@ export function CaptureBox({
         </div>
       </div>
       {isCreating ? (
-        <div className="pointer-events-none absolute top-[var(--shard-space-4)] right-[var(--shard-space-4)] flex items-center gap-[var(--shard-space-micro)] text-xs font-normal text-muted-foreground">
-          <Loader2Icon className="size-3.5 animate-spin" />
+        <HStack
+          gap={1.5}
+          vAlign="center"
+          style={{
+            position: "absolute",
+            top: "var(--shard-space-4)",
+            right: "var(--shard-space-4)",
+            pointerEvents: "none",
+            fontSize: 12,
+            fontWeight: 400,
+            color: "var(--muted-foreground)",
+          }}
+        >
+          <Loader2Icon className={styles.spin} size={14} />
           <span>保存中</span>
-        </div>
+        </HStack>
       ) : null}
     </div>
   )

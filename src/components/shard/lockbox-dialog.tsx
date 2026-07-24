@@ -6,6 +6,8 @@ import { useEffect, useMemo, useState, type FormEvent } from "react"
 import { save } from "@tauri-apps/plugin-dialog"
 
 import { Button } from "@astryxdesign/core/Button"
+import { HStack } from "@astryxdesign/core/HStack"
+import { Stack } from "@astryxdesign/core/Stack"
 import { TextInput } from "@astryxdesign/core/TextInput"
 import { useToast } from "@astryxdesign/core/Toast"
 import { getApiErrorMessage, saveRecoveryKey } from "@/lib/api"
@@ -92,45 +94,105 @@ export function LockboxDialog({
   }
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-background/[var(--shard-alpha-89)] px-[var(--shard-content-inset)] py-[var(--shard-space-4)] backdrop-blur-sm">
+    <div
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 60,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        background: "color-mix(in oklab, var(--background) 89%, transparent)",
+        paddingInline: "var(--shard-content-inset)",
+        paddingBlock: "var(--shard-space-4)",
+        backdropFilter: "blur(4px)",
+      }}
+    >
       <section
         aria-labelledby="lockbox-dialog-title"
         aria-modal="true"
-        className="relative w-full max-w-[520px] rounded-[var(--shard-surface-radius)] border border-border bg-card shadow-popover"
         role="dialog"
+        style={{
+          position: "relative",
+          width: "100%",
+          maxWidth: 520,
+          borderRadius: "var(--shard-surface-radius)",
+          border: "1px solid var(--border)",
+          background: "var(--card)",
+          boxShadow: "var(--shard-shadow-popover)",
+        }}
       >
         <Button
-          className="absolute top-[var(--shard-space-3)] right-[var(--shard-space-3)]"
-          icon={<XIcon data-icon="inline-start" />}
+          icon={<XIcon size={16} />}
           isDisabled={isBusy || Boolean(recoveryKey)}
           isIconOnly
           label="关闭密匣弹窗"
           onClick={onClose}
           size="sm"
+          style={{
+            position: "absolute",
+            top: "var(--shard-space-3)",
+            right: "var(--shard-space-3)",
+          }}
           type="button"
           variant="ghost"
         />
 
-        <header className="border-b border-border px-[var(--shard-space-5)] py-[var(--shard-space-4)] pr-[calc(var(--shard-space-8)+32px)]">
-          <div className="flex items-center gap-[var(--shard-space-3)]">
-            <span className="flex size-9 items-center justify-center rounded-[var(--shard-radius-control)] border border-border bg-background text-[color:var(--shard-sapphire)]">
-              <LockKeyholeIcon className="size-[18px] stroke-[1.75]" />
+        <header
+          style={{
+            borderBottom: "1px solid var(--border)",
+            paddingInline: "var(--shard-space-5)",
+            paddingBlock: "var(--shard-space-4)",
+            paddingRight: "calc(var(--shard-space-8) + 32px)",
+          }}
+        >
+          <HStack gap={3} vAlign="center">
+            <span
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                width: 36,
+                height: 36,
+                flexShrink: 0,
+                borderRadius: "var(--shard-radius-control)",
+                border: "1px solid var(--border)",
+                background: "var(--background)",
+                color: "var(--shard-sapphire)",
+              }}
+            >
+              <LockKeyholeIcon size={18} strokeWidth={1.75} />
             </span>
-            <div className="min-w-0">
+            <div style={{ minWidth: 0 }}>
               <h2
-                className="text-base leading-6 font-semibold text-balance"
                 id="lockbox-dialog-title"
+                style={{
+                  margin: 0,
+                  fontSize: "1rem",
+                  lineHeight: "1.5rem",
+                  fontWeight: 600,
+                  textWrap: "balance",
+                }}
               >
                 {title()}
               </h2>
-              <p className="mt-1 text-xs leading-5 text-pretty text-muted-foreground">
+              <p
+                style={{
+                  margin: 0,
+                  marginTop: "var(--shard-space-1)",
+                  fontSize: "0.75rem",
+                  lineHeight: "1.25rem",
+                  textWrap: "pretty",
+                  color: "var(--muted-foreground)",
+                }}
+              >
                 本地加密，解锁后 15 分钟闲置自动上锁。
               </p>
             </div>
-          </div>
+          </HStack>
         </header>
 
-        <div className="grid gap-[var(--shard-space-4)] px-[var(--shard-space-5)] py-[var(--shard-space-5)]">
+        <Stack gap={4} padding={5}>
           {recoveryKey ? (
             <RecoveryKeyStep
               code={recoveryCode}
@@ -156,7 +218,7 @@ export function LockboxDialog({
             />
           ) : mode === "unlock" ? (
             <form
-              className="grid gap-[var(--shard-space-3)]"
+              style={{ display: "flex", flexDirection: "column", gap: "var(--shard-space-3)" }}
               onSubmit={(event) => {
                 event.preventDefault()
                 void submit(() => onUnlock(password))
@@ -172,7 +234,7 @@ export function LockboxDialog({
                 type="password"
                 value={password}
               />
-              <div className="flex items-center justify-between gap-[var(--shard-space-3)]">
+              <HStack gap={3} hAlign="between" vAlign="center">
                 <Button
                   isDisabled={isBusy}
                   label="忘记密码"
@@ -186,11 +248,11 @@ export function LockboxDialog({
                   type="submit"
                   variant="primary"
                 />
-              </div>
+              </HStack>
             </form>
           ) : mode === "reset" ? (
             <form
-              className="grid gap-[var(--shard-space-3)]"
+              style={{ display: "flex", flexDirection: "column", gap: "var(--shard-space-3)" }}
               onSubmit={(event) => {
                 event.preventDefault()
                 if (!validateNewPassword()) return
@@ -212,7 +274,7 @@ export function LockboxDialog({
                 onNewPassword={setNewPassword}
                 onRepeatPassword={setRepeatPassword}
               />
-              <div className="flex justify-between gap-[var(--shard-space-3)]">
+              <HStack gap={3} hAlign="between">
                 <Button
                   isDisabled={isBusy}
                   label="返回解锁"
@@ -226,11 +288,11 @@ export function LockboxDialog({
                   type="submit"
                   variant="primary"
                 />
-              </div>
+              </HStack>
             </form>
           ) : mode === "change" ? (
             <form
-              className="grid gap-[var(--shard-space-3)]"
+              style={{ display: "flex", flexDirection: "column", gap: "var(--shard-space-3)" }}
               onSubmit={(event) => {
                 event.preventDefault()
                 if (!validateNewPassword()) return
@@ -264,11 +326,22 @@ export function LockboxDialog({
           ) : null}
 
           {error ? (
-            <div className="rounded-[var(--shard-radius-control)] border border-[rgb(var(--shard-ruby-rgb)/var(--shard-alpha-34))] bg-[rgb(var(--shard-ruby-rgb)/var(--shard-alpha-8))] px-[var(--shard-space-3)] py-[var(--shard-space-2)] text-xs leading-5 text-[color:var(--shard-ruby)]">
+            <div
+              style={{
+                borderRadius: "var(--shard-radius-control)",
+                border: "1px solid rgb(var(--shard-ruby-rgb) / var(--shard-alpha-34))",
+                background: "rgb(var(--shard-ruby-rgb) / var(--shard-alpha-8))",
+                paddingInline: "var(--shard-space-3)",
+                paddingBlock: "var(--shard-space-2)",
+                fontSize: "0.75rem",
+                lineHeight: "1.25rem",
+                color: "var(--shard-ruby)",
+              }}
+            >
               {error}
             </div>
           ) : null}
-        </div>
+        </Stack>
       </section>
     </div>
   )
@@ -294,7 +367,10 @@ function PasswordPairForm({
   onSubmit: (event: FormEvent<HTMLFormElement>) => void
 }) {
   return (
-    <form className="grid gap-[var(--shard-space-3)]" onSubmit={onSubmit}>
+    <form
+      style={{ display: "flex", flexDirection: "column", gap: "var(--shard-space-3)" }}
+      onSubmit={onSubmit}
+    >
       <PasswordPairFields
         isBusy={isBusy}
         newPassword={newPassword}
@@ -391,14 +467,33 @@ function RecoveryKeyStep({
   }
 
   return (
-    <div className="grid gap-[var(--shard-space-3)]">
-      <p className="text-sm leading-6 text-pretty text-muted-foreground">
+    <Stack gap={3}>
+      <p
+        style={{
+          margin: 0,
+          fontSize: "0.875rem",
+          lineHeight: "1.5rem",
+          textWrap: "pretty",
+          color: "var(--muted-foreground)",
+        }}
+      >
         这是唯一能保留密匣内容的重置凭据。Shard 不保存恢复密钥明文，关闭后不会再次显示。
       </p>
-      <div className="rounded-[var(--shard-radius-control)] border border-border bg-background p-[var(--shard-space-3)] font-mono text-sm leading-6 break-all">
+      <div
+        style={{
+          borderRadius: "var(--shard-radius-control)",
+          border: "1px solid var(--border)",
+          background: "var(--background)",
+          padding: "var(--shard-space-3)",
+          fontFamily: "var(--font-family-code)",
+          fontSize: "0.875rem",
+          lineHeight: "1.5rem",
+          wordBreak: "break-all",
+        }}
+      >
         {recoveryKey}
       </div>
-      <div className="flex flex-wrap items-center gap-[var(--shard-space-2)]">
+      <HStack gap={2} vAlign="center" wrap="wrap">
         <Button
           label="复制"
           onClick={() => {
@@ -416,10 +511,23 @@ function RecoveryKeyStep({
           type="button"
           variant="secondary"
         />
-        <span className="min-w-[220px] flex-1 text-xs leading-5 text-pretty text-muted-foreground">
-          输入最后一段 <span className="font-mono font-semibold">{code}</span> 确认已保存。
+        <span
+          style={{
+            minWidth: 220,
+            flex: "1 1 auto",
+            fontSize: "0.75rem",
+            lineHeight: "1.25rem",
+            textWrap: "pretty",
+            color: "var(--muted-foreground)",
+          }}
+        >
+          输入最后一段{" "}
+          <span style={{ fontFamily: "var(--font-family-code)", fontWeight: 600 }}>
+            {code}
+          </span>{" "}
+          确认已保存。
         </span>
-      </div>
+      </HStack>
       <TextInput
         isLabelHidden
         label="确认恢复密钥"
@@ -434,7 +542,7 @@ function RecoveryKeyStep({
         type="button"
         variant="primary"
       />
-    </div>
+    </Stack>
   )
 }
 

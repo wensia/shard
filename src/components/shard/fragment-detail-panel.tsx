@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react"
+import { useMemo, useState, type CSSProperties } from "react"
 import {
   CopyIcon,
   PlusIcon,
@@ -9,10 +9,80 @@ import { StatusBadge } from "@/components/shard/status-badge"
 import { TagBadge } from "@/components/shard/tag-badge"
 import { Button } from "@astryxdesign/core/Button"
 import { Divider } from "@astryxdesign/core/Divider"
+import { HStack } from "@astryxdesign/core/HStack"
 import { FragmentBody } from "@/components/shard/fragment-body"
+import { Stack, StackItem } from "@astryxdesign/core/Stack"
 import { TextInput } from "@astryxdesign/core/TextInput"
 import { normalizeTag, toggleTaskLine } from "@/lib/editor-format"
 import type { Fragment } from "@/types"
+
+const panelTitleStyle: CSSProperties = {
+  fontSize: "var(--font-size-lg)",
+  fontWeight: "var(--font-weight-bold)",
+}
+
+const sectionHeadingStyle: CSSProperties = {
+  fontSize: "var(--font-size-sm)",
+  fontWeight: "var(--font-weight-bold)",
+}
+
+const infoGridStyle: CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "72px 1fr",
+  rowGap: "var(--shard-space-3)",
+  fontSize: "var(--font-size-sm)",
+}
+
+const labelStyle: CSSProperties = {
+  color: "var(--muted-foreground)",
+}
+
+const truncateStyle: CSSProperties = {
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
+}
+
+const valueStyle: CSSProperties = {
+  textAlign: "right",
+  fontWeight: "var(--font-weight-medium)",
+}
+
+const valueMonoStyle: CSSProperties = {
+  ...truncateStyle,
+  textAlign: "right",
+  fontFamily: "var(--font-family-code)",
+  fontSize: "var(--font-size-xs)",
+}
+
+const valueTruncateStyle: CSSProperties = {
+  ...truncateStyle,
+  textAlign: "right",
+  fontSize: "var(--font-size-xs)",
+}
+
+const valueMutedTruncateStyle: CSSProperties = {
+  ...valueTruncateStyle,
+  color: "var(--muted-foreground)",
+}
+
+const contentBoxStyle: CSSProperties = {
+  minHeight: 112,
+  borderRadius: "var(--shard-radius-card)",
+  border: "1px solid var(--border)",
+  background: "color-mix(in srgb, var(--muted) 55%, transparent)",
+  padding: "var(--shard-space-3)",
+}
+
+const aiSuggestionBoxStyle: CSSProperties = {
+  borderRadius: "var(--shard-radius-card)",
+  border: "1px solid rgb(var(--shard-primary-rgb) / var(--shard-alpha-34))",
+  background: "rgb(var(--shard-primary-rgb) / var(--shard-alpha-8))",
+  padding: "var(--shard-space-3)",
+  fontSize: "var(--font-size-sm)",
+  lineHeight: "24px",
+  color: "var(--shard-sapphire-text)",
+}
 
 interface FragmentDetailPanelProps {
   fragment: Fragment | null
@@ -42,13 +112,32 @@ export function FragmentDetailPanel({
 
   if (!fragment) {
     return (
-      <aside className="flex min-h-0 flex-col bg-card px-5 py-6">
-        <div className="text-lg font-bold">片段详情</div>
-        <Divider className="my-5" />
-        <div className="flex flex-1 items-center justify-center text-center text-sm font-medium text-muted-foreground">
-          选择一张卡片查看详情。
-        </div>
-      </aside>
+      <Stack
+        as="aside"
+        minHeight={0}
+        paddingInline={5}
+        paddingBlock={6}
+        style={{ background: "var(--card)" }}
+      >
+        <div style={panelTitleStyle}>片段详情</div>
+        <Divider style={{ marginBlock: "var(--shard-space-5)" }} />
+        <StackItem size="fill">
+          <div
+            style={{
+              display: "flex",
+              height: "100%",
+              alignItems: "center",
+              justifyContent: "center",
+              textAlign: "center",
+              fontSize: "var(--font-size-sm)",
+              fontWeight: "var(--font-weight-medium)",
+              color: "var(--muted-foreground)",
+            }}
+          >
+            选择一张卡片查看详情。
+          </div>
+        </StackItem>
+      </Stack>
     )
   }
 
@@ -77,9 +166,9 @@ export function FragmentDetailPanel({
   }
 
   return (
-    <aside className="flex min-h-0 flex-col bg-card">
-      <div className="flex items-center justify-between px-5 py-5">
-        <div className="text-lg font-bold">片段详情</div>
+    <Stack as="aside" minHeight={0} style={{ background: "var(--card)" }}>
+      <HStack hAlign="between" vAlign="center" paddingInline={5} paddingBlock={5}>
+        <div style={panelTitleStyle}>片段详情</div>
         <Button
           icon={<CopyIcon />}
           isIconOnly
@@ -87,115 +176,123 @@ export function FragmentDetailPanel({
           size="sm"
           variant="ghost"
         />
-      </div>
+      </HStack>
       <Divider />
 
-      <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-5 py-5">
-        <section className="flex flex-col gap-3">
-          <h2 className="text-sm font-bold">基本信息</h2>
-          <dl className="grid grid-cols-[72px_1fr] gap-y-3 text-sm">
-            <dt className="text-muted-foreground">创建时间</dt>
-            <dd className="text-right font-medium">{createdTime}</dd>
-            <dt className="text-muted-foreground">ID</dt>
-            <dd className="truncate text-right font-mono text-xs">{fragment.id}</dd>
-            <dt className="text-muted-foreground">文件</dt>
-            <dd className="truncate text-right text-xs">{fragment.path}</dd>
-          </dl>
-        </section>
+      <StackItem size="fill" isScrollable>
+        <Stack gap={5} paddingInline={5} paddingBlock={5}>
+          <Stack as="section" gap={3}>
+            <h2 style={sectionHeadingStyle}>基本信息</h2>
+            <dl style={infoGridStyle}>
+              <dt style={labelStyle}>创建时间</dt>
+              <dd style={valueStyle}>{createdTime}</dd>
+              <dt style={labelStyle}>ID</dt>
+              <dd style={valueMonoStyle}>{fragment.id}</dd>
+              <dt style={labelStyle}>文件</dt>
+              <dd style={valueTruncateStyle}>{fragment.path}</dd>
+            </dl>
+          </Stack>
 
-        <Divider />
+          <Divider />
 
-        <section className="flex flex-col gap-3">
-          <div className="flex items-center justify-between">
-            <h2 className="text-sm font-bold">标签</h2>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {fragment.tags.map((tag) => (
-              <TagBadge
-                key={tag}
-                onRemove={removeTag}
-                removable
-                tag={tag}
-              />
-            ))}
-          </div>
-          <div className="flex gap-2">
-            <div className="min-w-0 flex-1">
-              <TextInput
-                isLabelHidden
+          <Stack as="section" gap={3}>
+            <HStack hAlign="between" vAlign="center">
+              <h2 style={sectionHeadingStyle}>标签</h2>
+            </HStack>
+            <HStack wrap="wrap" gap={2}>
+              {fragment.tags.map((tag) => (
+                <TagBadge
+                  key={tag}
+                  onRemove={removeTag}
+                  removable
+                  tag={tag}
+                />
+              ))}
+            </HStack>
+            <HStack gap={2}>
+              <StackItem size="fill">
+                <TextInput
+                  isLabelHidden
+                  label="添加标签"
+                  onChange={(value) => setDraftTag(value)}
+                  onEnter={addTag}
+                  placeholder="添加标签"
+                  value={draftTag}
+                />
+              </StackItem>
+              <Button
+                icon={<PlusIcon />}
+                isIconOnly
                 label="添加标签"
-                onChange={(value) => setDraftTag(value)}
-                onEnter={addTag}
-                placeholder="添加标签"
-                value={draftTag}
+                onClick={addTag}
+                size="sm"
+                variant="secondary"
+              />
+            </HStack>
+          </Stack>
+
+          <Divider />
+
+          <Stack as="section" gap={3}>
+            <HStack hAlign="between" vAlign="center">
+              <h2 style={sectionHeadingStyle}>Git 状态</h2>
+              <StatusBadge status={fragment.gitStatus} />
+            </HStack>
+            <dl style={infoGridStyle}>
+              <dt style={labelStyle}>Vault</dt>
+              <dd style={valueTruncateStyle}>{vaultPath}</dd>
+              <dt style={labelStyle}>错误</dt>
+              <dd style={valueMutedTruncateStyle}>
+                {fragment.error || "无"}
+              </dd>
+            </dl>
+          </Stack>
+
+          <Divider />
+
+          <Stack as="section" gap={3}>
+            <h2 style={sectionHeadingStyle}>内容</h2>
+            <div style={contentBoxStyle}>
+              <FragmentBody
+                as="div"
+                content={fragment.content}
+                downloadableImages
+                onTaskToggle={onUpdateContent ? toggleTask : undefined}
+                renderImages
+                vaultPath={vaultPath}
               />
             </div>
-            <Button
-              icon={<PlusIcon />}
-              isIconOnly
-              label="添加标签"
-              onClick={addTag}
-              size="sm"
-              variant="secondary"
-            />
-          </div>
-        </section>
+          </Stack>
 
-        <Divider />
+          <Divider />
 
-        <section className="flex flex-col gap-3">
-          <div className="flex items-center justify-between">
-            <h2 className="text-sm font-bold">Git 状态</h2>
-            <StatusBadge status={fragment.gitStatus} />
-          </div>
-          <dl className="grid grid-cols-[72px_1fr] gap-y-3 text-sm">
-            <dt className="text-muted-foreground">Vault</dt>
-            <dd className="truncate text-right text-xs">{vaultPath}</dd>
-            <dt className="text-muted-foreground">错误</dt>
-            <dd className="text-right text-xs text-muted-foreground">
-              {fragment.error || "无"}
-            </dd>
-          </dl>
-        </section>
+          <Stack as="section" gap={3}>
+            <HStack hAlign="between" vAlign="center">
+              <h2 style={sectionHeadingStyle}>AI 建议</h2>
+              <Button
+                icon={<SparklesIcon />}
+                isIconOnly
+                label="整理片段"
+                size="sm"
+                variant="ghost"
+              />
+            </HStack>
+            <div style={aiSuggestionBoxStyle}>
+              AI 整理会在后续版本中接入本地 Codex / Claude Code CLI。创建片段时不会等待 AI。
+            </div>
+          </Stack>
+        </Stack>
+      </StackItem>
 
-        <Divider />
-
-        <section className="flex flex-col gap-3">
-          <h2 className="text-sm font-bold">内容</h2>
-          <FragmentBody
-            as="div"
-            className="min-h-28 rounded-md border border-border bg-muted/[var(--shard-alpha-55)] p-3"
-            content={fragment.content}
-            downloadableImages
-            onTaskToggle={onUpdateContent ? toggleTask : undefined}
-            renderImages
-            vaultPath={vaultPath}
-          />
-        </section>
-
-        <Divider />
-
-        <section className="flex flex-col gap-3">
-          <div className="flex items-center justify-between">
-            <h2 className="text-sm font-bold">AI 建议</h2>
-            <Button
-              icon={<SparklesIcon />}
-              isIconOnly
-              label="整理片段"
-              size="sm"
-              variant="ghost"
-            />
-          </div>
-          <div className="rounded-md border border-[rgb(var(--shard-primary-rgb)/var(--shard-alpha-34))] bg-[rgb(var(--shard-primary-rgb)/var(--shard-alpha-8))] p-3 text-sm leading-6 text-[color:var(--shard-sapphire-text)]">
-            AI 整理会在后续版本中接入本地 Codex / Claude Code CLI。创建片段时不会等待 AI。
-          </div>
-        </section>
-      </div>
-
-      <div className="flex gap-3 border-t border-border p-5">
-        <Button className="flex-1" label="归档片段" variant="secondary" />
-        <Button className="flex-1" label="编辑片段" variant="secondary" />
-      </div>
-    </aside>
+      <HStack
+        gap={3}
+        paddingInline={5}
+        paddingBlock={5}
+        style={{ borderTop: "1px solid var(--border)" }}
+      >
+        <Button style={{ flex: 1 }} label="归档片段" variant="secondary" />
+        <Button style={{ flex: 1 }} label="编辑片段" variant="secondary" />
+      </HStack>
+    </Stack>
   )
 }

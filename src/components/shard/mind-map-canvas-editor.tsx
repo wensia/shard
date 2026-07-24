@@ -30,6 +30,8 @@ import {
 } from "@/lib/mind-map-tree"
 import type { ShardMapFile } from "@/types"
 
+import styles from "./mind-map-canvas-editor.module.css"
+
 interface MindMapCanvasEditorProps {
   file: ShardMapFile
   onChange: (file: ShardMapFile) => void
@@ -364,13 +366,10 @@ export function MindMapCanvasEditor({
   }
 
   return (
-    <div
-      className="relative min-h-0 flex-1 overflow-hidden bg-background"
-      ref={containerRef}
-    >
+    <div className={styles.canvasRoot} ref={containerRef}>
       <svg
         aria-label="思维导图编辑器"
-        className="block size-full bg-background"
+        className={styles.canvasSvg}
         preserveAspectRatio="xMidYMid meet"
         role="application"
         viewBox={fit.viewBox}
@@ -396,9 +395,7 @@ export function MindMapCanvasEditor({
 
           return (
             <g
-              className={
-                isRoot ? "cursor-text" : "cursor-grab active:cursor-grabbing"
-              }
+              className={isRoot ? styles.textCursor : styles.grabbable}
               key={layoutNode.id}
               onClick={(event) => {
                 if (suppressNodeClickRef.current) {
@@ -483,7 +480,7 @@ export function MindMapCanvasEditor({
       canEditSelectedNode &&
       !isDraggingNode ? (
         <Button
-          className="absolute z-20 cursor-grab bg-card/95 text-muted-foreground shadow-popover active:cursor-grabbing"
+          className={styles.dragHandleButton}
           icon={<GripVerticalIcon />}
           isIconOnly
           label="拖拽移动节点"
@@ -502,7 +499,7 @@ export function MindMapCanvasEditor({
       {selectedNode && selectedEditorRect && canEditSelectedNode && !isDraggingNode ? (
         <input
           aria-label={selectedNode.id === file.rootId ? "根节点" : "导图节点"}
-          className="absolute z-10 rounded-[var(--shard-radius-card)] border border-[rgb(var(--shard-primary-rgb)/var(--shard-alpha-34))] bg-card/95 px-3 text-sm font-medium text-foreground outline-none transition-[border-color,box-shadow] duration-150 ease-out focus-visible:border-[rgb(var(--shard-primary-rgb)/var(--shard-alpha-55))]"
+          className={styles.nodeInput}
           onChange={(event) =>
             onChange(
               updateMindMapNodeText(file, selectedNode.id, event.target.value)

@@ -1,0 +1,79 @@
+/*
+ * mind-map-outline-editor.tsx 专属样式。
+ *
+ * 这里之所以没有走默认的内联 style，是因为原设计需要三组"父级悬停/聚焦时
+ * 子元素才显示"的 group-hover / group-focus-within 效果（拖拽把手、行内操作
+ * 按钮组），以及输入框聚焦态的 :focus-within 边框——这些伪类/后代选择器组合
+ * 内联 style 做不到，且这三组规则在每一行大纲节点上都会重复渲染，属于
+ * "同一文件内重复出现 + 需要伪类" 的场景，符合新建同名 CSS Module 的条件。
+ */
+
+.row {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--shard-space-2);
+  border-radius: var(--shard-radius-control);
+  padding-block: 4px;
+  padding-inline-end: 4px;
+  transition: background-color 140ms ease;
+}
+
+.row:hover {
+  background: color-mix(in oklab, var(--muted) 70%, transparent);
+}
+
+.rowActive,
+.rowActive:hover {
+  background: var(--shard-accent-soft);
+}
+
+.rowDragging {
+  opacity: 0.5;
+}
+
+.rowMain {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--shard-space-2);
+}
+
+.dragHandle {
+  margin-left: -4px;
+  cursor: grab;
+  color: var(--muted-foreground);
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.dragHandle:active {
+  cursor: grabbing;
+}
+
+.row:hover .dragHandle,
+.row:focus-within .dragHandle {
+  opacity: 1;
+}
+
+.actionsRow {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.row:hover .actionsRow,
+.row:focus-within .actionsRow {
+  opacity: 1;
+}
+
+/* 输入框默认无边框/无背景，融入行内；聚焦时露出边框提示当前焦点。
+   基础态（透明边框/背景/阴影）额外用内联 style 强制设置，这里只负责
+   :focus-within 这一条内联 style 做不到的伪类规则。 */
+.nodeInputFocusRing:focus-within {
+  border-color: var(--border);
+}

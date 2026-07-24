@@ -2,6 +2,9 @@ import { useEffect, useRef } from "react"
 import { HashIcon, PlusIcon } from "lucide-react"
 
 import { getTextareaCaretBox } from "@/lib/textarea-caret"
+import { cn } from "@/lib/utils"
+
+import styles from "./tag-completion-popover.module.css"
 
 export interface TagSuggestion {
   kind: "create" | "existing"
@@ -36,13 +39,38 @@ export function TagCompletionPopover({
   return (
     <div
       aria-label="标签建议"
-      className="absolute z-40 max-h-[240px] w-[200px] max-w-[calc(100%-1.5rem)] overflow-y-auto rounded-[var(--shard-surface-radius)] border border-[rgb(0_0_0/var(--shard-alpha-5))] bg-card p-[var(--shard-space-1)] text-card-foreground shadow-popover"
       id={id}
       role="listbox"
-      style={{ left, top }}
+      style={{
+        background: "var(--card)",
+        border: "1px solid rgb(0 0 0 / var(--shard-alpha-5))",
+        borderRadius: "var(--shard-surface-radius)",
+        boxShadow: "var(--shard-shadow-popover)",
+        color: "var(--card-foreground)",
+        left,
+        maxHeight: 240,
+        maxWidth: "calc(100% - 1.5rem)",
+        overflowY: "auto",
+        padding: "var(--shard-space-1)",
+        position: "absolute",
+        top,
+        width: 200,
+        zIndex: 40,
+      }}
     >
       {suggestions.length === 0 ? (
-        <div className="flex min-h-8 items-center px-[var(--shard-space-2)] text-xs leading-5 font-normal text-muted-foreground">
+        <div
+          style={{
+            alignItems: "center",
+            color: "var(--muted-foreground)",
+            display: "flex",
+            fontSize: 12,
+            fontWeight: 400,
+            lineHeight: "20px",
+            minHeight: 32,
+            paddingInline: "var(--shard-space-2)",
+          }}
+        >
           暂无标签
         </div>
       ) : (
@@ -53,10 +81,7 @@ export function TagCompletionPopover({
           return (
             <button
               aria-selected={isActive}
-              className={[
-                "flex min-h-10 w-full items-center justify-between gap-[var(--shard-space-2)] rounded-[var(--shard-radius-control)] px-[var(--shard-space-2)] text-left transition-[background-color,color,scale] duration-150 ease-out hover:bg-muted active:scale-[0.96]",
-                isActive ? "bg-muted text-foreground" : "",
-              ].join(" ")}
+              className={cn(styles.item, isActive ? styles.itemActive : null)}
               id={getTagSuggestionOptionId(id, index)}
               key={`${item.kind}-${item.tag}`}
               onMouseDown={(event) => {
@@ -68,15 +93,50 @@ export function TagCompletionPopover({
               role="option"
               type="button"
             >
-              <span className="flex min-w-0 flex-1 items-center gap-[var(--shard-space-micro)] text-xs leading-5 font-normal text-foreground">
+              <span
+                style={{
+                  alignItems: "center",
+                  color: "var(--foreground)",
+                  display: "flex",
+                  flex: "1 1 0%",
+                  fontSize: 12,
+                  fontWeight: 400,
+                  gap: "var(--shard-space-micro)",
+                  lineHeight: "20px",
+                  minWidth: 0,
+                }}
+              >
                 {isCreate ? (
-                  <PlusIcon className="size-3.5 shrink-0 text-muted-foreground" />
+                  <PlusIcon
+                    size={14}
+                    style={{ color: "var(--muted-foreground)", flexShrink: 0 }}
+                  />
                 ) : (
-                  <HashIcon className="size-3.5 shrink-0 text-muted-foreground" />
+                  <HashIcon
+                    size={14}
+                    style={{ color: "var(--muted-foreground)", flexShrink: 0 }}
+                  />
                 )}
-                <span className="truncate">{item.tag}</span>
+                <span
+                  style={{
+                    display: "block",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {item.tag}
+                </span>
               </span>
-              <span className="shrink-0 text-[11px] leading-none font-normal text-muted-foreground">
+              <span
+                style={{
+                  color: "var(--muted-foreground)",
+                  flexShrink: 0,
+                  fontSize: 11,
+                  fontWeight: 400,
+                  lineHeight: 1,
+                }}
+              >
                 {isCreate ? "新建" : "使用"}
               </span>
             </button>

@@ -1,0 +1,12 @@
+/* Loading spinner rotation for the inline preview placeholder — inline
+   style cannot declare @keyframes, so this needs its own tiny stylesheet. */
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.spin {
+  animation: spin 1s linear infinite;
+}

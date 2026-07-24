@@ -1,3 +1,4 @@
+import type { CSSProperties } from "react"
 import {
   ArchiveIcon,
   ArchiveRestoreIcon,
@@ -10,11 +11,14 @@ import {
 } from "lucide-react"
 
 import { DropdownMenu, DropdownMenuItem } from "@astryxdesign/core/DropdownMenu"
+import { Center } from "@astryxdesign/core/Center"
+import { Grid } from "@astryxdesign/core/Grid"
+import { HStack } from "@astryxdesign/core/HStack"
 
+import styles from "./debt-card.module.css"
 import { DebtStatusBadge } from "@/components/shard/debt-status-badge"
 import { TagBadge } from "@/components/shard/tag-badge"
 import { centsToYuanLabel, computeDebtUrgency, describeDueDate } from "@/lib/debt"
-import { cn } from "@/lib/utils"
 import type { Debt } from "@/types"
 
 interface DebtCardProps {
@@ -39,38 +43,72 @@ export function DebtCard({
   const isLendOut = debt.direction === "lend_out"
 
   return (
-    <article
-      className="group flex cursor-pointer flex-col gap-[var(--shard-space-3)] rounded-[var(--shard-surface-radius)] bg-card px-[var(--shard-card-padding-x)] py-[var(--shard-card-padding-y)] shadow-card transition-shadow hover:shadow-card-hover"
-      onClick={() => onOpenDetail(debt)}
-    >
-      <div className="flex items-start justify-between gap-[var(--shard-space-3)]">
-        <div className="flex min-w-0 items-center gap-[var(--shard-space-3)]">
-          <span className="flex size-8 shrink-0 items-center justify-center rounded-[var(--shard-radius-control)] border border-border bg-background text-muted-foreground">
+    <article className={styles.card} onClick={() => onOpenDetail(debt)}>
+      <HStack hAlign="between" vAlign="start" gap={3}>
+        <HStack gap={3} vAlign="center" style={{ minWidth: 0 }}>
+          <Center
+            width={32}
+            height={32}
+            style={{
+              flexShrink: 0,
+              borderRadius: "var(--shard-radius-control)",
+              border: "1px solid var(--border)",
+              background: "var(--background)",
+              color: "var(--muted-foreground)",
+            }}
+          >
             {isLendOut ? (
-              <ArrowUpRightIcon className="size-4 stroke-[1.75]" />
+              <ArrowUpRightIcon size={16} strokeWidth={1.75} />
             ) : (
-              <ArrowDownLeftIcon className="size-4 stroke-[1.75]" />
+              <ArrowDownLeftIcon size={16} strokeWidth={1.75} />
             )}
-          </span>
-          <div className="min-w-0">
-            <div className="flex min-w-0 items-center gap-[var(--shard-space-2)]">
-              <h3 className="truncate text-sm font-semibold text-foreground">
+          </Center>
+          <div style={{ minWidth: 0 }}>
+            <HStack gap={2} vAlign="center" style={{ minWidth: 0 }}>
+              <h3
+                style={{
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                  fontSize: "var(--font-size-sm)",
+                  fontWeight: "var(--font-weight-semibold)",
+                  color: "var(--foreground)",
+                }}
+              >
                 {debt.counterparty}
               </h3>
-              <span className="shrink-0 text-xs font-medium text-muted-foreground">
+              <span
+                style={{
+                  flexShrink: 0,
+                  fontSize: "var(--font-size-xs)",
+                  fontWeight: "var(--font-weight-medium)",
+                  color: "var(--muted-foreground)",
+                }}
+              >
                 {isLendOut ? "借出" : "借入"}
               </span>
-            </div>
+            </HStack>
             {dueLabel ? (
-              <div className="mt-0.5 truncate text-xs text-muted-foreground">
+              <div
+                style={{
+                  marginTop: 2,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                  fontSize: "var(--font-size-xs)",
+                  color: "var(--muted-foreground)",
+                }}
+              >
                 {dueLabel}
               </div>
             ) : null}
           </div>
-        </div>
+        </HStack>
 
-        <div
-          className="flex shrink-0 items-center gap-[var(--shard-space-2)]"
+        <HStack
+          gap={2}
+          vAlign="center"
+          style={{ flexShrink: 0 }}
           onClick={(event) => event.stopPropagation()}
         >
           <DebtStatusBadge urgency={urgency} />
@@ -104,47 +142,70 @@ export function DebtCard({
               onClick={() => onDelete(debt)}
             />
           </DropdownMenu>
-        </div>
-      </div>
+        </HStack>
+      </HStack>
 
-      <div className="grid grid-cols-3 gap-[var(--shard-space-2)] rounded-[var(--shard-radius-control)] bg-background px-[var(--shard-space-3)] py-[var(--shard-space-2)]">
+      <Grid
+        columns={3}
+        gap={2}
+        style={{
+          borderRadius: "var(--shard-radius-control)",
+          background: "var(--background)",
+          paddingInline: "var(--shard-space-3)",
+          paddingBlock: "var(--shard-space-2)",
+        }}
+      >
         <AmountStat label="本金" value={centsToYuanLabel(debt.principalCents)} />
         <AmountStat label="已还" value={centsToYuanLabel(debt.paidCents)} />
         <AmountStat
-          className={
-            debt.settled ? "text-[color:var(--shard-emerald)]" : "text-foreground"
-          }
+          color={debt.settled ? "var(--shard-emerald)" : undefined}
           label="剩余"
           value={centsToYuanLabel(debt.remainingCents)}
         />
-      </div>
+      </Grid>
 
       {debt.tags.length > 0 ? (
-        <div className="shard-card-tags flex flex-wrap gap-[var(--shard-space-2)]">
+        <HStack className="shard-card-tags" wrap="wrap" gap={2}>
           {debt.tags.map((tag) => (
             <TagBadge key={tag} tag={tag} />
           ))}
-        </div>
+        </HStack>
       ) : null}
     </article>
   )
 }
 
 function AmountStat({
-  className,
+  color,
   label,
   value,
 }: {
-  className?: string
+  color?: string
   label: string
   value: string
 }) {
+  const valueStyle: CSSProperties = {
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+    fontSize: "var(--font-size-sm)",
+    fontWeight: "var(--font-weight-semibold)",
+    fontVariantNumeric: "tabular-nums",
+    color: color ?? "var(--foreground)",
+  }
+
   return (
-    <div className="min-w-0">
-      <div className="text-[11px] font-medium text-muted-foreground">{label}</div>
-      <div className={cn("truncate text-sm font-semibold tabular-nums", className)}>
-        {value}
+    <div style={{ minWidth: 0 }}>
+      <div
+        style={{
+          fontSize: 11,
+          fontWeight: "var(--font-weight-medium)",
+          color: "var(--muted-foreground)",
+        }}
+      >
+        {label}
       </div>
+      <div style={valueStyle}>{value}</div>
     </div>
   )
 }

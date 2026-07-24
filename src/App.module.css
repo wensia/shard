@@ -1,0 +1,42 @@
+.appShell {
+  display: grid;
+  height: 100dvh;
+  grid-template-rows: 1fr auto;
+  overflow: hidden;
+  background: var(--background);
+  color: var(--foreground);
+}
+
+.sidebarSlot {
+  display: none;
+  min-height: 0;
+}
+
+.bottomTabsSlot {
+  display: block;
+}
+
+.composerPadding {
+  padding-inline: var(--shard-content-inset);
+  padding-top: var(--shard-composer-top-gap);
+  padding-bottom: var(--shard-composer-bottom-gap);
+}
+
+@media (min-width: 1024px) {
+  .appShell {
+    grid-template-columns: var(--shard-sidebar-width) minmax(0, 1fr);
+    grid-template-rows: 1fr;
+  }
+
+  .sidebarSlot {
+    display: block;
+  }
+
+  .bottomTabsSlot {
+    display: none;
+  }
+
+  .composerPadding {
+    padding-inline: var(--shard-content-inset-lg);
+  }
+}

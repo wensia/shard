@@ -1,0 +1,112 @@
+/* Insight lens selector cards: needs :hover / :focus-visible and a
+   crossfade transition between the plus/check icons, so a plain inline
+   style can't express it -- kept in a CSS Module scoped to this file. */
+
+.lensCard {
+  display: flex;
+  flex-direction: column;
+  min-height: 176px;
+  border-radius: var(--shard-surface-radius);
+  border: 1px solid var(--border);
+  background: var(--card);
+  padding: var(--shard-space-5);
+  text-align: left;
+  outline: none;
+  cursor: pointer;
+  transition:
+    border-color 150ms ease,
+    background-color 150ms ease;
+}
+
+.lensCard:hover:not(.lensCardSelected) {
+  border-color: rgb(var(--shard-primary-rgb) / var(--shard-alpha-21));
+}
+
+.lensCard:focus-visible {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 34%, transparent);
+}
+
+.lensCardSelected {
+  border-color: rgb(var(--shard-primary-rgb) / var(--shard-alpha-34));
+  background: rgb(var(--shard-primary-rgb) / var(--shard-alpha-5));
+}
+
+.lensIconWrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: var(--shard-radius-control);
+  border: 1px solid transparent;
+  background: var(--background);
+  color: var(--foreground);
+  transition:
+    border-color 150ms ease,
+    color 150ms ease;
+}
+
+.lensCard:hover:not(.lensCardSelected) .lensIconWrap {
+  border-color: var(--border);
+}
+
+.lensIconWrapSelected {
+  border-color: rgb(var(--shard-primary-rgb) / var(--shard-alpha-21));
+  color: var(--shard-sapphire);
+}
+
+.checkToggle {
+  position: relative;
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 9999px;
+  border: 1px solid var(--border);
+  background: var(--background);
+  color: var(--muted-foreground);
+  transition:
+    border-color 150ms ease,
+    background-color 150ms ease,
+    color 150ms ease;
+}
+
+.lensCard:hover:not(.lensCardSelected) .checkToggle {
+  border-color: var(--shard-sapphire);
+  color: var(--shard-sapphire);
+}
+
+.checkToggleSelected {
+  border-color: transparent;
+  background: var(--shard-sapphire);
+  color: #fff;
+}
+
+.crossfadeLayer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition:
+    transform 300ms cubic-bezier(0.2, 0, 0, 1),
+    opacity 300ms cubic-bezier(0.2, 0, 0, 1),
+    filter 300ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+.crossfadeCheck {
+  position: absolute;
+  inset: 0;
+}
+
+.crossfadeVisible {
+  transform: scale(1);
+  opacity: 1;
+  filter: blur(0);
+}
+
+.crossfadeHidden {
+  transform: scale(0.25);
+  opacity: 0;
+  filter: blur(4px);
+}

@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { LockKeyholeIcon, TagIcon } from "lucide-react"
+import { HStack } from "@astryxdesign/core/HStack"
+import { Stack } from "@astryxdesign/core/Stack"
 import { useToast } from "@astryxdesign/core/Toast"
 
+import styles from "./App.module.css"
 import { BottomTabs } from "@/components/shard/bottom-tabs"
 import { CaptureBox } from "@/components/shard/capture-box"
 import { DebtWorkspace } from "@/components/shard/debt-workspace"
@@ -1051,9 +1054,9 @@ function App() {
     <>
       <main
         aria-hidden={isBlockingDialogOpen ? true : undefined}
-        className="grid h-dvh grid-rows-[1fr_auto] overflow-hidden bg-background text-foreground lg:grid-cols-[var(--shard-sidebar-width)_minmax(0,1fr)] lg:grid-rows-1"
+        className={styles.appShell}
       >
-        <div className="hidden min-h-0 lg:block">
+        <div className={styles.sidebarSlot}>
           <SidebarNav
             activeFilter={filter}
             fragments={publicOnlyFragments}
@@ -1075,12 +1078,15 @@ function App() {
             vaultPath={vaultPath}
           />
         </div>
-        <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
+        <Stack
+          as="section"
+          height="100%"
+          minHeight={0}
+          isScrollable={false}
+          style={{ minWidth: 0, overflow: "hidden", background: "var(--background)" }}
+        >
           {isInboxView ? (
-            <div
-              className="px-[var(--shard-content-inset)] pt-[var(--shard-composer-top-gap)] pb-[var(--shard-composer-bottom-gap)] lg:px-[var(--shard-content-inset-lg)]"
-              data-tauri-drag-region
-            >
+            <div className={styles.composerPadding} data-tauri-drag-region>
               <CaptureBox
                 collapseSignal={composerCollapseSignal}
                 isCreating={isCreating}
@@ -1092,7 +1098,7 @@ function App() {
           ) : (
             <div
               aria-hidden="true"
-              className="h-[var(--shard-composer-top-gap)] shrink-0"
+              style={{ height: "var(--shard-composer-top-gap)", flexShrink: 0 }}
               data-tauri-drag-region
             />
           )}
@@ -1203,8 +1209,8 @@ function App() {
               vaultPath={vaultPath}
             />
           )}
-        </section>
-        <div className="lg:hidden">
+        </Stack>
+        <div className={styles.bottomTabsSlot}>
           <BottomTabs
             activeFilter={filter}
             fragments={publicOnlyFragments}
@@ -1366,24 +1372,63 @@ function LockboxHeader({
   onUnlock: () => void
 }) {
   return (
-    <div className="shard-content-inset pb-[var(--shard-space-4)]">
-      <div className="shard-content-measure border-b border-border pb-[var(--shard-space-4)]">
-        <div className="flex flex-wrap items-center justify-between gap-[var(--shard-space-3)]">
-          <div className="flex min-w-0 items-center gap-[var(--shard-space-3)]">
-            <span className="flex size-8 shrink-0 items-center justify-center rounded-[var(--shard-radius-control)] border border-border bg-card text-[color:var(--shard-sapphire)]">
-              <LockKeyholeIcon className="size-4 stroke-[1.75]" />
+    <div
+      className="shard-content-inset"
+      style={{ paddingBottom: "var(--shard-space-4)" }}
+    >
+      <div
+        className="shard-content-measure"
+        style={{
+          borderBottom: "1px solid var(--border)",
+          paddingBottom: "var(--shard-space-4)",
+        }}
+      >
+        <HStack gap={3} hAlign="between" vAlign="center" wrap="wrap">
+          <HStack gap={3} vAlign="center" style={{ minWidth: 0 }}>
+            <span
+              style={{
+                display: "flex",
+                flexShrink: 0,
+                width: 32,
+                height: 32,
+                alignItems: "center",
+                justifyContent: "center",
+                borderRadius: "var(--shard-radius-control)",
+                border: "1px solid var(--border)",
+                background: "var(--card)",
+                color: "var(--shard-sapphire)",
+              }}
+            >
+              <LockKeyholeIcon size={16} strokeWidth={1.75} />
             </span>
-            <div className="min-w-0">
-              <h1 className="text-lg leading-6 font-bold text-balance">密匣</h1>
-              <p className="mt-1 text-sm leading-5 text-pretty text-muted-foreground">
+            <div style={{ minWidth: 0 }}>
+              <h1
+                style={{
+                  fontSize: 18,
+                  lineHeight: "24px",
+                  fontWeight: 700,
+                  textWrap: "balance",
+                }}
+              >
+                密匣
+              </h1>
+              <p
+                style={{
+                  marginTop: 4,
+                  fontSize: 14,
+                  lineHeight: "20px",
+                  textWrap: "pretty",
+                  color: "var(--muted-foreground)",
+                }}
+              >
                 {lockbox?.unlocked
                   ? `已解锁${lockbox.expiresAt ? `至 ${formatLockboxExpiry(lockbox.expiresAt)}` : ""}`
                   : "需要密码访问。私密笔记不会出现在主页、回顾或普通统计中。"}
               </p>
             </div>
-          </div>
+          </HStack>
 
-          <div className="flex shrink-0 items-center gap-[var(--shard-space-2)]">
+          <HStack gap={2} vAlign="center" style={{ flexShrink: 0 }}>
             {lockbox?.unlocked ? (
               <>
                 <Button label="修改密码" onClick={onChangePassword} size="sm" variant="secondary" />
@@ -1392,19 +1437,39 @@ function LockboxHeader({
             ) : (
               <Button label="解锁" onClick={onUnlock} size="sm" variant="primary" />
             )}
-          </div>
-        </div>
+          </HStack>
+        </HStack>
 
         {lockbox?.unlocked ? (
-          <div className="mt-[var(--shard-space-3)] flex flex-col gap-[var(--shard-space-2)]">
-            <div className="flex h-[var(--shard-chip-height)] items-center gap-[var(--shard-space-2)] text-xs font-medium text-muted-foreground">
-              <TagIcon className="size-3.5 shrink-0 stroke-[1.75]" />
+          <Stack gap={2} style={{ marginTop: "var(--shard-space-3)" }}>
+            <HStack
+              gap={2}
+              vAlign="center"
+              style={{
+                height: "var(--shard-chip-height)",
+                fontSize: 12,
+                fontWeight: 500,
+                color: "var(--muted-foreground)",
+              }}
+            >
+              <TagIcon size={14} strokeWidth={1.75} />
               <span className="tabular-nums">{summaries.length} 子标签</span>
               <span aria-hidden="true">·</span>
               <span className="tabular-nums">{totalCount} 条</span>
-            </div>
+            </HStack>
 
-            <div className="shard-tag-filters flex max-h-[72px] flex-wrap content-start gap-[var(--shard-space-2)] overflow-y-auto pr-[var(--shard-space-1)]">
+            <div
+              className="shard-tag-filters"
+              style={{
+                display: "flex",
+                maxHeight: 72,
+                flexWrap: "wrap",
+                alignContent: "flex-start",
+                gap: "var(--shard-space-2)",
+                overflowY: "auto",
+                paddingRight: "var(--shard-space-1)",
+              }}
+            >
               <LockboxTagFilterButton
                 active={selectedTag === null}
                 count={totalCount}
@@ -1421,7 +1486,7 @@ function LockboxHeader({
                 />
               ))}
             </div>
-          </div>
+          </Stack>
         ) : null}
       </div>
     </div>
@@ -1442,15 +1507,18 @@ function LockboxTagFilterButton({
   return (
     <button
       aria-pressed={active}
-      className={[
-        "shard-tag max-w-full gap-[var(--shard-space-micro)] font-medium",
-        active ? "shard-tag-active" : "",
-      ].join(" ")}
+      className={["shard-tag", active ? "shard-tag-active" : ""].join(" ")}
       onClick={onClick}
+      style={{ maxWidth: "100%", gap: "var(--shard-space-micro)", fontWeight: 500 }}
       title={label}
       type="button"
     >
-      <span className="shard-chip-text truncate">{label}</span>
+      <span
+        className="shard-chip-text"
+        style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+      >
+        {label}
+      </span>
       <span className="shard-chip-text shard-tag-count">{count}</span>
     </button>
   )

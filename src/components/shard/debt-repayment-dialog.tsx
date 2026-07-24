@@ -4,6 +4,7 @@ import { Button } from "@astryxdesign/core/Button"
 import type { ISODateString } from "@astryxdesign/core/Calendar"
 import { DateInput } from "@astryxdesign/core/DateInput"
 import { Dialog, DialogHeader } from "@astryxdesign/core/Dialog"
+import { HStack } from "@astryxdesign/core/HStack"
 import { Layout, LayoutContent, LayoutFooter } from "@astryxdesign/core/Layout"
 import { TextArea } from "@astryxdesign/core/TextArea"
 import { TextInput } from "@astryxdesign/core/TextInput"
@@ -95,9 +96,9 @@ export function DebtRepaymentDialog({
         content={
           <LayoutContent>
             <form
-              className="flex flex-col gap-[var(--shard-space-4)]"
               id={formId}
               onSubmit={handleSubmit}
+              style={{ display: "flex", flexDirection: "column", gap: "var(--shard-space-4)" }}
             >
               <TextInput
                 label="还款金额（元）"
@@ -117,26 +118,32 @@ export function DebtRepaymentDialog({
                 value={note}
               />
 
-              {error ? <p className="text-sm text-destructive">{error}</p> : null}
+              {error ? (
+                <p style={{ color: "var(--destructive)", fontSize: 14, margin: 0 }}>
+                  {error}
+                </p>
+              ) : null}
             </form>
           </LayoutContent>
         }
         footer={
-          <LayoutFooter className="flex justify-end gap-[var(--shard-space-2)]" hasDivider>
-            <Button
-              isDisabled={isSubmitting}
-              label="取消"
-              onClick={onClose}
-              type="button"
-              variant="secondary"
-            />
-            <Button
-              form={formId}
-              isLoading={isSubmitting}
-              label="登记还款"
-              type="submit"
-              variant="primary"
-            />
+          <LayoutFooter hasDivider>
+            <HStack gap={2} hAlign="end">
+              <Button
+                isDisabled={isSubmitting}
+                label="取消"
+                onClick={onClose}
+                type="button"
+                variant="secondary"
+              />
+              <Button
+                form={formId}
+                isLoading={isSubmitting}
+                label="登记还款"
+                type="submit"
+                variant="primary"
+              />
+            </HStack>
           </LayoutFooter>
         }
       />

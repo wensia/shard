@@ -5,14 +5,17 @@ import { Button } from "@astryxdesign/core/Button"
 import type { ISODateString } from "@astryxdesign/core/Calendar"
 import { DateInput } from "@astryxdesign/core/DateInput"
 import { Dialog, DialogHeader } from "@astryxdesign/core/Dialog"
+import { Grid } from "@astryxdesign/core/Grid"
+import { HStack } from "@astryxdesign/core/HStack"
 import { Layout, LayoutContent, LayoutFooter } from "@astryxdesign/core/Layout"
+import { SegmentedControl, SegmentedControlItem } from "@astryxdesign/core/SegmentedControl"
+import { Stack } from "@astryxdesign/core/Stack"
 import { TextArea } from "@astryxdesign/core/TextArea"
 import { TextInput } from "@astryxdesign/core/TextInput"
 
 import { TagBadge } from "@/components/shard/tag-badge"
 import { getApiErrorMessage } from "@/lib/api"
 import { yuanInputToCents } from "@/lib/debt"
-import { cn } from "@/lib/utils"
 import type { Debt, DebtDirection } from "@/types"
 
 export interface DebtFormValues {
@@ -149,33 +152,35 @@ export function DebtFormDialog({
         content={
           <LayoutContent>
             <form
-              className="flex flex-col gap-[var(--shard-space-4)]"
               id={formId}
               onSubmit={handleSubmit}
+              style={{ display: "flex", flexDirection: "column", gap: "var(--shard-space-4)" }}
             >
-              <div className="flex flex-col gap-[var(--shard-space-2)]">
-                <span className="text-xs font-semibold text-muted-foreground">方向</span>
-                <div className="grid grid-cols-2 gap-[var(--shard-space-2)]">
-                  <button
-                    className={directionButtonClass(direction === "borrow_in", mode === "edit")}
-                    disabled={mode === "edit"}
-                    onClick={() => setDirection("borrow_in")}
-                    type="button"
-                  >
-                    <ArrowDownLeftIcon className="size-4 shrink-0 stroke-[1.75]" />
-                    借入（我欠别人）
-                  </button>
-                  <button
-                    className={directionButtonClass(direction === "lend_out", mode === "edit")}
-                    disabled={mode === "edit"}
-                    onClick={() => setDirection("lend_out")}
-                    type="button"
-                  >
-                    <ArrowUpRightIcon className="size-4 shrink-0 stroke-[1.75]" />
-                    借出（别人欠我）
-                  </button>
-                </div>
-              </div>
+              <Stack gap={2}>
+                <span
+                  style={{ fontSize: "0.75rem", fontWeight: 600, color: "var(--muted-foreground)" }}
+                >
+                  方向
+                </span>
+                <SegmentedControl
+                  isDisabled={mode === "edit"}
+                  label="方向"
+                  layout="fill"
+                  onChange={(value) => setDirection(value as DebtDirection)}
+                  value={direction}
+                >
+                  <SegmentedControlItem
+                    icon={<ArrowDownLeftIcon size={16} strokeWidth={1.75} />}
+                    label="借入（我欠别人）"
+                    value="borrow_in"
+                  />
+                  <SegmentedControlItem
+                    icon={<ArrowUpRightIcon size={16} strokeWidth={1.75} />}
+                    label="借出（别人欠我）"
+                    value="lend_out"
+                  />
+                </SegmentedControl>
+              </Stack>
 
               <TextInput
                 hasClear
@@ -191,7 +196,7 @@ export function DebtFormDialog({
                 ))}
               </datalist>
 
-              <div className="grid grid-cols-2 gap-[var(--shard-space-3)]">
+              <Grid columns={2} gap={3}>
                 <TextInput
                   label="本金（元）"
                   onChange={setPrincipalYuan}
@@ -204,7 +209,7 @@ export function DebtFormDialog({
                   onChange={(value) => setDueDate(value ?? "")}
                   value={dueDate ? (dueDate as ISODateString) : undefined}
                 />
-              </div>
+              </Grid>
 
               <TextArea
                 label="备注"
@@ -213,31 +218,35 @@ export function DebtFormDialog({
                 value={note}
               />
 
-              <div className="flex flex-col gap-[var(--shard-space-2)]">
-                <span className="text-xs font-semibold text-muted-foreground">标签</span>
+              <Stack gap={2}>
+                <span
+                  style={{ fontSize: "0.75rem", fontWeight: 600, color: "var(--muted-foreground)" }}
+                >
+                  标签
+                </span>
                 {tags.length > 0 ? (
-                  <div className="flex flex-wrap gap-[var(--shard-space-2)]">
+                  <HStack gap={2} wrap="wrap">
                     {tags.map((tag) => (
                       <TagBadge key={tag} removable onRemove={removeTag} tag={tag} />
                     ))}
-                  </div>
+                  </HStack>
                 ) : null}
-                <div className="flex flex-wrap gap-[var(--shard-space-2)]">
+                <HStack gap={2} wrap="wrap">
                   {QUICK_TAGS.map((tag) => (
                     <button
-                      className={[
-                        "shard-tag gap-[var(--shard-space-micro)] font-medium",
-                        tags.includes(tag) ? "shard-tag-active" : "",
-                      ].join(" ")}
+                      className={
+                        tags.includes(tag) ? "shard-tag shard-tag-active" : "shard-tag"
+                      }
                       key={tag}
                       onClick={() => (tags.includes(tag) ? removeTag(tag) : addTag(tag))}
+                      style={{ gap: "var(--shard-space-micro)", fontWeight: 500 }}
                       type="button"
                     >
                       <span className="shard-chip-text">{tag}</span>
                     </button>
                   ))}
-                </div>
-                <div className="flex gap-[var(--shard-space-2)]">
+                </HStack>
+                <HStack gap={2}>
                   <TextInput
                     isLabelHidden
                     label="自定义标签"
@@ -258,42 +267,38 @@ export function DebtFormDialog({
                     type="button"
                     variant="secondary"
                   />
-                </div>
-              </div>
+                </HStack>
+              </Stack>
 
-              {error ? <p className="text-sm text-destructive">{error}</p> : null}
+              {error ? (
+                <p style={{ margin: 0, fontSize: "0.875rem", color: "var(--destructive)" }}>
+                  {error}
+                </p>
+              ) : null}
             </form>
           </LayoutContent>
         }
         footer={
-          <LayoutFooter className="flex justify-end gap-[var(--shard-space-2)]" hasDivider>
-            <Button
-              isDisabled={isSubmitting}
-              label="取消"
-              onClick={() => onOpenChange(false)}
-              type="button"
-              variant="secondary"
-            />
-            <Button
-              form={formId}
-              isLoading={isSubmitting}
-              label={mode === "create" ? "新增债务" : "保存修改"}
-              type="submit"
-              variant="primary"
-            />
+          <LayoutFooter hasDivider>
+            <HStack gap={2} hAlign="end">
+              <Button
+                isDisabled={isSubmitting}
+                label="取消"
+                onClick={() => onOpenChange(false)}
+                type="button"
+                variant="secondary"
+              />
+              <Button
+                form={formId}
+                isLoading={isSubmitting}
+                label={mode === "create" ? "新增债务" : "保存修改"}
+                type="submit"
+                variant="primary"
+              />
+            </HStack>
           </LayoutFooter>
         }
       />
     </Dialog>
-  )
-}
-
-function directionButtonClass(active: boolean, disabled: boolean) {
-  return cn(
-    "flex h-10 items-center justify-center gap-[var(--shard-space-2)] rounded-[var(--shard-radius-control)] border px-[var(--shard-space-3)] text-sm font-medium transition-colors",
-    active
-      ? "border-ring bg-sidebar-accent text-sidebar-accent-foreground"
-      : "border-border bg-background text-muted-foreground hover:text-foreground",
-    disabled ? "cursor-not-allowed opacity-[var(--shard-alpha-55)]" : ""
   )
 }

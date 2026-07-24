@@ -3,6 +3,9 @@ import { HandCoinsIcon, PlusIcon, RefreshCwIcon } from "lucide-react"
 
 import { AlertDialog } from "@astryxdesign/core/AlertDialog"
 import { Button } from "@astryxdesign/core/Button"
+import { HStack } from "@astryxdesign/core/HStack"
+import { Stack } from "@astryxdesign/core/Stack"
+import { Text } from "@astryxdesign/core/Text"
 import { useToast } from "@astryxdesign/core/Toast"
 
 import { DebtCard } from "@/components/shard/debt-card"
@@ -29,6 +32,8 @@ import {
 } from "@/lib/api"
 import { sortDebtsForDisplay } from "@/lib/debt"
 import type { Debt, DebtDirection } from "@/types"
+
+import styles from "./debt-workspace.module.css"
 
 interface DebtWorkspaceProps {
   debts: Debt[]
@@ -193,24 +198,63 @@ export function DebtWorkspace({ debts, onDebtsChange }: DebtWorkspaceProps) {
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <div className="shard-content-inset pb-[var(--shard-space-4)]">
-        <div className="shard-content-measure flex flex-wrap items-center justify-between gap-[var(--shard-space-3)]">
-          <div className="flex min-w-0 items-center gap-[var(--shard-space-3)]">
-            <span className="flex size-8 shrink-0 items-center justify-center rounded-[var(--shard-radius-control)] border border-border bg-card text-[color:var(--shard-sapphire)]">
-              <HandCoinsIcon className="size-4 stroke-[1.75]" />
+    <Stack minHeight={0} style={{ flex: "1 1 0%" }}>
+      <div
+        className="shard-content-inset"
+        style={{ paddingBottom: "var(--shard-space-4)" }}
+      >
+        <HStack
+          className="shard-content-measure"
+          gap={3}
+          hAlign="between"
+          vAlign="center"
+          wrap="wrap"
+        >
+          <HStack gap={3} vAlign="center" style={{ minWidth: 0 }}>
+            <span
+              style={{
+                display: "flex",
+                width: 32,
+                height: 32,
+                flexShrink: 0,
+                alignItems: "center",
+                justifyContent: "center",
+                borderRadius: "var(--shard-radius-control)",
+                border: "1px solid var(--border)",
+                background: "var(--card)",
+                color: "var(--shard-sapphire)",
+              }}
+            >
+              <HandCoinsIcon strokeWidth={1.75} style={{ width: 16, height: 16 }} />
             </span>
-            <div className="min-w-0">
-              <h1 className="text-lg leading-6 font-bold text-balance">债务追踪</h1>
-              <p className="mt-1 text-sm leading-5 text-muted-foreground">
+            <div style={{ minWidth: 0 }}>
+              <Text as="h1" display="block" textWrap="balance" type="large" weight="bold">
+                债务追踪
+              </Text>
+              <Text
+                as="p"
+                color="secondary"
+                display="block"
+                style={{ marginTop: 4 }}
+                type="body"
+              >
                 {activeCount} 笔进行中 · {contactCount} 位联系人
-              </p>
+              </Text>
             </div>
-          </div>
+          </HStack>
 
-          <div className="flex min-w-0 flex-1 items-center justify-end gap-[var(--shard-space-2)]">
+          <HStack
+            gap={2}
+            hAlign="end"
+            vAlign="center"
+            style={{ minWidth: 0, flex: "1 1 0%" }}
+          >
             <Button
-              icon={<RefreshCwIcon className={isRefreshing ? "animate-spin" : ""} />}
+              icon={
+                <RefreshCwIcon
+                  className={isRefreshing ? styles.spin : undefined}
+                />
+              }
               isDisabled={isRefreshing}
               isIconOnly
               label="刷新债务列表"
@@ -224,13 +268,29 @@ export function DebtWorkspace({ debts, onDebtsChange }: DebtWorkspaceProps) {
               onClick={() => setFormDialog({ mode: "create" })}
               variant="primary"
             />
-          </div>
-        </div>
+          </HStack>
+        </HStack>
       </div>
 
-      <div className="shard-content-inset pb-[var(--shard-space-4)]">
-        <div className="shard-content-measure flex flex-wrap items-center gap-[var(--shard-space-3)]">
-          <div className="flex items-center gap-[var(--shard-space-1)] rounded-[var(--shard-radius-control)] bg-muted p-[var(--shard-space-1)]">
+      <div
+        className="shard-content-inset"
+        style={{ paddingBottom: "var(--shard-space-4)" }}
+      >
+        <HStack
+          className="shard-content-measure"
+          gap={3}
+          vAlign="center"
+          wrap="wrap"
+        >
+          <HStack
+            gap={1}
+            vAlign="center"
+            style={{
+              borderRadius: "var(--shard-radius-control)",
+              background: "var(--muted)",
+              padding: "var(--shard-space-1)",
+            }}
+          >
             <ViewTabButton
               active={view === "timeline"}
               label="按时间"
@@ -241,11 +301,11 @@ export function DebtWorkspace({ debts, onDebtsChange }: DebtWorkspaceProps) {
               label="按联系人"
               onClick={() => setView("contacts")}
             />
-          </div>
+          </HStack>
 
           {view === "timeline" ? (
             <>
-              <div className="flex flex-wrap gap-[var(--shard-space-2)]">
+              <HStack gap={2} wrap="wrap">
                 <TagFilterButton
                   active={archiveFilter === "active"}
                   count={activeArchiveCount}
@@ -258,8 +318,8 @@ export function DebtWorkspace({ debts, onDebtsChange }: DebtWorkspaceProps) {
                   label="已归档"
                   onClick={() => setArchiveFilter("archived")}
                 />
-              </div>
-              <div className="flex flex-wrap gap-[var(--shard-space-2)]">
+              </HStack>
+              <HStack gap={2} wrap="wrap">
                 <TagFilterButton
                   active={directionFilter === "all"}
                   count={scopedDebts.length}
@@ -278,13 +338,21 @@ export function DebtWorkspace({ debts, onDebtsChange }: DebtWorkspaceProps) {
                   label="借出"
                   onClick={() => setDirectionFilter("lend_out")}
                 />
-              </div>
+              </HStack>
             </>
           ) : null}
-        </div>
+        </HStack>
       </div>
 
-      <div className="shard-content-inset min-h-0 flex-1 overflow-y-auto pb-[var(--shard-space-6)]">
+      <div
+        className="shard-content-inset"
+        style={{
+          minHeight: 0,
+          flex: "1 1 0%",
+          overflowY: "auto",
+          paddingBottom: "var(--shard-space-6)",
+        }}
+      >
         <div className="shard-content-measure">
           {view === "contacts" ? (
             <DebtContactSummaryPanel
@@ -296,21 +364,32 @@ export function DebtWorkspace({ debts, onDebtsChange }: DebtWorkspaceProps) {
               onToggleArchive={(debt) => void handleToggleArchive(debt)}
             />
           ) : sortedDebts.length === 0 ? (
-            <div className="flex h-48 flex-col items-center justify-center gap-[var(--shard-space-2)] text-center text-muted-foreground">
-              <HandCoinsIcon className="size-7 stroke-[1.5]" />
-              <div className="text-sm font-semibold text-foreground">
+            <Stack
+              gap={2}
+              hAlign="center"
+              style={{
+                height: 192,
+                textAlign: "center",
+                color: "var(--muted-foreground)",
+              }}
+              vAlign="center"
+            >
+              <HandCoinsIcon strokeWidth={1.5} style={{ width: 28, height: 28 }} />
+              <Text as="div" display="block" type="body" weight="semibold">
                 还没有记录任何债务
-              </div>
-              <p className="text-sm">点击右上角"新增债务"开始记录第一笔。</p>
+              </Text>
+              <Text as="p" color="secondary" display="block" type="body">
+                点击右上角"新增债务"开始记录第一笔。
+              </Text>
               <Button
                 icon={<PlusIcon />}
                 label="新增债务"
                 onClick={() => setFormDialog({ mode: "create" })}
                 variant="primary"
               />
-            </div>
+            </Stack>
           ) : (
-            <div className="flex flex-col gap-[var(--shard-space-3)]">
+            <Stack gap={3}>
               {sortedDebts.map((debt) => (
                 <DebtCard
                   debt={debt}
@@ -322,7 +401,7 @@ export function DebtWorkspace({ debts, onDebtsChange }: DebtWorkspaceProps) {
                   onToggleArchive={(target) => void handleToggleArchive(target)}
                 />
               ))}
-            </div>
+            </Stack>
           )}
         </div>
       </div>
@@ -369,7 +448,7 @@ export function DebtWorkspace({ debts, onDebtsChange }: DebtWorkspaceProps) {
         onCancel={() => setDeletingDebt(null)}
         onConfirm={() => void confirmDelete()}
       />
-    </div>
+    </Stack>
   )
 }
 
@@ -385,12 +464,9 @@ function ViewTabButton({
   return (
     <button
       aria-pressed={active}
-      className={[
-        "h-8 rounded-[var(--shard-radius-control)] px-[var(--shard-space-3)] text-[13px] font-semibold transition-colors",
-        active
-          ? "bg-card text-foreground shadow-card"
-          : "text-muted-foreground hover:text-foreground",
-      ].join(" ")}
+      className={`${styles.viewTab} ${
+        active ? styles.viewTabActive : styles.viewTabInactive
+      }`}
       onClick={onClick}
       type="button"
     >

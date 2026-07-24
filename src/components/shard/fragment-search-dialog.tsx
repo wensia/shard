@@ -14,9 +14,12 @@ import {
 } from "react"
 
 import { Dialog, DialogHeader } from "@astryxdesign/core/Dialog"
+import { HStack } from "@astryxdesign/core/HStack"
 import { Layout, LayoutContent } from "@astryxdesign/core/Layout"
+import { Stack } from "@astryxdesign/core/Stack"
 import { TextInput } from "@astryxdesign/core/TextInput"
 import { FragmentBody } from "@/components/shard/fragment-body"
+import styles from "@/components/shard/fragment-search-dialog.module.css"
 import { searchFragments } from "@/lib/fragment-search"
 import { LOCKBOX_TAG } from "@/lib/lockbox"
 import { cn } from "@/lib/utils"
@@ -25,6 +28,20 @@ import type { Fragment } from "@/types"
 const MAX_RESULTS = 40
 const RECENT_COUNT = 8
 const SEARCH_RESULTS_ID = "shard-floating-search-results"
+
+// 视觉上隐藏但保留给屏幕阅读器的标题（原 Tailwind "sr-only"，
+// Tailwind 卸载后手写等价的裁剪样式）。
+const SR_ONLY_STYLE = {
+  position: "absolute",
+  width: 1,
+  height: 1,
+  padding: 0,
+  margin: -1,
+  overflow: "hidden",
+  clip: "rect(0, 0, 0, 0)",
+  whiteSpace: "nowrap",
+  borderWidth: 0,
+} as const
 
 interface FragmentSearchDialogProps {
   fragments: Fragment[]
@@ -144,14 +161,19 @@ export function FragmentSearchDialog({
       <Layout
         header={
           <DialogHeader
-            className="sr-only"
+            style={SR_ONLY_STYLE}
             subtitle="搜索未归档笔记的正文和标签。"
             title="搜索笔记"
           />
         }
         content={
           <LayoutContent isScrollable={false} padding={0}>
-            <div className="border-b border-border p-[var(--shard-space-3)]">
+            <div
+              style={{
+                borderBottom: "1px solid var(--border)",
+                padding: "var(--shard-space-3)",
+              }}
+            >
               <TextInput
                 aria-controls={SEARCH_RESULTS_ID}
                 aria-expanded={items.length > 0}
@@ -171,9 +193,13 @@ export function FragmentSearchDialog({
 
             <div
               aria-busy={isSearching}
-              className="min-h-[260px] overflow-hidden bg-popover"
               id={SEARCH_RESULTS_ID}
               role="listbox"
+              style={{
+                minHeight: 260,
+                overflow: "hidden",
+                background: "var(--popover)",
+              }}
             >
               {fragments.length === 0 ? (
                 <SearchEmptyState message="还没有可搜索的笔记。" />
@@ -181,13 +207,29 @@ export function FragmentSearchDialog({
                 <SearchEmptyState message="没有匹配的笔记。" />
               ) : (
                 <>
-                  <div className="flex h-9 items-center justify-between border-b border-border px-[var(--shard-space-3)] text-xs font-semibold text-muted-foreground">
+                  <HStack
+                    hAlign="between"
+                    style={{
+                      height: 36,
+                      borderBottom: "1px solid var(--border)",
+                      paddingInline: "var(--shard-space-3)",
+                      fontSize: "0.75rem",
+                      fontWeight: 600,
+                      color: "var(--muted-foreground)",
+                    }}
+                    vAlign="center"
+                  >
                     <span>{hasQuery ? "搜索结果" : "最近笔记"}</span>
-                    <span className="tabular-nums">
+                    <span style={{ fontVariantNumeric: "tabular-nums" }}>
                       {formatResultCount(totalResultCount)}
                     </span>
-                  </div>
-                  <div className="max-h-[min(58dvh,480px)] overflow-y-auto">
+                  </HStack>
+                  <div
+                    style={{
+                      maxHeight: "min(58dvh, 480px)",
+                      overflowY: "auto",
+                    }}
+                  >
                     {items.map((item, index) => (
                       <SearchResultButton
                         isSelected={index === selectedIndex}
@@ -211,10 +253,22 @@ export function FragmentSearchDialog({
 
 function SearchEmptyState({ message }: { message: string }) {
   return (
-    <div className="flex min-h-[260px] flex-col items-center justify-center gap-[var(--shard-space-3)] px-[var(--shard-space-6)] text-center text-muted-foreground">
-      <SearchIcon className="size-6 stroke-[1.6]" />
-      <p className="text-sm font-semibold text-balance">{message}</p>
-    </div>
+    <Stack
+      gap={3}
+      hAlign="center"
+      style={{
+        minHeight: 260,
+        paddingInline: "var(--shard-space-6)",
+        textAlign: "center",
+        color: "var(--muted-foreground)",
+      }}
+      vAlign="center"
+    >
+      <SearchIcon size={24} strokeWidth={1.6} />
+      <p style={{ fontSize: "0.875rem", fontWeight: 600, textWrap: "balance" }}>
+        {message}
+      </p>
+    </Stack>
   )
 }
 
@@ -239,70 +293,107 @@ function SearchResultButton({
   return (
     <button
       aria-selected={isSelected}
-      className={[
-        "group grid w-full grid-cols-[1fr_auto] gap-x-[var(--shard-space-3)] gap-y-[var(--shard-space-2)] border-b border-border px-[var(--shard-space-4)] py-[var(--shard-space-3)] text-left transition-colors last:border-b-0 focus-visible:ring-3 focus-visible:ring-ring/[var(--shard-alpha-34)] focus-visible:outline-none",
-        isSelected
-          ? "bg-sidebar-accent text-sidebar-accent-foreground"
-          : "hover:bg-muted/[var(--shard-alpha-55)]",
-      ].join(" ")}
+      className={cn(styles.resultButton, isSelected && styles.resultButtonSelected)}
       onClick={() => onOpen(fragment)}
       onMouseEnter={onMouseEnter}
       role="option"
       type="button"
     >
-      <div className="flex min-w-0 items-center gap-[var(--shard-space-2)] text-xs leading-4 font-medium text-muted-foreground">
-        {fragment.lockbox ? (
-          <LockKeyholeIcon className="size-3.5 shrink-0 stroke-[1.75]" />
-        ) : (
-          <FileTextIcon className="size-3.5 shrink-0 stroke-[1.75]" />
-        )}
-        <span className="truncate">{formatSearchDate(fragment.createdAt)}</span>
-        <span aria-hidden="true">·</span>
-        <span className="truncate">{fragment.path || fragment.id}</span>
-      </div>
       <div
-        className={cn(
-          "flex items-center gap-1 text-[11px] leading-4 font-semibold text-muted-foreground transition-[opacity,filter,scale] duration-300 ease-[cubic-bezier(0.2,0,0,1)] group-hover:scale-100 group-hover:opacity-100 group-hover:blur-0",
-          isSelected
-            ? "scale-100 opacity-100 blur-0"
-            : "scale-[0.25] opacity-0 blur-[4px]"
-        )}
+        style={{
+          display: "flex",
+          minWidth: 0,
+          alignItems: "center",
+          gap: "var(--shard-space-2)",
+          fontSize: "0.75rem",
+          lineHeight: "1rem",
+          fontWeight: 500,
+          color: "var(--muted-foreground)",
+        }}
       >
-        <CornerDownLeftIcon className="size-3.5 stroke-[1.75]" />
+        {fragment.lockbox ? (
+          <LockKeyholeIcon
+            size={14}
+            strokeWidth={1.75}
+            style={{ flexShrink: 0 }}
+          />
+        ) : (
+          <FileTextIcon size={14} strokeWidth={1.75} style={{ flexShrink: 0 }} />
+        )}
+        <span
+          style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+        >
+          {formatSearchDate(fragment.createdAt)}
+        </span>
+        <span aria-hidden="true">·</span>
+        <span
+          style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+        >
+          {fragment.path || fragment.id}
+        </span>
+      </div>
+      <div className={cn(styles.openHint, isSelected && styles.openHintVisible)}>
+        <CornerDownLeftIcon size={14} strokeWidth={1.75} />
         打开
       </div>
 
-      <FragmentBody
-        className="shard-search-result-body col-span-2 max-h-[180px] overflow-hidden text-sm"
-        content={fragment.content}
-        hideTags
-        previewImages={false}
-        renderImages={Boolean(vaultPath)}
-        selectionEnd={matchEnd}
-        selectionStart={matchStart}
-        trimEnd
-        vaultPath={vaultPath}
-      />
+      <div style={{ gridColumn: "1 / -1", maxHeight: 180, overflow: "hidden" }}>
+        <FragmentBody
+          className="shard-search-result-body"
+          content={fragment.content}
+          hideTags
+          previewImages={false}
+          renderImages={Boolean(vaultPath)}
+          selectionEnd={matchEnd}
+          selectionStart={matchStart}
+          trimEnd
+          vaultPath={vaultPath}
+        />
+      </div>
 
       {visibleTags.length > 0 ? (
-        <div className="shard-card-tags col-span-2 flex min-w-0 flex-wrap gap-[var(--shard-space-2)]">
+        <div
+          className="shard-card-tags"
+          style={{
+            gridColumn: "1 / -1",
+            display: "flex",
+            minWidth: 0,
+            flexWrap: "wrap",
+            gap: "var(--shard-space-2)",
+          }}
+        >
           {visibleTags.slice(0, 4).map((tag) => {
             const isMatched = matchedTags.includes(tag)
 
             return (
               <span
-                className={[
-                  "shard-tag max-w-full font-medium",
-                  isMatched ? "shard-tag-active" : "shard-tag-muted",
-                ].join(" ")}
+                className={cn(
+                  "shard-tag",
+                  isMatched ? "shard-tag-active" : "shard-tag-muted"
+                )}
                 key={tag}
+                style={{ maxWidth: "100%", fontWeight: 500 }}
               >
-                <span className="truncate">#{tag}</span>
+                <span
+                  style={{
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  #{tag}
+                </span>
               </span>
             )
           })}
           {visibleTags.length > 4 ? (
-            <span className="shard-chip text-muted-foreground tabular-nums">
+            <span
+              className="shard-chip"
+              style={{
+                color: "var(--muted-foreground)",
+                fontVariantNumeric: "tabular-nums",
+              }}
+            >
               +{visibleTags.length - 4}
             </span>
           ) : null}

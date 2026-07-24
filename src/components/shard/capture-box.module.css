@@ -1,0 +1,77 @@
+/* Fragment capture composer. The card needs :focus-within and the textarea
+   overlay needs ::placeholder/:focus-visible — pseudo-classes inline style
+   cannot express. The save button rules use !important because the astryx
+   Button component's own variant styles are StyleX atomic classes compiled
+   with boosted selector specificity (chained `:not(#\#)`), which always wins
+   over a plain CSS Module class regardless of source order. */
+
+.composer {
+  position: relative;
+  border-radius: var(--shard-surface-radius);
+  border: 1px solid var(--border);
+  background: var(--card);
+  padding: 0;
+  box-shadow: var(--shard-composer-shadow);
+  transition: border-color 0.15s ease;
+}
+
+.composer:focus-within {
+  border-color: var(--shard-sapphire);
+}
+
+.textareaField {
+  position: relative;
+  z-index: 10;
+  display: block;
+  width: 100%;
+  resize: none;
+  overflow: hidden;
+  border: 0;
+  border-radius: var(--shard-surface-radius) var(--shard-surface-radius) 0 0;
+  background: transparent;
+  padding: var(--shard-composer-padding);
+  box-shadow: none;
+  transition: height 0.2s ease-in-out;
+}
+
+.textareaField::placeholder {
+  color: transparent;
+}
+
+.textareaField:focus-visible {
+  border-color: transparent;
+  outline: none;
+  box-shadow: none;
+}
+
+.saveButton {
+  border-radius: 9999px !important;
+  background-color: var(--shard-sapphire) !important;
+  background-image: none !important;
+  color: #fff !important;
+}
+
+.saveButton:hover {
+  background-color: var(--shard-sapphire-hover) !important;
+  background-image: none !important;
+}
+
+.saveButton:disabled {
+  background-image: none !important;
+  opacity: 1 !important;
+}
+
+.saveButtonIdle:disabled {
+  background-color: transparent !important;
+  color: var(--muted-foreground) !important;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.spin {
+  animation: spin 1s linear infinite;
+}

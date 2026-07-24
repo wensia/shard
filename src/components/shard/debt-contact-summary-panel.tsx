@@ -1,6 +1,8 @@
 import { useMemo, useState } from "react"
 import { ChevronDownIcon, ChevronRightIcon, UsersIcon } from "lucide-react"
 
+import { HStack, Stack } from "@astryxdesign/core/Stack"
+
 import { DebtCard } from "@/components/shard/debt-card"
 import { centsToYuanLabel, summarizeByContact } from "@/lib/debt"
 import type { Debt } from "@/types"
@@ -27,59 +29,101 @@ export function DebtContactSummaryPanel({
 
   if (summaries.length === 0) {
     return (
-      <div className="flex h-48 flex-col items-center justify-center gap-[var(--shard-space-2)] text-center text-muted-foreground">
-        <UsersIcon className="size-7 stroke-[1.5]" />
-        <div className="text-sm font-semibold text-foreground">
+      <Stack
+        height={192}
+        hAlign="center"
+        vAlign="center"
+        gap={2}
+        style={{ textAlign: "center", color: "var(--muted-foreground)" }}
+      >
+        <UsersIcon size={28} strokeWidth={1.5} />
+        <div
+          style={{
+            fontSize: "var(--font-size-sm)",
+            fontWeight: 600,
+            color: "var(--foreground)",
+          }}
+        >
           还没有联系人相关的债务
         </div>
-      </div>
+      </Stack>
     )
   }
 
   return (
-    <div className="flex flex-col gap-[var(--shard-space-3)]">
+    <Stack gap={3}>
       {summaries.map((summary) => {
         const expanded = expandedKey === summary.counterpartyKey
 
         return (
           <div
-            className="rounded-[var(--shard-surface-radius)] bg-card"
             key={summary.counterpartyKey}
+            style={{
+              borderRadius: "var(--shard-surface-radius)",
+              background: "var(--card)",
+            }}
           >
             <button
-              className="flex w-full items-center justify-between gap-[var(--shard-space-3)] px-[var(--shard-card-padding-x)] py-[var(--shard-card-padding-y)] text-left"
               onClick={() =>
                 setExpandedKey(expanded ? null : summary.counterpartyKey)
               }
+              style={{ width: "100%", textAlign: "left" }}
               type="button"
             >
-              <div className="flex min-w-0 items-center gap-[var(--shard-space-2)]">
-                {expanded ? (
-                  <ChevronDownIcon className="size-4 shrink-0 text-muted-foreground" />
-                ) : (
-                  <ChevronRightIcon className="size-4 shrink-0 text-muted-foreground" />
-                )}
-                <div className="min-w-0">
-                  <div className="truncate text-sm font-semibold text-foreground">
-                    {summary.counterpartyDisplayName}
+              <HStack hAlign="between" vAlign="center" gap={3} padding={4}>
+                <HStack gap={2} vAlign="center" style={{ minWidth: 0 }}>
+                  {expanded ? (
+                    <ChevronDownIcon
+                      size={16}
+                      style={{ flexShrink: 0, color: "var(--muted-foreground)" }}
+                    />
+                  ) : (
+                    <ChevronRightIcon
+                      size={16}
+                      style={{ flexShrink: 0, color: "var(--muted-foreground)" }}
+                    />
+                  )}
+                  <div style={{ minWidth: 0 }}>
+                    <div
+                      style={{
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                        fontSize: "var(--font-size-sm)",
+                        fontWeight: 600,
+                        color: "var(--foreground)",
+                      }}
+                    >
+                      {summary.counterpartyDisplayName}
+                    </div>
+                    <div
+                      style={{
+                        marginTop: 2,
+                        fontSize: "var(--font-size-xs)",
+                        color: "var(--muted-foreground)",
+                      }}
+                    >
+                      {summary.activeDebtCount} 笔进行中
+                      {summary.overdueCount > 0
+                        ? ` · ${summary.overdueCount} 笔逾期`
+                        : ""}
+                    </div>
                   </div>
-                  <div className="mt-0.5 text-xs text-muted-foreground">
-                    {summary.activeDebtCount} 笔进行中
-                    {summary.overdueCount > 0
-                      ? ` · ${summary.overdueCount} 笔逾期`
-                      : ""}
+                </HStack>
+                <div style={{ flexShrink: 0, textAlign: "right" }}>
+                  <div style={netAmountStyle(summary.netCents)}>
+                    {formatNetLabel(summary.netCents)}
                   </div>
                 </div>
-              </div>
-              <div className="shrink-0 text-right">
-                <div className={netAmountClass(summary.netCents)}>
-                  {formatNetLabel(summary.netCents)}
-                </div>
-              </div>
+              </HStack>
             </button>
 
             {expanded ? (
-              <div className="flex flex-col gap-[var(--shard-space-3)] border-t border-border px-[var(--shard-card-padding-x)] py-[var(--shard-card-padding-y)]">
+              <Stack
+                gap={3}
+                padding={4}
+                style={{ borderTop: "1px solid var(--border)" }}
+              >
                 {summary.debts.map((debt) => (
                   <DebtCard
                     debt={debt}
@@ -91,20 +135,27 @@ export function DebtContactSummaryPanel({
                     onToggleArchive={onToggleArchive}
                   />
                 ))}
-              </div>
+              </Stack>
             ) : null}
           </div>
         )
       })}
-    </div>
+    </Stack>
   )
 }
 
-function netAmountClass(netCents: number) {
-  const base = "text-sm font-semibold tabular-nums"
-  if (netCents > 0) return `${base} text-[color:var(--shard-emerald)]`
-  if (netCents < 0) return `${base} text-[color:var(--shard-ruby)]`
-  return `${base} text-muted-foreground`
+function netAmountStyle(netCents: number) {
+  return {
+    fontSize: "var(--font-size-sm)",
+    fontWeight: 600,
+    fontVariantNumeric: "tabular-nums",
+    color:
+      netCents > 0
+        ? "var(--shard-emerald)"
+        : netCents < 0
+          ? "var(--shard-ruby)"
+          : "var(--muted-foreground)",
+  }
 }
 
 function formatNetLabel(netCents: number) {

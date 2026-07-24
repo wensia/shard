@@ -1,0 +1,222 @@
+/* fragment-image-exporter.tsx 专属样式：模板选择网格需要 md 响应式断点、
+   hover/focus-visible/active 交互态，以及 loading 图标的旋转 @keyframes ——
+   这些内联 style 做不到，因此单独建同名 CSS Module。 */
+
+.body {
+  display: grid;
+  min-height: 0;
+  flex: 1 1 auto;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+}
+
+@media (width >= 48rem) {
+  .body {
+    grid-template-columns: 184px minmax(0, 1fr);
+    grid-template-rows: 1fr;
+  }
+}
+
+.templateList {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-content: start;
+  gap: var(--shard-space-2);
+  border-bottom: 1px solid var(--border);
+  padding: var(--shard-space-3);
+}
+
+@media (width >= 48rem) {
+  .templateList {
+    grid-template-columns: 1fr;
+    border-right: 1px solid var(--border);
+    border-bottom: none;
+  }
+}
+
+.templateButton {
+  display: grid;
+  min-width: 0;
+  align-content: start;
+  gap: var(--shard-space-2);
+  border-radius: var(--shard-radius-control);
+  border-width: 1px;
+  border-color: var(--border);
+  background: var(--card);
+  padding: var(--shard-space-2);
+  color: var(--foreground);
+  text-align: left;
+  transition:
+    background-color 150ms ease-out,
+    border-color 150ms ease-out,
+    color 150ms ease-out,
+    scale 150ms ease-out;
+}
+
+.templateButton:hover {
+  background: var(--muted);
+}
+
+.templateButton:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 34%, transparent);
+}
+
+.templateButton:active {
+  scale: 0.96;
+}
+
+.templateButtonActive,
+.templateButtonActive:hover {
+  border-color: var(--shard-sapphire);
+  background: var(--shard-sapphire-soft);
+  color: var(--shard-sapphire-text);
+}
+
+@media (width >= 48rem) {
+  .templateButton {
+    grid-template-columns: 56px minmax(0, 1fr);
+    align-items: center;
+    gap: var(--shard-space-3);
+  }
+}
+
+.templateLabel {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: center;
+  font-size: 0.75rem;
+  line-height: 1.25rem;
+  font-weight: 500;
+  text-wrap: balance;
+}
+
+@media (width >= 48rem) {
+  .templateLabel {
+    text-align: left;
+  }
+}
+
+.thumbnail {
+  position: relative;
+  margin-inline: auto;
+  display: block;
+  aspect-ratio: 3 / 4;
+  height: 72px;
+  overflow: hidden;
+  border-radius: calc(var(--shard-radius-control) - 2px);
+  border-width: 1px;
+}
+
+@media (width >= 48rem) {
+  .thumbnail {
+    height: 74px;
+  }
+}
+
+.previewArea {
+  min-height: 0;
+  overflow: auto;
+  background: var(--background);
+  padding: var(--shard-space-4);
+}
+
+@media (width >= 48rem) {
+  .previewArea {
+    padding: var(--shard-space-5);
+  }
+}
+
+.previewFrame {
+  position: relative;
+  display: flex;
+  height: 100%;
+  min-height: 320px;
+  width: 100%;
+  align-items: flex-start;
+  justify-content: center;
+}
+
+@media (width >= 48rem) {
+  .previewFrame {
+    align-items: center;
+  }
+}
+
+.previewOverlay {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--background) 55%, transparent);
+}
+
+.previewCanvas {
+  display: block;
+  height: auto;
+  max-height: 100%;
+  width: auto;
+  max-width: 100%;
+  border-radius: var(--shard-surface-radius);
+  border: 1px solid var(--border);
+  background: var(--card);
+  box-shadow: 0 8px 20px rgb(0 0 0 / var(--shard-alpha-8));
+}
+
+.spin {
+  animation: shard-export-spin 1s linear infinite;
+}
+
+@keyframes shard-export-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.footerCheckbox {
+  display: flex;
+  align-items: center;
+  gap: var(--shard-space-2);
+  border-radius: var(--shard-radius-control);
+  padding-inline: var(--shard-space-2);
+  padding-block: var(--shard-space-1);
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+  color: var(--muted-foreground);
+  transition: color 150ms ease;
+}
+
+.footerCheckbox:hover {
+  color: var(--foreground);
+}
+
+.footerCheckbox:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 34%, transparent);
+}
+
+.footerCheckboxBox {
+  display: flex;
+  height: 16px;
+  width: 16px;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  border-radius: calc(var(--shard-radius-control) - 2px);
+  border-width: 1.4px;
+  border-color: var(--muted-foreground);
+  background: transparent;
+  transition:
+    background-color 150ms ease,
+    border-color 150ms ease,
+    color 150ms ease;
+}
+
+.footerCheckboxBoxChecked {
+  border-color: var(--shard-sapphire);
+  background: var(--shard-sapphire);
+  color: #fff;
+}
