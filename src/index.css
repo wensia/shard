@@ -1,126 +1,62 @@
-@import "tailwindcss";
-@import "tw-animate-css";
-@import "shadcn/tailwind.css";
+@import "@astryxdesign/core/reset.css";
+@import "@astryxdesign/core/astryx.css";
+@import "@astryxdesign/theme-neutral/theme.css";
 @import "./styles/frontend-rules.css";
-@import "../vendor/kiln/tokens/elevation.css";
-@import "../vendor/kiln/tokens/typography.css";
-
-@custom-variant dark (&:is(.dark *));
-
-@theme inline {
-    --font-heading: var(--font-sans);
-    --font-sans: "Noto Sans SC", -apple-system, "Helvetica Neue", Arial, "Noto Sans SC", "Hiragino Sans GB", STHeiti, "Microsoft YaHei", "Microsoft JhengHei", "Source Han Sans SC", "Noto Sans CJK SC", "Source Han Sans CN", "Source Han Sans TC", "Noto Sans CJK TC", SimSun, sans-serif;
-    --text-page-title: var(--text-page-title);
-    --text-section-title: var(--text-section-title);
-    --text-body: var(--text-body);
-    --text-meta: var(--text-meta);
-    --text-tiny: var(--text-tiny);
-    --text-data: var(--text-data);
-    --color-sidebar-ring: var(--sidebar-ring);
-    --color-sidebar-border: var(--sidebar-border);
-    --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
-    --color-sidebar-accent: var(--sidebar-accent);
-    --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
-    --color-sidebar-primary: var(--sidebar-primary);
-    --color-sidebar-foreground: var(--sidebar-foreground);
-    --color-sidebar: var(--sidebar);
-    --color-chart-5: var(--chart-5);
-    --color-chart-4: var(--chart-4);
-    --color-chart-3: var(--chart-3);
-    --color-chart-2: var(--chart-2);
-    --color-chart-1: var(--chart-1);
-    --color-ring: var(--ring);
-    --color-input: var(--input);
-    --color-border-visible: var(--border-visible);
-    --color-border: var(--border);
-    --color-destructive: var(--destructive);
-    --color-warning: var(--warning);
-    --color-info: var(--info);
-    --color-success: var(--success);
-    --color-accent-foreground: var(--accent-foreground);
-    --color-accent: var(--accent);
-    --color-muted-foreground: var(--muted-foreground);
-    --color-muted: var(--muted);
-    --color-secondary-foreground: var(--secondary-foreground);
-    --color-secondary: var(--secondary);
-    --color-primary-foreground: var(--primary-foreground);
-    --color-primary-subtle: var(--primary-subtle);
-    --color-primary: var(--primary);
-    --color-solid-foreground: var(--solid-foreground);
-    --color-solid: var(--solid);
-    --color-popover-foreground: var(--popover-foreground);
-    --color-popover: var(--popover);
-    --color-card-foreground: var(--card-foreground);
-    --color-card: var(--card);
-    --color-foreground: var(--foreground);
-    --color-background: var(--background);
-    --radius-sm: 2px;
-    --radius-md: var(--shard-radius-control);
-    --radius-lg: var(--shard-radius-card);
-    --radius-xl: var(--shard-radius-panel);
-    --radius-2xl: var(--shard-radius-panel);
-    --radius-3xl: var(--shard-radius-panel);
-    --radius-4xl: var(--shard-radius-panel);
-    --shadow-xs: var(--shard-shadow-xs);
-    --shadow-card: var(--shard-shadow-card);
-    --shadow-popover: var(--shard-shadow-popover);
-    --shadow-input: var(--shard-shadow-input);
-    --shadow-card-hover: var(--shard-shadow-card-hover);
-}
 
 :root {
-    --palette-white: #ffffff;
-    --palette-clay: #b6533c;
-    --palette-canvas: #fbfaf8;
-    --palette-surface: #f1eee9;
-    --palette-line: #d8d3cc;
-    --palette-ink: #2f2f2f;
-    --palette-teal: #3e8c7d;
-    --palette-peacock: #2e6e79;
-    --palette-amber: #be7c32;
-    --background: var(--palette-canvas);
-    --foreground: var(--palette-ink);
-    --card: #ffffff;
-    --card-foreground: var(--palette-ink);
-    --popover: #ffffff;
-    --popover-foreground: var(--palette-ink);
-    --primary: var(--palette-clay);
-    --primary-foreground: #ffffff;
-    --primary-subtle: #f8ede9;
-    --solid: var(--palette-ink);
-    --solid-foreground: #ffffff;
-    --secondary: var(--palette-surface);
-    --secondary-foreground: var(--palette-ink);
-    --muted: var(--palette-surface);
-    --muted-foreground: #6f6760;
-    --accent: #f8ede9;
-    --accent-foreground: #743225;
-    --success: var(--palette-teal);
-    --info: var(--palette-peacock);
-    --warning: var(--palette-amber);
-    --destructive: var(--palette-clay);
-    --border: #efece7;
-    --border-visible: var(--palette-line);
-    --input: #dcd7d0;
-    --ring: var(--palette-clay);
-    --chart-1: var(--palette-clay);
-    --chart-2: var(--palette-teal);
-    --chart-3: var(--palette-peacock);
-    --chart-4: var(--palette-amber);
-    --chart-5: #6f6760;
-    --radius: 6px;
-    --sidebar: var(--background);
-    --sidebar-foreground: var(--palette-ink);
-    --sidebar-primary: var(--palette-clay);
-    --sidebar-primary-foreground: #ffffff;
-    --sidebar-accent: #f5f2ee;
-    --sidebar-accent-foreground: var(--palette-ink);
-    --sidebar-border: #efece7;
-    --sidebar-ring: var(--palette-clay);
-    --shard-accent: var(--palette-clay);
-    --shard-accent-hover: #96432f;
-    --shard-accent-soft: #f8ede9;
-    --shard-accent-text: #743225;
+    --font-sans: "Noto Sans SC", -apple-system, "Helvetica Neue", Arial, "Hiragino Sans GB", STHeiti, "Microsoft YaHei", "Microsoft JhengHei", "Source Han Sans SC", "Noto Sans CJK SC", "Source Han Sans CN", "Source Han Sans TC", "Noto Sans CJK TC", SimSun, sans-serif;
+    --font-heading: var(--font-sans);
+
+    /* Shard 语义色角色：变量名不变，真值改指向 astryx neutral 主题 token。
+       astryx neutral 没有独立的 --color-info，用 --color-accent 顶上（最接近的
+       "非状态强调色"）。--solid/--solid-foreground 是旧 shadcn Button 的"墨色实心"
+       角色，Phase 3 删除 ui/button.tsx 后这两个 token 会变成未使用的遗留，先保留
+       定义避免野指针，不强行现在清理。 */
+    --background: var(--color-background-body);
+    --foreground: var(--color-text-primary);
+    --card: var(--color-background-card);
+    --card-foreground: var(--color-text-primary);
+    --popover: var(--color-background-popover);
+    --popover-foreground: var(--color-text-primary);
+    --primary: var(--color-accent);
+    --primary-foreground: var(--color-on-accent);
+    --primary-subtle: var(--color-accent-muted);
+    --solid: var(--color-text-primary);
+    --solid-foreground: var(--color-on-dark);
+    --secondary: var(--color-background-surface);
+    --secondary-foreground: var(--color-text-primary);
+    --muted: var(--color-background-muted);
+    --muted-foreground: var(--color-text-secondary);
+    --accent: var(--color-accent-muted);
+    --accent-foreground: var(--color-text-accent);
+    --success: var(--color-success);
+    --info: var(--color-accent);
+    --warning: var(--color-warning);
+    --destructive: var(--color-error);
+    --border: var(--color-border);
+    --border-visible: var(--color-border-emphasized);
+    --input: var(--color-border-emphasized);
+    --ring: var(--color-accent);
+    --chart-1: var(--color-accent);
+    --chart-2: var(--color-success);
+    --chart-3: var(--color-warning);
+    --chart-4: var(--color-error);
+    --chart-5: var(--color-text-secondary);
+    --radius: var(--radius-container);
+    --sidebar: var(--card);
+    --sidebar-foreground: var(--foreground);
+    --sidebar-primary: var(--primary);
+    --sidebar-primary-foreground: var(--primary-foreground);
+    --sidebar-accent: var(--muted);
+    --sidebar-accent-foreground: var(--foreground);
+    --sidebar-border: var(--border);
+    --sidebar-ring: var(--ring);
+
+    /* Shard 自有扩展 token —— 与 astryx/Tailwind 无关，原样保留 */
+    --shard-accent: var(--primary);
+    --shard-accent-hover: color-mix(in srgb, var(--primary), black 12%);
+    --shard-accent-soft: var(--primary-subtle);
+    --shard-accent-text: var(--accent-foreground);
     --shard-sapphire: var(--shard-accent);
     --shard-sapphire-hover: var(--shard-accent-hover);
     --shard-sapphire-soft: var(--shard-accent-soft);
@@ -207,17 +143,22 @@
     --shard-caret-color: var(--shard-sapphire);
     --shard-caret-height-ratio: 1.22;
     --shard-caret-width: 1.5px;
-    --shard-shadow-xs: var(--shadow-xs);
-    --shard-shadow-card: var(--shadow-card);
-    --shard-shadow-card-hover: var(--shadow-card-hover);
-    --shard-shadow-popover: var(--shadow-popover);
-    --shard-shadow-input: var(--shadow-input);
+
+    /* 阴影：astryx 只暴露三档（low/med/high），没有 kiln 那种 xs/card/popover/input
+       专用命名，按语义就近映射，变量名保留以免全仓改动。 */
+    --shard-shadow-xs: var(--shadow-low);
+    --shard-shadow-card: var(--shadow-low);
+    --shard-shadow-card-hover: var(--shadow-med);
+    --shard-shadow-popover: var(--shadow-high);
+    --shard-shadow-input: var(--shadow-low);
     --shard-composer-shadow: var(--shard-shadow-card);
     --shard-chip-bg: var(--muted);
     --shard-chip-fg: var(--foreground);
-    --shard-chip-hover: #e8e2da;
+    --shard-chip-hover: color-mix(in srgb, var(--muted), black 6%);
 }
 
+/* dark mode 全仓库未真正接通（无 ThemeProvider、无切换入口），降级为占位保留，
+   不投入精力对齐 astryx token —— 保持原有手写深色值不变。 */
 .dark {
     --background: oklch(0.145 0 0);
     --foreground: oklch(0.985 0 0);
@@ -276,18 +217,21 @@
 
 @layer base {
   * {
-    @apply border-border outline-ring/[var(--shard-alpha-55)];
-    }
+    border-color: var(--border);
+    outline-color: color-mix(in srgb, var(--ring) 55%, transparent);
+  }
   body {
-    @apply bg-background text-foreground antialiased;
-    }
+    background: var(--background);
+    color: var(--foreground);
+    -webkit-font-smoothing: antialiased;
+  }
   html {
-    @apply font-sans antialiased;
+    font-family: var(--font-sans);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     height: 100%;
     overflow: hidden;
-    }
+  }
   body,
   #root {
     height: 100%;

@@ -37,8 +37,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { Toaster } from "@/components/ui/sonner"
-import { TooltipProvider } from "@/components/ui/tooltip"
+import { ToastViewport } from "@astryxdesign/core/Toast"
 import {
   archiveFragment,
   changeLockboxPassword,
@@ -1079,19 +1078,19 @@ function App() {
 
   if (activeMindMapId) {
     return (
-      <TooltipProvider>
+      <>
         <MindMapWorkspace
           mapId={activeMindMapId}
           onClose={() => setActiveMindMapId(null)}
           onMapsChange={setMindMaps}
         />
-        <Toaster />
-      </TooltipProvider>
+        <ToastViewport />
+      </>
     )
   }
 
   return (
-    <TooltipProvider>
+    <>
       <main
         aria-hidden={isBlockingDialogOpen ? true : undefined}
         className="grid h-dvh grid-rows-[1fr_auto] overflow-hidden bg-background text-foreground lg:grid-cols-[var(--shard-sidebar-width)_minmax(0,1fr)] lg:grid-rows-1"
@@ -1333,8 +1332,8 @@ function App() {
         onSetup={handleSetupLockbox}
         onUnlock={handleUnlockLockbox}
       />
-      <Toaster />
-    </TooltipProvider>
+      <ToastViewport />
+    </>
   )
 }
 

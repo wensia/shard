@@ -1,5 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
+import { Theme } from "@astryxdesign/core/theme";
+import { neutralTheme } from "@astryxdesign/theme-neutral/built";
 import App from "./App";
 import "./index.css";
 import "@fontsource/noto-sans-sc/400.css";
@@ -51,6 +53,8 @@ document.addEventListener("auxclick", suppressSecondaryPointerAction, {
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
-    <App />
+    <Theme theme={neutralTheme} mode="light">
+      <App />
+    </Theme>
   </React.StrictMode>,
 );

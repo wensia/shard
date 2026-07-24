@@ -158,6 +158,39 @@
   .cn-toast-loading .sonner-loading-bar {
     background: var(--shard-info);
   }
+
+  /* astryx 没有 Sheet/Drawer 组件，用 astryx 的 Dialog（原生 <dialog> 元素）打底
+     手写一个右侧滑入面板：覆盖默认居中定位，改成贴右满高，backdrop 淡入、
+     面板从右侧平移进入。仅 debt-detail-sheet.tsx 一处消费，只做右侧滑入。 */
+  .shard-sheet-panel {
+    position: fixed;
+    inset-block: 0;
+    right: 0;
+    left: auto;
+    margin: 0;
+    height: 100%;
+    max-height: 100%;
+    max-width: min(24rem, 100vw);
+    border: 0;
+    border-radius: 0;
+    box-shadow: var(--shard-shadow-popover);
+    transform: translateX(100%);
+    transition: transform 200ms ease-in-out;
+  }
+
+  .shard-sheet-panel[open] {
+    transform: translateX(0);
+  }
+
+  .shard-sheet-panel::backdrop {
+    background: rgb(0 0 0 / var(--shard-alpha-13));
+    opacity: 0;
+    transition: opacity 200ms ease-in-out;
+  }
+
+  .shard-sheet-panel[open]::backdrop {
+    opacity: 1;
+  }
 }
 
 @layer utilities {
