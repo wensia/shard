@@ -1,0 +1,17 @@
+{
+  "_comment": "设计债基线：业务代码里尚未清理的裸 hex 颜色与写死像素高度，按文件计数。新增违规会让 verify:tokens 失败；清理后跑 `npm run verify:tokens -- --update-baseline` 下调基线。目标是清零。",
+  "debt": {
+    "src/components/shard/fragment-image-exporter.tsx": {
+      "hex": 21,
+      "palette": 0,
+      "shadow": 0,
+      "height": 1
+    },
+    "src/lib/fragment-export-image.ts": {
+      "hex": 28,
+      "palette": 0,
+      "shadow": 0,
+      "height": 0
+    }
+  }
+}

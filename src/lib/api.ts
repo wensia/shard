@@ -6,6 +6,8 @@ import type {
   CodexReviewFragment,
   CodexReviewTask,
   CodexReviewTaskResult,
+  Debt,
+  DebtDirection,
   Fragment,
   GithubCliInfo,
   GitInfo,
@@ -215,4 +217,70 @@ export function createGithubVaultRepo(repoName: string) {
 
 export function syncVault() {
   return desktopInvoke<GitInfo>("sync_vault")
+}
+
+export function listDebts() {
+  return desktopInvoke<Debt[]>("list_debts")
+}
+
+export function createDebt(input: {
+  direction: DebtDirection
+  counterparty: string
+  principalCents: number
+  dueDate?: string | null
+  note?: string
+  tags?: string[]
+}) {
+  return desktopInvoke<Debt>("create_debt", {
+    direction: input.direction,
+    counterparty: input.counterparty,
+    principalCents: input.principalCents,
+    dueDate: input.dueDate ?? null,
+    note: input.note ?? "",
+    tags: input.tags ?? [],
+  })
+}
+
+export function updateDebt(input: {
+  id: string
+  counterparty: string
+  principalCents: number
+  dueDate?: string | null
+  note?: string
+  tags?: string[]
+}) {
+  return desktopInvoke<Debt>("update_debt", {
+    id: input.id,
+    counterparty: input.counterparty,
+    principalCents: input.principalCents,
+    dueDate: input.dueDate ?? null,
+    note: input.note ?? "",
+    tags: input.tags ?? [],
+  })
+}
+
+export function setDebtArchived(id: string, archived: boolean) {
+  return desktopInvoke<Debt>("set_debt_archived", { id, archived })
+}
+
+export function deleteDebt(id: string) {
+  return desktopInvoke<Debt[]>("delete_debt", { id })
+}
+
+export function addRepayment(input: {
+  debtId: string
+  amountCents: number
+  paidOn: string
+  note?: string
+}) {
+  return desktopInvoke<Debt>("add_repayment", {
+    debtId: input.debtId,
+    amountCents: input.amountCents,
+    paidOn: input.paidOn,
+    note: input.note ?? "",
+  })
+}
+
+export function deleteRepayment(debtId: string, repaymentId: string) {
+  return desktopInvoke<Debt>("delete_repayment", { debtId, repaymentId })
 }

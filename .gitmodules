@@ -1,0 +1,3 @@
+[submodule "vendor/kiln"]
+	path = vendor/kiln
+	url = https://github.com/wensia/kiln.git

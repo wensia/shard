@@ -81,7 +81,7 @@ interface TagFilterButtonProps {
   onClick: () => void
 }
 
-function TagFilterButton({
+export function TagFilterButton({
   active,
   count,
   label,

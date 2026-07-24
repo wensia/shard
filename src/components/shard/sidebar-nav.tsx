@@ -1,6 +1,7 @@
 import {
   ArchiveIcon,
   GitBranchIcon,
+  HandCoinsIcon,
   HelpCircleIcon,
   InboxIcon,
   KeyboardIcon,
@@ -12,7 +13,7 @@ import {
   SparklesIcon,
   TagIcon,
 } from "lucide-react"
-import { useState } from "react"
+import { Fragment as ReactFragment, useState } from "react"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -37,6 +38,11 @@ interface SidebarNavProps {
   fragments: Fragment[]
   git: GitInfo | null
   isSyncing: boolean
+  mindMapCount: number
+  mindMapViewActive: boolean
+  debtCount: number
+  debtViewActive: boolean
+  onOpenDebts: () => void
   onFilterChange: (filter: FragmentFilter) => void
   onHelp: () => void
   onOpenMindMaps: () => void
@@ -80,6 +86,7 @@ const SIDEBAR_COPY: Record<
       pending: string
       synced: string
     }
+    debts: string
     help: string
     mindMaps: string
     noCommit: string
@@ -115,6 +122,7 @@ const SIDEBAR_COPY: Record<
       pending: "待同步",
       synced: "已同步",
     },
+    debts: "债务",
     help: "帮助",
     mindMaps: "思维导图",
     noCommit: "无提交",
@@ -157,6 +165,7 @@ const SIDEBAR_COPY: Record<
       pending: "Pending",
       synced: "Synced",
     },
+    debts: "Debts",
     help: "Help",
     mindMaps: "Mind maps",
     noCommit: "no commit",
@@ -222,6 +231,11 @@ export function SidebarNav({
   fragments,
   git,
   isSyncing,
+  mindMapCount,
+  mindMapViewActive,
+  debtCount,
+  debtViewActive,
+  onOpenDebts,
   onFilterChange,
   onHelp,
   onOpenMindMaps,
@@ -266,7 +280,7 @@ export function SidebarNav({
         <img
           alt=""
           aria-hidden="true"
-          className="size-8 shrink-0 rounded-[8px] object-contain"
+          className="size-8 shrink-0 rounded-[var(--shard-radius-control)] object-contain"
           draggable={false}
           src={shardAppIconUrl}
         />
@@ -355,37 +369,90 @@ export function SidebarNav({
       >
         {navItems.map((item) => {
           const Icon = item.icon
-          const isActive = item.id === activeFilter
+          const isActive =
+            item.id === activeFilter && !mindMapViewActive && !debtViewActive
 
           return (
-            <button
-              aria-current={isActive ? "page" : undefined}
-              className={[
-                "relative flex h-10 items-center gap-[var(--shard-space-3)] rounded-[var(--shard-radius-control)] px-[var(--shard-space-3)] text-left text-sm font-semibold transition-colors",
-                isActive
-                  ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                  : "text-sidebar-foreground hover:bg-sidebar-accent/[var(--shard-alpha-55)]",
-              ].join(" ")}
-              key={item.id}
-              onClick={() => onFilterChange(item.id)}
-              type="button"
-            >
-              {isActive ? (
-                <span
-                  aria-hidden="true"
-                  className="absolute top-[var(--shard-space-2)] bottom-[var(--shard-space-2)] left-[var(--shard-space-1)] w-0.5 rounded-full bg-[color:var(--shard-sapphire)]"
-                />
+            <ReactFragment key={item.id}>
+              <button
+                aria-current={isActive ? "page" : undefined}
+                className={[
+                  "relative flex h-10 items-center gap-[var(--shard-space-3)] rounded-[var(--shard-radius-control)] px-[var(--shard-space-3)] text-left text-sm font-semibold transition-colors",
+                  isActive
+                    ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                    : "text-sidebar-foreground hover:bg-sidebar-accent/[var(--shard-alpha-55)]",
+                ].join(" ")}
+                onClick={() => onFilterChange(item.id)}
+                type="button"
+              >
+                {isActive ? (
+                  <span
+                    aria-hidden="true"
+                    className="absolute top-[var(--shard-space-2)] bottom-[var(--shard-space-2)] left-[var(--shard-space-1)] w-0.5 rounded-full bg-[color:var(--shard-sapphire)]"
+                  />
+                ) : null}
+                <Icon className="size-4 shrink-0 stroke-[1.75]" />
+                <span className="min-w-0 flex-1 truncate">
+                  {copy.nav[item.id]}
+                </span>
+                <span className="min-w-7 rounded-md bg-muted px-2 py-0.5 text-center text-xs font-semibold text-muted-foreground tabular-nums">
+                  {counts[item.id]}
+                </span>
+              </button>
+              {item.id === "inbox" ? (
+                <button
+                  aria-current={mindMapViewActive ? "page" : undefined}
+                  className={[
+                    "relative flex h-9 items-center gap-[var(--shard-space-2)] rounded-[var(--shard-radius-control)] pr-[var(--shard-space-3)] pl-[calc(var(--shard-space-3)+var(--shard-space-6))] text-left text-[13px] font-medium transition-colors",
+                    mindMapViewActive
+                      ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                      : "text-sidebar-foreground hover:bg-sidebar-accent/[var(--shard-alpha-55)]",
+                  ].join(" ")}
+                  onClick={onOpenMindMaps}
+                  type="button"
+                >
+                  {mindMapViewActive ? (
+                    <span
+                      aria-hidden="true"
+                      className="absolute top-[var(--shard-space-2)] bottom-[var(--shard-space-2)] left-[var(--shard-space-1)] w-0.5 rounded-full bg-[color:var(--shard-sapphire)]"
+                    />
+                  ) : null}
+                  <GitBranchIcon className="size-3.5 shrink-0 stroke-[1.75]" />
+                  <span className="min-w-0 flex-1 truncate">
+                    {copy.mindMaps}
+                  </span>
+                  <span className="min-w-7 rounded-md bg-muted px-2 py-0.5 text-center text-xs font-semibold text-muted-foreground tabular-nums">
+                    {mindMapCount}
+                  </span>
+                </button>
               ) : null}
-              <Icon className="size-4 shrink-0 stroke-[1.75]" />
-              <span className="min-w-0 flex-1 truncate">
-                {copy.nav[item.id]}
-              </span>
-              <span className="min-w-7 rounded-md bg-muted px-2 py-0.5 text-center text-xs font-semibold text-muted-foreground tabular-nums">
-                {counts[item.id]}
-              </span>
-            </button>
+            </ReactFragment>
           )
         })}
+
+        <button
+          aria-current={debtViewActive ? "page" : undefined}
+          className={[
+            "relative flex h-10 items-center gap-[var(--shard-space-3)] rounded-[var(--shard-radius-control)] px-[var(--shard-space-3)] text-left text-sm font-semibold transition-colors",
+            debtViewActive
+              ? "bg-sidebar-accent text-sidebar-accent-foreground"
+              : "text-sidebar-foreground hover:bg-sidebar-accent/[var(--shard-alpha-55)]",
+          ].join(" ")}
+          onClick={onOpenDebts}
+          type="button"
+        >
+          {debtViewActive ? (
+            <span
+              aria-hidden="true"
+              className="absolute top-[var(--shard-space-2)] bottom-[var(--shard-space-2)] left-[var(--shard-space-1)] w-0.5 rounded-full bg-[color:var(--shard-sapphire)]"
+            />
+          ) : null}
+          <HandCoinsIcon className="size-4 shrink-0 stroke-[1.75]" />
+          <span className="min-w-0 flex-1 truncate">{copy.debts}</span>
+          <span className="min-w-7 rounded-md bg-muted px-2 py-0.5 text-center text-xs font-semibold text-muted-foreground tabular-nums">
+            {debtCount}
+          </span>
+        </button>
       </nav>
 
       <div className="mt-auto px-[var(--shard-sidebar-inset)] pt-[var(--shard-space-6)] pb-[var(--shard-space-5)]">
@@ -449,17 +516,6 @@ export function SidebarNav({
             </TooltipTrigger>
             <TooltipContent side="top">{copy.restoreWindow}</TooltipContent>
           </Tooltip>
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button onClick={onOpenMindMaps} size="icon" variant="ghost" />
-              }
-            >
-              <GitBranchIcon data-icon="inline-start" />
-              <span className="sr-only">{copy.mindMaps}</span>
-            </TooltipTrigger>
-            <TooltipContent side="top">{copy.mindMaps}</TooltipContent>
-          </Tooltip>
           <DropdownMenu
             open={isUtilityMenuOpen}
             onOpenChange={setIsUtilityMenuOpen}
@@ -479,7 +535,7 @@ export function SidebarNav({
             </DropdownMenuTrigger>
             <DropdownMenuContent
               align="end"
-              className="w-40 rounded-md p-1 shadow-[0_8px_20px_rgb(0_0_0/var(--shard-alpha-8))] ring-[rgb(0_0_0/var(--shard-alpha-13))]"
+              className="w-40"
               side="top"
               sideOffset={8}
             >
@@ -585,7 +641,7 @@ interface SidebarHeatmap {
 const HEATMAP_COLUMNS = 12
 const HEATMAP_ROWS = 7
 const HEATMAP_LEVEL_CLASSES = [
-  "bg-[#ecefef]",
+  "bg-border",
   "bg-[color-mix(in_srgb,var(--shard-sapphire)_24%,transparent)]",
   "bg-[color-mix(in_srgb,var(--shard-sapphire)_52%,transparent)]",
   "bg-[color-mix(in_srgb,var(--shard-sapphire)_82%,transparent)]",

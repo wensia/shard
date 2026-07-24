@@ -4,15 +4,17 @@ import { toast } from "sonner"
 
 import { BottomTabs } from "@/components/shard/bottom-tabs"
 import { CaptureBox } from "@/components/shard/capture-box"
+import { DebtWorkspace } from "@/components/shard/debt-workspace"
 import { FragmentEditor } from "@/components/shard/fragment-editor"
 import { FragmentImageExporter } from "@/components/shard/fragment-image-exporter"
 import { FragmentSearchDialog } from "@/components/shard/fragment-search-dialog"
 import { FragmentTimeline } from "@/components/shard/fragment-timeline"
+import { InboxTagBar } from "@/components/shard/inbox-tag-bar"
 import {
   LockboxDialog,
   type LockboxDialogMode,
 } from "@/components/shard/lockbox-dialog"
-import { MindMapDialog } from "@/components/shard/mind-map-dialog"
+import { MindMapPanel } from "@/components/shard/mind-map-panel"
 import { MindMapWorkspace } from "@/components/shard/mind-map-workspace"
 import { ReviewWorkspace } from "@/components/shard/review-workspace"
 import { SidebarNav } from "@/components/shard/sidebar-nav"
@@ -43,6 +45,7 @@ import {
   createFragment,
   DESKTOP_RUNTIME_MESSAGE,
   getApiErrorMessage,
+  listDebts,
   listFragments,
   listMindMaps,
   lockLockbox,
@@ -64,6 +67,7 @@ import {
   wantsLockbox,
 } from "@/lib/lockbox"
 import type {
+  Debt,
   Fragment,
   FragmentFilter,
   GitInfo,
@@ -112,16 +116,20 @@ function App() {
     string | null
   >(null)
   const [isSearchDialogOpen, setIsSearchDialogOpen] = useState(false)
-  const [isMindMapDialogOpen, setIsMindMapDialogOpen] = useState(false)
+  const [isMindMapViewActive, setIsMindMapViewActive] = useState(false)
   const [activeMindMapId, setActiveMindMapId] = useState<string | null>(null)
   const [mindMaps, setMindMaps] = useState<MindMapSummary[]>([])
+  const [isDebtViewActive, setIsDebtViewActive] = useState(false)
+  const [debts, setDebts] = useState<Debt[]>([])
   const [selectedLockboxTag, setSelectedLockboxTag] = useState<string | null>(null)
   const [selectedTag, setSelectedTag] = useState<string | null>(null)
+  const [selectedInboxTag, setSelectedInboxTag] = useState<string | null>(null)
   const filterRef = useRef(filter)
 
   useEffect(() => {
     void refreshFragments()
     void refreshMindMaps()
+    void refreshDebts()
   }, [])
 
   useEffect(() => {
@@ -221,6 +229,21 @@ function App() {
     }
   }
 
+  async function refreshDebts() {
+    try {
+      setDebts(await listDebts())
+    } catch (error) {
+      const message = getApiErrorMessage(error)
+      if (message === DESKTOP_RUNTIME_MESSAGE || isVaultNotConfigured(error)) {
+        setDebts([])
+        return
+      }
+      toast.error("读取债务记录失败", {
+        description: message,
+      })
+    }
+  }
+
   function applyVaultState(state: VaultState) {
     const visibleFragments = state.lockbox.unlocked
       ? state.fragments
@@ -241,6 +264,9 @@ function App() {
     if (options.resetView) {
       closeEditor()
       setSelectedTag(null)
+      setSelectedInboxTag(null)
+      setIsMindMapViewActive(false)
+      setIsDebtViewActive(false)
       setFilter("inbox")
     }
     setIsVaultGuideOpen(true)
@@ -716,6 +742,8 @@ function App() {
     setEditingVariant("inline")
     setEditingFragmentId(null)
     setSelectedLockboxTag(null)
+    setIsMindMapViewActive(false)
+    setIsDebtViewActive(false)
 
     if (fragment.archived) {
       setSelectedTag(null)
@@ -731,6 +759,7 @@ function App() {
       setFilter("lockbox")
     } else if (fragment.tags.includes("inbox")) {
       setSelectedTag(null)
+      setSelectedInboxTag(null)
       setFilter("inbox")
     } else if (visibleTag) {
       setSelectedTag(visibleTag)
@@ -747,14 +776,55 @@ function App() {
     setIsSearchDialogOpen(true)
   }
 
+  function handleCreateInboxTag(rawTag: string) {
+    const tag = rawTag.trim().replace(/^#+/, "")
+    if (!tag) return false
+
+    if (/\s/.test(tag)) {
+      toast.error("标签不能包含空格")
+      return false
+    }
+
+    if (tag === "inbox" || tag === LOCKBOX_TAG) {
+      toast.error(`#${tag} 是保留标签，不能新建`)
+      return false
+    }
+
+    if (inboxTagSummaries.some((summary) => summary.tag === tag)) {
+      setSelectedInboxTag(tag)
+      toast.info(`标签 #${tag} 已存在`)
+      return true
+    }
+
+    updateAppSettings({
+      customTags: [...appSettings.customTags, tag],
+    })
+    setSelectedInboxTag(tag)
+    toast.success(`标签 #${tag} 已创建`, {
+      description: `写片段时输入 #${tag} 即可归入这个标签。`,
+    })
+    return true
+  }
+
   function openMindMap(map?: MindMapSummary) {
+    setIsDebtViewActive(false)
     if (!map) {
-      setIsMindMapDialogOpen(true)
+      setIsMindMapViewActive(true)
       return
     }
 
-    setIsMindMapDialogOpen(false)
     setActiveMindMapId(map.id)
+  }
+
+  function openDebts() {
+    setIsMindMapViewActive(false)
+    setIsDebtViewActive(true)
+  }
+
+  function handleFilterChange(nextFilter: FragmentFilter) {
+    setIsMindMapViewActive(false)
+    setIsDebtViewActive(false)
+    setFilter(nextFilter)
   }
 
   const publicOnlyFragments = useMemo(
@@ -796,6 +866,28 @@ function App() {
     () => buildTagSummaries(publicActiveFragments, DEFAULT_PROJECT_TAGS),
     [publicActiveFragments]
   )
+
+  const inboxFragments = useMemo(
+    () =>
+      publicActiveFragments.filter((fragment) =>
+        fragment.tags.includes("inbox")
+      ),
+    [publicActiveFragments]
+  )
+
+  const inboxTagSummaries = useMemo(
+    () => buildTagSummaries(inboxFragments, appSettings.customTags),
+    [appSettings.customTags, inboxFragments]
+  )
+
+  useEffect(() => {
+    if (
+      selectedInboxTag &&
+      !inboxTagSummaries.some((summary) => summary.tag === selectedInboxTag)
+    ) {
+      setSelectedInboxTag(null)
+    }
+  }, [inboxTagSummaries, selectedInboxTag])
 
   useEffect(() => {
     if (
@@ -842,16 +934,20 @@ function App() {
         return []
       case "inbox":
       default:
-        return publicActiveFragments.filter((fragment) =>
-          fragment.tags.includes("inbox")
-        )
+        return selectedInboxTag
+          ? inboxFragments.filter((fragment) =>
+              fragment.tags.includes(selectedInboxTag)
+            )
+          : inboxFragments
     }
   }, [
     archivedFragments,
     filter,
+    inboxFragments,
     lockbox?.unlocked,
     lockboxFragments,
     publicActiveFragments,
+    selectedInboxTag,
     selectedLockboxTag,
     selectedTag,
     taggedFragments,
@@ -863,13 +959,14 @@ function App() {
         new Set(
           DEFAULT_PROJECT_TAGS.concat(
             [LOCKBOX_TAG],
+            appSettings.customTags,
             publicActiveFragments
               .flatMap((fragment) => fragment.tags)
               .filter((tag) => tag !== "inbox")
           )
         )
       ).sort((a, b) => a.localeCompare(b)),
-    [publicActiveFragments]
+    [appSettings.customTags, publicActiveFragments]
   )
 
   const editingFragment = useMemo(
@@ -879,9 +976,12 @@ function App() {
         : null,
     [editingFragmentId, fragments]
   )
-  const isInboxView = filter === "inbox"
+  const isInboxView =
+    filter === "inbox" && !isMindMapViewActive && !isDebtViewActive
   const isReviewView =
-    filter === "dailyReview" || filter === "insight" || filter === "walk"
+    !isMindMapViewActive &&
+    !isDebtViewActive &&
+    (filter === "dailyReview" || filter === "insight" || filter === "walk")
   const isVaultDialogOpen = isVaultGuideOpen || needsVaultSetup
   const isExportSheetOpen = exportingFragment !== null
   const isLockboxArchiveConfirmOpen = pendingLockboxArchiveFragment !== null
@@ -889,10 +989,8 @@ function App() {
     isVaultDialogOpen ||
     lockboxDialogMode !== null ||
     isExportSheetOpen ||
-    isLockboxArchiveConfirmOpen ||
-    isMindMapDialogOpen
-  const isBlockingDialogOpen =
-    isModalBusy || isSearchDialogOpen || isMindMapDialogOpen
+    isLockboxArchiveConfirmOpen
+  const isBlockingDialogOpen = isModalBusy || isSearchDialogOpen
 
   const timelineScrollTargetId =
     pendingScrollFragmentId &&
@@ -1004,7 +1102,12 @@ function App() {
             fragments={publicOnlyFragments}
             git={git}
             isSyncing={isSyncing}
-            onFilterChange={setFilter}
+            mindMapCount={mindMaps.length}
+            mindMapViewActive={isMindMapViewActive}
+            debtCount={debts.filter((debt) => !debt.archived && !debt.settled).length}
+            debtViewActive={isDebtViewActive}
+            onOpenDebts={openDebts}
+            onFilterChange={handleFilterChange}
             onHelp={showHelp}
             onOpenMindMaps={() => openMindMap()}
             onOpenSearch={openSearch}
@@ -1037,7 +1140,17 @@ function App() {
             />
           )}
 
-          {filter === "tagged" ? (
+          {isInboxView ? (
+            <InboxTagBar
+              selectedTag={selectedInboxTag}
+              summaries={inboxTagSummaries}
+              totalCount={inboxFragments.length}
+              onCreateTag={handleCreateInboxTag}
+              onSelectTag={setSelectedInboxTag}
+            />
+          ) : null}
+
+          {filter === "tagged" && !isMindMapViewActive && !isDebtViewActive ? (
             <TaggedPanel
               lockbox={lockbox}
               selectedTag={selectedTag}
@@ -1048,7 +1161,7 @@ function App() {
             />
           ) : null}
 
-          {filter === "lockbox" ? (
+          {filter === "lockbox" && !isMindMapViewActive && !isDebtViewActive ? (
             <LockboxHeader
               lockbox={lockbox}
               selectedTag={selectedLockboxTag}
@@ -1061,7 +1174,14 @@ function App() {
             />
           ) : null}
 
-          {isReviewView ? (
+          {isDebtViewActive ? (
+            <DebtWorkspace debts={debts} onDebtsChange={setDebts} />
+          ) : isMindMapViewActive ? (
+            <MindMapPanel
+              onMapsChange={setMindMaps}
+              onOpenMap={setActiveMindMapId}
+            />
+          ) : isReviewView ? (
             <ReviewWorkspace
               editingFragmentId={
                 editingVariant === "inline" ? editingFragmentId : null
@@ -1098,12 +1218,14 @@ function App() {
                       : "密匣已上锁。"
                   : filter === "archive"
                     ? "还没有归档内容。"
-                    : undefined
+                    : isInboxView && selectedInboxTag
+                      ? `#${selectedInboxTag} 下还没有片段。写片段时输入 #${selectedInboxTag} 即可归入。`
+                      : undefined
               }
               fragments={filteredFragments}
               isLoading={isLoading}
               knownTags={knownTags}
-              mindMaps={isInboxView ? mindMaps : []}
+              mindMaps={isInboxView && !selectedInboxTag ? mindMaps : []}
               onArchive={handleArchiveFragment}
               onCancelEdit={closeEditor}
               onEdit={openInlineEditor}
@@ -1131,8 +1253,9 @@ function App() {
             fragments={publicOnlyFragments}
             git={git}
             isSyncing={isSyncing}
-            onFilterChange={setFilter}
+            onFilterChange={handleFilterChange}
             onHelp={showHelp}
+            onOpenDebts={openDebts}
             onOpenMindMaps={() => openMindMap()}
             onOpenSearch={openSearch}
             onOpenSettings={() => openSettings("vault")}
@@ -1164,15 +1287,6 @@ function App() {
         onOpenChange={setIsSearchDialogOpen}
         onOpenFragment={handleOpenSearchResult}
         vaultPath={vaultPath}
-      />
-      <MindMapDialog
-        open={isMindMapDialogOpen}
-        onMapsChange={setMindMaps}
-        onOpenChange={setIsMindMapDialogOpen}
-        onOpenMap={(mapId) => {
-          setIsMindMapDialogOpen(false)
-          setActiveMindMapId(mapId)
-        }}
       />
       <LockboxArchiveConfirmDialog
         fragment={pendingLockboxArchiveFragment}

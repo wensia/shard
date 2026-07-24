@@ -143,7 +143,7 @@ export function FragmentSearchDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        className="w-[min(720px,calc(100vw-32px))] gap-0 rounded-[10px] border-border bg-popover p-0 shadow-[0_18px_56px_rgb(0_0_0/var(--shard-alpha-21))]"
+        className="w-[min(720px,calc(100vw-32px))] gap-0 rounded-lg border-border bg-popover p-0 shadow-popover"
         showCloseButton={false}
         style={{
           top: "clamp(16px, 10dvh, 80px)",

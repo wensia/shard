@@ -2,12 +2,20 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 @import "./styles/frontend-rules.css";
+@import "../vendor/kiln/tokens/elevation.css";
+@import "../vendor/kiln/tokens/typography.css";
 
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
     --font-heading: var(--font-sans);
-    --font-sans: -apple-system, "Helvetica Neue", Arial, "Noto Sans SC", "Hiragino Sans GB", STHeiti, "Microsoft YaHei", "Microsoft JhengHei", "Source Han Sans SC", "Noto Sans CJK SC", "Source Han Sans CN", "Source Han Sans TC", "Noto Sans CJK TC", SimSun, sans-serif;
+    --font-sans: "Noto Sans SC", -apple-system, "Helvetica Neue", Arial, "Noto Sans SC", "Hiragino Sans GB", STHeiti, "Microsoft YaHei", "Microsoft JhengHei", "Source Han Sans SC", "Noto Sans CJK SC", "Source Han Sans CN", "Source Han Sans TC", "Noto Sans CJK TC", SimSun, sans-serif;
+    --text-page-title: var(--text-page-title);
+    --text-section-title: var(--text-section-title);
+    --text-body: var(--text-body);
+    --text-meta: var(--text-meta);
+    --text-tiny: var(--text-tiny);
+    --text-data: var(--text-data);
     --color-sidebar-ring: var(--sidebar-ring);
     --color-sidebar-border: var(--sidebar-border);
     --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -57,6 +65,7 @@
     --shadow-card: var(--shard-shadow-card);
     --shadow-popover: var(--shard-shadow-popover);
     --shadow-input: var(--shard-shadow-input);
+    --shadow-card-hover: var(--shard-shadow-card-hover);
 }
 
 :root {
@@ -198,10 +207,11 @@
     --shard-caret-color: var(--shard-sapphire);
     --shard-caret-height-ratio: 1.22;
     --shard-caret-width: 1.5px;
-    --shard-shadow-xs: 0 0 0 1px rgb(var(--shard-ink-rgb) / var(--shard-alpha-5)), 0 1px 2px rgb(var(--shard-ink-rgb) / var(--shard-alpha-5));
-    --shard-shadow-card: 0 0 0 1px rgb(var(--shard-ink-rgb) / var(--shard-alpha-5)), 0 2px 8px rgb(var(--shard-ink-rgb) / var(--shard-alpha-5));
-    --shard-shadow-popover: 0 0 0 1px rgb(var(--shard-ink-rgb) / var(--shard-alpha-8)), 0 12px 32px rgb(var(--shard-ink-rgb) / var(--shard-alpha-13));
-    --shard-shadow-input: inset 0 1px 0 rgb(255 255 255 / var(--shard-alpha-55));
+    --shard-shadow-xs: var(--shadow-xs);
+    --shard-shadow-card: var(--shadow-card);
+    --shard-shadow-card-hover: var(--shadow-card-hover);
+    --shard-shadow-popover: var(--shadow-popover);
+    --shard-shadow-input: var(--shadow-input);
     --shard-composer-shadow: var(--shard-shadow-card);
     --shard-chip-bg: var(--muted);
     --shard-chip-fg: var(--foreground);

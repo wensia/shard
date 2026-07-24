@@ -13,14 +13,14 @@ const badgeVariants = cva(
           "bg-primary text-primary-foreground [a]:hover:bg-[color-mix(in_oklch,var(--primary),var(--primary-foreground)_11%)]",
         secondary:
           "bg-secondary text-secondary-foreground [a]:hover:bg-secondary/[var(--shard-alpha-89)]",
-        destructive:
-          "bg-destructive/[var(--shard-alpha-8)] text-destructive focus-visible:ring-destructive/[var(--shard-alpha-21)] dark:bg-destructive/[var(--shard-alpha-21)] dark:focus-visible:ring-destructive/[var(--shard-alpha-34)] [a]:hover:bg-destructive/[var(--shard-alpha-21)]",
         success:
           "border-success/[var(--shard-alpha-21)] bg-success/[var(--shard-alpha-8)] text-success [a]:hover:bg-success/[var(--shard-alpha-13)]",
         info:
           "border-info/[var(--shard-alpha-21)] bg-info/[var(--shard-alpha-8)] text-info [a]:hover:bg-info/[var(--shard-alpha-13)]",
         warning:
           "border-warning/[var(--shard-alpha-21)] bg-warning/[var(--shard-alpha-8)] text-warning [a]:hover:bg-warning/[var(--shard-alpha-13)]",
+        neutral:
+          "bg-muted text-muted-foreground [a]:hover:bg-muted/[var(--shard-alpha-89)]",
         outline:
           "border-border text-foreground [a]:hover:bg-muted [a]:hover:text-muted-foreground",
         ghost:

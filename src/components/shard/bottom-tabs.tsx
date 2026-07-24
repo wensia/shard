@@ -1,6 +1,7 @@
 import {
   ArchiveIcon,
   GitBranchIcon,
+  HandCoinsIcon,
   HelpCircleIcon,
   InboxIcon,
   KeyboardIcon,
@@ -40,6 +41,7 @@ interface BottomTabsProps {
   isSyncing: boolean
   onFilterChange: (filter: FragmentFilter) => void
   onHelp: () => void
+  onOpenDebts: () => void
   onOpenMindMaps: () => void
   onOpenSearch: () => void
   onOpenSettings: () => void
@@ -71,6 +73,7 @@ export function BottomTabs({
   isSyncing,
   onFilterChange,
   onHelp,
+  onOpenDebts,
   onOpenMindMaps,
   onOpenSearch,
   onOpenSettings,
@@ -108,7 +111,7 @@ export function BottomTabs({
             <img
               alt=""
               aria-hidden="true"
-              className="size-4 shrink-0 rounded-[4px] object-contain"
+              className="size-4 shrink-0 rounded-[var(--shard-radius-control)] object-contain"
               draggable={false}
               src={shardAppIconUrl}
             />
@@ -172,7 +175,7 @@ export function BottomTabs({
                     className={[
                       "relative flex h-12 min-w-0 flex-col items-center justify-center gap-0.5 rounded-[6px] px-1.5 text-[11px] leading-none font-semibold transition-colors",
                       isActive
-                        ? "bg-card text-foreground shadow-[0_1px_2px_rgb(17_19_21/var(--shard-alpha-8))]"
+                        ? "bg-card text-foreground shadow-card"
                         : "text-muted-foreground hover:bg-card/[var(--shard-alpha-55)] hover:text-foreground",
                     ].join(" ")}
                     key={item.id}
@@ -196,18 +199,6 @@ export function BottomTabs({
             </nav>
           </div>
 
-          <Button
-            aria-label="思维导图"
-            onClick={onOpenMindMaps}
-            size="icon"
-            title="思维导图"
-            type="button"
-            variant="ghost"
-          >
-            <GitBranchIcon data-icon="inline-start" />
-            <span className="sr-only">思维导图</span>
-          </Button>
-
           <DropdownMenu open={isMenuOpen} onOpenChange={setIsMenuOpen}>
             <DropdownMenuTrigger render={<Button size="icon" variant="ghost" />}>
               <MoreHorizontalIcon data-icon="inline-start" />
@@ -215,7 +206,7 @@ export function BottomTabs({
             </DropdownMenuTrigger>
             <DropdownMenuContent
               align="end"
-              className="w-40 rounded-md p-1 shadow-[0_8px_20px_rgb(0_0_0/var(--shard-alpha-8))] ring-[rgb(0_0_0/var(--shard-alpha-13))]"
+              className="w-40"
               side="top"
               sideOffset={8}
             >
@@ -229,6 +220,26 @@ export function BottomTabs({
                 >
                   <SearchIcon />
                   搜索笔记
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  className={utilityMenuItemClass}
+                  onClick={() => {
+                    setIsMenuOpen(false)
+                    window.setTimeout(onOpenMindMaps, 0)
+                  }}
+                >
+                  <GitBranchIcon />
+                  思维导图
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  className={utilityMenuItemClass}
+                  onClick={() => {
+                    setIsMenuOpen(false)
+                    window.setTimeout(onOpenDebts, 0)
+                  }}
+                >
+                  <HandCoinsIcon />
+                  债务
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem

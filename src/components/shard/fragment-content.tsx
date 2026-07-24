@@ -464,7 +464,7 @@ export function FragmentImageAttachment({
     contextMenuPosition && canUseFileActions
       ? createPortal(
           <div
-            className="fixed z-50 grid w-fit min-w-44 gap-0 rounded-[var(--shard-radius-control)] bg-popover p-[var(--shard-space-1)] text-popover-foreground shadow-[0_8px_20px_rgb(0_0_0/var(--shard-alpha-8))] ring-1 ring-foreground/[var(--shard-alpha-13)] outline-none"
+            className="fixed z-50 grid w-fit min-w-44 gap-0 rounded-lg bg-popover p-[var(--shard-space-1)] text-popover-foreground shadow-popover outline-none"
             onContextMenu={(event) => {
               event.preventDefault()
             }}

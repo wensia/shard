@@ -310,6 +310,19 @@
     --shard-tag-active-ring: rgb(var(--shard-danger-rgb) / var(--shard-alpha-34));
   }
 
+  /* 密匣（lockbox）标签/筛选 chip：走 warning（琥珀）语义，
+     与默认标签的陶土红、success 的青绿、info 的孔雀蓝区分开，
+     让"加密/敏感内容"在片段卡片和标签筛选栏里都有独立可辨认的颜色。 */
+  .shard-tag-lockbox {
+    --shard-tag-bg: rgb(var(--shard-warning-rgb) / var(--shard-alpha-8));
+    --shard-tag-hover: rgb(var(--shard-warning-rgb) / var(--shard-alpha-13));
+    --shard-tag-fg: rgb(var(--shard-warning-rgb) / var(--shard-alpha-89));
+    --shard-tag-fg-strong: var(--shard-warning);
+    --shard-tag-ring: rgb(var(--shard-warning-rgb) / var(--shard-alpha-13));
+    --shard-tag-active-bg: rgb(var(--shard-warning-rgb) / var(--shard-alpha-21));
+    --shard-tag-active-ring: rgb(var(--shard-warning-rgb) / var(--shard-alpha-34));
+  }
+
   .shard-tag-count {
     color: currentColor;
     font-variant-numeric: tabular-nums;

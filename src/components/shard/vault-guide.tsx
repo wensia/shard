@@ -1113,7 +1113,7 @@ function SwitchToggle({
       <span
         className={[
           "absolute top-[2px] left-[2px] block size-5 rounded-full bg-white",
-          "shadow-[0_1px_2px_rgb(17_19_21/var(--shard-alpha-13))]",
+          "shadow-xs",
           "transition-transform duration-150 ease-out",
           checked ? "translate-x-[16px]" : "translate-x-0",
         ].join(" ")}

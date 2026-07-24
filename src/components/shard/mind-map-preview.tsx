@@ -4,6 +4,7 @@ import {
   fitMindMapLayout,
   layoutMindMap,
   shouldUseCompactMindMapText,
+  type MindMapLayoutNode,
 } from "@/lib/mind-map-layout"
 import { cn } from "@/lib/utils"
 import type { ShardMapFile } from "@/types"
@@ -15,6 +16,8 @@ interface MindMapPreviewProps {
   onNodeClick?: (nodeId: string) => void
   selectedNodeId?: string | null
 }
+
+const NODE_TEXT_BASELINE_DY = "0.28em"
 
 export function MindMapPreview({
   className,
@@ -120,19 +123,12 @@ export function MindMapPreview({
                 x={layoutNode.x}
                 y={layoutNode.y}
               />
-              <text
-                dominantBaseline="middle"
-                dy="0.08em"
+              <MindMapPreviewNodeText
+                compact={compactText}
                 fill={isRoot ? "var(--shard-accent-text)" : "var(--foreground)"}
-                fontSize={compactText ? "11" : "12.5"}
                 fontWeight={isRoot ? "600" : "500"}
-                letterSpacing="0"
-                pointerEvents="none"
-                x={layoutNode.x + 12}
-                y={layoutNode.y + layoutNode.height / 2}
-              >
-                {truncateNodeText(layoutNode.node.text, compactText)}
-              </text>
+                layoutNode={layoutNode}
+              />
             </g>
           )
         })}
@@ -141,9 +137,42 @@ export function MindMapPreview({
   )
 }
 
-function truncateNodeText(value: string, compact: boolean) {
-  const text = value.trim() || "未命名"
-  const limit = compact ? 10 : 18
+function MindMapPreviewNodeText({
+  compact,
+  fill,
+  fontWeight,
+  layoutNode,
+}: {
+  compact: boolean
+  fill: string
+  fontWeight: string
+  layoutNode: MindMapLayoutNode
+}) {
+  const fontSize = compact ? 11 : 12.5
+  const lineHeight = compact ? 14 : 17
+  const lines = layoutNode.textLines.length > 0 ? layoutNode.textLines : ["未命名"]
+  const startY =
+    layoutNode.y + layoutNode.height / 2 - ((lines.length - 1) * lineHeight) / 2
 
-  return text.length > limit ? `${text.slice(0, limit)}...` : text
+  return (
+    <text
+      dominantBaseline="middle"
+      fill={fill}
+      fontSize={fontSize}
+      fontWeight={fontWeight}
+      letterSpacing="0"
+      pointerEvents="none"
+    >
+      {lines.map((line, index) => (
+        <tspan
+          dy={NODE_TEXT_BASELINE_DY}
+          key={`${line}-${index}`}
+          x={layoutNode.x + 12}
+          y={startY + index * lineHeight}
+        >
+          {line}
+        </tspan>
+      ))}
+    </text>
+  )
 }

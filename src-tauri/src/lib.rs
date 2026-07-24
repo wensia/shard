@@ -24,6 +24,8 @@ use std::{
 };
 use tauri::Manager;
 
+mod debt;
+
 const DEFAULT_WINDOW_WIDTH: f64 = 1180.0;
 const DEFAULT_WINDOW_HEIGHT: f64 = 820.0;
 const DEFAULT_WINDOW_TITLE: &str = "Shard";
@@ -1527,6 +1529,7 @@ fn ensure_vault_layout(vault: &Path) -> Result<(), String> {
     fs::create_dir_all(vault.join("archive")).map_err(|error| error.to_string())?;
     fs::create_dir_all(vault.join("assets")).map_err(|error| error.to_string())?;
     fs::create_dir_all(vault.join("maps")).map_err(|error| error.to_string())?;
+    fs::create_dir_all(vault.join("debts")).map_err(|error| error.to_string())?;
     fs::create_dir_all(vault.join(".shard")).map_err(|error| error.to_string())?;
     Ok(())
 }
@@ -3279,6 +3282,7 @@ fn dirty_paths(vault: &Path) -> HashSet<String> {
             "archive",
             "assets",
             "maps",
+            "debts",
             "lockbox",
             ".shard",
         ],
@@ -3957,7 +3961,14 @@ pub fn run() {
             copy_exported_image,
             set_window_controls_hidden,
             restore_window_frame,
-            sync_vault
+            sync_vault,
+            debt::list_debts,
+            debt::create_debt,
+            debt::update_debt,
+            debt::set_debt_archived,
+            debt::delete_debt,
+            debt::add_repayment,
+            debt::delete_repayment
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

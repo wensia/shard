@@ -134,10 +134,7 @@ export function FragmentCard({
               />
               <span className="sr-only">片段操作</span>
             </DropdownMenuTrigger>
-            <DropdownMenuContent
-              align="end"
-              className="w-fit min-w-0 rounded-[var(--shard-radius-control)] p-[var(--shard-space-1)] shadow-[0_8px_20px_rgb(0_0_0/var(--shard-alpha-8))] ring-[rgb(0_0_0/var(--shard-alpha-13))]"
-            >
+            <DropdownMenuContent align="end" className="w-fit min-w-0">
               <DropdownMenuGroup>
                 <DropdownMenuItem
                   className="grid h-8 grid-cols-[14px_max-content] gap-[var(--shard-space-2)] px-[var(--shard-space-2)] text-[13px] font-medium whitespace-nowrap [&_svg]:size-3.5 [&_svg]:stroke-[1.65]"

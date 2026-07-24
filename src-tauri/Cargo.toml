@@ -31,6 +31,7 @@ base64 = "0.22"
 rand = "0.8"
 rsa = { version = "0.9", features = ["sha2"] }
 sha2 = "0.10"
+rusqlite = { version = "0.37", features = ["bundled"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2-app-kit = { version = "0.3.2", default-features = false, features = [

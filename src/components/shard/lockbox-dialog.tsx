@@ -96,7 +96,7 @@ export function LockboxDialog({
       <section
         aria-labelledby="lockbox-dialog-title"
         aria-modal="true"
-        className="relative w-full max-w-[520px] rounded-[var(--shard-surface-radius)] border border-border bg-card shadow-[0_18px_48px_rgb(17_19_21/var(--shard-alpha-13))]"
+        className="relative w-full max-w-[520px] rounded-[var(--shard-surface-radius)] border border-border bg-card shadow-popover"
         role="dialog"
       >
         <Button

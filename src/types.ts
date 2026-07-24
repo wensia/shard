@@ -117,6 +117,8 @@ export interface ShardMapNode {
   text: string
   note?: string
   collapsed?: boolean
+  /** 用户手动设置的节点宽度（布局单位）；未设置时按文字自适应。 */
+  width?: number
   createdAt: string
   updatedAt: string
   links?: ShardDocumentLink[]
@@ -165,4 +167,49 @@ export interface LockboxState {
 export interface LockboxSetupResult {
   recoveryKey: string
   vault: VaultState
+}
+
+export type DebtDirection = "borrow_in" | "lend_out"
+// 沿用 Fragment.gitStatus 的既有先例（snake_case 字符串字面量），与 Rust 侧
+// 原始字符串值一一对应，不做 camelCase 改写。
+
+export interface Repayment {
+  id: string
+  debtId: string
+  amountCents: number
+  paidOn: string // "YYYY-MM-DD"
+  note: string
+  createdAt: string // RFC3339
+}
+
+export interface Debt {
+  id: string
+  direction: DebtDirection
+  counterparty: string
+  principalCents: number
+  dueDate: string | null // "YYYY-MM-DD" | null
+  note: string
+  tags: string[]
+  createdAt: string
+  updatedAt: string
+  archived: boolean
+  paidCents: number
+  remainingCents: number
+  settled: boolean
+  repayments: Repayment[]
+}
+
+// —— 以下类型纯前端派生，没有对应的 Rust struct ——
+
+export type DebtUrgency = "overdue" | "dueSoon" | "settled" | "noDueDate" | "normal"
+
+export interface ContactDebtSummary {
+  counterpartyKey: string
+  counterpartyDisplayName: string
+  netCents: number // 正数=对方净欠我；负数=我净欠对方
+  lendOutRemainingCents: number
+  borrowInRemainingCents: number
+  activeDebtCount: number // 未结清且未归档
+  overdueCount: number
+  debts: Debt[]
 }

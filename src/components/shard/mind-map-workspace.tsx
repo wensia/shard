@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useState } from "react"
 import { isTauri } from "@tauri-apps/api/core"
 import {
   AlertTriangleIcon,
+  GitBranchIcon,
+  ListTreeIcon,
   Loader2Icon,
   SaveIcon,
   XIcon,
@@ -270,13 +272,13 @@ export function MindMapWorkspace({
   }, [autoSaveError, conflict, draftFile, isDirty, isSaving, readResult, save])
 
   return (
-    <div className="fixed inset-0 z-50 flex min-h-0 flex-col overflow-hidden bg-white text-foreground">
+    <div className="fixed inset-0 z-50 flex min-h-0 flex-col overflow-hidden bg-background text-foreground">
       <div
         aria-hidden="true"
         className="h-[var(--shard-top-inset)] shrink-0"
         data-tauri-drag-region
       />
-      <main className="min-h-0 flex-1 overflow-hidden bg-white">
+      <main className="min-h-0 flex-1 overflow-hidden bg-background">
         {isLoading ? (
           <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
             <Loader2Icon className="mr-[var(--shard-space-2)] size-4 animate-spin" />
@@ -356,27 +358,23 @@ export function MindMapWorkspace({
           </Button>
 
           {draftFile ? (
-            <div
-              aria-label="视图切换"
-              className="flex rounded-[var(--shard-radius-control)] border border-border bg-background p-0.5"
+            <Button
+              aria-label={view === "map" ? "切换到大纲视图" : "切换到思维导图视图"}
+              onClick={() => setView(view === "map" ? "outline" : "map")}
+              size="icon-sm"
+              title={view === "map" ? "切换到大纲视图" : "切换到思维导图视图"}
+              type="button"
+              variant="ghost"
             >
-              <Button
-                onClick={() => setView("map")}
-                size="sm"
-                type="button"
-                variant={view === "map" ? "secondary" : "ghost"}
-              >
-                思维导图
-              </Button>
-              <Button
-                onClick={() => setView("outline")}
-                size="sm"
-                type="button"
-                variant={view === "outline" ? "secondary" : "ghost"}
-              >
-                大纲
-              </Button>
-            </div>
+              {view === "map" ? (
+                <ListTreeIcon data-icon="inline-start" />
+              ) : (
+                <GitBranchIcon data-icon="inline-start" />
+              )}
+              <span className="sr-only">
+                {view === "map" ? "切换到大纲视图" : "切换到思维导图视图"}
+              </span>
+            </Button>
           ) : null}
 
           <span className="min-w-20 text-right text-xs text-muted-foreground">

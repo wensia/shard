@@ -202,7 +202,7 @@ export function MindMapOutlineEditor({
   }
 
   return (
-    <div className="min-h-0 flex-1 overflow-y-auto bg-white p-[var(--shard-space-5)]">
+    <div className="min-h-0 flex-1 overflow-y-auto bg-background p-[var(--shard-space-5)]">
       <div className="mx-auto flex max-w-4xl flex-col gap-[var(--shard-space-1)]">
         {rows.map(({ node, depth }) => {
           const isRoot = node.id === file.rootId

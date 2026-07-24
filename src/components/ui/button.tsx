@@ -24,7 +24,6 @@ const buttonVariants = cva(
       },
       size: {
         default: "h-9 px-3",
-        xs: "h-6 px-2 text-xs in-data-[slot=button-group]:rounded-md [&_svg:not([class*='size-'])]:size-3",
         sm: "h-8 px-2.5 text-[0.8rem] in-data-[slot=button-group]:rounded-md [&_svg:not([class*='size-'])]:size-3.5",
         lg: "h-10 px-3.5",
         icon: "size-9",
@@ -58,7 +57,7 @@ function Button({
       data-slot="button"
       className={cn(
         buttonVariants({ variant, size }),
-        !isStatic && "active:not-aria-[haspopup]:scale-[0.96]",
+        !isStatic && "active:not-aria-[haspopup]:translate-y-px",
         className
       )}
       {...props}
