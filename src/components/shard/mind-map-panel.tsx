@@ -100,7 +100,14 @@ export function MindMapPanel({ onMapsChange, onOpenMap }: MindMapPanelProps) {
 
   return (
     <Stack minHeight={0} style={{ flex: "1 1 0%" }}>
-      <div className="shard-content-inset" style={{ paddingBottom: "var(--shard-space-4)" }}>
+      <div
+        className="shard-content-inset"
+        data-tauri-drag-region
+        style={{
+          paddingBottom: "var(--shard-space-4)",
+          paddingTop: "var(--shard-top-inset)",
+        }}
+      >
         <HStack
           className="shard-content-measure"
           gap={3}

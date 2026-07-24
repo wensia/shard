@@ -32,7 +32,11 @@ export function TaggedPanel({
   return (
     <div
       className="shard-content-inset"
-      style={{ paddingBottom: "var(--shard-space-4)" }}
+      data-tauri-drag-region
+      style={{
+        paddingBottom: "var(--shard-space-4)",
+        paddingTop: "var(--shard-top-inset)",
+      }}
     >
       <Stack className="shard-content-measure" gap={3}>
         <HStack

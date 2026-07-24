@@ -201,7 +201,11 @@ export function DebtWorkspace({ debts, onDebtsChange }: DebtWorkspaceProps) {
     <Stack minHeight={0} style={{ flex: "1 1 0%" }}>
       <div
         className="shard-content-inset"
-        style={{ paddingBottom: "var(--shard-space-4)" }}
+        data-tauri-drag-region
+        style={{
+          paddingBottom: "var(--shard-space-4)",
+          paddingTop: "var(--shard-top-inset)",
+        }}
       >
         <HStack
           className="shard-content-measure"

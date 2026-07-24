@@ -1095,13 +1095,7 @@ function App() {
                 onOpenZen={openZenDraft}
               />
             </div>
-          ) : (
-            <div
-              aria-hidden="true"
-              style={{ height: "var(--shard-composer-top-gap)", flexShrink: 0 }}
-              data-tauri-drag-region
-            />
-          )}
+          ) : null}
 
           {isInboxView ? (
             <InboxTagBar
@@ -1374,7 +1368,11 @@ function LockboxHeader({
   return (
     <div
       className="shard-content-inset"
-      style={{ paddingBottom: "var(--shard-space-4)" }}
+      data-tauri-drag-region
+      style={{
+        paddingBottom: "var(--shard-space-4)",
+        paddingTop: "var(--shard-top-inset)",
+      }}
     >
       <div
         className="shard-content-measure"
