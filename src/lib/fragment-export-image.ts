@@ -139,7 +139,6 @@ export async function drawFragmentExportImage(
 
   canvas.width = template.width * pixelRatio
   canvas.height = logicalHeight * pixelRatio
-  canvas.style.aspectRatio = `${template.width} / ${logicalHeight}`
 
   const context = canvas.getContext("2d")
   if (!context) {

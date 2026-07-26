@@ -50,7 +50,6 @@ import {
   restoreWindowFrame,
   resetLockboxPassword,
   setupLockbox,
-  syncVault,
   unlockLockbox,
   updateFragment,
 } from "@/lib/api"
@@ -66,7 +65,6 @@ import type {
   Debt,
   Fragment,
   FragmentFilter,
-  GitInfo,
   LockboxState,
   MindMapSummary,
   VaultState,
@@ -83,12 +81,10 @@ interface ZenDraft {
 function App() {
   const toast = useToast()
   const [fragments, setFragments] = useState<Fragment[]>([])
-  const [git, setGit] = useState<GitInfo | null>(null)
   const [vaultPath, setVaultPath] = useState("")
   const [filter, setFilter] = useState<FragmentFilter>("inbox")
   const [isLoading, setIsLoading] = useState(true)
   const [isCreating, setIsCreating] = useState(false)
-  const [isSyncing, setIsSyncing] = useState(false)
   const [lockbox, setLockbox] = useState<LockboxState | null>(null)
   const [lockboxDialogMode, setLockboxDialogMode] =
     useState<LockboxDialogMode | null>(null)
@@ -186,7 +182,6 @@ function App() {
 
       if (message === DESKTOP_RUNTIME_MESSAGE) {
         setFragments([])
-        setGit(null)
         setLockbox(null)
         setVaultPath("")
         setNeedsVaultSetup(false)
@@ -195,7 +190,6 @@ function App() {
 
       if (isVaultNotConfigured(error)) {
         setFragments([])
-        setGit(null)
         setLockbox(null)
         setVaultPath("")
         setNeedsVaultSetup(true)
@@ -241,7 +235,6 @@ function App() {
       : publicFragments(state.fragments)
 
     setFragments(sortFragmentsForDisplay(visibleFragments))
-    setGit(state.git)
     setLockbox(state.lockbox)
     setVaultPath(state.vaultPath)
     setNeedsVaultSetup(false)
@@ -299,8 +292,6 @@ function App() {
       tags,
       category: null,
       path: "",
-      gitStatus: "saved",
-      error: null,
       archived: false,
       lockbox: false,
       pinned: false,
@@ -317,11 +308,7 @@ function App() {
           )
         )
       )
-      if (created.gitStatus === "commit_failed") {
-        toast({ body: `${"片段已保存，但 Git commit 失败"}：${created.error ?? "可以继续记录，之后再处理 Git 配置。"}` })
-      } else {
-        toast({ body: "片段已保存" })
-      }
+      toast({ body: "片段已保存" })
       void refreshFragments()
     } catch (error) {
       const message = getApiErrorMessage(error)
@@ -332,27 +319,6 @@ function App() {
       throw new Error(message)
     } finally {
       setIsCreating(false)
-    }
-  }
-
-  async function handleSync() {
-    setIsSyncing(true)
-    try {
-      const synced = await syncVault()
-      setGit(synced)
-      toast({ body: "同步完成" })
-      void refreshFragments()
-    } catch (error) {
-      if (isGitSetupError(error)) {
-        setIsVaultGuideOpen(true)
-        void refreshFragments()
-        toast({ body: `${"需要完成 Git 配置"}：${getApiErrorMessage(error)}` })
-        return
-      }
-
-      toast({ body: `${"同步失败"}：${getApiErrorMessage(error)}`, type: "error" })
-    } finally {
-      setIsSyncing(false)
     }
   }
 
@@ -990,53 +956,6 @@ function App() {
     }
   }, [isModalBusy])
 
-  const autoSyncFailureNotifiedRef = useRef(false)
-  const autoSyncTickRef = useRef<() => void>(() => {})
-  autoSyncTickRef.current = () => {
-    if (
-      !appSettings.autoSyncEnabled ||
-      !git?.hasRemote ||
-      isSyncing ||
-      isCreating ||
-      isModalBusy ||
-      editingFragmentId !== null
-    ) {
-      return
-    }
-
-    setIsSyncing(true)
-    void syncVault()
-      .then((synced) => {
-        setGit(synced)
-        autoSyncFailureNotifiedRef.current = false
-        void refreshFragments()
-      })
-      .catch((error) => {
-        if (!autoSyncFailureNotifiedRef.current) {
-          autoSyncFailureNotifiedRef.current = true
-          toast({ body: `${"自动同步失败"}：${getApiErrorMessage(error)}`, type: "error" })
-        }
-      })
-      .finally(() => {
-        setIsSyncing(false)
-      })
-  }
-
-  useEffect(() => {
-    if (!appSettings.autoSyncEnabled) {
-      return
-    }
-
-    const timer = window.setInterval(
-      () => autoSyncTickRef.current(),
-      appSettings.autoSyncIntervalMinutes * 60_000
-    )
-
-    return () => {
-      window.clearInterval(timer)
-    }
-  }, [appSettings.autoSyncEnabled, appSettings.autoSyncIntervalMinutes])
-
   if (activeMindMapId) {
     return (
       <>
@@ -1060,8 +979,6 @@ function App() {
           <SidebarNav
             activeFilter={filter}
             fragments={publicOnlyFragments}
-            git={git}
-            isSyncing={isSyncing}
             mindMapCount={mindMaps.length}
             mindMapViewActive={isMindMapViewActive}
             debtCount={debts.filter((debt) => !debt.archived && !debt.settled).length}
@@ -1074,8 +991,6 @@ function App() {
             onOpenSettings={() => openSettings("vault")}
             onRestoreWindow={handleRestoreWindow}
             onShortcuts={showShortcuts}
-            onSync={handleSync}
-            vaultPath={vaultPath}
           />
         </div>
         <Stack
@@ -1208,8 +1123,6 @@ function App() {
           <BottomTabs
             activeFilter={filter}
             fragments={publicOnlyFragments}
-            git={git}
-            isSyncing={isSyncing}
             onFilterChange={handleFilterChange}
             onHelp={showHelp}
             onOpenDebts={openDebts}
@@ -1218,7 +1131,6 @@ function App() {
             onOpenSettings={() => openSettings("vault")}
             onRestoreWindow={handleRestoreWindow}
             onShortcuts={showShortcuts}
-            onSync={handleSync}
             vaultPath={vaultPath}
           />
         </div>
@@ -1263,13 +1175,7 @@ function App() {
         }}
       />
       <VaultGuide
-        autoSyncEnabled={appSettings.autoSyncEnabled}
-        autoSyncIntervalMinutes={appSettings.autoSyncIntervalMinutes}
-        git={git}
         initialSection={settingsSection}
-        isSyncing={isSyncing}
-        onAutoSyncChange={updateAppSettings}
-        onSync={() => void handleSync()}
         onClose={() => {
           if (!needsVaultSetup) {
             setIsVaultGuideOpen(false)
@@ -1524,11 +1430,6 @@ function LockboxTagFilterButton({
 
 function isVaultNotConfigured(error: unknown) {
   return String(error).includes("vault_not_configured")
-}
-
-function isGitSetupError(error: unknown) {
-  const message = String(error)
-  return message.includes("Git 未初始化") || message.includes("Git remote 未配置")
 }
 
 function hasVisibleTag(fragment: Fragment) {

@@ -14,6 +14,16 @@ export function todayISODate(): string {
   return new Intl.DateTimeFormat("en-CA").format(new Date())
 }
 
+/**
+ * RFC3339 时刻 → 本地时区 "YYYY-MM-DD"，用于把 `Debt.createdAt` 回填进日期选择
+ * 器。同 `todayISODate`，走 `en-CA` 而非 `toISOString()`，避免跨时区错一天。
+ */
+export function isoDateOfTimestamp(timestamp: string): string {
+  const parsed = new Date(timestamp)
+  if (Number.isNaN(parsed.getTime())) return ""
+  return new Intl.DateTimeFormat("en-CA").format(parsed)
+}
+
 /** a - b，用 UTC 毫秒数做减法避免夏令时/时分秒残留导致的偏差。 */
 function daysBetweenISODates(a: string, b: string): number {
   const [ay, am, ad] = a.split("-").map(Number)

@@ -1,0 +1,105 @@
+{
+  "_comment": [
+    "全文检索分词的一致性基准。Rust 侧（shard-core）与未来的 Web 侧实现都必须",
+    "通过这份用例，否则索引与查询会静默漂移，表现为搜索搜不到东西。",
+    "matchQuery 为 null 表示 build_match_query 应返回 None（调用方须跳过查询）。"
+  ],
+  "cases": [
+    {
+      "name": "两字中文——trigram 方案会在这一条上失效",
+      "input": "会议",
+      "ftsText": "会 议",
+      "matchQuery": "\"会 议\""
+    },
+    {
+      "name": "单字中文",
+      "input": "会",
+      "ftsText": "会",
+      "matchQuery": "\"会\""
+    },
+    {
+      "name": "中英混排带空格",
+      "input": "Rust 会议",
+      "ftsText": "Rust 会 议",
+      "matchQuery": "\"rust\"* AND \"会 议\""
+    },
+    {
+      "name": "中英混排无空格——边界靠字符类别切分",
+      "input": "Rust会议",
+      "ftsText": "Rust 会 议",
+      "matchQuery": "\"rust\"* AND \"会 议\""
+    },
+    {
+      "name": "标签形态：# 属于 tokenchars，不被拆散",
+      "input": "日程#2",
+      "ftsText": "日 程 #2",
+      "matchQuery": "\"日 程\" AND \"#2\"*"
+    },
+    {
+      "name": "emoji 作为分隔符，不产生垃圾 token",
+      "input": "😀 会议",
+      "ftsText": "😀 会 议",
+      "matchQuery": "\"会 议\""
+    },
+    {
+      "name": "全角标点作为分隔符，切断 phrase",
+      "input": "会议，日程",
+      "ftsText": "会 议 ， 日 程",
+      "matchQuery": "\"会 议\" AND \"日 程\""
+    },
+    {
+      "name": "日文假名同样逐字切分",
+      "input": "ミーティング",
+      "ftsText": "ミ ー テ ィ ン グ",
+      "matchQuery": "\"ミ ー テ ィ ン グ\""
+    },
+    {
+      "name": "大小写归一化由查询侧完成",
+      "input": "RUST",
+      "ftsText": "RUST",
+      "matchQuery": "\"rust\"*"
+    },
+    {
+      "name": "FTS5 关键字被当作字面量，不解释为语法",
+      "input": "AND OR",
+      "ftsText": "AND OR",
+      "matchQuery": "\"and\"* AND \"or\"*"
+    },
+    {
+      "name": "双引号是分隔符，不会破坏生成的表达式",
+      "input": "a\"b",
+      "ftsText": "a\"b",
+      "matchQuery": "\"a\"* AND \"b\"*"
+    },
+    {
+      "name": "空串",
+      "input": "",
+      "ftsText": "",
+      "matchQuery": null
+    },
+    {
+      "name": "纯空白",
+      "input": "   ",
+      "ftsText": "",
+      "matchQuery": null
+    },
+    {
+      "name": "纯符号：是 tokenchars 但无字母数字，应丢弃而非生成空匹配项",
+      "input": "---",
+      "ftsText": "---",
+      "matchQuery": null
+    },
+    {
+      "name": "CJK 扩展 B（增补平面）",
+      "input": "𠀋",
+      "ftsText": "𠀋",
+      "matchQuery": "\"𠀋\""
+    },
+    {
+      "name": "多段混排",
+      "input": "会议 notes/2026 日程",
+      "ftsText": "会 议 notes/2026 日 程",
+      "matchQuery": "\"会 议\" AND \"notes/2026\"* AND \"日 程\""
+    }
+  ]
+}

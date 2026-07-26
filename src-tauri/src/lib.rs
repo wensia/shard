@@ -24,7 +24,11 @@ use std::{
 };
 use tauri::Manager;
 
+mod db;
 mod debt;
+mod notes;
+
+use notes::NotesDb;
 
 const DEFAULT_WINDOW_WIDTH: f64 = 1180.0;
 const DEFAULT_WINDOW_HEIGHT: f64 = 820.0;
@@ -53,8 +57,6 @@ struct Fragment {
     tags: Vec<String>,
     category: Option<String>,
     path: String,
-    git_status: String,
-    error: Option<String>,
     ai_status: String,
     archived: bool,
     lockbox: bool,
@@ -66,7 +68,6 @@ struct Fragment {
 struct VaultState {
     vault_path: String,
     fragments: Vec<Fragment>,
-    git: GitInfo,
     lockbox: LockboxState,
 }
 
@@ -81,26 +82,10 @@ struct AppConfig {
     /// Turso 云端 auth token。与 `turso_url` 同时存在时启用 embedded replica。
     #[serde(default)]
     turso_auth_token: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct GitInfo {
-    branch: String,
-    short_commit: String,
-    has_remote: bool,
-    status: String,
-    error: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct GithubCliInfo {
-    installed: bool,
-    authenticated: bool,
-    login: Option<String>,
-    protocol: Option<String>,
-    error: Option<String>,
+    /// 是否从笔记库读取片段列表。缺省视为开启。
+    /// 数据层出问题时可一键退回递归扫 Markdown 的老路径，无需回滚版本。
+    #[serde(default)]
+    db_read_enabled: Option<bool>,
 }
 
 #[derive(Debug, Serialize)]
@@ -336,13 +321,77 @@ where
 async fn list_fragments(
     app: tauri::AppHandle,
     lockbox_runtime: tauri::State<'_, LockboxRuntime>,
+    notes: tauri::State<'_, NotesDb>,
 ) -> Result<VaultState, String> {
-    let lockbox_runtime = lockbox_runtime.inner().clone();
+    let runtime = lockbox_runtime.inner().clone();
+
+    if read_app_config(&app)
+        .map(|cfg| cfg.db_read_enabled.unwrap_or(true))
+        .unwrap_or(true)
+    {
+        match list_fragments_from_db(&app, &notes, &runtime).await {
+            Ok(state) => return Ok(state),
+            // 读库失败绝不能让用户打不开自己的笔记：退回扫描 Markdown。
+            Err(error) => eprintln!("[shard] 读取笔记库失败，已回退到扫描文件：{error}"),
+        }
+    }
+
+    let runtime = lockbox_runtime.inner().clone();
     run_blocking(move || {
         let vault = ensure_vault_dirs(&app)?;
-        list_fragments_in_vault(&vault, &lockbox_runtime)
+        list_fragments_in_vault(&vault, &runtime)
     })
     .await
+}
+
+/// 走笔记库的读路径：一条 SQL 取回全部片段，替代递归扫目录 + 逐文件解析。
+async fn list_fragments_from_db(
+    app: &tauri::AppHandle,
+    notes: &NotesDb,
+    lockbox_runtime: &LockboxRuntime,
+) -> Result<VaultState, String> {
+    let vault = ensure_vault_dirs(app)?;
+    let conn = notes.conn(app, false).await?;
+
+    // 首次使用时库还是空的。不先导入的话用户会看到空列表，以为笔记全丢了。
+    ensure_notes_imported(&conn, &vault).await?;
+
+    let (lockbox_state, read_keys) = {
+        let vault = vault.clone();
+        let runtime = lockbox_runtime.clone();
+        run_blocking(move || {
+            Ok::<_, String>((
+                lockbox_state(&vault, &runtime),
+                unlocked_lockbox_read_keys(&vault, &runtime),
+            ))
+        })
+        .await?
+    };
+
+    let fragments = notes::bridge::list_fragments(&conn, &vault, read_keys.as_ref()).await?;
+
+    Ok(VaultState {
+        vault_path: vault.display().to_string(),
+        fragments,
+        lockbox: lockbox_state,
+    })
+}
+
+/// 确保 vault 内容已导入笔记库。只在首次（或换 vault 后）跑一次全量导入。
+async fn ensure_notes_imported(conn: &libsql::Connection, vault: &Path) -> Result<(), String> {
+    if notes::repo::get_meta(conn, "markdown_import_state")
+        .await?
+        .as_deref()
+        == Some("done")
+    {
+        return Ok(());
+    }
+    let report = notes::import::run(conn, vault, &notes::import::ImportOptions::default()).await?;
+    eprintln!(
+        "[shard] 首次建立笔记库：扫描 {} 个文件，导入 {} 条，失败 {} 条",
+        report.scanned, report.imported, report.failed.len()
+    );
+    Ok(())
 }
 
 #[tauri::command]
@@ -425,7 +474,6 @@ async fn set_vault_path(
         fs::create_dir_all(&vault).map_err(|error| error.to_string())?;
         ensure_vault_layout(&vault)?;
         if initialize_git {
-            ensure_git_repo(&vault)?;
         }
         let mut config = read_app_config(&app)?;
         config.vault_path = Some(vault.display().to_string());
@@ -437,60 +485,8 @@ async fn set_vault_path(
     .await
 }
 
-#[tauri::command]
-async fn initialize_vault_git(
-    app: tauri::AppHandle,
-    lockbox_runtime: tauri::State<'_, LockboxRuntime>,
-) -> Result<VaultState, String> {
-    let lockbox_runtime = lockbox_runtime.inner().clone();
-    run_blocking(move || {
-        let vault = ensure_vault_dirs(&app)?;
-        ensure_git_repo(&vault)?;
-        list_fragments_in_vault(&vault, &lockbox_runtime)
-    })
-    .await
-}
 
-#[tauri::command]
-async fn set_vault_remote(
-    app: tauri::AppHandle,
-    lockbox_runtime: tauri::State<'_, LockboxRuntime>,
-    remote_url: String,
-) -> Result<VaultState, String> {
-    let lockbox_runtime = lockbox_runtime.inner().clone();
-    run_blocking(move || {
-        let remote_url = remote_url.trim().to_string();
-        if remote_url.is_empty() {
-            return Err("Git remote URL 不能为空".to_string());
-        }
 
-        let vault = ensure_vault_dirs(&app)?;
-        ensure_git_repo(&vault)?;
-
-        let remotes = git_remotes(&vault);
-        if remotes.iter().any(|remote| remote == "origin") {
-            run_git(&vault, &["remote", "set-url", "origin", &remote_url])?;
-        } else {
-            run_git(&vault, &["remote", "add", "origin", &remote_url])?;
-        }
-
-        list_fragments_in_vault(&vault, &lockbox_runtime)
-    })
-    .await
-}
-
-#[tauri::command]
-async fn github_cli_status() -> GithubCliInfo {
-    tauri::async_runtime::spawn_blocking(read_github_cli_status)
-        .await
-        .unwrap_or_else(|error| GithubCliInfo {
-            installed: false,
-            authenticated: false,
-            login: None,
-            protocol: None,
-            error: Some(format!("无法读取 GitHub CLI 登录状态：{error}")),
-        })
-}
 
 #[tauri::command]
 async fn codex_agent_status() -> CodexAgentStatus {
@@ -511,56 +507,6 @@ async fn run_codex_review_task(
     run_blocking(move || run_codex_review_task_blocking(request)).await
 }
 
-fn read_github_cli_status() -> GithubCliInfo {
-    let Ok(gh) = gh_path() else {
-        return GithubCliInfo {
-            installed: false,
-            authenticated: false,
-            login: None,
-            protocol: None,
-            error: Some("未检测到 GitHub CLI。".to_string()),
-        };
-    };
-
-    let auth = Command::new(&gh)
-        .args(["auth", "status", "--hostname", "github.com"])
-        .output();
-    let Ok(auth) = auth else {
-        return GithubCliInfo {
-            installed: true,
-            authenticated: false,
-            login: None,
-            protocol: None,
-            error: Some("无法读取 GitHub CLI 登录状态。".to_string()),
-        };
-    };
-
-    let authenticated = auth.status.success();
-    let auth_output = format!(
-        "{}\n{}",
-        String::from_utf8_lossy(&auth.stdout),
-        String::from_utf8_lossy(&auth.stderr)
-    );
-    let protocol = run_gh_with_path(
-        &gh,
-        &["config", "get", "git_protocol", "--host", "github.com"],
-    )
-    .ok()
-    .map(|value| value.trim().to_string())
-    .filter(|value| !value.is_empty());
-
-    GithubCliInfo {
-        installed: true,
-        authenticated,
-        login: parse_gh_login(&auth_output),
-        protocol,
-        error: if authenticated {
-            None
-        } else {
-            Some("gh 尚未登录 GitHub。请先运行 gh auth login。".to_string())
-        },
-    }
-}
 
 fn read_codex_agent_status() -> CodexAgentStatus {
     let Ok(codex) = codex_path() else {
@@ -602,46 +548,6 @@ fn run_codex_review_task_blocking(
     Ok(CodexReviewTaskResult { text })
 }
 
-#[tauri::command]
-async fn create_github_vault_repo(
-    app: tauri::AppHandle,
-    lockbox_runtime: tauri::State<'_, LockboxRuntime>,
-    repo_name: String,
-) -> Result<VaultState, String> {
-    let lockbox_runtime = lockbox_runtime.inner().clone();
-    run_blocking(move || {
-        let repo_name = sanitize_repo_name(&repo_name)?;
-        let vault = ensure_vault_dirs(&app)?;
-        ensure_git_repo(&vault)?;
-
-        if default_remote(&vault).is_some() {
-            return Err("当前 Vault 已经配置 Git remote。".to_string());
-        }
-
-        commit_all_if_dirty(&vault, "configure git sync")?;
-
-        run_gh_in(
-            &vault,
-            &[
-                "repo",
-                "create",
-                &repo_name,
-                "--private",
-                "--source",
-                ".",
-                "--remote",
-                "origin",
-            ],
-        )?;
-
-        if run_git(&vault, &["rev-parse", "--verify", "HEAD"]).is_ok() {
-            push_vault(&vault)?;
-        }
-
-        list_fragments_in_vault(&vault, &lockbox_runtime)
-    })
-    .await
-}
 
 fn list_fragments_in_vault(
     vault: &Path,
@@ -651,10 +557,9 @@ fn list_fragments_in_vault(
     collect_markdown_files(&vault.join("fragments"), &mut files)?;
     collect_markdown_files(&vault.join("archive"), &mut files)?;
 
-    let dirty_paths = dirty_paths(&vault);
     let mut fragments = files
         .iter()
-        .filter_map(|path| read_fragment(path, &vault, &dirty_paths, None).ok())
+        .filter_map(|path| read_fragment(&path, vault).ok())
         .collect::<Vec<_>>();
 
     if let Some(read_keys) = unlocked_lockbox_read_keys(vault, lockbox_runtime) {
@@ -663,7 +568,7 @@ fn list_fragments_in_vault(
         collect_lockbox_files(&vault.join("lockbox").join("archive"), &mut lockbox_files)?;
 
         fragments.extend(lockbox_files.iter().filter_map(|path| {
-            read_lockbox_fragment(path, vault, &dirty_paths, &read_keys, None).ok()
+            read_lockbox_fragment(&path, vault, &read_keys).ok()
         }));
     }
 
@@ -676,7 +581,6 @@ fn list_fragments_in_vault(
     Ok(VaultState {
         vault_path: vault.display().to_string(),
         fragments,
-        git: git_info(&vault),
         lockbox: lockbox_state(vault, lockbox_runtime),
     })
 }
@@ -841,11 +745,13 @@ fn delete_mind_map_in_vault(vault: &Path, id: &str, expected_revision: u64) -> R
 async fn create_fragment(
     app: tauri::AppHandle,
     lockbox_runtime: tauri::State<'_, LockboxRuntime>,
+    notes: tauri::State<'_, NotesDb>,
     content: String,
     tags: Option<Vec<String>>,
 ) -> Result<Fragment, String> {
     let lockbox_runtime = lockbox_runtime.inner().clone();
-    run_blocking(move || {
+    let shadow_app = app.clone();
+    let fragment = run_blocking(move || {
         let content = content.trim().to_string();
         if content.is_empty() {
             return Err("片段内容不能为空".to_string());
@@ -887,34 +793,30 @@ async fn create_fragment(
 
         write_fragment_file(&path, &frontmatter, &content)?;
 
-        let rel_path = relative_path(&vault, &path)?;
-        let commit_result = commit_path_if_git(
-            &vault,
-            &rel_path,
-            &format!("create fragment {}", now.format("%Y-%m-%d %H:%M:%S")),
-        );
+        let _rel_path = relative_path(&vault, &path)?;
 
-        let dirty = dirty_paths(&vault);
-        let override_status = match commit_result {
-            Ok(Some(_)) => Some(("committed".to_string(), None)),
-            Ok(None) => Some(("saved".to_string(), None)),
-            Err(error) => Some(("commit_failed".to_string(), Some(error))),
-        };
 
-        read_fragment(&path, &vault, &dirty, override_status)
+        read_fragment(&path, &vault)
     })
-    .await
+    .await?;
+
+    // 落盘成功后才同步进本地库。失败只记日志：文件仍是真相源，
+    // 旁路索引出问题不该让用户看到保存失败（DESIGN.md：保存不可失败）。
+    notes::shadow::sync_file(&shadow_app, &notes, &fragment.path).await;
+    Ok(fragment)
 }
 
 #[tauri::command]
 async fn update_fragment_tags(
     app: tauri::AppHandle,
     lockbox_runtime: tauri::State<'_, LockboxRuntime>,
+    notes: tauri::State<'_, NotesDb>,
     id: String,
     tags: Vec<String>,
 ) -> Result<Fragment, String> {
     let lockbox_runtime = lockbox_runtime.inner().clone();
-    run_blocking(move || {
+    let shadow_app = app.clone();
+    let fragment = run_blocking(move || {
         let vault = ensure_vault_dirs(&app)?;
         let normalized_tags = normalize_tags(tags, false);
 
@@ -945,35 +847,31 @@ async fn update_fragment_tags(
         frontmatter.updated_at = Local::now().to_rfc3339();
         write_fragment_file(&path, &frontmatter, body.trim_start_matches('\n'))?;
 
-        let rel_path = relative_path(&vault, &path)?;
-        let commit_result = commit_path_if_git(
-            &vault,
-            &rel_path,
-            &format!("update fragment tags {}", frontmatter.id),
-        );
+        let _rel_path = relative_path(&vault, &path)?;
 
-        let dirty = dirty_paths(&vault);
-        let override_status = match commit_result {
-            Ok(Some(_)) => Some(("committed".to_string(), None)),
-            Ok(None) => Some(("saved".to_string(), None)),
-            Err(error) => Some(("commit_failed".to_string(), Some(error))),
-        };
 
-        read_fragment(&path, &vault, &dirty, override_status)
+        read_fragment(&path, &vault)
     })
-    .await
+    .await?;
+
+    // 落盘成功后才同步进本地库。失败只记日志：文件仍是真相源，
+    // 旁路索引出问题不该让用户看到保存失败（DESIGN.md：保存不可失败）。
+    notes::shadow::sync_file(&shadow_app, &notes, &fragment.path).await;
+    Ok(fragment)
 }
 
 #[tauri::command]
 async fn update_fragment(
     app: tauri::AppHandle,
     lockbox_runtime: tauri::State<'_, LockboxRuntime>,
+    notes: tauri::State<'_, NotesDb>,
     id: String,
     content: String,
     tags: Option<Vec<String>>,
 ) -> Result<Fragment, String> {
     let lockbox_runtime = lockbox_runtime.inner().clone();
-    run_blocking(move || {
+    let shadow_app = app.clone();
+    let fragment = run_blocking(move || {
         if content.trim().is_empty() {
             return Err("片段内容不能为空".to_string());
         }
@@ -1015,26 +913,26 @@ async fn update_fragment(
         frontmatter.updated_at = Local::now().to_rfc3339();
         write_fragment_file(&path, &frontmatter, &content)?;
 
-        let dirty = dirty_paths(&vault);
-        let override_status = if vault.join(".git").exists() {
-            Some(("sync_pending".to_string(), None))
-        } else {
-            Some(("saved".to_string(), None))
-        };
-
-        read_fragment(&path, &vault, &dirty, override_status)
+        read_fragment(&path, &vault)
     })
-    .await
+    .await?;
+
+    // 落盘成功后才同步进本地库。失败只记日志：文件仍是真相源，
+    // 旁路索引出问题不该让用户看到保存失败（DESIGN.md：保存不可失败）。
+    notes::shadow::sync_file(&shadow_app, &notes, &fragment.path).await;
+    Ok(fragment)
 }
 
 #[tauri::command]
 async fn archive_fragment(
     app: tauri::AppHandle,
     lockbox_runtime: tauri::State<'_, LockboxRuntime>,
+    notes: tauri::State<'_, NotesDb>,
     id: String,
 ) -> Result<Fragment, String> {
     let lockbox_runtime = lockbox_runtime.inner().clone();
-    run_blocking(move || {
+    let shadow_app = app.clone();
+    let fragment = run_blocking(move || {
         let vault = ensure_vault_dirs(&app)?;
         if let Some(lockbox_path) = find_lockbox_fragment_path(&vault, &id)? {
             let read_keys = require_unlocked_lockbox_read_keys(&vault, &lockbox_runtime)?;
@@ -1045,8 +943,7 @@ async fn archive_fragment(
         let rel_path = relative_path(&vault, &path)?;
 
         if rel_path.starts_with("archive/") {
-            let dirty = dirty_paths(&vault);
-            return read_fragment(&path, &vault, &dirty, None);
+            return read_fragment(&path, &vault);
         }
 
         let active_root = vault.join("fragments");
@@ -1068,29 +965,29 @@ async fn archive_fragment(
             })
             .map_err(|error| error.to_string())?;
 
-        let commit_result = commit_all_if_git(&vault, &format!("archive fragment {}", id));
 
-        let dirty = dirty_paths(&vault);
-        let override_status = match commit_result {
-            Ok(Some(_)) => Some(("committed".to_string(), None)),
-            Ok(None) => Some(("saved".to_string(), None)),
-            Err(error) => Some(("commit_failed".to_string(), Some(error))),
-        };
 
-        read_fragment(&archived_path, &vault, &dirty, override_status)
+        read_fragment(&archived_path, &vault)
     })
-    .await
+    .await?;
+
+    // 落盘成功后才同步进本地库。失败只记日志：文件仍是真相源，
+    // 旁路索引出问题不该让用户看到保存失败（DESIGN.md：保存不可失败）。
+    notes::shadow::sync_file(&shadow_app, &notes, &fragment.path).await;
+    Ok(fragment)
 }
 
 #[tauri::command]
 async fn set_fragment_pinned(
     app: tauri::AppHandle,
     lockbox_runtime: tauri::State<'_, LockboxRuntime>,
+    notes: tauri::State<'_, NotesDb>,
     id: String,
     pinned: bool,
 ) -> Result<Fragment, String> {
     let lockbox_runtime = lockbox_runtime.inner().clone();
-    run_blocking(move || {
+    let shadow_app = app.clone();
+    let fragment = run_blocking(move || {
         let vault = ensure_vault_dirs(&app)?;
         if let Some(lockbox_path) = find_lockbox_fragment_path(&vault, &id)? {
             let read_keys = require_unlocked_lockbox_read_keys(&vault, &lockbox_runtime)?;
@@ -1100,23 +997,35 @@ async fn set_fragment_pinned(
         let path = find_fragment_path(&vault, &id)?.ok_or_else(|| format!("找不到片段 {}", id))?;
         set_public_fragment_pinned_in_vault(&vault, &path, pinned)
     })
-    .await
+    .await?;
+
+    // 落盘成功后才同步进本地库。失败只记日志：文件仍是真相源，
+    // 旁路索引出问题不该让用户看到保存失败（DESIGN.md：保存不可失败）。
+    notes::shadow::sync_file(&shadow_app, &notes, &fragment.path).await;
+    Ok(fragment)
 }
 
 #[tauri::command]
 async fn move_fragment_to_lockbox(
     app: tauri::AppHandle,
     lockbox_runtime: tauri::State<'_, LockboxRuntime>,
+    notes: tauri::State<'_, NotesDb>,
     id: String,
 ) -> Result<VaultState, String> {
     let lockbox_runtime = lockbox_runtime.inner().clone();
-    run_blocking(move || {
+    let shadow_app = app.clone();
+    let shadow_id = id.clone();
+    let state = run_blocking(move || {
         let vault = ensure_vault_dirs(&app)?;
         let path = find_fragment_path(&vault, &id)?.ok_or_else(|| format!("找不到片段 {}", id))?;
         move_public_fragment_to_lockbox_in_vault(&vault, &lockbox_runtime, &path)?;
         list_fragments_in_vault(&vault, &lockbox_runtime)
     })
-    .await
+    .await?;
+
+    // 明文文件此刻已被删除，库里残留的那一行就是明文泄漏，必须立即清掉。
+    notes::shadow::sync_lockbox_transfer(&shadow_app, &notes, &shadow_id).await;
+    Ok(state)
 }
 
 #[tauri::command]
@@ -1449,78 +1358,8 @@ fn restore_default_window_frame(window: &tauri::WebviewWindow) -> Result<(), Str
     }
 }
 
-#[tauri::command]
-async fn sync_vault(app: tauri::AppHandle) -> Result<GitInfo, String> {
-    run_blocking(move || {
-        let vault = ensure_vault_dirs(&app)?;
 
-        if !vault.join(".git").exists() {
-            return Err("Git 未初始化。请先在 Vault 设置中初始化 Git。".to_string());
-        }
 
-        push_vault(&vault)?;
-        Ok(git_info(&vault))
-    })
-    .await
-}
-
-fn push_vault(vault: &Path) -> Result<(), String> {
-    let Some(remote) = default_remote(vault) else {
-        return Err("Git remote 未配置。请先在 ShardVault 中设置远端。".to_string());
-    };
-
-    ensure_no_unfinished_git_operation(vault)?;
-    commit_all_if_dirty(vault, "sync local vault changes")?;
-
-    let branch = current_branch(vault);
-    let has_upstream = run_git(
-        vault,
-        &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
-    )
-    .is_ok();
-
-    if has_upstream {
-        pull_rebase_autostash(vault, None)?;
-        run_git(vault, &["push"])?;
-    } else {
-        let remote_branch =
-            run_git(vault, &["ls-remote", "--heads", &remote, &branch]).unwrap_or_default();
-        if !remote_branch.trim().is_empty() {
-            pull_rebase_autostash(vault, Some((&remote, &branch)))?;
-        }
-        run_git(vault, &["push", "-u", &remote, &branch])?;
-    }
-    Ok(())
-}
-
-fn pull_rebase_autostash(vault: &Path, target: Option<(&str, &str)>) -> Result<(), String> {
-    let mut args = vec!["pull", "--rebase", "--autostash"];
-    if let Some((remote, branch)) = target {
-        args.push(remote);
-        args.push(branch);
-    }
-
-    match run_git(vault, &args) {
-        Ok(_) => {
-            if has_rebase_in_progress(vault) {
-                return Err("Git rebase 未完成。请先在 Vault 中解决冲突后再同步。".to_string());
-            }
-            Ok(())
-        }
-        Err(error) => {
-            let abort_error = if has_rebase_in_progress(vault) {
-                run_git(vault, &["rebase", "--abort"]).err()
-            } else {
-                None
-            };
-            let mut message = format_git_sync_error(&error);
-            if let Some(abort_error) = abort_error {
-                message.push_str(&format!("\n\n自动中止 rebase 失败：{abort_error}"));
-            }
-            Err(message)
-        }
-    }
-}
 
 fn ensure_vault_dirs(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     let vault = configured_vault_path(app)?;
@@ -1978,24 +1817,10 @@ fn write_mind_map_conflict(vault: &Path, file: &ShardMapFile) -> Result<PathBuf,
     Ok(path)
 }
 
-fn read_fragment(
-    path: &Path,
-    vault: &Path,
-    dirty_paths: &HashSet<String>,
-    override_status: Option<(String, Option<String>)>,
-) -> Result<Fragment, String> {
+fn read_fragment(path: &Path, vault: &Path) -> Result<Fragment, String> {
     let text = fs::read_to_string(path).map_err(|error| error.to_string())?;
     let (frontmatter, body) = parse_fragment_text(&text)?;
     let rel_path = relative_path(vault, path)?;
-    let (git_status, error) = override_status.unwrap_or_else(|| {
-        if !vault.join(".git").exists() {
-            ("saved".to_string(), None)
-        } else if dirty_paths.contains(&rel_path) {
-            ("sync_pending".to_string(), None)
-        } else {
-            ("committed".to_string(), None)
-        }
-    });
     let archived = rel_path.starts_with("archive/");
 
     Ok(Fragment {
@@ -2010,8 +1835,6 @@ fn read_fragment(
         },
         category: frontmatter.category,
         path: rel_path,
-        git_status,
-        error,
         ai_status: frontmatter.ai_status.unwrap_or_else(|| "none".to_string()),
         archived,
         lockbox: false,
@@ -2038,10 +1861,19 @@ fn write_fragment_file(
     frontmatter: &FragmentFrontmatter,
     body: &str,
 ) -> Result<(), String> {
+    let text = render_fragment_text(frontmatter, body)?;
+    fs::write(path, text).map_err(|error| error.to_string())
+}
+
+/// 渲染片段文件的完整文本。抽出来是为了让正常写入与从库导出共用同一条
+/// 渲染路径——两边各写一份格式化逻辑，迟早会产生字节差异。
+fn render_fragment_text(
+    frontmatter: &FragmentFrontmatter,
+    body: &str,
+) -> Result<String, String> {
     let yaml = serde_yaml::to_string(frontmatter).map_err(|error| error.to_string())?;
     let yaml = yaml.strip_prefix("---\n").unwrap_or(&yaml);
-    let text = format!("---\n{}---\n\n{}\n", yaml, body.trim_end());
-    fs::write(path, text).map_err(|error| error.to_string())
+    Ok(format!("---\n{}---\n\n{}\n", yaml, body.trim_end()))
 }
 
 fn set_public_fragment_pinned_in_vault(
@@ -2060,16 +1892,13 @@ fn set_public_fragment_pinned_in_vault(
     frontmatter.updated_at = Local::now().to_rfc3339();
     write_fragment_file(path, &frontmatter, body.trim_start_matches('\n'))?;
 
-    let commit_message = if pinned {
+    let _commit_message = if pinned {
         format!("pin fragment {}", frontmatter.id)
     } else {
         format!("unpin fragment {}", frontmatter.id)
     };
-    let commit_result = commit_path_if_git(vault, &rel_path, &commit_message);
-    let dirty = dirty_paths(vault);
-    let override_status = commit_override_status(commit_result);
 
-    read_fragment(path, vault, &dirty, override_status)
+    read_fragment(&path, vault)
 }
 
 fn create_lockbox_fragment_in_vault(
@@ -2106,29 +1935,12 @@ fn create_lockbox_fragment_in_vault(
 
     write_lockbox_fragment_file(&path, &write_key, &frontmatter, content)?;
 
-    let rel_path = relative_path(vault, &path)?;
-    let commit_result = commit_path_if_git(
-        vault,
-        &rel_path,
-        &format!(
-            "create lockbox fragment {}",
-            now.format("%Y-%m-%d %H:%M:%S")
-        ),
-    );
-    let dirty = dirty_paths(vault);
-    let override_status = commit_override_status(commit_result);
+    let _rel_path = relative_path(vault, &path)?;
 
     if let Some(read_keys) = unlocked_lockbox_read_keys(vault, lockbox_runtime) {
-        read_lockbox_fragment(&path, vault, &dirty, &read_keys, override_status)
+        read_lockbox_fragment(&path, vault, &read_keys)
     } else {
-        lockbox_fragment_from_parts(
-            &path,
-            vault,
-            &dirty,
-            frontmatter,
-            String::new(),
-            override_status,
-        )
+        lockbox_fragment_from_parts(&path, vault, frontmatter, String::new())
     }
 }
 
@@ -2147,14 +1959,7 @@ fn update_lockbox_fragment_in_vault(
     let write_key = LockboxWriteKey::Master(read_keys.master_key.clone());
     write_lockbox_payload(path, &write_key, &payload)?;
 
-    let dirty = dirty_paths(vault);
-    let override_status = if vault.join(".git").exists() {
-        Some(("sync_pending".to_string(), None))
-    } else {
-        Some(("saved".to_string(), None))
-    };
-
-    read_lockbox_fragment(path, vault, &dirty, read_keys, override_status)
+    read_lockbox_fragment(&path, vault, &read_keys)
 }
 
 fn update_lockbox_fragment_tags_in_vault(
@@ -2169,16 +1974,9 @@ fn update_lockbox_fragment_tags_in_vault(
     let write_key = LockboxWriteKey::Master(read_keys.master_key.clone());
     write_lockbox_payload(path, &write_key, &payload)?;
 
-    let rel_path = relative_path(vault, path)?;
-    let commit_result = commit_path_if_git(
-        vault,
-        &rel_path,
-        &format!("update lockbox fragment tags {}", payload.frontmatter.id),
-    );
-    let dirty = dirty_paths(vault);
-    let override_status = commit_override_status(commit_result);
+    let _rel_path = relative_path(vault, path)?;
 
-    read_lockbox_fragment(path, vault, &dirty, read_keys, override_status)
+    read_lockbox_fragment(&path, vault, &read_keys)
 }
 
 fn set_lockbox_fragment_pinned_in_vault(
@@ -2198,16 +1996,13 @@ fn set_lockbox_fragment_pinned_in_vault(
     let write_key = LockboxWriteKey::Master(read_keys.master_key.clone());
     write_lockbox_payload(path, &write_key, &payload)?;
 
-    let commit_message = if pinned {
+    let _commit_message = if pinned {
         format!("pin lockbox fragment {}", payload.frontmatter.id)
     } else {
         format!("unpin lockbox fragment {}", payload.frontmatter.id)
     };
-    let commit_result = commit_path_if_git(vault, &rel_path, &commit_message);
-    let dirty = dirty_paths(vault);
-    let override_status = commit_override_status(commit_result);
 
-    read_lockbox_fragment(path, vault, &dirty, read_keys, override_status)
+    read_lockbox_fragment(&path, vault, &read_keys)
 }
 
 fn move_public_fragment_to_lockbox_in_vault(
@@ -2279,24 +2074,11 @@ fn move_public_fragment_payload_to_lockbox_in_vault(
     write_lockbox_fragment_file(&lockbox_path, &write_key, &frontmatter, content)?;
     fs::remove_file(public_path).map_err(|error| error.to_string())?;
 
-    let commit_result = commit_all_if_git(
-        vault,
-        &format!("move fragment {} to lockbox", frontmatter.id),
-    );
-    let dirty = dirty_paths(vault);
-    let override_status = commit_override_status(commit_result);
 
     if let Some(read_keys) = unlocked_lockbox_read_keys(vault, lockbox_runtime) {
-        read_lockbox_fragment(&lockbox_path, vault, &dirty, &read_keys, override_status)
+        read_lockbox_fragment(&lockbox_path, vault, &read_keys)
     } else {
-        lockbox_fragment_from_parts(
-            &lockbox_path,
-            vault,
-            &dirty,
-            frontmatter,
-            String::new(),
-            override_status,
-        )
+        lockbox_fragment_from_parts(&lockbox_path, vault, frontmatter, String::new())
     }
 }
 
@@ -2304,12 +2086,11 @@ fn archive_lockbox_fragment_in_vault(
     vault: &Path,
     path: &Path,
     read_keys: &LockboxReadKeys,
-    id: &str,
+    _id: &str,
 ) -> Result<Fragment, String> {
     let rel_path = relative_path(vault, path)?;
     if rel_path.starts_with("lockbox/archive/") {
-        let dirty = dirty_paths(vault);
-        return read_lockbox_fragment(path, vault, &dirty, read_keys, None);
+        return read_lockbox_fragment(&path, vault, &read_keys);
     }
 
     let active_root = vault.join("lockbox").join("fragments");
@@ -2331,49 +2112,26 @@ fn archive_lockbox_fragment_in_vault(
         })
         .map_err(|error| error.to_string())?;
 
-    let commit_result = commit_all_if_git(vault, &format!("archive lockbox fragment {}", id));
-    let dirty = dirty_paths(vault);
-    let override_status = commit_override_status(commit_result);
 
-    read_lockbox_fragment(&archived_path, vault, &dirty, read_keys, override_status)
+    read_lockbox_fragment(&archived_path, vault, &read_keys)
 }
 
 fn read_lockbox_fragment(
     path: &Path,
     vault: &Path,
-    dirty_paths: &HashSet<String>,
     read_keys: &LockboxReadKeys,
-    override_status: Option<(String, Option<String>)>,
 ) -> Result<Fragment, String> {
     let payload = read_lockbox_payload(path, read_keys)?;
-    lockbox_fragment_from_parts(
-        path,
-        vault,
-        dirty_paths,
-        payload.frontmatter,
-        payload.body,
-        override_status,
-    )
+    lockbox_fragment_from_parts(path, vault, payload.frontmatter, payload.body)
 }
 
 fn lockbox_fragment_from_parts(
     path: &Path,
     vault: &Path,
-    dirty_paths: &HashSet<String>,
     frontmatter: FragmentFrontmatter,
     body: String,
-    override_status: Option<(String, Option<String>)>,
 ) -> Result<Fragment, String> {
     let rel_path = relative_path(vault, path)?;
-    let (git_status, error) = override_status.unwrap_or_else(|| {
-        if !vault.join(".git").exists() {
-            ("saved".to_string(), None)
-        } else if dirty_paths.contains(&rel_path) {
-            ("sync_pending".to_string(), None)
-        } else {
-            ("committed".to_string(), None)
-        }
-    });
     let archived = rel_path.starts_with("lockbox/archive/");
 
     Ok(Fragment {
@@ -2384,8 +2142,6 @@ fn lockbox_fragment_from_parts(
         tags: frontmatter.tags,
         category: frontmatter.category,
         path: rel_path,
-        git_status,
-        error,
         ai_status: frontmatter.ai_status.unwrap_or_else(|| "none".to_string()),
         archived,
         lockbox: true,
@@ -2459,6 +2215,15 @@ fn read_lockbox_payload(
     let text = fs::read_to_string(path).map_err(|error| error.to_string())?;
     let encrypted = serde_json::from_str::<LockboxEncryptedFragment>(&text)
         .map_err(|error| error.to_string())?;
+    decrypt_lockbox_fragment(&encrypted, read_keys)
+}
+
+/// 解开一个密匣信封。与来源解耦：密文可能来自 `.shard` 文件，也可能来自
+/// 笔记库的 `cipher_*` 列。两条读路径必须共用同一份解密逻辑。
+fn decrypt_lockbox_fragment(
+    encrypted: &LockboxEncryptedFragment,
+    read_keys: &LockboxReadKeys,
+) -> Result<LockboxFragmentPayload, String> {
     if encrypted.version != LOCKBOX_VERSION {
         return Err("不支持的密匣片段版本。".to_string());
     }
@@ -2542,9 +2307,6 @@ fn setup_lockbox_in_vault(
     write_lockbox_manifest(vault, &manifest)?;
     unlock_lockbox_runtime(lockbox_runtime, vault, &master_key);
 
-    commit_path_if_git(vault, ".shard/lockbox.json", "setup lockbox")
-        .or_else(|_| commit_all_if_git(vault, "setup lockbox").map(|_| None))
-        .ok();
 
     Ok(recovery_key)
 }
@@ -2558,7 +2320,6 @@ fn unlock_lockbox_in_vault(
     let master_key = unwrap_lockbox_master_key_with_password(&manifest, password)?;
     if ensure_lockbox_manifest_write_key(&mut manifest, &master_key)? {
         write_lockbox_manifest(vault, &manifest)?;
-        commit_path_if_git(vault, ".shard/lockbox.json", "upgrade lockbox write key").ok();
     }
     unlock_lockbox_runtime(lockbox_runtime, vault, &master_key);
     Ok(())
@@ -2581,7 +2342,6 @@ fn change_lockbox_password_in_vault(
     manifest.updated_at = Local::now().to_rfc3339();
     write_lockbox_manifest(vault, &manifest)?;
     unlock_lockbox_runtime(lockbox_runtime, vault, &master_key);
-    commit_path_if_git(vault, ".shard/lockbox.json", "change lockbox password").ok();
     Ok(())
 }
 
@@ -2610,7 +2370,6 @@ fn reset_lockbox_password_in_vault(
     manifest.updated_at = Local::now().to_rfc3339();
     write_lockbox_manifest(vault, &manifest)?;
     unlock_lockbox_runtime(lockbox_runtime, vault, &master_key);
-    commit_path_if_git(vault, ".shard/lockbox.json", "reset lockbox password").ok();
 
     Ok(next_recovery_key)
 }
@@ -2952,7 +2711,6 @@ fn lockbox_write_key(
         })?;
     ensure_lockbox_manifest_write_key(&mut manifest, &master_key)?;
     write_lockbox_manifest(vault, &manifest)?;
-    commit_path_if_git(vault, ".shard/lockbox.json", "upgrade lockbox write key").ok();
     decode_lockbox_write_public_key(&manifest)?
         .map(LockboxWriteKey::Public)
         .ok_or_else(|| "密匣写入密钥生成失败。".to_string())
@@ -3016,16 +2774,6 @@ fn reject_lockbox_images(content: &str) -> Result<(), String> {
 fn is_markdown_image_line(line: &str) -> bool {
     let line = line.trim();
     line.starts_with("![") && line.contains("](") && line.ends_with(')')
-}
-
-fn commit_override_status(
-    commit_result: Result<Option<()>, String>,
-) -> Option<(String, Option<String>)> {
-    match commit_result {
-        Ok(Some(_)) => Some(("committed".to_string(), None)),
-        Ok(None) => Some(("saved".to_string(), None)),
-        Err(error) => Some(("commit_failed".to_string(), Some(error))),
-    }
 }
 
 fn normalize_tag(tag: &str) -> Option<String> {
@@ -3204,273 +2952,22 @@ fn image_extension_for_mime_type(mime_type: &str) -> Option<&'static str> {
     }
 }
 
-fn ensure_git_repo(vault: &Path) -> Result<(), String> {
-    if vault.join(".git").exists() {
-        return ensure_git_identity(vault);
-    }
-    run_git(vault, &["init"])?;
-    ensure_git_identity(vault)
-}
 
-fn commit_path(vault: &Path, rel_path: &str, message: &str) -> Result<(), String> {
-    ensure_git_identity(vault)?;
-    run_git(vault, &["add", rel_path])?;
-    run_git(vault, &["commit", "-m", message]).map(|_| ())
-}
 
-fn commit_path_if_git(vault: &Path, rel_path: &str, message: &str) -> Result<Option<()>, String> {
-    if !vault.join(".git").exists() {
-        return Ok(None);
-    }
 
-    commit_path(vault, rel_path, message).map(Some)
-}
 
-fn commit_all(vault: &Path, message: &str) -> Result<(), String> {
-    ensure_git_identity(vault)?;
-    run_git(vault, &["add", "-A"])?;
-    run_git(vault, &["commit", "-m", message]).map(|_| ())
-}
 
-fn commit_all_if_dirty(vault: &Path, message: &str) -> Result<(), String> {
-    let status = run_git(vault, &["status", "--porcelain"])?;
 
-    if status.trim().is_empty() {
-        return Ok(());
-    }
 
-    commit_all(vault, message)
-}
 
-fn ensure_git_identity(vault: &Path) -> Result<(), String> {
-    if run_git(vault, &["config", "user.name"])
-        .ok()
-        .map(|value| value.trim().is_empty())
-        .unwrap_or(true)
-    {
-        run_git(vault, &["config", "user.name", "Shard"])?;
-    }
 
-    if run_git(vault, &["config", "user.email"])
-        .ok()
-        .map(|value| value.trim().is_empty())
-        .unwrap_or(true)
-    {
-        run_git(vault, &["config", "user.email", "shard@local"])?;
-    }
 
-    Ok(())
-}
 
-fn commit_all_if_git(vault: &Path, message: &str) -> Result<Option<()>, String> {
-    if !vault.join(".git").exists() {
-        return Ok(None);
-    }
 
-    commit_all(vault, message).map(Some)
-}
 
-fn dirty_paths(vault: &Path) -> HashSet<String> {
-    let mut paths = HashSet::new();
-    if !vault.join(".git").exists() {
-        return paths;
-    }
 
-    let Ok(output) = run_git(
-        vault,
-        &[
-            "status",
-            "--porcelain",
-            "--",
-            "fragments",
-            "archive",
-            "assets",
-            "maps",
-            "debts",
-            "lockbox",
-            ".shard",
-        ],
-    ) else {
-        return paths;
-    };
 
-    for line in output.lines() {
-        if line.len() >= 4 {
-            paths.insert(line[3..].trim().to_string());
-        }
-    }
 
-    paths
-}
-
-fn git_info(vault: &Path) -> GitInfo {
-    if !vault.join(".git").exists() {
-        return GitInfo {
-            branch: "main".to_string(),
-            short_commit: "no git".to_string(),
-            has_remote: false,
-            status: "no_git".to_string(),
-            error: None,
-        };
-    }
-
-    let branch = current_branch(vault);
-    let short_commit = run_git(vault, &["rev-parse", "--short", "HEAD"])
-        .unwrap_or_else(|_| "no commit".to_string())
-        .trim()
-        .to_string();
-    let has_remote = !git_remotes(vault).is_empty();
-
-    match run_git(vault, &["status", "--porcelain"]) {
-        Ok(status) if status.trim().is_empty() => GitInfo {
-            branch: if branch.is_empty() {
-                "main".to_string()
-            } else {
-                branch
-            },
-            short_commit,
-            has_remote,
-            status: "ready".to_string(),
-            error: None,
-        },
-        Ok(_) => GitInfo {
-            branch: if branch.is_empty() {
-                "main".to_string()
-            } else {
-                branch
-            },
-            short_commit,
-            has_remote,
-            status: "dirty".to_string(),
-            error: None,
-        },
-        Err(error) => GitInfo {
-            branch: if branch.is_empty() {
-                "main".to_string()
-            } else {
-                branch
-            },
-            short_commit,
-            has_remote,
-            status: "error".to_string(),
-            error: Some(error),
-        },
-    }
-}
-
-fn current_branch(vault: &Path) -> String {
-    let branch = run_git(vault, &["branch", "--show-current"])
-        .or_else(|_| run_git(vault, &["symbolic-ref", "--short", "HEAD"]))
-        .unwrap_or_else(|_| "main".to_string())
-        .trim()
-        .to_string();
-
-    if branch.is_empty() {
-        "main".to_string()
-    } else {
-        branch
-    }
-}
-
-fn git_remotes(vault: &Path) -> Vec<String> {
-    run_git(vault, &["remote"])
-        .unwrap_or_default()
-        .lines()
-        .map(str::trim)
-        .filter(|remote| !remote.is_empty())
-        .map(ToString::to_string)
-        .collect()
-}
-
-fn default_remote(vault: &Path) -> Option<String> {
-    let remotes = git_remotes(vault);
-    remotes
-        .iter()
-        .find(|remote| remote.as_str() == "origin")
-        .cloned()
-        .or_else(|| remotes.into_iter().next())
-}
-
-fn ensure_no_unfinished_git_operation(vault: &Path) -> Result<(), String> {
-    if has_rebase_in_progress(vault) {
-        return Err("Vault 中有未完成的 Git rebase。请先解决冲突或在 Vault 里执行 git rebase --abort 后再同步。".to_string());
-    }
-
-    if git_internal_path_exists(vault, "MERGE_HEAD") {
-        return Err("Vault 中有未完成的 Git merge。请先解决冲突或在 Vault 里执行 git merge --abort 后再同步。".to_string());
-    }
-
-    Ok(())
-}
-
-fn has_rebase_in_progress(vault: &Path) -> bool {
-    git_internal_path_exists(vault, "rebase-merge")
-        || git_internal_path_exists(vault, "rebase-apply")
-}
-
-fn git_internal_path_exists(vault: &Path, name: &str) -> bool {
-    let Ok(path) = run_git(vault, &["rev-parse", "--git-path", name]) else {
-        return false;
-    };
-
-    let path = PathBuf::from(path.trim());
-    let path = if path.is_absolute() {
-        path
-    } else {
-        vault.join(path)
-    };
-
-    path.exists()
-}
-
-fn format_git_sync_error(error: &str) -> String {
-    let lower = error.to_lowercase();
-    if lower.contains("conflict")
-        || lower.contains("could not apply")
-        || lower.contains("resolve all conflicts")
-    {
-        return format!(
-            "同步遇到 Git 冲突。Shard 已保留本地提交并停止自动同步，请在 Vault 中解决冲突后再同步。\n\n{error}"
-        );
-    }
-
-    if lower.contains("authentication failed")
-        || lower.contains("permission denied")
-        || lower.contains("could not read username")
-        || lower.contains("terminal prompts disabled")
-    {
-        return format!(
-            "Git 认证失败。请先在终端确认当前 Vault 可以执行 git fetch 和 git push，再回到 Shard 同步。\n\n{error}"
-        );
-    }
-
-    if lower.contains("cannot pull with rebase") {
-        return format!(
-            "Git 仍检测到未提交变更，无法 rebase。Shard 会先提交 vault 变更并使用 autostash；如果问题持续，请检查 Vault 中是否有未完成的 Git 操作。\n\n{error}"
-        );
-    }
-
-    error.to_string()
-}
-
-fn gh_path() -> Result<PathBuf, String> {
-    let mut candidates = Vec::new();
-
-    if let Some(paths) = env::var_os("PATH") {
-        candidates.extend(env::split_paths(&paths).map(|path| path.join("gh")));
-    }
-
-    candidates.extend([
-        PathBuf::from("/opt/homebrew/bin/gh"),
-        PathBuf::from("/usr/local/bin/gh"),
-        PathBuf::from("/usr/bin/gh"),
-    ]);
-
-    candidates
-        .into_iter()
-        .find(|path| path.is_file())
-        .ok_or_else(|| "未检测到 GitHub CLI。".to_string())
-}
 
 fn codex_path() -> Result<PathBuf, String> {
     let mut candidates = Vec::new();
@@ -3844,56 +3341,9 @@ fn extract_codex_agent_message(output: &str) -> Result<String, String> {
     final_text.ok_or_else(|| "Codex 没有返回可展示的文本。".to_string())
 }
 
-fn run_gh_in(vault: &Path, args: &[&str]) -> Result<String, String> {
-    let gh = gh_path()?;
-    run_command(Command::new(gh).args(args).current_dir(vault))
-}
 
-fn run_gh_with_path(gh: &Path, args: &[&str]) -> Result<String, String> {
-    run_command(Command::new(gh).args(args))
-}
 
-fn parse_gh_login(output: &str) -> Option<String> {
-    output.lines().find_map(|line| {
-        let (_, login) = line.split_once("account ")?;
-        login
-            .split_whitespace()
-            .next()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(ToString::to_string)
-    })
-}
 
-fn sanitize_repo_name(repo_name: &str) -> Result<String, String> {
-    let repo_name = repo_name.trim().trim_matches('/').to_string();
-    if repo_name.is_empty() {
-        return Err("GitHub 仓库名不能为空".to_string());
-    }
-
-    let parts = repo_name.split('/').collect::<Vec<_>>();
-    if parts.len() > 2 || parts.iter().any(|part| part.is_empty()) {
-        return Err("仓库名应为 repo 或 owner/repo。".to_string());
-    }
-
-    let is_valid = repo_name.chars().all(|character| {
-        character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.' | '/')
-    });
-    if !is_valid {
-        return Err("仓库名只能包含字母、数字、横线、下划线、点和一个斜杠。".to_string());
-    }
-
-    Ok(repo_name)
-}
-
-fn run_git(vault: &Path, args: &[&str]) -> Result<String, String> {
-    run_command(
-        Command::new("git")
-            .args(args)
-            .current_dir(vault)
-            .env("GIT_TERMINAL_PROMPT", "0"),
-    )
-}
 
 fn run_command(command: &mut Command) -> Result<String, String> {
     let output = command.output().map_err(|error| error.to_string())?;
@@ -3923,6 +3373,7 @@ pub fn run() {
     tauri::Builder::default()
         .manage(Arc::new(Mutex::new(LockboxSession::default())))
         .manage(debt::DebtDb::default())
+        .manage(notes::NotesDb::default())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
@@ -3940,12 +3391,8 @@ pub fn run() {
             write_mind_map,
             delete_mind_map,
             set_vault_path,
-            initialize_vault_git,
-            set_vault_remote,
-            github_cli_status,
             codex_agent_status,
             run_codex_review_task,
-            create_github_vault_repo,
             setup_lockbox,
             unlock_lockbox,
             lock_lockbox,
@@ -3966,7 +3413,6 @@ pub fn run() {
             copy_exported_image,
             set_window_controls_hidden,
             restore_window_frame,
-            sync_vault,
             debt::list_debts,
             debt::create_debt,
             debt::update_debt,
@@ -3975,7 +3421,13 @@ pub fn run() {
             debt::add_repayment,
             debt::delete_repayment,
             debt::get_turso_config,
-            debt::set_turso_config
+            debt::set_turso_config,
+            notes::commands::import_vault_markdown,
+            notes::commands::notes_db_stats,
+            notes::commands::search_fragments_db,
+            notes::commands::rebuild_search_index,
+            notes::commands::export_vault_markdown,
+            notes::commands::verify_export
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

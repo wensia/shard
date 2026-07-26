@@ -1,0 +1,17 @@
+[package]
+name = "shard-core"
+version = "0.1.0"
+edition = "2021"
+description = "Shard 客户端与服务端共享的数据模型、schema 与检索逻辑"
+
+# 这个 crate 被 src-tauri（Tauri 客户端）和 shard-server（后端）共同依赖。
+# 任何放进来的逻辑都必须是两端都要用且必须保持一致的，最典型的就是全文检索
+# 的分词：索引侧和查询侧一旦漂移，搜索就会静默地搜不到东西。
+[dependencies]
+
+[dev-dependencies]
+serde_json = "1"
+# 仅用于集成测试：在真实 FTS5 里验证分词方案确实可行（见 tests/fts_fts5.rs）。
+# 不是生产依赖——shard-core 本身不碰数据库。
+libsql = "0.9"
+tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread"] }

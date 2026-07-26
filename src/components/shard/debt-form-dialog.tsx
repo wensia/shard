@@ -15,7 +15,7 @@ import { TextInput } from "@astryxdesign/core/TextInput"
 
 import { TagBadge } from "@/components/shard/tag-badge"
 import { getApiErrorMessage } from "@/lib/api"
-import { yuanInputToCents } from "@/lib/debt"
+import { isoDateOfTimestamp, todayISODate, yuanInputToCents } from "@/lib/debt"
 import type { Debt, DebtDirection } from "@/types"
 
 export interface DebtFormValues {
@@ -25,6 +25,8 @@ export interface DebtFormValues {
   dueDate: string | null
   note: string
   tags: string[]
+  /** 手填的创建日期 "YYYY-MM-DD"；留空表示沿用后端默认（新建=此刻，编辑=不变）。 */
+  createdAt: string | null
 }
 
 const QUICK_TAGS = ["亲戚", "朋友", "信用卡", "其他"]
@@ -52,6 +54,7 @@ export function DebtFormDialog({
   const [counterparty, setCounterparty] = useState("")
   const [principalYuan, setPrincipalYuan] = useState("")
   const [dueDate, setDueDate] = useState("")
+  const [createdDate, setCreatedDate] = useState("")
   const [note, setNote] = useState("")
   const [tags, setTags] = useState<string[]>([])
   const [tagDraft, setTagDraft] = useState("")
@@ -70,6 +73,7 @@ export function DebtFormDialog({
       setCounterparty(debt.counterparty)
       setPrincipalYuan(String(debt.principalCents / 100))
       setDueDate(debt.dueDate ?? "")
+      setCreatedDate(isoDateOfTimestamp(debt.createdAt))
       setNote(debt.note)
       setTags(debt.tags)
     } else {
@@ -77,6 +81,7 @@ export function DebtFormDialog({
       setCounterparty("")
       setPrincipalYuan("")
       setDueDate("")
+      setCreatedDate(todayISODate())
       setNote("")
       setTags([])
     }
@@ -118,6 +123,7 @@ export function DebtFormDialog({
         dueDate: dueDate || null,
         note,
         tags,
+        createdAt: createdDate || null,
       })
     } catch (submitError) {
       setError(getApiErrorMessage(submitError))
@@ -196,12 +202,19 @@ export function DebtFormDialog({
                 ))}
               </datalist>
 
+              <TextInput
+                label="本金（元）"
+                onChange={setPrincipalYuan}
+                placeholder="0.00"
+                value={principalYuan}
+              />
+
               <Grid columns={2} gap={3}>
-                <TextInput
-                  label="本金（元）"
-                  onChange={setPrincipalYuan}
-                  placeholder="0.00"
-                  value={principalYuan}
+                <DateInput
+                  hasClear
+                  label="创建日期"
+                  onChange={(value) => setCreatedDate(value ?? "")}
+                  value={createdDate ? (createdDate as ISODateString) : undefined}
                 />
                 <DateInput
                   hasClear

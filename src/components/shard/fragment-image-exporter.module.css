@@ -155,10 +155,12 @@
 }
 
 .previewCanvas {
+  /* 显示宽高由 fragment-image-exporter.tsx 里的 fitCanvasToContainer()
+     以 JS 精确计算并写入 style.width/height（详见其注释）——这两条
+     max-* 只是 JS 尚未运行完那一瞬间的兜底，避免 canvas 以原始物理
+     分辨率闪现。 */
   display: block;
-  height: auto;
   max-height: 100%;
-  width: auto;
   max-width: 100%;
   border-radius: var(--shard-surface-radius);
   border: 1px solid var(--border);

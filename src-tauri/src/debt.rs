@@ -14,15 +14,13 @@
 //! `CREATE VIEW`、`PRAGMA user_version` 迁移全部沿用，schema 未做任何裁剪。
 
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
-use chrono::{Local, NaiveDate};
-use libsql::{params, Connection, Database, Row};
+use chrono::{DateTime, Local, NaiveDate, TimeZone};
+use libsql::{params, Connection, Row};
 use serde::Serialize;
-use tauri::async_runtime::Mutex;
 
-use crate::{ensure_vault_dirs, read_app_config, unique_suffix, AppConfig};
+use crate::db::{migrate::Migration, DbHandle, DbSpec};
+use crate::{read_app_config, unique_suffix, AppConfig};
 
 /// 首次建库（`PRAGMA user_version = 0`）时执行的全部 DDL。执行完成后调用方
 /// 负责把 `PRAGMA user_version` 设为 1。这里不包含连接级 PRAGMA（
@@ -119,138 +117,48 @@ pub(crate) struct TursoConfigView {
 }
 
 // ---------------------------------------------------------------------------
-// 连接管理：libSQL Database 按 (vault, turso_url) 懒缓存在 tauri State 里，
-// 避免每次命令都重新 build（embedded replica 的 build 会做一次远程握手/初始
-// 同步，成本较高）。Connection 本身很轻，每次命令从缓存的 Database 现连。
+// 库定义。连接缓存、迁移推进与连接级 PRAGMA 全部由 crate::db 泛型实现并与
+// 笔记库共用，这里只声明记账库自己的目录、文件名、迁移和远端凭据来源。
 // ---------------------------------------------------------------------------
 
+/// 记账库的静态描述。连接缓存、迁移与 PRAGMA 都由 [`crate::db`] 泛型实现，
+/// 这里只声明本库独有的部分。
+pub(crate) struct DebtSpec;
+
+static DEBT_MIGRATIONS: &[Migration] = &[Migration {
+    version: 1,
+    sql: SCHEMA_V1_SQL,
+}];
+
+impl DbSpec for DebtSpec {
+    const SUBDIR: &'static str = "debts";
+    const FILE_NAME: &'static str = "debts.sqlite3";
+    // 记账库目前仍是自己的唯一真相源，保持被 Git 跟踪（沿用既有行为）。
+    const IGNORE_MAIN_DB: bool = false;
+
+    fn migrations() -> &'static [Migration] {
+        DEBT_MIGRATIONS
+    }
+
+    /// `turso_url` 与 `turso_auth_token` 都非空时返回 `(url, token)`，否则 `None`
+    /// （纯本地模式）。
+    fn remote(cfg: &AppConfig) -> Option<(String, String)> {
+        let url = cfg
+            .turso_url
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())?;
+        let token = cfg
+            .turso_auth_token
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())?;
+        Some((url.to_string(), token.to_string()))
+    }
+}
+
 /// 注册进 `tauri::Builder::manage`，跨命令共享的记账库缓存。
-#[derive(Default)]
-pub(crate) struct DebtDb {
-    cache: Mutex<Option<CachedDb>>,
-}
-
-struct CachedDb {
-    /// 缓存键：`"<vault_path>|<turso_url>"`。配置变化（换 vault 或改 Turso 地址）
-    /// 时键不同，触发重建。
-    key: String,
-    db: Arc<Database>,
-    /// 是否为 embedded replica（配置了远程），决定读取前是否值得 `sync()`。
-    remote: bool,
-}
-
-fn debts_dir(vault: &Path) -> PathBuf {
-    vault.join("debts")
-}
-
-fn cache_key(vault: &Path, cfg: &AppConfig) -> String {
-    format!(
-        "{}|{}",
-        vault.display(),
-        cfg.turso_url.as_deref().unwrap_or("")
-    )
-}
-
-/// `turso_url` 与 `turso_auth_token` 都非空时返回 `(url, token)`，否则 `None`
-/// （纯本地模式）。
-fn remote_credentials(cfg: &AppConfig) -> Option<(String, String)> {
-    let url = cfg
-        .turso_url
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())?;
-    let token = cfg
-        .turso_auth_token
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())?;
-    Some((url.to_string(), token.to_string()))
-}
-
-async fn build_database(vault: &Path, cfg: &AppConfig) -> Result<(Database, bool), String> {
-    let dir = debts_dir(vault);
-    std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
-    ensure_debts_gitignore(&dir)?;
-    let path = dir.join("debts.sqlite3");
-
-    match remote_credentials(cfg) {
-        Some((url, token)) => {
-            let db = libsql::Builder::new_remote_replica(path, url, token)
-                .build()
-                .await
-                .map_err(|error| format!("连接 Turso 云端失败：{error}"))?;
-            Ok((db, true))
-        }
-        None => {
-            let db = libsql::Builder::new_local(path)
-                .build()
-                .await
-                .map_err(|error| error.to_string())?;
-            Ok((db, false))
-        }
-    }
-}
-
-/// 每个新连接都要设置的连接级 PRAGMA。`foreign_keys` 在 SQLite 里是连接作用域，
-/// 级联删除依赖它必须逐连接开启。
-async fn connect_with_pragmas(db: &Database) -> Result<Connection, String> {
-    let conn = db.connect().map_err(|error| error.to_string())?;
-    conn.execute_batch("PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;")
-        .await
-        .map_err(|error| error.to_string())?;
-    Ok(conn)
-}
-
-async fn migrate_schema(conn: &Connection) -> Result<(), String> {
-    let mut rows = conn
-        .query("PRAGMA user_version", ())
-        .await
-        .map_err(|error| error.to_string())?;
-    let version: i64 = rows
-        .next()
-        .await
-        .map_err(|error| error.to_string())?
-        .ok_or_else(|| "无法读取 user_version".to_string())?
-        .get(0)
-        .map_err(|error| error.to_string())?;
-
-    if version < 1 {
-        conn.execute_batch(SCHEMA_V1_SQL)
-            .await
-            .map_err(|error| error.to_string())?;
-        conn.execute_batch("PRAGMA user_version = 1;")
-            .await
-            .map_err(|error| error.to_string())?;
-    }
-
-    Ok(())
-}
-
-/// 取得（或懒建）当前 vault 的记账库句柄。返回 `(db, remote)`。
-async fn debt_db(app: &tauri::AppHandle, state: &DebtDb) -> Result<(Arc<Database>, bool), String> {
-    let vault = ensure_vault_dirs(app)?;
-    let cfg = read_app_config(app)?;
-    let key = cache_key(&vault, &cfg);
-
-    let mut guard = state.cache.lock().await;
-    if let Some(cached) = guard.as_ref() {
-        if cached.key == key {
-            return Ok((cached.db.clone(), cached.remote));
-        }
-    }
-
-    let (db, remote) = build_database(&vault, &cfg).await?;
-    let db = Arc::new(db);
-    // 首建时跑一次迁移；后续命中缓存不再迁移。
-    let conn = connect_with_pragmas(&db).await?;
-    migrate_schema(&conn).await?;
-    *guard = Some(CachedDb {
-        key,
-        db: db.clone(),
-        remote,
-    });
-    Ok((db, remote))
-}
+pub(crate) type DebtDb = DbHandle<DebtSpec>;
 
 /// 打开一个已就绪（含 PRAGMA、schema）的连接供命令使用。`sync_first` 为 true
 /// 且当前是 embedded replica 时，先尽力 `sync()` 拉取远程改动（失败仅忽略，
@@ -260,24 +168,7 @@ async fn open_conn(
     state: &DebtDb,
     sync_first: bool,
 ) -> Result<Connection, String> {
-    let (db, remote) = debt_db(app, state).await?;
-    if sync_first && remote {
-        let _ = db.sync().await;
-    }
-    connect_with_pragmas(&db).await
-}
-
-fn ensure_debts_gitignore(dir: &Path) -> Result<(), String> {
-    let path = dir.join(".gitignore");
-    if !path.exists() {
-        std::fs::write(
-            &path,
-            // libSQL 副本除主库外还会生成 -wal/-shm 及内部元数据文件，一并忽略。
-            "*.sqlite3-journal\n*.sqlite3-wal\n*.sqlite3-shm\n*.sqlite3-client_wal_index\n",
-        )
-        .map_err(|error| error.to_string())?;
-    }
-    Ok(())
+    state.conn(app, sync_first).await
 }
 
 // ---------------------------------------------------------------------------
@@ -308,6 +199,26 @@ fn validate_date(value: &str, field: &str) -> Result<(), String> {
     NaiveDate::parse_from_str(value, "%Y-%m-%d")
         .map(|_| ())
         .map_err(|_| format!("{field}格式不正确，应为 YYYY-MM-DD"))
+}
+
+/// 把手动指定的创建日期（`YYYY-MM-DD`）补齐成本地时区的 RFC3339 时刻。
+///
+/// 时分秒取自 `reference`（编辑时是这笔债务原有的 `created_at`，新建时为
+/// `None` 则用当前时刻），这样同一天录入的多笔债务仍保留 `ORDER BY created_at`
+/// 的先后次序，改日期也不会把既有顺序打乱成并列的 00:00:00。
+fn compose_created_at(date: &str, reference: Option<&str>) -> Result<String, String> {
+    let day = NaiveDate::parse_from_str(date, "%Y-%m-%d")
+        .map_err(|_| "创建日期格式不正确，应为 YYYY-MM-DD".to_string())?;
+    let time = reference
+        .and_then(|value| DateTime::parse_from_rfc3339(value).ok())
+        .map(|value| value.with_timezone(&Local).time())
+        .unwrap_or_else(|| Local::now().time());
+
+    Local
+        .from_local_datetime(&day.and_time(time))
+        .earliest()
+        .map(|value| value.to_rfc3339())
+        .ok_or_else(|| "创建日期无法转换为本地时间".to_string())
 }
 
 fn validate_direction(value: &str) -> Result<(), String> {
@@ -451,6 +362,20 @@ async fn list_all_debts(conn: &Connection) -> Result<Vec<Debt>, String> {
     Ok(debts)
 }
 
+/// 读取单笔债务已存的 `created_at`；记录不存在时返回 `None`，由后续 UPDATE 的
+/// `affected == 0` 统一报"找不到该笔债务"。
+async fn fetch_created_at(conn: &Connection, id: &str) -> Result<Option<String>, String> {
+    let mut rows = conn
+        .query("SELECT created_at FROM debts WHERE id = ?1", params![id])
+        .await
+        .map_err(|error| error.to_string())?;
+
+    match rows.next().await.map_err(|error| error.to_string())? {
+        Some(row) => row.get::<String>(0).map(Some).map_err(|error| error.to_string()),
+        None => Ok(None),
+    }
+}
+
 async fn debt_exists(conn: &Connection, id: &str) -> Result<bool, String> {
     let mut rows = conn
         .query("SELECT 1 FROM debts WHERE id = ?1", params![id])
@@ -488,6 +413,7 @@ pub(crate) async fn create_debt(
     due_date: Option<String>,
     note: Option<String>,
     tags: Option<Vec<String>>,
+    created_at: Option<String>,
 ) -> Result<Debt, String> {
     validate_direction(&direction)?;
 
@@ -502,17 +428,24 @@ pub(crate) async fn create_debt(
         validate_date(date, "到期日")?;
     }
 
+    let now = Local::now().to_rfc3339();
+    // 创建日期可手动指定（补录旧账），留空则按当前时刻记；updated_at 始终是
+    // 真实的写入时刻，不跟着手填的创建日期回拨。
+    let created_at_value = match created_at.as_deref().map(str::trim) {
+        Some(date) if !date.is_empty() => compose_created_at(date, None)?,
+        _ => now.clone(),
+    };
+
     let conn = open_conn(&app, &state, false).await?;
     let tx = conn.transaction().await.map_err(|error| error.to_string())?;
 
     let id = new_debt_id();
     let key = counterparty.to_lowercase();
-    let now = Local::now().to_rfc3339();
 
     tx.execute(
         "INSERT INTO debts \
          (id, direction, counterparty, counterparty_key, principal_cents, due_date, note, created_at, updated_at, archived_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8, NULL)",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, NULL)",
         params![
             id.clone(),
             direction,
@@ -521,6 +454,7 @@ pub(crate) async fn create_debt(
             principal_cents,
             due_date,
             note.unwrap_or_default(),
+            created_at_value,
             now
         ],
     )
@@ -550,6 +484,7 @@ pub(crate) async fn update_debt(
     due_date: Option<String>,
     note: Option<String>,
     tags: Option<Vec<String>>,
+    created_at: Option<String>,
     // 注意：没有 direction 参数——方向创建后不可改，录错方向的唯一修正路径是
     // 删除重建。
 ) -> Result<Debt, String> {
@@ -565,6 +500,17 @@ pub(crate) async fn update_debt(
     }
 
     let conn = open_conn(&app, &state, false).await?;
+
+    // 手填创建日期时沿用原记录的时分秒，日期不变则写回同一个值，同天多笔的既有
+    // 排序不受影响。
+    let created_at_value = match created_at.as_deref().map(str::trim) {
+        Some(date) if !date.is_empty() => {
+            let previous = fetch_created_at(&conn, &id).await?;
+            Some(compose_created_at(date, previous.as_deref())?)
+        }
+        _ => None,
+    };
+
     let tx = conn.transaction().await.map_err(|error| error.to_string())?;
 
     let key = counterparty.to_lowercase();
@@ -573,7 +519,8 @@ pub(crate) async fn update_debt(
     let affected = tx
         .execute(
             "UPDATE debts SET counterparty = ?1, counterparty_key = ?2, principal_cents = ?3, \
-             due_date = ?4, note = ?5, updated_at = ?6 WHERE id = ?7",
+             due_date = ?4, note = ?5, updated_at = ?6, created_at = COALESCE(?7, created_at) \
+             WHERE id = ?8",
             params![
                 counterparty,
                 key,
@@ -581,6 +528,7 @@ pub(crate) async fn update_debt(
                 due_date,
                 note.unwrap_or_default(),
                 now,
+                created_at_value,
                 id.clone()
             ],
         )
@@ -795,7 +743,7 @@ pub(crate) async fn set_turso_config(
     crate::write_app_config(&app, &cfg)?;
 
     // 配置变更后失效缓存，下一次记账命令按新配置重建 Database。
-    *state.cache.lock().await = None;
+    state.invalidate().await;
 
     Ok(TursoConfigView {
         url: cfg
@@ -823,8 +771,10 @@ mod tests {
             .build()
             .await
             .unwrap();
-        let conn = connect_with_pragmas(&db).await.unwrap();
-        migrate_schema(&conn).await.unwrap();
+        let conn = crate::db::connect_with_pragmas(&db).await.unwrap();
+        crate::db::migrate::apply(&conn, DebtSpec::migrations())
+            .await
+            .unwrap();
         conn
     }
 
@@ -967,6 +917,21 @@ mod tests {
             "信用卡".to_string(),
         ]);
         assert_eq!(tags, vec!["朋友".to_string(), "信用卡".to_string()]);
+    }
+
+    #[test]
+    fn compose_created_at_keeps_reference_time_of_day() {
+        let composed = compose_created_at("2026-03-05", Some("2026-07-25T21:43:07+08:00")).unwrap();
+        let parsed = DateTime::parse_from_rfc3339(&composed).unwrap();
+        // 日期换成手填的那天，时分秒沿用原记录，同天多笔的既有排序不被抹平。
+        assert_eq!(parsed.date_naive(), NaiveDate::from_ymd_opt(2026, 3, 5).unwrap());
+        assert_eq!(parsed.time().to_string(), "21:43:07");
+    }
+
+    #[test]
+    fn compose_created_at_rejects_malformed_date() {
+        assert!(compose_created_at("2026/03/05", None).is_err());
+        assert!(compose_created_at("", None).is_err());
     }
 
     #[test]

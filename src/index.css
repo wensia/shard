@@ -3,6 +3,16 @@
 @import "@astryxdesign/theme-neutral/theme.css";
 @import "./styles/frontend-rules.css";
 
+/* 全局关闭 astryx 组件的键盘 focus-visible 高亮环。astryx.css 用 :not(#\#) 把这些
+   规则的优先级抬到接近 ID 选择器（但不加 !important），常规选择器覆盖不掉，只能
+   用 !important 顶。三条选择器对应 astryx 里的三种呈现方式：直接画在被聚焦元素
+   本身上 / 画在"含聚焦后代"的容器上 / 画在聚焦容器内的装饰性子元素上。 */
+:focus-visible,
+:has(:focus-visible),
+:has(:focus-visible) * {
+    outline: none !important;
+}
+
 :root {
     --font-sans: "Noto Sans SC", -apple-system, "Helvetica Neue", Arial, "Hiragino Sans GB", STHeiti, "Microsoft YaHei", "Microsoft JhengHei", "Source Han Sans SC", "Noto Sans CJK SC", "Source Han Sans CN", "Source Han Sans TC", "Noto Sans CJK TC", SimSun, sans-serif;
     --font-heading: var(--font-sans);
@@ -13,15 +23,22 @@
        角色，Phase 3 删除 ui/button.tsx 后这两个 token 会变成未使用的遗留，先保留
        定义避免野指针，不强行现在清理。 */
 
-    /* 主色：kiln 孔雀蓝(peacock #2e6e79)接管 astryx neutral 默认的中性灰黑强调色。
-       只需覆盖这 5 个 astryx 原生 token——Button primary/焦点环/选中态等组件都
-       直接消费它们，--primary/--ring/--sidebar-primary 等 Shard 语义 token 通过
-       var(--color-accent) 间接引用会自动跟随，不需要逐个改。 */
+    /* 可切换强调色：默认值（孔雀蓝，与升级前行为一致）。真正的切换靠下面 4 个
+       :root[data-theme="..."] 块覆盖这 7 个 token——Button primary/焦点环/选中态
+       等组件都直接消费它们，--primary/--ring/--sidebar-primary 等 Shard 语义
+       token 通过 var(--color-accent) 间接引用会自动跟随，不需要逐个改。
+       data-theme 属性由 <html> 携带，src/lib/theme.ts 负责读写。
+       --shard-primary-rgb / --shard-primary-soft-rgb 是给 rgb(var(..) / alpha)
+       写法准备的手写整数三元组——CSS 没有能从十六进制派生出这种分量三元组的函数，
+       只能每套主题各存一份，务必和同一 data-theme 块里的 --color-accent 保持同一
+       个色。soft 是往白色方向淡化约 40% 的版本，目前只有从未真正接通的 .dark 用到。 */
     --color-accent: #2e6e79;
-    --color-accent-muted: color-mix(in srgb, #2e6e79 14%, white);
-    --color-text-accent: #2e6e79;
-    --color-icon-accent: #2e6e79;
+    --color-accent-muted: color-mix(in srgb, var(--color-accent) 14%, white);
+    --color-text-accent: var(--color-accent);
+    --color-icon-accent: var(--color-accent);
     --color-on-accent: #ffffff;
+    --shard-primary-rgb: 46 110 121;
+    --shard-primary-soft-rgb: 130 168 175;
     --background: var(--color-background-body);
     --foreground: var(--color-text-primary);
     --card: var(--color-background-card);
@@ -116,9 +133,13 @@
     --shard-sidebar-inset: var(--shard-space-4);
     --shard-content-inset: var(--shard-space-4);
     --shard-content-inset-lg: var(--shard-space-6);
-    /* Shared top datum below the macOS overlay traffic lights (13 * 4px).
-       Sidebar header and composer both align to this line. */
-    --shard-top-inset: 52px;
+    /* Shared top datum below the macOS overlay traffic lights. Measured from
+       a real dev-window screenshot: traffic light top sits ~9.5pt below the
+       window top, button height ~12.5pt — so 9.5 + 12.5 + 9.5 (symmetric
+       bottom gap) ≈ 32px, which also happens to land exactly on the
+       --shard-space-8 grid step. Sidebar header and composer both align to
+       this line. */
+    --shard-top-inset: 32px;
     --shard-composer-top-gap: var(--shard-top-inset);
     --shard-composer-bottom-gap: var(--shard-space-4);
     --shard-composer-padding: var(--shard-space-4);
@@ -165,6 +186,34 @@
     --shard-chip-bg: var(--muted);
     --shard-chip-fg: var(--foreground);
     --shard-chip-hover: color-mix(in srgb, var(--muted), black 6%);
+}
+
+/* 陶土红 clay */
+:root[data-theme="clay"] {
+    --color-accent: #b6533c;
+    --shard-primary-rgb: 182 83 60;
+    --shard-primary-soft-rgb: 211 152 138;
+}
+
+/* 窑青绿 teal */
+:root[data-theme="teal"] {
+    --color-accent: #3e8c7d;
+    --shard-primary-rgb: 62 140 125;
+    --shard-primary-soft-rgb: 139 186 177;
+}
+
+/* 孔雀蓝 peacock（默认值，与升级前行为一致） */
+:root[data-theme="peacock"] {
+    --color-accent: #2e6e79;
+    --shard-primary-rgb: 46 110 121;
+    --shard-primary-soft-rgb: 130 168 175;
+}
+
+/* 暖琥珀 amber */
+:root[data-theme="amber"] {
+    --color-accent: #be7c32;
+    --shard-primary-rgb: 190 124 50;
+    --shard-primary-soft-rgb: 216 176 132;
 }
 
 /* dark mode 全仓库未真正接通（无 ThemeProvider、无切换入口），降级为占位保留，

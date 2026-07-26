@@ -1,5 +1,4 @@
 import {
-  ArchiveIcon,
   GitBranchIcon,
   HandCoinsIcon,
   HelpCircleIcon,
@@ -7,11 +6,11 @@ import {
   KeyboardIcon,
   Maximize2Icon,
   MoreHorizontalIcon,
-  RefreshCwIcon,
   SearchIcon,
   SettingsIcon,
   SparklesIcon,
   TagIcon,
+ArchiveIcon,
 } from "lucide-react"
 import { useState } from "react"
 
@@ -22,15 +21,13 @@ import { Tooltip } from "@astryxdesign/core/Tooltip"
 import shardAppIconUrl from "@/assets/shard-app-icon.png"
 import { dailyReviewCount, insightReviewCount } from "@/lib/review-workflows"
 import { useAppVersion } from "@/lib/use-app-version"
-import type { Fragment, FragmentFilter, GitInfo } from "@/types"
+import type { Fragment, FragmentFilter } from "@/types"
 
 import styles from "./bottom-tabs.module.css"
 
 interface BottomTabsProps {
   activeFilter: FragmentFilter
   fragments: Fragment[]
-  git: GitInfo | null
-  isSyncing: boolean
   onFilterChange: (filter: FragmentFilter) => void
   onHelp: () => void
   onOpenDebts: () => void
@@ -39,7 +36,6 @@ interface BottomTabsProps {
   onOpenSettings: () => void
   onRestoreWindow: () => void
   onShortcuts: () => void
-  onSync: () => void
   vaultPath: string
 }
 
@@ -58,8 +54,6 @@ const tabItems: Array<{
 export function BottomTabs({
   activeFilter,
   fragments,
-  git,
-  isSyncing,
   onFilterChange,
   onHelp,
   onOpenDebts,
@@ -68,7 +62,6 @@ export function BottomTabs({
   onOpenSettings,
   onRestoreWindow,
   onShortcuts,
-  onSync,
   vaultPath,
 }: BottomTabsProps) {
   const [isMenuOpen, setIsMenuOpen] = useState(false)
@@ -86,12 +79,6 @@ export function BottomTabs({
     walk: activeFragments.length,
     archive: archivedFragments.length,
   }
-
-  const gitStateLabel = getGitStateLabel(git)
-  const isMissingRemote = Boolean(
-    git && git.status !== "no_git" && !git.hasRemote
-  )
-  const gitDotColor = getGitStatusDotColor(git, isMissingRemote)
 
   return (
     <footer
@@ -143,36 +130,6 @@ export function BottomTabs({
             vAlign="center"
             style={{ minWidth: 0, color: "var(--muted-foreground)" }}
           >
-            <HStack
-              gap={1.5}
-              vAlign="center"
-              style={{
-                flexShrink: 0,
-                fontWeight: 600,
-                color: "var(--sidebar-foreground)",
-              }}
-            >
-              <span
-                aria-hidden="true"
-                style={{
-                  width: 8,
-                  height: 8,
-                  borderRadius: 9999,
-                  background: gitDotColor,
-                }}
-              />
-              {gitStateLabel}
-            </HStack>
-
-            <div className={styles.branchInfo}>
-              <GitBranchIcon style={{ width: 14, height: 14, flexShrink: 0 }} />
-              <span className={styles.truncate}>{git?.branch || "main"}</span>
-              <span>·</span>
-              <span className={styles.truncate}>
-                {git?.shortCommit || "no commit"}
-              </span>
-            </div>
-
             <Tooltip
               content={vaultPath || "Vault not loaded"}
               placement="above"
@@ -289,14 +246,6 @@ export function BottomTabs({
               },
               { type: "divider" },
               {
-                icon: (
-                  <RefreshCwIcon className={isSyncing ? styles.spin : undefined} />
-                ),
-                isDisabled: isSyncing,
-                label: isSyncing ? "同步中" : "同步 Git vault",
-                onClick: () => window.setTimeout(onSync, 0),
-              },
-              {
                 icon: <Maximize2Icon />,
                 label: "还原窗口尺寸",
                 onClick: () => window.setTimeout(onRestoreWindow, 0),
@@ -328,23 +277,3 @@ export function BottomTabs({
   )
 }
 
-function getGitStateLabel(git: GitInfo | null) {
-  if (!git) return "No Vault"
-  if (git.status === "no_git") return "No Git"
-  if (!git.hasRemote) return "No Remote"
-  if (git.status === "dirty") return "Pending"
-  if (git.status === "error") return "Error"
-  return "Synced"
-}
-
-function getGitStatusDotColor(git: GitInfo | null, isMissingRemote: boolean) {
-  if (git?.status === "error") return "var(--shard-ruby)"
-  if (git?.status === "dirty" || isMissingRemote) return "var(--shard-amber)"
-  if (!git || (git.status === "ready" && git.hasRemote)) {
-    return "var(--shard-emerald)"
-  }
-  if (git.status === "no_git") {
-    return "color-mix(in oklab, var(--muted-foreground) calc(var(--shard-alpha-55) * 100%), transparent)"
-  }
-  return "var(--shard-emerald)"
-}

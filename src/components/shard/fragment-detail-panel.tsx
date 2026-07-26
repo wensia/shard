@@ -5,7 +5,6 @@ import {
   SparklesIcon,
 } from "lucide-react"
 
-import { StatusBadge } from "@/components/shard/status-badge"
 import { TagBadge } from "@/components/shard/tag-badge"
 import { Button } from "@astryxdesign/core/Button"
 import { Divider } from "@astryxdesign/core/Divider"
@@ -59,11 +58,6 @@ const valueTruncateStyle: CSSProperties = {
   ...truncateStyle,
   textAlign: "right",
   fontSize: "var(--font-size-xs)",
-}
-
-const valueMutedTruncateStyle: CSSProperties = {
-  ...valueTruncateStyle,
-  color: "var(--muted-foreground)",
 }
 
 const contentBoxStyle: CSSProperties = {
@@ -229,23 +223,6 @@ export function FragmentDetailPanel({
                 variant="secondary"
               />
             </HStack>
-          </Stack>
-
-          <Divider />
-
-          <Stack as="section" gap={3}>
-            <HStack hAlign="between" vAlign="center">
-              <h2 style={sectionHeadingStyle}>Git 状态</h2>
-              <StatusBadge status={fragment.gitStatus} />
-            </HStack>
-            <dl style={infoGridStyle}>
-              <dt style={labelStyle}>Vault</dt>
-              <dd style={valueTruncateStyle}>{vaultPath}</dd>
-              <dt style={labelStyle}>错误</dt>
-              <dd style={valueMutedTruncateStyle}>
-                {fragment.error || "无"}
-              </dd>
-            </dl>
           </Stack>
 
           <Divider />

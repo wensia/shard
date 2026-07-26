@@ -7,7 +7,6 @@ import {
   KeyboardIcon,
   Maximize2Icon,
   MoreHorizontalIcon,
-  RefreshCwIcon,
   SearchIcon,
   SettingsIcon,
   SparklesIcon,
@@ -28,15 +27,13 @@ import { Tooltip } from "@astryxdesign/core/Tooltip"
 import shardAppIconUrl from "@/assets/shard-app-icon.png"
 import { dailyReviewCount, insightReviewCount } from "@/lib/review-workflows"
 import { useAppVersion } from "@/lib/use-app-version"
-import type { Fragment, FragmentFilter, GitInfo } from "@/types"
+import type { Fragment, FragmentFilter } from "@/types"
 
 import styles from "./sidebar-nav.module.css"
 
 interface SidebarNavProps {
   activeFilter: FragmentFilter
   fragments: Fragment[]
-  git: GitInfo | null
-  isSyncing: boolean
   mindMapCount: number
   mindMapViewActive: boolean
   debtCount: number
@@ -49,8 +46,6 @@ interface SidebarNavProps {
   onOpenSettings: () => void
   onRestoreWindow: () => void
   onShortcuts: () => void
-  onSync: () => void
-  vaultPath: string
 }
 
 const navItems: Array<{
@@ -222,9 +217,6 @@ const MONTH_LABELS: Record<SidebarLanguage, readonly string[]> = {
   ],
 }
 
-const TOOLTIP_DIM_COLOR =
-  "color-mix(in oklab, var(--background) calc(var(--shard-alpha-55) * 100%), transparent)"
-
 const NAV_COUNT_BADGE_STYLE: CSSProperties = {
   minWidth: 28,
   borderRadius: "var(--shard-radius-card)",
@@ -249,8 +241,6 @@ const NAV_LABEL_STYLE: CSSProperties = {
 export function SidebarNav({
   activeFilter,
   fragments,
-  git,
-  isSyncing,
   mindMapCount,
   mindMapViewActive,
   debtCount,
@@ -263,8 +253,6 @@ export function SidebarNav({
   onOpenSettings,
   onRestoreWindow,
   onShortcuts,
-  onSync,
-  vaultPath,
 }: SidebarNavProps) {
   const [isUtilityMenuOpen, setIsUtilityMenuOpen] = useState(false)
   const appVersion = useAppVersion()
@@ -283,12 +271,6 @@ export function SidebarNav({
     walk: activeFragments.length,
     archive: archivedFragments.length,
   }
-  const gitStateLabel = getGitStateLabel(git, copy)
-  const gitSummary = `${git?.branch || "main"} · ${git?.shortCommit || copy.noCommit}`
-  const vaultLabel = vaultPath || copy.vaultNotLoaded
-  const isMissingRemote = Boolean(
-    git && git.status !== "no_git" && !git.hasRemote
-  )
   const heatmap = buildSidebarHeatmap(activeFragments, language)
 
   return (
@@ -525,58 +507,6 @@ export function SidebarNav({
         }}
       >
         <HStack hAlign="between" vAlign="center">
-          <Tooltip
-            content={
-              <Stack gap={1}>
-                <span>
-                  {isSyncing ? copy.syncing : `Git ${gitStateLabel}`}
-                </span>
-                <span style={{ color: TOOLTIP_DIM_COLOR }}>{gitSummary}</span>
-                <span
-                  style={{
-                    maxWidth: 256,
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                    color: TOOLTIP_DIM_COLOR,
-                  }}
-                >
-                  {vaultLabel}
-                </span>
-              </Stack>
-            }
-            placement="above"
-          >
-            <div style={{ position: "relative" }}>
-              <Button
-                icon={
-                  <RefreshCwIcon
-                    className={isSyncing ? styles.spin : undefined}
-                  />
-                }
-                isDisabled={isSyncing}
-                isIconOnly
-                label={copy.syncGitVault}
-                onClick={onSync}
-                size="sm"
-                variant="ghost"
-              />
-              <span
-                aria-hidden="true"
-                style={{
-                  position: "absolute",
-                  top: 8,
-                  right: 8,
-                  width: 6,
-                  height: 6,
-                  borderRadius: 9999,
-                  background: getGitStatusDotColor(git, isMissingRemote),
-                  boxShadow: "0 0 0 1px var(--sidebar)",
-                  pointerEvents: "none",
-                }}
-              />
-            </div>
-          </Tooltip>
           <Tooltip content={copy.restoreWindow} placement="above">
             <Button
               icon={<Maximize2Icon />}
@@ -630,30 +560,6 @@ function getSidebarLanguage(): SidebarLanguage {
     navigator.languages?.find((language) => language) ?? navigator.language
 
   return preferredLanguage.toLowerCase().startsWith("zh") ? "zh" : "en"
-}
-
-function getGitStateLabel(
-  git: GitInfo | null,
-  copy: (typeof SIDEBAR_COPY)[SidebarLanguage]
-) {
-  if (!git) return copy.gitState.noVault
-  if (git.status === "no_git") return copy.gitState.noGit
-  if (!git.hasRemote) return copy.gitState.noRemote
-  if (git.status === "dirty") return copy.gitState.pending
-  if (git.status === "error") return copy.gitState.error
-  return copy.gitState.synced
-}
-
-function getGitStatusDotColor(git: GitInfo | null, isMissingRemote: boolean) {
-  if (git?.status === "error") return "var(--shard-ruby)"
-  if (git?.status === "dirty" || isMissingRemote) return "var(--shard-amber)"
-  if (!git || (git.status === "ready" && git.hasRemote)) {
-    return "var(--shard-emerald)"
-  }
-  if (git?.status === "no_git") {
-    return "color-mix(in oklab, var(--muted-foreground) calc(var(--shard-alpha-55) * 100%), transparent)"
-  }
-  return "var(--shard-emerald)"
 }
 
 interface SidebarStatProps {

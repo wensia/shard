@@ -32,8 +32,13 @@ rand = "0.8"
 rsa = { version = "0.9", features = ["sha2"] }
 sha2 = "0.10"
 # 记账（债务追踪）模块的存储后端：libSQL（Turso）。默认 features 已含
-# core/replication/remote，支持 embedded replica（本地文件 + 远程同步）。
+# core/replication/remote/sync，支持 embedded replica（本地文件 + 远程同步）。
 libsql = "0.9"
+# 客户端与（未来的）服务端共享的核心逻辑，目前是全文检索的 CJK 分词。
+# 索引侧与查询侧必须调用同一份实现，放进共享 crate 就是为了杜绝两端漂移。
+# 暂用 path 依赖而非 workspace：避免把构建产物挪到仓库根、触发全量重编译。
+# 等 shard-server 落地时再统一迁成 workspace。
+shard-core = { path = "../crates/shard-core" }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2-app-kit = { version = "0.3.2", default-features = false, features = [

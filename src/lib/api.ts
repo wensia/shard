@@ -9,8 +9,6 @@ import type {
   Debt,
   DebtDirection,
   Fragment,
-  GithubCliInfo,
-  GitInfo,
   LockboxSetupResult,
   MindMapReadResult,
   MindMapSummary,
@@ -151,10 +149,6 @@ export function setVaultPath(path: string, initializeGit: boolean) {
   return desktopInvoke<VaultState>("set_vault_path", { path, initializeGit })
 }
 
-export function initializeVaultGit() {
-  return desktopInvoke<VaultState>("initialize_vault_git")
-}
-
 export function setupLockbox(password: string) {
   return desktopInvoke<LockboxSetupResult>("setup_lockbox", { password })
 }
@@ -184,14 +178,6 @@ export function resetLockboxPassword(recoveryKey: string, newPassword: string) {
   })
 }
 
-export function setVaultRemote(remoteUrl: string) {
-  return desktopInvoke<VaultState>("set_vault_remote", { remoteUrl })
-}
-
-export function getGithubCliStatus() {
-  return desktopInvoke<GithubCliInfo>("github_cli_status")
-}
-
 export function getCodexAgentStatus() {
   return desktopInvoke<CodexAgentStatus>("codex_agent_status")
 }
@@ -212,14 +198,6 @@ export function runCodexReviewTask(
   })
 }
 
-export function createGithubVaultRepo(repoName: string) {
-  return desktopInvoke<VaultState>("create_github_vault_repo", { repoName })
-}
-
-export function syncVault() {
-  return desktopInvoke<GitInfo>("sync_vault")
-}
-
 export function listDebts() {
   return desktopInvoke<Debt[]>("list_debts")
 }
@@ -231,6 +209,7 @@ export function createDebt(input: {
   dueDate?: string | null
   note?: string
   tags?: string[]
+  createdAt?: string | null
 }) {
   return desktopInvoke<Debt>("create_debt", {
     direction: input.direction,
@@ -249,6 +228,7 @@ export function updateDebt(input: {
   dueDate?: string | null
   note?: string
   tags?: string[]
+  createdAt?: string | null
 }) {
   return desktopInvoke<Debt>("update_debt", {
     id: input.id,
@@ -300,4 +280,73 @@ export function setTursoConfig(input: { url?: string | null; token?: string }) {
     url: input.url ?? null,
     token: input.token,
   })
+}
+
+// ---------------------------------------------------------------------------
+// 笔记库：导入 / 导出 / 校验 / 索引维护
+//
+// Git 移除后，导出是数据离开应用的唯一出口，因此这些能力必须在 UI 上可达，
+// 不能只作为内部命令存在。
+// ---------------------------------------------------------------------------
+
+export interface NotesDbStats {
+  total: number
+  active: number
+  deleted: number
+  lockbox: number
+  indexed: number
+  importState: string | null
+  importAt: string | null
+}
+
+export interface ImportReport {
+  scanned: number
+  imported: number
+  skippedUnchanged: number
+  failed: { path: string; reason: string }[]
+  warnings: string[]
+  lockboxMetadataPending: number
+  durationMs: number
+}
+
+export interface ExportReport {
+  exported: number
+  skipped: number
+  failed: { id: string; reason: string }[]
+  durationMs: number
+}
+
+export interface VerifyReport {
+  checked: number
+  mismatched: { id: string; field: string; detail: string }[]
+  missing: string[]
+  byteDifferences: string[]
+  unmapped: string[]
+  /** 库内容能否被产物无损还原。false 表示不该把文件当作可靠备份。 */
+  lossless: boolean
+}
+
+export function getNotesDbStats() {
+  return desktopInvoke<NotesDbStats>("notes_db_stats")
+}
+
+/** `dryRun` 为 true 时只扫描不写库，用于先让用户确认规模。 */
+export function importVaultMarkdown(dryRun: boolean, includeLockbox = true) {
+  return desktopInvoke<ImportReport>("import_vault_markdown", {
+    dryRun,
+    includeLockbox,
+  })
+}
+
+/** `full` 为 true 时全量重写，否则只写有改动的条目。 */
+export function exportVaultMarkdown(full: boolean) {
+  return desktopInvoke<ExportReport>("export_vault_markdown", { full })
+}
+
+export function verifyExport() {
+  return desktopInvoke<VerifyReport>("verify_export")
+}
+
+export function rebuildSearchIndex() {
+  return desktopInvoke<number>("rebuild_search_index")
 }

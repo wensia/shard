@@ -1,9 +1,3 @@
-export type FragmentStatus =
-  | "saved"
-  | "committed"
-  | "sync_pending"
-  | "commit_failed"
-
 export type FragmentFilter =
   | "inbox"
   | "tagged"
@@ -21,28 +15,10 @@ export interface Fragment {
   tags: string[]
   category: string | null
   path: string
-  gitStatus: FragmentStatus
-  error: string | null
   aiStatus?: "none" | "pending" | "suggested" | "accepted" | "skipped"
   archived: boolean
   lockbox: boolean
   pinned: boolean
-}
-
-export interface GitInfo {
-  branch: string
-  shortCommit: string
-  hasRemote: boolean
-  status: "ready" | "no_git" | "dirty" | "syncing" | "error"
-  error: string | null
-}
-
-export interface GithubCliInfo {
-  installed: boolean
-  authenticated: boolean
-  login: string | null
-  protocol: string | null
-  error: string | null
 }
 
 export interface CodexAgentStatus {
@@ -153,7 +129,6 @@ export interface ShardMapLink {
 export interface VaultState {
   vaultPath: string
   fragments: Fragment[]
-  git: GitInfo
   lockbox: LockboxState
 }
 
@@ -170,7 +145,7 @@ export interface LockboxSetupResult {
 }
 
 export type DebtDirection = "borrow_in" | "lend_out"
-// 沿用 Fragment.gitStatus 的既有先例（snake_case 字符串字面量），与 Rust 侧
+// 沿用 snake_case 字符串字面量的既有先例，与 Rust 侧
 // 原始字符串值一一对应，不做 camelCase 改写。
 
 export interface Repayment {

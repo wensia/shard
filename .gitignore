@@ -16,6 +16,8 @@ dist-ssr
 # Tauri / Rust build artifacts
 src-tauri/target/
 src-tauri/gen/schemas/
+crates/*/target/
+crates/*/Cargo.lock
 
 # Local agent rules and private docs
 AGENTS.md

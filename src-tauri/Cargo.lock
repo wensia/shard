@@ -4158,6 +4158,7 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "sha2",
+ "shard-core",
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",
@@ -4165,6 +4166,10 @@ dependencies = [
  "tempfile",
  "tokio",
 ]
+
+[[package]]
+name = "shard-core"
+version = "0.1.0"
 
 [[package]]
 name = "shlex"

@@ -3,10 +3,13 @@ import ReactDOM from "react-dom/client";
 import { Theme } from "@astryxdesign/core/theme";
 import { neutralTheme } from "@astryxdesign/theme-neutral/built";
 import App from "./App";
+import { initAccentTheme } from "./lib/theme";
 import "./index.css";
 import "@fontsource/noto-sans-sc/400.css";
 import "@fontsource/noto-sans-sc/500.css";
 import "@fontsource/noto-sans-sc/600.css";
+
+initAccentTheme();
 
 function suppressEvent(event: Event) {
   event.preventDefault();

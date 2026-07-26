@@ -49,6 +49,9 @@ export function FragmentImageExporter({
   const [previewCanvas, setPreviewCanvas] = useState<HTMLCanvasElement | null>(
     null
   )
+  const [previewFrame, setPreviewFrame] = useState<HTMLDivElement | null>(
+    null
+  )
   const activeTemplate = useMemo(
     () =>
       EXPORT_IMAGE_TEMPLATES.find((template) => template.id === templateId) ??
@@ -74,6 +77,9 @@ export function FragmentImageExporter({
           vaultPath,
         })
       )
+      .then(() => {
+        if (!cancelled) fitCanvasToContainer(previewCanvas, previewFrame)
+      })
       .catch((error) => {
         if (cancelled) return
         toast({
@@ -92,11 +98,28 @@ export function FragmentImageExporter({
     fragment,
     open,
     previewCanvas,
+    previewFrame,
     showCreatedDate,
     showCreatedTime,
     templateId,
     vaultPath,
   ])
+
+  // 用 JS 精确计算并设置 canvas 的显示宽高（而不是靠 CSS 的
+  // aspect-ratio + width/height:auto + max-*:100% 隐式求解），因为
+  // Tauri 原生窗口的 WKWebView 在这套隐式尺寸计算上和 Chromium 表现不一致，
+  // 会导致预览画布在真机上被撑得又长又窄、内容挤在顶部一小块。容器尺寸变化
+  // （对话框自身随视口 resize）时也要重新适配，故监听 ResizeObserver。
+  useEffect(() => {
+    if (!previewCanvas || !previewFrame) return
+
+    const observer = new ResizeObserver(() => {
+      fitCanvasToContainer(previewCanvas, previewFrame)
+    })
+    observer.observe(previewFrame)
+
+    return () => observer.disconnect()
+  }, [previewCanvas, previewFrame])
 
   async function renderExportBlob(targetFragment: Fragment) {
     const canvas = document.createElement("canvas")
@@ -244,7 +267,7 @@ export function FragmentImageExporter({
               </div>
 
               <div aria-busy={isPreviewing} className={styles.previewArea}>
-                <div className={styles.previewFrame}>
+                <div className={styles.previewFrame} ref={setPreviewFrame}>
                   {isPreviewing ? (
                     <div className={styles.previewOverlay}>
                       <Loader2Icon
@@ -545,6 +568,28 @@ function nextPaint() {
 
 function getCanvasPixelRatio() {
   return Math.min(Math.max(window.devicePixelRatio || 1, 1), 3)
+}
+
+function fitCanvasToContainer(
+  canvas: HTMLCanvasElement,
+  container: HTMLElement | null
+) {
+  if (!container) return
+
+  const canvasWidth = canvas.width
+  const canvasHeight = canvas.height
+  const availableWidth = container.clientWidth
+  const availableHeight = container.clientHeight
+  if (!canvasWidth || !canvasHeight || !availableWidth || !availableHeight) {
+    return
+  }
+
+  const scale = Math.min(
+    availableWidth / canvasWidth,
+    availableHeight / canvasHeight
+  )
+  canvas.style.width = `${Math.round(canvasWidth * scale)}px`
+  canvas.style.height = `${Math.round(canvasHeight * scale)}px`
 }
 
 function downloadBlob(blob: Blob, fileName: string) {

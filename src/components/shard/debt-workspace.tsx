@@ -137,6 +137,7 @@ export function DebtWorkspace({ debts, onDebtsChange }: DebtWorkspaceProps) {
       dueDate: values.dueDate,
       note: values.note,
       tags: values.tags,
+      createdAt: values.createdAt,
     })
     upsertDebt(updated)
     setFormDialog(null)
@@ -357,7 +358,14 @@ export function DebtWorkspace({ debts, onDebtsChange }: DebtWorkspaceProps) {
           paddingBottom: "var(--shard-space-6)",
         }}
       >
-        <div className="shard-content-measure">
+        <div
+          className="shard-content-measure"
+          style={
+            view === "timeline" && sortedDebts.length === 0
+              ? { height: "100%" }
+              : undefined
+          }
+        >
           {view === "contacts" ? (
             <DebtContactSummaryPanel
               debts={debts}
@@ -372,7 +380,7 @@ export function DebtWorkspace({ debts, onDebtsChange }: DebtWorkspaceProps) {
               gap={2}
               hAlign="center"
               style={{
-                height: 192,
+                minHeight: "100%",
                 textAlign: "center",
                 color: "var(--muted-foreground)",
               }}
