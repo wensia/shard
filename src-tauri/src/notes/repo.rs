@@ -435,11 +435,18 @@ pub(crate) async fn soft_delete(
     Ok(())
 }
 
-/// 标记一条已经成功导出到磁盘，清掉脏标记。
-pub(crate) async fn mark_exported(conn: &Connection, id: &str) -> Result<(), String> {
+/// 标记一条已经成功导出到磁盘，记下产物路径并清掉脏标记。
+///
+/// 路径要跟着写回去：归档会让产物换目录，不更新的话下次导出会拿旧路径去删
+/// 一个已经不存在的文件，而真正的旧文件留在原地。
+pub(crate) async fn mark_exported_at(
+    conn: &Connection,
+    id: &str,
+    export_path: &str,
+) -> Result<(), String> {
     conn.execute(
-        "UPDATE fragments SET export_dirty = 0, exported_at = ?2 WHERE id = ?1",
-        params![id, chrono::Local::now().to_rfc3339()],
+        "UPDATE fragments SET export_dirty = 0, exported_at = ?2, export_path = ?3 WHERE id = ?1",
+        params![id, chrono::Local::now().to_rfc3339(), export_path],
     )
     .await
     .map_err(|error| error.to_string())?;

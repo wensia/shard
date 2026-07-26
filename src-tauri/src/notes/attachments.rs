@@ -174,6 +174,54 @@ pub(crate) fn rewrite_asset_links(content: &str, assets: &HashMap<String, String
     })
 }
 
+/// 导出方向：把内容寻址的引用还原成 `assets/` 下的相对路径。
+///
+/// 与 [`rewrite_asset_links`] 互为逆操作。导出的 Markdown 要能被任何编辑器
+/// 直接打开，`shard-attachment:` 这种只有 Shard 认识的协议在那里毫无意义。
+pub(crate) fn restore_asset_links(content: &str, paths: &HashMap<String, String>) -> String {
+    map_image_targets(content, |target| {
+        let (link, title) = split_target(target);
+        let hash = link.trim().strip_prefix(ATTACHMENT_SCHEME)?;
+        Some(format!("{}{title}", paths.get(hash)?))
+    })
+}
+
+/// 附件导出到 `assets/` 时的相对路径。
+///
+/// 仍按 hash 分桶并以 hash 命名：导出是**可重复**的操作，用原始文件名会在
+/// 重名时互相覆盖，内容寻址不会。扩展名从入库时定死的 MIME 反推，让文件在
+/// 系统里能被正常双击打开。
+pub(crate) fn export_rel_path(hash: &str, mime_type: &str) -> String {
+    let bucket = &hash[..2.min(hash.len())];
+    match extension_for_mime(mime_type) {
+        Some(extension) => format!("assets/{bucket}/{hash}.{extension}"),
+        None => format!("assets/{bucket}/{hash}"),
+    }
+}
+
+/// 全部未删除的附件。导出时要照着它把字节从缓存复制回 `assets/`。
+pub(crate) async fn list_all(conn: &Connection) -> Result<Vec<AttachmentRow>, String> {
+    let mut rows = conn
+        .query(
+            "SELECT hash, mime_type, byte_size, created_at
+               FROM attachments WHERE deleted_at IS NULL ORDER BY hash",
+            (),
+        )
+        .await
+        .map_err(|error| error.to_string())?;
+
+    let mut out = Vec::new();
+    while let Some(row) = rows.next().await.map_err(|e| e.to_string())? {
+        out.push(AttachmentRow {
+            hash: row.get(0).map_err(|e| e.to_string())?,
+            mime_type: row.get(1).map_err(|e| e.to_string())?,
+            byte_size: row.get(2).map_err(|e| e.to_string())?,
+            created_at: row.get(3).map_err(|e| e.to_string())?,
+        });
+    }
+    Ok(out)
+}
+
 /// 正文引用到的全部附件 hash，去重且保序。
 pub(crate) fn referenced_hashes(content: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();

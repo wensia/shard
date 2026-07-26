@@ -366,7 +366,7 @@ export function VaultGuide({
       <section className={styles.sectionPad}>
         <h3 style={sectionTitleStyle}>备份与校验</h3>
         <p style={sectionDescriptionStyle}>
-          导出会把库中全部笔记写回 Markdown 文件；密匣条目以密文形式导出，不需要解锁。
+          导出会把库中全部内容写回文件：笔记、思维导图与图片附件。密匣条目以密文形式导出，不需要解锁。
         </p>
         <HStack gap={2} style={{ marginTop: "var(--shard-space-3)", flexWrap: "wrap" }}>
           <Button
@@ -375,9 +375,10 @@ export function VaultGuide({
             onClick={() =>
               void runDataAction("export", async () => {
                 const report = await exportVaultMarkdown(true)
+                const summary = `已导出 ${report.exported} 条笔记、${report.maps} 份导图、${report.attachments} 个附件`
                 return report.failed.length
-                  ? `导出 ${report.exported} 条，${report.failed.length} 条失败`
-                  : `已导出 ${report.exported} 条笔记`
+                  ? `${summary}，${report.failed.length} 项失败`
+                  : summary
               })
             }
             size="sm"

@@ -314,6 +314,10 @@ export interface ImportReport {
 export interface ExportReport {
   exported: number
   skipped: number
+  /** 写出的思维导图数量。 */
+  maps: number
+  /** 复制回 assets/ 的附件数量。 */
+  attachments: number
   failed: { id: string; reason: string }[]
   durationMs: number
 }
