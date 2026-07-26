@@ -18,10 +18,16 @@
 use crate::db::migrate::Migration;
 
 /// 全部迁移，按版本升序。
-pub(crate) static MIGRATIONS: &[Migration] = &[Migration {
-    version: 1,
-    sql: V1_SQL,
-}];
+pub(crate) static MIGRATIONS: &[Migration] = &[
+    Migration {
+        version: 1,
+        sql: V1_SQL,
+    },
+    Migration {
+        version: 2,
+        sql: V2_SQL,
+    },
+];
 
 const V1_SQL: &str = r#"
 CREATE TABLE IF NOT EXISTS fragments (
@@ -148,4 +154,79 @@ CREATE TABLE IF NOT EXISTS import_ledger (
 ) WITHOUT ROWID;
 
 CREATE INDEX IF NOT EXISTS idx_import_ledger_target ON import_ledger (target_id);
+"#;
+
+/// v2：把剩下三类仍以文件为真相源的数据纳入库中——思维导图、图片附件元数据、
+/// 密匣密钥。至此本地不再有「只存在于文件里」的数据。
+const V2_SQL: &str = r#"
+-- 思维导图。**整档存储，不拆节点**：现有 SHARD_MAP_MAX_NODES = 400，
+-- 保存语义本就是「整档 + expected_revision + last_saved_hash」，整档存 TEXT
+-- 能让既有的乐观锁语义 1:1 平移成一条 CAS UPDATE，不必重新设计并发模型。
+CREATE TABLE IF NOT EXISTS shard_maps (
+    id            TEXT PRIMARY KEY,
+    title         TEXT NOT NULL,
+    -- canonical_mind_map_text() 的输出，保证同一份文档序列化结果确定。
+    doc_json      TEXT NOT NULL,
+    -- = hash_text(doc_json)，即前端传来的 last_saved_hash，口径必须一致。
+    doc_hash      TEXT NOT NULL,
+    revision      INTEGER NOT NULL CHECK (revision > 0),
+    node_count    INTEGER NOT NULL,
+    created_at    TEXT NOT NULL,
+    updated_at    TEXT NOT NULL,
+    updated_at_ms INTEGER NOT NULL,
+    deleted_at    TEXT,
+    export_path   TEXT,
+    export_dirty  INTEGER NOT NULL DEFAULT 1 CHECK (export_dirty IN (0, 1))
+);
+
+CREATE INDEX IF NOT EXISTS idx_shard_maps_updated
+    ON shard_maps (updated_at DESC) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_shard_maps_export_dirty
+    ON shard_maps (export_dirty) WHERE export_dirty = 1;
+
+-- 图片附件的**元数据**。二进制留在文件系统（本地缓存目录），这里只存内容寻址
+-- 的 hash 与摄入时确定的 MIME —— 把大 blob 放进库会让体积失控，而附件本就
+-- 适合按需读取。
+CREATE TABLE IF NOT EXISTS attachments (
+    hash        TEXT PRIMARY KEY,
+    -- 摄入时用魔数嗅探定死，读取直接用这一列。不信任扩展名：内容是 SVG 而
+    -- 名为 .png 的文件按扩展名判定会被当成 image/png，是一个脚本执行面。
+    mime_type   TEXT NOT NULL,
+    byte_size   INTEGER NOT NULL CHECK (byte_size >= 0),
+    created_at  TEXT NOT NULL,
+    deleted_at  TEXT
+);
+
+-- 附件与笔记的多对多关联：同一张图可能被多条笔记引用（内容寻址天然去重），
+-- 因此不能把 fragment_id 直接挂在 attachments 上。
+CREATE TABLE IF NOT EXISTS fragment_attachments (
+    fragment_id TEXT NOT NULL REFERENCES fragments(id) ON DELETE CASCADE,
+    hash        TEXT NOT NULL REFERENCES attachments(hash),
+    PRIMARY KEY (fragment_id, hash)
+) WITHOUT ROWID;
+
+CREATE INDEX IF NOT EXISTS idx_fragment_attachments_hash ON fragment_attachments (hash);
+
+-- 密匣 manifest（单行）。内容与 .shard/lockbox.json 相同，全是密文。
+--
+-- revision 用于 CAS，修复一个真实缺陷：解锁时会写回 manifest 补生成密钥对，
+-- 两台设备同时首次解锁会互相覆盖，导致先写那台在锁定态写入的片段永久无法解密。
+CREATE TABLE IF NOT EXISTS lockbox_manifest (
+    id         INTEGER PRIMARY KEY CHECK (id = 1),
+    payload    TEXT NOT NULL,
+    revision   INTEGER NOT NULL DEFAULT 1 CHECK (revision > 0),
+    updated_at TEXT NOT NULL
+);
+
+-- 历史密钥**只增不删**。密钥轮换或并发解锁产生新密钥对后，旧密钥仍是解开
+-- 既有密文的唯一途径，删掉等于永久销毁那批数据。
+CREATE TABLE IF NOT EXISTS lockbox_keys (
+    key_id              TEXT PRIMARY KEY,
+    algorithm           TEXT NOT NULL,
+    public_key          TEXT NOT NULL,
+    wrapped_private_key TEXT NOT NULL,
+    nonce               TEXT NOT NULL,
+    created_at          TEXT NOT NULL,
+    retired_at          TEXT
+);
 "#;

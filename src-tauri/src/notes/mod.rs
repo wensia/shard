@@ -19,6 +19,7 @@ pub(crate) mod bridge;
 pub(crate) mod commands;
 pub(crate) mod export;
 pub(crate) mod import;
+pub(crate) mod maps;
 pub(crate) mod model;
 pub(crate) mod repo;
 pub(crate) mod schema;
@@ -103,11 +104,31 @@ mod tests {
         }
     }
 
+    /// 建库后 user_version 应停在最新迁移上。跟随 MIGRATIONS 取值而非写死数字，
+    /// 这样追加迁移时不必再回来改这条断言。
     #[tokio::test]
-    async fn creates_schema_and_sets_user_version() {
+    async fn creates_schema_and_sets_latest_user_version() {
         let conn = open_test_conn().await;
         let version = crate::db::migrate::user_version(&conn).await.unwrap();
-        assert_eq!(version, 1);
+        let latest = NotesSpec::migrations()
+            .iter()
+            .map(|m| m.version)
+            .max()
+            .unwrap();
+        assert_eq!(version, latest);
+
+        // v2 的三张新表都应存在。
+        for table in ["shard_maps", "attachments", "fragment_attachments", "lockbox_manifest", "lockbox_keys"] {
+            let mut rows = conn
+                .query(
+                    "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+                    libsql::params![table],
+                )
+                .await
+                .unwrap();
+            let found: i64 = rows.next().await.unwrap().unwrap().get(0).unwrap();
+            assert_eq!(found, 1, "缺少表 {table}");
+        }
     }
 
     #[tokio::test]
