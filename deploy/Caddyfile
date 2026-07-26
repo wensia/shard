@@ -1,0 +1,25 @@
+# Caddy 负责 TLS 与反向代理。shard-server 只绑 127.0.0.1，不直接面向公网。
+#
+# 换成你自己的域名后：caddy validate --config /etc/caddy/Caddyfile && systemctl reload caddy
+shard.example.com {
+	# 证书自动申请与续期，无需手工维护。
+	encode zstd gzip
+
+	reverse_proxy 127.0.0.1:8787 {
+		# 附件上传可能有几十 MB，默认超时对慢速上行不够用。
+		transport http {
+			read_timeout 300s
+			write_timeout 300s
+		}
+	}
+
+	# 探活端点不需要凭据，但也不必对外可见。
+	@healthz path /healthz
+	respond @healthz 200
+
+	log {
+		output file /var/log/caddy/shard.log
+		# 请求里带着 Authorization 头，别把它记进日志。
+		format json
+	}
+}

@@ -1,0 +1,25 @@
+[package]
+name = "shard-server"
+version = "0.1.0"
+edition.workspace = true
+description = "Shard 的自建同步服务端"
+
+[dependencies]
+shard-core = { path = "../shard-core" }
+
+axum = "0.8"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "net"] }
+tower-http = { version = "0.6", features = ["trace", "limit"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+libsql = { workspace = true }
+sha2 = { workspace = true }
+# 认证令牌用常量时间比较，避免按字节短路泄漏前缀。
+subtle = "2"
+
+[dev-dependencies]
+tempfile = "3"

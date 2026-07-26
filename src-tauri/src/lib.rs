@@ -11,7 +11,7 @@ use rsa::{
     Oaep, RsaPrivateKey, RsaPublicKey,
 };
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
+use sha2::Sha256;
 use std::{
     collections::{BTreeMap, HashSet},
     env, fs,
@@ -1942,15 +1942,10 @@ fn canonical_mind_map_text(file: &ShardMapFile) -> Result<String, String> {
 }
 
 /// 字节内容的 sha256 十六进制摘要。附件的内容寻址键。
-pub(crate) fn hash_bytes(bytes: &[u8]) -> String {
-    let digest = Sha256::digest(bytes);
-    digest.iter().map(|byte| format!("{byte:02x}")).collect()
-}
-
-fn hash_text(text: &str) -> String {
-    let digest = Sha256::digest(text.as_bytes());
-    digest.iter().map(|byte| format!("{byte:02x}")).collect()
-}
+///
+/// 转发到 `shard-core`：服务端算 `content_hash` 要得到完全相同的结果，
+/// 两边各写一份迟早会因为某次"顺手优化"而分叉。
+pub(crate) use shard_core::{hash_bytes, hash_text};
 
 fn write_text_atomically(path: &Path, text: &str) -> Result<(), String> {
     if let Some(parent) = path.parent() {

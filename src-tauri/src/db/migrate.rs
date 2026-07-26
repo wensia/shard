@@ -6,11 +6,8 @@
 
 use libsql::Connection;
 
-/// 单个版本的 DDL。`version` 从 1 开始，同一组内必须严格递增。
-pub(crate) struct Migration {
-    pub version: i64,
-    pub sql: &'static str,
-}
+/// 单个版本的 DDL，定义在 `shard-core`：服务端要跑同一套迁移。
+pub(crate) use shard_core::Migration;
 
 /// 读当前 `user_version`，按序执行所有更高版本的迁移。
 ///
