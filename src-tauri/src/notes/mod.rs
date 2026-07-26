@@ -15,6 +15,7 @@
 //! Phase 2 是**影子写**：Markdown 文件仍是真相源，这个库只是旁路验证，
 //! 出问题删掉重建即可。写路径反转在 Phase 4。
 
+pub(crate) mod attachments;
 pub(crate) mod bridge;
 pub(crate) mod commands;
 pub(crate) mod export;
