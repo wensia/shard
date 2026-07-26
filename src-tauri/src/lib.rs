@@ -61,6 +61,12 @@ struct Fragment {
     archived: bool,
     lockbox: bool,
     pinned: bool,
+    /// 非空表示这是一份冲突副本，值是它所属原件的 id。
+    ///
+    /// 同步遇到「两端都改过同一条」时不覆盖，把本地那版另存成这样一条。
+    /// 前端据此打徽章——不提示的话，用户根本不会发现多出来的这一条是什么。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    conflict_of: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -2027,6 +2033,8 @@ fn read_fragment(path: &Path, vault: &Path) -> Result<Fragment, String> {
         archived,
         lockbox: false,
         pinned: frontmatter.pinned,
+        // 文件回退路径没有同步元数据；冲突副本只可能来自库。
+        conflict_of: None,
     })
 }
 
@@ -2142,6 +2150,7 @@ fn lockbox_fragment_from_parts(
         archived,
         lockbox: true,
         pinned: frontmatter.pinned,
+        conflict_of: None,
     })
 }
 

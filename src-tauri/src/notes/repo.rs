@@ -18,7 +18,7 @@ const FRAGMENT_COLUMNS: &str = "
     id, content, content_hash, created_at, updated_at,
     archived_at, pinned, lockbox, category, ai_status, source, revision,
     cipher_version, cipher_nonce, cipher_text, cipher_key_alg, cipher_key_text, cipher_key_id,
-    export_path, export_dirty
+    export_path, export_dirty, conflict_of
 ";
 
 /// 写入一条笔记（新建或整体覆盖），连同标签与全文索引。
@@ -556,5 +556,6 @@ fn map_row(row: &Row) -> libsql::Result<FragmentRow> {
         cipher,
         export_path: row.get(18)?,
         export_dirty: row.get::<i64>(19)? != 0,
+        conflict_of: row.get(20)?,
     })
 }

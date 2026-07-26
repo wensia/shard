@@ -265,6 +265,13 @@
       scale 140ms ease;
   }
 
+  /* 标签里的图标跟随字号，不必每处各写一遍尺寸——那样迟早会写出三种大小。 */
+  .shard-tag > svg {
+    width: 1em;
+    height: 1em;
+    flex-shrink: 0;
+  }
+
   .shard-tag:hover {
     color: var(--shard-tag-fg-strong);
     background: var(--shard-tag-hover);

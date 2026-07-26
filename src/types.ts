@@ -19,6 +19,12 @@ export interface Fragment {
   archived: boolean
   lockbox: boolean
   pinned: boolean
+  /**
+   * 非空表示这是一份冲突副本，值是原件的 id。
+   *
+   * 同步遇到"两端都改过同一条"时不覆盖，把本地那版另存成这样一条。
+   */
+  conflictOf?: string
 }
 
 export interface CodexAgentStatus {

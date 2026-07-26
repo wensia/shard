@@ -103,6 +103,7 @@ fn plain_fragment(row: &FragmentRow) -> Fragment {
         archived: row.archived,
         lockbox: false,
         pinned: row.pinned,
+        conflict_of: row.conflict_of.clone(),
     }
 }
 
@@ -138,6 +139,7 @@ fn decrypt_row(row: &FragmentRow, keys: &LockboxReadKeys) -> Result<Fragment, St
         archived: row.archived,
         lockbox: true,
         pinned: frontmatter.pinned,
+        conflict_of: row.conflict_of.clone(),
     })
 }
 

@@ -1,6 +1,7 @@
 import {
   ArchiveIcon,
   ArchiveRestoreIcon,
+  GitBranchIcon,
   LockKeyholeIcon,
   MoreHorizontalIcon,
   PencilLineIcon,
@@ -102,7 +103,10 @@ export function FragmentCard({
           >
             {createdTime}
           </time>
-          {fragment.pinned || fragment.lockbox || displayTags.length > 0 ? (
+          {fragment.pinned ||
+          fragment.lockbox ||
+          fragment.conflictOf ||
+          displayTags.length > 0 ? (
             <HStack
               className="shard-card-tags"
               gap={2}
@@ -114,7 +118,7 @@ export function FragmentCard({
                   className="shard-tag shard-tag-muted"
                   style={{ fontWeight: 500 }}
                 >
-                  <PinIcon strokeWidth={1.75} style={{ width: 14, height: 14 }} />
+                  <PinIcon strokeWidth={1.75} />
                   置顶
                 </span>
               ) : null}
@@ -123,8 +127,20 @@ export function FragmentCard({
                   className="shard-tag shard-tag-lockbox"
                   style={{ fontWeight: 500 }}
                 >
-                  <LockKeyholeIcon strokeWidth={1.75} style={{ width: 14, height: 14 }} />
+                  <LockKeyholeIcon strokeWidth={1.75} />
                   密匣
+                </span>
+              ) : null}
+              {fragment.conflictOf ? (
+                // 同步冲突时本地那一版被另存成了这条。不打标的话，用户只会看到
+                // 时间线里莫名多出一条内容相近的笔记，完全不知道发生了什么。
+                <span
+                  className="shard-tag shard-tag-muted"
+                  style={{ fontWeight: 500 }}
+                  title={`这是同步冲突时保留的本地版本，原件 ${fragment.conflictOf}`}
+                >
+                  <GitBranchIcon strokeWidth={1.75} />
+                  冲突副本
                 </span>
               ) : null}
               {displayTags.map((tag) => (

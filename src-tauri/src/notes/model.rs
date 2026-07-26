@@ -106,6 +106,8 @@ pub(crate) struct FragmentRow {
     pub export_path: Option<String>,
     /// 库内容比磁盘产物新，需要重新导出。
     pub export_dirty: bool,
+    /// 非空表示这是一份冲突副本，值是原件的 id。
+    pub conflict_of: Option<String>,
 }
 
 /// RFC3339 时间戳转毫秒。
