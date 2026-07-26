@@ -21,7 +21,9 @@
 //! 代价是未解锁时读不到密文里的元数据（创建时间、标签），这些列先用文件
 //! mtime 占位，条目计入 `lockbox_metadata_pending`，待解锁后补齐。
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Instant;
 
 use chrono::{DateTime, Local};
@@ -34,6 +36,9 @@ use super::repo;
 /// 每批读取并解析的文件数。分批是为了让大 vault 的内存占用可控——
 /// 一次性把几千条笔记的正文全读进内存没有必要。
 const BATCH_SIZE: usize = 200;
+
+/// `db_meta` 里记录「正文里的 assets/ 引用已重写完」的键。
+const ASSET_REWRITE_KEY: &str = "attachment_rewrite_state";
 
 #[derive(Debug, Clone)]
 pub(crate) struct ImportOptions {
@@ -84,7 +89,12 @@ struct Parsed {
     source_path: String,
     source_hash: String,
     metadata_pending: bool,
+    /// 正文引用到的附件 hash，写库后据此建立 `fragment_attachments` 关联。
+    attachment_hashes: Vec<String>,
 }
+
+/// `assets/…` 相对路径到内容 hash 的映射。
+type AssetMap = HashMap<String, String>;
 
 /// 执行导入。`conn` 已就绪（含 PRAGMA 与 schema）。
 pub(crate) async fn run(
@@ -96,9 +106,17 @@ pub(crate) async fn run(
     let mut report = ImportReport::default();
 
     // 附件先于笔记导入：正文里的 assets/ 引用要能查到对应的 hash 才能重写。
-    if options.include_plaintext {
-        import_assets(conn, vault, options.dry_run, &mut report).await?;
-    }
+    let assets = Arc::new(if options.include_plaintext {
+        import_assets(conn, vault, options.dry_run, &mut report).await?
+    } else {
+        AssetMap::new()
+    });
+
+    // 附件重写是**在既有台账之上**追加的一次性动作：先前跑过导入的库里，笔记
+    // 早已按内容 hash 记账，直接跳过就永远等不到正文重写。这一轮强制重解析
+    // 明文笔记，完成后落一个 meta 标记，后续导入照常走增量。
+    let rewrite_pending = options.include_plaintext
+        && repo::get_meta(conn, ASSET_REWRITE_KEY).await?.as_deref() != Some("done");
 
     let files = scan(vault, options.include_lockbox, options.include_plaintext).await?;
     report.scanned += files.len();
@@ -106,11 +124,13 @@ pub(crate) async fn run(
     for chunk in files.chunks(BATCH_SIZE) {
         let vault = vault.to_path_buf();
         let chunk: Vec<SourceFile> = chunk.to_vec();
+        let assets = Arc::clone(&assets);
 
         // 文件读取与 YAML/JSON 解析都是阻塞操作，必须离开 async executor。
-        let parsed = tauri::async_runtime::spawn_blocking(move || parse_batch(&vault, &chunk))
-            .await
-            .map_err(|error| format!("解析任务失败：{error}"))?;
+        let parsed =
+            tauri::async_runtime::spawn_blocking(move || parse_batch(&vault, &chunk, &assets))
+                .await
+                .map_err(|error| format!("解析任务失败：{error}"))?;
 
         for outcome in parsed {
             match outcome {
@@ -119,7 +139,8 @@ pub(crate) async fn run(
                         report.lockbox_metadata_pending += 1;
                     }
 
-                    if is_unchanged(conn, &item).await? {
+                    let forced = rewrite_pending && item.source_kind == "fragment_md";
+                    if !forced && is_unchanged(conn, &item).await? {
                         report.skipped_unchanged += 1;
                         continue;
                     }
@@ -141,6 +162,7 @@ pub(crate) async fn run(
 
                     match written {
                         Ok(()) => {
+                            link_attachments(conn, &item, &mut report).await?;
                             record_ledger(conn, &item).await?;
                             report.imported += 1;
                         }
@@ -158,6 +180,9 @@ pub(crate) async fn run(
     if !options.dry_run {
         repo::set_meta(conn, "markdown_import_state", "done").await?;
         repo::set_meta(conn, "markdown_import_at", &Local::now().to_rfc3339()).await?;
+        if options.include_plaintext {
+            repo::set_meta(conn, ASSET_REWRITE_KEY, "done").await?;
+        }
         // 让查询计划器拿到新鲜的统计信息。
         let _ = conn.execute("ANALYZE", ()).await;
     }
@@ -194,27 +219,38 @@ pub(crate) async fn sync_one(
     };
 
     let vault_owned = vault.to_path_buf();
-    let parsed = tauri::async_runtime::spawn_blocking(move || parse_one(&vault_owned, &file))
-        .await
-        .map_err(|error| format!("解析任务失败：{error}"))??;
+    // 影子写的正文来自磁盘，此时引用已经是 `shard-attachment:` 形式（新图片
+    // 直接以 hash 写入，旧图片在导入时重写过），不需要再查 assets 映射。
+    let parsed =
+        tauri::async_runtime::spawn_blocking(move || parse_one(&vault_owned, &file, &AssetMap::new()))
+            .await
+            .map_err(|error| format!("解析任务失败：{error}"))??;
 
     repo::upsert(conn, &parsed.note).await?;
+    for hash in &parsed.attachment_hashes {
+        // 未登记的 hash 会撞外键。正文是用户可编辑的，手打一串十六进制并非
+        // 不可能，不能让它把一次保存变成失败。
+        if super::attachments::get(conn, hash).await?.is_some() {
+            super::attachments::link(conn, &parsed.note.id, hash).await?;
+        }
+    }
     record_ledger(conn, &parsed).await
 }
 
-/// 把 `assets/` 下的图片登记进库。
+/// 把 `assets/` 下的图片登记进库，并把字节复制进内容寻址的缓存目录。
 ///
-/// 二进制**不复制**：现有文件原地留用，库里只记 hash 与元数据。真正搬进
-/// `.cache/attachments/` 是命令层改造时的事，迁移阶段没必要先动一遍磁盘。
+/// 旧的 `assets/` **不删**：它天然就是一份导出快照，迁移出问题还能回头。
+/// 返回的映射用于把正文里的相对引用重写成 `shard-attachment:<hash>`。
 async fn import_assets(
     conn: &Connection,
     vault: &Path,
     dry_run: bool,
     report: &mut ImportReport,
-) -> Result<(), String> {
+) -> Result<AssetMap, String> {
+    let mut map = AssetMap::new();
     let assets_root = vault.join("assets");
     if !assets_root.exists() {
-        return Ok(());
+        return Ok(map);
     }
 
     let scanned = {
@@ -229,10 +265,15 @@ async fn import_assets(
         let rel = relative_path(vault, &path);
         let read = {
             let path = path.clone();
+            let vault = vault.to_path_buf();
             tauri::async_runtime::spawn_blocking(move || {
                 let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
                 let mime = crate::detect_image_mime(&path, &bytes)?;
-                Ok::<_, String>((crate::hash_bytes(&bytes), mime, bytes.len()))
+                let hash = crate::hash_bytes(&bytes);
+                if !dry_run {
+                    stage_attachment_bytes(&vault, &hash, &bytes)?;
+                }
+                Ok::<_, String>((hash, mime, bytes.len()))
             })
             .await
             .map_err(|error| format!("读取附件失败：{error}"))?
@@ -240,6 +281,7 @@ async fn import_assets(
 
         match read {
             Ok((hash, mime, size)) => {
+                map.insert(rel, hash.clone());
                 if dry_run {
                     report.imported += 1;
                     continue;
@@ -259,6 +301,38 @@ async fn import_assets(
             // 不认识的文件类型不该让整批导入失败——assets/ 里可能有杂物。
             Err(reason) => report.warnings.push(format!("{rel}：{reason}")),
         }
+    }
+    Ok(map)
+}
+
+/// 把附件字节写进内容寻址的缓存目录。已存在同名文件即视为完成——文件名就是
+/// 内容的摘要，重复写入没有意义。
+fn stage_attachment_bytes(vault: &Path, hash: &str, bytes: &[u8]) -> Result<(), String> {
+    let target = vault.join(super::attachments::cache_rel_path(hash));
+    if target.exists() {
+        return Ok(());
+    }
+    if let Some(parent) = target.parent() {
+        std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    std::fs::write(&target, bytes).map_err(|error| error.to_string())
+}
+
+/// 建立正文里引用到的附件关联。找不到的 hash 记 warning 但不阻断——引用可能
+/// 指向一张已经不在 `assets/` 里的图。
+async fn link_attachments(
+    conn: &Connection,
+    item: &Parsed,
+    report: &mut ImportReport,
+) -> Result<(), String> {
+    for hash in &item.attachment_hashes {
+        if super::attachments::get(conn, hash).await?.is_none() {
+            report
+                .warnings
+                .push(format!("{}：引用的附件 {hash} 不在库中", item.source_path));
+            continue;
+        }
+        super::attachments::link(conn, &item.note.id, hash).await?;
     }
     Ok(())
 }
@@ -349,12 +423,16 @@ async fn scan(
     .map_err(|error| format!("扫描任务失败：{error}"))?
 }
 
-fn parse_batch(vault: &Path, files: &[SourceFile]) -> Vec<Result<Parsed, ImportFailure>> {
+fn parse_batch(
+    vault: &Path,
+    files: &[SourceFile],
+    assets: &AssetMap,
+) -> Vec<Result<Parsed, ImportFailure>> {
     files
         .iter()
         .map(|file| {
             let rel = relative_path(vault, &file.path);
-            parse_one(vault, file).map_err(|reason| ImportFailure {
+            parse_one(vault, file, assets).map_err(|reason| ImportFailure {
                 path: rel,
                 reason,
             })
@@ -362,7 +440,7 @@ fn parse_batch(vault: &Path, files: &[SourceFile]) -> Vec<Result<Parsed, ImportF
         .collect()
 }
 
-fn parse_one(vault: &Path, file: &SourceFile) -> Result<Parsed, String> {
+fn parse_one(vault: &Path, file: &SourceFile, assets: &AssetMap) -> Result<Parsed, String> {
     let raw = std::fs::read_to_string(&file.path).map_err(|error| error.to_string())?;
     let source_hash = crate::hash_text(&raw);
     let source_path = relative_path(vault, &file.path);
@@ -370,14 +448,20 @@ fn parse_one(vault: &Path, file: &SourceFile) -> Result<Parsed, String> {
     match file.kind {
         "fragment_md" => {
             let (frontmatter, body) = crate::parse_fragment_text(&raw)?;
+            // 必须与 `read_fragment` 的口径完全一致：去掉 frontmatter 与正文
+            // 之间的空行，但保留尾部。口径不一致会让 content_hash 对不上，
+            // 进而在导出时产生假 diff。
+            let body = body.trim_start_matches('\n');
+            // 磁盘上的 md **不动**：重写只发生在入库的正文上。文件即将退化为
+            // 导出产物，导出时会把 hash 还原成相对路径。
+            let content = super::attachments::rewrite_asset_links(body, assets);
+            let attachment_hashes = super::attachments::referenced_hashes(&content);
+
             Ok(Parsed {
                 map: None,
                 note: NoteWrite {
                     id: frontmatter.id.clone(),
-                    // 必须与 `read_fragment` 的口径完全一致：去掉 frontmatter 与正文
-                    // 之间的空行，但保留尾部。口径不一致会让 content_hash 对不上，
-                    // 进而在导出时产生假 diff。
-                    content: Some(body.trim_start_matches('\n').to_string()),
+                    content: Some(content),
                     created_at: frontmatter.created_at.clone(),
                     updated_at: frontmatter.updated_at.clone(),
                     // 同样对齐 `read_fragment`：无标签的笔记归入 inbox。
@@ -402,6 +486,7 @@ fn parse_one(vault: &Path, file: &SourceFile) -> Result<Parsed, String> {
                 source_path,
                 source_hash,
                 metadata_pending: false,
+                attachment_hashes,
             })
         }
         "lockbox_shard" => {
@@ -436,6 +521,8 @@ fn parse_one(vault: &Path, file: &SourceFile) -> Result<Parsed, String> {
                 source_path,
                 source_hash,
                 metadata_pending: true,
+                // 密匣正文是密文，不解密就无从解析引用。
+                attachment_hashes: Vec::new(),
             })
         }
         "shardmap" => {
@@ -463,6 +550,7 @@ fn parse_one(vault: &Path, file: &SourceFile) -> Result<Parsed, String> {
                 source_path,
                 source_hash,
                 metadata_pending: false,
+                attachment_hashes: Vec::new(),
             })
         }
         other => Err(format!("未知的源类型：{other}")),
@@ -998,5 +1086,138 @@ mod asset_tests {
 
         assert!(report.imported >= 1, "dry run 仍要报告将导入的数量");
         assert_eq!(super::super::attachments::count(&conn).await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn dry_run_stages_no_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = dir.path();
+        write_asset(vault, "assets/a.png", &png_bytes(b"x"));
+
+        let conn = open_conn().await;
+        run(
+            &conn,
+            vault,
+            &ImportOptions { dry_run: true, ..Default::default() },
+        )
+        .await
+        .unwrap();
+
+        assert!(!vault.join(".cache").exists(), "dry run 不该动磁盘");
+    }
+
+    fn write_note(vault: &Path, rel: &str, id: &str, body: &str) {
+        let path = vault.join(rel);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            path,
+            format!(
+                "---\nid: {id}\ncreated_at: 2026-07-26T10:00:00+08:00\n\
+                 updated_at: 2026-07-26T10:00:00+08:00\ntags:\n- x\ncategory: null\n\
+                 ai_status: none\nsource: desktop\n---\n\n{body}\n"
+            ),
+        )
+        .unwrap();
+    }
+
+    /// 迁移的核心：字节进缓存、正文引用换成 hash、关联入库，而磁盘上的
+    /// 旧文件一个字节都不动。
+    #[tokio::test]
+    async fn migrates_assets_into_cache_and_rewrites_body() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = dir.path();
+        let bytes = png_bytes(b"photo");
+        let hash = crate::hash_bytes(&bytes);
+        write_asset(vault, "assets/2026/07/p.png", &bytes);
+        let original = "看图 ![截图](assets/2026/07/p.png)";
+        write_note(vault, "fragments/a.md", "a", original);
+
+        let conn = open_conn().await;
+        run(&conn, vault, &ImportOptions::default()).await.unwrap();
+
+        let cached = vault.join(super::super::attachments::cache_rel_path(&hash));
+        assert_eq!(std::fs::read(&cached).unwrap(), bytes, "字节应进缓存目录");
+        assert!(vault.join("assets/2026/07/p.png").exists(), "旧文件必须保留");
+
+        let row = repo::get(&conn, "a").await.unwrap().unwrap();
+        assert_eq!(
+            row.content.as_deref(),
+            Some(format!("看图 ![截图](shard-attachment:{hash})\n").as_str()),
+            "入库正文应引用 hash"
+        );
+        assert!(
+            std::fs::read_to_string(vault.join("fragments/a.md"))
+                .unwrap()
+                .contains("assets/2026/07/p.png"),
+            "磁盘上的 md 不该被改写"
+        );
+        assert_eq!(
+            super::super::attachments::hashes_for(&conn, "a").await.unwrap(),
+            vec![hash]
+        );
+    }
+
+    /// 已经导入过的库（台账齐全）再跑一次，正文仍要被重写——否则先前迁移过的
+    /// 用户永远等不到这次改写。
+    #[tokio::test]
+    async fn rewrites_bodies_even_when_ledger_says_unchanged() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = dir.path();
+        let bytes = png_bytes(b"photo");
+        let hash = crate::hash_bytes(&bytes);
+        write_note(vault, "fragments/a.md", "a", "![x](assets/p.png)");
+
+        let conn = open_conn().await;
+        // 第一轮：assets/ 还不存在，正文原样入库并记账。
+        run(&conn, vault, &ImportOptions::default()).await.unwrap();
+        assert!(repo::get(&conn, "a")
+            .await
+            .unwrap()
+            .unwrap()
+            .content
+            .unwrap()
+            .contains("assets/p.png"));
+
+        // 模拟「上一版本已迁移完」的库：清掉重写标记，放进图片再跑一次。
+        repo::set_meta(&conn, ASSET_REWRITE_KEY, "pending").await.unwrap();
+        write_asset(vault, "assets/p.png", &bytes);
+        run(&conn, vault, &ImportOptions::default()).await.unwrap();
+
+        assert_eq!(
+            repo::get(&conn, "a").await.unwrap().unwrap().content.as_deref(),
+            Some(format!("![x](shard-attachment:{hash})\n").as_str())
+        );
+    }
+
+    /// 重写完成后再导入应回到增量：没改过的笔记走跳过。
+    #[tokio::test]
+    async fn second_import_skips_unchanged_notes() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = dir.path();
+        write_note(vault, "fragments/a.md", "a", "纯文字");
+
+        let conn = open_conn().await;
+        run(&conn, vault, &ImportOptions::default()).await.unwrap();
+        let report = run(&conn, vault, &ImportOptions::default()).await.unwrap();
+
+        assert_eq!(report.skipped_unchanged, 1, "第二轮应走增量");
+    }
+
+    /// 指向已不存在图片的引用只报 warning，不改坏正文也不阻断导入。
+    #[tokio::test]
+    async fn missing_asset_reference_is_left_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = dir.path();
+        write_note(vault, "fragments/a.md", "a", "![x](assets/gone.png)");
+
+        let conn = open_conn().await;
+        let report = run(&conn, vault, &ImportOptions::default()).await.unwrap();
+
+        assert!(report.failed.is_empty());
+        assert_eq!(
+            repo::get(&conn, "a").await.unwrap().unwrap().content.as_deref(),
+            Some("![x](assets/gone.png)\n"),
+            "查不到的引用原样保留"
+        );
     }
 }

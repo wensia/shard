@@ -12,11 +12,22 @@
 //! SVG 而文件名是 `.png` 的附件按扩展名判定会被当成 `image/png`，而 SVG 能
 //! 携带脚本，这是一个真实的执行面。
 //!
-//! 本模块的命令层接入（save_fragment_image 改造、shard-attachment:// 协议）
-//! 是第 4 步的后半程，目前只有单测覆盖。
+//! # 正文只引用 hash
+//!
+//! 笔记正文里的图片写成 `![alt](shard-attachment:<hash>)`。协议只接受 hash，
+//! 客户端永不解析用户提供的路径，路径穿越在结构上不可能发生。旧的
+//! `assets/...` 相对引用在导入时一次性重写过来。
 #![allow(dead_code)]
 
+use std::collections::HashMap;
+
 use libsql::{params, Connection};
+
+/// 正文里引用附件的协议前缀。
+pub(crate) const ATTACHMENT_SCHEME: &str = "shard-attachment:";
+
+/// sha256 十六进制摘要的长度。用来把正文里的引用与随便一段文字区分开。
+const HASH_HEX_LEN: usize = 64;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct AttachmentRow {
@@ -131,6 +142,129 @@ pub(crate) async fn count(conn: &Connection) -> Result<i64, String> {
 /// 附件在缓存目录中的相对路径。按 hash 前两位分桶，避免单目录塞进上万个文件。
 pub(crate) fn cache_rel_path(hash: &str) -> String {
     format!(".cache/attachments/{}/{}", &hash[..2.min(hash.len())], hash)
+}
+
+/// hash 必须是纯十六进制的定长摘要。协议入口用它挡住一切非内容寻址的输入。
+pub(crate) fn is_valid_hash(hash: &str) -> bool {
+    hash.len() == HASH_HEX_LEN && hash.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+/// 把正文里指向 `assets/` 的图片引用改写成内容寻址协议。
+///
+/// `assets` 的键是相对 vault 的路径（`assets/2026/07/x.png`）。查不到的引用
+/// **原样保留**——迁移不该因为一张丢失的图片就改坏正文。
+pub(crate) fn rewrite_asset_links(content: &str, assets: &HashMap<String, String>) -> String {
+    map_image_targets(content, |target| {
+        let (link, title) = split_target(target);
+        let hash = assets.get(&normalize_asset_key(link)?)?;
+        Some(format!("{ATTACHMENT_SCHEME}{hash}{title}"))
+    })
+}
+
+/// 正文引用到的全部附件 hash，去重且保序。
+pub(crate) fn referenced_hashes(content: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut rest = content;
+
+    while let Some(index) = rest.find(ATTACHMENT_SCHEME) {
+        let after = &rest[index + ATTACHMENT_SCHEME.len()..];
+        let end = after
+            .find(|ch: char| !ch.is_ascii_hexdigit())
+            .unwrap_or(after.len());
+        let hash = &after[..end];
+
+        if is_valid_hash(hash) && !out.iter().any(|seen| seen == hash) {
+            out.push(hash.to_string());
+        }
+        rest = &after[end..];
+    }
+
+    out
+}
+
+/// 遍历正文里的 Markdown 图片，把链接目标交给 `map` 改写。
+///
+/// 手写扫描而不是正则：只需要认 `![…](…)` 这一种形状，为它引一个正则依赖
+/// 不划算，而且这里的输入是用户正文，行为必须可预测——认不出的形状一律
+/// 原样透传。
+fn map_image_targets(content: &str, mut map: impl FnMut(&str) -> Option<String>) -> String {
+    let mut out = String::with_capacity(content.len());
+    let mut rest = content;
+
+    while let Some(start) = rest.find("![") {
+        let (head, tail) = rest.split_at(start);
+        out.push_str(head);
+
+        let Some(mid) = tail.find("](") else {
+            out.push_str(tail);
+            return out;
+        };
+
+        out.push_str(&tail[..mid + 2]);
+        let after = &tail[mid + 2..];
+
+        let Some(end) = after.find(')') else {
+            rest = after;
+            continue;
+        };
+
+        let target = &after[..end];
+        match map(target) {
+            Some(replacement) => out.push_str(&replacement),
+            None => out.push_str(target),
+        }
+        out.push(')');
+        rest = &after[end + 1..];
+    }
+
+    out.push_str(rest);
+    out
+}
+
+/// 拆出链接本体与其后的可选标题（`![a](path "title")`）。
+fn split_target(target: &str) -> (&str, &str) {
+    match target.find(char::is_whitespace) {
+        Some(index) => (&target[..index], &target[index..]),
+        None => (target, ""),
+    }
+}
+
+/// 把正文里的链接归一成 `assets/…` 形式的查表键。
+fn normalize_asset_key(link: &str) -> Option<String> {
+    let trimmed = link.trim().trim_start_matches('<').trim_end_matches('>');
+    if trimmed.is_empty() || trimmed.contains("://") {
+        return None;
+    }
+
+    let decoded = percent_decode(trimmed).replace('\\', "/");
+    // 绝对路径也能命中：迁移前的正文里两种写法都出现过。
+    let index = decoded.rfind("assets/")?;
+    Some(decoded[index..].to_string())
+}
+
+/// 只解码 `%XX`。正文里的中文文件名常被编辑器写成百分号转义，不解码就查不到表。
+fn percent_decode(input: &str) -> String {
+    if !input.contains('%') {
+        return input.to_string();
+    }
+
+    let bytes = input.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+
+    while index < bytes.len() {
+        if bytes[index] == b'%' && index + 2 < bytes.len() {
+            if let Ok(byte) = u8::from_str_radix(&input[index + 1..index + 3], 16) {
+                out.push(byte);
+                index += 3;
+                continue;
+            }
+        }
+        out.push(bytes[index]);
+        index += 1;
+    }
+
+    String::from_utf8(out).unwrap_or_else(|_| input.to_string())
 }
 
 #[cfg(test)]
@@ -251,5 +385,76 @@ mod tests {
             cache_rel_path("ab12cd34"),
             ".cache/attachments/ab/ab12cd34"
         );
+    }
+
+    fn assets() -> HashMap<String, String> {
+        HashMap::from([(
+            "assets/2026/07/photo.png".to_string(),
+            "a".repeat(HASH_HEX_LEN),
+        )])
+    }
+
+    #[test]
+    fn rewrites_relative_asset_reference() {
+        let out = rewrite_asset_links("看这个 ![截图](assets/2026/07/photo.png) 结束", &assets());
+        assert_eq!(
+            out,
+            format!("看这个 ![截图](shard-attachment:{}) 结束", "a".repeat(64))
+        );
+    }
+
+    /// `./` 前缀、百分号转义、绝对路径三种写法在真实 vault 里都出现过。
+    #[test]
+    fn rewrites_alternate_path_spellings() {
+        let map = HashMap::from([("assets/我的图.png".to_string(), "b".repeat(HASH_HEX_LEN))]);
+        for link in [
+            "./assets/我的图.png",
+            "assets/%E6%88%91%E7%9A%84%E5%9B%BE.png",
+            "/Users/x/vault/assets/我的图.png",
+        ] {
+            let out = rewrite_asset_links(&format!("![x]({link})"), &map);
+            assert_eq!(
+                out,
+                format!("![x](shard-attachment:{})", "b".repeat(64)),
+                "未能重写 {link}"
+            );
+        }
+    }
+
+    /// 带标题的图片语法不该被吃掉标题。
+    #[test]
+    fn preserves_image_title() {
+        let out = rewrite_asset_links("![x](assets/2026/07/photo.png \"标题\")", &assets());
+        assert!(out.contains("\"标题\""), "标题丢失：{out}");
+        assert!(out.contains(ATTACHMENT_SCHEME));
+    }
+
+    /// 查不到的引用原样保留：迁移不该因为一张丢图就改坏正文。
+    #[test]
+    fn leaves_unknown_and_external_references_untouched() {
+        let text = "![a](assets/missing.png) ![b](https://example.com/x.png) [链接](assets/2026/07/photo.png)";
+        assert_eq!(rewrite_asset_links(text, &assets()), text);
+    }
+
+    /// 未闭合的图片语法不该让扫描丢内容或死循环。
+    #[test]
+    fn malformed_syntax_round_trips() {
+        for text in ["![未闭合](assets/2026", "![a", "![](", "普通文字"] {
+            assert_eq!(rewrite_asset_links(text, &assets()), text, "{text}");
+        }
+    }
+
+    #[test]
+    fn collects_referenced_hashes_deduplicated() {
+        let hash = "c".repeat(HASH_HEX_LEN);
+        let text = format!("![a]({ATTACHMENT_SCHEME}{hash}) ![b]({ATTACHMENT_SCHEME}{hash})");
+        assert_eq!(referenced_hashes(&text), vec![hash]);
+    }
+
+    /// 长度不对的一段十六进制不是附件引用。
+    #[test]
+    fn ignores_malformed_hash_references() {
+        assert!(referenced_hashes("![a](shard-attachment:abc)").is_empty());
+        assert!(referenced_hashes("shard-attachment:").is_empty());
     }
 }
