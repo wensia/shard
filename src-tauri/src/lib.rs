@@ -1759,6 +1759,12 @@ fn canonical_mind_map_text(file: &ShardMapFile) -> Result<String, String> {
     Ok(format!("{}\n", text))
 }
 
+/// 字节内容的 sha256 十六进制摘要。附件的内容寻址键。
+pub(crate) fn hash_bytes(bytes: &[u8]) -> String {
+    let digest = Sha256::digest(bytes);
+    digest.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
 fn hash_text(text: &str) -> String {
     let digest = Sha256::digest(text.as_bytes());
     digest.iter().map(|byte| format!("{byte:02x}")).collect()
@@ -2897,6 +2903,22 @@ fn resolve_vault_asset_path(vault: &Path, raw_path: &str) -> Result<PathBuf, Str
     }
 
     Ok(image_path)
+}
+
+/// 摄入时确定附件的 MIME，**以内容为准**。
+///
+/// 顺序刻意与旧的 `image_mime_type` 相反：先嗅探魔数，扩展名只在嗅探不出时
+/// 兜底。按扩展名优先会把「内容是 SVG、文件名是 .png」的文件判成 image/png，
+/// 而 SVG 能携带脚本——这是一个真实的执行面，不是洁癖。
+pub(crate) fn detect_image_mime(path: &Path, bytes: &[u8]) -> Result<&'static str, String> {
+    if let Ok(mime) = sniff_image_mime_type(bytes) {
+        return Ok(mime);
+    }
+    let extension = path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .unwrap_or_default();
+    image_mime_type_from_extension(extension)
 }
 
 fn image_mime_type(path: &Path, bytes: &[u8]) -> Result<&'static str, String> {

@@ -95,8 +95,13 @@ pub(crate) async fn run(
     let started = Instant::now();
     let mut report = ImportReport::default();
 
+    // 附件先于笔记导入：正文里的 assets/ 引用要能查到对应的 hash 才能重写。
+    if options.include_plaintext {
+        import_assets(conn, vault, options.dry_run, &mut report).await?;
+    }
+
     let files = scan(vault, options.include_lockbox, options.include_plaintext).await?;
-    report.scanned = files.len();
+    report.scanned += files.len();
 
     for chunk in files.chunks(BATCH_SIZE) {
         let vault = vault.to_path_buf();
@@ -195,6 +200,88 @@ pub(crate) async fn sync_one(
 
     repo::upsert(conn, &parsed.note).await?;
     record_ledger(conn, &parsed).await
+}
+
+/// 把 `assets/` 下的图片登记进库。
+///
+/// 二进制**不复制**：现有文件原地留用，库里只记 hash 与元数据。真正搬进
+/// `.cache/attachments/` 是命令层改造时的事，迁移阶段没必要先动一遍磁盘。
+async fn import_assets(
+    conn: &Connection,
+    vault: &Path,
+    dry_run: bool,
+    report: &mut ImportReport,
+) -> Result<(), String> {
+    let assets_root = vault.join("assets");
+    if !assets_root.exists() {
+        return Ok(());
+    }
+
+    let scanned = {
+        let root = assets_root.clone();
+        tauri::async_runtime::spawn_blocking(move || collect_files(&root))
+            .await
+            .map_err(|error| format!("扫描附件失败：{error}"))??
+    };
+    report.scanned += scanned.len();
+
+    for path in scanned {
+        let rel = relative_path(vault, &path);
+        let read = {
+            let path = path.clone();
+            tauri::async_runtime::spawn_blocking(move || {
+                let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
+                let mime = crate::detect_image_mime(&path, &bytes)?;
+                Ok::<_, String>((crate::hash_bytes(&bytes), mime, bytes.len()))
+            })
+            .await
+            .map_err(|error| format!("读取附件失败：{error}"))?
+        };
+
+        match read {
+            Ok((hash, mime, size)) => {
+                if dry_run {
+                    report.imported += 1;
+                    continue;
+                }
+                super::attachments::put(
+                    conn,
+                    &super::attachments::AttachmentRow {
+                        hash,
+                        mime_type: mime.to_string(),
+                        byte_size: size as i64,
+                        created_at: Local::now().to_rfc3339(),
+                    },
+                )
+                .await?;
+                report.imported += 1;
+            }
+            // 不认识的文件类型不该让整批导入失败——assets/ 里可能有杂物。
+            Err(reason) => report.warnings.push(format!("{rel}：{reason}")),
+        }
+    }
+    Ok(())
+}
+
+/// 递归收集目录下的全部文件（不限扩展名）。
+fn collect_files(dir: &Path) -> Result<Vec<PathBuf>, String> {
+    let mut out = Vec::new();
+    if !dir.exists() {
+        return Ok(out);
+    }
+    for entry in std::fs::read_dir(dir).map_err(|e| e.to_string())? {
+        let path = entry.map_err(|e| e.to_string())?.path();
+        if path.is_dir() {
+            out.extend(collect_files(&path)?);
+        } else if !path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|n| n.starts_with('.'))
+        {
+            out.push(path);
+        }
+    }
+    Ok(out)
 }
 
 #[derive(Clone)]
@@ -794,5 +881,122 @@ mod tests {
         let report = run(&conn, vault, &opts()).await.unwrap();
         assert_eq!(report.imported, 1, "台账已清，应能重新导入");
         assert_eq!(repo::count(&conn, true).await.unwrap(), 1);
+    }
+}
+
+#[cfg(test)]
+mod asset_tests {
+    use super::*;
+    use libsql::Connection;
+
+    async fn open_conn() -> Connection {
+        let db = libsql::Builder::new_local(":memory:").build().await.unwrap();
+        let conn = crate::db::connect_with_pragmas(&db).await.unwrap();
+        crate::db::migrate::apply(&conn, super::super::schema::MIGRATIONS)
+            .await
+            .unwrap();
+        conn
+    }
+
+    /// 最小的合法 PNG 头，足以让魔数嗅探认出来。
+    fn png_bytes(tail: &[u8]) -> Vec<u8> {
+        let mut v = b"\x89PNG\r\n\x1a\n".to_vec();
+        v.extend_from_slice(tail);
+        v
+    }
+
+    fn write_asset(vault: &Path, rel: &str, bytes: &[u8]) {
+        let path = vault.join(rel);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, bytes).unwrap();
+    }
+
+    #[tokio::test]
+    async fn imports_assets_with_sniffed_mime() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = dir.path();
+        write_asset(vault, "assets/2026/07/a.png", &png_bytes(b"one"));
+
+        let conn = open_conn().await;
+        run(&conn, vault, &ImportOptions::default()).await.unwrap();
+
+        assert_eq!(super::super::attachments::count(&conn).await.unwrap(), 1);
+        let hash = crate::hash_bytes(&png_bytes(b"one"));
+        let row = super::super::attachments::get(&conn, &hash).await.unwrap().unwrap();
+        assert_eq!(row.mime_type, "image/png");
+    }
+
+    /// 内容相同的两个文件只登记一次——内容寻址天然去重。
+    #[tokio::test]
+    async fn identical_bytes_collapse_to_one_row() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = dir.path();
+        write_asset(vault, "assets/a.png", &png_bytes(b"same"));
+        write_asset(vault, "assets/b.png", &png_bytes(b"same"));
+
+        let conn = open_conn().await;
+        run(&conn, vault, &ImportOptions::default()).await.unwrap();
+        assert_eq!(super::super::attachments::count(&conn).await.unwrap(), 1);
+    }
+
+    /// 安全关键：MIME 以内容为准。内容是 SVG 而文件名是 .png 的文件
+    /// 必须被判成 image/svg+xml，否则 SVG 里的脚本会以图片身份被加载。
+    #[tokio::test]
+    async fn mime_follows_content_not_extension() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = dir.path();
+        let svg = br#"<svg xmlns="http://www.w3.org/2000/svg"></svg>"#;
+        write_asset(vault, "assets/disguised.png", svg);
+
+        let conn = open_conn().await;
+        run(&conn, vault, &ImportOptions::default()).await.unwrap();
+
+        let row = super::super::attachments::get(&conn, &crate::hash_bytes(svg))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            row.mime_type, "image/svg+xml",
+            "伪装成 .png 的 SVG 必须按内容判定"
+        );
+    }
+
+    /// assets/ 里的杂物不该让整批导入失败。
+    #[tokio::test]
+    async fn unrecognised_files_warn_but_do_not_fail() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = dir.path();
+        write_asset(vault, "assets/good.png", &png_bytes(b"ok"));
+        write_asset(vault, "assets/notes.txt", b"just some text");
+
+        let conn = open_conn().await;
+        let report = run(&conn, vault, &ImportOptions::default()).await.unwrap();
+
+        assert_eq!(super::super::attachments::count(&conn).await.unwrap(), 1);
+        assert!(report.failed.is_empty(), "杂物不该计入失败");
+        assert!(
+            report.warnings.iter().any(|w| w.contains("notes.txt")),
+            "但要如实报告：{:?}",
+            report.warnings
+        );
+    }
+
+    #[tokio::test]
+    async fn dry_run_does_not_register_assets() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = dir.path();
+        write_asset(vault, "assets/a.png", &png_bytes(b"x"));
+
+        let conn = open_conn().await;
+        let report = run(
+            &conn,
+            vault,
+            &ImportOptions { dry_run: true, ..Default::default() },
+        )
+        .await
+        .unwrap();
+
+        assert!(report.imported >= 1, "dry run 仍要报告将导入的数量");
+        assert_eq!(super::super::attachments::count(&conn).await.unwrap(), 0);
     }
 }
