@@ -26,8 +26,9 @@ import {
   parseMarkdownImageLine,
 } from "@/lib/editor-format"
 import {
+  attachmentHash,
   downloadFragmentImageAttachment,
-  loadFragmentImageSrc,
+  resolveFragmentImageSrc,
 } from "@/lib/fragment-images"
 import {
   getApiErrorMessage,
@@ -274,23 +275,14 @@ export function FragmentImageAttachment({
     (downloadable || Boolean(vaultPath))
 
   useEffect(() => {
-    let isMounted = true
-    setImageSrc(src ?? "")
-    if (!src) setIsPreviewOpen(false)
-
-    if (src) return
-
-    loadFragmentImageSrc(path, vaultPath)
-      .then((loadedSrc) => {
-        if (isMounted) setImageSrc(loadedSrc)
-      })
-      .catch(() => {
-        if (isMounted) setImageSrc("")
-      })
-
-    return () => {
-      isMounted = false
+    if (src) {
+      setImageSrc(src)
+      return
     }
+
+    // 附件地址是同步解析出来的，没有中间的加载态可言。
+    setIsPreviewOpen(false)
+    setImageSrc(resolveFragmentImageSrc(path, vaultPath))
   }, [path, src, vaultPath])
 
   useEffect(() => {
@@ -615,6 +607,8 @@ function getContextMenuPosition(clientX: number, clientY: number) {
 
 function isLocalImageAttachmentPath(path: string) {
   const normalizedPath = path.trim()
+  if (attachmentHash(normalizedPath)) return true
+
   return Boolean(
     normalizedPath &&
       !/^(?:[a-z][a-z\d+.-]*:|\/\/)/i.test(normalizedPath)
@@ -623,6 +617,8 @@ function isLocalImageAttachmentPath(path: string) {
 
 function getLocalImageFilePath(path: string, vaultPath?: string) {
   const normalizedPath = path.trim()
+  // 附件的真实位置只有后端知道（缓存目录里按 hash 分桶），前端拼不出来。
+  if (attachmentHash(normalizedPath)) return null
   if (!isLocalImageAttachmentPath(normalizedPath)) return null
   if (isAbsolutePath(normalizedPath)) return normalizedPath
   if (!vaultPath) return null

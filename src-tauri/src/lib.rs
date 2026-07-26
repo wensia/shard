@@ -377,18 +377,17 @@ async fn list_fragments_from_db(
     })
 }
 
-/// 确保 vault 内容已导入笔记库。只在首次（或换 vault 后）跑一次全量导入。
+/// 确保 vault 内容已导入笔记库，且已跟上当前的导入口径。
+///
+/// 首次（或换 vault 后）跑一次全量导入；此外，先前迁移过但还没做过附件重写的
+/// 库也要补跑一轮——否则那些库里的正文仍指向 `assets/`，图片会全部显示不出来。
 async fn ensure_notes_imported(conn: &libsql::Connection, vault: &Path) -> Result<(), String> {
-    if notes::repo::get_meta(conn, "markdown_import_state")
-        .await?
-        .as_deref()
-        == Some("done")
-    {
+    if notes::import::is_up_to_date(conn).await? {
         return Ok(());
     }
     let report = notes::import::run(conn, vault, &notes::import::ImportOptions::default()).await?;
     eprintln!(
-        "[shard] 首次建立笔记库：扫描 {} 个文件，导入 {} 条，失败 {} 条",
+        "[shard] 同步笔记库：扫描 {} 个文件，导入 {} 条，失败 {} 条",
         report.scanned, report.imported, report.failed.len()
     );
     Ok(())
@@ -1043,60 +1042,65 @@ async fn move_fragment_to_lockbox(
     Ok(state)
 }
 
+/// 收下一张图片，返回正文里该写的引用（`shard-attachment:<hash>`）。
+///
+/// 内容寻址：同一张图重复粘贴不会产生第二份字节。MIME **在这里定死**并入库，
+/// 读取时直接用那一列，不再二次嗅探。
 #[tauri::command]
 async fn save_fragment_image(
     app: tauri::AppHandle,
+    notes: tauri::State<'_, NotesDb>,
     file_name: String,
     bytes: Vec<u8>,
 ) -> Result<String, String> {
-    run_blocking(move || {
-        if bytes.is_empty() {
-            return Err("图片内容为空".to_string());
-        }
+    let conn = notes.conn(&app, false).await?;
+    let staged = {
+        let app = app.clone();
+        run_blocking(move || {
+            if bytes.is_empty() {
+                return Err("图片内容为空".to_string());
+            }
 
-        let vault = ensure_vault_dirs(&app)?;
-        let now = Local::now();
-        let dir = vault
-            .join("assets")
-            .join(now.format("%Y").to_string())
-            .join(now.format("%m").to_string());
-        fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+            let vault = ensure_vault_dirs(&app)?;
+            let mime_type = detect_image_mime(Path::new(&file_name), &bytes)?;
+            let hash = hash_bytes(&bytes);
+            let path = vault.join(notes::attachments::cache_rel_path(&hash));
 
-        let safe_name = normalize_image_file_name(&file_name, &bytes)?;
-        let path = dir.join(format!(
-            "{}-{}-{}",
-            now.format("%Y-%m-%d-%H%M%S"),
-            unique_suffix(),
-            safe_name
-        ));
+            // 文件名就是内容摘要，已存在即已写好。
+            if !path.exists() {
+                if let Some(parent) = path.parent() {
+                    fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+                }
+                let size = bytes.len();
+                fs::write(&path, bytes).map_err(|error| error.to_string())?;
+                return Ok((hash, mime_type, size));
+            }
 
-        fs::write(&path, bytes).map_err(|error| error.to_string())?;
-        relative_path(&vault, &path)
-    })
-    .await
-}
+            Ok((hash, mime_type, bytes.len()))
+        })
+        .await?
+    };
 
-#[tauri::command]
-async fn read_fragment_image(app: tauri::AppHandle, path: String) -> Result<String, String> {
-    run_blocking(move || {
-        let vault = ensure_vault_dirs(&app)?;
-        let image_path = resolve_vault_asset_path(&vault, &path)?;
-        let bytes = fs::read(&image_path).map_err(|error| error.to_string())?;
-        let mime_type = image_mime_type(&image_path, &bytes)?;
-        let encoded = BASE64_STANDARD.encode(bytes);
+    let (hash, mime_type, size) = staged;
+    notes::attachments::put(
+        &conn,
+        &notes::attachments::AttachmentRow {
+            hash: hash.clone(),
+            mime_type: mime_type.to_string(),
+            byte_size: size as i64,
+            created_at: Local::now().to_rfc3339(),
+        },
+    )
+    .await?;
 
-        Ok(format!("data:{mime_type};base64,{encoded}"))
-    })
-    .await
+    Ok(format!("{}{hash}", notes::attachments::ATTACHMENT_SCHEME))
 }
 
 #[tauri::command]
 async fn fragment_image_file_path(app: tauri::AppHandle, path: String) -> Result<String, String> {
     run_blocking(move || {
         let vault = ensure_vault_dirs(&app)?;
-        let image_path = resolve_vault_asset_path(&vault, &path)?;
-
-        Ok(image_path.to_string_lossy().to_string())
+        Ok(attachment_path(&vault, &path)?.to_string_lossy().to_string())
     })
     .await
 }
@@ -1105,7 +1109,7 @@ async fn fragment_image_file_path(app: tauri::AppHandle, path: String) -> Result
 async fn reveal_fragment_image_in_dir(app: tauri::AppHandle, path: String) -> Result<(), String> {
     run_blocking(move || {
         let vault = ensure_vault_dirs(&app)?;
-        let image_path = resolve_vault_asset_path(&vault, &path)?;
+        let image_path = attachment_path(&vault, &path)?;
 
         tauri_plugin_opener::reveal_item_in_dir(&image_path).map_err(|error| error.to_string())
     })
@@ -2829,80 +2833,83 @@ fn normalize_tags(tags: Vec<String>, include_inbox: bool) -> Vec<String> {
     next_tags
 }
 
-fn sanitize_file_name(file_name: &str) -> String {
-    let normalized = file_name
+/// 从正文里的引用取出附件 hash。接受 `shard-attachment:<hash>` 与裸 hash 两种写法。
+///
+/// **只认 hash**。这里不接受任何路径，所以不存在「用户提供的路径逃出 vault」
+/// 这类问题——它在结构上无法表达，而不是靠一层校验挡住。
+fn attachment_hash_from_ref(raw: &str) -> Result<&str, String> {
+    let hash = raw
         .trim()
-        .trim_start_matches('.')
-        .chars()
-        .map(|character| {
-            if character.is_ascii_alphanumeric() || matches!(character, '.' | '-' | '_') {
-                character
-            } else if character.is_whitespace() {
-                '-'
-            } else {
-                '_'
-            }
-        })
-        .collect::<String>();
+        .strip_prefix(notes::attachments::ATTACHMENT_SCHEME)
+        .unwrap_or_else(|| raw.trim());
 
-    let normalized = normalized.trim_matches(['-', '_', '.']).to_string();
-    if normalized.is_empty() {
-        "image.png".to_string()
-    } else {
-        normalized.chars().take(80).collect()
+    if !notes::attachments::is_valid_hash(hash) {
+        return Err("附件引用无效".to_string());
+    }
+
+    Ok(hash)
+}
+
+/// `shard-attachment://` 的响应体。
+///
+/// MIME 取库里那一列——摄入时按魔数定死过。回退到嗅探而不是扩展名：缓存文件
+/// 根本没有扩展名，而按内容判定本来就是这里唯一正确的口径。
+async fn attachment_response(
+    app: &tauri::AppHandle,
+    uri_path: &str,
+) -> tauri::http::Response<Vec<u8>> {
+    match load_attachment(app, uri_path).await {
+        Ok((mime_type, bytes)) => tauri::http::Response::builder()
+            .header("Content-Type", mime_type)
+            // 内容寻址的 URL 永远指向同一份字节，可以放心长缓存。
+            .header("Cache-Control", "max-age=31536000, immutable")
+            // 导出图片要把它画进 canvas，没有这个头会污染画布。
+            .header("Access-Control-Allow-Origin", "*")
+            .body(bytes)
+            .expect("构造附件响应"),
+        Err(reason) => tauri::http::Response::builder()
+            .status(404)
+            .header("Content-Type", "text/plain; charset=utf-8")
+            .header("Access-Control-Allow-Origin", "*")
+            .body(reason.into_bytes())
+            .expect("构造附件错误响应"),
     }
 }
 
-fn normalize_image_file_name(file_name: &str, bytes: &[u8]) -> Result<String, String> {
-    let safe_name = sanitize_file_name(file_name);
-    let extension = Path::new(&safe_name)
-        .extension()
-        .and_then(|extension| extension.to_str())
-        .unwrap_or_default();
+async fn load_attachment(
+    app: &tauri::AppHandle,
+    uri_path: &str,
+) -> Result<(String, Vec<u8>), String> {
+    let hash = attachment_hash_from_ref(uri_path.trim_start_matches('/'))?.to_string();
+    let notes = app.state::<NotesDb>();
+    let conn = notes.conn(app, false).await?;
+    let row = notes::attachments::get(&conn, &hash).await?;
 
-    if image_mime_type_from_extension(extension).is_ok() {
-        return Ok(safe_name);
-    }
+    let app = app.clone();
+    run_blocking(move || {
+        let vault = ensure_vault_dirs(&app)?;
+        let path = vault.join(notes::attachments::cache_rel_path(&hash));
+        let bytes = fs::read(&path).map_err(|error| error.to_string())?;
+        let mime_type = match row {
+            Some(row) => row.mime_type,
+            None => detect_image_mime(&path, &bytes)?.to_string(),
+        };
 
-    let mime_type = sniff_image_mime_type(bytes)?;
-    let extension =
-        image_extension_for_mime_type(mime_type).ok_or_else(|| "不支持的图片格式".to_string())?;
-
-    Ok(format!("{safe_name}.{extension}"))
+        Ok((mime_type, bytes))
+    })
+    .await
 }
 
-fn resolve_vault_asset_path(vault: &Path, raw_path: &str) -> Result<PathBuf, String> {
-    let trimmed = raw_path.trim();
-    if trimmed.is_empty() {
-        return Err("图片路径为空".to_string());
-    }
-    if trimmed.contains("://") || trimmed.starts_with("//") {
-        return Err("不支持读取外部图片地址".to_string());
-    }
+/// 附件字节在缓存目录里的绝对路径。
+fn attachment_path(vault: &Path, raw: &str) -> Result<PathBuf, String> {
+    let hash = attachment_hash_from_ref(raw)?;
+    let path = vault.join(notes::attachments::cache_rel_path(hash));
 
-    let requested_path = PathBuf::from(trimmed);
-    let candidate = if requested_path.is_absolute() {
-        requested_path
-    } else {
-        vault.join(requested_path)
-    };
-
-    let asset_root = vault
-        .join("assets")
-        .canonicalize()
-        .map_err(|error| error.to_string())?;
-    let image_path = candidate
-        .canonicalize()
-        .map_err(|error| error.to_string())?;
-
-    if !image_path.starts_with(&asset_root) {
-        return Err("只能读取 vault assets 目录中的图片".to_string());
-    }
-    if !image_path.is_file() {
-        return Err("图片文件不存在".to_string());
+    if !path.is_file() {
+        return Err("附件文件不存在".to_string());
     }
 
-    Ok(image_path)
+    Ok(path)
 }
 
 /// 摄入时确定附件的 MIME，**以内容为准**。
@@ -2919,15 +2926,6 @@ pub(crate) fn detect_image_mime(path: &Path, bytes: &[u8]) -> Result<&'static st
         .and_then(|extension| extension.to_str())
         .unwrap_or_default();
     image_mime_type_from_extension(extension)
-}
-
-fn image_mime_type(path: &Path, bytes: &[u8]) -> Result<&'static str, String> {
-    let extension = path
-        .extension()
-        .and_then(|extension| extension.to_str())
-        .unwrap_or_default();
-
-    image_mime_type_from_extension(extension).or_else(|_| sniff_image_mime_type(bytes))
 }
 
 fn image_mime_type_from_extension(extension: &str) -> Result<&'static str, String> {
@@ -2964,16 +2962,6 @@ fn sniff_image_mime_type(bytes: &[u8]) -> Result<&'static str, String> {
     Err("不支持的图片格式".to_string())
 }
 
-fn image_extension_for_mime_type(mime_type: &str) -> Option<&'static str> {
-    match mime_type {
-        "image/gif" => Some("gif"),
-        "image/jpeg" => Some("jpg"),
-        "image/png" => Some("png"),
-        "image/svg+xml" => Some("svg"),
-        "image/webp" => Some("webp"),
-        _ => None,
-    }
-}
 
 
 
@@ -3399,6 +3387,14 @@ pub fn run() {
         .manage(notes::NotesDb::default())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        // 图片直接由 webview 按 URL 取，不再走 base64-over-IPC：省掉 33% 的编码
+        // 膨胀，也不用把每张图常驻在 JS 堆里。
+        .register_asynchronous_uri_scheme_protocol("shard-attachment", |ctx, request, responder| {
+            let app = ctx.app_handle().clone();
+            tauri::async_runtime::spawn(async move {
+                responder.respond(attachment_response(&app, request.uri().path()).await);
+            });
+        })
         .setup(|app| {
             for window in app.webview_windows().values() {
                 restore_default_window_frame(window)?;
@@ -3428,7 +3424,6 @@ pub fn run() {
             set_fragment_pinned,
             move_fragment_to_lockbox,
             save_fragment_image,
-            read_fragment_image,
             fragment_image_file_path,
             reveal_fragment_image_in_dir,
             save_recovery_key,
@@ -3589,16 +3584,35 @@ mod tests {
     #[test]
     fn detects_extensionless_png_images() {
         let bytes = b"\x89PNG\r\n\x1a\nrest";
-        let path = Path::new("assets/2026/06/clipboard-png");
+        // 缓存里的附件文件名就是摘要，没有扩展名可依。
+        let path = Path::new(".cache/attachments/ab/abcdef");
 
-        assert_eq!(image_mime_type(path, bytes).unwrap(), "image/png");
+        assert_eq!(detect_image_mime(path, bytes).unwrap(), "image/png");
     }
 
     #[test]
-    fn appends_extension_when_uploaded_image_name_has_none() {
-        let bytes = b"\x89PNG\r\n\x1a\nrest";
+    fn accepts_both_spellings_of_an_attachment_reference() {
+        let hash = "a".repeat(64);
+        assert_eq!(attachment_hash_from_ref(&hash).unwrap(), hash);
+        assert_eq!(
+            attachment_hash_from_ref(&format!("shard-attachment:{hash}")).unwrap(),
+            hash
+        );
+    }
 
-        assert_eq!(normalize_image_file_name("png", bytes).unwrap(), "png.png");
+    /// 安全关键：协议只认 hash。路径一律拒绝，穿越在结构上无法表达。
+    #[test]
+    fn rejects_anything_that_is_not_a_hash() {
+        for raw in [
+            "../../etc/passwd",
+            "assets/2026/07/a.png",
+            "/Users/x/secret.png",
+            "shard-attachment:../../etc/passwd",
+            "",
+            &"a".repeat(63),
+        ] {
+            assert!(attachment_hash_from_ref(raw).is_err(), "不该接受 {raw:?}");
+        }
     }
 
     #[test]

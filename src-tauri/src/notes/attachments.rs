@@ -144,6 +144,19 @@ pub(crate) fn cache_rel_path(hash: &str) -> String {
     format!(".cache/attachments/{}/{}", &hash[..2.min(hash.len())], hash)
 }
 
+/// 导出附件时用 MIME 反推文件名扩展。缓存里的文件没有扩展名——名字就是摘要，
+/// 只有回到 `assets/` 的那一刻才需要一个人能双击打开的名字。
+pub(crate) fn extension_for_mime(mime_type: &str) -> Option<&'static str> {
+    match mime_type {
+        "image/gif" => Some("gif"),
+        "image/jpeg" => Some("jpg"),
+        "image/png" => Some("png"),
+        "image/svg+xml" => Some("svg"),
+        "image/webp" => Some("webp"),
+        _ => None,
+    }
+}
+
 /// hash 必须是纯十六进制的定长摘要。协议入口用它挡住一切非内容寻址的输入。
 pub(crate) fn is_valid_hash(hash: &str) -> bool {
     hash.len() == HASH_HEX_LEN && hash.bytes().all(|byte| byte.is_ascii_hexdigit())

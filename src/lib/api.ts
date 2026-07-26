@@ -114,12 +114,9 @@ export function moveFragmentToLockbox(id: string) {
   return desktopInvoke<VaultState>("move_fragment_to_lockbox", { id })
 }
 
+// 返回正文里该写的引用（`shard-attachment:<hash>`），不是文件路径。
 export function saveFragmentImage(fileName: string, bytes: number[]) {
   return desktopInvoke<string>("save_fragment_image", { fileName, bytes })
-}
-
-export function readFragmentImage(path: string) {
-  return desktopInvoke<string>("read_fragment_image", { path })
 }
 
 export function getFragmentImageFilePath(path: string) {

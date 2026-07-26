@@ -1,5 +1,8 @@
 import { getTagRanges, parseMarkdownImageLine } from "@/lib/editor-format"
-import { loadFragmentImageSrc } from "@/lib/fragment-images"
+import {
+  resolveFragmentImageSrc,
+  toDrawableImageSource,
+} from "@/lib/fragment-images"
 import type { Fragment } from "@/types"
 
 export type ExportImageTemplateId = "paper" | "focus" | "night"
@@ -618,13 +621,18 @@ async function loadImages(blocks: ExportBlock[], vaultPath?: string) {
 
   await Promise.all(
     imageBlocks.map(async (block) => {
+      const source = resolveFragmentImageSrc(block.path, vaultPath)
+      if (!source) return
+
+      let drawable = ""
       try {
-        const source = await loadFragmentImageSrc(block.path, vaultPath)
-        if (!canDrawImageSource(source)) return
-        const image = await loadImageElement(source)
-        images.set(block.key, image)
+        drawable = await toDrawableImageSource(source)
+        images.set(block.key, await loadImageElement(drawable))
       } catch {
         // Export still succeeds with a placeholder when an attachment is unavailable.
+      } finally {
+        // 图片已解码完毕，句柄可以还回去了。
+        if (drawable && drawable !== source) URL.revokeObjectURL(drawable)
       }
     })
   )
@@ -640,10 +648,6 @@ function loadImageElement(source: string) {
     image.onerror = () => reject(new Error("图片附件无法载入。"))
     image.src = source
   })
-}
-
-function canDrawImageSource(source: string) {
-  return source.startsWith("data:") || source.startsWith("blob:")
 }
 
 function stripTagsFromLine(line: string): string {

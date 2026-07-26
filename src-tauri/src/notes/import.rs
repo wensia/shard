@@ -40,6 +40,18 @@ const BATCH_SIZE: usize = 200;
 /// `db_meta` 里记录「正文里的 assets/ 引用已重写完」的键。
 const ASSET_REWRITE_KEY: &str = "attachment_rewrite_state";
 
+/// 库是否已经跟上当前的导入口径。
+///
+/// 不只看「导入过没有」：附件重写是在既有库之上追加的一次性动作，先前迁移过
+/// 的库两个标记会一个有一个没有，此时仍要再跑一轮，否则那些库里的正文永远
+/// 停在旧的 `assets/` 引用上，图片直接显示不出来。
+pub(crate) async fn is_up_to_date(conn: &Connection) -> Result<bool, String> {
+    Ok(
+        repo::get_meta(conn, "markdown_import_state").await?.as_deref() == Some("done")
+            && repo::get_meta(conn, ASSET_REWRITE_KEY).await?.as_deref() == Some("done"),
+    )
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct ImportOptions {
     /// 只扫描与解析，不写库。UI 应当先跑一次 dry run 让用户确认。
