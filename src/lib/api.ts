@@ -353,6 +353,47 @@ export function verifyExport() {
   return desktopInvoke<VerifyReport>("verify_export")
 }
 
+export interface SyncConfigView {
+  url: string
+  hasToken: boolean
+}
+
+export interface SyncStatus {
+  configured: boolean
+  lastSyncedAt: string | null
+  lastError: string | null
+  /** 还有多少条本地改动没推上去。 */
+  pending: number
+  lastPulledSeq: number
+}
+
+export interface SyncReport {
+  pulled: number
+  pushed: number
+  /** 因冲突另存的副本数。非零时应提示用户去看一眼。 */
+  conflicts: number
+  rejected: string[]
+  uploadedAttachments: number
+  durationMs: number
+}
+
+export function getSyncConfig() {
+  return desktopInvoke<SyncConfigView>("get_sync_config")
+}
+
+/** `token` 传 undefined 保留原值，传空串清除。 */
+export function setSyncConfig(url: string, token?: string) {
+  return desktopInvoke<SyncConfigView>("set_sync_config", { url, token })
+}
+
+export function getSyncStatus() {
+  return desktopInvoke<SyncStatus>("sync_status")
+}
+
+export function syncNow() {
+  return desktopInvoke<SyncReport>("sync_now")
+}
+
 export function rebuildSearchIndex() {
   return desktopInvoke<number>("rebuild_search_index")
 }

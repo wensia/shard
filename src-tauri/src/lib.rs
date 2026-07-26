@@ -86,6 +86,16 @@ struct AppConfig {
     /// 数据层出问题时可一键退回递归扫 Markdown 的老路径，无需回滚版本。
     #[serde(default)]
     db_read_enabled: Option<bool>,
+    /// 自建同步服务端地址（形如 `https://shard.example.com`）。
+    /// 与 `sync_token` 同时存在时启用同步；缺任一项则纯本地运行。
+    #[serde(default)]
+    sync_url: Option<String>,
+    /// 同步服务端的访问令牌。
+    ///
+    /// **已知问题**：配置文件是明文 JSON，令牌会明文落盘——记账模块的
+    /// `turso_auth_token` 已是同等待遇。换到系统 keychain 是独立的一件事。
+    #[serde(default)]
+    sync_token: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -2868,10 +2878,19 @@ async fn load_attachment(
     let conn = notes.conn(app, false).await?;
     let row = notes::attachments::get(&conn, &hash).await?;
 
-    let app = app.clone();
+    let vault = {
+        let app = app.clone();
+        run_blocking(move || ensure_vault_dirs(&app)).await?
+    };
+    let path = vault.join(notes::attachments::cache_rel_path(&hash));
+
+    // 本地没有字节：这张图是从别的设备同步过来的，元数据先到、内容还没拉。
+    // 按需去服务器取一次并落进缓存，此后就是本地文件。
+    if !path.exists() {
+        fetch_attachment_from_server(app, &vault, &hash).await?;
+    }
+
     run_blocking(move || {
-        let vault = ensure_vault_dirs(&app)?;
-        let path = vault.join(notes::attachments::cache_rel_path(&hash));
         let bytes = fs::read(&path).map_err(|error| error.to_string())?;
         let mime_type = match row {
             Some(row) => row.mime_type,
@@ -2879,6 +2898,36 @@ async fn load_attachment(
         };
 
         Ok((mime_type, bytes))
+    })
+    .await
+}
+
+/// 从同步服务端补一张本地缺失的图。
+///
+/// 下载后**必须重算摘要**：内容寻址的前提是"文件名就是内容"，把没验过的字节
+/// 写进那个位置，之后每一次读取都会拿到它。
+async fn fetch_attachment_from_server(
+    app: &tauri::AppHandle,
+    vault: &Path,
+    hash: &str,
+) -> Result<(), String> {
+    let cfg = read_app_config(app)?;
+    let server = notes::sync::ServerConfig::from_parts(cfg.sync_url, cfg.sync_token)
+        .ok_or_else(|| "附件不在本地，且未配置同步服务器。".to_string())?;
+
+    let client = notes::sync::Client::new(server)?;
+    let bytes = client.download_attachment(hash).await?;
+
+    if hash_bytes(&bytes) != hash {
+        return Err("下载到的附件与其摘要不符，已丢弃。".to_string());
+    }
+
+    let path = vault.join(notes::attachments::cache_rel_path(hash));
+    run_blocking(move || {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        }
+        fs::write(&path, bytes).map_err(|error| error.to_string())
     })
     .await
 }
@@ -3428,7 +3477,11 @@ pub fn run() {
             notes::commands::search_fragments_db,
             notes::commands::rebuild_search_index,
             notes::commands::export_vault_markdown,
-            notes::commands::verify_export
+            notes::commands::verify_export,
+            notes::commands::get_sync_config,
+            notes::commands::set_sync_config,
+            notes::commands::sync_status,
+            notes::commands::sync_now
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

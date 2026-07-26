@@ -57,9 +57,35 @@ interface MindMapPoint {
   y: number
 }
 
+interface CanvasViewState {
+  scale: number
+  x: number
+  y: number
+}
+
+interface CanvasPanState {
+  active: boolean
+  pointerId: number
+  startClientX: number
+  startClientY: number
+  startViewScale: number
+  startViewX: number
+  startViewY: number
+}
+
+// Safari/WebKit(macOS 触控板双指捏合)专有事件，标准 DOM lib 里没有类型定义。
+interface WebKitGestureEvent extends Event {
+  clientX: number
+  clientY: number
+  scale: number
+}
+
 const CANVAS_DRAG_THRESHOLD_PX = 4
 const DROP_INDICATOR_COLOR =
   "rgb(var(--shard-primary-rgb) / var(--shard-alpha-55))"
+const MIN_CANVAS_SCALE = 0.05
+const MAX_CANVAS_SCALE = 4
+const WHEEL_ZOOM_INTENSITY = 0.0018
 
 export function MindMapCanvasEditor({
   file,
@@ -73,9 +99,16 @@ export function MindMapCanvasEditor({
   const containerRef = useRef<HTMLDivElement>(null)
   const selectedInputRef = useRef<HTMLInputElement | null>(null)
   const dragStateRef = useRef<CanvasDragState | null>(null)
+  const canvasPanStateRef = useRef<CanvasPanState | null>(null)
   const suppressNodeClickRef = useRef(false)
+  const fitRef = useRef<ReturnType<typeof fitMindMapLayout> | null>(null)
+  const sizeRef = useRef({ height: 720, width: 980 })
+  const viewOverrideRef = useRef<CanvasViewState | null>(null)
   const [size, setSize] = useState({ height: 720, width: 980 })
   const [dragState, setDragState] = useState<CanvasDragState | null>(null)
+  const [viewOverride, setViewOverride] = useState<CanvasViewState | null>(null)
+  const [hasPanSession, setHasPanSession] = useState(false)
+  const [canvasPanActive, setCanvasPanActive] = useState(false)
   const layout = useMemo(
     () =>
       layoutMindMap(file, {
@@ -90,7 +123,14 @@ export function MindMapCanvasEditor({
     () => fitMindMapLayout(layout, size.width, size.height, 56),
     [layout, size.height, size.width]
   )
-  const compactText = shouldUseCompactMindMapText(layout, fit.scale)
+  const effectiveFit = useMemo(
+    () => (viewOverride ? viewStateToFit(viewOverride, size) : fit),
+    [fit, size, viewOverride]
+  )
+  fitRef.current = fit
+  sizeRef.current = size
+  viewOverrideRef.current = viewOverride
+  const compactText = shouldUseCompactMindMapText(layout, effectiveFit.scale)
   const selectedNodeIdsSet = useMemo(
     () => new Set(selectedNodeIds.filter((nodeId) => file.nodes[nodeId])),
     [file.nodes, selectedNodeIds]
@@ -105,7 +145,7 @@ export function MindMapCanvasEditor({
     : null
   const selectedEditorRect =
     selectedLayoutNode && selectedNode
-      ? getScreenNodeRect(selectedLayoutNode, fit, size)
+      ? getScreenNodeRect(selectedLayoutNode, effectiveFit, size)
       : null
   const hasDragSession = dragState !== null
   const isDraggingNode = dragState?.active ?? false
@@ -125,6 +165,169 @@ export function MindMapCanvasEditor({
 
     return () => observer.disconnect()
   }, [])
+
+  useEffect(() => {
+    setViewOverride(null)
+  }, [file.id])
+
+  useEffect(() => {
+    const element = containerRef.current
+    if (!element) return
+
+    function getCurrentView(): CanvasViewState {
+      const override = viewOverrideRef.current
+      if (override) return override
+      const currentFit = fitRef.current
+      return currentFit
+        ? { scale: currentFit.scale, x: currentFit.x, y: currentFit.y }
+        : { scale: 1, x: 0, y: 0 }
+    }
+
+    function zoomAtClientPoint(
+      clientX: number,
+      clientY: number,
+      baseView: CanvasViewState,
+      nextScale: number
+    ) {
+      const container = containerRef.current
+      if (!container) return
+
+      const rect = container.getBoundingClientRect()
+      if (rect.width <= 0 || rect.height <= 0) return
+
+      const currentSize = sizeRef.current
+      const mouseOffsetX = ((clientX - rect.left) / rect.width) * currentSize.width
+      const mouseOffsetY = ((clientY - rect.top) / rect.height) * currentSize.height
+      const pointX = baseView.x + mouseOffsetX / baseView.scale
+      const pointY = baseView.y + mouseOffsetY / baseView.scale
+      const clampedScale = clamp(nextScale, MIN_CANVAS_SCALE, MAX_CANVAS_SCALE)
+
+      setViewOverride({
+        scale: clampedScale,
+        x: pointX - mouseOffsetX / clampedScale,
+        y: pointY - mouseOffsetY / clampedScale,
+      })
+    }
+
+    // 约定与常见白板/设计工具一致：触控板双指滑动或裸滚轮 = 平移画布；
+    // 按住 ctrl/cmd 滚动，或触控板双指捏合(通过下方 gesture* 事件) = 缩放。
+    // Chrome 会把触控板捏合手势转换成带 ctrlKey 的 wheel 事件，
+    // 但 macOS 上 Tauri 用的 WKWebView 不会——捏合手势走 gesturestart/change/end。
+    function handleWheel(event: WheelEvent) {
+      event.preventDefault()
+
+      const currentView = getCurrentView()
+
+      if (event.ctrlKey || event.metaKey) {
+        const zoomFactor = Math.exp(-event.deltaY * WHEEL_ZOOM_INTENSITY)
+        zoomAtClientPoint(
+          event.clientX,
+          event.clientY,
+          currentView,
+          currentView.scale * zoomFactor
+        )
+        return
+      }
+
+      setViewOverride({
+        scale: currentView.scale,
+        x: currentView.x + event.deltaX / currentView.scale,
+        y: currentView.y + event.deltaY / currentView.scale,
+      })
+    }
+
+    let gestureStartView: CanvasViewState | null = null
+    let gestureStartScale = 1
+
+    function handleGestureStart(event: Event) {
+      event.preventDefault()
+      const gestureEvent = event as WebKitGestureEvent
+      gestureStartView = getCurrentView()
+      gestureStartScale = gestureEvent.scale || 1
+    }
+
+    function handleGestureChange(event: Event) {
+      event.preventDefault()
+      if (!gestureStartView) return
+
+      const gestureEvent = event as WebKitGestureEvent
+      const relativeScale = (gestureEvent.scale || 1) / gestureStartScale
+      zoomAtClientPoint(
+        gestureEvent.clientX,
+        gestureEvent.clientY,
+        gestureStartView,
+        gestureStartView.scale * relativeScale
+      )
+    }
+
+    function handleGestureEnd(event: Event) {
+      event.preventDefault()
+      gestureStartView = null
+    }
+
+    element.addEventListener("wheel", handleWheel, { passive: false })
+    element.addEventListener("gesturestart", handleGestureStart)
+    element.addEventListener("gesturechange", handleGestureChange)
+    element.addEventListener("gestureend", handleGestureEnd)
+
+    return () => {
+      element.removeEventListener("wheel", handleWheel)
+      element.removeEventListener("gesturestart", handleGestureStart)
+      element.removeEventListener("gesturechange", handleGestureChange)
+      element.removeEventListener("gestureend", handleGestureEnd)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!hasPanSession) return
+
+    function handlePointerMove(event: PointerEvent) {
+      const current = canvasPanStateRef.current
+      if (!current || event.pointerId !== current.pointerId) return
+
+      const deltaClientX = event.clientX - current.startClientX
+      const deltaClientY = event.clientY - current.startClientY
+      const active =
+        current.active ||
+        Math.hypot(deltaClientX, deltaClientY) >= CANVAS_DRAG_THRESHOLD_PX
+      if (!active) return
+
+      if (!current.active) {
+        suppressNodeClickRef.current = true
+        setCanvasPanActive(true)
+      }
+      canvasPanStateRef.current = { ...current, active: true }
+      setViewOverride({
+        scale: current.startViewScale,
+        x: current.startViewX - deltaClientX / current.startViewScale,
+        y: current.startViewY - deltaClientY / current.startViewScale,
+      })
+    }
+
+    function endPan(event: PointerEvent) {
+      const current = canvasPanStateRef.current
+      if (!current || event.pointerId !== current.pointerId) return
+
+      if (current.active) {
+        window.setTimeout(() => {
+          suppressNodeClickRef.current = false
+        }, 0)
+      }
+      canvasPanStateRef.current = null
+      setCanvasPanActive(false)
+      setHasPanSession(false)
+    }
+
+    window.addEventListener("pointermove", handlePointerMove)
+    window.addEventListener("pointerup", endPan)
+    window.addEventListener("pointercancel", endPan)
+
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove)
+      window.removeEventListener("pointerup", endPan)
+      window.removeEventListener("pointercancel", endPan)
+    }
+  }, [hasPanSession])
 
   useEffect(() => {
     if (isDraggingNode) return
@@ -152,7 +355,7 @@ export function MindMapCanvasEditor({
         ? getCanvasDropTarget(
             file,
             layout.nodes,
-            fit,
+            effectiveFit,
             containerRef.current,
             current.nodeIds,
             event.clientX,
@@ -216,8 +419,8 @@ export function MindMapCanvasEditor({
       window.removeEventListener("pointercancel", handlePointerCancel)
     }
   }, [
+    effectiveFit,
     file,
-    fit,
     hasDragSession,
     layout.nodes,
     onChange,
@@ -315,6 +518,26 @@ export function MindMapCanvasEditor({
     setDragState(next)
   }
 
+  function startCanvasPan(event: ReactPointerEvent<SVGSVGElement>) {
+    if (event.button !== 0 || dragStateRef.current) return
+
+    const currentView: CanvasViewState = viewOverride ?? {
+      scale: fit.scale,
+      x: fit.x,
+      y: fit.y,
+    }
+    canvasPanStateRef.current = {
+      active: false,
+      pointerId: event.pointerId,
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+      startViewScale: currentView.scale,
+      startViewX: currentView.x,
+      startViewY: currentView.y,
+    }
+    setHasPanSession(true)
+  }
+
   function handleNodeKeyDown(event: KeyboardEvent<HTMLInputElement>) {
     if (!selectedNodeId || !selectedNode) return
 
@@ -369,12 +592,17 @@ export function MindMapCanvasEditor({
     <div className={styles.canvasRoot} ref={containerRef}>
       <svg
         aria-label="思维导图编辑器"
-        className={styles.canvasSvg}
+        className={
+          canvasPanActive
+            ? `${styles.canvasSvg} ${styles.canvasSvgPanning}`
+            : styles.canvasSvg
+        }
+        onPointerDown={startCanvasPan}
         preserveAspectRatio="xMidYMid meet"
         role="application"
-        viewBox={fit.viewBox}
+        viewBox={effectiveFit.viewBox}
       >
-        <g fill="none" stroke="var(--border)" strokeWidth="1.45">
+        <g fill="none" stroke="var(--border-visible)" strokeWidth="1.6">
           {layout.edges.map((edge) => {
             const midX = (edge.x1 + edge.x2) / 2
 
@@ -634,6 +862,23 @@ function getCanvasDropMode(
   if (offsetY < layoutNode.height * 0.28) return "before"
   if (offsetY > layoutNode.height * 0.72) return "after"
   return "inside"
+}
+
+function viewStateToFit(
+  view: CanvasViewState,
+  size: { height: number; width: number }
+): ReturnType<typeof fitMindMapLayout> {
+  const width = size.width / view.scale
+  const height = size.height / view.scale
+
+  return {
+    height,
+    scale: view.scale,
+    viewBox: `${view.x} ${view.y} ${width} ${height}`,
+    width,
+    x: view.x,
+    y: view.y,
+  }
 }
 
 function getScreenNodeRect(

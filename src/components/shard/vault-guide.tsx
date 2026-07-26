@@ -12,6 +12,7 @@ import { useEffect, useRef, useState, type CSSProperties } from "react"
 import { Button } from "@astryxdesign/core/Button"
 import { HStack } from "@astryxdesign/core/HStack"
 import { Stack } from "@astryxdesign/core/Stack"
+import { TextInput } from "@astryxdesign/core/TextInput"
 import { useToast } from "@astryxdesign/core/Toast"
 import {
 } from "@/lib/app-settings"
@@ -20,10 +21,15 @@ import {
   setVaultPath,
   exportVaultMarkdown,
   getNotesDbStats,
+  getSyncConfig,
+  getSyncStatus,
   importVaultMarkdown,
   rebuildSearchIndex,
+  setSyncConfig,
+  syncNow,
   verifyExport,
   type NotesDbStats,
+  type SyncStatus,
 } from "@/lib/api"
 import type { VaultState } from "@/types"
 
@@ -257,6 +263,10 @@ export function VaultGuide({
   const [activeAction, setActiveAction] = useState<VaultAction>(null)
   const [section, setSection] = useState<SettingsSection>(initialSection)
   const [dbStats, setDbStats] = useState<NotesDbStats | null>(null)
+  const [syncState, setSyncState] = useState<SyncStatus | null>(null)
+  const [syncUrl, setSyncUrl] = useState("")
+  const [syncToken, setSyncToken] = useState("")
+  const [syncHasToken, setSyncHasToken] = useState(false)
   const [dataBusy, setDataBusy] = useState<string | null>(null)
   const dialogRef = useRef<HTMLDivElement>(null)
   const toast = useToast()
@@ -320,8 +330,22 @@ export function VaultGuide({
     }
   }
 
+  async function refreshSyncState() {
+    try {
+      const [config, status] = await Promise.all([getSyncConfig(), getSyncStatus()])
+      setSyncUrl(config.url)
+      setSyncHasToken(config.hasToken)
+      setSyncState(status)
+    } catch (error) {
+      toast({ body: `读取同步状态失败：${getApiErrorMessage(error)}`, type: "error" })
+    }
+  }
+
   useEffect(() => {
-    if (isOpen && section === "data") void refreshDbStats()
+    if (isOpen && section === "data") {
+      void refreshDbStats()
+      void refreshSyncState()
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, section])
 
@@ -331,6 +355,7 @@ export function VaultGuide({
     try {
       toast({ body: await run() })
       await refreshDbStats()
+      await refreshSyncState()
     } catch (error) {
       toast({ body: `${getApiErrorMessage(error)}`, type: "error" })
     } finally {
@@ -361,6 +386,101 @@ export function VaultGuide({
           <dt style={{ color: "var(--muted-foreground)" }}>搜索索引</dt>
           <dd>{dbStats ? `${dbStats.indexed} 条` : "…"}</dd>
         </dl>
+      </section>
+
+      <section className={styles.sectionPad}>
+        <h3 style={sectionTitleStyle}>同步</h3>
+        <p style={sectionDescriptionStyle}>
+          配置自建服务器后，笔记会在多台设备之间同步。离线时照常读写，联网后自动追平；
+          两端同时改过同一条时不会覆盖，本地那一版会另存为冲突副本。
+        </p>
+
+        <Stack gap={2} style={{ marginTop: "var(--shard-space-3)" }}>
+          <TextInput
+            label="服务器地址"
+            onChange={setSyncUrl}
+            placeholder="https://shard.example.com"
+            value={syncUrl}
+          />
+          <TextInput
+            label={syncHasToken ? "访问令牌（留空则保留当前令牌）" : "访问令牌"}
+            onChange={setSyncToken}
+            placeholder={syncHasToken ? "已配置" : "服务器上生成的令牌"}
+            type="password"
+            value={syncToken}
+          />
+        </Stack>
+
+        <HStack gap={2} style={{ marginTop: "var(--shard-space-3)", flexWrap: "wrap" }}>
+          <Button
+            isDisabled={dataBusy !== null}
+            label={dataBusy === "sync-config" ? "保存中…" : "保存同步设置"}
+            onClick={() =>
+              void runDataAction("sync-config", async () => {
+                // 令牌留空表示"沿用当前的"，不要把它清掉。
+                const config = await setSyncConfig(
+                  syncUrl,
+                  syncToken.trim() === "" ? undefined : syncToken
+                )
+                setSyncToken("")
+                return config.url ? `已保存：${config.url}` : "已关闭同步"
+              })
+            }
+            size="sm"
+            variant="secondary"
+          />
+          <Button
+            isDisabled={dataBusy !== null || !syncState?.configured}
+            label={dataBusy === "sync" ? "同步中…" : "立即同步"}
+            onClick={() =>
+              void runDataAction("sync", async () => {
+                const report = await syncNow()
+                const parts = [`拉取 ${report.pulled} 条`, `推送 ${report.pushed} 条`]
+                if (report.uploadedAttachments > 0) {
+                  parts.push(`上传 ${report.uploadedAttachments} 个附件`)
+                }
+                if (report.conflicts > 0) {
+                  parts.push(`${report.conflicts} 条冲突已另存副本`)
+                }
+                if (report.rejected.length > 0) {
+                  parts.push(`${report.rejected.length} 条被服务器拒绝`)
+                }
+                return parts.join("，")
+              })
+            }
+            size="sm"
+            variant="secondary"
+          />
+        </HStack>
+
+        <dl
+          style={{
+            display: "grid",
+            gridTemplateColumns: "auto 1fr",
+            gap: "var(--shard-space-2) var(--shard-space-4)",
+            marginTop: "var(--shard-space-3)",
+            fontSize: 13,
+          }}
+        >
+          <dt style={{ color: "var(--muted-foreground)" }}>状态</dt>
+          <dd>{syncState?.configured ? "已配置" : "未配置（纯本地运行）"}</dd>
+          <dt style={{ color: "var(--muted-foreground)" }}>待同步</dt>
+          <dd>{syncState ? `${syncState.pending} 条本地改动` : "…"}</dd>
+          <dt style={{ color: "var(--muted-foreground)" }}>上次同步</dt>
+          <dd>{syncState?.lastSyncedAt ?? "从未"}</dd>
+        </dl>
+
+        {syncState?.lastError ? (
+          <p
+            style={{
+              ...sectionDescriptionStyle,
+              color: "var(--shard-danger)",
+              marginTop: "var(--shard-space-2)",
+            }}
+          >
+            上次同步失败：{syncState.lastError}
+          </p>
+        ) : null}
       </section>
 
       <section className={styles.sectionPad}>

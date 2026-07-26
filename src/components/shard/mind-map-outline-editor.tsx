@@ -51,6 +51,9 @@ interface MindMapOutlineEditorProps {
 const NODE_DRAG_MIME_TYPE = "application/x-shard-mind-map-node"
 const DROP_INDICATOR_COLOR =
   "rgb(var(--shard-primary-rgb) / var(--shard-alpha-55))"
+const OUTLINE_INDENT_PX = 22
+// 与实测的 bullet 圆点水平中心对齐(拖拽把手宽度 + gap + 半个圆点直径)。
+const OUTLINE_GUIDE_LINE_OFFSET_PX = 35
 
 export function MindMapOutlineEditor({
   file,
@@ -216,7 +219,7 @@ export function MindMapOutlineEditor({
       }}
     >
       <Stack gap={1} maxWidth={896} style={{ marginInline: "auto" }}>
-        {rows.map(({ node, depth }) => {
+        {rows.map(({ node, depth }, index) => {
           const isRoot = node.id === file.rootId
           const selected = selectedNodeId === node.id
           const activeDropMode =
@@ -238,6 +241,27 @@ export function MindMapOutlineEditor({
                 paddingLeft: `${Math.min(depth, 10) * 22}px`,
               }}
             >
+              {Array.from({ length: Math.min(depth, 10) }, (_, level) => {
+                const guideDepth = level + 1
+                const isOwnDepth = guideDepth === depth
+                const branchActive = isOutlineBranchActiveAtDepth(
+                  rows,
+                  index,
+                  guideDepth
+                )
+
+                return (
+                  <span
+                    aria-hidden="true"
+                    className={styles.guideLine}
+                    key={guideDepth}
+                    style={{
+                      height: isOwnDepth && !branchActive ? "50%" : "100%",
+                      left: `${guideDepth * OUTLINE_INDENT_PX + OUTLINE_GUIDE_LINE_OFFSET_PX}px`,
+                    }}
+                  />
+                )
+              })}
               <div className={styles.rowMain}>
                 {isRoot ? (
                   <span aria-hidden="true" style={{ width: 24, height: 24, flexShrink: 0 }} />
@@ -365,6 +389,20 @@ export function MindMapOutlineEditor({
       </Stack>
     </div>
   )
+}
+
+function isOutlineBranchActiveAtDepth(
+  rows: { depth: number }[],
+  index: number,
+  depth: number
+) {
+  for (let cursor = index + 1; cursor < rows.length; cursor += 1) {
+    if (rows[cursor].depth <= depth) {
+      return rows[cursor].depth === depth
+    }
+  }
+
+  return false
 }
 
 function getOutlineDropTarget(

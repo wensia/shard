@@ -267,20 +267,23 @@ CREATE TABLE IF NOT EXISTS sync_seq (
 );
 INSERT OR IGNORE INTO sync_seq (id, value) VALUES (1, 0);
 
--- 客户端侧：待推送队列。
+-- 客户端侧：这一行推到服务端时是哪个版本。
 --
--- 主键是 (kind, id)，同一条实体只保留最新一条待推——离线期间连改十次，
--- 上线时只需要推最后那一版。
-CREATE TABLE IF NOT EXISTS sync_outbox (
-    entity_kind   TEXT NOT NULL,
-    entity_id     TEXT NOT NULL,
-    -- 入队时这条在本地的版本。推送时作为 CAS 的基准。
-    base_revision INTEGER,
-    queued_at     TEXT NOT NULL,
-    attempts      INTEGER NOT NULL DEFAULT 0,
-    last_error    TEXT,
-    PRIMARY KEY (entity_kind, entity_id)
-) WITHOUT ROWID;
+-- 刻意**不用**单独的 outbox 表：那是「另一份需要与行保持一致的状态」，入队
+-- 写失败、事务边界没对齐、或者某条写路径忘了入队，症状都是这条改动永远推不
+-- 上去，而且不会有任何报错。把它做成行上的一列就不可能不一致：
+--   synced_revision IS NULL          → 从未推送（也覆盖了首次全量推送）
+--   synced_revision <> revision      → 有本地改动待推
+--   synced_revision  = revision      → 已追平
+ALTER TABLE fragments ADD COLUMN synced_revision INTEGER;
+ALTER TABLE shard_maps ADD COLUMN synced_revision INTEGER;
+-- 附件元数据只增不改，只需要知道推没推过。
+ALTER TABLE attachments ADD COLUMN synced_at TEXT;
+
+CREATE INDEX IF NOT EXISTS idx_fragments_unsynced ON fragments (revision)
+    WHERE synced_revision IS NULL OR synced_revision <> revision;
+CREATE INDEX IF NOT EXISTS idx_shard_maps_unsynced ON shard_maps (revision)
+    WHERE synced_revision IS NULL OR synced_revision <> revision;
 
 -- 客户端侧：同步游标。
 CREATE TABLE IF NOT EXISTS sync_state (

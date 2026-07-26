@@ -33,11 +33,13 @@ pub(crate) struct MapRow {
     pub updated_at: String,
     pub export_path: Option<String>,
     pub export_dirty: bool,
+    /// 这一版推到服务端时的 revision。与 `revision` 不等即有本地改动待推。
+    pub synced_revision: Option<i64>,
 }
 
 const MAP_COLUMNS: &str = "
     id, title, doc_json, doc_hash, revision, node_count,
-    created_at, updated_at, export_path, export_dirty
+    created_at, updated_at, export_path, export_dirty, synced_revision
 ";
 
 /// CAS 失败的原因。调用方据此决定是另存冲突副本还是报「找不到」。
@@ -191,7 +193,41 @@ fn map_row(row: &libsql::Row) -> libsql::Result<MapRow> {
         updated_at: row.get(7)?,
         export_path: row.get(8)?,
         export_dirty: row.get::<i64>(9)? != 0,
+        synced_revision: row.get(10)?,
     })
+}
+
+/// 把当前这一版另存为冲突副本。
+///
+/// 与笔记同一套语义：副本是**独立的一份**（新 id，不参与后续 CAS），
+/// 只是留给人比对的快照。同步把远端版本写进原件时，本地那版就靠它保住。
+pub(crate) async fn insert_conflict_copy(
+    conn: &Connection,
+    local: &MapRow,
+) -> Result<String, String> {
+    let copy_id = format!("{}-conflict-{}", local.id, chrono::Local::now().timestamp());
+    let now = chrono::Local::now().to_rfc3339();
+
+    conn.execute(
+        "INSERT INTO shard_maps
+         (id, title, doc_json, doc_hash, revision, node_count,
+          created_at, updated_at, updated_at_ms, export_path, export_dirty, synced_revision)
+         VALUES (?1, ?2, ?3, ?4, 1, ?5, ?6, ?7, ?8, NULL, 1, NULL)",
+        params![
+            copy_id.clone(),
+            format!("{}（冲突副本）", local.title),
+            local.doc_json.clone(),
+            local.doc_hash.clone(),
+            local.node_count,
+            local.created_at.clone(),
+            now.clone(),
+            to_millis(&now),
+        ],
+    )
+    .await
+    .map_err(|error| format!("另存导图冲突副本失败：{error}"))?;
+
+    Ok(copy_id)
 }
 
 // ---------------------------------------------------------------------------
@@ -219,6 +255,7 @@ pub(crate) fn row_from_file(
         updated_at: file.updated_at.clone(),
         export_path,
         export_dirty: true,
+        synced_revision: None,
     })
 }
 
@@ -270,6 +307,7 @@ mod tests {
             updated_at: "2026-07-26T10:00:00+08:00".into(),
             export_path: Some("maps/m1.shardmap.json".into()),
             export_dirty: true,
+            synced_revision: None,
         }
     }
 

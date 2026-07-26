@@ -922,6 +922,7 @@ mod tests {
                 updated_at: "2026-07-26T10:00:00+08:00".into(),
                 export_path: Some("maps/2026/07/m1.shardmap.json".into()),
                 export_dirty: true,
+                synced_revision: None,
             },
         )
         .await
@@ -959,6 +960,7 @@ mod tests {
                 updated_at: "2026-07-26T10:00:00+08:00".into(),
                 export_path: Some("maps/m1.shardmap.json".into()),
                 export_dirty: true,
+                synced_revision: None,
             },
         )
         .await
@@ -994,6 +996,7 @@ mod tests {
                 updated_at: "2026-07-26T10:00:00+08:00".into(),
                 export_path: Some("maps/m1.shardmap.json".into()),
                 export_dirty: true,
+                synced_revision: None,
             },
         )
         .await

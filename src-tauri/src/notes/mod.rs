@@ -25,6 +25,7 @@ pub(crate) mod model;
 pub(crate) mod repo;
 pub(crate) mod schema;
 pub(crate) mod search;
+pub(crate) mod sync;
 
 use crate::db::{migrate::Migration, DbHandle, DbSpec};
 use crate::AppConfig;
