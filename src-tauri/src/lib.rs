@@ -395,63 +395,148 @@ async fn ensure_notes_imported(conn: &libsql::Connection, vault: &Path) -> Resul
 }
 
 #[tauri::command]
-async fn list_mind_maps(app: tauri::AppHandle) -> Result<Vec<MindMapSummary>, String> {
-    run_blocking(move || {
-        let vault = ensure_vault_dirs(&app)?;
-        list_mind_maps_in_vault(&vault)
-    })
-    .await
+async fn list_mind_maps(
+    app: tauri::AppHandle,
+    notes: tauri::State<'_, NotesDb>,
+) -> Result<Vec<MindMapSummary>, String> {
+    let conn = notes.conn(&app, false).await?;
+    let vault = ensure_vault_dirs(&app)?;
+    ensure_notes_imported(&conn, &vault).await?;
+    Ok(notes::maps::list(&conn)
+        .await?
+        .iter()
+        .map(notes::maps::to_summary)
+        .collect())
 }
 
 #[tauri::command]
 async fn create_mind_map(
     app: tauri::AppHandle,
+    notes: tauri::State<'_, NotesDb>,
     title: String,
     source_fragment_id: Option<String>,
 ) -> Result<MindMapReadResult, String> {
-    run_blocking(move || {
-        let vault = ensure_vault_dirs(&app)?;
-        create_mind_map_in_vault(&vault, title, source_fragment_id)
+    let conn = notes.conn(&app, false).await?;
+    let build_app = app.clone();
+    // 构造文档仍在阻塞线程里做：它要校验 source_fragment_id 是否存在。
+    let created = run_blocking(move || {
+        let vault = ensure_vault_dirs(&build_app)?;
+        build_mind_map_document(&vault, title, source_fragment_id)
     })
-    .await
+    .await?;
+
+    let row = notes::maps::row_from_file(&created, Some(mind_map_export_path(&created)))?;
+    notes::maps::insert(&conn, &row).await?;
+    notes::maps::to_read_result(&row)
 }
 
 #[tauri::command]
-async fn read_mind_map(app: tauri::AppHandle, id: String) -> Result<MindMapReadResult, String> {
-    run_blocking(move || {
-        let vault = ensure_vault_dirs(&app)?;
-        read_mind_map_in_vault(&vault, &id)
-    })
-    .await
+async fn read_mind_map(
+    app: tauri::AppHandle,
+    notes: tauri::State<'_, NotesDb>,
+    id: String,
+) -> Result<MindMapReadResult, String> {
+    let conn = notes.conn(&app, false).await?;
+    let row = notes::maps::get(&conn, &id)
+        .await?
+        .ok_or_else(|| format!("找不到思维导图 {id}"))?;
+    notes::maps::to_read_result(&row)
 }
 
 #[tauri::command]
 async fn write_mind_map(
     app: tauri::AppHandle,
+    notes: tauri::State<'_, NotesDb>,
     id: String,
     file: ShardMapFile,
     expected_revision: u64,
     last_saved_hash: String,
 ) -> Result<MindMapReadResult, String> {
-    run_blocking(move || {
-        let vault = ensure_vault_dirs(&app)?;
-        write_mind_map_in_vault(&vault, &id, file, expected_revision, &last_saved_hash)
-    })
-    .await
+    if file.id != id {
+        return Err("导图 id 与写入目标不一致。".to_string());
+    }
+
+    let conn = notes.conn(&app, false).await?;
+    let vault = ensure_vault_dirs(&app)?;
+
+    // 校验仍在阻塞线程里做：它要检查 fragment 链接是否指向真实笔记。
+    let checked = {
+        let vault = vault.clone();
+        let file = file.clone();
+        run_blocking(move || {
+            validate_mind_map_file(&vault, &file)?;
+            Ok::<_, String>(file)
+        })
+        .await?
+    };
+
+    let mut next = checked;
+    next.kind = SHARD_MAP_KIND.to_string();
+    next.schema_version = SHARD_MAP_SCHEMA_VERSION;
+    next.updated_at = Local::now().to_rfc3339();
+    next.revision = expected_revision + 1;
+    next.saved_with_app_version = env!("CARGO_PKG_VERSION").to_string();
+
+    let doc_json = canonical_mind_map_text(&next)?;
+    let doc_hash = hash_text(&doc_json);
+
+    let outcome = notes::maps::update_cas(
+        &conn,
+        &id,
+        &doc_json,
+        &doc_hash,
+        &next.title,
+        next.nodes.len() as i64,
+        &next.updated_at,
+        expected_revision as i64,
+        &last_saved_hash,
+    )
+    .await?;
+
+    match outcome {
+        notes::maps::WriteOutcome::Applied { .. } => {
+            let row = notes::maps::get(&conn, &id)
+                .await?
+                .ok_or_else(|| format!("找不到思维导图 {id}"))?;
+            notes::maps::to_read_result(&row)
+        }
+        notes::maps::WriteOutcome::NotFound => Err(format!("找不到思维导图 {id}")),
+        notes::maps::WriteOutcome::Conflict => {
+            // 沿用文件时代的语义：不覆盖，另存一份冲突副本供人工比对。
+            let conflict_vault = vault.clone();
+            let conflict_file = next.clone();
+            let path = run_blocking(move || {
+                let path = write_mind_map_conflict(&conflict_vault, &conflict_file)?;
+                relative_path(&conflict_vault, &path)
+            })
+            .await?;
+            Err(format!("导图已被外部修改，已另存冲突副本：{path}"))
+        }
+    }
 }
 
 #[tauri::command]
 async fn delete_mind_map(
     app: tauri::AppHandle,
+    notes: tauri::State<'_, NotesDb>,
     id: String,
     expected_revision: u64,
 ) -> Result<Vec<MindMapSummary>, String> {
-    run_blocking(move || {
-        let vault = ensure_vault_dirs(&app)?;
-        delete_mind_map_in_vault(&vault, &id, expected_revision)?;
-        list_mind_maps_in_vault(&vault)
-    })
-    .await
+    let conn = notes.conn(&app, false).await?;
+    let row = notes::maps::get(&conn, &id)
+        .await?
+        .ok_or_else(|| format!("找不到思维导图 {id}"))?;
+    if row.revision != expected_revision as i64 {
+        return Err("导图已被外部修改，请重新打开后再删除。".to_string());
+    }
+
+    // 软删除：留墓碑，否则多端同步时会被其它设备推回来。
+    notes::maps::soft_delete(&conn, &id, &Local::now().to_rfc3339()).await?;
+    Ok(notes::maps::list(&conn)
+        .await?
+        .iter()
+        .map(notes::maps::to_summary)
+        .collect())
 }
 
 #[tauri::command]
@@ -585,24 +670,13 @@ fn list_fragments_in_vault(
     })
 }
 
-fn list_mind_maps_in_vault(vault: &Path) -> Result<Vec<MindMapSummary>, String> {
-    let mut files = Vec::new();
-    collect_mind_map_files(&vault.join("maps"), &mut files)?;
-
-    let mut summaries = files
-        .iter()
-        .filter_map(|path| read_mind_map_summary(path, vault).ok())
-        .collect::<Vec<_>>();
-
-    summaries.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
-    Ok(summaries)
-}
-
-fn create_mind_map_in_vault(
+/// 构造一份新导图文档，**不落盘**。校验 source_fragment_id 需要读 vault，
+/// 因此仍收 vault 参数。
+fn build_mind_map_document(
     vault: &Path,
     title: String,
     source_fragment_id: Option<String>,
-) -> Result<MindMapReadResult, String> {
+) -> Result<ShardMapFile, String> {
     let title = title.trim();
     if title.is_empty() {
         return Err("思维导图标题不能为空。".to_string());
@@ -671,74 +745,22 @@ fn create_mind_map_in_vault(
         viewport: None,
     };
 
-    let dir = vault
-        .join("maps")
-        .join(now.format("%Y").to_string())
-        .join(now.format("%m").to_string());
-    fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
-    let path = dir.join(format!(
-        "{}-{}.shardmap.json",
-        now.format("%Y-%m-%d-%H%M%S"),
-        suffix
-    ));
-
     validate_mind_map_file(vault, &file)?;
-    let text = canonical_mind_map_text(&file)?;
-    write_text_atomically(&path, &text)?;
-    write_mind_map_last_good(vault, &file)?;
-    mind_map_read_result(vault, &path, file, text)
+    Ok(file)
 }
 
-fn read_mind_map_in_vault(vault: &Path, id: &str) -> Result<MindMapReadResult, String> {
-    let path = find_mind_map_path(vault, id)?.ok_or_else(|| format!("找不到思维导图 {id}"))?;
-    let (file, text) = read_mind_map_file(&path)?;
-    validate_mind_map_file(vault, &file)?;
-    mind_map_read_result(vault, &path, file, text)
-}
-
-fn write_mind_map_in_vault(
-    vault: &Path,
-    id: &str,
-    mut file: ShardMapFile,
-    expected_revision: u64,
-    last_saved_hash: &str,
-) -> Result<MindMapReadResult, String> {
-    if file.id != id {
-        return Err("导图 id 与写入目标不一致。".to_string());
-    }
-
-    let path = find_mind_map_path(vault, id)?.ok_or_else(|| format!("找不到思维导图 {id}"))?;
-    let (current_file, current_text) = read_mind_map_file(&path)?;
-    let current_hash = hash_text(&current_text);
-
-    if current_file.revision != expected_revision || current_hash != last_saved_hash {
-        let conflict_path = write_mind_map_conflict(vault, &file)?;
-        return Err(format!(
-            "导图已被外部修改，已另存冲突副本：{}",
-            relative_path(vault, &conflict_path)?
-        ));
-    }
-
-    file.kind = SHARD_MAP_KIND.to_string();
-    file.schema_version = SHARD_MAP_SCHEMA_VERSION;
-    file.saved_with_app_version = env!("CARGO_PKG_VERSION").to_string();
-    file.revision = expected_revision + 1;
-    file.updated_at = Local::now().to_rfc3339();
-    validate_mind_map_file(vault, &file)?;
-
-    let text = canonical_mind_map_text(&file)?;
-    write_text_atomically(&path, &text)?;
-    write_mind_map_last_good(vault, &file)?;
-    mind_map_read_result(vault, &path, file, text)
-}
-
-fn delete_mind_map_in_vault(vault: &Path, id: &str, expected_revision: u64) -> Result<(), String> {
-    let path = find_mind_map_path(vault, id)?.ok_or_else(|| format!("找不到思维导图 {id}"))?;
-    let (file, _) = read_mind_map_file(&path)?;
-    if file.revision != expected_revision {
-        return Err("导图已被外部修改，请重新打开后再删除。".to_string());
-    }
-    fs::remove_file(path).map_err(|error| error.to_string())
+/// 导图的导出路径。库成为真相源后这只是「导出时该写到哪」，
+/// 不再是数据的实际位置。
+fn mind_map_export_path(file: &ShardMapFile) -> String {
+    let stamp = chrono::DateTime::parse_from_rfc3339(&file.created_at)
+        .map(|value| value.with_timezone(&Local))
+        .unwrap_or_else(|_| Local::now());
+    format!(
+        "maps/{}/{}/{}.shardmap.json",
+        stamp.format("%Y"),
+        stamp.format("%m"),
+        file.id
+    )
 }
 
 #[tauri::command]
@@ -1495,36 +1517,10 @@ fn is_mind_map_file(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
-fn read_mind_map_summary(path: &Path, vault: &Path) -> Result<MindMapSummary, String> {
-    let (file, _) = read_mind_map_file(path)?;
-    validate_mind_map_file(vault, &file)?;
-    Ok(MindMapSummary {
-        id: file.id,
-        title: file.title,
-        created_at: file.created_at,
-        updated_at: file.updated_at,
-        node_count: file.nodes.len(),
-        path: relative_path(vault, path)?,
-    })
-}
-
 fn read_mind_map_file(path: &Path) -> Result<(ShardMapFile, String), String> {
     let text = fs::read_to_string(path).map_err(|error| error.to_string())?;
     let file = serde_json::from_str::<ShardMapFile>(&text).map_err(|error| error.to_string())?;
     Ok((file, text))
-}
-
-fn mind_map_read_result(
-    vault: &Path,
-    path: &Path,
-    file: ShardMapFile,
-    text: String,
-) -> Result<MindMapReadResult, String> {
-    Ok(MindMapReadResult {
-        file,
-        path: relative_path(vault, path)?,
-        last_saved_hash: hash_text(&text),
-    })
 }
 
 fn validate_mind_map_file(vault: &Path, file: &ShardMapFile) -> Result<(), String> {
@@ -1790,6 +1786,12 @@ fn write_text_atomically(path: &Path, text: &str) -> Result<(), String> {
     })
 }
 
+/// 文件时代的保险：写盘前先备份磁盘上的旧版本。
+///
+/// 库成为真相源后这层保险基本冗余——磁盘文件只是导出产物，导出失败重新导出
+/// 即可，真正的原子性由数据库事务保证。暂留不删，等第 6 步补全导出流时再决定
+/// 是否让导出复用它。
+#[allow(dead_code)]
 fn write_mind_map_last_good(vault: &Path, file: &ShardMapFile) -> Result<(), String> {
     let text = canonical_mind_map_text(file)?;
     let path = vault
@@ -2154,11 +2156,18 @@ fn write_lockbox_fragment_file(
     write_lockbox_payload(path, write_key, &payload)
 }
 
-fn write_lockbox_payload(
-    path: &Path,
-    write_key: &LockboxWriteKey,
+/// 封一个密匣信封，**不碰文件系统**。与 [`decrypt_lockbox_fragment`] 对称。
+///
+/// 抽出来是为了让密文能直接写进库的 `cipher_*` 列——原先加密与写盘耦合在
+/// 一个函数里，密文除了落成 `.shard` 文件之外没有别的出口。
+///
+/// 两条封装路径：
+/// - `Master` 用主密钥直接加密，只在解锁态可用；
+/// - `Public` 每片段生成一次性密钥，再用 RSA 公钥封装它，因此**锁定态也能写入**。
+fn encrypt_lockbox_fragment(
     payload: &LockboxFragmentPayload,
-) -> Result<(), String> {
+    write_key: &LockboxWriteKey,
+) -> Result<LockboxEncryptedFragment, String> {
     let plaintext = serde_json::to_vec(payload).map_err(|error| error.to_string())?;
     let (nonce, ciphertext, key_algorithm, key_ciphertext) = match write_key {
         LockboxWriteKey::Master(master_key) => {
@@ -2179,14 +2188,23 @@ fn write_lockbox_payload(
             )
         }
     };
-    let encrypted = LockboxEncryptedFragment {
+
+    Ok(LockboxEncryptedFragment {
         version: LOCKBOX_VERSION,
         id: payload.frontmatter.id.clone(),
         nonce,
         ciphertext,
         key_algorithm,
         key_ciphertext,
-    };
+    })
+}
+
+fn write_lockbox_payload(
+    path: &Path,
+    write_key: &LockboxWriteKey,
+    payload: &LockboxFragmentPayload,
+) -> Result<(), String> {
+    let encrypted = encrypt_lockbox_fragment(payload, write_key)?;
     let text = serde_json::to_string_pretty(&encrypted).map_err(|error| error.to_string())?;
     fs::write(path, text).map_err(|error| error.to_string())
 }
@@ -3418,6 +3436,103 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
+
+    fn lockbox_payload(id: &str, body: &str) -> LockboxFragmentPayload {
+        LockboxFragmentPayload {
+            frontmatter: FragmentFrontmatter {
+                id: id.to_string(),
+                created_at: "2026-07-26T10:00:00+08:00".to_string(),
+                updated_at: "2026-07-26T10:00:00+08:00".to_string(),
+                tags: vec!["密匣".to_string()],
+                category: None,
+                ai_status: Some("none".to_string()),
+                pinned: false,
+                source: "desktop-lockbox".to_string(),
+            },
+            body: body.to_string(),
+        }
+    }
+
+    /// 拆分后的核心保证：加密不再依赖文件系统，且密文仍能被解开。
+    /// 这是把密文写进库的 cipher_* 列的前提。
+    #[test]
+    fn lockbox_envelope_round_trips_without_touching_disk() {
+        let master_key = random_bytes(32);
+        let payload = lockbox_payload("f1", "会议室密码是 1234");
+
+        let encrypted =
+            encrypt_lockbox_fragment(&payload, &LockboxWriteKey::Master(master_key.clone()))
+                .unwrap();
+
+        assert_eq!(encrypted.id, "f1");
+        assert_eq!(encrypted.version, LOCKBOX_VERSION);
+        // 主密钥直封路径不带信封密钥。
+        assert!(encrypted.key_algorithm.is_none());
+        assert!(encrypted.key_ciphertext.is_none());
+        // 密文里不该出现任何明文片段。
+        assert!(!encrypted.ciphertext.contains("1234"));
+        assert!(!encrypted.ciphertext.contains("会议"));
+
+        let keys = LockboxReadKeys {
+            master_key,
+            write_private_key: None,
+        };
+        let decoded = decrypt_lockbox_fragment(&encrypted, &keys).unwrap();
+        assert_eq!(decoded.body, "会议室密码是 1234");
+        assert_eq!(decoded.frontmatter.id, "f1");
+        assert_eq!(decoded.frontmatter.tags, vec!["密匣".to_string()]);
+    }
+
+    /// 公钥路径：锁定态也能写入，解开需要私钥。
+    #[test]
+    fn public_key_envelope_round_trips_and_needs_private_key() {
+        let master_key = random_bytes(32);
+        let private_key = RsaPrivateKey::new(&mut OsRng, 2048).unwrap();
+        let payload = lockbox_payload("f2", "锁定时写入的内容");
+
+        let encrypted = encrypt_lockbox_fragment(
+            &payload,
+            &LockboxWriteKey::Public(private_key.to_public_key()),
+        )
+        .unwrap();
+
+        // 信封路径必须带上密钥算法与被封装的片段密钥。
+        assert_eq!(
+            encrypted.key_algorithm.as_deref(),
+            Some(LOCKBOX_FRAGMENT_KEY_ALGORITHM)
+        );
+        assert!(encrypted.key_ciphertext.is_some());
+
+        // 只有主密钥、没有私钥时解不开。
+        let without = LockboxReadKeys {
+            master_key: master_key.clone(),
+            write_private_key: None,
+        };
+        assert!(decrypt_lockbox_fragment(&encrypted, &without).is_err());
+
+        let with = LockboxReadKeys {
+            master_key,
+            write_private_key: Some(private_key),
+        };
+        let decoded = decrypt_lockbox_fragment(&encrypted, &with).unwrap();
+        assert_eq!(decoded.body, "锁定时写入的内容");
+    }
+
+    /// 同一份明文两次加密必须产生不同密文（nonce 与片段密钥都是随机的），
+    /// 否则密文可比对，等于泄漏「这两条内容相同」。
+    #[test]
+    fn encryption_is_randomized_across_calls() {
+        let master_key = random_bytes(32);
+        let payload = lockbox_payload("f3", "同样的内容");
+
+        let a = encrypt_lockbox_fragment(&payload, &LockboxWriteKey::Master(master_key.clone()))
+            .unwrap();
+        let b =
+            encrypt_lockbox_fragment(&payload, &LockboxWriteKey::Master(master_key)).unwrap();
+
+        assert_ne!(a.nonce, b.nonce);
+        assert_ne!(a.ciphertext, b.ciphertext);
+    }
     use super::*;
 
     #[test]
@@ -3472,35 +3587,41 @@ mod tests {
         let fragment_id = write_public_test_fragment(vault, "linked public note");
 
         let created =
-            create_mind_map_in_vault(vault, "Launch Plan".to_string(), Some(fragment_id.clone()))
+            build_mind_map_document(vault, "Launch Plan".to_string(), Some(fragment_id.clone()))
                 .unwrap();
 
-        assert_eq!(created.file.kind, SHARD_MAP_KIND);
-        assert_eq!(created.file.schema_version, SHARD_MAP_SCHEMA_VERSION);
-        assert_eq!(created.file.revision, 1);
-        assert!(!created.last_saved_hash.is_empty());
+        assert_eq!(created.kind, SHARD_MAP_KIND);
+        assert_eq!(created.schema_version, SHARD_MAP_SCHEMA_VERSION);
+        assert_eq!(created.revision, 1);
 
-        let root = created.file.nodes.get(&created.file.root_id).unwrap();
+        let root = created.nodes.get(&created.root_id).unwrap();
         assert_eq!(root.links.len(), 1);
         let root_children = created
-            .file
             .nodes
             .values()
-            .filter(|node| node.parent_id.as_deref() == Some(created.file.root_id.as_str()))
+            .filter(|node| node.parent_id.as_deref() == Some(created.root_id.as_str()))
             .collect::<Vec<_>>();
         assert_eq!(root_children.len(), 1);
         assert_eq!(root_children[0].text, "");
         match &root.links[0] {
             ShardDocumentLink::Fragment { target_id, .. } => {
-                assert_eq!(target_id, &fragment_id);
+                assert_eq!(target_id.as_str(), fragment_id.as_str());
             }
             _ => panic!("expected fragment link"),
         }
 
-        let summaries = list_mind_maps_in_vault(vault).unwrap();
-        assert_eq!(summaries.len(), 1);
-        assert_eq!(summaries[0].id, created.file.id);
-        assert_eq!(summaries[0].node_count, 2);
+        // 入库后再列出，验证转换层与 summary 口径。
+        let row = notes::maps::row_from_file(&created, Some("maps/x.shardmap.json".into())).unwrap();
+        assert_eq!(row.node_count, 2);
+        let summary = notes::maps::to_summary(&row);
+        assert_eq!(summary.id, created.id);
+        assert_eq!(summary.node_count, 2);
+
+        // 往返：库里的 doc_json 能还原成同一份文档。
+        let restored = notes::maps::to_read_result(&row).unwrap();
+        assert_eq!(restored.file.id, created.id);
+        assert_eq!(restored.file.nodes.len(), created.nodes.len());
+        assert_eq!(restored.last_saved_hash, row.doc_hash);
     }
 
     #[test]
@@ -3508,8 +3629,8 @@ mod tests {
         let tempdir = tempfile::tempdir().unwrap();
         let vault = tempdir.path();
         ensure_vault_layout(vault).unwrap();
-        let created = create_mind_map_in_vault(vault, "Draft".to_string(), None).unwrap();
-        let mut edited = created.file.clone();
+        let created = build_mind_map_document(vault, "Draft".to_string(), None).unwrap();
+        let mut edited = created.clone();
         let child_id = edited
             .nodes
             .values()
@@ -3539,7 +3660,7 @@ mod tests {
         )
         .unwrap();
 
-        let error = create_mind_map_in_vault(vault, "Private Map".to_string(), Some(private.id))
+        let error = build_mind_map_document(vault, "Private Map".to_string(), Some(private.id))
             .unwrap_err();
         assert!(error.contains("密匣片段"));
     }
@@ -3549,23 +3670,22 @@ mod tests {
         let tempdir = tempfile::tempdir().unwrap();
         let vault = tempdir.path();
         ensure_vault_layout(vault).unwrap();
-        let created = create_mind_map_in_vault(vault, "Draft".to_string(), None).unwrap();
-        let mut edited = created.file.clone();
+        let created = build_mind_map_document(vault, "Draft".to_string(), None).unwrap();
+        let mut edited = created.clone();
         edited.title = "Edited Draft".to_string();
 
-        let error = write_mind_map_in_vault(
-            vault,
-            &created.file.id,
-            edited,
-            created.file.revision,
-            "stale-hash",
-        )
-        .unwrap_err();
+        // CAS 冲突后要另存一份副本供人工比对——不覆盖、不丢弃。
+        // CAS 判定本身由 notes::maps 的单测覆盖，这里只验证副本确实落盘。
+        let path = write_mind_map_conflict(vault, &edited).unwrap();
+        assert!(path.exists());
 
-        assert!(error.contains("冲突副本"));
         let mut conflicts = Vec::new();
         collect_mind_map_files(&vault.join("maps").join(".conflicts"), &mut conflicts).unwrap();
         assert_eq!(conflicts.len(), 1);
+
+        // 副本内容必须是被拒绝的那一版，否则拿它比对没有意义。
+        let (restored, _) = read_mind_map_file(&conflicts[0]).unwrap();
+        assert_eq!(restored.title, "Edited Draft");
     }
 
     #[test]

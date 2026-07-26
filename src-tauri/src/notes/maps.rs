@@ -194,6 +194,57 @@ fn map_row(row: &libsql::Row) -> libsql::Result<MapRow> {
     })
 }
 
+// ---------------------------------------------------------------------------
+// 与 lib.rs 的导图类型互转。
+//
+// 库里存的是「整档 JSON + 派生的 hash/计数」，而 UI 要的是解析好的
+// ShardMapFile。转换集中在这里，避免命令层各写一份。
+// ---------------------------------------------------------------------------
+
+/// 由一份导图文档构造待写入的行。`doc_json` 走 canonical 序列化，
+/// `doc_hash` 与前端的 `lastSavedHash` 同源，两者口径必须一致。
+pub(crate) fn row_from_file(
+    file: &crate::ShardMapFile,
+    export_path: Option<String>,
+) -> Result<MapRow, String> {
+    let doc_json = crate::canonical_mind_map_text(file)?;
+    Ok(MapRow {
+        id: file.id.clone(),
+        title: file.title.clone(),
+        doc_hash: crate::hash_text(&doc_json),
+        doc_json,
+        revision: file.revision as i64,
+        node_count: file.nodes.len() as i64,
+        created_at: file.created_at.clone(),
+        updated_at: file.updated_at.clone(),
+        export_path,
+        export_dirty: true,
+    })
+}
+
+pub(crate) fn to_summary(row: &MapRow) -> crate::MindMapSummary {
+    crate::MindMapSummary {
+        id: row.id.clone(),
+        title: row.title.clone(),
+        created_at: row.created_at.clone(),
+        updated_at: row.updated_at.clone(),
+        node_count: row.node_count as usize,
+        path: row.export_path.clone().unwrap_or_default(),
+    }
+}
+
+/// 还原成 UI 要的读取结果。`last_saved_hash` 直接取库里的 `doc_hash`——
+/// 它就是下次 CAS 写入时要回传的那个值。
+pub(crate) fn to_read_result(row: &MapRow) -> Result<crate::MindMapReadResult, String> {
+    let file: crate::ShardMapFile =
+        serde_json::from_str(&row.doc_json).map_err(|error| error.to_string())?;
+    Ok(crate::MindMapReadResult {
+        file,
+        path: row.export_path.clone().unwrap_or_default(),
+        last_saved_hash: row.doc_hash.clone(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

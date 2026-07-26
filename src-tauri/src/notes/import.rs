@@ -77,6 +77,8 @@ pub(crate) struct ImportFailure {
 
 /// 解析完成、待写库的一条。
 struct Parsed {
+    /// 非 None 时这是一份思维导图，走 shard_maps 表而不是 fragments。
+    map: Option<super::maps::MapRow>,
     note: NoteWrite,
     source_kind: &'static str,
     source_path: String,
@@ -122,7 +124,17 @@ pub(crate) async fn run(
                         continue;
                     }
 
-                    match repo::upsert(conn, &item.note).await {
+                    let written = match &item.map {
+                        // 导图：已存在就跳过（重复导入不该重置 revision）。
+                        Some(row) => match super::maps::get(conn, &row.id).await {
+                            Ok(Some(_)) => Ok(()),
+                            Ok(None) => super::maps::insert(conn, row).await,
+                            Err(reason) => Err(reason),
+                        },
+                        None => repo::upsert(conn, &item.note).await,
+                    };
+
+                    match written {
                         Ok(()) => {
                             record_ledger(conn, &item).await?;
                             report.imported += 1;
@@ -217,6 +229,18 @@ async fn scan(
             }
         }
 
+        // 思维导图：整档入库，revision/doc_hash 沿用文件内的值，
+        // 保证乐观并发语义在迁移前后连续。
+        {
+            let mut found = Vec::new();
+            crate::collect_mind_map_files(&vault.join("maps"), &mut found)?;
+            files.extend(found.into_iter().map(|path| SourceFile {
+                path,
+                kind: "shardmap",
+                archived: false,
+            }));
+        }
+
         if include_lockbox {
             for (dir, archived) in [
                 (vault.join("lockbox").join("fragments"), false),
@@ -260,6 +284,7 @@ fn parse_one(vault: &Path, file: &SourceFile) -> Result<Parsed, String> {
         "fragment_md" => {
             let (frontmatter, body) = crate::parse_fragment_text(&raw)?;
             Ok(Parsed {
+                map: None,
                 note: NoteWrite {
                     id: frontmatter.id.clone(),
                     // 必须与 `read_fragment` 的口径完全一致：去掉 frontmatter 与正文
@@ -298,6 +323,7 @@ fn parse_one(vault: &Path, file: &SourceFile) -> Result<Parsed, String> {
             // 未解锁时元数据在密文里，用文件 mtime 占位。
             let stamp = file_timestamp(&file.path);
             Ok(Parsed {
+                map: None,
                 note: NoteWrite {
                     id: encrypted.id.clone(),
                     content: None,
@@ -323,6 +349,33 @@ fn parse_one(vault: &Path, file: &SourceFile) -> Result<Parsed, String> {
                 source_path,
                 source_hash,
                 metadata_pending: true,
+            })
+        }
+        "shardmap" => {
+            // 变量名避开外层的 `file`（SourceFile），别遮蔽它。
+            let doc: crate::ShardMapFile =
+                serde_json::from_str(&raw).map_err(|error| error.to_string())?;
+            Ok(Parsed {
+                map: Some(super::maps::row_from_file(&doc, Some(source_path.clone()))?),
+                note: NoteWrite {
+                    // 导图不落 fragments 表，这里的占位不会被写入。
+                    id: doc.id.clone(),
+                    content: Some(String::new()),
+                    created_at: doc.created_at.clone(),
+                    updated_at: doc.updated_at.clone(),
+                    tags: Vec::new(),
+                    category: None,
+                    ai_status: "none".to_string(),
+                    source: "shardmap".to_string(),
+                    archived: false,
+                    pinned: false,
+                    cipher: None,
+                    export_path: Some(source_path.clone()),
+                },
+                source_kind: file.kind,
+                source_path,
+                source_hash,
+                metadata_pending: false,
             })
         }
         other => Err(format!("未知的源类型：{other}")),
