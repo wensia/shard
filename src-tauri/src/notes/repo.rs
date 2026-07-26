@@ -64,22 +64,7 @@ pub(crate) async fn upsert(conn: &Connection, note: &NoteWrite) -> Result<(), St
     .await
     .map_err(|error| format!("写入笔记失败：{error}"))?;
 
-    tx.execute(
-        "DELETE FROM fragment_tags WHERE fragment_id = ?1",
-        params![note.id.clone()],
-    )
-    .await
-    .map_err(|error| error.to_string())?;
-
-    for tag in &note.tags {
-        tx.execute(
-            "INSERT OR IGNORE INTO fragment_tags (fragment_id, tag) VALUES (?1, ?2)",
-            params![note.id.clone(), tag.clone()],
-        )
-        .await
-        .map_err(|error| format!("写入标签失败：{error}"))?;
-    }
-
+    write_tags(&tx, &note.id, &note.tags).await?;
     search::index_fragment(&tx, &note.id, note.content.as_deref(), &note.tags).await?;
 
     tx.commit()
@@ -122,10 +107,220 @@ ON CONFLICT(id) DO UPDATE SET
     revision        = fragments.revision + 1
 ";
 
-/// 按 id 取一条（含标签）。已软删除的返回 `None`。
+/// CAS 写入失败的原因。
 ///
-/// Phase 2 仅测试使用；读路径在 Phase 3 切换。
-#[allow(dead_code)]
+/// 冲突必须与「写坏了」分开：冲突是**正常**的并发结果，调用方要么重试要么
+/// 另存副本；把两者混成一个字符串错误，同步接进来时就没法自动处理了。
+#[derive(Debug)]
+pub(crate) enum WriteError {
+    /// 期望的 revision 与库里的对不上——别人先改了这一行。
+    Conflict,
+    Failed(String),
+}
+
+impl From<WriteError> for String {
+    fn from(error: WriteError) -> Self {
+        match error {
+            WriteError::Conflict => "这条笔记刚被别处改过，请重试。".to_string(),
+            WriteError::Failed(reason) => reason,
+        }
+    }
+}
+
+/// 带乐观锁的写入。写路径反转后这是笔记的**唯一**写入口。
+///
+/// `expected_revision` 为 `None` 表示新建：id 已存在即冲突，不静默覆盖——
+/// 多端并发下静默覆盖就是丢数据。返回写入后的 revision。
+///
+/// 与 [`upsert`] 的分工：那个是导入用的「以文件为准整体覆盖」，没有并发语义；
+/// 这个是用户写入用的，每一次都要能回答「我改的是不是我看到的那一版」。
+pub(crate) async fn write(
+    conn: &Connection,
+    note: &NoteWrite,
+    expected_revision: Option<i64>,
+    device: &str,
+) -> Result<i64, WriteError> {
+    let tx = conn
+        .transaction()
+        .await
+        .map_err(|error| WriteError::Failed(format!("开启事务失败：{error}")))?;
+
+    let cipher = note.cipher.as_ref();
+    let changed = match expected_revision {
+        None => tx
+            .execute(
+                INSERT_SQL,
+                params![
+                    note.id.clone(),
+                    note.content.clone(),
+                    note.content_hash(),
+                    note.created_at.clone(),
+                    note.updated_at.clone(),
+                    to_millis(&note.updated_at),
+                    note.archived.then(|| note.updated_at.clone()),
+                    i64::from(note.pinned),
+                    i64::from(note.is_lockbox()),
+                    note.category.clone(),
+                    note.ai_status.clone(),
+                    note.source.clone(),
+                    cipher.map(|c| c.version),
+                    cipher.map(|c| c.nonce.clone()),
+                    cipher.map(|c| c.text.clone()),
+                    cipher.and_then(|c| c.key_alg.clone()),
+                    cipher.and_then(|c| c.key_text.clone()),
+                    cipher.and_then(|c| c.key_id.clone()),
+                    note.export_path.clone(),
+                    device,
+                ],
+            )
+            .await
+            .map_err(|error| WriteError::Failed(format!("新建笔记失败：{error}")))?,
+        Some(revision) => tx
+            .execute(
+                UPDATE_CAS_SQL,
+                params![
+                    note.id.clone(),
+                    note.content.clone(),
+                    note.content_hash(),
+                    note.updated_at.clone(),
+                    to_millis(&note.updated_at),
+                    i64::from(note.archived),
+                    i64::from(note.pinned),
+                    i64::from(note.is_lockbox()),
+                    note.category.clone(),
+                    note.ai_status.clone(),
+                    note.source.clone(),
+                    cipher.map(|c| c.version),
+                    cipher.map(|c| c.nonce.clone()),
+                    cipher.map(|c| c.text.clone()),
+                    cipher.and_then(|c| c.key_alg.clone()),
+                    cipher.and_then(|c| c.key_text.clone()),
+                    cipher.and_then(|c| c.key_id.clone()),
+                    note.export_path.clone(),
+                    device,
+                    revision,
+                ],
+            )
+            .await
+            .map_err(|error| WriteError::Failed(format!("更新笔记失败：{error}")))?,
+    };
+
+    if changed == 0 {
+        return Err(WriteError::Conflict);
+    }
+
+    write_tags(&tx, &note.id, &note.tags)
+        .await
+        .map_err(WriteError::Failed)?;
+    search::index_fragment(&tx, &note.id, note.content.as_deref(), &note.tags)
+        .await
+        .map_err(WriteError::Failed)?;
+
+    let revision = scalar_i64(&tx, "SELECT revision FROM fragments WHERE id = ?1", &note.id)
+        .await
+        .map_err(WriteError::Failed)?;
+
+    tx.commit()
+        .await
+        .map_err(|error| WriteError::Failed(format!("提交事务失败：{error}")))?;
+    Ok(revision)
+}
+
+/// 新建。`ON CONFLICT DO NOTHING` 让「id 已存在」表现为影响 0 行，
+/// 与 CAS 失败走同一条冲突分支，调用方只需要判断一次。
+const INSERT_SQL: &str = "
+INSERT INTO fragments (
+    id, content, content_hash, created_at, updated_at, updated_at_ms,
+    archived_at, pinned, lockbox, category, ai_status, source,
+    cipher_version, cipher_nonce, cipher_text, cipher_key_alg, cipher_key_text, cipher_key_id,
+    export_path, updated_by_device, revision, export_dirty
+) VALUES (
+    ?1, ?2, ?3, ?4, ?5, ?6,
+    ?7, ?8, ?9, ?10, ?11, ?12,
+    ?13, ?14, ?15, ?16, ?17, ?18,
+    ?19, ?20, 1, 1
+)
+ON CONFLICT(id) DO NOTHING
+";
+
+/// 更新。`archived_at` 用 COALESCE 保留**首次**归档的时间——每次编辑都刷新它
+/// 会让「什么时候归档的」这个事实随便一次改标签就丢掉。
+const UPDATE_CAS_SQL: &str = "
+UPDATE fragments SET
+    content         = ?2,
+    content_hash    = ?3,
+    updated_at      = ?4,
+    updated_at_ms   = ?5,
+    archived_at     = CASE WHEN ?6 = 1 THEN COALESCE(archived_at, ?4) ELSE NULL END,
+    pinned          = ?7,
+    lockbox         = ?8,
+    category        = ?9,
+    ai_status       = ?10,
+    source          = ?11,
+    cipher_version  = ?12,
+    cipher_nonce    = ?13,
+    cipher_text     = ?14,
+    cipher_key_alg  = ?15,
+    cipher_key_text = ?16,
+    cipher_key_id   = ?17,
+    export_path     = ?18,
+    updated_by_device = ?19,
+    export_dirty    = 1,
+    revision        = revision + 1
+WHERE id = ?1 AND revision = ?20 AND deleted_at IS NULL
+";
+
+async fn write_tags(conn: &Connection, id: &str, tags: &[String]) -> Result<(), String> {
+    conn.execute("DELETE FROM fragment_tags WHERE fragment_id = ?1", params![id])
+        .await
+        .map_err(|error| error.to_string())?;
+
+    for tag in tags {
+        conn.execute(
+            "INSERT OR IGNORE INTO fragment_tags (fragment_id, tag) VALUES (?1, ?2)",
+            params![id, tag.clone()],
+        )
+        .await
+        .map_err(|error| format!("写入标签失败：{error}"))?;
+    }
+    Ok(())
+}
+
+async fn scalar_i64(conn: &Connection, sql: &str, param: &str) -> Result<i64, String> {
+    let mut rows = conn
+        .query(sql, params![param])
+        .await
+        .map_err(|error| error.to_string())?;
+    rows.next()
+        .await
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "查询无结果".to_string())?
+        .get(0)
+        .map_err(|error| error.to_string())
+}
+
+/// 本机的设备标识。首次调用时生成并存进 `db_meta`，此后固定不变。
+///
+/// 多端同步要能回答「这一版是谁写的」，`updated_by_device` 在冲突诊断时往往是
+/// 唯一线索。也用作新 id 的后缀，让不同设备的并发新建不可能撞号。
+pub(crate) async fn device_id(conn: &Connection) -> Result<String, String> {
+    if let Some(existing) = get_meta(conn, DEVICE_ID_KEY).await? {
+        if !existing.trim().is_empty() {
+            return Ok(existing);
+        }
+    }
+
+    let mut bytes = [0u8; 8];
+    rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut bytes);
+    let id: String = bytes.iter().map(|byte| format!("{byte:02x}")).collect();
+
+    set_meta(conn, DEVICE_ID_KEY, &id).await?;
+    Ok(id)
+}
+
+const DEVICE_ID_KEY: &str = "device_id";
+
+/// 按 id 取一条（含标签）。已软删除的返回 `None`。
 pub(crate) async fn get(conn: &Connection, id: &str) -> Result<Option<FragmentRow>, String> {
     let sql =
         format!("SELECT {FRAGMENT_COLUMNS} FROM fragments WHERE id = ?1 AND deleted_at IS NULL");
@@ -253,11 +448,10 @@ pub(crate) async fn mark_exported(conn: &Connection, id: &str) -> Result<(), Str
 
 /// 把一条从库里彻底移除（含标签与索引）。
 ///
-/// 与 [`soft_delete`] 不同，这里是**硬删**，只用于「这条内容不该再以当前形态
-/// 存在于库中」的场景——典型是明文被移入密匣：明文文件已从磁盘删除，库里
-/// 残留的那一行就是明文泄漏，留个墓碑没有意义反而危险。
-///
-/// 用户发起的删除请走 `soft_delete`，那里需要墓碑来阻止其它设备把它推回来。
+/// 与 [`soft_delete`] 不同，这里是**硬删**，没有墓碑。写路径反转后生产代码
+/// 里已经没有它的位置了：转入密匣变成了同一行的状态更新，明文列在同一条
+/// UPDATE 里被清空，不再有「先删行再重建」的中间态。留给测试重建库用。
+#[cfg(test)]
 pub(crate) async fn purge(conn: &Connection, id: &str) -> Result<(), String> {
     let tx = conn
         .transaction()

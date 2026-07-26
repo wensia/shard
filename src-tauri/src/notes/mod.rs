@@ -10,10 +10,10 @@
 //! 冲突是不可恢复的硬错误（见 `libsql-0.9.30/src/sync.rs` 的 `sync_offline`），
 //! 拿它做多端合并会在双端离线写之后永久分叉。同步必须自己在应用层做。
 //!
-//! # 阶段
+//! # 真相源
 //!
-//! Phase 2 是**影子写**：Markdown 文件仍是真相源，这个库只是旁路验证，
-//! 出问题删掉重建即可。写路径反转在 Phase 4。
+//! 这个库**就是**本地的真相源。Markdown / `.shard` / `.shardmap.json` 已经
+//! 降级为手动导出的产物：写命令只写库、不碰文件，文件只在用户点导出时生成。
 
 pub(crate) mod attachments;
 pub(crate) mod bridge;
@@ -25,7 +25,6 @@ pub(crate) mod model;
 pub(crate) mod repo;
 pub(crate) mod schema;
 pub(crate) mod search;
-pub(crate) mod shadow;
 
 use crate::db::{migrate::Migration, DbHandle, DbSpec};
 use crate::AppConfig;
@@ -291,6 +290,174 @@ mod tests {
 
         let hits = search::search(&conn, "会议", false, 20).await.unwrap();
         assert_eq!(hits.len(), 2);
+    }
+
+    /// 新建走 `expected_revision = None`，起始 revision 为 1。
+    #[tokio::test]
+    async fn write_creates_at_revision_one() {
+        let conn = open_test_conn().await;
+        let revision = repo::write(&conn, &note("f1", "新建", &["a"]), None, "dev-a")
+            .await
+            .unwrap();
+
+        assert_eq!(revision, 1);
+        assert_eq!(repo::get(&conn, "f1").await.unwrap().unwrap().revision, 1);
+    }
+
+    /// 新建撞上已存在的 id 必须是冲突，**不能**静默覆盖——多端并发下
+    /// 静默覆盖就是丢数据。
+    #[tokio::test]
+    async fn write_rejects_duplicate_create() {
+        let conn = open_test_conn().await;
+        repo::write(&conn, &note("f1", "先来的", &[]), None, "dev-a")
+            .await
+            .unwrap();
+
+        let result = repo::write(&conn, &note("f1", "后到的", &[]), None, "dev-b").await;
+        assert!(matches!(result, Err(repo::WriteError::Conflict)));
+        assert_eq!(
+            repo::get(&conn, "f1").await.unwrap().unwrap().content.as_deref(),
+            Some("先来的"),
+            "先写的那一版必须原封不动"
+        );
+    }
+
+    #[tokio::test]
+    async fn write_advances_revision_with_matching_cas() {
+        let conn = open_test_conn().await;
+        repo::write(&conn, &note("f1", "第一版", &[]), None, "dev-a")
+            .await
+            .unwrap();
+
+        let revision = repo::write(&conn, &note("f1", "第二版", &[]), Some(1), "dev-a")
+            .await
+            .unwrap();
+        assert_eq!(revision, 2);
+
+        let row = repo::get(&conn, "f1").await.unwrap().unwrap();
+        assert_eq!(row.content.as_deref(), Some("第二版"));
+    }
+
+    /// 拿着过期的 revision 去写必须失败，且不留下任何痕迹。
+    #[tokio::test]
+    async fn write_rejects_stale_revision() {
+        let conn = open_test_conn().await;
+        repo::write(&conn, &note("f1", "第一版", &[]), None, "dev-a")
+            .await
+            .unwrap();
+        repo::write(&conn, &note("f1", "第二版", &[]), Some(1), "dev-a")
+            .await
+            .unwrap();
+
+        // dev-b 手里还是 revision 1。
+        let result = repo::write(&conn, &note("f1", "基于旧版", &[]), Some(1), "dev-b").await;
+        assert!(matches!(result, Err(repo::WriteError::Conflict)));
+
+        let row = repo::get(&conn, "f1").await.unwrap().unwrap();
+        assert_eq!(row.content.as_deref(), Some("第二版"));
+        assert_eq!(row.revision, 2, "冲突不该推进 revision");
+    }
+
+    /// 软删除的行不该还能被 CAS 写活。
+    #[tokio::test]
+    async fn write_cannot_resurrect_a_tombstone() {
+        let conn = open_test_conn().await;
+        repo::write(&conn, &note("f1", "内容", &[]), None, "dev-a")
+            .await
+            .unwrap();
+        repo::soft_delete(&conn, "f1", "2026-07-26T11:00:00+08:00", "dev-a")
+            .await
+            .unwrap();
+
+        let result = repo::write(&conn, &note("f1", "复活", &[]), Some(2), "dev-a").await;
+        assert!(matches!(result, Err(repo::WriteError::Conflict)));
+    }
+
+    /// 归档时间只记第一次。此后改标签、改正文都不该把它刷成"刚刚"。
+    #[tokio::test]
+    async fn archived_at_records_first_archive_only() {
+        let conn = open_test_conn().await;
+        repo::write(&conn, &note("f1", "内容", &[]), None, "dev-a")
+            .await
+            .unwrap();
+
+        let mut archived = note("f1", "内容", &[]);
+        archived.archived = true;
+        archived.updated_at = "2026-07-26T12:00:00+08:00".into();
+        repo::write(&conn, &archived, Some(1), "dev-a").await.unwrap();
+        let first = archived_at(&conn, "f1").await;
+
+        let mut edited = archived.clone();
+        edited.updated_at = "2026-07-27T09:00:00+08:00".into();
+        repo::write(&conn, &edited, Some(2), "dev-a").await.unwrap();
+        assert_eq!(archived_at(&conn, "f1").await, first, "归档时间不该被后续编辑刷新");
+
+        // 取消归档要清空，再次归档才重新记时间。
+        let mut restored = edited.clone();
+        restored.archived = false;
+        repo::write(&conn, &restored, Some(3), "dev-a").await.unwrap();
+        assert!(archived_at(&conn, "f1").await.is_none());
+    }
+
+    async fn archived_at(conn: &Connection, id: &str) -> Option<String> {
+        let mut rows = conn
+            .query(
+                "SELECT archived_at FROM fragments WHERE id = ?1",
+                libsql::params![id],
+            )
+            .await
+            .unwrap();
+        rows.next().await.unwrap().unwrap().get(0).unwrap()
+    }
+
+    /// 安全关键：一条笔记转入密匣后，库里绝不能残留明文。
+    ///
+    /// 文件时代这是「删明文文件 + 写密匣文件」两步，中间明文同时存在于两处；
+    /// 现在是同一行的一次 CAS UPDATE，明文列与索引在同一个事务里被清空。
+    #[tokio::test]
+    async fn converting_to_lockbox_leaves_no_plaintext_behind() {
+        let conn = open_test_conn().await;
+        repo::write(&conn, &note("f1", "会议室密码是 1234", &["x"]), None, "dev-a")
+            .await
+            .unwrap();
+        assert_eq!(
+            search::search(&conn, "会议", false, 20).await.unwrap().len(),
+            1,
+            "前置条件：明文此时应可搜到"
+        );
+
+        repo::write(&conn, &lockbox_note("f1", "ENCRYPTED"), Some(1), "dev-a")
+            .await
+            .unwrap();
+
+        let row = repo::get(&conn, "f1").await.unwrap().unwrap();
+        assert!(row.lockbox);
+        assert!(row.content.is_none(), "明文列必须为空");
+        assert_eq!(row.cipher.unwrap().text, "ENCRYPTED");
+        assert!(row.tags.is_empty(), "密匣的标签留在密文里，不该落在明文标签表");
+
+        assert!(
+            search::search(&conn, "会议", false, 20).await.unwrap().is_empty(),
+            "旧明文必须已从索引中消失"
+        );
+        let mut rows = conn
+            .query("SELECT count(*) FROM fragments_fts", ())
+            .await
+            .unwrap();
+        let indexed: i64 = rows.next().await.unwrap().unwrap().get(0).unwrap();
+        assert_eq!(indexed, 0, "FTS 表里不该留下任何行");
+    }
+
+    /// 设备标识生成一次之后必须固定：它会写进每一行的 updated_by_device，
+    /// 每次启动都变的话冲突诊断就没有线索了。
+    #[tokio::test]
+    async fn device_id_is_stable_once_generated() {
+        let conn = open_test_conn().await;
+        let first = repo::device_id(&conn).await.unwrap();
+        let second = repo::device_id(&conn).await.unwrap();
+
+        assert_eq!(first, second);
+        assert_eq!(first.len(), 16, "16 位十六进制，64 bit 熵");
     }
 
     #[tokio::test]

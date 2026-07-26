@@ -4,7 +4,7 @@ use aes_gcm::{
 };
 use argon2::{Algorithm, Argon2, Params, Version};
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
-use chrono::Local;
+use chrono::{DateTime, Local};
 use rand::{rngs::OsRng, RngCore};
 use rsa::{
     pkcs8::{DecodePrivateKey, DecodePublicKey, EncodePrivateKey, EncodePublicKey},
@@ -281,6 +281,9 @@ struct LockboxSession {
 type LockboxRuntime = Arc<Mutex<LockboxSession>>;
 
 enum LockboxWriteKey {
+    /// 直接用主密钥加密。新写入一律走 `Public`（免密码写入），这一支只在测试
+    /// 里构造——但**解密侧必须继续支持**：历史数据里有这种形状的信封。
+    #[allow(dead_code)]
     Master(Vec<u8>),
     Public(RsaPublicKey),
 }
@@ -762,6 +765,134 @@ fn mind_map_export_path(file: &ShardMapFile) -> String {
     )
 }
 
+/// 一次写命令要用到的全部上下文。
+///
+/// 一次性拿齐，避免每个命令各自 `ensure_vault_dirs` + 取连接 + 读密钥——
+/// 那些都是阻塞操作，散在各处既慢又容易漏掉某一个。
+struct WriteCtx {
+    conn: libsql::Connection,
+    device: String,
+    vault: PathBuf,
+    /// 密匣解锁时的读密钥。锁定态为 `None`，此时密匣条目写得进读不出。
+    read_keys: Option<LockboxReadKeys>,
+}
+
+async fn write_ctx(
+    app: &tauri::AppHandle,
+    notes: &NotesDb,
+    lockbox_runtime: &LockboxRuntime,
+) -> Result<WriteCtx, String> {
+    let conn = notes.conn(app, false).await?;
+    let device = notes::repo::device_id(&conn).await?;
+
+    let app = app.clone();
+    let runtime = lockbox_runtime.clone();
+    let (vault, read_keys) = run_blocking(move || {
+        let vault = ensure_vault_dirs(&app)?;
+        let read_keys = unlocked_lockbox_read_keys(&vault, &runtime);
+        Ok((vault, read_keys))
+    })
+    .await?;
+
+    Ok(WriteCtx {
+        conn,
+        device,
+        vault,
+        read_keys,
+    })
+}
+
+impl WriteCtx {
+    /// 读出一条，不存在就报错。写命令都以「先看到当前版本」开头。
+    async fn require_row(&self, id: &str) -> Result<notes::model::FragmentRow, String> {
+        notes::repo::get(&self.conn, id)
+            .await?
+            .ok_or_else(|| format!("找不到片段 {id}"))
+    }
+
+    /// 写完之后从库里读回来。返回给前端的那一条与列表里的同一条必须完全一致。
+    async fn read_back(&self, id: &str) -> Result<Fragment, String> {
+        let row = self.require_row(id).await?;
+        notes::bridge::fragment_from_row(&row, self.read_keys.as_ref())
+    }
+
+    fn require_read_keys(&self) -> Result<&LockboxReadKeys, String> {
+        self.read_keys
+            .as_ref()
+            .ok_or_else(|| "lockbox_locked".to_string())
+    }
+}
+
+/// 新片段 id：`<时间戳>-<8 位 hex>-<设备短码>`。
+///
+/// 旧格式只有 16 bit 随机后缀，同一秒内两台设备各建一条就有肉眼可见的碰撞
+/// 概率。加上 32 bit 随机与设备短码后，跨设备重号在实践中不可能发生。
+fn new_fragment_id(now: &DateTime<Local>, device: &str) -> String {
+    let mut bytes = [0u8; 4];
+    OsRng.fill_bytes(&mut bytes);
+    let random: String = bytes.iter().map(|byte| format!("{byte:02x}")).collect();
+    let short_device = &device[..6.min(device.len())];
+
+    format!("{}-{random}-{short_device}", now.format("%Y%m%d-%H%M%S"))
+}
+
+/// 把正文与元数据封成密匣信封。**明文不进库**，出去的只有密文。
+fn seal_lockbox_note(
+    vault: &Path,
+    lockbox_runtime: &LockboxRuntime,
+    frontmatter: FragmentFrontmatter,
+    body: &str,
+) -> Result<notes::model::CipherEnvelope, String> {
+    reject_lockbox_images(body)?;
+    let write_key = lockbox_write_key(vault, lockbox_runtime)?;
+    let payload = LockboxFragmentPayload {
+        frontmatter,
+        body: body.to_string(),
+    };
+
+    Ok(cipher_envelope(&encrypt_lockbox_fragment(
+        &payload, &write_key,
+    )?))
+}
+
+fn cipher_envelope(encrypted: &LockboxEncryptedFragment) -> notes::model::CipherEnvelope {
+    notes::model::CipherEnvelope {
+        version: i64::from(encrypted.version),
+        nonce: encrypted.nonce.clone(),
+        text: encrypted.ciphertext.clone(),
+        key_alg: encrypted.key_algorithm.clone(),
+        key_text: encrypted.key_ciphertext.clone(),
+        key_id: None,
+    }
+}
+
+/// 解开库里那一行的密文，拿到可编辑的 payload。
+///
+/// 密匣的标签、置顶、创建时间全部藏在密文里——库里对应的列对密匣条目是空的
+/// （标签尤其不能进 `fragment_tags`，那等于把隐私标签明文摊开）。所以任何要
+/// 改这些字段的操作，都必须先解密再重新封回去。
+fn open_lockbox_row(
+    row: &notes::model::FragmentRow,
+    read_keys: &LockboxReadKeys,
+) -> Result<LockboxFragmentPayload, String> {
+    let cipher = row
+        .cipher
+        .as_ref()
+        .ok_or_else(|| "密匣条目缺少密文".to_string())?;
+
+    decrypt_lockbox_fragment(
+        &LockboxEncryptedFragment {
+            version: cipher.version as u32,
+            id: row.id.clone(),
+            nonce: cipher.nonce.clone(),
+            ciphertext: cipher.text.clone(),
+            key_algorithm: cipher.key_alg.clone(),
+            key_ciphertext: cipher.key_text.clone(),
+        },
+        read_keys,
+    )
+}
+
 #[tauri::command]
 async fn create_fragment(
     app: tauri::AppHandle,
@@ -770,61 +901,94 @@ async fn create_fragment(
     content: String,
     tags: Option<Vec<String>>,
 ) -> Result<Fragment, String> {
-    let lockbox_runtime = lockbox_runtime.inner().clone();
-    let shadow_app = app.clone();
-    let fragment = run_blocking(move || {
-        let content = content.trim().to_string();
-        if content.is_empty() {
-            return Err("片段内容不能为空".to_string());
-        }
+    let content = content.trim().to_string();
+    if content.is_empty() {
+        return Err("片段内容不能为空".to_string());
+    }
 
-        let vault = ensure_vault_dirs(&app)?;
-        let normalized_tags = normalize_tags(tags.unwrap_or_default(), true);
-        if contains_lockbox_tag(&normalized_tags) {
-            return create_lockbox_fragment_in_vault(
-                &vault,
-                &lockbox_runtime,
-                &content,
-                normalized_tags,
-            );
-        }
+    let runtime = lockbox_runtime.inner().clone();
+    let ctx = write_ctx(&app, &notes, &runtime).await?;
 
-        let now = Local::now();
-        let suffix = unique_suffix();
-        let id = format!("{}-{}", now.format("%Y%m%d-%H%M%S"), suffix);
-        let created_at = now.to_rfc3339();
-        let dir = vault
-            .join("fragments")
-            .join(now.format("%Y").to_string())
-            .join(now.format("%m").to_string());
-        fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+    let now = Local::now();
+    let created_at = now.to_rfc3339();
+    let id = new_fragment_id(&now, &ctx.device);
+    let normalized_tags = normalize_tags(tags.unwrap_or_default(), true);
+    let wants_lockbox = contains_lockbox_tag(&normalized_tags);
 
-        let file_name = format!("{}-{}.md", now.format("%Y-%m-%d-%H%M%S"), suffix);
-        let path = dir.join(file_name);
+    let note = if wants_lockbox {
         let frontmatter = FragmentFrontmatter {
             id: id.clone(),
+            created_at: created_at.clone(),
+            updated_at: created_at.clone(),
+            tags: normalize_lockbox_tags(normalized_tags),
+            category: None,
+            ai_status: Some("none".to_string()),
+            pinned: false,
+            source: "desktop-lockbox".to_string(),
+        };
+
+        let vault = ctx.vault.clone();
+        let runtime = runtime.clone();
+        let body = content.clone();
+        let cipher =
+            run_blocking(move || seal_lockbox_note(&vault, &runtime, frontmatter, &body)).await?;
+
+        notes::model::NoteWrite {
+            id: id.clone(),
+            // 明文不进库。密匣的标签也留在密文里，不进 fragment_tags。
+            content: None,
+            created_at: created_at.clone(),
+            updated_at: created_at,
+            tags: Vec::new(),
+            category: None,
+            ai_status: "none".to_string(),
+            source: "desktop-lockbox".to_string(),
+            archived: false,
+            pinned: false,
+            cipher: Some(cipher),
+            export_path: None,
+        }
+    } else {
+        notes::model::NoteWrite {
+            id: id.clone(),
+            content: Some(content),
             created_at: created_at.clone(),
             updated_at: created_at,
             tags: normalized_tags,
             category: None,
-            ai_status: Some("none".to_string()),
-            pinned: false,
+            ai_status: "none".to_string(),
             source: "desktop".to_string(),
-        };
+            archived: false,
+            pinned: false,
+            cipher: None,
+            export_path: None,
+        }
+    };
 
-        write_fragment_file(&path, &frontmatter, &content)?;
+    notes::repo::write(&ctx.conn, &note, None, &ctx.device).await?;
+    link_body_attachments(&ctx.conn, &note).await;
+    ctx.read_back(&id).await
+}
 
-        let _rel_path = relative_path(&vault, &path)?;
+/// 把正文里引用到的附件与这条笔记关联起来。
+///
+/// 失败只记日志：关联表只影响孤儿附件回收，写不进去不该让用户的保存失败。
+async fn link_body_attachments(conn: &libsql::Connection, note: &notes::model::NoteWrite) {
+    let Some(content) = note.content.as_deref() else {
+        return;
+    };
 
-
-        read_fragment(&path, &vault)
-    })
-    .await?;
-
-    // 落盘成功后才同步进本地库。失败只记日志：文件仍是真相源，
-    // 旁路索引出问题不该让用户看到保存失败（DESIGN.md：保存不可失败）。
-    notes::shadow::sync_file(&shadow_app, &notes, &fragment.path).await;
-    Ok(fragment)
+    for hash in notes::attachments::referenced_hashes(content) {
+        match notes::attachments::get(conn, &hash).await {
+            Ok(Some(_)) => {
+                if let Err(error) = notes::attachments::link(conn, &note.id, &hash).await {
+                    eprintln!("[shard] 关联附件失败（{}/{hash}）：{error}", note.id);
+                }
+            }
+            Ok(None) => {}
+            Err(error) => eprintln!("[shard] 查询附件失败（{hash}）：{error}"),
+        }
+    }
 }
 
 #[tauri::command]
@@ -835,50 +999,14 @@ async fn update_fragment_tags(
     id: String,
     tags: Vec<String>,
 ) -> Result<Fragment, String> {
-    let lockbox_runtime = lockbox_runtime.inner().clone();
-    let shadow_app = app.clone();
-    let fragment = run_blocking(move || {
-        let vault = ensure_vault_dirs(&app)?;
-        let normalized_tags = normalize_tags(tags, false);
+    let runtime = lockbox_runtime.inner().clone();
+    let ctx = write_ctx(&app, &notes, &runtime).await?;
+    let row = ctx.require_row(&id).await?;
+    let normalized_tags = normalize_tags(tags, false);
 
-        if let Some(lockbox_path) = find_lockbox_fragment_path(&vault, &id)? {
-            let read_keys = require_unlocked_lockbox_read_keys(&vault, &lockbox_runtime)?;
-            return update_lockbox_fragment_tags_in_vault(
-                &vault,
-                &lockbox_path,
-                &read_keys,
-                normalized_tags,
-            );
-        }
-
-        let path = find_fragment_path(&vault, &id)?.ok_or_else(|| format!("找不到片段 {}", id))?;
-        let text = fs::read_to_string(&path).map_err(|error| error.to_string())?;
-        let (mut frontmatter, body) = parse_fragment_text(&text)?;
-
-        if contains_lockbox_tag(&normalized_tags) {
-            return move_public_fragment_to_lockbox_in_vault(&vault, &lockbox_runtime, &path);
-        }
-
-        let mut next_tags = normalized_tags;
-        if next_tags.is_empty() {
-            next_tags.push("inbox".to_string());
-        }
-
-        frontmatter.tags = next_tags;
-        frontmatter.updated_at = Local::now().to_rfc3339();
-        write_fragment_file(&path, &frontmatter, body.trim_start_matches('\n'))?;
-
-        let _rel_path = relative_path(&vault, &path)?;
-
-
-        read_fragment(&path, &vault)
-    })
-    .await?;
-
-    // 落盘成功后才同步进本地库。失败只记日志：文件仍是真相源，
-    // 旁路索引出问题不该让用户看到保存失败（DESIGN.md：保存不可失败）。
-    notes::shadow::sync_file(&shadow_app, &notes, &fragment.path).await;
-    Ok(fragment)
+    let note = rewrite_note(&ctx, &runtime, &row, None, normalized_tags).await?;
+    notes::repo::write(&ctx.conn, &note, Some(row.revision), &ctx.device).await?;
+    ctx.read_back(&id).await
 }
 
 #[tauri::command]
@@ -890,58 +1018,99 @@ async fn update_fragment(
     content: String,
     tags: Option<Vec<String>>,
 ) -> Result<Fragment, String> {
-    let lockbox_runtime = lockbox_runtime.inner().clone();
-    let shadow_app = app.clone();
-    let fragment = run_blocking(move || {
-        if content.trim().is_empty() {
-            return Err("片段内容不能为空".to_string());
-        }
+    if content.trim().is_empty() {
+        return Err("片段内容不能为空".to_string());
+    }
 
-        let vault = ensure_vault_dirs(&app)?;
-        let normalized_tags = normalize_tags(tags.unwrap_or_default(), false);
+    let runtime = lockbox_runtime.inner().clone();
+    let ctx = write_ctx(&app, &notes, &runtime).await?;
+    let row = ctx.require_row(&id).await?;
+    let normalized_tags = normalize_tags(tags.unwrap_or_default(), false);
 
-        if let Some(lockbox_path) = find_lockbox_fragment_path(&vault, &id)? {
-            let read_keys = require_unlocked_lockbox_read_keys(&vault, &lockbox_runtime)?;
-            return update_lockbox_fragment_in_vault(
-                &vault,
-                &lockbox_path,
-                &read_keys,
-                content.trim(),
-                normalized_tags,
-            );
-        }
+    let note = rewrite_note(
+        &ctx,
+        &runtime,
+        &row,
+        Some(content.trim().to_string()),
+        normalized_tags,
+    )
+    .await?;
+    notes::repo::write(&ctx.conn, &note, Some(row.revision), &ctx.device).await?;
+    link_body_attachments(&ctx.conn, &note).await;
+    ctx.read_back(&id).await
+}
 
-        let path = find_fragment_path(&vault, &id)?.ok_or_else(|| format!("找不到片段 {}", id))?;
-        let text = fs::read_to_string(&path).map_err(|error| error.to_string())?;
-        let (mut frontmatter, _) = parse_fragment_text(&text)?;
+/// 编辑一条笔记的正文与标签，产出新的写入参数。
+///
+/// 三条分支合在一处，是因为它们共享同一个判定：**结果该不该是密匣**。分开写
+/// 会让「明文加上 #密匣 标签」这条转换路径漏在某个命令里。
+///
+/// `content` 为 `None` 表示只改标签，正文沿用当前值（密匣条目则沿用密文里的
+/// 正文，需要解密后再封回去）。
+async fn rewrite_note(
+    ctx: &WriteCtx,
+    lockbox_runtime: &LockboxRuntime,
+    row: &notes::model::FragmentRow,
+    content: Option<String>,
+    tags: Vec<String>,
+) -> Result<notes::model::NoteWrite, String> {
+    let now = Local::now().to_rfc3339();
+    let wants_lockbox = row.lockbox || contains_lockbox_tag(&tags);
 
-        if contains_lockbox_tag(&normalized_tags) {
-            return move_public_fragment_content_to_lockbox_in_vault(
-                &vault,
-                &lockbox_runtime,
-                &path,
-                content.trim(),
-                normalized_tags,
-            );
-        }
-
-        let mut next_tags = normalized_tags;
+    if !wants_lockbox {
+        let mut next_tags = tags;
         if next_tags.is_empty() {
             next_tags.push("inbox".to_string());
         }
 
-        frontmatter.tags = next_tags;
-        frontmatter.updated_at = Local::now().to_rfc3339();
-        write_fragment_file(&path, &frontmatter, &content)?;
+        return Ok(notes::model::NoteWrite {
+            content: Some(content.unwrap_or_else(|| row.content.clone().unwrap_or_default())),
+            updated_at: now,
+            tags: next_tags,
+            ..notes::model::NoteWrite::from_row(row)
+        });
+    }
 
-        read_fragment(&path, &vault)
+    // 密匣：正文与元数据都要重新封一遍。已是密匣的先解密拿到当前值，
+    // 明文转入密匣的直接用库里的明文。
+    let (mut frontmatter, current_body) = if row.lockbox {
+        let payload = open_lockbox_row(row, ctx.require_read_keys()?)?;
+        (payload.frontmatter, payload.body)
+    } else {
+        (
+            FragmentFrontmatter {
+                id: row.id.clone(),
+                created_at: row.created_at.clone(),
+                updated_at: row.updated_at.clone(),
+                tags: row.tags.clone(),
+                category: row.category.clone(),
+                ai_status: Some(row.ai_status.clone()),
+                pinned: row.pinned,
+                source: row.source.clone(),
+            },
+            row.content.clone().unwrap_or_default(),
+        )
+    };
+
+    let body = content.unwrap_or(current_body);
+    frontmatter.tags = normalize_lockbox_tags(tags);
+    frontmatter.updated_at = now.clone();
+    frontmatter.source = "desktop-lockbox".to_string();
+
+    let vault = ctx.vault.clone();
+    let runtime = lockbox_runtime.clone();
+    let sealed_body = body.clone();
+    let cipher =
+        run_blocking(move || seal_lockbox_note(&vault, &runtime, frontmatter, &sealed_body)).await?;
+
+    Ok(notes::model::NoteWrite {
+        content: None,
+        updated_at: now,
+        tags: Vec::new(),
+        source: "desktop-lockbox".to_string(),
+        cipher: Some(cipher),
+        ..notes::model::NoteWrite::from_row(row)
     })
-    .await?;
-
-    // 落盘成功后才同步进本地库。失败只记日志：文件仍是真相源，
-    // 旁路索引出问题不该让用户看到保存失败（DESIGN.md：保存不可失败）。
-    notes::shadow::sync_file(&shadow_app, &notes, &fragment.path).await;
-    Ok(fragment)
 }
 
 #[tauri::command]
@@ -952,43 +1121,27 @@ async fn set_fragment_archived(
     id: String,
     archived: bool,
 ) -> Result<Fragment, String> {
-    let lockbox_runtime = lockbox_runtime.inner().clone();
-    let shadow_app = app.clone();
-    let fragment = run_blocking(move || {
-        let vault = ensure_vault_dirs(&app)?;
+    let runtime = lockbox_runtime.inner().clone();
+    let ctx = write_ctx(&app, &notes, &runtime).await?;
+    let row = ctx.require_row(&id).await?;
 
-        if let Some(path) = find_lockbox_fragment_path(&vault, &id)? {
-            let read_keys = require_unlocked_lockbox_read_keys(&vault, &lockbox_runtime)?;
-            let rel_path = relative_path(&vault, &path)?;
-            // 已是目标状态：直接返回，保持幂等。
-            if rel_path.starts_with("lockbox/archive/") == archived {
-                return read_lockbox_fragment(&path, &vault, &read_keys);
-            }
-            let active = vault.join("lockbox").join("fragments");
-            let archive = vault.join("lockbox").join("archive");
-            let (from, to) = if archived { (&active, &archive) } else { (&archive, &active) };
-            let moved = move_fragment_file(from, to, &path)?;
-            return read_lockbox_fragment(&moved, &vault, &read_keys);
-        }
+    // 已是目标状态：什么都不做，保持幂等。
+    if row.archived == archived {
+        return ctx.read_back(&id).await;
+    }
 
-        let path = find_fragment_path(&vault, &id)?.ok_or_else(|| format!("找不到片段 {}", id))?;
-        let rel_path = relative_path(&vault, &path)?;
-        if rel_path.starts_with("archive/") == archived {
-            return read_fragment(&path, &vault);
-        }
+    // 归档现在是一个纯粹的数据状态，不再牵动文件位置——**密匣条目也不必解密**，
+    // 因为归档标记存在库的列上，不在密文里。
+    let note = notes::model::NoteWrite {
+        archived,
+        // 归档的条目不该同时是置顶的，两种"排在最前面"的语义会打架。
+        pinned: row.pinned && !archived,
+        updated_at: Local::now().to_rfc3339(),
+        ..notes::model::NoteWrite::from_row(&row)
+    };
 
-        let active = vault.join("fragments");
-        let archive = vault.join("archive");
-        let (from, to) = if archived { (&active, &archive) } else { (&archive, &active) };
-        let moved = move_fragment_file(from, to, &path)?;
-        read_fragment(&moved, &vault)
-    })
-    .await?;
-
-    // 落盘成功后才同步进本地库。失败只记日志：文件仍是真相源，
-    // 旁路索引出问题不该让用户看到保存失败（DESIGN.md：保存不可失败）。
-    notes::shadow::sync_file(&shadow_app, &notes, &fragment.path).await;
-    Ok(fragment)
+    notes::repo::write(&ctx.conn, &note, Some(row.revision), &ctx.device).await?;
+    ctx.read_back(&id).await
 }
 
 #[tauri::command]
@@ -999,24 +1152,44 @@ async fn set_fragment_pinned(
     id: String,
     pinned: bool,
 ) -> Result<Fragment, String> {
-    let lockbox_runtime = lockbox_runtime.inner().clone();
-    let shadow_app = app.clone();
-    let fragment = run_blocking(move || {
-        let vault = ensure_vault_dirs(&app)?;
-        if let Some(lockbox_path) = find_lockbox_fragment_path(&vault, &id)? {
-            let read_keys = require_unlocked_lockbox_read_keys(&vault, &lockbox_runtime)?;
-            return set_lockbox_fragment_pinned_in_vault(&vault, &lockbox_path, &read_keys, pinned);
+    let runtime = lockbox_runtime.inner().clone();
+    let ctx = write_ctx(&app, &notes, &runtime).await?;
+    let row = ctx.require_row(&id).await?;
+
+    if row.archived && pinned {
+        return Err("归档片段不能置顶。".to_string());
+    }
+
+    let now = Local::now().to_rfc3339();
+    let note = if row.lockbox {
+        // 置顶状态藏在密文的 frontmatter 里（读路径以它为准），必须重新封一遍。
+        let mut payload = open_lockbox_row(&row, ctx.require_read_keys()?)?;
+        payload.frontmatter.pinned = pinned;
+        payload.frontmatter.updated_at = now.clone();
+
+        let vault = ctx.vault.clone();
+        let runtime = runtime.clone();
+        let cipher = run_blocking(move || {
+            seal_lockbox_note(&vault, &runtime, payload.frontmatter, &payload.body)
+        })
+        .await?;
+
+        notes::model::NoteWrite {
+            pinned,
+            updated_at: now,
+            cipher: Some(cipher),
+            ..notes::model::NoteWrite::from_row(&row)
         }
+    } else {
+        notes::model::NoteWrite {
+            pinned,
+            updated_at: now,
+            ..notes::model::NoteWrite::from_row(&row)
+        }
+    };
 
-        let path = find_fragment_path(&vault, &id)?.ok_or_else(|| format!("找不到片段 {}", id))?;
-        set_public_fragment_pinned_in_vault(&vault, &path, pinned)
-    })
-    .await?;
-
-    // 落盘成功后才同步进本地库。失败只记日志：文件仍是真相源，
-    // 旁路索引出问题不该让用户看到保存失败（DESIGN.md：保存不可失败）。
-    notes::shadow::sync_file(&shadow_app, &notes, &fragment.path).await;
-    Ok(fragment)
+    notes::repo::write(&ctx.conn, &note, Some(row.revision), &ctx.device).await?;
+    ctx.read_back(&id).await
 }
 
 #[tauri::command]
@@ -1026,20 +1199,25 @@ async fn move_fragment_to_lockbox(
     notes: tauri::State<'_, NotesDb>,
     id: String,
 ) -> Result<VaultState, String> {
-    let lockbox_runtime = lockbox_runtime.inner().clone();
-    let shadow_app = app.clone();
-    let shadow_id = id.clone();
-    let state = run_blocking(move || {
-        let vault = ensure_vault_dirs(&app)?;
-        let path = find_fragment_path(&vault, &id)?.ok_or_else(|| format!("找不到片段 {}", id))?;
-        move_public_fragment_to_lockbox_in_vault(&vault, &lockbox_runtime, &path)?;
-        list_fragments_in_vault(&vault, &lockbox_runtime)
-    })
-    .await?;
+    let runtime = lockbox_runtime.inner().clone();
+    let ctx = write_ctx(&app, &notes, &runtime).await?;
+    let row = ctx.require_row(&id).await?;
 
-    // 明文文件此刻已被删除，库里残留的那一行就是明文泄漏，必须立即清掉。
-    notes::shadow::sync_lockbox_transfer(&shadow_app, &notes, &shadow_id).await;
-    Ok(state)
+    if row.lockbox {
+        return list_fragments(app.clone(), lockbox_runtime, notes).await;
+    }
+
+    // 转入密匣是**同一行的状态变化**：id 不变，明文列清空、密文列填上。
+    // 文件时代这里要移动文件并改扩展名，转换过程中明文会短暂存在于两个地方；
+    // 现在是一条 CAS UPDATE，明文没有中间态。
+    let tags = normalize_lockbox_tags(row.tags.clone());
+    let note = rewrite_note(&ctx, &runtime, &row, None, tags).await?;
+    if !note.is_lockbox() {
+        return Err("转入密匣失败：未能生成密文。".to_string());
+    }
+
+    notes::repo::write(&ctx.conn, &note, Some(row.revision), &ctx.device).await?;
+    list_fragments(app.clone(), lockbox_runtime, notes).await
 }
 
 /// 收下一张图片，返回正文里该写的引用（`shard-attachment:<hash>`）。
@@ -1861,6 +2039,9 @@ fn parse_fragment_text(text: &str) -> Result<(FragmentFrontmatter, &str), String
     Ok((frontmatter, body))
 }
 
+/// 只剩测试在用。写路径反转后生产代码里没有任何地方再往 vault 写 .md——
+/// 文件只在手动导出时由 `notes::export` 生成。
+#[cfg(test)]
 fn write_fragment_file(
     path: &Path,
     frontmatter: &FragmentFrontmatter,
@@ -1881,31 +2062,12 @@ fn render_fragment_text(
     Ok(format!("---\n{}---\n\n{}\n", yaml, body.trim_end()))
 }
 
-fn set_public_fragment_pinned_in_vault(
-    vault: &Path,
-    path: &Path,
-    pinned: bool,
-) -> Result<Fragment, String> {
-    let rel_path = relative_path(vault, path)?;
-    if rel_path.starts_with("archive/") && pinned {
-        return Err("归档片段不能置顶。".to_string());
-    }
-
-    let text = fs::read_to_string(path).map_err(|error| error.to_string())?;
-    let (mut frontmatter, body) = parse_fragment_text(&text)?;
-    frontmatter.pinned = pinned;
-    frontmatter.updated_at = Local::now().to_rfc3339();
-    write_fragment_file(path, &frontmatter, body.trim_start_matches('\n'))?;
-
-    let _commit_message = if pinned {
-        format!("pin fragment {}", frontmatter.id)
-    } else {
-        format!("unpin fragment {}", frontmatter.id)
-    };
-
-    read_fragment(&path, vault)
-}
-
+/// 往 vault 里写一个文件形态的密匣片段。
+///
+/// 写路径反转后生产代码不再这样写入，但**文件回退路径仍然活着**：读库失败时
+/// `list_fragments` 会退回扫描目录。密匣在那条路径上的行为（锁定态不可见、
+/// 解锁后可读、标签规范化）仍需被测试守住，所以这个构造函数留给测试用。
+#[cfg(test)]
 fn create_lockbox_fragment_in_vault(
     vault: &Path,
     lockbox_runtime: &LockboxRuntime,
@@ -1925,8 +2087,7 @@ fn create_lockbox_fragment_in_vault(
         .join(now.format("%m").to_string());
     fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
 
-    let file_name = format!("{}-{}.shard", now.format("%Y-%m-%d-%H%M%S"), suffix);
-    let path = dir.join(file_name);
+    let path = dir.join(format!("{}-{}.shard", now.format("%Y-%m-%d-%H%M%S"), suffix));
     let frontmatter = FragmentFrontmatter {
         id,
         created_at: created_at.clone(),
@@ -1940,175 +2101,10 @@ fn create_lockbox_fragment_in_vault(
 
     write_lockbox_fragment_file(&path, &write_key, &frontmatter, content)?;
 
-    let _rel_path = relative_path(vault, &path)?;
-
-    if let Some(read_keys) = unlocked_lockbox_read_keys(vault, lockbox_runtime) {
-        read_lockbox_fragment(&path, vault, &read_keys)
-    } else {
-        lockbox_fragment_from_parts(&path, vault, frontmatter, String::new())
+    match unlocked_lockbox_read_keys(vault, lockbox_runtime) {
+        Some(read_keys) => read_lockbox_fragment(&path, vault, &read_keys),
+        None => lockbox_fragment_from_parts(&path, vault, frontmatter, String::new()),
     }
-}
-
-fn update_lockbox_fragment_in_vault(
-    vault: &Path,
-    path: &Path,
-    read_keys: &LockboxReadKeys,
-    content: &str,
-    tags: Vec<String>,
-) -> Result<Fragment, String> {
-    reject_lockbox_images(content)?;
-    let mut payload = read_lockbox_payload(path, read_keys)?;
-    payload.frontmatter.tags = normalize_lockbox_tags(tags);
-    payload.frontmatter.updated_at = Local::now().to_rfc3339();
-    payload.body = content.to_string();
-    let write_key = LockboxWriteKey::Master(read_keys.master_key.clone());
-    write_lockbox_payload(path, &write_key, &payload)?;
-
-    read_lockbox_fragment(&path, vault, &read_keys)
-}
-
-fn update_lockbox_fragment_tags_in_vault(
-    vault: &Path,
-    path: &Path,
-    read_keys: &LockboxReadKeys,
-    tags: Vec<String>,
-) -> Result<Fragment, String> {
-    let mut payload = read_lockbox_payload(path, read_keys)?;
-    payload.frontmatter.tags = normalize_lockbox_tags(tags);
-    payload.frontmatter.updated_at = Local::now().to_rfc3339();
-    let write_key = LockboxWriteKey::Master(read_keys.master_key.clone());
-    write_lockbox_payload(path, &write_key, &payload)?;
-
-    let _rel_path = relative_path(vault, path)?;
-
-    read_lockbox_fragment(&path, vault, &read_keys)
-}
-
-fn set_lockbox_fragment_pinned_in_vault(
-    vault: &Path,
-    path: &Path,
-    read_keys: &LockboxReadKeys,
-    pinned: bool,
-) -> Result<Fragment, String> {
-    let rel_path = relative_path(vault, path)?;
-    if rel_path.starts_with("lockbox/archive/") && pinned {
-        return Err("归档片段不能置顶。".to_string());
-    }
-
-    let mut payload = read_lockbox_payload(path, read_keys)?;
-    payload.frontmatter.pinned = pinned;
-    payload.frontmatter.updated_at = Local::now().to_rfc3339();
-    let write_key = LockboxWriteKey::Master(read_keys.master_key.clone());
-    write_lockbox_payload(path, &write_key, &payload)?;
-
-    let _commit_message = if pinned {
-        format!("pin lockbox fragment {}", payload.frontmatter.id)
-    } else {
-        format!("unpin lockbox fragment {}", payload.frontmatter.id)
-    };
-
-    read_lockbox_fragment(&path, vault, &read_keys)
-}
-
-fn move_public_fragment_to_lockbox_in_vault(
-    vault: &Path,
-    lockbox_runtime: &LockboxRuntime,
-    path: &Path,
-) -> Result<Fragment, String> {
-    let text = fs::read_to_string(path).map_err(|error| error.to_string())?;
-    let (frontmatter, body) = parse_fragment_text(&text)?;
-    move_public_fragment_payload_to_lockbox_in_vault(
-        vault,
-        lockbox_runtime,
-        path,
-        body.trim_start_matches('\n'),
-        frontmatter.tags.clone(),
-        Some(frontmatter),
-    )
-}
-
-fn move_public_fragment_content_to_lockbox_in_vault(
-    vault: &Path,
-    lockbox_runtime: &LockboxRuntime,
-    path: &Path,
-    content: &str,
-    tags: Vec<String>,
-) -> Result<Fragment, String> {
-    let text = fs::read_to_string(path).map_err(|error| error.to_string())?;
-    let (frontmatter, _) = parse_fragment_text(&text)?;
-    move_public_fragment_payload_to_lockbox_in_vault(
-        vault,
-        lockbox_runtime,
-        path,
-        content,
-        tags,
-        Some(frontmatter),
-    )
-}
-
-fn move_public_fragment_payload_to_lockbox_in_vault(
-    vault: &Path,
-    lockbox_runtime: &LockboxRuntime,
-    public_path: &Path,
-    content: &str,
-    tags: Vec<String>,
-    existing_frontmatter: Option<FragmentFrontmatter>,
-) -> Result<Fragment, String> {
-    reject_lockbox_images(content)?;
-    let write_key = lockbox_write_key(vault, lockbox_runtime)?;
-    let mut frontmatter = existing_frontmatter.ok_or_else(|| "片段缺少 frontmatter".to_string())?;
-    frontmatter.tags = normalize_lockbox_tags(tags);
-    frontmatter.updated_at = Local::now().to_rfc3339();
-    frontmatter.source = "desktop-lockbox".to_string();
-
-    let public_rel = public_path
-        .strip_prefix(vault.join("fragments"))
-        .or_else(|_| public_path.strip_prefix(vault.join("archive")))
-        .map_err(|error| error.to_string())?;
-    let target_root = if relative_path(vault, public_path)?.starts_with("archive/") {
-        vault.join("lockbox").join("archive")
-    } else {
-        vault.join("lockbox").join("fragments")
-    };
-    let mut lockbox_path = target_root.join(public_rel);
-    lockbox_path.set_extension("shard");
-
-    if let Some(parent) = lockbox_path.parent() {
-        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-    }
-    write_lockbox_fragment_file(&lockbox_path, &write_key, &frontmatter, content)?;
-    fs::remove_file(public_path).map_err(|error| error.to_string())?;
-
-
-    if let Some(read_keys) = unlocked_lockbox_read_keys(vault, lockbox_runtime) {
-        read_lockbox_fragment(&lockbox_path, vault, &read_keys)
-    } else {
-        lockbox_fragment_from_parts(&lockbox_path, vault, frontmatter, String::new())
-    }
-}
-
-/// 在活跃目录与归档目录之间移动一个片段文件，返回新路径。
-///
-/// 归档与取消归档本是同一个操作的两个方向。原先只实现了单向，
-/// 文件一旦挪进 `archive/` 就回不来了。
-fn move_fragment_file(from_root: &Path, to_root: &Path, path: &Path) -> Result<PathBuf, String> {
-    let rel = path
-        .strip_prefix(from_root)
-        .map_err(|error| error.to_string())?;
-    let target = to_root.join(rel);
-
-    if let Some(parent) = target.parent() {
-        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-    }
-    // 跨设备时 rename 会失败，退回复制加删除。
-    fs::rename(path, &target)
-        .or_else(|_| {
-            fs::copy(path, &target)
-                .map(|_| ())
-                .and_then(|_| fs::remove_file(path))
-        })
-        .map_err(|error| error.to_string())?;
-    Ok(target)
 }
 
 fn read_lockbox_fragment(
@@ -2144,6 +2140,7 @@ fn lockbox_fragment_from_parts(
     })
 }
 
+#[cfg(test)]
 fn write_lockbox_fragment_file(
     path: &Path,
     write_key: &LockboxWriteKey,
@@ -2209,6 +2206,7 @@ fn encrypt_lockbox_fragment(
     })
 }
 
+#[cfg(test)]
 fn write_lockbox_payload(
     path: &Path,
     write_key: &LockboxWriteKey,
@@ -2689,16 +2687,6 @@ fn unlocked_lockbox_read_keys(
         master_key,
         write_private_key,
     })
-}
-
-fn require_unlocked_lockbox_read_keys(
-    vault: &Path,
-    lockbox_runtime: &LockboxRuntime,
-) -> Result<LockboxReadKeys, String> {
-    if !lockbox_manifest_path(vault).exists() {
-        return Err("lockbox_not_configured".to_string());
-    }
-    unlocked_lockbox_read_keys(vault, lockbox_runtime).ok_or_else(|| "lockbox_locked".to_string())
 }
 
 fn lockbox_write_key(

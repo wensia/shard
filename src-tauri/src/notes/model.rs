@@ -43,6 +43,28 @@ pub(crate) struct NoteWrite {
 }
 
 impl NoteWrite {
+    /// 从库里的一行重建写入参数。
+    ///
+    /// 写入是**整行覆盖**语义，所以「只改置顶」这类命令也必须把其余字段原样带
+    /// 回去。让每个命令自己拼一遍，迟早有一个会漏掉某个字段，表现出来就是改个
+    /// 置顶把分类弄丢了。
+    pub(crate) fn from_row(row: &FragmentRow) -> Self {
+        Self {
+            id: row.id.clone(),
+            content: row.content.clone(),
+            created_at: row.created_at.clone(),
+            updated_at: row.updated_at.clone(),
+            tags: row.tags.clone(),
+            category: row.category.clone(),
+            ai_status: row.ai_status.clone(),
+            source: row.source.clone(),
+            archived: row.archived,
+            pinned: row.pinned,
+            cipher: row.cipher.clone(),
+            export_path: row.export_path.clone(),
+        }
+    }
+
     pub(crate) fn is_lockbox(&self) -> bool {
         self.cipher.is_some()
     }

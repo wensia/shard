@@ -210,45 +210,6 @@ pub(crate) async fn run(
     Ok(report)
 }
 
-/// 同步单个已落盘的文件（影子写用）。
-///
-/// 刻意复用批量导入的 [`parse_one`]：内存里的 `Fragment` 是面向 UI 的视图，
-/// 缺 `source` 字段，且密匣态下 `content` 是**解密后的明文**——从它构造写入
-/// 参数迟早会与导入口径漂移。只留一条解析路径就不会。
-pub(crate) async fn sync_one(
-    conn: &Connection,
-    vault: &Path,
-    rel_path: &str,
-) -> Result<(), String> {
-    let file = SourceFile {
-        path: vault.join(rel_path),
-        kind: if rel_path.starts_with("lockbox/") {
-            "lockbox_shard"
-        } else {
-            "fragment_md"
-        },
-        archived: rel_path.starts_with("archive/") || rel_path.starts_with("lockbox/archive/"),
-    };
-
-    let vault_owned = vault.to_path_buf();
-    // 影子写的正文来自磁盘，此时引用已经是 `shard-attachment:` 形式（新图片
-    // 直接以 hash 写入，旧图片在导入时重写过），不需要再查 assets 映射。
-    let parsed =
-        tauri::async_runtime::spawn_blocking(move || parse_one(&vault_owned, &file, &AssetMap::new()))
-            .await
-            .map_err(|error| format!("解析任务失败：{error}"))??;
-
-    repo::upsert(conn, &parsed.note).await?;
-    for hash in &parsed.attachment_hashes {
-        // 未登记的 hash 会撞外键。正文是用户可编辑的，手打一串十六进制并非
-        // 不可能，不能让它把一次保存变成失败。
-        if super::attachments::get(conn, hash).await?.is_some() {
-            super::attachments::link(conn, &parsed.note.id, hash).await?;
-        }
-    }
-    record_ledger(conn, &parsed).await
-}
-
 /// 把 `assets/` 下的图片登记进库，并把字节复制进内容寻址的缓存目录。
 ///
 /// 旧的 `assets/` **不删**：它天然就是一份导出快照，迁移出问题还能回头。
@@ -882,88 +843,6 @@ mod tests {
             repo::get_meta(&conn, "markdown_import_state").await.unwrap().as_deref(),
             Some("done")
         );
-    }
-
-    /// 单文件同步（影子写的核心）走的必须是与批量导入相同的解析路径。
-    #[tokio::test]
-    async fn sync_one_matches_batch_import() {
-        let dir = tempfile::tempdir().unwrap();
-        let vault = dir.path();
-        write_fragment(vault, "fragments/a.md", "a", &["会议"], "今天开会议程");
-
-        let conn = open_conn().await;
-        sync_one(&conn, vault, "fragments/a.md").await.unwrap();
-
-        let row = repo::get(&conn, "a").await.unwrap().unwrap();
-        assert_eq!(row.content.as_deref(), Some("今天开会议程\n"));
-        assert_eq!(row.tags, vec!["会议".to_string()]);
-        // 索引也要就绪，否则刚写的笔记搜不到。
-        let hits = super::super::search::search(&conn, "会议", false, 20).await.unwrap();
-        assert_eq!(hits.len(), 1);
-    }
-
-    #[tokio::test]
-    async fn sync_one_detects_archived_from_path() {
-        let dir = tempfile::tempdir().unwrap();
-        let vault = dir.path();
-        write_fragment(vault, "archive/a.md", "a", &["x"], "归档内容");
-
-        let conn = open_conn().await;
-        sync_one(&conn, vault, "archive/a.md").await.unwrap();
-        assert!(repo::get(&conn, "a").await.unwrap().unwrap().archived);
-    }
-
-    /// 安全关键：明文被移入密匣后，库里绝不能残留明文——
-    /// 明文文件此时已从磁盘删除，库里留着就是泄漏。
-    #[tokio::test]
-    async fn plaintext_does_not_survive_move_to_lockbox() {
-        let dir = tempfile::tempdir().unwrap();
-        let vault = dir.path();
-        write_fragment(vault, "fragments/a.md", "a", &["x"], "会议室密码是 1234");
-
-        let conn = open_conn().await;
-        sync_one(&conn, vault, "fragments/a.md").await.unwrap();
-        assert_eq!(
-            super::super::search::search(&conn, "会议", false, 20).await.unwrap().len(),
-            1,
-            "前置条件：明文此时应可搜到"
-        );
-
-        // 模拟 move_public_fragment_to_lockbox_in_vault 的效果：
-        // 明文文件消失，密匣文件出现（id 不变）。
-        std::fs::remove_file(vault.join("fragments/a.md")).unwrap();
-        let lockbox_dir = vault.join("lockbox/fragments");
-        std::fs::create_dir_all(&lockbox_dir).unwrap();
-        std::fs::write(
-            lockbox_dir.join("2026-07-26-100000-ab12.shard"),
-            r#"{"version":1,"id":"a","nonce":"N","ciphertext":"ENCRYPTED"}"#,
-        )
-        .unwrap();
-
-        // 这正是 shadow::sync_lockbox_transfer 做的两步。
-        repo::purge(&conn, "a").await.unwrap();
-        run(
-            &conn,
-            vault,
-            &ImportOptions { include_plaintext: false, ..Default::default() },
-        )
-        .await
-        .unwrap();
-
-        let row = repo::get(&conn, "a").await.unwrap().expect("密匣条目应已入库");
-        assert!(row.lockbox);
-        assert!(row.content.is_none(), "明文列必须为空");
-        assert_eq!(row.cipher.unwrap().text, "ENCRYPTED");
-
-        let hits = super::super::search::search(&conn, "会议", false, 20).await.unwrap();
-        assert!(hits.is_empty(), "旧明文必须已从索引中消失");
-
-        let mut rows = conn
-            .query("SELECT count(*) FROM fragments_fts", ())
-            .await
-            .unwrap();
-        let indexed: i64 = rows.next().await.unwrap().unwrap().get(0).unwrap();
-        assert_eq!(indexed, 0, "FTS 表里不该留下任何行");
     }
 
     /// purge 之后重新导入同一文件应当照常工作（台账也要一并清掉）。

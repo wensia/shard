@@ -68,6 +68,22 @@ pub(crate) async fn list_fragments(
     Ok(fragments)
 }
 
+/// 单行 → 前端 `Fragment`。写命令写完之后从库里读回来时走这条路。
+///
+/// 刻意与 [`list_fragments`] 共用同两个转换函数：写完返回的那一条和列表里的
+/// 同一条必须长得一模一样，否则「保存后卡片跳一下」这类问题会反复出现。
+pub(crate) fn fragment_from_row(
+    row: &FragmentRow,
+    read_keys: Option<&LockboxReadKeys>,
+) -> Result<Fragment, String> {
+    if !row.lockbox {
+        return Ok(plain_fragment(row));
+    }
+
+    let keys = read_keys.ok_or_else(|| "密匣未解锁，无法读取该片段。".to_string())?;
+    decrypt_row(row, keys)
+}
+
 fn plain_fragment(row: &FragmentRow) -> Fragment {
     Fragment {
         id: row.id.clone(),
