@@ -924,50 +924,43 @@ async fn update_fragment(
 }
 
 #[tauri::command]
-async fn archive_fragment(
+async fn set_fragment_archived(
     app: tauri::AppHandle,
     lockbox_runtime: tauri::State<'_, LockboxRuntime>,
     notes: tauri::State<'_, NotesDb>,
     id: String,
+    archived: bool,
 ) -> Result<Fragment, String> {
     let lockbox_runtime = lockbox_runtime.inner().clone();
     let shadow_app = app.clone();
     let fragment = run_blocking(move || {
         let vault = ensure_vault_dirs(&app)?;
-        if let Some(lockbox_path) = find_lockbox_fragment_path(&vault, &id)? {
+
+        if let Some(path) = find_lockbox_fragment_path(&vault, &id)? {
             let read_keys = require_unlocked_lockbox_read_keys(&vault, &lockbox_runtime)?;
-            return archive_lockbox_fragment_in_vault(&vault, &lockbox_path, &read_keys, &id);
+            let rel_path = relative_path(&vault, &path)?;
+            // 已是目标状态：直接返回，保持幂等。
+            if rel_path.starts_with("lockbox/archive/") == archived {
+                return read_lockbox_fragment(&path, &vault, &read_keys);
+            }
+            let active = vault.join("lockbox").join("fragments");
+            let archive = vault.join("lockbox").join("archive");
+            let (from, to) = if archived { (&active, &archive) } else { (&archive, &active) };
+            let moved = move_fragment_file(from, to, &path)?;
+            return read_lockbox_fragment(&moved, &vault, &read_keys);
         }
 
         let path = find_fragment_path(&vault, &id)?.ok_or_else(|| format!("找不到片段 {}", id))?;
         let rel_path = relative_path(&vault, &path)?;
-
-        if rel_path.starts_with("archive/") {
+        if rel_path.starts_with("archive/") == archived {
             return read_fragment(&path, &vault);
         }
 
-        let active_root = vault.join("fragments");
-        let archived_root = vault.join("archive");
-        let active_rel = path
-            .strip_prefix(&active_root)
-            .map_err(|error| error.to_string())?;
-        let archived_path = archived_root.join(active_rel);
-
-        if let Some(parent) = archived_path.parent() {
-            fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-        }
-
-        fs::rename(&path, &archived_path)
-            .or_else(|_| {
-                fs::copy(&path, &archived_path)
-                    .map(|_| ())
-                    .and_then(|_| fs::remove_file(&path))
-            })
-            .map_err(|error| error.to_string())?;
-
-
-
-        read_fragment(&archived_path, &vault)
+        let active = vault.join("fragments");
+        let archive = vault.join("archive");
+        let (from, to) = if archived { (&active, &archive) } else { (&archive, &active) };
+        let moved = move_fragment_file(from, to, &path)?;
+        read_fragment(&moved, &vault)
     })
     .await?;
 
@@ -2082,38 +2075,28 @@ fn move_public_fragment_payload_to_lockbox_in_vault(
     }
 }
 
-fn archive_lockbox_fragment_in_vault(
-    vault: &Path,
-    path: &Path,
-    read_keys: &LockboxReadKeys,
-    _id: &str,
-) -> Result<Fragment, String> {
-    let rel_path = relative_path(vault, path)?;
-    if rel_path.starts_with("lockbox/archive/") {
-        return read_lockbox_fragment(&path, vault, &read_keys);
-    }
-
-    let active_root = vault.join("lockbox").join("fragments");
-    let archived_root = vault.join("lockbox").join("archive");
-    let active_rel = path
-        .strip_prefix(&active_root)
+/// 在活跃目录与归档目录之间移动一个片段文件，返回新路径。
+///
+/// 归档与取消归档本是同一个操作的两个方向。原先只实现了单向，
+/// 文件一旦挪进 `archive/` 就回不来了。
+fn move_fragment_file(from_root: &Path, to_root: &Path, path: &Path) -> Result<PathBuf, String> {
+    let rel = path
+        .strip_prefix(from_root)
         .map_err(|error| error.to_string())?;
-    let archived_path = archived_root.join(active_rel);
+    let target = to_root.join(rel);
 
-    if let Some(parent) = archived_path.parent() {
+    if let Some(parent) = target.parent() {
         fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
-
-    fs::rename(path, &archived_path)
+    // 跨设备时 rename 会失败，退回复制加删除。
+    fs::rename(path, &target)
         .or_else(|_| {
-            fs::copy(path, &archived_path)
+            fs::copy(path, &target)
                 .map(|_| ())
                 .and_then(|_| fs::remove_file(path))
         })
         .map_err(|error| error.to_string())?;
-
-
-    read_lockbox_fragment(&archived_path, vault, &read_keys)
+    Ok(target)
 }
 
 fn read_lockbox_fragment(
@@ -3401,7 +3384,7 @@ pub fn run() {
             create_fragment,
             update_fragment,
             update_fragment_tags,
-            archive_fragment,
+            set_fragment_archived,
             set_fragment_pinned,
             move_fragment_to_lockbox,
             save_fragment_image,

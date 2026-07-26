@@ -1,5 +1,6 @@
 import {
   ArchiveIcon,
+  ArchiveRestoreIcon,
   LockKeyholeIcon,
   MoreHorizontalIcon,
   PencilLineIcon,
@@ -186,9 +187,8 @@ export function FragmentCard({
               />
             ) : null}
             <DropdownMenuItem
-              icon={ArchiveIcon}
-              isDisabled={fragment.archived}
-              label={fragment.archived ? "已归档" : "归档"}
+              icon={fragment.archived ? ArchiveRestoreIcon : ArchiveIcon}
+              label={fragment.archived ? "移回收件箱" : "归档"}
               onClick={() => onArchive?.(fragment)}
             />
           </DropdownMenu>

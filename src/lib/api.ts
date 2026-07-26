@@ -97,8 +97,13 @@ export function updateFragmentTags(id: string, tags: string[]) {
   return desktopInvoke<Fragment>("update_fragment_tags", { id, tags })
 }
 
-export function archiveFragment(id: string) {
-  return desktopInvoke<Fragment>("archive_fragment", { id })
+/**
+ * 归档与取消归档是同一个操作的两个方向。传 `archived: false` 可以把片段
+ * 从归档区移回收件箱——旧版只能单向归档，移进去就取不回来了。
+ * 已处于目标状态时是空操作。
+ */
+export function setFragmentArchived(id: string, archived: boolean) {
+  return desktopInvoke<Fragment>("set_fragment_archived", { id, archived })
 }
 
 export function pinFragment(id: string, pinned: boolean) {

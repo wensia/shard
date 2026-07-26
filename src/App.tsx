@@ -36,7 +36,7 @@ import { Dialog, DialogHeader } from "@astryxdesign/core/Dialog"
 import { Layout, LayoutFooter } from "@astryxdesign/core/Layout"
 import { ToastViewport } from "@astryxdesign/core/Toast"
 import {
-  archiveFragment,
+  setFragmentArchived,
   changeLockboxPassword,
   createFragment,
   DESKTOP_RUNTIME_MESSAGE,
@@ -413,24 +413,33 @@ function App() {
       return
     }
 
+    // 取消归档不需要确认：它是个可撤销的、低风险的还原动作。
+    if (fragment.archived) {
+      await archiveFragmentWithFeedback(fragment, false)
+      return
+    }
+
     const confirmed = window.confirm("确认归档这条片段？归档后可在 Archive 中查看。")
     if (!confirmed) return
 
-    await archiveFragmentWithFeedback(fragment)
+    await archiveFragmentWithFeedback(fragment, true)
   }
 
-  async function archiveFragmentWithFeedback(fragment: Fragment) {
+  async function archiveFragmentWithFeedback(
+    fragment: Fragment,
+    archived = true
+  ) {
     try {
-      const archived = await archiveFragment(fragment.id)
+      const updated = await setFragmentArchived(fragment.id, archived)
       setFragments((current) =>
         current.map((currentFragment) =>
-          currentFragment.id === fragment.id ? archived : currentFragment
+          currentFragment.id === fragment.id ? updated : currentFragment
         )
       )
       if (editingFragmentId === fragment.id) {
         closeEditor()
       }
-      toast({ body: "已归档" })
+      toast({ body: archived ? "已归档" : "已移回收件箱" })
       return true
     } catch (error) {
       toast({ body: `${"归档失败"}：${getApiErrorMessage(error)}`, type: "error" })
