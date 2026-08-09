@@ -34,9 +34,13 @@ export function dailyReviewCount(fragments: Fragment[], now = new Date()) {
   )
 }
 
-// 洞察覆盖全部未归档笔记，按时间正序方便模型观察演变；密匣笔记不出
-// vault（内容会发往 Codex 云端模型），AI 洞察输出自身也排除以免回音室
-export function insightReviewFragments(fragments: Fragment[]) {
+// 洞察覆盖全部未归档笔记，按时间正序方便模型观察演变；密匣笔记默认不出
+// vault（内容会发往云端模型），仅在用户显式勾选并重新解锁后
+// （includeLockbox）才并入候选；AI 洞察输出自身也排除以免回音室
+export function insightReviewFragments(
+  fragments: Fragment[],
+  options: { includeLockbox?: boolean } = {}
+) {
   const eligible = fragments
     .map((fragment) => ({
       fragment,
@@ -45,7 +49,7 @@ export function insightReviewFragments(fragments: Fragment[]) {
     .filter(
       (candidate) =>
         !candidate.fragment.archived &&
-        !candidate.fragment.lockbox &&
+        (options.includeLockbox || !candidate.fragment.lockbox) &&
         !candidate.fragment.tags.includes("ai/insight") &&
         Number.isFinite(candidate.timestamp)
     )

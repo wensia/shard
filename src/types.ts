@@ -53,7 +53,10 @@ export interface GithubCliInfo {
   error: string | null
 }
 
-export interface CodexAgentStatus {
+export type AiAgentKind = "codex" | "claude" | "kimi" | "opencode"
+
+export interface AiAgentStatus {
+  agent: AiAgentKind
   installed: boolean
   version: string | null
   path: string | null

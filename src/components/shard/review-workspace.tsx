@@ -1,32 +1,23 @@
 import {
-  BotIcon,
-  BrainCircuitIcon,
   CalendarDaysIcon,
   CircleAlertIcon,
-  CompassIcon,
-  GitBranchIcon,
-  CheckIcon,
-  HeartHandshakeIcon,
-  PlusIcon,
   RouteIcon,
-  ScaleIcon,
   SparklesIcon,
-  RotateCcwIcon,
 } from "lucide-react"
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useState, type ReactNode } from "react"
 
-import { Badge } from "@astryxdesign/core/Badge"
-import { Button } from "@astryxdesign/core/Button"
-import { Grid } from "@astryxdesign/core/Grid"
-import { HStack, Stack, StackItem } from "@astryxdesign/core/Stack"
+import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
 
 import { FragmentCard } from "@/components/shard/fragment-card"
 import { MarkdownDocument } from "@/components/shard/markdown-document"
 import {
-  getCodexAgentStatus,
+  getAiAgentStatuses,
   getApiErrorMessage,
-  runCodexReviewTask,
+  runAiReviewTask,
 } from "@/lib/api"
+import { LOCKBOX_TAG } from "@/lib/lockbox"
 import {
   codexReviewFragments,
   dailyReviewFragments,
@@ -37,7 +28,8 @@ import {
 } from "@/lib/review-workflows"
 import { cn } from "@/lib/utils"
 import type {
-  CodexAgentStatus,
+  AiAgentKind,
+  AiAgentStatus,
   CodexInsightLens,
   CodexReviewTask,
   Fragment,
@@ -51,14 +43,17 @@ type ReviewMode = Extract<FragmentFilter, "dailyReview" | "insight" | "walk">
 interface ReviewWorkspaceProps {
   editingFragmentId?: string | null
   fragments: Fragment[]
+  insightIncludeLockbox: boolean
   isLoading: boolean
   knownTags?: string[]
+  lockboxConfigured: boolean
   mode: ReviewMode
   onArchive?: (fragment: Fragment) => void
   onCancelEdit?: () => void
   onCreate: (content: string, tags: string[]) => Promise<void>
   onEdit?: (fragment: Fragment) => void
   onExportImage?: (fragment: Fragment) => void
+  onInsightIncludeLockboxChange: (next: boolean) => void
   onMoveToLockbox?: (fragment: Fragment) => void
   onOpenZen?: (fragment: Fragment) => void
   onPin?: (fragment: Fragment) => void
@@ -83,64 +78,68 @@ const modeMeta: Record<
   insight: {
     title: "洞察视角",
     description:
-      "选择任意视角，让本机 Codex 只读分析全部未归档笔记（不含密匣与 AI 洞察）。",
+      "选择任意视角与本机 AI 运行器，只读分析全部未归档笔记（不含密匣与 AI 洞察）。",
     icon: SparklesIcon,
   },
   walk: {
     title: "随机漫步",
-    description: "抽取一串片段路径，再让 Codex 解释其中可能的意外连接。",
+    description: "抽取一串片段路径，再让本机 AI 解释其中可能的意外连接。",
     icon: RouteIcon,
   },
 }
+
+const agentLabels: Record<AiAgentKind, string> = {
+  codex: "Codex",
+  claude: "Claude Code",
+  kimi: "Kimi Code",
+  opencode: "OpenCode",
+}
+
+// 含密匣洞察只允许 stdin 传输密匣内容的运行器（Claude / Codex），
+// Kimi / OpenCode 走 argv 会泄露明文，这里在选择层直接禁用
+const LOCKBOX_BLOCKED_AGENTS: readonly AiAgentKind[] = ["kimi", "opencode"]
 
 const insightLenses: Array<{
   id: CodexInsightLens
   title: string
   description: string
   focus: string
-  icon: typeof SparklesIcon
 }> = [
   {
     id: "default",
     title: "默认洞察",
     description: "挖掘笔记背后反复出现的思维模式、关注点和内在张力。",
     focus: "主题复盘",
-    icon: BrainCircuitIcon,
   },
   {
     id: "values",
     title: "价值澄清",
     description: "从取舍、反复记录和情绪强度里找出你真正看重的东西。",
     focus: "取舍判断",
-    icon: ScaleIcon,
   },
   {
     id: "reverse",
     title: "逆向思考",
     description: "反过来审视笔记中的默认假设、遗漏条件和可能误判。",
     focus: "假设检查",
-    icon: RotateCcwIcon,
   },
   {
     id: "secondOrder",
     title: "二阶思考",
     description: "识别表层问题背后的上游原因，以及继续行动的二阶影响。",
     focus: "影响推演",
-    icon: GitBranchIcon,
   },
   {
     id: "cbt",
     title: "CBT 视角",
     description: "识别笔记中的自动想法、认知陷阱，并生成更平衡的替代想法。",
     focus: "思维校准",
-    icon: HeartHandshakeIcon,
   },
   {
     id: "mbti",
     title: "MBTI 分析",
     description: "从笔记内容中观察偏好倾向，生成非定型的人格视角分析。",
     focus: "偏好识别",
-    icon: CompassIcon,
   },
 ]
 
@@ -159,14 +158,17 @@ const insightLensGroups: Array<{
 export function ReviewWorkspace({
   editingFragmentId = null,
   fragments,
+  insightIncludeLockbox,
   isLoading,
   knownTags = [],
+  lockboxConfigured,
   mode,
   onArchive,
   onCancelEdit,
   onCreate,
   onEdit,
   onExportImage,
+  onInsightIncludeLockboxChange,
   onMoveToLockbox,
   onOpenZen,
   onPin,
@@ -178,13 +180,21 @@ export function ReviewWorkspace({
   const [walkSeed, setWalkSeed] = useState(() => daySeed() + 17)
   const [selectedInsightLens, setSelectedInsightLens] =
     useState<CodexInsightLens>("default")
-  const [codexStatus, setCodexStatus] = useState<CodexAgentStatus | null>(null)
-  const [codexError, setCodexError] = useState<string | null>(null)
-  const [isCheckingCodex, setIsCheckingCodex] = useState(false)
+  const [agentStatuses, setAgentStatuses] = useState<AiAgentStatus[]>([])
+  const [selectedAgent, setSelectedAgent] = useState<AiAgentKind | null>(null)
+  const [agentError, setAgentError] = useState<string | null>(null)
+  const [isCheckingAgents, setIsCheckingAgents] = useState(false)
   const [isRunningInsight, setIsRunningInsight] = useState(false)
   const [isRunningWalk, setIsRunningWalk] = useState(false)
   const [insightText, setInsightText] = useState("")
+  const [insightResultLens, setInsightResultLens] =
+    useState<CodexInsightLens>("default")
+  const [insightResultAgent, setInsightResultAgent] =
+    useState<AiAgentKind | null>(null)
+  const [insightResultIncludesLockbox, setInsightResultIncludesLockbox] =
+    useState(false)
   const [walkText, setWalkText] = useState("")
+  const [walkResultAgent, setWalkResultAgent] = useState<AiAgentKind | null>(null)
   const [isSavingInsight, setIsSavingInsight] = useState(false)
 
   const dailyFragments = useMemo(
@@ -192,8 +202,11 @@ export function ReviewWorkspace({
     [dailySeed, fragments]
   )
   const insightFragments = useMemo(
-    () => insightReviewFragments(fragments),
-    [fragments]
+    () =>
+      insightReviewFragments(fragments, {
+        includeLockbox: insightIncludeLockbox,
+      }),
+    [fragments, insightIncludeLockbox]
   )
   const walkFragments = useMemo(
     () => randomWalkFragments(fragments, walkSeed),
@@ -207,31 +220,49 @@ export function ReviewWorkspace({
         : dailyFragments
   const meta = modeMeta[mode]
   const MetaIcon = meta.icon
-  const canRunCodex = Boolean(codexStatus?.installed)
+  const selectedAgentStatus = agentStatuses.find(
+    (status) => status.agent === selectedAgent
+  )
+  const canRunAgent = Boolean(selectedAgentStatus?.installed)
+  const insightAgentBlocked =
+    insightIncludeLockbox &&
+    selectedAgent !== null &&
+    LOCKBOX_BLOCKED_AGENTS.includes(selectedAgent)
+  const canRunInsight = canRunAgent && !insightAgentBlocked
+  const insightDescription = insightIncludeLockbox
+    ? "选择任意视角与本机 AI 运行器，只读分析全部未归档笔记（含密匣，不含既往 AI 洞察）。"
+    : modeMeta.insight.description
   const selectedInsightLensMeta = insightLensById[selectedInsightLens]
 
   useEffect(() => {
     if (mode !== "insight" && mode !== "walk") return
 
     let isMounted = true
-    setIsCheckingCodex(true)
-    setCodexError(null)
+    setIsCheckingAgents(true)
+    setAgentError(null)
 
-    getCodexAgentStatus()
-      .then((status) => {
+    getAiAgentStatuses()
+      .then((statuses) => {
         if (!isMounted) return
-        setCodexStatus(status)
-        if (!status.installed && status.error) {
-          setCodexError(status.error)
+        setAgentStatuses(statuses)
+        setSelectedAgent((current) => {
+          if (current && statuses.some((item) => item.agent === current && item.installed)) {
+            return current
+          }
+          return statuses.find((item) => item.installed)?.agent ?? null
+        })
+        if (!statuses.some((item) => item.installed)) {
+          setAgentError("未检测到可用的 AI CLI。请先安装 Codex、Claude Code、Kimi Code 或 OpenCode。")
         }
       })
       .catch((error) => {
         if (!isMounted) return
-        setCodexStatus(null)
-        setCodexError(getApiErrorMessage(error))
+        setAgentStatuses([])
+        setSelectedAgent(null)
+        setAgentError(getApiErrorMessage(error))
       })
       .finally(() => {
-        if (isMounted) setIsCheckingCodex(false)
+        if (isMounted) setIsCheckingAgents(false)
       })
 
     return () => {
@@ -241,9 +272,10 @@ export function ReviewWorkspace({
 
   async function runCodex(task: CodexReviewTask) {
     const selectedFragments = task === "walk" ? walkFragments : insightFragments
-    if (selectedFragments.length === 0) return
+    if (selectedFragments.length === 0 || !selectedAgent) return
 
-    setCodexError(null)
+    setAgentError(null)
+    const runningAgent = selectedAgent
     if (task === "walk") {
       setIsRunningWalk(true)
     } else {
@@ -251,7 +283,8 @@ export function ReviewWorkspace({
     }
 
     try {
-      const result = await runCodexReviewTask(
+      const result = await runAiReviewTask(
+        runningAgent,
         task,
         task === "insight"
           ? codexReviewFragments(
@@ -260,15 +293,21 @@ export function ReviewWorkspace({
             )
           : codexReviewFragments(selectedFragments),
         vaultPath,
-        task === "insight" ? selectedInsightLens : undefined
+        task === "insight" ? selectedInsightLens : undefined,
+        task === "insight" ? insightIncludeLockbox : undefined
       )
       if (task === "walk") {
         setWalkText(result.text)
+        setWalkResultAgent(runningAgent)
       } else {
+        // 结果标题记录实际来源视角；之后再切换选择不影响已生成内容。
+        setInsightResultLens(selectedInsightLens)
+        setInsightResultAgent(runningAgent)
+        setInsightResultIncludesLockbox(insightIncludeLockbox)
         setInsightText(result.text)
       }
     } catch (error) {
-      setCodexError(getApiErrorMessage(error))
+      setAgentError(getApiErrorMessage(error))
     } finally {
       setIsRunningWalk(false)
       setIsRunningInsight(false)
@@ -281,18 +320,28 @@ export function ReviewWorkspace({
 
     setIsSavingInsight(true)
     try {
-      await onCreate(`${selectedInsightLensMeta.title}\n\n${content}`, [
-        "inbox",
-        "ai/insight",
-        `insight/${selectedInsightLens}`,
-      ])
+      // 含密匣的洞察结果只能回到密匣：加「密匣」标签走加密存储链路
+      // （handleCreate 按 wantsLockbox 判定），且不带 inbox 标签
+      await onCreate(
+        `${insightLensById[insightResultLens].title}\n\n${content}`,
+        insightResultIncludesLockbox
+          ? [LOCKBOX_TAG, "ai/insight", `insight/${insightResultLens}`]
+          : ["inbox", "ai/insight", `insight/${insightResultLens}`]
+      )
     } finally {
       setIsSavingInsight(false)
     }
   }
 
   return (
-    <Stack minHeight={0} style={{ flex: 1 }}>
+    <div
+      style={{
+        display: "flex",
+        minHeight: 0,
+        flex: 1,
+        flexDirection: "column",
+      }}
+    >
       <ReviewHeader
         icon={MetaIcon}
         mode={mode}
@@ -301,7 +350,7 @@ export function ReviewWorkspace({
           mode === "insight" ? "笔记" : "片段"
         )}
         title={meta.title}
-        description={meta.description}
+        description={mode === "insight" ? undefined : meta.description}
         onRefreshDaily={() => {
           setDailySeed((current) => current + 1)
         }}
@@ -311,7 +360,7 @@ export function ReviewWorkspace({
         }}
       />
 
-      <StackItem size="fill" isScrollable>
+      <div style={{ minHeight: 0, flex: 1, overflowY: "auto" }}>
         {isLoading ? (
           <ReviewEmpty icon={MetaIcon} message="正在读取 Shard vault..." />
         ) : displayFragments.length === 0 ? (
@@ -319,50 +368,150 @@ export function ReviewWorkspace({
         ) : (
           <div
             className="shard-content-inset"
-            style={{ paddingBottom: "var(--shard-space-8)" }}
+            style={{
+              paddingTop: "var(--shard-space-4)",
+              paddingBottom: "var(--shard-space-8)",
+            }}
           >
-            <Stack className="shard-content-measure" gap={4}>
+            <div
+              className="shard-content-measure"
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: "var(--shard-space-4)",
+              }}
+            >
               {mode === "insight" ? (
-                <>
-                  <InsightLensGallery
-                    selectedLens={selectedInsightLens}
-                    onSelect={(lens) => {
-                      setSelectedInsightLens(lens)
-                      setInsightText("")
-                    }}
-                  />
-                  <CodexPanel
-                    actionLabel={isRunningInsight ? "洞察中" : "开始洞察"}
-                    canRun={canRunCodex && !isRunningInsight}
-                    error={codexError}
-                    isChecking={isCheckingCodex}
-                    isRunning={isRunningInsight}
+                <div className={styles.insightMeasure}>
+                  <TaskPanel
+                    actionHint={
+                      insightAgentBlocked
+                        ? "含密匣洞察仅支持 Claude / Codex（stdin 传输），请改选运行器。"
+                        : undefined
+                    }
+                    actionLabel={isRunningInsight ? "洞察中..." : "开始洞察"}
+                    agents={agentStatuses}
+                    busy={isRunningInsight}
+                    canRun={canRunInsight}
+                    description={insightDescription}
+                    disabledAgents={
+                      insightIncludeLockbox ? LOCKBOX_BLOCKED_AGENTS : undefined
+                    }
+                    disabledAgentsHint={
+                      insightIncludeLockbox
+                        ? "含密匣洞察仅支持 Claude / Codex（stdin 传输）"
+                        : undefined
+                    }
+                    error={agentError}
+                    isChecking={isCheckingAgents}
                     onRun={() => void runCodex("insight")}
-                    result={insightText}
-                    status={codexStatus}
-                    title={selectedInsightLensMeta.title}
-                    onSave={insightText ? saveInsight : undefined}
+                    onSelectAgent={setSelectedAgent}
+                    selectedAgent={selectedAgent}
+                    summary={
+                      <>
+                        <div className={styles.taskSummaryTitle}>
+                          {selectedInsightLensMeta.title}
+                        </div>
+                        <div className={styles.taskSummaryDesc}>
+                          {selectedInsightLensMeta.description} 适合：
+                          {selectedInsightLensMeta.focus}。
+                        </div>
+                      </>
+                    }
+                    title="分析设置"
+                  >
+                    <InsightLensSelect
+                      disabled={isRunningInsight}
+                      onSelect={setSelectedInsightLens}
+                      selectedLens={selectedInsightLens}
+                    />
+                    {lockboxConfigured ? (
+                      <div
+                        style={{
+                          display: "flex",
+                          flexDirection: "column",
+                          gap: "var(--shard-space-1)",
+                          marginTop: "var(--shard-space-3)",
+                        }}
+                      >
+                        <label
+                          className="flex items-center gap-2 text-sm"
+                          htmlFor="insight-include-lockbox"
+                        >
+                          <Checkbox
+                            checked={insightIncludeLockbox}
+                            disabled={isRunningInsight}
+                            id="insight-include-lockbox"
+                            onCheckedChange={onInsightIncludeLockboxChange}
+                          />
+                          包含密匣内容
+                        </label>
+                        {insightIncludeLockbox ? (
+                          <p
+                            style={{
+                              margin: 0,
+                              paddingLeft: 26,
+                              fontSize: "var(--text-tiny)",
+                              lineHeight: "18px",
+                              color: "var(--muted-foreground)",
+                              textWrap: "pretty",
+                            }}
+                          >
+                            密匣内容将随洞察一并发送给所选 AI 运行器；生成结果保存时将自动存入密匣。
+                          </p>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </TaskPanel>
+
+                  <ResultSection
+                    emptyHint="选择一个视角并开始，结果会在这里展开。"
+                    emptyTitle="尚未生成洞察"
+                    isRunning={isRunningInsight}
                     isSaving={isSavingInsight}
+                    onSave={insightText ? saveInsight : undefined}
+                    result={insightText}
+                    saveLabel={
+                      insightResultIncludesLockbox ? "保存到密匣" : undefined
+                    }
+                    title={`洞察结果 · ${insightLensById[insightResultLens].title}${insightResultAgent ? ` · ${agentLabels[insightResultAgent]}` : ""}`}
+                  />
+                </div>
+              ) : null}
+
+              {mode === "walk" ? (
+                <>
+                  <TaskPanel
+                    actionLabel={isRunningWalk ? "生成中..." : "生成连接理由"}
+                    agents={agentStatuses}
+                    busy={isRunningWalk}
+                    canRun={canRunAgent}
+                    error={agentError}
+                    isChecking={isCheckingAgents}
+                    onRun={() => void runCodex("walk")}
+                    onSelectAgent={setSelectedAgent}
+                    selectedAgent={selectedAgent}
+                    summary={null}
+                    title="漫步连接"
+                  />
+                  <ResultSection
+                    emptyHint="点击生成按钮，连接理由会在这里展开。"
+                    emptyTitle="尚未生成连接理由"
+                    isRunning={isRunningWalk}
+                    result={walkText}
+                    title={`连接理由${walkResultAgent ? ` · ${agentLabels[walkResultAgent]}` : ""}`}
                   />
                 </>
               ) : null}
 
-              {mode === "walk" ? (
-                <CodexPanel
-                  actionLabel={isRunningWalk ? "生成中" : "生成连接理由"}
-                  canRun={canRunCodex && !isRunningWalk}
-                  error={codexError}
-                  isChecking={isCheckingCodex}
-                  isRunning={isRunningWalk}
-                  onRun={() => void runCodex("walk")}
-                  result={walkText}
-                  status={codexStatus}
-                  title="漫步连接"
-                />
-              ) : null}
-
               {mode !== "insight" ? (
-                <Stack gap={4}>
+                <div
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: "var(--shard-space-4)",
+                  }}
+                >
                   {displayFragments.map((fragment, index) => (
                     <div
                       key={fragment.id}
@@ -373,9 +522,13 @@ export function ReviewWorkspace({
                       }}
                     >
                       {mode === "walk" ? (
-                        <Stack
-                          hAlign="center"
-                          style={{ paddingTop: "var(--shard-space-4)" }}
+                        <div
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            flexDirection: "column",
+                            paddingTop: "var(--shard-space-4)",
+                          }}
                         >
                           <span
                             style={{
@@ -407,7 +560,7 @@ export function ReviewWorkspace({
                               }}
                             />
                           ) : null}
-                        </Stack>
+                        </div>
                       ) : (
                         <span aria-hidden="true" />
                       )}
@@ -428,18 +581,18 @@ export function ReviewWorkspace({
                       />
                     </div>
                   ))}
-                </Stack>
+                </div>
               ) : null}
-            </Stack>
+            </div>
           </div>
         )}
-      </StackItem>
-    </Stack>
+      </div>
+    </div>
   )
 }
 
 interface ReviewHeaderProps {
-  description: string
+  description?: string
   icon: typeof CalendarDaysIcon
   mode: ReviewMode
   onRefreshDaily: () => void
@@ -449,6 +602,7 @@ interface ReviewHeaderProps {
 }
 
 function ReviewHeader({
+  description,
   mode,
   onRefreshDaily,
   onRefreshWalk,
@@ -458,20 +612,30 @@ function ReviewHeader({
   return (
     <header
       className="shard-content-inset"
-      style={{ flexShrink: 0, paddingBottom: "var(--shard-space-3)" }}
+      style={{
+        flexShrink: 0,
+        borderBottom: "1px solid var(--border)",
+        paddingBlock: "var(--shard-space-3)",
+      }}
     >
-      <HStack
+      <div
         className="shard-content-measure"
-        wrap="wrap"
-        hAlign="between"
-        vAlign="center"
-        gap={3}
         style={{
-          borderBottom: "1px solid var(--border)",
-          paddingBottom: "var(--shard-space-3)",
+          display: "flex",
+          flexWrap: "wrap",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: "var(--shard-space-3)",
         }}
       >
-        <HStack gap={2} vAlign="center" style={{ minWidth: 0 }}>
+        <div
+          style={{
+            display: "flex",
+            minWidth: 0,
+            alignItems: "center",
+            gap: "var(--shard-space-2)",
+          }}
+        >
           <h1
             style={{
               minWidth: 0,
@@ -486,282 +650,330 @@ function ReviewHeader({
           >
             {title}
           </h1>
-          <Badge style={{ flexShrink: 0 }} label={summary} />
-        </HStack>
-        <HStack gap={2} vAlign="center" style={{ flexShrink: 0 }}>
+          {/* 元信息用中性 Badge：clay 只留给"开始洞察"这个唯一主动作。 */}
+          <Badge style={{ flexShrink: 0 }} variant="secondary">
+            {summary}
+          </Badge>
+        </div>
+        <div
+          style={{
+            display: "flex",
+            flexShrink: 0,
+            alignItems: "center",
+            gap: "var(--shard-space-2)",
+          }}
+        >
           {mode === "dailyReview" ? (
-            <Button label="换一组" size="sm" onClick={onRefreshDaily} />
+            <Button
+              onClick={onRefreshDaily}
+              size="sm"
+              variant="secondary"
+            >
+              换一组
+            </Button>
           ) : null}
           {mode === "walk" ? (
-            <Button label="换路径" size="sm" onClick={onRefreshWalk} />
+            <Button
+              onClick={onRefreshWalk}
+              size="sm"
+              variant="secondary"
+            >
+              换路径
+            </Button>
           ) : null}
-        </HStack>
-      </HStack>
+        </div>
+      </div>
+      {/* 一句话说明这页在做什么、数据边界在哪（本机只读、不含密匣），
+          帮用户做"要不要跑"的决定——这是它挣到的位置。 */}
+      {description ? (
+        <div
+          className="shard-content-measure"
+          style={{
+            marginTop: "var(--shard-space-1)",
+            fontSize: "var(--font-size-xs)",
+            lineHeight: "20px",
+            color: "var(--muted-foreground)",
+            textWrap: "pretty",
+          }}
+        >
+          {description}
+        </div>
+      ) : null}
     </header>
   )
 }
 
-function InsightLensGallery({
+// 分组单选列表（Codex 裁决：不是 button tabs——那暗示每项有独立结果）。
+// 行 = 组名 + 三个等分选项；短文本已够识别，不需要图标。
+function InsightLensSelect({
+  disabled = false,
   selectedLens,
   onSelect,
 }: {
+  disabled?: boolean
   selectedLens: CodexInsightLens
   onSelect: (lens: CodexInsightLens) => void
 }) {
   return (
-    <Stack as="section" aria-label="洞察视角选择" gap={8}>
+    <div
+      aria-label="洞察视角选择"
+      className={styles.lensSelect}
+      role="radiogroup"
+    >
       {insightLensGroups.map((group) => (
-        <div key={group.title}>
-          <h2
-            style={{
-              paddingInline: 4,
-              fontSize: "var(--font-size-xl)",
-              lineHeight: "28px",
-              fontWeight: 700,
-              textWrap: "balance",
-            }}
-          >
-            {group.title}
-          </h2>
-          <Grid
-            columns={{ minWidth: 220, max: 3 }}
-            gap={3}
-            style={{ marginTop: "var(--shard-space-4)" }}
-          >
+        <div className={styles.lensSelectRow} key={group.title}>
+          <span className={styles.lensSelectGroup}>{group.title}</span>
+          <div className={styles.lensOptionItems}>
             {group.lensIds.map((lensId) => {
               const lens = insightLensById[lensId]
-              const Icon = lens.icon
               const isSelected = lens.id === selectedLens
               return (
                 <button
-                  aria-pressed={isSelected}
+                  aria-checked={isSelected}
                   className={cn(
-                    styles.lensCard,
-                    isSelected && styles.lensCardSelected
+                    styles.lensOption,
+                    isSelected && styles.lensOptionSelected
                   )}
+                  disabled={disabled}
                   key={lens.id}
                   onClick={() => onSelect(lens.id)}
+                  role="radio"
                   type="button"
                 >
-                  <span
-                    style={{
-                      display: "flex",
-                      alignItems: "flex-start",
-                      justifyContent: "space-between",
-                      gap: "var(--shard-space-4)",
-                    }}
-                  >
-                    <span
-                      className={cn(
-                        styles.lensIconWrap,
-                        isSelected && styles.lensIconWrapSelected
-                      )}
-                    >
-                      <Icon size={24} strokeWidth={1.75} />
-                    </span>
-                    <span
-                      aria-hidden="true"
-                      className={cn(
-                        styles.checkToggle,
-                        isSelected && styles.checkToggleSelected
-                      )}
-                    >
-                      <span
-                        className={cn(
-                          styles.crossfadeLayer,
-                          styles.crossfadeCheck,
-                          isSelected
-                            ? styles.crossfadeVisible
-                            : styles.crossfadeHidden
-                        )}
-                      >
-                        <CheckIcon size={16} strokeWidth={2} />
-                      </span>
-                      <span
-                        className={cn(
-                          styles.crossfadeLayer,
-                          isSelected
-                            ? styles.crossfadeHidden
-                            : styles.crossfadeVisible
-                        )}
-                      >
-                        <PlusIcon size={16} strokeWidth={2} />
-                      </span>
-                    </span>
-                  </span>
-
-                  <span
-                    style={{
-                      marginTop: "var(--shard-space-5)",
-                      display: "block",
-                      fontSize: "var(--font-size-lg)",
-                      lineHeight: "24px",
-                      fontWeight: 700,
-                      textWrap: "balance",
-                    }}
-                  >
-                    {lens.title}
-                  </span>
-                  <span
-                    style={{
-                      marginTop: "var(--shard-space-3)",
-                      display: "-webkit-box",
-                      WebkitBoxOrient: "vertical",
-                      WebkitLineClamp: 3,
-                      overflow: "hidden",
-                      fontSize: "var(--font-size-sm)",
-                      lineHeight: "24px",
-                      textWrap: "pretty",
-                      color: "var(--muted-foreground)",
-                    }}
-                  >
-                    {lens.description}
-                  </span>
-                  <span
-                    style={{
-                      marginTop: "auto",
-                      paddingTop: "var(--shard-space-5)",
-                      fontSize: "var(--font-size-xs)",
-                      lineHeight: "16px",
-                      color: "var(--muted-foreground)",
-                    }}
-                  >
-                    适合：{lens.focus}
-                  </span>
+                  {lens.title}
                 </button>
               )
             })}
-          </Grid>
+          </div>
         </div>
       ))}
-    </Stack>
+    </div>
   )
 }
 
-interface CodexPanelProps {
-  actionLabel: string
-  canRun: boolean
-  error: string | null
-  isChecking: boolean
-  isRunning: boolean
-  isSaving?: boolean
-  onRun: () => void
-  onSave?: () => Promise<void>
-  result: string
-  status: CodexAgentStatus | null
-  title: string
-}
-
-function CodexPanel({
+// 设置面板：白卡 + shadow-card，承载"这次动作"的全部参数与唯一 clay 主动作。
+function TaskPanel({
+  actionHint,
   actionLabel,
+  agents,
+  busy,
   canRun,
+  children,
+  description,
+  disabledAgents,
+  disabledAgentsHint,
   error,
   isChecking,
-  isRunning,
-  isSaving = false,
   onRun,
-  onSave,
-  result,
-  status,
+  onSelectAgent,
+  selectedAgent,
+  summary,
   title,
-}: CodexPanelProps) {
+}: {
+  actionHint?: string
+  actionLabel: string
+  agents: AiAgentStatus[]
+  busy: boolean
+  canRun: boolean
+  children?: ReactNode
+  description?: string
+  disabledAgents?: readonly AiAgentKind[]
+  disabledAgentsHint?: string
+  error: string | null
+  isChecking: boolean
+  onRun: () => void
+  onSelectAgent: (agent: AiAgentKind) => void
+  selectedAgent: AiAgentKind | null
+  summary: ReactNode
+  title: string
+}) {
   return (
-    <section
-      style={{
-        borderRadius: "var(--shard-surface-radius)",
-        border: "1px solid var(--border)",
-        background: "var(--card)",
-        padding: "var(--shard-card-padding-x)",
-      }}
-    >
-      <HStack wrap="wrap" hAlign="between" vAlign="center" gap={3}>
-        <div style={{ minWidth: 0 }}>
-          <HStack gap={2} vAlign="center">
-            <BotIcon size={16} style={{ color: "var(--shard-sapphire)" }} />
-            <h2
-              style={{
-                fontSize: "var(--font-size-sm)",
-                fontWeight: 700,
-                textWrap: "balance",
-              }}
-            >
-              {title}
-            </h2>
-          </HStack>
-          <div
-            style={{
-              marginTop: 4,
-              fontSize: "var(--font-size-xs)",
-              lineHeight: "20px",
-              color: "var(--muted-foreground)",
-            }}
-          >
-            {isChecking
-              ? "正在检测 Codex CLI..."
-              : status?.installed
-                ? `Codex ${status.version ?? "已安装"}`
-                : "需要本机 Codex CLI"}
-          </div>
-        </div>
+    <section aria-busy={busy} className={styles.taskCard}>
+      <h2 className={styles.taskCardTitle}>{title}</h2>
+      {description ? (
+        <p className={styles.taskCardDesc}>{description}</p>
+      ) : null}
+      {children}
 
-        <HStack gap={2} vAlign="center" style={{ flexShrink: 0 }}>
-          {onSave ? (
-            <Button
-              isDisabled={isSaving || isRunning}
-              label={isSaving ? "保存中" : "保存为片段"}
-              onClick={() => void onSave()}
-              size="sm"
-            />
-          ) : null}
-          <Button
-            isDisabled={!canRun || isChecking}
-            label={actionLabel}
-            onClick={onRun}
-            size="sm"
-            variant="primary"
-          />
-        </HStack>
-      </HStack>
+      <AgentSelect
+        agents={agents}
+        disabled={busy || isChecking}
+        disabledAgents={disabledAgents}
+        disabledAgentsHint={disabledAgentsHint}
+        isChecking={isChecking}
+        onSelect={onSelectAgent}
+        selectedAgent={selectedAgent}
+      />
+
+      <div className={styles.taskCardActionRow}>
+        <div className={styles.taskCardSummary}>{summary}</div>
+        <Button
+          disabled={!canRun || isChecking || busy}
+          onClick={onRun}
+          variant="primary"
+        >
+          {actionLabel}
+        </Button>
+      </div>
+
+      {actionHint ? (
+        <p className={styles.taskCardDesc}>{actionHint}</p>
+      ) : null}
 
       {error ? (
-        <HStack
-          gap={2}
-          paddingInline={3}
-          paddingBlock={2}
-          style={{
-            marginTop: "var(--shard-space-3)",
-            borderRadius: "var(--shard-radius-control)",
-            border:
-              "1px solid rgb(var(--shard-ruby-rgb) / var(--shard-alpha-34))",
-            background: "rgb(var(--shard-ruby-rgb) / var(--shard-alpha-8))",
-            fontSize: "var(--font-size-xs)",
-            lineHeight: "20px",
-            color: "var(--shard-ruby)",
-          }}
-        >
+        <div className={styles.taskCardError}>
           <CircleAlertIcon
             size={14}
             style={{ marginTop: 2, flexShrink: 0 }}
           />
           <span style={{ textWrap: "pretty" }}>{error}</span>
-        </HStack>
-      ) : null}
-
-      {result ? (
-        <div style={{ marginTop: "var(--shard-space-4)" }}>
-          <MarkdownDocument content={result} />
         </div>
-      ) : (
+      ) : null}
+    </section>
+  )
+}
+
+function AgentSelect({
+  agents,
+  disabled,
+  disabledAgents = [],
+  disabledAgentsHint,
+  isChecking,
+  onSelect,
+  selectedAgent,
+}: {
+  agents: AiAgentStatus[]
+  disabled: boolean
+  disabledAgents?: readonly AiAgentKind[]
+  disabledAgentsHint?: string
+  isChecking: boolean
+  onSelect: (agent: AiAgentKind) => void
+  selectedAgent: AiAgentKind | null
+}) {
+  const selectedStatus = agents.find((item) => item.agent === selectedAgent)
+  const availableCount = agents.filter((item) => item.installed).length
+  const version = selectedStatus?.version?.replace(/^codex-cli\s+/u, "")
+
+  return (
+    <div className={styles.agentField}>
+      <div className={styles.agentFieldHeading}>
+        <label className={styles.agentFieldLabel} htmlFor="review-agent-select">
+          运行器
+        </label>
+        {!isChecking ? (
+          <span className={styles.agentCount}>
+            已识别 {availableCount}/{agents.length || 4}
+          </span>
+        ) : null}
+      </div>
+      <select
+        aria-label="AI 运行器"
+        className={styles.agentSelect}
+        disabled={disabled || availableCount === 0}
+        id="review-agent-select"
+        onChange={(event) => onSelect(event.target.value as AiAgentKind)}
+        value={selectedAgent ?? ""}
+      >
+        {selectedAgent === null ? <option value="">选择运行器</option> : null}
+        {agents.map((status) => {
+          const blockedByLockbox = disabledAgents.includes(status.agent)
+          return (
+            <option
+              disabled={!status.installed || blockedByLockbox}
+              key={status.agent}
+              value={status.agent}
+            >
+              {agentLabels[status.agent]} ·{" "}
+              {blockedByLockbox
+                ? "含密匣时不可用"
+                : status.installed
+                  ? "已就绪"
+                  : "未检测到"}
+            </option>
+          )
+        })}
+      </select>
+      <div
+        aria-live="polite"
+        className={cn(
+          styles.agentStatus,
+          selectedStatus?.installed && styles.agentStatusReady
+        )}
+      >
+        <span aria-hidden="true" className={styles.agentStatusDot} />
+        {isChecking
+          ? "正在检测本机运行器..."
+          : selectedStatus?.installed
+            ? `已就绪${version ? ` · ${version}` : ""}`
+            : "没有可用的本机运行器"}
+      </div>
+      {disabledAgentsHint ? (
         <div
           style={{
-            marginTop: "var(--shard-space-4)",
-            fontSize: "var(--font-size-sm)",
-            lineHeight: "24px",
-            textWrap: "pretty",
+            fontSize: "var(--text-tiny)",
+            lineHeight: "18px",
             color: "var(--muted-foreground)",
+            textWrap: "pretty",
           }}
         >
-          {isRunning ? "Codex 正在只读分析所选笔记..." : "生成后会显示在这里。"}
+          {disabledAgentsHint}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+// 结果区：标题 + hairline + 文档/骨架/稳定空态；保存动作属于结果，放在文档末尾。
+function ResultSection({
+  emptyHint,
+  emptyTitle,
+  isRunning,
+  isSaving = false,
+  onSave,
+  result,
+  saveLabel = "保存为片段",
+  title,
+}: {
+  emptyHint: string
+  emptyTitle: string
+  isRunning: boolean
+  isSaving?: boolean
+  onSave?: () => Promise<void>
+  result: string
+  saveLabel?: string
+  title: string
+}) {
+  return (
+    <section className={styles.resultSection}>
+      <h2 className={styles.resultTitle}>{title}</h2>
+      {result ? (
+        <>
+          <div className={styles.resultBody}>
+            <MarkdownDocument content={result} />
+          </div>
+          {onSave ? (
+            <div className={styles.resultActions}>
+              <Button
+                disabled={isSaving}
+                onClick={() => void onSave()}
+                variant="default"
+              >
+                {isSaving ? "保存中" : saveLabel}
+              </Button>
+            </div>
+          ) : null}
+        </>
+      ) : isRunning ? (
+        <div aria-hidden="true" className={styles.resultSkeleton}>
+          <span className={styles.skeletonBar} />
+          <span className={styles.skeletonBar} style={{ width: "82%" }} />
+          <span className={styles.skeletonBar} style={{ width: "64%" }} />
+          <span className={styles.skeletonBar} style={{ width: "74%" }} />
+        </div>
+      ) : (
+        <div className={styles.resultEmpty}>
+          <div className={styles.resultEmptyTitle}>{emptyTitle}</div>
+          <div className={styles.resultEmptyHint}>{emptyHint}</div>
         </div>
       )}
     </section>
@@ -776,12 +988,17 @@ function ReviewEmpty({
   message: string
 }) {
   return (
-    <Stack
-      height="100%"
-      hAlign="center"
-      vAlign="center"
-      gap={3}
-      style={{ textAlign: "center", color: "var(--muted-foreground)" }}
+    <div
+      style={{
+        display: "flex",
+        height: "100%",
+        alignItems: "center",
+        justifyContent: "center",
+        flexDirection: "column",
+        gap: "var(--shard-space-3)",
+        textAlign: "center",
+        color: "var(--muted-foreground)",
+      }}
     >
       <Icon size={32} />
       <div
@@ -793,7 +1010,7 @@ function ReviewEmpty({
       >
         {message}
       </div>
-    </Stack>
+    </div>
   )
 }
 

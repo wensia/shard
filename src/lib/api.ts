@@ -1,7 +1,8 @@
 import { invoke, isTauri } from "@tauri-apps/api/core"
 
 import type {
-  CodexAgentStatus,
+  AiAgentKind,
+  AiAgentStatus,
   CodexInsightLens,
   CodexReviewFragment,
   CodexReviewTask,
@@ -195,22 +196,26 @@ export function getGithubCliStatus() {
   return desktopInvoke<GithubCliInfo>("github_cli_status")
 }
 
-export function getCodexAgentStatus() {
-  return desktopInvoke<CodexAgentStatus>("codex_agent_status")
+export function getAiAgentStatuses() {
+  return desktopInvoke<AiAgentStatus[]>("ai_agent_statuses")
 }
 
-export function runCodexReviewTask(
+export function runAiReviewTask(
+  agent: AiAgentKind,
   task: CodexReviewTask,
   fragments: CodexReviewFragment[],
   vaultPath: string,
-  lens?: CodexInsightLens
+  lens?: CodexInsightLens,
+  includeLockbox?: boolean
 ) {
-  return desktopInvoke<CodexReviewTaskResult>("run_codex_review_task", {
+  return desktopInvoke<CodexReviewTaskResult>("run_ai_review_task", {
     request: {
+      agent,
       task,
       lens,
       fragments,
       vaultPath,
+      includeLockbox,
     },
   })
 }

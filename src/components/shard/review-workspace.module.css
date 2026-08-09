@@ -1,112 +1,317 @@
-/* Insight lens selector cards: needs :hover / :focus-visible and a
-   crossfade transition between the plus/check icons, so a plain inline
-   style can't express it -- kept in a CSS Module scoped to this file. */
+/* 洞察页：设置面板 + 结果区 + 分组单选。
+   字号/间距/圆角/阴影全部走 kiln token（--text-* / --shard-space-* / shadow-card），
+   hover/focus 需要真实伪类——保留在 CSS Module 里。 */
 
-.lensCard {
+/* 洞察工作台：参数是窄列，结果是主工作面；正文自身再限制阅读行宽。 */
+.insightMeasure {
+  display: grid;
+  grid-template-columns: minmax(300px, 340px) minmax(0, 1fr);
+  align-items: start;
+  gap: var(--shard-space-8);
+  width: 100%;
+  min-width: 0;
+}
+
+/* 设置面板：白卡 + shadow-card，承载这次动作的全部参数与唯一 clay 主动作。 */
+.taskCard {
   display: flex;
   flex-direction: column;
-  min-height: 176px;
-  border-radius: var(--shard-surface-radius);
-  border: 1px solid var(--border);
   background: var(--card);
-  padding: var(--shard-space-5);
-  text-align: left;
+  border-radius: var(--shard-radius-card);
+  box-shadow: var(--shard-shadow-card);
+  padding: var(--shard-space-4);
+}
+
+.taskCardTitle {
+  margin: 0;
+  font-size: var(--text-section-title);
+  font-weight: 600;
+  line-height: 1.45;
+}
+
+.taskCardDesc,
+.taskCardStatus {
+  margin: var(--shard-space-1) 0 0;
+  font-size: var(--text-meta);
+  line-height: 20px;
+  color: var(--muted-foreground);
+  text-wrap: pretty;
+}
+
+.agentField {
+  display: flex;
+  flex-direction: column;
+  gap: var(--shard-space-micro);
+  margin-top: var(--shard-space-4);
+}
+
+.agentFieldHeading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--shard-space-2);
+}
+
+.agentFieldLabel {
+  font-size: var(--text-meta);
+  font-weight: 600;
+  color: var(--foreground);
+}
+
+.agentCount {
+  font-size: var(--text-tiny);
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+}
+
+.agentSelect {
+  width: 100%;
+  height: 36px;
+  border: 1px solid var(--input);
+  border-radius: var(--shard-radius-control);
+  background: var(--background);
+  padding: 0 var(--shard-space-3);
+  font: inherit;
+  font-size: var(--text-body);
+  color: var(--foreground);
   outline: none;
+  box-shadow: var(--shard-shadow-input);
+}
+
+.agentSelect:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--foreground) 21%, var(--input));
+}
+
+.agentSelect:focus-visible {
+  border-color: var(--ring);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 21%, transparent);
+}
+
+.agentSelect:disabled {
+  cursor: not-allowed;
+  opacity: var(--shard-alpha-55);
+}
+
+.agentStatus {
+  display: flex;
+  align-items: center;
+  gap: var(--shard-space-micro);
+  min-height: 18px;
+  font-size: var(--text-tiny);
+  color: var(--muted-foreground);
+}
+
+.agentStatusDot {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border: 1px solid currentColor;
+  border-radius: 9999px;
+  background: transparent;
+}
+
+.agentStatusReady {
+  color: var(--shard-emerald);
+}
+
+.agentStatusReady .agentStatusDot {
+  background: currentColor;
+}
+
+/* 说明 → 选择器 12px；两组选项间 8px。 */
+.lensSelect {
+  display: flex;
+  flex-direction: column;
+  gap: var(--shard-space-2);
+  margin-top: var(--shard-space-3);
+}
+
+.lensSelectRow {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr);
+  align-items: center;
+  gap: var(--shard-space-3);
+}
+
+.lensSelectGroup {
+  font-size: var(--text-meta);
+  color: var(--muted-foreground);
+}
+
+.lensOptionItems {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--shard-space-2);
+}
+
+.lensOption {
+  height: 36px;
+  padding-inline: var(--shard-space-3);
+  border: 1px solid transparent;
+  border-radius: var(--shard-radius-control);
+  background: var(--muted);
+  font-size: var(--text-body);
+  font-weight: 500;
+  color: var(--foreground);
+  white-space: nowrap;
   cursor: pointer;
+  outline: none;
   transition:
+    background-color 150ms ease,
     border-color 150ms ease,
-    background-color 150ms ease;
+    color 150ms ease;
 }
 
-.lensCard:hover:not(.lensCardSelected) {
-  border-color: rgb(var(--shard-primary-rgb) / var(--shard-alpha-21));
+.lensOption:hover:not(.lensOptionSelected):not(:disabled) {
+  background: var(--border);
 }
 
-.lensCard:focus-visible {
+.lensOption:focus-visible {
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 34%, transparent);
 }
 
-.lensCardSelected {
-  border-color: rgb(var(--shard-primary-rgb) / var(--shard-alpha-34));
+.lensOptionSelected {
   background: rgb(var(--shard-primary-rgb) / var(--shard-alpha-5));
+  border-color: rgb(var(--shard-primary-rgb) / var(--shard-alpha-34));
+  color: var(--shard-accent-text);
 }
 
-.lensIconWrap {
+.lensOption:disabled {
+  opacity: var(--shard-alpha-55);
+  pointer-events: none;
+}
+
+/* 选择器 → 摘要行动行 16px，行顶发丝线；主动作 36px 默认高度。 */
+.taskCardActionRow {
   display: flex;
   align-items: center;
-  justify-content: center;
-  width: 44px;
-  height: 44px;
-  border-radius: var(--shard-radius-control);
-  border: 1px solid transparent;
-  background: var(--background);
-  color: var(--foreground);
-  transition:
-    border-color 150ms ease,
-    color 150ms ease;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--shard-space-3);
+  margin-top: var(--shard-space-4);
+  border-top: 1px solid var(--border);
+  padding-top: var(--shard-space-4);
 }
 
-.lensCard:hover:not(.lensCardSelected) .lensIconWrap {
-  border-color: var(--border);
+.taskCardSummary {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
-.lensIconWrapSelected {
-  border-color: rgb(var(--shard-primary-rgb) / var(--shard-alpha-21));
-  color: var(--shard-sapphire);
+.taskSummaryTitle {
+  font-size: var(--text-section-title);
+  font-weight: 600;
+  line-height: 1.45;
 }
 
-.checkToggle {
-  position: relative;
-  display: flex;
-  flex-shrink: 0;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  border-radius: 9999px;
-  border: 1px solid var(--border);
-  background: var(--background);
+.taskSummaryDesc {
+  margin-top: 2px;
+  font-size: var(--text-body);
+  line-height: 1.45;
   color: var(--muted-foreground);
-  transition:
-    border-color 150ms ease,
-    background-color 150ms ease,
-    color 150ms ease;
+  text-wrap: pretty;
 }
 
-.lensCard:hover:not(.lensCardSelected) .checkToggle {
-  border-color: var(--shard-sapphire);
-  color: var(--shard-sapphire);
-}
-
-.checkToggleSelected {
-  border-color: transparent;
-  background: var(--shard-sapphire);
-  color: #fff;
-}
-
-.crossfadeLayer {
+.taskCardError {
   display: flex;
+  gap: var(--shard-space-2);
+  margin-top: var(--shard-space-3);
+  padding-inline: var(--shard-space-3);
+  padding-block: var(--shard-space-2);
+  border: 1px solid rgb(var(--shard-ruby-rgb) / var(--shard-alpha-34));
+  border-radius: var(--shard-radius-control);
+  background: rgb(var(--shard-ruby-rgb) / var(--shard-alpha-8));
+  font-size: var(--text-meta);
+  line-height: 20px;
+  color: var(--shard-ruby);
+}
+
+/* 结果区：标题 + hairline + 文档/骨架/稳定空态。 */
+.resultSection {
+  min-width: 0;
+  min-height: 320px;
+}
+
+.resultTitle {
+  margin: 0;
+  padding-bottom: var(--shard-space-2);
+  border-bottom: 1px solid var(--border);
+  font-size: var(--text-section-title);
+  font-weight: 600;
+  line-height: 1.45;
+}
+
+.resultBody {
+  max-width: 42rem;
+  margin-top: var(--shard-space-4);
+  font-size: var(--text-body);
+  line-height: 1.6;
+}
+
+.resultActions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: var(--shard-space-4);
+}
+
+.resultEmpty {
+  display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  transition:
-    transform 300ms cubic-bezier(0.2, 0, 0, 1),
-    opacity 300ms cubic-bezier(0.2, 0, 0, 1),
-    filter 300ms cubic-bezier(0.2, 0, 0, 1);
+  gap: var(--shard-space-1);
+  min-height: 176px;
+  text-align: center;
 }
 
-.crossfadeCheck {
-  position: absolute;
-  inset: 0;
+.resultEmptyTitle {
+  font-size: var(--text-body);
+  font-weight: 500;
+  color: var(--foreground);
 }
 
-.crossfadeVisible {
-  transform: scale(1);
-  opacity: 1;
-  filter: blur(0);
+.resultEmptyHint {
+  font-size: var(--text-meta);
+  color: var(--muted-foreground);
 }
 
-.crossfadeHidden {
-  transform: scale(0.25);
-  opacity: 0;
-  filter: blur(4px);
+/* 运行态骨架与空态同高，避免布局跳动。 */
+.resultSkeleton {
+  display: flex;
+  flex-direction: column;
+  gap: var(--shard-space-3);
+  min-height: 176px;
+  padding-top: var(--shard-space-4);
+}
+
+.skeletonBar {
+  height: 12px;
+  border-radius: var(--shard-radius-control);
+  background: var(--muted);
+}
+
+/* 窄屏：组名移到选项上方，三项保持等分；更窄则两列，不横向滚动。 */
+@media (width < 70rem) {
+  .insightMeasure {
+    grid-template-columns: 1fr;
+    gap: var(--shard-space-6);
+  }
+
+  .lensSelectRow {
+    grid-template-columns: 1fr;
+    gap: var(--shard-space-1);
+  }
+}
+
+@media (width < 30rem) {
+  .lensOptionItems {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (pointer: coarse) {
+  .agentSelect,
+  .lensOption {
+    min-height: 44px;
+  }
 }
