@@ -12,6 +12,8 @@ dist
 dist-ssr
 *.local
 .playwright-mcp/
+playwright-report/
+test-results/
 
 # Tauri / Rust build artifacts
 # workspace 化之后构建产物与锁文件都收敛到仓库根，子目录里的是历史残留。
