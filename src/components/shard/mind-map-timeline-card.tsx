@@ -1,4 +1,9 @@
-import { useEffect, useRef, useState } from "react"
+import {
+  useEffect,
+  useRef,
+  useState,
+  type KeyboardEvent,
+} from "react"
 import {
   GitBranchIcon,
   Loader2Icon,
@@ -6,11 +11,15 @@ import {
   PencilLineIcon,
   Share2Icon,
 } from "lucide-react"
+import { toast } from "sonner"
 
-import { DropdownMenu, DropdownMenuItem } from "@astryxdesign/core/DropdownMenu"
-import { HStack } from "@astryxdesign/core/HStack"
-import { Stack } from "@astryxdesign/core/Stack"
-import { useToast } from "@astryxdesign/core/Toast"
+import { Button } from "@/components/ui/button"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 
 import { MindMapPreview } from "@/components/shard/mind-map-preview"
 import { getApiErrorMessage, readMindMap } from "@/lib/api"
@@ -24,7 +33,6 @@ interface MindMapTimelineCardProps {
 }
 
 export function MindMapTimelineCard({ map, onOpen }: MindMapTimelineCardProps) {
-  const toast = useToast()
   const cardRef = useRef<HTMLElement | null>(null)
   const [readResult, setReadResult] = useState<MindMapReadResult | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -66,20 +74,25 @@ export function MindMapTimelineCard({ map, onOpen }: MindMapTimelineCardProps) {
       }
 
       await clipboard.writeText(`${map.title}\n${map.path}`)
-      toast({ body: "已复制思维导图信息" })
+      toast("已复制思维导图信息", { duration: 5000 })
     } catch (unknownError) {
-      toast({
-        body: `分享思维导图失败：${getApiErrorMessage(unknownError)}`,
-        type: "error",
+      toast.error(`分享思维导图失败：${getApiErrorMessage(unknownError)}`, {
+        duration: Infinity,
       })
     }
   }
 
   return (
-    <Stack
-      as="article"
+    <article
+      aria-label={onOpen ? `打开思维导图：${map.title}` : undefined}
       onClick={() => onOpen?.(map)}
+      onKeyDown={(event: KeyboardEvent<HTMLElement>) => {
+        if (!onOpen || (event.key !== "Enter" && event.key !== " ")) return
+        event.preventDefault()
+        onOpen(map)
+      }}
       ref={cardRef}
+      role={onOpen ? "button" : undefined}
       style={{
         cursor: "pointer",
         borderRadius: "var(--shard-surface-radius)",
@@ -88,8 +101,15 @@ export function MindMapTimelineCard({ map, onOpen }: MindMapTimelineCardProps) {
         paddingTop: "var(--shard-card-padding-y)",
         paddingBottom: "var(--shard-card-padding-bottom)",
       }}
+      tabIndex={onOpen ? 0 : undefined}
     >
-      <HStack gap={4} vAlign="start">
+      <div
+        style={{
+          alignItems: "flex-start",
+          display: "flex",
+          gap: "var(--shard-space-4)",
+        }}
+      >
         <div style={{ minWidth: 0, flex: "1 1 0%" }}>
           <div
             style={{
@@ -109,7 +129,14 @@ export function MindMapTimelineCard({ map, onOpen }: MindMapTimelineCardProps) {
             >
               {formatCreatedTime(map.createdAt)}
             </time>
-            <HStack className="shard-card-tags" gap={2} wrap="wrap">
+            <div
+              className="shard-card-tags"
+              style={{
+                display: "flex",
+                flexWrap: "wrap",
+                gap: "var(--shard-space-2)",
+              }}
+            >
               <span
                 className="shard-tag shard-tag-muted"
                 style={{ fontWeight: 500 }}
@@ -123,7 +150,7 @@ export function MindMapTimelineCard({ map, onOpen }: MindMapTimelineCardProps) {
               >
                 {map.nodeCount} 节点
               </span>
-            </HStack>
+            </div>
           </div>
           <h2
             style={{
@@ -142,30 +169,41 @@ export function MindMapTimelineCard({ map, onOpen }: MindMapTimelineCardProps) {
 
         <div
           onClick={(event) => event.stopPropagation()}
+          onKeyDown={(event) => event.stopPropagation()}
           style={{ display: "flex", flexShrink: 0, alignItems: "center" }}
         >
-          <DropdownMenu
-            button={{
-              icon: <MoreHorizontalIcon />,
-              isIconOnly: true,
-              label: "思维导图操作",
-              size: "sm",
-              variant: "ghost",
-            }}
-          >
-            <DropdownMenuItem
-              icon={PencilLineIcon}
-              label="编辑"
-              onClick={() => onOpen?.(map)}
-            />
-            <DropdownMenuItem
-              icon={Share2Icon}
-              label="分享"
-              onClick={() => void shareMindMap()}
-            />
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={
+                <Button
+                  aria-label="思维导图操作"
+                  size="icon-sm"
+                  type="button"
+                  variant="ghost"
+                />
+              }
+            >
+              <MoreHorizontalIcon aria-hidden="true" />
+              <span className="sr-only">思维导图操作</span>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" style={{ width: 144 }}>
+              <DropdownMenuItem
+                disabled={!onOpen}
+                onClick={() => {
+                  if (onOpen) window.setTimeout(() => onOpen(map), 0)
+                }}
+              >
+                <PencilLineIcon aria-hidden="true" />
+                <span>编辑</span>
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => void shareMindMap()}>
+                <Share2Icon aria-hidden="true" />
+                <span>分享</span>
+              </DropdownMenuItem>
+            </DropdownMenuContent>
           </DropdownMenu>
         </div>
-      </HStack>
+      </div>
 
       <div style={{ marginTop: "var(--shard-space-3)" }}>
         {readResult ? (
@@ -224,7 +262,7 @@ export function MindMapTimelineCard({ map, onOpen }: MindMapTimelineCardProps) {
           编辑于 {formatCreatedTime(map.updatedAt)}
         </div>
       ) : null}
-    </Stack>
+    </article>
   )
 }
 

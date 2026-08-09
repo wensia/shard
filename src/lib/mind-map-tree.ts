@@ -1,5 +1,11 @@
 import type { ShardMapFile, ShardMapNode } from "@/types"
 
+// updateDraft 的操作元数据：文本编辑传 mergeKey（如 text:{nodeId}），
+// 连续击键合并为一条历史；结构操作不传，每次独立入栈。
+export interface MindMapChangeMeta {
+  mergeKey?: string
+}
+
 const SORT_ALPHABET =
   "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 const FIRST_SORT_CHAR = SORT_ALPHABET[0]
@@ -145,6 +151,60 @@ export function deleteMindMapNode(
   }
 
   return { file: touchFile(next), focusNodeId }
+}
+
+// 只删除节点本身（对应 XMind 的「删除单个主题」/ MindNode 的 ⌥+⌫）：
+// 子节点保持相对顺序上提到被删节点的位置，挂到祖父节点下。
+export function deleteMindMapNodeOnly(
+  file: ShardMapFile,
+  nodeId: string
+): { file: ShardMapFile; focusNodeId: string } {
+  const node = file.nodes[nodeId]
+  if (!node || node.id === file.rootId || !node.parentId) {
+    return { file, focusNodeId: file.rootId }
+  }
+
+  const siblings = getMindMapChildren(file, node.parentId)
+  const index = siblings.findIndex((sibling) => sibling.id === nodeId)
+  const children = getMindMapChildren(file, nodeId)
+  const focusNodeId =
+    children[0]?.id ??
+    siblings[index + 1]?.id ??
+    siblings[index - 1]?.id ??
+    node.parentId
+
+  const next = cloneMindMapFile(file)
+  const updatedAt = new Date().toISOString()
+  let previousSortKey = siblings[index - 1]?.sortKey ?? null
+  const followingSortKey = siblings[index + 1]?.sortKey ?? null
+  for (const child of children) {
+    const movedChild = next.nodes[child.id]
+    if (!movedChild) continue
+
+    movedChild.parentId = node.parentId
+    movedChild.sortKey = getSortKeyBetween(previousSortKey, followingSortKey)
+    movedChild.updatedAt = updatedAt
+    previousSortKey = movedChild.sortKey
+  }
+
+  delete next.nodes[nodeId]
+  return { file: touchFile(next), focusNodeId }
+}
+
+export function toggleMindMapNodeCollapsed(
+  file: ShardMapFile,
+  nodeId: string
+): ShardMapFile {
+  const node = file.nodes[nodeId]
+  if (!node || node.id === file.rootId) return file
+
+  const next = cloneMindMapFile(file)
+  const target = next.nodes[nodeId]
+  if (!target) return file
+
+  target.collapsed = !target.collapsed
+  target.updatedAt = new Date().toISOString()
+  return touchFile(next)
 }
 
 export function indentMindMapNode(
@@ -335,6 +395,28 @@ export function getMovableMindMapNodeIds(
     if (!selectedIds.has(nodeId)) return false
     return !hasMindMapAncestorInSet(file, nodeId, selectedIds)
   })
+}
+
+// 撤销回到已保存内容时，文件/节点的 updatedAt 时间戳已被 touchFile 刷新，
+// 直接 JSON 比对会永远 dirty。归一化掉时间戳后比较内容是否一致。
+export function isMindMapFileContentEqual(a: ShardMapFile, b: ShardMapFile) {
+  return (
+    JSON.stringify(normalizeMindMapFileForCompare(a)) ===
+    JSON.stringify(normalizeMindMapFileForCompare(b))
+  )
+}
+
+function normalizeMindMapFileForCompare(file: ShardMapFile) {
+  return {
+    ...file,
+    updatedAt: "",
+    nodes: Object.fromEntries(
+      Object.entries(file.nodes).map(([nodeId, node]) => [
+        nodeId,
+        { ...node, updatedAt: "" },
+      ])
+    ),
+  }
 }
 
 export function findFirstEditableNodeId(file: ShardMapFile): string {

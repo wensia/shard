@@ -1,4 +1,10 @@
-import { useEffect, useRef, useState, type FormEvent } from "react"
+import {
+  useEffect,
+  useRef,
+  useState,
+  type FormEvent,
+  type KeyboardEvent,
+} from "react"
 import {
   GitBranchIcon,
   Loader2Icon,
@@ -8,14 +14,17 @@ import {
   RefreshCwIcon,
   Share2Icon,
 } from "lucide-react"
+import { toast } from "sonner"
 
-import { Button } from "@astryxdesign/core/Button"
-import { DropdownMenu, DropdownMenuItem } from "@astryxdesign/core/DropdownMenu"
-import { Grid } from "@astryxdesign/core/Grid"
-import { HStack } from "@astryxdesign/core/HStack"
-import { Stack } from "@astryxdesign/core/Stack"
-import { TextInput } from "@astryxdesign/core/TextInput"
-import { useToast } from "@astryxdesign/core/Toast"
+import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import { Input } from "@/components/ui/input"
 
 import { MindMapPreview } from "@/components/shard/mind-map-preview"
 import {
@@ -36,7 +45,6 @@ interface MindMapPanelProps {
 const CARD_PREVIEW_HEIGHT = 168
 
 export function MindMapPanel({ onMapsChange, onOpenMap }: MindMapPanelProps) {
-  const toast = useToast()
   const [maps, setMaps] = useState<MindMapSummary[]>([])
   const [title, setTitle] = useState("")
   const [isCreating, setIsCreating] = useState(false)
@@ -52,9 +60,8 @@ export function MindMapPanel({ onMapsChange, onOpenMap }: MindMapPanelProps) {
     try {
       updateMaps(await listMindMaps())
     } catch (error) {
-      toast({
-        body: `读取思维导图失败：${getApiErrorMessage(error)}`,
-        type: "error",
+      toast.error(`读取思维导图失败：${getApiErrorMessage(error)}`, {
+        duration: Infinity,
       })
     } finally {
       setIsLoading(false)
@@ -81,12 +88,11 @@ export function MindMapPanel({ onMapsChange, onOpenMap }: MindMapPanelProps) {
         },
         ...maps,
       ])
-      toast({ body: "思维导图已创建" })
+      toast("思维导图已创建", { duration: 5000 })
       onOpenMap(created.file.id)
     } catch (error) {
-      toast({
-        body: `创建思维导图失败：${getApiErrorMessage(error)}`,
-        type: "error",
+      toast.error(`创建思维导图失败：${getApiErrorMessage(error)}`, {
+        duration: Infinity,
       })
     } finally {
       setIsCreating(false)
@@ -99,7 +105,7 @@ export function MindMapPanel({ onMapsChange, onOpenMap }: MindMapPanelProps) {
   }
 
   return (
-    <Stack minHeight={0} style={{ flex: "1 1 0%" }}>
+    <div className="flex min-h-0 flex-1 flex-col">
       <div
         className="shard-content-inset"
         data-tauri-drag-region
@@ -108,73 +114,69 @@ export function MindMapPanel({ onMapsChange, onOpenMap }: MindMapPanelProps) {
           paddingTop: "var(--shard-top-inset)",
         }}
       >
-        <HStack
+        <div
           className="shard-content-measure"
-          gap={3}
-          hAlign="between"
-          vAlign="center"
-          wrap="wrap"
+          style={{
+            alignItems: "center",
+            borderBottom: "1px solid var(--border)",
+            display: "flex",
+            flexWrap: "wrap",
+            gap: "var(--shard-space-3)",
+            justifyContent: "space-between",
+            paddingBottom: "var(--shard-space-3)",
+          }}
         >
-          <HStack gap={3} style={{ minWidth: 0 }} vAlign="center">
-            <span
+          <div
+            style={{
+              alignItems: "center",
+              display: "flex",
+              gap: "var(--shard-space-2)",
+              minWidth: 0,
+            }}
+          >
+            <h1
               style={{
-                alignItems: "center",
-                background: "var(--card)",
-                border: "1px solid var(--border)",
-                borderRadius: "var(--shard-radius-control)",
-                color: "var(--shard-sapphire)",
-                display: "flex",
-                flexShrink: 0,
-                height: 32,
-                justifyContent: "center",
-                width: 32,
+                fontSize: "var(--font-size-base)",
+                fontWeight: 600,
+                lineHeight: "24px",
+                margin: 0,
+                minWidth: 0,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                textWrap: "balance",
+                whiteSpace: "nowrap",
               }}
             >
-              <GitBranchIcon size={16} strokeWidth={1.75} />
-            </span>
-            <div style={{ minWidth: 0 }}>
-              <h1
-                style={{
-                  fontSize: 18,
-                  fontWeight: 700,
-                  lineHeight: "24px",
-                  margin: 0,
-                  textWrap: "balance",
-                }}
-              >
-                思维导图
-              </h1>
-              <p
-                style={{
-                  color: "var(--muted-foreground)",
-                  fontSize: 14,
-                  lineHeight: "20px",
-                  margin: 0,
-                  marginTop: 4,
-                }}
-              >
-                {maps.length} 份导图
-              </p>
-            </div>
-          </HStack>
+              思维导图
+            </h1>
+            <Badge style={{ flexShrink: 0 }}>{maps.length} 份</Badge>
+          </div>
 
-          <HStack
-            gap={2}
-            hAlign="end"
-            style={{ flex: "1 1 0%", minWidth: 0 }}
-            vAlign="center"
+          <div
+            style={{
+              alignItems: "center",
+              display: "flex",
+              flex: "1 1 0%",
+              gap: "var(--shard-space-2)",
+              justifyContent: "flex-end",
+              minWidth: 0,
+            }}
           >
             <Button
-              icon={<RefreshCwIcon />}
-              isDisabled={isLoading}
-              isIconOnly
-              isLoading={isLoading}
-              label="刷新思维导图列表"
+              aria-label="刷新思维导图列表"
+              disabled={isLoading}
               onClick={() => void refreshMindMaps()}
-              size="sm"
+              size="icon-sm"
+              title="刷新思维导图列表"
               type="button"
               variant="ghost"
-            />
+            >
+              <RefreshCwIcon
+                aria-hidden="true"
+                className={isLoading ? styles.spinner : undefined}
+              />
+              <span className="sr-only">刷新思维导图列表</span>
+            </Button>
             <form
               className={styles.createForm}
               onSubmit={handleCreate}
@@ -186,26 +188,34 @@ export function MindMapPanel({ onMapsChange, onOpenMap }: MindMapPanelProps) {
               }}
             >
               <div style={{ flex: "1 1 0%", minWidth: 0 }}>
-                <TextInput
-                  isDisabled={isCreating}
-                  isLabelHidden
-                  label="思维导图标题"
-                  onChange={(value) => setTitle(value)}
+                <Input
+                  aria-label="思维导图标题"
+                  className={styles.createInput}
+                  disabled={isCreating}
+                  onChange={(event) => setTitle(event.currentTarget.value)}
                   placeholder="新建导图标题"
                   value={title}
-                  width="100%"
                 />
               </div>
               <Button
-                icon={<PlusIcon />}
-                isDisabled={!title.trim() || isCreating}
-                isLoading={isCreating}
-                label="新建"
+                disabled={!title.trim() || isCreating}
+                size="sm"
                 type="submit"
-              />
+                variant="default"
+              >
+                {isCreating ? (
+                  <Loader2Icon
+                    aria-hidden="true"
+                    className={styles.spinner}
+                  />
+                ) : (
+                  <PlusIcon aria-hidden="true" />
+                )}
+                <span>新建</span>
+              </Button>
             </form>
-          </HStack>
-        </HStack>
+          </div>
+        </div>
       </div>
 
       <div
@@ -232,11 +242,17 @@ export function MindMapPanel({ onMapsChange, onOpenMap }: MindMapPanelProps) {
               正在读取...
             </div>
           ) : maps.length === 0 ? (
-            <Stack
-              gap={2}
-              hAlign="center"
-              style={{ color: "var(--muted-foreground)", height: 192, textAlign: "center" }}
-              vAlign="center"
+            <div
+              style={{
+                alignItems: "center",
+                color: "var(--muted-foreground)",
+                display: "flex",
+                flexDirection: "column",
+                gap: "var(--shard-space-2)",
+                height: 192,
+                justifyContent: "center",
+                textAlign: "center",
+              }}
             >
               <GitBranchIcon
                 size={28}
@@ -247,9 +263,16 @@ export function MindMapPanel({ onMapsChange, onOpenMap }: MindMapPanelProps) {
                 还没有思维导图
               </div>
               <p style={{ fontSize: 14, margin: 0 }}>在上方输入标题即可新建第一份导图。</p>
-            </Stack>
+            </div>
           ) : (
-            <Grid columns={{ minWidth: 260 }} gap={4}>
+            <div
+              style={{
+                display: "grid",
+                gap: "var(--shard-space-4)",
+                gridTemplateColumns:
+                  "repeat(auto-fit, minmax(min(260px, 100%), 1fr))",
+              }}
+            >
               {maps.map((map) => (
                 <MindMapGridCard
                   key={map.id}
@@ -257,11 +280,11 @@ export function MindMapPanel({ onMapsChange, onOpenMap }: MindMapPanelProps) {
                   onOpen={() => onOpenMap(map.id)}
                 />
               ))}
-            </Grid>
+            </div>
           )}
         </div>
       </div>
-    </Stack>
+    </div>
   )
 }
 
@@ -272,7 +295,6 @@ function MindMapGridCard({
   map: MindMapSummary
   onOpen: () => void
 }) {
-  const toast = useToast()
   const cardRef = useRef<HTMLElement | null>(null)
   const [readResult, setReadResult] = useState<MindMapReadResult | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -313,17 +335,28 @@ function MindMapGridCard({
       }
 
       await clipboard.writeText(`${map.title}\n${map.path}`)
-      toast({ body: "已复制思维导图信息" })
+      toast("已复制思维导图信息", { duration: 5000 })
     } catch (unknownError) {
-      toast({
-        body: `分享思维导图失败：${getApiErrorMessage(unknownError)}`,
-        type: "error",
+      toast.error(`分享思维导图失败：${getApiErrorMessage(unknownError)}`, {
+        duration: Infinity,
       })
     }
   }
 
   return (
-    <article className={styles.card} onClick={onOpen} ref={cardRef}>
+    <article
+      aria-label={`打开思维导图：${map.title}`}
+      className={styles.card}
+      onClick={onOpen}
+      onKeyDown={(event: KeyboardEvent<HTMLElement>) => {
+        if (event.key !== "Enter" && event.key !== " ") return
+        event.preventDefault()
+        onOpen()
+      }}
+      ref={cardRef}
+      role="button"
+      tabIndex={0}
+    >
       {readResult ? (
         <MindMapPreview file={readResult.file} height={CARD_PREVIEW_HEIGHT} />
       ) : (
@@ -368,11 +401,15 @@ function MindMapGridCard({
         </div>
       )}
 
-      <HStack
-        gap={2}
-        hAlign="between"
-        style={{ marginTop: "var(--shard-space-3)", minWidth: 0 }}
-        vAlign="start"
+      <div
+        style={{
+          alignItems: "center",
+          display: "flex",
+          gap: "var(--shard-space-2)",
+          justifyContent: "space-between",
+          marginTop: "var(--shard-space-3)",
+          minWidth: 0,
+        }}
       >
         <div style={{ flex: "1 1 0%", minWidth: 0 }}>
           <h2
@@ -405,26 +442,36 @@ function MindMapGridCard({
 
         <div
           onClick={(event) => event.stopPropagation()}
+          onKeyDown={(event) => event.stopPropagation()}
           style={{ alignItems: "center", display: "flex", flexShrink: 0 }}
         >
-          <DropdownMenu
-            button={{
-              icon: <MoreHorizontalIcon />,
-              isIconOnly: true,
-              label: "思维导图操作",
-              size: "sm",
-              variant: "ghost",
-            }}
-          >
-            <DropdownMenuItem icon={PencilLineIcon} label="编辑" onClick={onOpen} />
-            <DropdownMenuItem
-              icon={Share2Icon}
-              label="分享"
-              onClick={() => void shareMindMap()}
-            />
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={
+                <Button
+                  aria-label="思维导图操作"
+                  size="icon-sm"
+                  type="button"
+                  variant="ghost"
+                />
+              }
+            >
+              <MoreHorizontalIcon aria-hidden="true" />
+              <span className="sr-only">思维导图操作</span>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" style={{ width: 144 }}>
+              <DropdownMenuItem onClick={() => window.setTimeout(onOpen, 0)}>
+                <PencilLineIcon aria-hidden="true" />
+                <span>编辑</span>
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => void shareMindMap()}>
+                <Share2Icon aria-hidden="true" />
+                <span>分享</span>
+              </DropdownMenuItem>
+            </DropdownMenuContent>
           </DropdownMenu>
         </div>
-      </HStack>
+      </div>
     </article>
   )
 }

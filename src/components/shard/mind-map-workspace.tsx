@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { isTauri } from "@tauri-apps/api/core"
 import {
   AlertTriangleIcon,
@@ -9,10 +9,8 @@ import {
   XIcon,
 } from "lucide-react"
 
-import { Button } from "@astryxdesign/core/Button"
-import { HStack } from "@astryxdesign/core/HStack"
-import { Stack } from "@astryxdesign/core/Stack"
-import { useToast } from "@astryxdesign/core/Toast"
+import { Button } from "@/components/ui/button"
+import { toast } from "sonner"
 
 import { MindMapCanvasEditor } from "@/components/shard/mind-map-canvas-editor"
 import { MindMapOutlineEditor } from "@/components/shard/mind-map-outline-editor"
@@ -23,6 +21,10 @@ import {
   setWindowControlsHidden,
   writeMindMap,
 } from "@/lib/api"
+import {
+  isMindMapFileContentEqual,
+  type MindMapChangeMeta,
+} from "@/lib/mind-map-tree"
 import type { MindMapReadResult, MindMapSummary, ShardMapFile } from "@/types"
 
 import styles from "./mind-map-workspace.module.css"
@@ -42,13 +44,13 @@ type ConflictState = {
 }
 
 const AUTO_SAVE_DELAY_MS = 1200
+const UNDO_STACK_LIMIT = 100
 
 export function MindMapWorkspace({
   mapId,
   onClose,
   onMapsChange,
 }: MindMapWorkspaceProps) {
-  const toast = useToast()
   const [readResult, setReadResult] = useState<MindMapReadResult | null>(null)
   const [draftFile, setDraftFile] = useState<ShardMapFile | null>(null)
   const [view, setView] = useState<MindMapWorkspaceView>("map")
@@ -59,10 +61,18 @@ export function MindMapWorkspace({
   const [error, setError] = useState<string | null>(null)
   const [autoSaveError, setAutoSaveError] = useState<string | null>(null)
   const [conflict, setConflict] = useState<ConflictState | null>(null)
+  // 撤销/重做历史：KB 级文件快照栈，上限 UNDO_STACK_LIMIT。
+  // 用 ref 管理（无 UI 依赖），避免 setState updater 内的副作用。
+  const draftFileRef = useRef<ShardMapFile | null>(null)
+  const undoStackRef = useRef<ShardMapFile[]>([])
+  const redoStackRef = useRef<ShardMapFile[]>([])
+  const lastMergeKeyRef = useRef<string | null>(null)
+  draftFileRef.current = draftFile
   const isSaving = saveMode !== null
+  // 时间戳归一化比较：撤销回到已保存内容时不算 dirty、不触发写盘。
   const isDirty =
     readResult && draftFile
-      ? JSON.stringify(readResult.file) !== JSON.stringify(draftFile)
+      ? !isMindMapFileContentEqual(readResult.file, draftFile)
       : false
   const saveStatusText = saveMode
     ? saveMode === "auto"
@@ -101,6 +111,9 @@ export function MindMapWorkspace({
       setFocusNodeId(null)
       setConflict(null)
       setAutoSaveError(null)
+      undoStackRef.current = []
+      redoStackRef.current = []
+      lastMergeKeyRef.current = null
     } catch (unknownError) {
       setError(getApiErrorMessage(unknownError))
     } finally {
@@ -118,10 +131,10 @@ export function MindMapWorkspace({
 
   const save = useCallback(
     async (mode: SaveMode = "manual") => {
-      if (!readResult || !draftFile || isSaving) return
+      if (!readResult || !draftFile || isSaving) return false
 
       const draftSnapshot = JSON.stringify(draftFile)
-      if (JSON.stringify(readResult.file) === draftSnapshot) return
+      if (isMindMapFileContentEqual(readResult.file, draftFile)) return true
 
       setSaveMode(mode)
       setConflict(null)
@@ -138,10 +151,14 @@ export function MindMapWorkspace({
           return JSON.stringify(currentDraft) === draftSnapshot ? saved.file : currentDraft
         })
         setAutoSaveError(null)
+        // 保存点即撤销合并边界：之后继续打字应作为新的历史步骤，
+        // 这样 ⌘Z 能先回到刚保存的状态（且不触发再次写盘）。
+        lastMergeKeyRef.current = null
         await refreshSummaries()
         if (mode === "manual") {
-          toast({ body: "思维导图已保存" })
+          toast("思维导图已保存", { duration: 5000 })
         }
+        return true
       } catch (unknownError) {
         const message = getApiErrorMessage(unknownError)
         setAutoSaveError(message)
@@ -149,14 +166,23 @@ export function MindMapWorkspace({
           setConflict({ draft: draftFile, message })
         }
         if (mode === "manual") {
-          toast({ body: `保存思维导图失败：${message}`, type: "error" })
+          toast.error(`保存思维导图失败：${message}`, {
+            duration: Infinity,
+          })
         }
+        return false
       } finally {
         setSaveMode(null)
       }
     },
-    [draftFile, isSaving, readResult, refreshSummaries, toast]
+    [draftFile, isSaving, readResult, refreshSummaries]
   )
+
+  const saveAndCloseWorkspace = useCallback(async () => {
+    if (await save("manual")) {
+      onClose()
+    }
+  }, [onClose, save])
 
   const closeWorkspace = useCallback(() => {
     if (isDirty && !window.confirm("思维导图有未保存修改，确定返回吗？")) {
@@ -165,10 +191,47 @@ export function MindMapWorkspace({
     onClose()
   }, [isDirty, onClose])
 
-  const updateDraft = useCallback((file: ShardMapFile) => {
-    setDraftFile(file)
+  const updateDraft = useCallback(
+    (file: ShardMapFile, meta?: MindMapChangeMeta) => {
+      const current = draftFileRef.current
+      const mergeKey = meta?.mergeKey ?? null
+      // mergeKey 相同（同一节点连续打字）只更新 draft 不入栈；
+      // 其余情况（结构操作/首次击键）先把当前 draft 压入历史。
+      const shouldMerge =
+        mergeKey !== null && mergeKey === lastMergeKeyRef.current
+      if (current && !shouldMerge) {
+        undoStackRef.current.push(current)
+        if (undoStackRef.current.length > UNDO_STACK_LIMIT) {
+          undoStackRef.current.shift()
+        }
+        redoStackRef.current = []
+      }
+      lastMergeKeyRef.current = mergeKey
+      setDraftFile(file)
+      setConflict(null)
+      setAutoSaveError(null)
+    },
+    []
+  )
+
+  const undoDraft = useCallback(() => {
+    const current = draftFileRef.current
+    const previous = undoStackRef.current.pop()
+    if (!current || !previous) return
+    redoStackRef.current.push(current)
+    lastMergeKeyRef.current = null
+    setDraftFile(previous)
     setConflict(null)
-    setAutoSaveError(null)
+  }, [])
+
+  const redoDraft = useCallback(() => {
+    const current = draftFileRef.current
+    const next = redoStackRef.current.pop()
+    if (!current || !next) return
+    undoStackRef.current.push(current)
+    lastMergeKeyRef.current = null
+    setDraftFile(next)
+    setConflict(null)
   }, [])
 
   const selectNode = useCallback((nodeId: string) => {
@@ -189,8 +252,8 @@ export function MindMapWorkspace({
 
   const keepDiskVersion = useCallback(async () => {
     await loadMap()
-    toast({ body: "已载入磁盘版本" })
-  }, [loadMap, toast])
+    toast("已载入磁盘版本", { duration: 5000 })
+  }, [loadMap])
 
   const keepMyVersion = useCallback(async () => {
     if (!readResult || !conflict || isSaving) return
@@ -208,17 +271,19 @@ export function MindMapWorkspace({
       setReadResult(saved)
       setDraftFile(saved.file)
       setConflict(null)
+      undoStackRef.current = []
+      redoStackRef.current = []
+      lastMergeKeyRef.current = null
       await refreshSummaries()
-      toast({ body: "已保存我的版本" })
+      toast("已保存我的版本", { duration: 5000 })
     } catch (unknownError) {
-      toast({
-        body: `保存我的版本失败：${getApiErrorMessage(unknownError)}`,
-        type: "error",
+      toast.error(`保存我的版本失败：${getApiErrorMessage(unknownError)}`, {
+        duration: Infinity,
       })
     } finally {
       setSaveMode(null)
     }
-  }, [conflict, isSaving, readResult, refreshSummaries, toast])
+  }, [conflict, isSaving, readResult, refreshSummaries])
 
   useEffect(() => {
     void loadMap()
@@ -252,21 +317,48 @@ export function MindMapWorkspace({
 
   useEffect(() => {
     function handleShortcut(event: KeyboardEvent) {
+      const isComposing =
+        event.isComposing || event.key === "Process" || event.keyCode === 229
+      if (isComposing) return
+
+      if (
+        (event.metaKey || event.ctrlKey) &&
+        event.key === "Enter"
+      ) {
+        event.preventDefault()
+        void saveAndCloseWorkspace()
+        return
+      }
+
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
         event.preventDefault()
         void save()
         return
       }
 
-      if (event.key === "Escape") {
+      // 思维导图全屏界面内，Tab 只表达"新增子节点/缩进"语义；
+      // 禁止默认的焦点迁移把焦点甩到底部全局操作区（退出/切换/保存按钮）。
+      // 编辑器自身的 Tab 处理在目标阶段已执行，这里的 preventDefault 不影响它。
+      if (event.key === "Tab") {
         event.preventDefault()
-        closeWorkspace()
+        return
+      }
+
+      // 撤销/重做统一走自定义历史栈（受控 textarea 的原生撤销会被
+      // React 重赋值破坏，WKWebView 下尤甚），文本编辑靠 mergeKey 合并。
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "z") {
+        event.preventDefault()
+        if (event.shiftKey) {
+          redoDraft()
+        } else {
+          undoDraft()
+        }
       }
     }
 
     window.addEventListener("keydown", handleShortcut)
     return () => window.removeEventListener("keydown", handleShortcut)
-  }, [closeWorkspace, save])
+  }, [redoDraft, save, saveAndCloseWorkspace, undoDraft])
 
   useEffect(() => {
     if (!isDirty || !draftFile || !readResult || isSaving || conflict || autoSaveError) return
@@ -279,15 +371,11 @@ export function MindMapWorkspace({
   }, [autoSaveError, conflict, draftFile, isDirty, isSaving, readResult, save])
 
   return (
-    <Stack
-      minHeight={0}
+    <div
+      className="fixed inset-0 z-50 flex min-h-0 flex-col overflow-hidden"
       style={{
         background: "var(--background)",
         color: "var(--foreground)",
-        inset: 0,
-        overflow: "hidden",
-        position: "fixed",
-        zIndex: 50,
       }}
     >
       <div
@@ -364,10 +452,8 @@ export function MindMapWorkspace({
           className="shard-content-inset"
           style={{ flexShrink: 0, paddingBottom: "var(--shard-space-2)" }}
         >
-          <HStack
-            gap={2}
-            paddingBlock={3}
-            paddingInline={3}
+          <div
+            className="flex items-start gap-2 px-3 py-3"
             style={{
               background: "color-mix(in srgb, var(--destructive) 5%, transparent)",
               border: "1px solid color-mix(in srgb, var(--destructive) 30%, transparent)",
@@ -375,7 +461,6 @@ export function MindMapWorkspace({
               marginInline: "auto",
               maxWidth: 896,
             }}
-            vAlign="start"
           >
             <AlertTriangleIcon
               size={16}
@@ -396,20 +481,22 @@ export function MindMapWorkspace({
               </p>
             </div>
             <Button
-              isDisabled={isSaving}
-              label="保留我的版本"
+              disabled={isSaving}
               onClick={() => void keepMyVersion()}
               size="sm"
-              variant="primary"
-            />
+              variant="default"
+            >
+              保留我的版本
+            </Button>
             <Button
-              isDisabled={isSaving}
-              label="保留磁盘版本"
+              disabled={isSaving}
               onClick={() => void keepDiskVersion()}
               size="sm"
               variant="secondary"
-            />
-          </HStack>
+            >
+              保留磁盘版本
+            </Button>
+          </div>
         </div>
       ) : null}
 
@@ -417,40 +504,46 @@ export function MindMapWorkspace({
         className="shard-content-inset"
         style={{ flexShrink: 0, paddingBottom: "var(--shard-space-4)" }}
       >
-        <HStack
-          gap={2}
-          maxWidth="100%"
-          paddingBlock={3}
-          paddingInline={3}
+        <div
+          className="mx-auto flex w-fit max-w-full items-center gap-2 px-3 py-3"
           style={{
             background: "var(--card)",
             borderRadius: "var(--shard-surface-radius)",
             boxShadow: "var(--shard-composer-shadow)",
-            marginInline: "auto",
           }}
-          vAlign="center"
-          width="fit-content"
         >
           <Button
-            icon={<XIcon />}
-            isIconOnly
-            label="退出思维导图"
+            aria-label="退出思维导图"
             onClick={closeWorkspace}
-            size="sm"
-            tooltip="退出思维导图"
+            size="icon-sm"
+            title="退出思维导图（Cmd/Ctrl+Enter 保存并关闭）"
             variant="ghost"
-          />
+          >
+            <XIcon aria-hidden="true" />
+            <span className="sr-only">退出思维导图</span>
+          </Button>
 
           {draftFile ? (
             <Button
-              icon={view === "map" ? <ListTreeIcon /> : <GitBranchIcon />}
-              isIconOnly
-              label={view === "map" ? "切换到大纲视图" : "切换到思维导图视图"}
+              aria-label={
+                view === "map" ? "切换到大纲视图" : "切换到思维导图视图"
+              }
               onClick={() => setView(view === "map" ? "outline" : "map")}
-              size="sm"
-              tooltip={view === "map" ? "切换到大纲视图" : "切换到思维导图视图"}
+              size="icon-sm"
+              title={
+                view === "map" ? "切换到大纲视图" : "切换到思维导图视图"
+              }
               variant="ghost"
-            />
+            >
+              {view === "map" ? (
+                <ListTreeIcon aria-hidden="true" />
+              ) : (
+                <GitBranchIcon aria-hidden="true" />
+              )}
+              <span className="sr-only">
+                {view === "map" ? "切换到大纲视图" : "切换到思维导图视图"}
+              </span>
+            </Button>
           ) : null}
 
           <span
@@ -464,23 +557,24 @@ export function MindMapWorkspace({
             {saveStatusText}
           </span>
           <Button
-            icon={
-              isSaving ? (
-                <Loader2Icon className={styles.spinner} />
-              ) : (
-                <SaveIcon />
-              )
-            }
-            isDisabled={!isDirty || isSaving || !draftFile}
-            isIconOnly
-            label={isSaving ? saveStatusText : "保存思维导图"}
+            aria-label={isSaving ? saveStatusText : "保存思维导图"}
+            disabled={!isDirty || isSaving || !draftFile}
             onClick={() => void save("manual")}
-            size="sm"
-            tooltip={isSaving ? saveStatusText : "保存思维导图"}
-            variant="ghost"
-          />
-        </HStack>
+            size="icon-sm"
+            title={isSaving ? saveStatusText : "保存思维导图"}
+            variant="default"
+          >
+            {isSaving ? (
+              <Loader2Icon aria-hidden="true" className={styles.spinner} />
+            ) : (
+              <SaveIcon aria-hidden="true" />
+            )}
+            <span className="sr-only">
+              {isSaving ? saveStatusText : "保存思维导图"}
+            </span>
+          </Button>
+        </div>
       </footer>
-    </Stack>
+    </div>
   )
 }

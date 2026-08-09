@@ -78,6 +78,7 @@ const DEFAULT_NODE_VERTICAL_PADDING = 13
 const DEFAULT_NODE_LINE_HEIGHT = 18
 const DEFAULT_MAX_NODE_LINES = 3
 const BOUNDS_MARGIN = 18
+const NODE_TEXT_MEASURE_TOLERANCE = 4
 
 export function layoutMindMap(
   file: ShardMapFile,
@@ -114,6 +115,12 @@ export function layoutMindMap(
   const nodes: MindMapLayoutNode[] = []
   const edges: MindMapLayoutEdge[] = []
   const tree = measureSubtree(root)
+  const columnWidths = getColumnWidths(tree)
+  const columnX = columnWidths.map((_, depth) =>
+    columnWidths
+      .slice(0, depth)
+      .reduce((x, width) => x + width + horizontalGap, 0)
+  )
 
   function measureSubtree(node: ShardMapNode): MindMapSubtree {
     const children = node.collapsed
@@ -148,13 +155,25 @@ export function layoutMindMap(
     )
   }
 
+  function getColumnWidths(subtree: MindMapSubtree) {
+    const widths: number[] = []
+
+    function visit(current: MindMapSubtree, depth: number) {
+      widths[depth] = Math.max(widths[depth] ?? maxNodeWidth, current.width)
+      current.children.forEach((child) => visit(child, depth + 1))
+    }
+
+    visit(subtree, 0)
+    return widths
+  }
+
   function placeSubtree(
     subtree: MindMapSubtree,
     depth: number,
     centerY: number
   ): MindMapLayoutNode {
     const node = subtree.node
-    const x = depth * (maxNodeWidth + horizontalGap)
+    const x = columnX[depth] ?? 0
     const y = centerY - subtree.nodeHeight / 2
 
     const layoutNode: MindMapLayoutNode = {
@@ -265,15 +284,34 @@ function measureMindMapNode(
 ) {
   const text = normalizeMindMapNodeText(node.text)
 
-  // 用户手动设置了宽度：以该宽度为准换行，高度随行数自适应，不做省略截断。
+  // 用户手动设置的宽度作为最小宽度保留；文字继续增加时节点仍会自动扩展，
+  // 达到自定义宽度上限后再换行，避免编辑态被历史宽度锁死。
   if (typeof node.width === "number" && Number.isFinite(node.width)) {
-    const width = clamp(
+    const configuredWidth = clamp(
       Math.round(node.width),
       options.minNodeWidth,
       CUSTOM_WIDTH_MAX
     )
-    const maxTextWidth = Math.max(1, width - options.nodeHorizontalPadding * 2)
-    const textLines = wrapMindMapText(text, maxTextWidth, CUSTOM_WIDTH_MAX_LINES)
+    const desiredWidth = Math.ceil(
+      estimateMindMapTextWidth(text) +
+        options.nodeHorizontalPadding * 2 +
+        NODE_TEXT_MEASURE_TOLERANCE
+    )
+    const width = clamp(
+      Math.max(configuredWidth, desiredWidth),
+      options.minNodeWidth,
+      CUSTOM_WIDTH_MAX
+    )
+    const maxTextWidth = Math.max(
+      1,
+      width -
+        options.nodeHorizontalPadding * 2 -
+        NODE_TEXT_MEASURE_TOLERANCE
+    )
+    const textLines =
+      desiredWidth > CUSTOM_WIDTH_MAX
+        ? wrapMindMapText(text, maxTextWidth, CUSTOM_WIDTH_MAX_LINES)
+        : [text]
     const height = Math.max(
       options.nodeHeight,
       options.nodeVerticalPadding * 2 +
@@ -285,10 +323,14 @@ function measureMindMapNode(
 
   const maxTextWidth = Math.max(
     1,
-    options.maxNodeWidth - options.nodeHorizontalPadding * 2
+    options.maxNodeWidth -
+      options.nodeHorizontalPadding * 2 -
+      NODE_TEXT_MEASURE_TOLERANCE
   )
   const desiredWidth = Math.ceil(
-    estimateMindMapTextWidth(text) + options.nodeHorizontalPadding * 2
+    estimateMindMapTextWidth(text) +
+      options.nodeHorizontalPadding * 2 +
+      NODE_TEXT_MEASURE_TOLERANCE
   )
   const width = clamp(
     desiredWidth,

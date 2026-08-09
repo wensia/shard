@@ -6,6 +6,10 @@ import {
   shouldUseCompactMindMapText,
   type MindMapLayoutNode,
 } from "@/lib/mind-map-layout"
+import {
+  measureMindMapInkBaselineOffset,
+  useMindMapFontFamily,
+} from "@/lib/mind-map-text-metrics"
 import type { ShardMapFile } from "@/types"
 
 interface MindMapPreviewProps {
@@ -15,8 +19,6 @@ interface MindMapPreviewProps {
   onNodeClick?: (nodeId: string) => void
   selectedNodeId?: string | null
 }
-
-const NODE_TEXT_BASELINE_DY = "0.28em"
 
 export function MindMapPreview({
   className,
@@ -33,6 +35,8 @@ export function MindMapPreview({
     [layout, size.height, size.width]
   )
   const compactText = shouldUseCompactMindMapText(layout, fit.scale)
+  // 与画布编辑器同源：按实际字体实测字形墨盒偏移。
+  const nodeFontFamily = useMindMapFontFamily(containerRef)
 
   useEffect(() => {
     const element = containerRef.current
@@ -128,6 +132,7 @@ export function MindMapPreview({
               <MindMapPreviewNodeText
                 compact={compactText}
                 fill={isRoot ? "var(--shard-accent-text)" : "var(--foreground)"}
+                fontFamily={nodeFontFamily}
                 fontWeight={isRoot ? "600" : "500"}
                 layoutNode={layoutNode}
               />
@@ -142,11 +147,13 @@ export function MindMapPreview({
 function MindMapPreviewNodeText({
   compact,
   fill,
+  fontFamily,
   fontWeight,
   layoutNode,
 }: {
   compact: boolean
   fill: string
+  fontFamily: string | null
   fontWeight: string
   layoutNode: MindMapLayoutNode
 }) {
@@ -158,7 +165,6 @@ function MindMapPreviewNodeText({
 
   return (
     <text
-      dominantBaseline="middle"
       fill={fill}
       fontSize={fontSize}
       fontWeight={fontWeight}
@@ -167,10 +173,18 @@ function MindMapPreviewNodeText({
     >
       {lines.map((line, index) => (
         <tspan
-          dy={NODE_TEXT_BASELINE_DY}
           key={`${line}-${index}`}
           x={layoutNode.x + 12}
-          y={startY + index * lineHeight}
+          y={
+            startY +
+            index * lineHeight +
+            measureMindMapInkBaselineOffset(
+              fontFamily ?? "",
+              fontSize,
+              fontWeight,
+              line
+            )
+          }
         >
           {line}
         </tspan>

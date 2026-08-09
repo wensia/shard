@@ -1,9 +1,27 @@
-/* Create-map form needs a min-width breakpoint (sm:max-w-320px), the map
-   card needs a :hover shadow transition, and the loading spinner needs a
-   @keyframes animation — none of these are expressible via inline style. */
+/* Create-map form needs a min-width breakpoint, cards need keyboard focus
+   treatment, and the loading spinner needs a keyframe animation. */
 
 .createForm {
   min-width: 0;
+}
+
+.createInput {
+  box-sizing: border-box;
+  height: var(--shard-space-8);
+  min-height: var(--shard-space-8);
+  border-color: var(--input);
+  border-radius: var(--shard-radius-control);
+  box-shadow: var(--shard-shadow-input);
+}
+
+.createInput:hover:not(:focus-within) {
+  border-color: var(--input);
+  box-shadow: var(--shard-shadow-input);
+}
+
+.createInput:focus-within {
+  border-color: var(--input);
+  box-shadow: var(--ring-focus);
 }
 
 @media (width >= 40rem) {
@@ -19,12 +37,16 @@
   border-radius: var(--shard-surface-radius);
   background: var(--card);
   padding: var(--shard-space-3);
-  box-shadow: var(--shard-shadow-card);
-  transition: box-shadow 150ms ease-out;
+  outline: none;
+  transition: background-color 150ms ease-out;
 }
 
 .card:hover {
-  box-shadow: var(--shard-shadow-card-hover);
+  background: color-mix(in srgb, var(--card) 89%, var(--muted));
+}
+
+.card:focus-visible {
+  box-shadow: 0 0 0 3px rgb(var(--shard-primary-rgb) / var(--shard-alpha-34));
 }
 
 @keyframes spin {

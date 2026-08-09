@@ -10,16 +10,42 @@
   background: var(--background);
 }
 
+/* 容器通过 tabIndex=-1 承接键盘焦点（选中态下的 Delete/Tab/Enter 等），
+   焦点只是按键入口，不需要可见的 focus ring。 */
+.canvasRoot:focus {
+  outline: none;
+}
+
+.canvasRootDragging {
+  cursor: grabbing;
+  user-select: none;
+}
+
 .canvasSvg {
   display: block;
   width: 100%;
   height: 100%;
   background: var(--background);
-  cursor: grab;
+  cursor: default;
+  /* 节点文字只在编辑态（textarea）里可选；画布上拖拽框选不能带出原生文本选区。
+     WKWebView/Safari 对 SVG <text> 需要 -webkit- 前缀才生效。 */
+  -webkit-user-select: none;
+  user-select: none;
   touch-action: none;
 }
 
+/* 按住空格 = 抓手工具（Photoshop 约定）。 */
+.canvasSvgSpacePan {
+  cursor: grab;
+}
+
 .canvasSvgPanning {
+  cursor: grabbing;
+}
+
+.canvasSvgDragging,
+.canvasSvgDragging .grabbable,
+.canvasSvgDragging .textCursor {
   cursor: grabbing;
 }
 
@@ -39,26 +65,137 @@
   position: absolute;
   z-index: 20;
   cursor: grab;
-  background: color-mix(in srgb, var(--card) 95%, transparent);
+  border-color: var(--border);
+  background: var(--card);
   color: var(--muted-foreground);
-  box-shadow: var(--shard-shadow-popover);
+  box-shadow: none;
+  touch-action: none;
+  transition:
+    border-color 120ms ease,
+    background-color 120ms ease,
+    color 120ms ease,
+    transform 120ms ease;
+}
+
+.dragHandleButton:hover {
+  border-color: rgb(var(--shard-primary-rgb) / var(--shard-alpha-34));
+  background: var(--shard-accent-soft);
+  color: var(--shard-accent-text);
 }
 
 .dragHandleButton:active {
   cursor: grabbing;
+  transform: scale(0.96);
+}
+
+.dragHandleButton svg {
+  width: 50%;
+  height: 50%;
+}
+
+.dragPreview {
+  position: fixed;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: var(--shard-space-2);
+  min-height: var(--shard-space-8);
+  padding-inline: var(--shard-space-3);
+  border: 1px solid rgb(var(--shard-primary-rgb) / var(--shard-alpha-34));
+  border-radius: var(--shard-radius-control);
+  background: var(--card);
+  color: var(--shard-accent-text);
+  box-shadow: var(--shard-shadow-popover);
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  pointer-events: none;
+  transform: translate(var(--shard-space-3), calc(-50% - var(--shard-space-3)));
+}
+
+.dragPreview svg {
+  width: var(--shard-space-4);
+  height: var(--shard-space-4);
+  flex: 0 0 auto;
+}
+
+/* 默认选择工具下，空白画布拖出的多选选框。 */
+.marquee {
+  position: absolute;
+  z-index: 30;
+  pointer-events: none;
+  border: 1px solid rgb(var(--shard-primary-rgb) / var(--shard-alpha-34));
+  border-radius: var(--shard-radius-control);
+  background: rgb(var(--shard-primary-rgb) / var(--shard-alpha-5));
+}
+
+/* 视口被 pin/平移/缩放后出现，点击回到全图自适应（⌘0）。 */
+.fitViewButton {
+  position: absolute;
+  right: var(--shard-space-3);
+  bottom: var(--shard-space-3);
+  z-index: 20;
+  border-color: var(--border);
+  background: var(--card);
+  color: var(--muted-foreground);
+  box-shadow: var(--shard-shadow-popover);
+}
+
+.fitViewButton:hover {
+  border-color: rgb(var(--shard-primary-rgb) / var(--shard-alpha-34));
+  background: var(--shard-accent-soft);
+  color: var(--shard-accent-text);
+}
+
+/* 节点右缘的折叠钮：展开时显示减号，折叠时显示子节点计数。 */
+.collapseToggle {
+  cursor: pointer;
+}
+
+.collapseToggleCircle {
+  fill: var(--card);
+  stroke: var(--border);
+  stroke-width: 1.2;
+}
+
+.collapseToggleMinus {
+  stroke: var(--muted-foreground);
+  stroke-width: 1.4;
+  stroke-linecap: round;
+}
+
+.collapseToggleText {
+  fill: var(--muted-foreground);
+}
+
+.collapseToggle:hover .collapseToggleCircle {
+  fill: var(--shard-accent-soft);
+  stroke: rgb(var(--shard-primary-rgb) / var(--shard-alpha-34));
+}
+
+.collapseToggle:hover .collapseToggleMinus,
+.collapseToggle:hover .collapseToggleText {
+  stroke: var(--shard-accent-text);
+  fill: var(--shard-accent-text);
 }
 
 .nodeInput {
   position: absolute;
   z-index: 10;
+  display: block;
+  box-sizing: border-box;
+  margin: 0;
+  overflow: hidden;
+  resize: none;
   border-radius: var(--shard-radius-card);
   border: 1px solid rgb(var(--shard-primary-rgb) / var(--shard-alpha-34));
-  background: color-mix(in srgb, var(--card) 95%, transparent);
+  background: var(--card);
   padding-inline: 12px;
+  font-family: inherit;
   font-size: var(--font-size-sm);
   font-weight: 500;
   color: var(--foreground);
   outline: none;
+  white-space: pre-wrap;
   transition:
     border-color 150ms ease-out,
     box-shadow 150ms ease-out;

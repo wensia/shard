@@ -16,9 +16,8 @@ import {
   Trash2Icon,
 } from "lucide-react"
 
-import { Button } from "@astryxdesign/core/Button"
-import { Stack } from "@astryxdesign/core/Stack"
-import { TextInput } from "@astryxdesign/core/TextInput"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 
 import { cn } from "@/lib/utils"
 import styles from "./mind-map-outline-editor.module.css"
@@ -29,6 +28,7 @@ import {
   deleteMindMapNode,
   getMindMapRows,
   indentMindMapNode,
+  type MindMapChangeMeta,
   type MindMapDropMode,
   type MindMapDropTarget,
   moveMindMapNode,
@@ -41,7 +41,7 @@ import type { ShardMapFile } from "@/types"
 interface MindMapOutlineEditorProps {
   file: ShardMapFile
   focusNodeId?: string | null
-  onChange: (file: ShardMapFile) => void
+  onChange: (file: ShardMapFile, meta?: MindMapChangeMeta) => void
   onFocusHandled?: () => void
   onSave?: () => void
   onSelectNode?: (nodeId: string) => void
@@ -174,6 +174,13 @@ export function MindMapOutlineEditor({
     event: KeyboardEvent<HTMLInputElement>,
     nodeId: string
   ) {
+    if (event.key === "Escape") {
+      event.preventDefault()
+      event.stopPropagation()
+      event.currentTarget.blur()
+      return
+    }
+
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
       event.preventDefault()
       onSave?.()
@@ -218,7 +225,15 @@ export function MindMapOutlineEditor({
         padding: "var(--shard-space-5)",
       }}
     >
-      <Stack gap={1} maxWidth={896} style={{ marginInline: "auto" }}>
+      <div
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          gap: "var(--shard-space-1)",
+          marginInline: "auto",
+          maxWidth: 896,
+        }}
+      >
         {rows.map(({ node, depth }, index) => {
           const isRoot = node.id === file.rootId
           const selected = selectedNodeId === node.id
@@ -268,18 +283,19 @@ export function MindMapOutlineEditor({
                 ) : (
                   <Button
                     aria-grabbed={draggingNodeId === node.id}
+                    aria-label="拖拽移动节点"
                     className={styles.dragHandle}
                     draggable
-                    icon={<GripVerticalIcon />}
-                    isIconOnly
-                    label="拖拽移动节点"
                     onDragEnd={clearDragState}
                     onDragStart={(event) => handleDragStart(event, node.id)}
-                    size="sm"
-                    tooltip="拖拽移动节点"
+                    size="icon-sm"
+                    title="拖拽移动节点"
                     type="button"
                     variant="ghost"
-                  />
+                  >
+                    <GripVerticalIcon aria-hidden="true" />
+                    <span className="sr-only">拖拽移动节点</span>
+                  </Button>
                 )}
                 <span
                   aria-hidden="true"
@@ -294,12 +310,21 @@ export function MindMapOutlineEditor({
                   }}
                 />
                 <div style={{ minWidth: 0, flex: "1 1 auto" }}>
-                  <TextInput
-                    className={styles.nodeInputFocusRing}
-                    isLabelHidden
-                    label={isRoot ? "根节点" : "导图节点"}
-                    onChange={(value) =>
-                      onChange(updateMindMapNodeText(file, node.id, value))
+                  <Input
+                    aria-label={isRoot ? "根节点" : "导图节点"}
+                    className={cn(
+                      styles.nodeInputFocusRing,
+                      "border-transparent bg-transparent shadow-none"
+                    )}
+                    onChange={(event) =>
+                      onChange(
+                        updateMindMapNodeText(
+                          file,
+                          node.id,
+                          event.currentTarget.value
+                        ),
+                        { mergeKey: `text:${node.id}` }
+                      )
                     }
                     onFocus={() => onSelectNode?.(node.id)}
                     onKeyDown={(event) => handleKeyDown(event, node.id)}
@@ -307,86 +332,87 @@ export function MindMapOutlineEditor({
                     ref={(element) => {
                       inputRefs.current[node.id] = element
                     }}
-                    style={{
-                      borderColor: "transparent",
-                      background: "transparent",
-                      boxShadow: "none",
-                    }}
                     value={node.text}
                   />
                 </div>
               </div>
               <div className={styles.actionsRow}>
                 <Button
-                  icon={<PlusIcon />}
-                  isIconOnly
-                  label="添加子节点"
+                  aria-label="添加子节点"
                   onClick={() => addChild(node.id)}
-                  size="sm"
+                  size="icon-sm"
                   type="button"
                   variant="ghost"
-                />
+                >
+                  <PlusIcon aria-hidden="true" />
+                  <span className="sr-only">添加子节点</span>
+                </Button>
                 <Button
-                  icon={<ArrowUpIcon />}
-                  isDisabled={isRoot}
-                  isIconOnly
-                  label="上移"
+                  aria-label="上移"
+                  disabled={isRoot}
                   onClick={() => onChange(moveMindMapNode(file, node.id, "up"))}
-                  size="sm"
+                  size="icon-sm"
                   type="button"
                   variant="ghost"
-                />
+                >
+                  <ArrowUpIcon aria-hidden="true" />
+                  <span className="sr-only">上移</span>
+                </Button>
                 <Button
-                  icon={<ArrowDownIcon />}
-                  isDisabled={isRoot}
-                  isIconOnly
-                  label="下移"
+                  aria-label="下移"
+                  disabled={isRoot}
                   onClick={() => onChange(moveMindMapNode(file, node.id, "down"))}
-                  size="sm"
+                  size="icon-sm"
                   type="button"
                   variant="ghost"
-                />
+                >
+                  <ArrowDownIcon aria-hidden="true" />
+                  <span className="sr-only">下移</span>
+                </Button>
                 <Button
-                  icon={<ArrowRightIcon />}
-                  isDisabled={isRoot}
-                  isIconOnly
-                  label="缩进"
+                  aria-label="缩进"
+                  disabled={isRoot}
                   onClick={() => {
                     onChange(indentMindMapNode(file, node.id))
                     onSelectNode?.(node.id)
                   }}
-                  size="sm"
+                  size="icon-sm"
                   type="button"
                   variant="ghost"
-                />
+                >
+                  <ArrowRightIcon aria-hidden="true" />
+                  <span className="sr-only">缩进</span>
+                </Button>
                 <Button
-                  icon={<ArrowLeftIcon />}
-                  isDisabled={isRoot}
-                  isIconOnly
-                  label="反缩进"
+                  aria-label="反缩进"
+                  disabled={isRoot}
                   onClick={() => {
                     onChange(outdentMindMapNode(file, node.id))
                     onSelectNode?.(node.id)
                   }}
-                  size="sm"
+                  size="icon-sm"
                   type="button"
                   variant="ghost"
-                />
+                >
+                  <ArrowLeftIcon aria-hidden="true" />
+                  <span className="sr-only">反缩进</span>
+                </Button>
                 <Button
-                  icon={<Trash2Icon />}
-                  isDisabled={isRoot}
-                  isIconOnly
-                  label="删除节点"
+                  aria-label="删除节点"
+                  disabled={isRoot}
                   onClick={() => deleteNode(node.id)}
-                  size="sm"
+                  size="icon-sm"
                   type="button"
                   variant="ghost"
-                />
+                >
+                  <Trash2Icon aria-hidden="true" />
+                  <span className="sr-only">删除节点</span>
+                </Button>
               </div>
             </div>
           )
         })}
-      </Stack>
+      </div>
     </div>
   )
 }
