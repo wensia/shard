@@ -9,6 +9,8 @@ import type {
   Debt,
   DebtDirection,
   Fragment,
+  GithubCliInfo,
+  GitInfo,
   LockboxSetupResult,
   MindMapReadResult,
   MindMapSummary,
@@ -114,9 +116,13 @@ export function moveFragmentToLockbox(id: string) {
   return desktopInvoke<VaultState>("move_fragment_to_lockbox", { id })
 }
 
-// 返回正文里该写的引用（`shard-attachment:<hash>`），不是文件路径。
+// 返回 assets 目录下的相对路径，可直接写入 Markdown 正文。
 export function saveFragmentImage(fileName: string, bytes: number[]) {
   return desktopInvoke<string>("save_fragment_image", { fileName, bytes })
+}
+
+export function readFragmentImage(path: string) {
+  return desktopInvoke<string>("read_fragment_image", { path })
 }
 
 export function getFragmentImageFilePath(path: string) {
@@ -151,6 +157,10 @@ export function setVaultPath(path: string, initializeGit: boolean) {
   return desktopInvoke<VaultState>("set_vault_path", { path, initializeGit })
 }
 
+export function initializeVaultGit() {
+  return desktopInvoke<VaultState>("initialize_vault_git")
+}
+
 export function setupLockbox(password: string) {
   return desktopInvoke<LockboxSetupResult>("setup_lockbox", { password })
 }
@@ -180,6 +190,14 @@ export function resetLockboxPassword(recoveryKey: string, newPassword: string) {
   })
 }
 
+export function setVaultRemote(remoteUrl: string) {
+  return desktopInvoke<VaultState>("set_vault_remote", { remoteUrl })
+}
+
+export function getGithubCliStatus() {
+  return desktopInvoke<GithubCliInfo>("github_cli_status")
+}
+
 export function getCodexAgentStatus() {
   return desktopInvoke<CodexAgentStatus>("codex_agent_status")
 }
@@ -198,6 +216,14 @@ export function runCodexReviewTask(
       vaultPath,
     },
   })
+}
+
+export function createGithubVaultRepo(repoName: string) {
+  return desktopInvoke<VaultState>("create_github_vault_repo", { repoName })
+}
+
+export function syncVault() {
+  return desktopInvoke<GitInfo>("sync_vault")
 }
 
 export function listDebts() {
@@ -282,118 +308,4 @@ export function setTursoConfig(input: { url?: string | null; token?: string }) {
     url: input.url ?? null,
     token: input.token,
   })
-}
-
-// ---------------------------------------------------------------------------
-// 笔记库：导入 / 导出 / 校验 / 索引维护
-//
-// Git 移除后，导出是数据离开应用的唯一出口，因此这些能力必须在 UI 上可达，
-// 不能只作为内部命令存在。
-// ---------------------------------------------------------------------------
-
-export interface NotesDbStats {
-  total: number
-  active: number
-  deleted: number
-  lockbox: number
-  indexed: number
-  importState: string | null
-  importAt: string | null
-}
-
-export interface ImportReport {
-  scanned: number
-  imported: number
-  skippedUnchanged: number
-  failed: { path: string; reason: string }[]
-  warnings: string[]
-  lockboxMetadataPending: number
-  durationMs: number
-}
-
-export interface ExportReport {
-  exported: number
-  skipped: number
-  /** 写出的思维导图数量。 */
-  maps: number
-  /** 复制回 assets/ 的附件数量。 */
-  attachments: number
-  failed: { id: string; reason: string }[]
-  durationMs: number
-}
-
-export interface VerifyReport {
-  checked: number
-  mismatched: { id: string; field: string; detail: string }[]
-  missing: string[]
-  byteDifferences: string[]
-  unmapped: string[]
-  /** 库内容能否被产物无损还原。false 表示不该把文件当作可靠备份。 */
-  lossless: boolean
-}
-
-export function getNotesDbStats() {
-  return desktopInvoke<NotesDbStats>("notes_db_stats")
-}
-
-/** `dryRun` 为 true 时只扫描不写库，用于先让用户确认规模。 */
-export function importVaultMarkdown(dryRun: boolean, includeLockbox = true) {
-  return desktopInvoke<ImportReport>("import_vault_markdown", {
-    dryRun,
-    includeLockbox,
-  })
-}
-
-/** `full` 为 true 时全量重写，否则只写有改动的条目。 */
-export function exportVaultMarkdown(full: boolean) {
-  return desktopInvoke<ExportReport>("export_vault_markdown", { full })
-}
-
-export function verifyExport() {
-  return desktopInvoke<VerifyReport>("verify_export")
-}
-
-export interface SyncConfigView {
-  url: string
-  hasToken: boolean
-}
-
-export interface SyncStatus {
-  configured: boolean
-  lastSyncedAt: string | null
-  lastError: string | null
-  /** 还有多少条本地改动没推上去。 */
-  pending: number
-  lastPulledSeq: number
-}
-
-export interface SyncReport {
-  pulled: number
-  pushed: number
-  /** 因冲突另存的副本数。非零时应提示用户去看一眼。 */
-  conflicts: number
-  rejected: string[]
-  uploadedAttachments: number
-  durationMs: number
-}
-
-export function getSyncConfig() {
-  return desktopInvoke<SyncConfigView>("get_sync_config")
-}
-
-/** `token` 传 undefined 保留原值，传空串清除。 */
-export function setSyncConfig(url: string, token?: string) {
-  return desktopInvoke<SyncConfigView>("set_sync_config", { url, token })
-}
-
-export function getSyncStatus() {
-  return desktopInvoke<SyncStatus>("sync_status")
-}
-
-export function syncNow() {
-  return desktopInvoke<SyncReport>("sync_now")
-}
-
-export function rebuildSearchIndex() {
-  return desktopInvoke<number>("rebuild_search_index")
 }

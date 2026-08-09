@@ -31,18 +31,6 @@ base64 = "0.22"
 rand = "0.8"
 rsa = { version = "0.9", features = ["sha2"] }
 sha2 = { workspace = true }
-# 记账（债务追踪）模块的存储后端：libSQL（Turso）。默认 features 已含
-# core/replication/remote/sync，支持 embedded replica（本地文件 + 远程同步）。
-libsql = { workspace = true }
-# 同步客户端的 HTTP。用 rustls 而不是系统 TLS：跨平台行为一致，
-# 也不必为每个目标平台各配一套证书链。
-reqwest = { version = "0.12", default-features = false, features = [
-    "json",
-    "rustls-tls",
-] }
-# 客户端与服务端共享的核心：分词、表定义、内容指纹、同步报文。
-# 两端调用同一份实现，是为了杜绝那些只会表现为「数据不对」的静默漂移。
-shard-core = { path = "../crates/shard-core" }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2-app-kit = { version = "0.3.2", default-features = false, features = [
@@ -61,4 +49,3 @@ objc2-foundation = { version = "0.3.2", default-features = false, features = [
 
 [dev-dependencies]
 tempfile = "3"
-tokio = { workspace = true }

@@ -120,7 +120,7 @@ Example fragment:
 
 ```markdown
 ---
-id: 20260605-0012-abcd
+id: 20260803-050116-e71fe4dc-c91185
 created_at: 2026-06-05T00:12:00+08:00
 updated_at: 2026-06-05T00:12:00+08:00
 tags:

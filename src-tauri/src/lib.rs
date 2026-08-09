@@ -11,7 +11,7 @@ use rsa::{
     Oaep, RsaPrivateKey, RsaPublicKey,
 };
 use serde::{Deserialize, Serialize};
-use sha2::Sha256;
+use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, HashSet},
     env, fs,
@@ -23,12 +23,6 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tauri::Manager;
-
-mod db;
-mod debt;
-mod notes;
-
-use notes::NotesDb;
 
 const DEFAULT_WINDOW_WIDTH: f64 = 1180.0;
 const DEFAULT_WINDOW_HEIGHT: f64 = 820.0;
@@ -57,14 +51,12 @@ struct Fragment {
     tags: Vec<String>,
     category: Option<String>,
     path: String,
+    git_status: String,
+    error: Option<String>,
     ai_status: String,
     archived: bool,
     lockbox: bool,
     pinned: bool,
-    /// 非空表示这是一份冲突副本，值是它所属原件的 id。
-    ///
-    /// 同步遇到「两端都改过同一条」时不覆盖，把本地那版另存成这样一条。
-    /// 前端据此打徽章——不提示的话，用户根本不会发现多出来的这一条是什么。
     #[serde(skip_serializing_if = "Option::is_none")]
     conflict_of: Option<String>,
 }
@@ -74,6 +66,7 @@ struct Fragment {
 struct VaultState {
     vault_path: String,
     fragments: Vec<Fragment>,
+    git: GitInfo,
     lockbox: LockboxState,
 }
 
@@ -81,32 +74,63 @@ struct VaultState {
 #[serde(rename_all = "camelCase")]
 struct AppConfig {
     vault_path: Option<String>,
-    /// Turso/libSQL 云端库地址（形如 `libsql://<db>.turso.io`）。为空则记账模块
-    /// 退化为纯本地 libSQL 文件，离线可用、不做云同步。
-    #[serde(default)]
-    turso_url: Option<String>,
-    /// Turso 云端 auth token。与 `turso_url` 同时存在时启用 embedded replica。
-    #[serde(default)]
-    turso_auth_token: Option<String>,
-    /// 是否从笔记库读取片段列表。缺省视为开启。
-    /// 数据层出问题时可一键退回递归扫 Markdown 的老路径，无需回滚版本。
-    #[serde(default)]
-    db_read_enabled: Option<bool>,
-    /// 自建同步服务端地址（形如 `https://shard.example.com`）。
-    /// 与 `sync_token` 同时存在时启用同步；缺任一项则纯本地运行。
-    #[serde(default)]
-    sync_url: Option<String>,
-    /// 同步服务端的访问令牌。
-    ///
-    /// **已知问题**：配置文件是明文 JSON，令牌会明文落盘——记账模块的
-    /// `turso_auth_token` 已是同等待遇。换到系统 keychain 是独立的一件事。
-    #[serde(default)]
-    sync_token: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct CodexAgentStatus {
+struct GitInfo {
+    branch: String,
+    short_commit: String,
+    has_remote: bool,
+    status: String,
+    error: Option<String>,
+    ahead: u64,
+    behind: u64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GithubCliInfo {
+    installed: bool,
+    authenticated: bool,
+    login: Option<String>,
+    protocol: Option<String>,
+    error: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+enum AiAgentKind {
+    Codex,
+    Claude,
+    Kimi,
+    Opencode,
+}
+
+impl AiAgentKind {
+    fn binary_name(self) -> &'static str {
+        match self {
+            Self::Codex => "codex",
+            Self::Claude => "claude",
+            Self::Kimi => "kimi",
+            Self::Opencode => "opencode",
+        }
+    }
+
+    fn display_name(self) -> &'static str {
+        match self {
+            Self::Codex => "Codex",
+            Self::Claude => "Claude Code",
+            Self::Kimi => "Kimi Code",
+            Self::Opencode => "OpenCode",
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AiAgentStatus {
+    agent: AiAgentKind,
     installed: bool,
     version: Option<String>,
     path: Option<String>,
@@ -144,10 +168,14 @@ struct CodexReviewFragment {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct CodexReviewTaskRequest {
+    agent: AiAgentKind,
     task: CodexReviewTask,
     lens: Option<CodexInsightLens>,
     fragments: Vec<CodexReviewFragment>,
     vault_path: String,
+    // 是否在洞察来源中包含密匣私密笔记；默认 false，兼容旧前端调用
+    #[serde(default)]
+    include_lockbox: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -297,9 +325,6 @@ struct LockboxSession {
 type LockboxRuntime = Arc<Mutex<LockboxSession>>;
 
 enum LockboxWriteKey {
-    /// 直接用主密钥加密。新写入一律走 `Public`（免密码写入），这一支只在测试
-    /// 里构造——但**解密侧必须继续支持**：历史数据里有这种形状的信封。
-    #[allow(dead_code)]
     Master(Vec<u8>),
     Public(RsaPublicKey),
 }
@@ -320,6 +345,8 @@ struct FragmentFrontmatter {
     #[serde(default, skip_serializing_if = "is_false")]
     pinned: bool,
     source: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    conflict_of: Option<String>,
 }
 
 fn is_false(value: &bool) -> bool {
@@ -340,221 +367,73 @@ where
 async fn list_fragments(
     app: tauri::AppHandle,
     lockbox_runtime: tauri::State<'_, LockboxRuntime>,
-    notes: tauri::State<'_, NotesDb>,
 ) -> Result<VaultState, String> {
-    let runtime = lockbox_runtime.inner().clone();
-
-    if read_app_config(&app)
-        .map(|cfg| cfg.db_read_enabled.unwrap_or(true))
-        .unwrap_or(true)
-    {
-        match list_fragments_from_db(&app, &notes, &runtime).await {
-            Ok(state) => return Ok(state),
-            // 读库失败绝不能让用户打不开自己的笔记：退回扫描 Markdown。
-            Err(error) => eprintln!("[shard] 读取笔记库失败，已回退到扫描文件：{error}"),
-        }
-    }
-
-    let runtime = lockbox_runtime.inner().clone();
+    let lockbox_runtime = lockbox_runtime.inner().clone();
     run_blocking(move || {
         let vault = ensure_vault_dirs(&app)?;
-        list_fragments_in_vault(&vault, &runtime)
+        list_fragments_in_vault(&vault, &lockbox_runtime)
     })
     .await
 }
 
-/// 走笔记库的读路径：一条 SQL 取回全部片段，替代递归扫目录 + 逐文件解析。
-async fn list_fragments_from_db(
-    app: &tauri::AppHandle,
-    notes: &NotesDb,
-    lockbox_runtime: &LockboxRuntime,
-) -> Result<VaultState, String> {
-    let vault = ensure_vault_dirs(app)?;
-    let conn = notes.conn(app, false).await?;
-
-    // 首次使用时库还是空的。不先导入的话用户会看到空列表，以为笔记全丢了。
-    ensure_notes_imported(&conn, &vault).await?;
-
-    let (lockbox_state, read_keys) = {
-        let vault = vault.clone();
-        let runtime = lockbox_runtime.clone();
-        run_blocking(move || {
-            Ok::<_, String>((
-                lockbox_state(&vault, &runtime),
-                unlocked_lockbox_read_keys(&vault, &runtime),
-            ))
-        })
-        .await?
-    };
-
-    let fragments = notes::bridge::list_fragments(&conn, &vault, read_keys.as_ref()).await?;
-
-    Ok(VaultState {
-        vault_path: vault.display().to_string(),
-        fragments,
-        lockbox: lockbox_state,
-    })
-}
-
-/// 确保 vault 内容已导入笔记库，且已跟上当前的导入口径。
-///
-/// 首次（或换 vault 后）跑一次全量导入；此外，先前迁移过但还没做过附件重写的
-/// 库也要补跑一轮——否则那些库里的正文仍指向 `assets/`，图片会全部显示不出来。
-async fn ensure_notes_imported(conn: &libsql::Connection, vault: &Path) -> Result<(), String> {
-    if notes::import::is_up_to_date(conn).await? {
-        return Ok(());
-    }
-    let report = notes::import::run(conn, vault, &notes::import::ImportOptions::default()).await?;
-    eprintln!(
-        "[shard] 同步笔记库：扫描 {} 个文件，导入 {} 条，失败 {} 条",
-        report.scanned, report.imported, report.failed.len()
-    );
-    Ok(())
-}
-
 #[tauri::command]
-async fn list_mind_maps(
-    app: tauri::AppHandle,
-    notes: tauri::State<'_, NotesDb>,
-) -> Result<Vec<MindMapSummary>, String> {
-    let conn = notes.conn(&app, false).await?;
-    let vault = ensure_vault_dirs(&app)?;
-    ensure_notes_imported(&conn, &vault).await?;
-    Ok(notes::maps::list(&conn)
-        .await?
-        .iter()
-        .map(notes::maps::to_summary)
-        .collect())
+async fn list_mind_maps(app: tauri::AppHandle) -> Result<Vec<MindMapSummary>, String> {
+    run_blocking(move || {
+        let vault = ensure_vault_dirs(&app)?;
+        list_mind_maps_in_vault(&vault)
+    })
+    .await
 }
 
 #[tauri::command]
 async fn create_mind_map(
     app: tauri::AppHandle,
-    notes: tauri::State<'_, NotesDb>,
     title: String,
     source_fragment_id: Option<String>,
 ) -> Result<MindMapReadResult, String> {
-    let conn = notes.conn(&app, false).await?;
-    let build_app = app.clone();
-    // 构造文档仍在阻塞线程里做：它要校验 source_fragment_id 是否存在。
-    let created = run_blocking(move || {
-        let vault = ensure_vault_dirs(&build_app)?;
-        build_mind_map_document(&vault, title, source_fragment_id)
+    run_blocking(move || {
+        let vault = ensure_vault_dirs(&app)?;
+        create_mind_map_in_vault(&vault, title, source_fragment_id)
     })
-    .await?;
-
-    let row = notes::maps::row_from_file(&created, Some(mind_map_export_path(&created)))?;
-    notes::maps::insert(&conn, &row).await?;
-    notes::maps::to_read_result(&row)
+    .await
 }
 
 #[tauri::command]
-async fn read_mind_map(
-    app: tauri::AppHandle,
-    notes: tauri::State<'_, NotesDb>,
-    id: String,
-) -> Result<MindMapReadResult, String> {
-    let conn = notes.conn(&app, false).await?;
-    let row = notes::maps::get(&conn, &id)
-        .await?
-        .ok_or_else(|| format!("找不到思维导图 {id}"))?;
-    notes::maps::to_read_result(&row)
+async fn read_mind_map(app: tauri::AppHandle, id: String) -> Result<MindMapReadResult, String> {
+    run_blocking(move || {
+        let vault = ensure_vault_dirs(&app)?;
+        read_mind_map_in_vault(&vault, &id)
+    })
+    .await
 }
 
 #[tauri::command]
 async fn write_mind_map(
     app: tauri::AppHandle,
-    notes: tauri::State<'_, NotesDb>,
     id: String,
     file: ShardMapFile,
     expected_revision: u64,
     last_saved_hash: String,
 ) -> Result<MindMapReadResult, String> {
-    if file.id != id {
-        return Err("导图 id 与写入目标不一致。".to_string());
-    }
-
-    let conn = notes.conn(&app, false).await?;
-    let vault = ensure_vault_dirs(&app)?;
-
-    // 校验仍在阻塞线程里做：它要检查 fragment 链接是否指向真实笔记。
-    let checked = {
-        let vault = vault.clone();
-        let file = file.clone();
-        run_blocking(move || {
-            validate_mind_map_file(&vault, &file)?;
-            Ok::<_, String>(file)
-        })
-        .await?
-    };
-
-    let mut next = checked;
-    next.kind = SHARD_MAP_KIND.to_string();
-    next.schema_version = SHARD_MAP_SCHEMA_VERSION;
-    next.updated_at = Local::now().to_rfc3339();
-    next.revision = expected_revision + 1;
-    next.saved_with_app_version = env!("CARGO_PKG_VERSION").to_string();
-
-    let doc_json = canonical_mind_map_text(&next)?;
-    let doc_hash = hash_text(&doc_json);
-
-    let outcome = notes::maps::update_cas(
-        &conn,
-        &id,
-        &doc_json,
-        &doc_hash,
-        &next.title,
-        next.nodes.len() as i64,
-        &next.updated_at,
-        expected_revision as i64,
-        &last_saved_hash,
-    )
-    .await?;
-
-    match outcome {
-        notes::maps::WriteOutcome::Applied { .. } => {
-            let row = notes::maps::get(&conn, &id)
-                .await?
-                .ok_or_else(|| format!("找不到思维导图 {id}"))?;
-            notes::maps::to_read_result(&row)
-        }
-        notes::maps::WriteOutcome::NotFound => Err(format!("找不到思维导图 {id}")),
-        notes::maps::WriteOutcome::Conflict => {
-            // 沿用文件时代的语义：不覆盖，另存一份冲突副本供人工比对。
-            let conflict_vault = vault.clone();
-            let conflict_file = next.clone();
-            let path = run_blocking(move || {
-                let path = write_mind_map_conflict(&conflict_vault, &conflict_file)?;
-                relative_path(&conflict_vault, &path)
-            })
-            .await?;
-            Err(format!("导图已被外部修改，已另存冲突副本：{path}"))
-        }
-    }
+    run_blocking(move || {
+        let vault = ensure_vault_dirs(&app)?;
+        write_mind_map_in_vault(&vault, &id, file, expected_revision, &last_saved_hash)
+    })
+    .await
 }
 
 #[tauri::command]
 async fn delete_mind_map(
     app: tauri::AppHandle,
-    notes: tauri::State<'_, NotesDb>,
     id: String,
     expected_revision: u64,
 ) -> Result<Vec<MindMapSummary>, String> {
-    let conn = notes.conn(&app, false).await?;
-    let row = notes::maps::get(&conn, &id)
-        .await?
-        .ok_or_else(|| format!("找不到思维导图 {id}"))?;
-    if row.revision != expected_revision as i64 {
-        return Err("导图已被外部修改，请重新打开后再删除。".to_string());
-    }
-
-    // 软删除：留墓碑，否则多端同步时会被其它设备推回来。
-    notes::maps::soft_delete(&conn, &id, &Local::now().to_rfc3339()).await?;
-    Ok(notes::maps::list(&conn)
-        .await?
-        .iter()
-        .map(notes::maps::to_summary)
-        .collect())
+    run_blocking(move || {
+        let vault = ensure_vault_dirs(&app)?;
+        delete_mind_map_in_vault(&vault, &id, expected_revision)?;
+        list_mind_maps_in_vault(&vault)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -577,6 +456,7 @@ async fn set_vault_path(
         fs::create_dir_all(&vault).map_err(|error| error.to_string())?;
         ensure_vault_layout(&vault)?;
         if initialize_git {
+            ensure_git_repo(&vault)?;
         }
         let mut config = read_app_config(&app)?;
         config.vault_path = Some(vault.display().to_string());
@@ -588,69 +468,240 @@ async fn set_vault_path(
     .await
 }
 
-
-
+#[tauri::command]
+async fn initialize_vault_git(
+    app: tauri::AppHandle,
+    lockbox_runtime: tauri::State<'_, LockboxRuntime>,
+) -> Result<VaultState, String> {
+    let lockbox_runtime = lockbox_runtime.inner().clone();
+    run_blocking(move || {
+        let vault = ensure_vault_dirs(&app)?;
+        ensure_git_repo(&vault)?;
+        list_fragments_in_vault(&vault, &lockbox_runtime)
+    })
+    .await
+}
 
 #[tauri::command]
-async fn codex_agent_status() -> CodexAgentStatus {
-    tauri::async_runtime::spawn_blocking(read_codex_agent_status)
+async fn set_vault_remote(
+    app: tauri::AppHandle,
+    lockbox_runtime: tauri::State<'_, LockboxRuntime>,
+    remote_url: String,
+) -> Result<VaultState, String> {
+    let lockbox_runtime = lockbox_runtime.inner().clone();
+    run_blocking(move || {
+        let remote_url = remote_url.trim().to_string();
+        if remote_url.is_empty() {
+            return Err("Git remote URL 不能为空".to_string());
+        }
+
+        let vault = ensure_vault_dirs(&app)?;
+        ensure_git_repo(&vault)?;
+
+        let remotes = git_remotes(&vault);
+        if remotes.iter().any(|remote| remote == "origin") {
+            run_git(&vault, &["remote", "set-url", "origin", &remote_url])?;
+        } else {
+            run_git(&vault, &["remote", "add", "origin", &remote_url])?;
+        }
+
+        list_fragments_in_vault(&vault, &lockbox_runtime)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn github_cli_status() -> GithubCliInfo {
+    tauri::async_runtime::spawn_blocking(read_github_cli_status)
         .await
-        .unwrap_or_else(|error| CodexAgentStatus {
+        .unwrap_or_else(|error| GithubCliInfo {
             installed: false,
-            version: None,
-            path: None,
-            error: Some(format!("无法读取 Codex CLI 状态：{error}")),
+            authenticated: false,
+            login: None,
+            protocol: None,
+            error: Some(format!("无法读取 GitHub CLI 登录状态：{error}")),
         })
 }
 
 #[tauri::command]
-async fn run_codex_review_task(
-    request: CodexReviewTaskRequest,
-) -> Result<CodexReviewTaskResult, String> {
-    run_blocking(move || run_codex_review_task_blocking(request)).await
+async fn ai_agent_statuses() -> Vec<AiAgentStatus> {
+    tauri::async_runtime::spawn_blocking(read_ai_agent_statuses)
+        .await
+        .unwrap_or_else(|error| {
+            [
+                AiAgentKind::Codex,
+                AiAgentKind::Claude,
+                AiAgentKind::Kimi,
+                AiAgentKind::Opencode,
+            ]
+            .into_iter()
+            .map(|agent| AiAgentStatus {
+                agent,
+                installed: false,
+                version: None,
+                path: None,
+                error: Some(format!("无法读取 {} 状态：{error}", agent.display_name())),
+            })
+            .collect()
+        })
 }
 
+#[tauri::command]
+async fn run_ai_review_task(
+    request: CodexReviewTaskRequest,
+) -> Result<CodexReviewTaskResult, String> {
+    run_blocking(move || run_ai_review_task_blocking(request)).await
+}
 
-fn read_codex_agent_status() -> CodexAgentStatus {
-    let Ok(codex) = codex_path() else {
-        return CodexAgentStatus {
+fn read_github_cli_status() -> GithubCliInfo {
+    let Ok(gh) = gh_path() else {
+        return GithubCliInfo {
             installed: false,
-            version: None,
-            path: None,
-            error: Some("未检测到 Codex CLI。".to_string()),
+            authenticated: false,
+            login: None,
+            protocol: None,
+            error: Some("未检测到 GitHub CLI。".to_string()),
         };
     };
 
-    let version = run_command(Command::new(&codex).arg("--version"))
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty());
+    let auth = Command::new(&gh)
+        .args(["auth", "status", "--hostname", "github.com"])
+        .output();
+    let Ok(auth) = auth else {
+        return GithubCliInfo {
+            installed: true,
+            authenticated: false,
+            login: None,
+            protocol: None,
+            error: Some("无法读取 GitHub CLI 登录状态。".to_string()),
+        };
+    };
 
-    CodexAgentStatus {
+    let authenticated = auth.status.success();
+    let auth_output = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&auth.stdout),
+        String::from_utf8_lossy(&auth.stderr)
+    );
+    let protocol = run_gh_with_path(
+        &gh,
+        &["config", "get", "git_protocol", "--host", "github.com"],
+    )
+    .ok()
+    .map(|value| value.trim().to_string())
+    .filter(|value| !value.is_empty());
+
+    GithubCliInfo {
         installed: true,
-        version,
-        path: Some(codex.display().to_string()),
-        error: None,
+        authenticated,
+        login: parse_gh_login(&auth_output),
+        protocol,
+        error: if authenticated {
+            None
+        } else {
+            Some("gh 尚未登录 GitHub。请先运行 gh auth login。".to_string())
+        },
     }
 }
 
-fn run_codex_review_task_blocking(
+fn read_ai_agent_statuses() -> Vec<AiAgentStatus> {
+    [
+        AiAgentKind::Codex,
+        AiAgentKind::Claude,
+        AiAgentKind::Kimi,
+        AiAgentKind::Opencode,
+    ]
+    .into_iter()
+    .map(|agent| match ai_agent_path(agent) {
+        Ok(path) => AiAgentStatus {
+            agent,
+            installed: true,
+            version: run_command(Command::new(&path).arg("--version"))
+                .ok()
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty()),
+            path: Some(path.display().to_string()),
+            error: None,
+        },
+        Err(error) => AiAgentStatus {
+            agent,
+            installed: false,
+            version: None,
+            path: None,
+            error: Some(error),
+        },
+    })
+    .collect()
+}
+
+fn run_ai_review_task_blocking(
     request: CodexReviewTaskRequest,
 ) -> Result<CodexReviewTaskResult, String> {
     if request.fragments.is_empty() {
-        return Err("没有可供 Codex 分析的片段。".to_string());
+        return Err("没有可供 AI 分析的片段。".to_string());
+    }
+
+    // 防御：Kimi / Opencode 运行器经命令行参数传 prompt，
+    // 密匣内容会暴露在本机进程参数中，因此含密匣的洞察只允许 stdin 传输的运行器
+    if request.include_lockbox
+        && matches!(request.agent, AiAgentKind::Kimi | AiAgentKind::Opencode)
+    {
+        return Err(
+            "包含密匣内容的洞察仅支持 Claude / Codex 运行器（stdin 传输），请切换运行器后重试。"
+                .to_string(),
+        );
     }
 
     let vault = PathBuf::from(request.vault_path.trim());
     if vault.as_os_str().is_empty() || !vault.is_dir() {
-        return Err("Codex 需要一个有效的 Shard vault 目录。".to_string());
+        return Err("AI 洞察需要一个有效的 Shard vault 目录。".to_string());
     }
 
     let prompt = codex_review_prompt(&request);
-    let text = run_codex_exec(&vault, &prompt)?;
+    let text = run_ai_agent(request.agent, &vault, &prompt)?;
     Ok(CodexReviewTaskResult { text })
 }
 
+#[tauri::command]
+async fn create_github_vault_repo(
+    app: tauri::AppHandle,
+    lockbox_runtime: tauri::State<'_, LockboxRuntime>,
+    repo_name: String,
+) -> Result<VaultState, String> {
+    let lockbox_runtime = lockbox_runtime.inner().clone();
+    run_blocking(move || {
+        let repo_name = sanitize_repo_name(&repo_name)?;
+        let vault = ensure_vault_dirs(&app)?;
+        ensure_git_repo(&vault)?;
+
+        if default_remote(&vault).is_some() {
+            return Err("当前 Vault 已经配置 Git remote。".to_string());
+        }
+
+        commit_all_if_dirty(&vault, "configure git sync")?;
+
+        run_gh_in(
+            &vault,
+            &[
+                "repo",
+                "create",
+                &repo_name,
+                "--private",
+                "--source",
+                ".",
+                "--remote",
+                "origin",
+            ],
+        )?;
+
+        if run_git(&vault, &["rev-parse", "--verify", "HEAD"]).is_ok() {
+            push_vault(&vault)?;
+        }
+
+        list_fragments_in_vault(&vault, &lockbox_runtime)
+    })
+    .await
+}
 
 fn list_fragments_in_vault(
     vault: &Path,
@@ -660,9 +711,10 @@ fn list_fragments_in_vault(
     collect_markdown_files(&vault.join("fragments"), &mut files)?;
     collect_markdown_files(&vault.join("archive"), &mut files)?;
 
+    let dirty_paths = dirty_paths(&vault);
     let mut fragments = files
         .iter()
-        .filter_map(|path| read_fragment(&path, vault).ok())
+        .filter_map(|path| read_fragment(path, &vault, &dirty_paths, None).ok())
         .collect::<Vec<_>>();
 
     if let Some(read_keys) = unlocked_lockbox_read_keys(vault, lockbox_runtime) {
@@ -671,7 +723,7 @@ fn list_fragments_in_vault(
         collect_lockbox_files(&vault.join("lockbox").join("archive"), &mut lockbox_files)?;
 
         fragments.extend(lockbox_files.iter().filter_map(|path| {
-            read_lockbox_fragment(&path, vault, &read_keys).ok()
+            read_lockbox_fragment(path, vault, &dirty_paths, &read_keys, None).ok()
         }));
     }
 
@@ -684,17 +736,29 @@ fn list_fragments_in_vault(
     Ok(VaultState {
         vault_path: vault.display().to_string(),
         fragments,
+        git: git_info(&vault),
         lockbox: lockbox_state(vault, lockbox_runtime),
     })
 }
 
-/// 构造一份新导图文档，**不落盘**。校验 source_fragment_id 需要读 vault，
-/// 因此仍收 vault 参数。
-fn build_mind_map_document(
+fn list_mind_maps_in_vault(vault: &Path) -> Result<Vec<MindMapSummary>, String> {
+    let mut files = Vec::new();
+    collect_mind_map_files(&vault.join("maps"), &mut files)?;
+
+    let mut summaries = files
+        .iter()
+        .filter_map(|path| read_mind_map_summary(path, vault).ok())
+        .collect::<Vec<_>>();
+
+    summaries.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    Ok(summaries)
+}
+
+fn create_mind_map_in_vault(
     vault: &Path,
     title: String,
     source_fragment_id: Option<String>,
-) -> Result<ShardMapFile, String> {
+) -> Result<MindMapReadResult, String> {
     let title = title.trim();
     if title.is_empty() {
         return Err("思维导图标题不能为空。".to_string());
@@ -763,538 +827,465 @@ fn build_mind_map_document(
         viewport: None,
     };
 
+    let dir = vault
+        .join("maps")
+        .join(now.format("%Y").to_string())
+        .join(now.format("%m").to_string());
+    fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+    let path = dir.join(format!(
+        "{}-{}.shardmap.json",
+        now.format("%Y-%m-%d-%H%M%S"),
+        suffix
+    ));
+
     validate_mind_map_file(vault, &file)?;
-    Ok(file)
-}
-
-/// 导图的导出路径。库成为真相源后这只是「导出时该写到哪」，
-/// 不再是数据的实际位置。
-fn mind_map_export_path(file: &ShardMapFile) -> String {
-    let stamp = chrono::DateTime::parse_from_rfc3339(&file.created_at)
-        .map(|value| value.with_timezone(&Local))
-        .unwrap_or_else(|_| Local::now());
-    format!(
-        "maps/{}/{}/{}.shardmap.json",
-        stamp.format("%Y"),
-        stamp.format("%m"),
-        file.id
-    )
-}
-
-/// 一次写命令要用到的全部上下文。
-///
-/// 一次性拿齐，避免每个命令各自 `ensure_vault_dirs` + 取连接 + 读密钥——
-/// 那些都是阻塞操作，散在各处既慢又容易漏掉某一个。
-struct WriteCtx {
-    conn: libsql::Connection,
-    device: String,
-    vault: PathBuf,
-    /// 密匣解锁时的读密钥。锁定态为 `None`，此时密匣条目写得进读不出。
-    read_keys: Option<LockboxReadKeys>,
-}
-
-async fn write_ctx(
-    app: &tauri::AppHandle,
-    notes: &NotesDb,
-    lockbox_runtime: &LockboxRuntime,
-) -> Result<WriteCtx, String> {
-    let conn = notes.conn(app, false).await?;
-    let device = notes::repo::device_id(&conn).await?;
-
-    let app = app.clone();
-    let runtime = lockbox_runtime.clone();
-    let (vault, read_keys) = run_blocking(move || {
-        let vault = ensure_vault_dirs(&app)?;
-        let read_keys = unlocked_lockbox_read_keys(&vault, &runtime);
-        Ok((vault, read_keys))
-    })
-    .await?;
-
-    Ok(WriteCtx {
-        conn,
-        device,
+    let text = canonical_mind_map_text(&file)?;
+    write_text_atomically(&path, &text)?;
+    write_mind_map_last_good(vault, &file)?;
+    commit_paths_best_effort(
         vault,
-        read_keys,
-    })
+        &[
+            relative_path(vault, &path)?,
+            mind_map_last_good_rel_path(&file),
+        ],
+        &format!("create mind map {}", file.id),
+    );
+    mind_map_read_result(vault, &path, file, text)
 }
 
-impl WriteCtx {
-    /// 读出一条，不存在就报错。写命令都以「先看到当前版本」开头。
-    async fn require_row(&self, id: &str) -> Result<notes::model::FragmentRow, String> {
-        notes::repo::get(&self.conn, id)
-            .await?
-            .ok_or_else(|| format!("找不到片段 {id}"))
-    }
-
-    /// 写完之后从库里读回来。返回给前端的那一条与列表里的同一条必须完全一致。
-    async fn read_back(&self, id: &str) -> Result<Fragment, String> {
-        let row = self.require_row(id).await?;
-        notes::bridge::fragment_from_row(&row, self.read_keys.as_ref())
-    }
-
-    fn require_read_keys(&self) -> Result<&LockboxReadKeys, String> {
-        self.read_keys
-            .as_ref()
-            .ok_or_else(|| "lockbox_locked".to_string())
-    }
+fn read_mind_map_in_vault(vault: &Path, id: &str) -> Result<MindMapReadResult, String> {
+    let path = find_mind_map_path(vault, id)?.ok_or_else(|| format!("找不到思维导图 {id}"))?;
+    let (file, text) = read_mind_map_file(&path)?;
+    validate_mind_map_file(vault, &file)?;
+    mind_map_read_result(vault, &path, file, text)
 }
 
-/// 新片段 id：`<时间戳>-<8 位 hex>-<设备短码>`。
-///
-/// 旧格式只有 16 bit 随机后缀，同一秒内两台设备各建一条就有肉眼可见的碰撞
-/// 概率。加上 32 bit 随机与设备短码后，跨设备重号在实践中不可能发生。
-fn new_fragment_id(now: &DateTime<Local>, device: &str) -> String {
-    let mut bytes = [0u8; 4];
-    OsRng.fill_bytes(&mut bytes);
-    let random: String = bytes.iter().map(|byte| format!("{byte:02x}")).collect();
-    let short_device = &device[..6.min(device.len())];
-
-    format!("{}-{random}-{short_device}", now.format("%Y%m%d-%H%M%S"))
-}
-
-/// 把正文与元数据封成密匣信封。**明文不进库**，出去的只有密文。
-fn seal_lockbox_note(
+fn write_mind_map_in_vault(
     vault: &Path,
-    lockbox_runtime: &LockboxRuntime,
-    frontmatter: FragmentFrontmatter,
-    body: &str,
-) -> Result<notes::model::CipherEnvelope, String> {
-    reject_lockbox_images(body)?;
-    let write_key = lockbox_write_key(vault, lockbox_runtime)?;
-    let payload = LockboxFragmentPayload {
-        frontmatter,
-        body: body.to_string(),
-    };
-
-    Ok(cipher_envelope(&encrypt_lockbox_fragment(
-        &payload, &write_key,
-    )?))
-}
-
-fn cipher_envelope(encrypted: &LockboxEncryptedFragment) -> notes::model::CipherEnvelope {
-    notes::model::CipherEnvelope {
-        version: i64::from(encrypted.version),
-        nonce: encrypted.nonce.clone(),
-        text: encrypted.ciphertext.clone(),
-        key_alg: encrypted.key_algorithm.clone(),
-        key_text: encrypted.key_ciphertext.clone(),
-        key_id: None,
+    id: &str,
+    mut file: ShardMapFile,
+    expected_revision: u64,
+    last_saved_hash: &str,
+) -> Result<MindMapReadResult, String> {
+    if file.id != id {
+        return Err("导图 id 与写入目标不一致。".to_string());
     }
+
+    let path = find_mind_map_path(vault, id)?.ok_or_else(|| format!("找不到思维导图 {id}"))?;
+    let (current_file, current_text) = read_mind_map_file(&path)?;
+    let current_hash = hash_text(&current_text);
+
+    if current_file.revision != expected_revision || current_hash != last_saved_hash {
+        let conflict_path = write_mind_map_conflict(vault, &file)?;
+        commit_paths_best_effort(
+            vault,
+            &[relative_path(vault, &conflict_path)?],
+            &format!("preserve mind map conflict {}", file.id),
+        );
+        return Err(format!(
+            "导图已被外部修改，已另存冲突副本：{}",
+            relative_path(vault, &conflict_path)?
+        ));
+    }
+
+    file.kind = SHARD_MAP_KIND.to_string();
+    file.schema_version = SHARD_MAP_SCHEMA_VERSION;
+    file.saved_with_app_version = env!("CARGO_PKG_VERSION").to_string();
+    file.revision = expected_revision + 1;
+    file.updated_at = Local::now().to_rfc3339();
+    validate_mind_map_file(vault, &file)?;
+
+    let text = canonical_mind_map_text(&file)?;
+    write_text_atomically(&path, &text)?;
+    write_mind_map_last_good(vault, &file)?;
+    commit_paths_best_effort(
+        vault,
+        &[
+            relative_path(vault, &path)?,
+            mind_map_last_good_rel_path(&file),
+        ],
+        &format!("update mind map {}", file.id),
+    );
+    mind_map_read_result(vault, &path, file, text)
 }
 
-/// 解开库里那一行的密文，拿到可编辑的 payload。
-///
-/// 密匣的标签、置顶、创建时间全部藏在密文里——库里对应的列对密匣条目是空的
-/// （标签尤其不能进 `fragment_tags`，那等于把隐私标签明文摊开）。所以任何要
-/// 改这些字段的操作，都必须先解密再重新封回去。
-fn open_lockbox_row(
-    row: &notes::model::FragmentRow,
-    read_keys: &LockboxReadKeys,
-) -> Result<LockboxFragmentPayload, String> {
-    let cipher = row
-        .cipher
-        .as_ref()
-        .ok_or_else(|| "密匣条目缺少密文".to_string())?;
-
-    decrypt_lockbox_fragment(
-        &LockboxEncryptedFragment {
-            version: cipher.version as u32,
-            id: row.id.clone(),
-            nonce: cipher.nonce.clone(),
-            ciphertext: cipher.text.clone(),
-            key_algorithm: cipher.key_alg.clone(),
-            key_ciphertext: cipher.key_text.clone(),
-        },
-        read_keys,
-    )
+fn delete_mind_map_in_vault(vault: &Path, id: &str, expected_revision: u64) -> Result<(), String> {
+    let path = find_mind_map_path(vault, id)?.ok_or_else(|| format!("找不到思维导图 {id}"))?;
+    let (file, _) = read_mind_map_file(&path)?;
+    if file.revision != expected_revision {
+        return Err("导图已被外部修改，请重新打开后再删除。".to_string());
+    }
+    let rel_path = relative_path(vault, &path)?;
+    fs::remove_file(&path).map_err(|error| error.to_string())?;
+    let last_good = vault.join(mind_map_last_good_rel_path(&file));
+    if last_good.exists() {
+        fs::remove_file(&last_good).map_err(|error| error.to_string())?;
+    }
+    commit_paths_best_effort(
+        vault,
+        &[rel_path, mind_map_last_good_rel_path(&file)],
+        &format!("delete mind map {}", file.id),
+    );
+    Ok(())
 }
 
 #[tauri::command]
 async fn create_fragment(
     app: tauri::AppHandle,
     lockbox_runtime: tauri::State<'_, LockboxRuntime>,
-    notes: tauri::State<'_, NotesDb>,
     content: String,
     tags: Option<Vec<String>>,
 ) -> Result<Fragment, String> {
-    let content = content.trim().to_string();
-    if content.is_empty() {
-        return Err("片段内容不能为空".to_string());
-    }
+    let lockbox_runtime = lockbox_runtime.inner().clone();
+    run_blocking(move || {
+        let content = content.trim().to_string();
+        if content.is_empty() {
+            return Err("片段内容不能为空".to_string());
+        }
 
-    let runtime = lockbox_runtime.inner().clone();
-    let ctx = write_ctx(&app, &notes, &runtime).await?;
+        let vault = ensure_vault_dirs(&app)?;
+        let normalized_tags = normalize_tags(tags.unwrap_or_default(), true);
+        if contains_lockbox_tag(&normalized_tags) {
+            return create_lockbox_fragment_in_vault(
+                &vault,
+                &lockbox_runtime,
+                &content,
+                normalized_tags,
+            );
+        }
 
-    let now = Local::now();
-    let created_at = now.to_rfc3339();
-    let id = new_fragment_id(&now, &ctx.device);
-    let normalized_tags = normalize_tags(tags.unwrap_or_default(), true);
-    let wants_lockbox = contains_lockbox_tag(&normalized_tags);
+        let now = Local::now();
+        let id = new_fragment_id(&now);
+        let created_at = now.to_rfc3339();
+        let dir = vault
+            .join("fragments")
+            .join(now.format("%Y").to_string())
+            .join(now.format("%m").to_string());
+        fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
 
-    let note = if wants_lockbox {
+        let path = dir.join(format!("{id}.md"));
         let frontmatter = FragmentFrontmatter {
             id: id.clone(),
-            created_at: created_at.clone(),
-            updated_at: created_at.clone(),
-            tags: normalize_lockbox_tags(normalized_tags),
-            category: None,
-            ai_status: Some("none".to_string()),
-            pinned: false,
-            source: "desktop-lockbox".to_string(),
-        };
-
-        let vault = ctx.vault.clone();
-        let runtime = runtime.clone();
-        let body = content.clone();
-        let cipher =
-            run_blocking(move || seal_lockbox_note(&vault, &runtime, frontmatter, &body)).await?;
-
-        notes::model::NoteWrite {
-            id: id.clone(),
-            // 明文不进库。密匣的标签也留在密文里，不进 fragment_tags。
-            content: None,
-            created_at: created_at.clone(),
-            updated_at: created_at,
-            tags: Vec::new(),
-            category: None,
-            ai_status: "none".to_string(),
-            source: "desktop-lockbox".to_string(),
-            archived: false,
-            pinned: false,
-            cipher: Some(cipher),
-            export_path: None,
-        }
-    } else {
-        notes::model::NoteWrite {
-            id: id.clone(),
-            content: Some(content),
             created_at: created_at.clone(),
             updated_at: created_at,
             tags: normalized_tags,
             category: None,
-            ai_status: "none".to_string(),
-            source: "desktop".to_string(),
-            archived: false,
+            ai_status: Some("none".to_string()),
             pinned: false,
-            cipher: None,
-            export_path: None,
-        }
-    };
+            source: "desktop".to_string(),
+            conflict_of: None,
+        };
 
-    notes::repo::write(&ctx.conn, &note, None, &ctx.device).await?;
-    link_body_attachments(&ctx.conn, &note).await;
-    ctx.read_back(&id).await
-}
+        write_fragment_file(&path, &frontmatter, &content)?;
 
-/// 把正文里引用到的附件与这条笔记关联起来。
-///
-/// 失败只记日志：关联表只影响孤儿附件回收，写不进去不该让用户的保存失败。
-async fn link_body_attachments(conn: &libsql::Connection, note: &notes::model::NoteWrite) {
-    let Some(content) = note.content.as_deref() else {
-        return;
-    };
+        let rel_path = relative_path(&vault, &path)?;
+        let commit_result = commit_path_if_git(
+            &vault,
+            &rel_path,
+            &format!("create fragment {}", now.format("%Y-%m-%d %H:%M:%S")),
+        );
 
-    for hash in notes::attachments::referenced_hashes(content) {
-        match notes::attachments::get(conn, &hash).await {
-            Ok(Some(_)) => {
-                if let Err(error) = notes::attachments::link(conn, &note.id, &hash).await {
-                    eprintln!("[shard] 关联附件失败（{}/{hash}）：{error}", note.id);
-                }
-            }
-            Ok(None) => {}
-            Err(error) => eprintln!("[shard] 查询附件失败（{hash}）：{error}"),
-        }
-    }
+        let dirty = dirty_paths(&vault);
+        let override_status = match commit_result {
+            Ok(Some(_)) => Some(("committed".to_string(), None)),
+            Ok(None) => Some(("saved".to_string(), None)),
+            Err(error) => Some(("commit_failed".to_string(), Some(error))),
+        };
+
+        read_fragment(&path, &vault, &dirty, override_status)
+    })
+    .await
 }
 
 #[tauri::command]
 async fn update_fragment_tags(
     app: tauri::AppHandle,
     lockbox_runtime: tauri::State<'_, LockboxRuntime>,
-    notes: tauri::State<'_, NotesDb>,
     id: String,
     tags: Vec<String>,
 ) -> Result<Fragment, String> {
-    let runtime = lockbox_runtime.inner().clone();
-    let ctx = write_ctx(&app, &notes, &runtime).await?;
-    let row = ctx.require_row(&id).await?;
-    let normalized_tags = normalize_tags(tags, false);
+    let lockbox_runtime = lockbox_runtime.inner().clone();
+    run_blocking(move || {
+        let vault = ensure_vault_dirs(&app)?;
+        let normalized_tags = normalize_tags(tags, false);
 
-    let note = rewrite_note(&ctx, &runtime, &row, None, normalized_tags).await?;
-    notes::repo::write(&ctx.conn, &note, Some(row.revision), &ctx.device).await?;
-    ctx.read_back(&id).await
+        if let Some(lockbox_path) = find_lockbox_fragment_path(&vault, &id)? {
+            let read_keys = require_unlocked_lockbox_read_keys(&vault, &lockbox_runtime)?;
+            return update_lockbox_fragment_tags_in_vault(
+                &vault,
+                &lockbox_path,
+                &read_keys,
+                normalized_tags,
+            );
+        }
+
+        let path = find_fragment_path(&vault, &id)?.ok_or_else(|| format!("找不到片段 {}", id))?;
+        let text = fs::read_to_string(&path).map_err(|error| error.to_string())?;
+        let (mut frontmatter, body) = parse_fragment_text(&text)?;
+
+        if contains_lockbox_tag(&normalized_tags) {
+            return move_public_fragment_to_lockbox_in_vault(&vault, &lockbox_runtime, &path);
+        }
+
+        let mut next_tags = normalized_tags;
+        if next_tags.is_empty() {
+            next_tags.push("inbox".to_string());
+        }
+
+        frontmatter.tags = next_tags;
+        frontmatter.updated_at = Local::now().to_rfc3339();
+        write_fragment_file(&path, &frontmatter, body.trim_start_matches('\n'))?;
+
+        let rel_path = relative_path(&vault, &path)?;
+        let commit_result = commit_path_if_git(
+            &vault,
+            &rel_path,
+            &format!("update fragment tags {}", frontmatter.id),
+        );
+
+        let dirty = dirty_paths(&vault);
+        let override_status = match commit_result {
+            Ok(Some(_)) => Some(("committed".to_string(), None)),
+            Ok(None) => Some(("saved".to_string(), None)),
+            Err(error) => Some(("commit_failed".to_string(), Some(error))),
+        };
+
+        read_fragment(&path, &vault, &dirty, override_status)
+    })
+    .await
 }
 
 #[tauri::command]
 async fn update_fragment(
     app: tauri::AppHandle,
     lockbox_runtime: tauri::State<'_, LockboxRuntime>,
-    notes: tauri::State<'_, NotesDb>,
     id: String,
     content: String,
     tags: Option<Vec<String>>,
 ) -> Result<Fragment, String> {
-    if content.trim().is_empty() {
-        return Err("片段内容不能为空".to_string());
-    }
+    let lockbox_runtime = lockbox_runtime.inner().clone();
+    run_blocking(move || {
+        if content.trim().is_empty() {
+            return Err("片段内容不能为空".to_string());
+        }
 
-    let runtime = lockbox_runtime.inner().clone();
-    let ctx = write_ctx(&app, &notes, &runtime).await?;
-    let row = ctx.require_row(&id).await?;
-    let normalized_tags = normalize_tags(tags.unwrap_or_default(), false);
+        let vault = ensure_vault_dirs(&app)?;
+        let normalized_tags = normalize_tags(tags.unwrap_or_default(), false);
 
-    let note = rewrite_note(
-        &ctx,
-        &runtime,
-        &row,
-        Some(content.trim().to_string()),
-        normalized_tags,
-    )
-    .await?;
-    notes::repo::write(&ctx.conn, &note, Some(row.revision), &ctx.device).await?;
-    link_body_attachments(&ctx.conn, &note).await;
-    ctx.read_back(&id).await
-}
+        if let Some(lockbox_path) = find_lockbox_fragment_path(&vault, &id)? {
+            let read_keys = require_unlocked_lockbox_read_keys(&vault, &lockbox_runtime)?;
+            return update_lockbox_fragment_in_vault(
+                &vault,
+                &lockbox_path,
+                &read_keys,
+                content.trim(),
+                normalized_tags,
+            );
+        }
 
-/// 编辑一条笔记的正文与标签，产出新的写入参数。
-///
-/// 三条分支合在一处，是因为它们共享同一个判定：**结果该不该是密匣**。分开写
-/// 会让「明文加上 #密匣 标签」这条转换路径漏在某个命令里。
-///
-/// `content` 为 `None` 表示只改标签，正文沿用当前值（密匣条目则沿用密文里的
-/// 正文，需要解密后再封回去）。
-async fn rewrite_note(
-    ctx: &WriteCtx,
-    lockbox_runtime: &LockboxRuntime,
-    row: &notes::model::FragmentRow,
-    content: Option<String>,
-    tags: Vec<String>,
-) -> Result<notes::model::NoteWrite, String> {
-    let now = Local::now().to_rfc3339();
-    let wants_lockbox = row.lockbox || contains_lockbox_tag(&tags);
+        let path = find_fragment_path(&vault, &id)?.ok_or_else(|| format!("找不到片段 {}", id))?;
+        let text = fs::read_to_string(&path).map_err(|error| error.to_string())?;
+        let (mut frontmatter, _) = parse_fragment_text(&text)?;
 
-    if !wants_lockbox {
-        let mut next_tags = tags;
+        if contains_lockbox_tag(&normalized_tags) {
+            return move_public_fragment_content_to_lockbox_in_vault(
+                &vault,
+                &lockbox_runtime,
+                &path,
+                content.trim(),
+                normalized_tags,
+            );
+        }
+
+        let mut next_tags = normalized_tags;
         if next_tags.is_empty() {
             next_tags.push("inbox".to_string());
         }
 
-        return Ok(notes::model::NoteWrite {
-            content: Some(content.unwrap_or_else(|| row.content.clone().unwrap_or_default())),
-            updated_at: now,
-            tags: next_tags,
-            ..notes::model::NoteWrite::from_row(row)
-        });
-    }
+        frontmatter.tags = next_tags;
+        frontmatter.updated_at = Local::now().to_rfc3339();
+        write_fragment_file(&path, &frontmatter, &content)?;
 
-    // 密匣：正文与元数据都要重新封一遍。已是密匣的先解密拿到当前值，
-    // 明文转入密匣的直接用库里的明文。
-    let (mut frontmatter, current_body) = if row.lockbox {
-        let payload = open_lockbox_row(row, ctx.require_read_keys()?)?;
-        (payload.frontmatter, payload.body)
-    } else {
-        (
-            FragmentFrontmatter {
-                id: row.id.clone(),
-                created_at: row.created_at.clone(),
-                updated_at: row.updated_at.clone(),
-                tags: row.tags.clone(),
-                category: row.category.clone(),
-                ai_status: Some(row.ai_status.clone()),
-                pinned: row.pinned,
-                source: row.source.clone(),
-            },
-            row.content.clone().unwrap_or_default(),
-        )
-    };
+        let rel_path = relative_path(&vault, &path)?;
+        let commit_result = commit_path_if_git(
+            &vault,
+            &rel_path,
+            &format!("update fragment {}", frontmatter.id),
+        );
+        let dirty = dirty_paths(&vault);
+        let override_status = commit_override_status(commit_result);
 
-    let body = content.unwrap_or(current_body);
-    frontmatter.tags = normalize_lockbox_tags(tags);
-    frontmatter.updated_at = now.clone();
-    frontmatter.source = "desktop-lockbox".to_string();
-
-    let vault = ctx.vault.clone();
-    let runtime = lockbox_runtime.clone();
-    let sealed_body = body.clone();
-    let cipher =
-        run_blocking(move || seal_lockbox_note(&vault, &runtime, frontmatter, &sealed_body)).await?;
-
-    Ok(notes::model::NoteWrite {
-        content: None,
-        updated_at: now,
-        tags: Vec::new(),
-        source: "desktop-lockbox".to_string(),
-        cipher: Some(cipher),
-        ..notes::model::NoteWrite::from_row(row)
+        read_fragment(&path, &vault, &dirty, override_status)
     })
+    .await
 }
 
 #[tauri::command]
 async fn set_fragment_archived(
     app: tauri::AppHandle,
     lockbox_runtime: tauri::State<'_, LockboxRuntime>,
-    notes: tauri::State<'_, NotesDb>,
     id: String,
     archived: bool,
 ) -> Result<Fragment, String> {
-    let runtime = lockbox_runtime.inner().clone();
-    let ctx = write_ctx(&app, &notes, &runtime).await?;
-    let row = ctx.require_row(&id).await?;
+    let lockbox_runtime = lockbox_runtime.inner().clone();
+    run_blocking(move || {
+        let vault = ensure_vault_dirs(&app)?;
+        if let Some(lockbox_path) = find_lockbox_fragment_path(&vault, &id)? {
+            let read_keys = require_unlocked_lockbox_read_keys(&vault, &lockbox_runtime)?;
+            return set_lockbox_fragment_archived_in_vault(
+                &vault,
+                &lockbox_path,
+                &read_keys,
+                &id,
+                archived,
+            );
+        }
 
-    // 已是目标状态：什么都不做，保持幂等。
-    if row.archived == archived {
-        return ctx.read_back(&id).await;
-    }
+        let path = find_fragment_path(&vault, &id)?.ok_or_else(|| format!("找不到片段 {}", id))?;
+        let rel_path = relative_path(&vault, &path)?;
+        let is_archived = rel_path.starts_with("archive/");
+        if is_archived == archived {
+            let dirty = dirty_paths(&vault);
+            return read_fragment(&path, &vault, &dirty, None);
+        }
 
-    // 归档现在是一个纯粹的数据状态，不再牵动文件位置——**密匣条目也不必解密**，
-    // 因为归档标记存在库的列上，不在密文里。
-    let note = notes::model::NoteWrite {
-        archived,
-        // 归档的条目不该同时是置顶的，两种"排在最前面"的语义会打架。
-        pinned: row.pinned && !archived,
-        updated_at: Local::now().to_rfc3339(),
-        ..notes::model::NoteWrite::from_row(&row)
-    };
+        let source_root = if is_archived {
+            vault.join("archive")
+        } else {
+            vault.join("fragments")
+        };
+        let target_root = if archived {
+            vault.join("archive")
+        } else {
+            vault.join("fragments")
+        };
+        let source_rel = path
+            .strip_prefix(&source_root)
+            .map_err(|error| error.to_string())?;
+        let target_path = target_root.join(source_rel);
 
-    notes::repo::write(&ctx.conn, &note, Some(row.revision), &ctx.device).await?;
-    ctx.read_back(&id).await
+        if let Some(parent) = target_path.parent() {
+            fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        }
+
+        fs::rename(&path, &target_path)
+            .or_else(|_| {
+                fs::copy(&path, &target_path)
+                    .map(|_| ())
+                    .and_then(|_| fs::remove_file(&path))
+            })
+            .map_err(|error| error.to_string())?;
+
+        let commit_result = commit_paths_if_git(
+            &vault,
+            &[rel_path, relative_path(&vault, &target_path)?],
+            &format!(
+                "{} fragment {}",
+                if archived { "archive" } else { "restore" },
+                id
+            ),
+        );
+
+        let dirty = dirty_paths(&vault);
+        let override_status = commit_override_status(commit_result);
+
+        read_fragment(&target_path, &vault, &dirty, override_status)
+    })
+    .await
 }
 
 #[tauri::command]
 async fn set_fragment_pinned(
     app: tauri::AppHandle,
     lockbox_runtime: tauri::State<'_, LockboxRuntime>,
-    notes: tauri::State<'_, NotesDb>,
     id: String,
     pinned: bool,
 ) -> Result<Fragment, String> {
-    let runtime = lockbox_runtime.inner().clone();
-    let ctx = write_ctx(&app, &notes, &runtime).await?;
-    let row = ctx.require_row(&id).await?;
-
-    if row.archived && pinned {
-        return Err("归档片段不能置顶。".to_string());
-    }
-
-    let now = Local::now().to_rfc3339();
-    let note = if row.lockbox {
-        // 置顶状态藏在密文的 frontmatter 里（读路径以它为准），必须重新封一遍。
-        let mut payload = open_lockbox_row(&row, ctx.require_read_keys()?)?;
-        payload.frontmatter.pinned = pinned;
-        payload.frontmatter.updated_at = now.clone();
-
-        let vault = ctx.vault.clone();
-        let runtime = runtime.clone();
-        let cipher = run_blocking(move || {
-            seal_lockbox_note(&vault, &runtime, payload.frontmatter, &payload.body)
-        })
-        .await?;
-
-        notes::model::NoteWrite {
-            pinned,
-            updated_at: now,
-            cipher: Some(cipher),
-            ..notes::model::NoteWrite::from_row(&row)
+    let lockbox_runtime = lockbox_runtime.inner().clone();
+    run_blocking(move || {
+        let vault = ensure_vault_dirs(&app)?;
+        if let Some(lockbox_path) = find_lockbox_fragment_path(&vault, &id)? {
+            let read_keys = require_unlocked_lockbox_read_keys(&vault, &lockbox_runtime)?;
+            return set_lockbox_fragment_pinned_in_vault(&vault, &lockbox_path, &read_keys, pinned);
         }
-    } else {
-        notes::model::NoteWrite {
-            pinned,
-            updated_at: now,
-            ..notes::model::NoteWrite::from_row(&row)
-        }
-    };
 
-    notes::repo::write(&ctx.conn, &note, Some(row.revision), &ctx.device).await?;
-    ctx.read_back(&id).await
+        let path = find_fragment_path(&vault, &id)?.ok_or_else(|| format!("找不到片段 {}", id))?;
+        set_public_fragment_pinned_in_vault(&vault, &path, pinned)
+    })
+    .await
 }
 
 #[tauri::command]
 async fn move_fragment_to_lockbox(
     app: tauri::AppHandle,
     lockbox_runtime: tauri::State<'_, LockboxRuntime>,
-    notes: tauri::State<'_, NotesDb>,
     id: String,
 ) -> Result<VaultState, String> {
-    let runtime = lockbox_runtime.inner().clone();
-    let ctx = write_ctx(&app, &notes, &runtime).await?;
-    let row = ctx.require_row(&id).await?;
-
-    if row.lockbox {
-        return list_fragments(app.clone(), lockbox_runtime, notes).await;
-    }
-
-    // 转入密匣是**同一行的状态变化**：id 不变，明文列清空、密文列填上。
-    // 文件时代这里要移动文件并改扩展名，转换过程中明文会短暂存在于两个地方；
-    // 现在是一条 CAS UPDATE，明文没有中间态。
-    let tags = normalize_lockbox_tags(row.tags.clone());
-    let note = rewrite_note(&ctx, &runtime, &row, None, tags).await?;
-    if !note.is_lockbox() {
-        return Err("转入密匣失败：未能生成密文。".to_string());
-    }
-
-    notes::repo::write(&ctx.conn, &note, Some(row.revision), &ctx.device).await?;
-    list_fragments(app.clone(), lockbox_runtime, notes).await
+    let lockbox_runtime = lockbox_runtime.inner().clone();
+    run_blocking(move || {
+        let vault = ensure_vault_dirs(&app)?;
+        let path = find_fragment_path(&vault, &id)?.ok_or_else(|| format!("找不到片段 {}", id))?;
+        move_public_fragment_to_lockbox_in_vault(&vault, &lockbox_runtime, &path)?;
+        list_fragments_in_vault(&vault, &lockbox_runtime)
+    })
+    .await
 }
 
-/// 收下一张图片，返回正文里该写的引用（`shard-attachment:<hash>`）。
-///
-/// 内容寻址：同一张图重复粘贴不会产生第二份字节。MIME **在这里定死**并入库，
-/// 读取时直接用那一列，不再二次嗅探。
 #[tauri::command]
 async fn save_fragment_image(
     app: tauri::AppHandle,
-    notes: tauri::State<'_, NotesDb>,
-    file_name: String,
+    _file_name: String,
     bytes: Vec<u8>,
 ) -> Result<String, String> {
-    let conn = notes.conn(&app, false).await?;
-    let staged = {
-        let app = app.clone();
-        run_blocking(move || {
-            if bytes.is_empty() {
-                return Err("图片内容为空".to_string());
-            }
+    run_blocking(move || {
+        if bytes.is_empty() {
+            return Err("图片内容为空".to_string());
+        }
 
-            let vault = ensure_vault_dirs(&app)?;
-            let mime_type = detect_image_mime(Path::new(&file_name), &bytes)?;
-            let hash = hash_bytes(&bytes);
-            let path = vault.join(notes::attachments::cache_rel_path(&hash));
+        let vault = ensure_vault_dirs(&app)?;
+        let mime_type = sniff_image_mime_type(&bytes)?;
+        let extension = image_extension_for_mime_type(mime_type)
+            .ok_or_else(|| "不支持的图片格式".to_string())?;
+        let hash = hash_bytes(&bytes);
+        let dir = vault.join("assets").join(&hash[..2]);
+        fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+        let path = dir.join(format!("{hash}.{extension}"));
 
-            // 文件名就是内容摘要，已存在即已写好。
-            if !path.exists() {
-                if let Some(parent) = path.parent() {
-                    fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-                }
-                let size = bytes.len();
-                fs::write(&path, bytes).map_err(|error| error.to_string())?;
-                return Ok((hash, mime_type, size));
-            }
+        if !path.exists() {
+            write_bytes_atomically(&path, &bytes)?;
+        }
+        let rel_path = relative_path(&vault, &path)?;
+        commit_paths_best_effort(
+            &vault,
+            std::slice::from_ref(&rel_path),
+            &format!("add attachment {}", &hash[..12]),
+        );
+        Ok(rel_path)
+    })
+    .await
+}
 
-            Ok((hash, mime_type, bytes.len()))
-        })
-        .await?
-    };
+#[tauri::command]
+async fn read_fragment_image(app: tauri::AppHandle, path: String) -> Result<String, String> {
+    run_blocking(move || {
+        let vault = ensure_vault_dirs(&app)?;
+        let image_path = resolve_vault_asset_path(&vault, &path)?;
+        let bytes = fs::read(&image_path).map_err(|error| error.to_string())?;
+        let mime_type = image_mime_type(&image_path, &bytes)?;
+        let encoded = BASE64_STANDARD.encode(bytes);
 
-    let (hash, mime_type, size) = staged;
-    notes::attachments::put(
-        &conn,
-        &notes::attachments::AttachmentRow {
-            hash: hash.clone(),
-            mime_type: mime_type.to_string(),
-            byte_size: size as i64,
-            created_at: Local::now().to_rfc3339(),
-        },
-    )
-    .await?;
-
-    Ok(format!("{}{hash}", notes::attachments::ATTACHMENT_SCHEME))
+        Ok(format!("data:{mime_type};base64,{encoded}"))
+    })
+    .await
 }
 
 #[tauri::command]
 async fn fragment_image_file_path(app: tauri::AppHandle, path: String) -> Result<String, String> {
     run_blocking(move || {
         let vault = ensure_vault_dirs(&app)?;
-        Ok(attachment_path(&vault, &path)?.to_string_lossy().to_string())
+        let image_path = resolve_vault_asset_path(&vault, &path)?;
+
+        Ok(image_path.to_string_lossy().to_string())
     })
     .await
 }
@@ -1303,7 +1294,7 @@ async fn fragment_image_file_path(app: tauri::AppHandle, path: String) -> Result
 async fn reveal_fragment_image_in_dir(app: tauri::AppHandle, path: String) -> Result<(), String> {
     run_blocking(move || {
         let vault = ensure_vault_dirs(&app)?;
-        let image_path = attachment_path(&vault, &path)?;
+        let image_path = resolve_vault_asset_path(&vault, &path)?;
 
         tauri_plugin_opener::reveal_item_in_dir(&image_path).map_err(|error| error.to_string())
     })
@@ -1417,6 +1408,11 @@ async fn setup_lockbox(
     run_blocking(move || {
         let vault = ensure_vault_dirs(&app)?;
         let recovery_key = setup_lockbox_in_vault(&vault, &lockbox_runtime, &password)?;
+        commit_paths_best_effort(
+            &vault,
+            &[".shard/lockbox.json".to_string()],
+            "configure lockbox",
+        );
         Ok(LockboxSetupResult {
             recovery_key,
             vault: list_fragments_in_vault(&vault, &lockbox_runtime)?,
@@ -1470,6 +1466,11 @@ async fn change_lockbox_password(
             &current_password,
             &new_password,
         )?;
+        commit_paths_best_effort(
+            &vault,
+            &[".shard/lockbox.json".to_string()],
+            "change lockbox password",
+        );
         list_fragments_in_vault(&vault, &lockbox_runtime)
     })
     .await
@@ -1491,6 +1492,11 @@ async fn reset_lockbox_password(
             &recovery_key,
             &new_password,
         )?;
+        commit_paths_best_effort(
+            &vault,
+            &[".shard/lockbox.json".to_string()],
+            "reset lockbox password",
+        );
         Ok(LockboxSetupResult {
             recovery_key,
             vault: list_fragments_in_vault(&vault, &lockbox_runtime)?,
@@ -1571,8 +1577,78 @@ fn restore_default_window_frame(window: &tauri::WebviewWindow) -> Result<(), Str
     }
 }
 
+#[tauri::command]
+async fn sync_vault(app: tauri::AppHandle) -> Result<GitInfo, String> {
+    run_blocking(move || {
+        let vault = ensure_vault_dirs(&app)?;
 
+        if !vault.join(".git").exists() {
+            return Err("Git 未初始化。请先在 Vault 设置中初始化 Git。".to_string());
+        }
 
+        push_vault(&vault)?;
+        Ok(git_info(&vault))
+    })
+    .await
+}
+
+fn push_vault(vault: &Path) -> Result<(), String> {
+    let Some(remote) = default_remote(vault) else {
+        return Err("Git remote 未配置。请先在 ShardVault 中设置远端。".to_string());
+    };
+
+    ensure_no_unfinished_git_operation(vault)?;
+    commit_all_if_dirty(vault, "sync local vault changes")?;
+
+    let branch = current_branch(vault);
+    let has_upstream = run_git(
+        vault,
+        &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+    )
+    .is_ok();
+
+    if has_upstream {
+        pull_rebase_autostash(vault, None)?;
+        run_git(vault, &["push"])?;
+    } else {
+        let remote_branch =
+            run_git(vault, &["ls-remote", "--heads", &remote, &branch]).unwrap_or_default();
+        if !remote_branch.trim().is_empty() {
+            pull_rebase_autostash(vault, Some((&remote, &branch)))?;
+        }
+        run_git(vault, &["push", "-u", &remote, &branch])?;
+    }
+    Ok(())
+}
+
+fn pull_rebase_autostash(vault: &Path, target: Option<(&str, &str)>) -> Result<(), String> {
+    let mut args = vec!["pull", "--rebase", "--autostash"];
+    if let Some((remote, branch)) = target {
+        args.push(remote);
+        args.push(branch);
+    }
+
+    match run_git(vault, &args) {
+        Ok(_) => {
+            if has_rebase_in_progress(vault) {
+                return Err("Git rebase 未完成。请先在 Vault 中解决冲突后再同步。".to_string());
+            }
+            Ok(())
+        }
+        Err(error) => {
+            let abort_error = if has_rebase_in_progress(vault) {
+                run_git(vault, &["rebase", "--abort"]).err()
+            } else {
+                None
+            };
+            let mut message = format_git_sync_error(&error);
+            if let Some(abort_error) = abort_error {
+                message.push_str(&format!("\n\n自动中止 rebase 失败：{abort_error}"));
+            }
+            Err(message)
+        }
+    }
+}
 
 fn ensure_vault_dirs(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     let vault = configured_vault_path(app)?;
@@ -1585,7 +1661,6 @@ fn ensure_vault_layout(vault: &Path) -> Result<(), String> {
     fs::create_dir_all(vault.join("archive")).map_err(|error| error.to_string())?;
     fs::create_dir_all(vault.join("assets")).map_err(|error| error.to_string())?;
     fs::create_dir_all(vault.join("maps")).map_err(|error| error.to_string())?;
-    fs::create_dir_all(vault.join("debts")).map_err(|error| error.to_string())?;
     fs::create_dir_all(vault.join(".shard")).map_err(|error| error.to_string())?;
     Ok(())
 }
@@ -1636,6 +1711,21 @@ fn default_vault_path() -> Result<PathBuf, String> {
         .or_else(|_| std::env::var("USERPROFILE"))
         .map_err(|_| "无法找到用户 home 目录".to_string())?;
     Ok(PathBuf::from(home).join("Documents").join("ShardVault"))
+}
+
+fn new_fragment_id(now: &DateTime<Local>) -> String {
+    let mut bytes = [0u8; 7];
+    OsRng.fill_bytes(&mut bytes);
+    let random: String = bytes[..4]
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    let device: String = bytes[4..]
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+
+    format!("{}-{random}-{device}", now.format("%Y%m%d-%H%M%S"))
 }
 
 fn unique_suffix() -> String {
@@ -1715,10 +1805,36 @@ fn is_mind_map_file(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
+fn read_mind_map_summary(path: &Path, vault: &Path) -> Result<MindMapSummary, String> {
+    let (file, _) = read_mind_map_file(path)?;
+    validate_mind_map_file(vault, &file)?;
+    Ok(MindMapSummary {
+        id: file.id,
+        title: file.title,
+        created_at: file.created_at,
+        updated_at: file.updated_at,
+        node_count: file.nodes.len(),
+        path: relative_path(vault, path)?,
+    })
+}
+
 fn read_mind_map_file(path: &Path) -> Result<(ShardMapFile, String), String> {
     let text = fs::read_to_string(path).map_err(|error| error.to_string())?;
     let file = serde_json::from_str::<ShardMapFile>(&text).map_err(|error| error.to_string())?;
     Ok((file, text))
+}
+
+fn mind_map_read_result(
+    vault: &Path,
+    path: &Path,
+    file: ShardMapFile,
+    text: String,
+) -> Result<MindMapReadResult, String> {
+    Ok(MindMapReadResult {
+        file,
+        path: relative_path(vault, path)?,
+        last_saved_hash: hash_text(&text),
+    })
 }
 
 fn validate_mind_map_file(vault: &Path, file: &ShardMapFile) -> Result<(), String> {
@@ -1741,10 +1857,7 @@ fn validate_mind_map_file(vault: &Path, file: &ShardMapFile) -> Result<(), Strin
         return Err("导图缺少 root 节点。".to_string());
     }
     if file.nodes.len() > SHARD_MAP_MAX_NODES {
-        return Err(format!(
-            "导图节点数量不能超过 {}。",
-            SHARD_MAP_MAX_NODES
-        ));
+        return Err(format!("导图节点数量不能超过 {}。", SHARD_MAP_MAX_NODES));
     }
     if file
         .nodes
@@ -1771,10 +1884,7 @@ fn validate_mind_map_tree_shape(file: &ShardMapFile) -> Result<(), String> {
         let parent_key = node.parent_id.as_deref().unwrap_or("__root__");
         let sibling_key = format!("{}\u{0}{}", parent_key, node.sort_key);
         if !sibling_sort_keys.insert(sibling_key) {
-            return Err(format!(
-                "同级节点存在重复 sortKey：{}。",
-                node.sort_key
-            ));
+            return Err(format!("同级节点存在重复 sortKey：{}。", node.sort_key));
         }
     }
 
@@ -1957,13 +2067,20 @@ fn canonical_mind_map_text(file: &ShardMapFile) -> Result<String, String> {
     Ok(format!("{}\n", text))
 }
 
-/// 字节内容的 sha256 十六进制摘要。附件的内容寻址键。
-///
-/// 转发到 `shard-core`：服务端算 `content_hash` 要得到完全相同的结果，
-/// 两边各写一份迟早会因为某次"顺手优化"而分叉。
-pub(crate) use shard_core::{hash_bytes, hash_text};
+fn hash_text(text: &str) -> String {
+    hash_bytes(text.as_bytes())
+}
+
+fn hash_bytes(bytes: &[u8]) -> String {
+    let digest = Sha256::digest(bytes);
+    digest.iter().map(|byte| format!("{byte:02x}")).collect()
+}
 
 fn write_text_atomically(path: &Path, text: &str) -> Result<(), String> {
+    write_bytes_atomically(path, text.as_bytes())
+}
+
+fn write_bytes_atomically(path: &Path, bytes: &[u8]) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
@@ -1975,8 +2092,7 @@ fn write_text_atomically(path: &Path, text: &str) -> Result<(), String> {
     let temp_path = path.with_file_name(format!(".{}.tmp-{}", file_name, unique_suffix()));
     {
         let mut file = File::create(&temp_path).map_err(|error| error.to_string())?;
-        file.write_all(text.as_bytes())
-            .map_err(|error| error.to_string())?;
+        file.write_all(bytes).map_err(|error| error.to_string())?;
         file.sync_all().map_err(|error| error.to_string())?;
     }
     fs::rename(&temp_path, path).map_err(|error| {
@@ -1985,19 +2101,14 @@ fn write_text_atomically(path: &Path, text: &str) -> Result<(), String> {
     })
 }
 
-/// 文件时代的保险：写盘前先备份磁盘上的旧版本。
-///
-/// 库成为真相源后这层保险基本冗余——磁盘文件只是导出产物，导出失败重新导出
-/// 即可，真正的原子性由数据库事务保证。暂留不删，等第 6 步补全导出流时再决定
-/// 是否让导出复用它。
-#[allow(dead_code)]
 fn write_mind_map_last_good(vault: &Path, file: &ShardMapFile) -> Result<(), String> {
     let text = canonical_mind_map_text(file)?;
-    let path = vault
-        .join("maps")
-        .join(".last-good")
-        .join(format!("{}.shardmap.json", file.id));
+    let path = vault.join(mind_map_last_good_rel_path(file));
     write_text_atomically(&path, &text)
+}
+
+fn mind_map_last_good_rel_path(file: &ShardMapFile) -> String {
+    format!("maps/.last-good/{}.shardmap.json", file.id)
 }
 
 fn write_mind_map_conflict(vault: &Path, file: &ShardMapFile) -> Result<PathBuf, String> {
@@ -2011,10 +2122,24 @@ fn write_mind_map_conflict(vault: &Path, file: &ShardMapFile) -> Result<PathBuf,
     Ok(path)
 }
 
-fn read_fragment(path: &Path, vault: &Path) -> Result<Fragment, String> {
+fn read_fragment(
+    path: &Path,
+    vault: &Path,
+    dirty_paths: &HashSet<String>,
+    override_status: Option<(String, Option<String>)>,
+) -> Result<Fragment, String> {
     let text = fs::read_to_string(path).map_err(|error| error.to_string())?;
     let (frontmatter, body) = parse_fragment_text(&text)?;
     let rel_path = relative_path(vault, path)?;
+    let (git_status, error) = override_status.unwrap_or_else(|| {
+        if !vault.join(".git").exists() {
+            ("saved".to_string(), None)
+        } else if dirty_paths.contains(&rel_path) {
+            ("sync_pending".to_string(), None)
+        } else {
+            ("committed".to_string(), None)
+        }
+    });
     let archived = rel_path.starts_with("archive/");
 
     Ok(Fragment {
@@ -2029,12 +2154,13 @@ fn read_fragment(path: &Path, vault: &Path) -> Result<Fragment, String> {
         },
         category: frontmatter.category,
         path: rel_path,
+        git_status,
+        error,
         ai_status: frontmatter.ai_status.unwrap_or_else(|| "none".to_string()),
         archived,
         lockbox: false,
         pinned: frontmatter.pinned,
-        // 文件回退路径没有同步元数据；冲突副本只可能来自库。
-        conflict_of: None,
+        conflict_of: frontmatter.conflict_of,
     })
 }
 
@@ -2052,35 +2178,45 @@ fn parse_fragment_text(text: &str) -> Result<(FragmentFrontmatter, &str), String
     Ok((frontmatter, body))
 }
 
-/// 只剩测试在用。写路径反转后生产代码里没有任何地方再往 vault 写 .md——
-/// 文件只在手动导出时由 `notes::export` 生成。
-#[cfg(test)]
 fn write_fragment_file(
     path: &Path,
     frontmatter: &FragmentFrontmatter,
     body: &str,
 ) -> Result<(), String> {
-    let text = render_fragment_text(frontmatter, body)?;
-    fs::write(path, text).map_err(|error| error.to_string())
-}
-
-/// 渲染片段文件的完整文本。抽出来是为了让正常写入与从库导出共用同一条
-/// 渲染路径——两边各写一份格式化逻辑，迟早会产生字节差异。
-fn render_fragment_text(
-    frontmatter: &FragmentFrontmatter,
-    body: &str,
-) -> Result<String, String> {
     let yaml = serde_yaml::to_string(frontmatter).map_err(|error| error.to_string())?;
     let yaml = yaml.strip_prefix("---\n").unwrap_or(&yaml);
-    Ok(format!("---\n{}---\n\n{}\n", yaml, body.trim_end()))
+    let text = format!("---\n{}---\n\n{}\n", yaml, body.trim_end());
+    write_text_atomically(path, &text)
 }
 
-/// 往 vault 里写一个文件形态的密匣片段。
-///
-/// 写路径反转后生产代码不再这样写入，但**文件回退路径仍然活着**：读库失败时
-/// `list_fragments` 会退回扫描目录。密匣在那条路径上的行为（锁定态不可见、
-/// 解锁后可读、标签规范化）仍需被测试守住，所以这个构造函数留给测试用。
-#[cfg(test)]
+fn set_public_fragment_pinned_in_vault(
+    vault: &Path,
+    path: &Path,
+    pinned: bool,
+) -> Result<Fragment, String> {
+    let rel_path = relative_path(vault, path)?;
+    if rel_path.starts_with("archive/") && pinned {
+        return Err("归档片段不能置顶。".to_string());
+    }
+
+    let text = fs::read_to_string(path).map_err(|error| error.to_string())?;
+    let (mut frontmatter, body) = parse_fragment_text(&text)?;
+    frontmatter.pinned = pinned;
+    frontmatter.updated_at = Local::now().to_rfc3339();
+    write_fragment_file(path, &frontmatter, body.trim_start_matches('\n'))?;
+
+    let commit_message = if pinned {
+        format!("pin fragment {}", frontmatter.id)
+    } else {
+        format!("unpin fragment {}", frontmatter.id)
+    };
+    let commit_result = commit_path_if_git(vault, &rel_path, &commit_message);
+    let dirty = dirty_paths(vault);
+    let override_status = commit_override_status(commit_result);
+
+    read_fragment(path, vault, &dirty, override_status)
+}
+
 fn create_lockbox_fragment_in_vault(
     vault: &Path,
     lockbox_runtime: &LockboxRuntime,
@@ -2090,8 +2226,7 @@ fn create_lockbox_fragment_in_vault(
     reject_lockbox_images(content)?;
     let write_key = lockbox_write_key(vault, lockbox_runtime)?;
     let now = Local::now();
-    let suffix = unique_suffix();
-    let id = format!("{}-{}", now.format("%Y%m%d-%H%M%S"), suffix);
+    let id = new_fragment_id(&now);
     let created_at = now.to_rfc3339();
     let dir = vault
         .join("lockbox")
@@ -2100,7 +2235,7 @@ fn create_lockbox_fragment_in_vault(
         .join(now.format("%m").to_string());
     fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
 
-    let path = dir.join(format!("{}-{}.shard", now.format("%Y-%m-%d-%H%M%S"), suffix));
+    let path = dir.join(format!("{id}.shard"));
     let frontmatter = FragmentFrontmatter {
         id,
         created_at: created_at.clone(),
@@ -2110,32 +2245,303 @@ fn create_lockbox_fragment_in_vault(
         ai_status: Some("none".to_string()),
         pinned: false,
         source: "desktop-lockbox".to_string(),
+        conflict_of: None,
     };
 
     write_lockbox_fragment_file(&path, &write_key, &frontmatter, content)?;
 
-    match unlocked_lockbox_read_keys(vault, lockbox_runtime) {
-        Some(read_keys) => read_lockbox_fragment(&path, vault, &read_keys),
-        None => lockbox_fragment_from_parts(&path, vault, frontmatter, String::new()),
+    let rel_path = relative_path(vault, &path)?;
+    let commit_result = commit_path_if_git(
+        vault,
+        &rel_path,
+        &format!(
+            "create lockbox fragment {}",
+            now.format("%Y-%m-%d %H:%M:%S")
+        ),
+    );
+    let dirty = dirty_paths(vault);
+    let override_status = commit_override_status(commit_result);
+
+    if let Some(read_keys) = unlocked_lockbox_read_keys(vault, lockbox_runtime) {
+        read_lockbox_fragment(&path, vault, &dirty, &read_keys, override_status)
+    } else {
+        lockbox_fragment_from_parts(
+            &path,
+            vault,
+            &dirty,
+            frontmatter,
+            String::new(),
+            override_status,
+        )
     }
+}
+
+fn update_lockbox_fragment_in_vault(
+    vault: &Path,
+    path: &Path,
+    read_keys: &LockboxReadKeys,
+    content: &str,
+    tags: Vec<String>,
+) -> Result<Fragment, String> {
+    reject_lockbox_images(content)?;
+    let mut payload = read_lockbox_payload(path, read_keys)?;
+    payload.frontmatter.tags = normalize_lockbox_tags(tags);
+    payload.frontmatter.updated_at = Local::now().to_rfc3339();
+    payload.body = content.to_string();
+    let write_key = LockboxWriteKey::Master(read_keys.master_key.clone());
+    write_lockbox_payload(path, &write_key, &payload)?;
+
+    let rel_path = relative_path(vault, path)?;
+    let commit_result = commit_path_if_git(
+        vault,
+        &rel_path,
+        &format!("update lockbox fragment {}", payload.frontmatter.id),
+    );
+    let dirty = dirty_paths(vault);
+    let override_status = commit_override_status(commit_result);
+
+    read_lockbox_fragment(path, vault, &dirty, read_keys, override_status)
+}
+
+fn update_lockbox_fragment_tags_in_vault(
+    vault: &Path,
+    path: &Path,
+    read_keys: &LockboxReadKeys,
+    tags: Vec<String>,
+) -> Result<Fragment, String> {
+    let mut payload = read_lockbox_payload(path, read_keys)?;
+    payload.frontmatter.tags = normalize_lockbox_tags(tags);
+    payload.frontmatter.updated_at = Local::now().to_rfc3339();
+    let write_key = LockboxWriteKey::Master(read_keys.master_key.clone());
+    write_lockbox_payload(path, &write_key, &payload)?;
+
+    let rel_path = relative_path(vault, path)?;
+    let commit_result = commit_path_if_git(
+        vault,
+        &rel_path,
+        &format!("update lockbox fragment tags {}", payload.frontmatter.id),
+    );
+    let dirty = dirty_paths(vault);
+    let override_status = commit_override_status(commit_result);
+
+    read_lockbox_fragment(path, vault, &dirty, read_keys, override_status)
+}
+
+fn set_lockbox_fragment_pinned_in_vault(
+    vault: &Path,
+    path: &Path,
+    read_keys: &LockboxReadKeys,
+    pinned: bool,
+) -> Result<Fragment, String> {
+    let rel_path = relative_path(vault, path)?;
+    if rel_path.starts_with("lockbox/archive/") && pinned {
+        return Err("归档片段不能置顶。".to_string());
+    }
+
+    let mut payload = read_lockbox_payload(path, read_keys)?;
+    payload.frontmatter.pinned = pinned;
+    payload.frontmatter.updated_at = Local::now().to_rfc3339();
+    let write_key = LockboxWriteKey::Master(read_keys.master_key.clone());
+    write_lockbox_payload(path, &write_key, &payload)?;
+
+    let commit_message = if pinned {
+        format!("pin lockbox fragment {}", payload.frontmatter.id)
+    } else {
+        format!("unpin lockbox fragment {}", payload.frontmatter.id)
+    };
+    let commit_result = commit_path_if_git(vault, &rel_path, &commit_message);
+    let dirty = dirty_paths(vault);
+    let override_status = commit_override_status(commit_result);
+
+    read_lockbox_fragment(path, vault, &dirty, read_keys, override_status)
+}
+
+fn move_public_fragment_to_lockbox_in_vault(
+    vault: &Path,
+    lockbox_runtime: &LockboxRuntime,
+    path: &Path,
+) -> Result<Fragment, String> {
+    let text = fs::read_to_string(path).map_err(|error| error.to_string())?;
+    let (frontmatter, body) = parse_fragment_text(&text)?;
+    move_public_fragment_payload_to_lockbox_in_vault(
+        vault,
+        lockbox_runtime,
+        path,
+        body.trim_start_matches('\n'),
+        frontmatter.tags.clone(),
+        Some(frontmatter),
+    )
+}
+
+fn move_public_fragment_content_to_lockbox_in_vault(
+    vault: &Path,
+    lockbox_runtime: &LockboxRuntime,
+    path: &Path,
+    content: &str,
+    tags: Vec<String>,
+) -> Result<Fragment, String> {
+    let text = fs::read_to_string(path).map_err(|error| error.to_string())?;
+    let (frontmatter, _) = parse_fragment_text(&text)?;
+    move_public_fragment_payload_to_lockbox_in_vault(
+        vault,
+        lockbox_runtime,
+        path,
+        content,
+        tags,
+        Some(frontmatter),
+    )
+}
+
+fn move_public_fragment_payload_to_lockbox_in_vault(
+    vault: &Path,
+    lockbox_runtime: &LockboxRuntime,
+    public_path: &Path,
+    content: &str,
+    tags: Vec<String>,
+    existing_frontmatter: Option<FragmentFrontmatter>,
+) -> Result<Fragment, String> {
+    reject_lockbox_images(content)?;
+    let write_key = lockbox_write_key(vault, lockbox_runtime)?;
+    let mut frontmatter = existing_frontmatter.ok_or_else(|| "片段缺少 frontmatter".to_string())?;
+    frontmatter.tags = normalize_lockbox_tags(tags);
+    frontmatter.updated_at = Local::now().to_rfc3339();
+    frontmatter.source = "desktop-lockbox".to_string();
+
+    let public_rel = public_path
+        .strip_prefix(vault.join("fragments"))
+        .or_else(|_| public_path.strip_prefix(vault.join("archive")))
+        .map_err(|error| error.to_string())?;
+    let target_root = if relative_path(vault, public_path)?.starts_with("archive/") {
+        vault.join("lockbox").join("archive")
+    } else {
+        vault.join("lockbox").join("fragments")
+    };
+    let mut lockbox_path = target_root.join(public_rel);
+    lockbox_path.set_extension("shard");
+
+    if let Some(parent) = lockbox_path.parent() {
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    write_lockbox_fragment_file(&lockbox_path, &write_key, &frontmatter, content)?;
+    fs::remove_file(public_path).map_err(|error| error.to_string())?;
+
+    let commit_result = commit_paths_if_git(
+        vault,
+        &[
+            relative_path(vault, public_path)?,
+            relative_path(vault, &lockbox_path)?,
+        ],
+        &format!("move fragment {} to lockbox", frontmatter.id),
+    );
+    let dirty = dirty_paths(vault);
+    let override_status = commit_override_status(commit_result);
+
+    if let Some(read_keys) = unlocked_lockbox_read_keys(vault, lockbox_runtime) {
+        read_lockbox_fragment(&lockbox_path, vault, &dirty, &read_keys, override_status)
+    } else {
+        lockbox_fragment_from_parts(
+            &lockbox_path,
+            vault,
+            &dirty,
+            frontmatter,
+            String::new(),
+            override_status,
+        )
+    }
+}
+
+fn set_lockbox_fragment_archived_in_vault(
+    vault: &Path,
+    path: &Path,
+    read_keys: &LockboxReadKeys,
+    id: &str,
+    archived: bool,
+) -> Result<Fragment, String> {
+    let rel_path = relative_path(vault, path)?;
+    let is_archived = rel_path.starts_with("lockbox/archive/");
+    if is_archived == archived {
+        let dirty = dirty_paths(vault);
+        return read_lockbox_fragment(path, vault, &dirty, read_keys, None);
+    }
+
+    let source_root = if is_archived {
+        vault.join("lockbox").join("archive")
+    } else {
+        vault.join("lockbox").join("fragments")
+    };
+    let target_root = if archived {
+        vault.join("lockbox").join("archive")
+    } else {
+        vault.join("lockbox").join("fragments")
+    };
+    let source_rel = path
+        .strip_prefix(&source_root)
+        .map_err(|error| error.to_string())?;
+    let target_path = target_root.join(source_rel);
+
+    if let Some(parent) = target_path.parent() {
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+
+    fs::rename(path, &target_path)
+        .or_else(|_| {
+            fs::copy(path, &target_path)
+                .map(|_| ())
+                .and_then(|_| fs::remove_file(path))
+        })
+        .map_err(|error| error.to_string())?;
+
+    let commit_result = commit_paths_if_git(
+        vault,
+        &[rel_path, relative_path(vault, &target_path)?],
+        &format!(
+            "{} lockbox fragment {}",
+            if archived { "archive" } else { "restore" },
+            id
+        ),
+    );
+    let dirty = dirty_paths(vault);
+    let override_status = commit_override_status(commit_result);
+
+    read_lockbox_fragment(&target_path, vault, &dirty, read_keys, override_status)
 }
 
 fn read_lockbox_fragment(
     path: &Path,
     vault: &Path,
+    dirty_paths: &HashSet<String>,
     read_keys: &LockboxReadKeys,
+    override_status: Option<(String, Option<String>)>,
 ) -> Result<Fragment, String> {
     let payload = read_lockbox_payload(path, read_keys)?;
-    lockbox_fragment_from_parts(path, vault, payload.frontmatter, payload.body)
+    lockbox_fragment_from_parts(
+        path,
+        vault,
+        dirty_paths,
+        payload.frontmatter,
+        payload.body,
+        override_status,
+    )
 }
 
 fn lockbox_fragment_from_parts(
     path: &Path,
     vault: &Path,
+    dirty_paths: &HashSet<String>,
     frontmatter: FragmentFrontmatter,
     body: String,
+    override_status: Option<(String, Option<String>)>,
 ) -> Result<Fragment, String> {
     let rel_path = relative_path(vault, path)?;
+    let (git_status, error) = override_status.unwrap_or_else(|| {
+        if !vault.join(".git").exists() {
+            ("saved".to_string(), None)
+        } else if dirty_paths.contains(&rel_path) {
+            ("sync_pending".to_string(), None)
+        } else {
+            ("committed".to_string(), None)
+        }
+    });
     let archived = rel_path.starts_with("lockbox/archive/");
 
     Ok(Fragment {
@@ -2146,15 +2552,16 @@ fn lockbox_fragment_from_parts(
         tags: frontmatter.tags,
         category: frontmatter.category,
         path: rel_path,
+        git_status,
+        error,
         ai_status: frontmatter.ai_status.unwrap_or_else(|| "none".to_string()),
         archived,
         lockbox: true,
         pinned: frontmatter.pinned,
-        conflict_of: None,
+        conflict_of: frontmatter.conflict_of,
     })
 }
 
-#[cfg(test)]
 fn write_lockbox_fragment_file(
     path: &Path,
     write_key: &LockboxWriteKey,
@@ -2171,24 +2578,18 @@ fn write_lockbox_fragment_file(
             ai_status: frontmatter.ai_status.clone(),
             pinned: frontmatter.pinned,
             source: frontmatter.source.clone(),
+            conflict_of: frontmatter.conflict_of.clone(),
         },
         body: body.trim_end().to_string(),
     };
     write_lockbox_payload(path, write_key, &payload)
 }
 
-/// 封一个密匣信封，**不碰文件系统**。与 [`decrypt_lockbox_fragment`] 对称。
-///
-/// 抽出来是为了让密文能直接写进库的 `cipher_*` 列——原先加密与写盘耦合在
-/// 一个函数里，密文除了落成 `.shard` 文件之外没有别的出口。
-///
-/// 两条封装路径：
-/// - `Master` 用主密钥直接加密，只在解锁态可用；
-/// - `Public` 每片段生成一次性密钥，再用 RSA 公钥封装它，因此**锁定态也能写入**。
-fn encrypt_lockbox_fragment(
-    payload: &LockboxFragmentPayload,
+fn write_lockbox_payload(
+    path: &Path,
     write_key: &LockboxWriteKey,
-) -> Result<LockboxEncryptedFragment, String> {
+    payload: &LockboxFragmentPayload,
+) -> Result<(), String> {
     let plaintext = serde_json::to_vec(payload).map_err(|error| error.to_string())?;
     let (nonce, ciphertext, key_algorithm, key_ciphertext) = match write_key {
         LockboxWriteKey::Master(master_key) => {
@@ -2209,26 +2610,16 @@ fn encrypt_lockbox_fragment(
             )
         }
     };
-
-    Ok(LockboxEncryptedFragment {
+    let encrypted = LockboxEncryptedFragment {
         version: LOCKBOX_VERSION,
         id: payload.frontmatter.id.clone(),
         nonce,
         ciphertext,
         key_algorithm,
         key_ciphertext,
-    })
-}
-
-#[cfg(test)]
-fn write_lockbox_payload(
-    path: &Path,
-    write_key: &LockboxWriteKey,
-    payload: &LockboxFragmentPayload,
-) -> Result<(), String> {
-    let encrypted = encrypt_lockbox_fragment(payload, write_key)?;
+    };
     let text = serde_json::to_string_pretty(&encrypted).map_err(|error| error.to_string())?;
-    fs::write(path, text).map_err(|error| error.to_string())
+    write_text_atomically(path, &text)
 }
 
 fn read_lockbox_payload(
@@ -2238,15 +2629,6 @@ fn read_lockbox_payload(
     let text = fs::read_to_string(path).map_err(|error| error.to_string())?;
     let encrypted = serde_json::from_str::<LockboxEncryptedFragment>(&text)
         .map_err(|error| error.to_string())?;
-    decrypt_lockbox_fragment(&encrypted, read_keys)
-}
-
-/// 解开一个密匣信封。与来源解耦：密文可能来自 `.shard` 文件，也可能来自
-/// 笔记库的 `cipher_*` 列。两条读路径必须共用同一份解密逻辑。
-fn decrypt_lockbox_fragment(
-    encrypted: &LockboxEncryptedFragment,
-    read_keys: &LockboxReadKeys,
-) -> Result<LockboxFragmentPayload, String> {
     if encrypted.version != LOCKBOX_VERSION {
         return Err("不支持的密匣片段版本。".to_string());
     }
@@ -2330,6 +2712,7 @@ fn setup_lockbox_in_vault(
     write_lockbox_manifest(vault, &manifest)?;
     unlock_lockbox_runtime(lockbox_runtime, vault, &master_key);
 
+    commit_path_if_git(vault, ".shard/lockbox.json", "setup lockbox").ok();
 
     Ok(recovery_key)
 }
@@ -2343,6 +2726,7 @@ fn unlock_lockbox_in_vault(
     let master_key = unwrap_lockbox_master_key_with_password(&manifest, password)?;
     if ensure_lockbox_manifest_write_key(&mut manifest, &master_key)? {
         write_lockbox_manifest(vault, &manifest)?;
+        commit_path_if_git(vault, ".shard/lockbox.json", "upgrade lockbox write key").ok();
     }
     unlock_lockbox_runtime(lockbox_runtime, vault, &master_key);
     Ok(())
@@ -2365,6 +2749,7 @@ fn change_lockbox_password_in_vault(
     manifest.updated_at = Local::now().to_rfc3339();
     write_lockbox_manifest(vault, &manifest)?;
     unlock_lockbox_runtime(lockbox_runtime, vault, &master_key);
+    commit_path_if_git(vault, ".shard/lockbox.json", "change lockbox password").ok();
     Ok(())
 }
 
@@ -2393,6 +2778,7 @@ fn reset_lockbox_password_in_vault(
     manifest.updated_at = Local::now().to_rfc3339();
     write_lockbox_manifest(vault, &manifest)?;
     unlock_lockbox_runtime(lockbox_runtime, vault, &master_key);
+    commit_path_if_git(vault, ".shard/lockbox.json", "reset lockbox password").ok();
 
     Ok(next_recovery_key)
 }
@@ -2641,7 +3027,7 @@ fn write_lockbox_manifest(vault: &Path, manifest: &LockboxManifest) -> Result<()
         fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
     let text = serde_json::to_string_pretty(manifest).map_err(|error| error.to_string())?;
-    fs::write(path, text).map_err(|error| error.to_string())
+    write_text_atomically(&path, &text)
 }
 
 fn ensure_lockbox_layout(vault: &Path) -> Result<(), String> {
@@ -2703,6 +3089,16 @@ fn unlocked_lockbox_read_keys(
     })
 }
 
+fn require_unlocked_lockbox_read_keys(
+    vault: &Path,
+    lockbox_runtime: &LockboxRuntime,
+) -> Result<LockboxReadKeys, String> {
+    if !lockbox_manifest_path(vault).exists() {
+        return Err("lockbox_not_configured".to_string());
+    }
+    unlocked_lockbox_read_keys(vault, lockbox_runtime).ok_or_else(|| "lockbox_locked".to_string())
+}
+
 fn lockbox_write_key(
     vault: &Path,
     lockbox_runtime: &LockboxRuntime,
@@ -2724,6 +3120,7 @@ fn lockbox_write_key(
         })?;
     ensure_lockbox_manifest_write_key(&mut manifest, &master_key)?;
     write_lockbox_manifest(vault, &manifest)?;
+    commit_path_if_git(vault, ".shard/lockbox.json", "upgrade lockbox write key").ok();
     decode_lockbox_write_public_key(&manifest)?
         .map(LockboxWriteKey::Public)
         .ok_or_else(|| "密匣写入密钥生成失败。".to_string())
@@ -2789,6 +3186,16 @@ fn is_markdown_image_line(line: &str) -> bool {
     line.starts_with("![") && line.contains("](") && line.ends_with(')')
 }
 
+fn commit_override_status(
+    commit_result: Result<Option<()>, String>,
+) -> Option<(String, Option<String>)> {
+    match commit_result {
+        Ok(Some(_)) => Some(("committed".to_string(), None)),
+        Ok(None) => Some(("saved".to_string(), None)),
+        Err(error) => Some(("commit_failed".to_string(), Some(error))),
+    }
+}
+
 fn normalize_tag(tag: &str) -> Option<String> {
     let tag = tag.trim().trim_start_matches('#').trim_matches(|char| {
         matches!(
@@ -2835,138 +3242,65 @@ fn normalize_tags(tags: Vec<String>, include_inbox: bool) -> Vec<String> {
     next_tags
 }
 
-/// 从正文里的引用取出附件 hash。接受 `shard-attachment:<hash>` 与裸 hash 两种写法。
-///
-/// **只认 hash**。这里不接受任何路径，所以不存在「用户提供的路径逃出 vault」
-/// 这类问题——它在结构上无法表达，而不是靠一层校验挡住。
-fn attachment_hash_from_ref(raw: &str) -> Result<&str, String> {
-    let hash = raw
-        .trim()
-        .strip_prefix(notes::attachments::ATTACHMENT_SCHEME)
-        .unwrap_or_else(|| raw.trim());
-
-    if !notes::attachments::is_valid_hash(hash) {
-        return Err("附件引用无效".to_string());
+fn resolve_vault_asset_path(vault: &Path, raw_path: &str) -> Result<PathBuf, String> {
+    let trimmed = raw_path.trim();
+    if trimmed.is_empty() {
+        return Err("图片路径为空".to_string());
+    }
+    if trimmed.contains("://") || trimmed.starts_with("//") {
+        return Err("不支持读取外部图片地址".to_string());
     }
 
-    Ok(hash)
-}
-
-/// `shard-attachment://` 的响应体。
-///
-/// MIME 取库里那一列——摄入时按魔数定死过。回退到嗅探而不是扩展名：缓存文件
-/// 根本没有扩展名，而按内容判定本来就是这里唯一正确的口径。
-async fn attachment_response(
-    app: &tauri::AppHandle,
-    uri_path: &str,
-) -> tauri::http::Response<Vec<u8>> {
-    match load_attachment(app, uri_path).await {
-        Ok((mime_type, bytes)) => tauri::http::Response::builder()
-            .header("Content-Type", mime_type)
-            // 内容寻址的 URL 永远指向同一份字节，可以放心长缓存。
-            .header("Cache-Control", "max-age=31536000, immutable")
-            // 导出图片要把它画进 canvas，没有这个头会污染画布。
-            .header("Access-Control-Allow-Origin", "*")
-            .body(bytes)
-            .expect("构造附件响应"),
-        Err(reason) => tauri::http::Response::builder()
-            .status(404)
-            .header("Content-Type", "text/plain; charset=utf-8")
-            .header("Access-Control-Allow-Origin", "*")
-            .body(reason.into_bytes())
-            .expect("构造附件错误响应"),
-    }
-}
-
-async fn load_attachment(
-    app: &tauri::AppHandle,
-    uri_path: &str,
-) -> Result<(String, Vec<u8>), String> {
-    let hash = attachment_hash_from_ref(uri_path.trim_start_matches('/'))?.to_string();
-    let notes = app.state::<NotesDb>();
-    let conn = notes.conn(app, false).await?;
-    let row = notes::attachments::get(&conn, &hash).await?;
-
-    let vault = {
-        let app = app.clone();
-        run_blocking(move || ensure_vault_dirs(&app)).await?
-    };
-    let path = vault.join(notes::attachments::cache_rel_path(&hash));
-
-    // 本地没有字节：这张图是从别的设备同步过来的，元数据先到、内容还没拉。
-    // 按需去服务器取一次并落进缓存，此后就是本地文件。
-    if !path.exists() {
-        fetch_attachment_from_server(app, &vault, &hash).await?;
-    }
-
-    run_blocking(move || {
-        let bytes = fs::read(&path).map_err(|error| error.to_string())?;
-        let mime_type = match row {
-            Some(row) => row.mime_type,
-            None => detect_image_mime(&path, &bytes)?.to_string(),
-        };
-
-        Ok((mime_type, bytes))
-    })
-    .await
-}
-
-/// 从同步服务端补一张本地缺失的图。
-///
-/// 下载后**必须重算摘要**：内容寻址的前提是"文件名就是内容"，把没验过的字节
-/// 写进那个位置，之后每一次读取都会拿到它。
-async fn fetch_attachment_from_server(
-    app: &tauri::AppHandle,
-    vault: &Path,
-    hash: &str,
-) -> Result<(), String> {
-    let cfg = read_app_config(app)?;
-    let server = notes::sync::ServerConfig::from_parts(cfg.sync_url, cfg.sync_token)
-        .ok_or_else(|| "附件不在本地，且未配置同步服务器。".to_string())?;
-
-    let client = notes::sync::Client::new(server)?;
-    let bytes = client.download_attachment(hash).await?;
-
-    if hash_bytes(&bytes) != hash {
-        return Err("下载到的附件与其摘要不符，已丢弃。".to_string());
-    }
-
-    let path = vault.join(notes::attachments::cache_rel_path(hash));
-    run_blocking(move || {
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    let attachment_hash = trimmed.strip_prefix("shard-attachment:");
+    let candidate = if let Some(hash) = attachment_hash {
+        if hash.len() != 64 || !hash.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return Err("附件引用无效".to_string());
         }
-        fs::write(&path, bytes).map_err(|error| error.to_string())
-    })
-    .await
-}
 
-/// 附件字节在缓存目录里的绝对路径。
-fn attachment_path(vault: &Path, raw: &str) -> Result<PathBuf, String> {
-    let hash = attachment_hash_from_ref(raw)?;
-    let path = vault.join(notes::attachments::cache_rel_path(hash));
+        ["gif", "jpg", "png", "svg", "webp"]
+            .into_iter()
+            .map(|extension| {
+                vault
+                    .join("assets")
+                    .join(&hash[..2])
+                    .join(format!("{hash}.{extension}"))
+            })
+            .find(|path| path.is_file())
+            .ok_or_else(|| "图片文件不存在".to_string())?
+    } else {
+        let requested_path = PathBuf::from(trimmed);
+        if requested_path.is_absolute() {
+            requested_path
+        } else {
+            vault.join(requested_path)
+        }
+    };
 
-    if !path.is_file() {
-        return Err("附件文件不存在".to_string());
+    let asset_root = vault
+        .join("assets")
+        .canonicalize()
+        .map_err(|error| error.to_string())?;
+    let image_path = candidate
+        .canonicalize()
+        .map_err(|error| error.to_string())?;
+
+    if !image_path.starts_with(&asset_root) {
+        return Err("只能读取 vault assets 目录中的图片".to_string());
+    }
+    if !image_path.is_file() {
+        return Err("图片文件不存在".to_string());
     }
 
-    Ok(path)
+    Ok(image_path)
 }
 
-/// 摄入时确定附件的 MIME，**以内容为准**。
-///
-/// 顺序刻意与旧的 `image_mime_type` 相反：先嗅探魔数，扩展名只在嗅探不出时
-/// 兜底。按扩展名优先会把「内容是 SVG、文件名是 .png」的文件判成 image/png，
-/// 而 SVG 能携带脚本——这是一个真实的执行面，不是洁癖。
-pub(crate) fn detect_image_mime(path: &Path, bytes: &[u8]) -> Result<&'static str, String> {
-    if let Ok(mime) = sniff_image_mime_type(bytes) {
-        return Ok(mime);
-    }
+fn image_mime_type(path: &Path, bytes: &[u8]) -> Result<&'static str, String> {
     let extension = path
         .extension()
         .and_then(|extension| extension.to_str())
         .unwrap_or_default();
-    image_mime_type_from_extension(extension)
+
+    image_mime_type_from_extension(extension).or_else(|_| sniff_image_mime_type(bytes))
 }
 
 fn image_mime_type_from_extension(extension: &str) -> Result<&'static str, String> {
@@ -3003,50 +3337,432 @@ fn sniff_image_mime_type(bytes: &[u8]) -> Result<&'static str, String> {
     Err("不支持的图片格式".to_string())
 }
 
+fn image_extension_for_mime_type(mime_type: &str) -> Option<&'static str> {
+    match mime_type {
+        "image/gif" => Some("gif"),
+        "image/jpeg" => Some("jpg"),
+        "image/png" => Some("png"),
+        "image/svg+xml" => Some("svg"),
+        "image/webp" => Some("webp"),
+        _ => None,
+    }
+}
 
+fn ensure_git_repo(vault: &Path) -> Result<(), String> {
+    if vault.join(".git").exists() {
+        return ensure_git_identity(vault);
+    }
+    run_git(vault, &["init"])?;
+    ensure_git_identity(vault)
+}
 
+fn commit_path(vault: &Path, rel_path: &str, message: &str) -> Result<(), String> {
+    commit_paths(vault, &[rel_path.to_string()], message)
+}
 
+fn commit_path_if_git(vault: &Path, rel_path: &str, message: &str) -> Result<Option<()>, String> {
+    if !vault.join(".git").exists() {
+        return Ok(None);
+    }
 
+    commit_path(vault, rel_path, message).map(Some)
+}
 
+fn commit_paths(vault: &Path, rel_paths: &[String], message: &str) -> Result<(), String> {
+    let rel_paths = rel_paths
+        .iter()
+        .filter(|rel_path| {
+            run_git(vault, &["ls-files", "--", rel_path])
+                .map(|tracked| !tracked.trim().is_empty())
+                .unwrap_or(false)
+                || run_git(vault, &["status", "--porcelain", "--", rel_path])
+                    .map(|changed| !changed.trim().is_empty())
+                    .unwrap_or(false)
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    if rel_paths.is_empty() {
+        return Ok(());
+    }
+    ensure_git_identity(vault)?;
 
+    let mut add = Command::new("git");
+    add.arg("add").arg("-A").arg("--").args(&rel_paths);
+    run_command(add.current_dir(vault).env("GIT_TERMINAL_PROMPT", "0"))?;
 
+    let mut diff = Command::new("git");
+    diff.arg("diff")
+        .arg("--cached")
+        .arg("--name-only")
+        .arg("--")
+        .args(&rel_paths);
+    let staged = run_command(diff.current_dir(vault).env("GIT_TERMINAL_PROMPT", "0"))?;
+    if staged.trim().is_empty() {
+        return Ok(());
+    }
 
+    let mut commit = Command::new("git");
+    commit
+        .arg("commit")
+        .arg("-m")
+        .arg(message)
+        .arg("--")
+        .args(&rel_paths);
+    run_command(commit.current_dir(vault).env("GIT_TERMINAL_PROMPT", "0")).map(|_| ())
+}
 
+fn commit_paths_if_git(
+    vault: &Path,
+    rel_paths: &[String],
+    message: &str,
+) -> Result<Option<()>, String> {
+    if !vault.join(".git").exists() {
+        return Ok(None);
+    }
+    commit_paths(vault, rel_paths, message).map(Some)
+}
 
+fn commit_paths_best_effort(vault: &Path, rel_paths: &[String], message: &str) {
+    if let Err(error) = commit_paths_if_git(vault, rel_paths, message) {
+        eprintln!("[shard] Git commit 失败（{message}）：{error}");
+    }
+}
 
+fn commit_all_if_dirty(vault: &Path, message: &str) -> Result<(), String> {
+    commit_paths(
+        vault,
+        &[
+            "fragments".to_string(),
+            "archive".to_string(),
+            "assets".to_string(),
+            "maps".to_string(),
+            "lockbox".to_string(),
+            ".shard".to_string(),
+        ],
+        message,
+    )
+}
 
+fn ensure_git_identity(vault: &Path) -> Result<(), String> {
+    if run_git(vault, &["config", "user.name"])
+        .ok()
+        .map(|value| value.trim().is_empty())
+        .unwrap_or(true)
+    {
+        run_git(vault, &["config", "user.name", "Shard"])?;
+    }
 
+    if run_git(vault, &["config", "user.email"])
+        .ok()
+        .map(|value| value.trim().is_empty())
+        .unwrap_or(true)
+    {
+        run_git(vault, &["config", "user.email", "shard@local"])?;
+    }
 
+    Ok(())
+}
 
+fn dirty_paths(vault: &Path) -> HashSet<String> {
+    let mut paths = HashSet::new();
+    if !vault.join(".git").exists() {
+        return paths;
+    }
 
+    let Ok(output) = run_git(
+        vault,
+        &[
+            "status",
+            "--porcelain",
+            "--",
+            "fragments",
+            "archive",
+            "assets",
+            "maps",
+            "lockbox",
+            ".shard",
+        ],
+    ) else {
+        return paths;
+    };
 
+    for line in output.lines() {
+        if line.len() >= 4 {
+            paths.insert(line[3..].trim().to_string());
+        }
+    }
 
-fn codex_path() -> Result<PathBuf, String> {
+    paths
+}
+
+fn git_info(vault: &Path) -> GitInfo {
+    if !vault.join(".git").exists() {
+        return GitInfo {
+            branch: "main".to_string(),
+            short_commit: "no git".to_string(),
+            has_remote: false,
+            status: "no_git".to_string(),
+            error: None,
+            ahead: 0,
+            behind: 0,
+        };
+    }
+
+    let branch = current_branch(vault);
+    let short_commit = run_git(vault, &["rev-parse", "--short", "HEAD"])
+        .unwrap_or_else(|_| "no commit".to_string())
+        .trim()
+        .to_string();
+    let has_remote = !git_remotes(vault).is_empty();
+    let (ahead, behind, has_upstream) = upstream_counts(vault);
+    let needs_first_push =
+        has_remote && !has_upstream && run_git(vault, &["rev-parse", "--verify", "HEAD"]).is_ok();
+
+    match run_git(
+        vault,
+        &[
+            "status",
+            "--porcelain",
+            "--",
+            "fragments",
+            "archive",
+            "assets",
+            "maps",
+            "lockbox",
+            ".shard",
+        ],
+    ) {
+        Ok(status)
+            if status.trim().is_empty() && ahead == 0 && behind == 0 && !needs_first_push =>
+        {
+            GitInfo {
+                branch: if branch.is_empty() {
+                    "main".to_string()
+                } else {
+                    branch
+                },
+                short_commit,
+                has_remote,
+                status: "ready".to_string(),
+                error: None,
+                ahead,
+                behind,
+            }
+        }
+        Ok(_) => GitInfo {
+            branch: if branch.is_empty() {
+                "main".to_string()
+            } else {
+                branch
+            },
+            short_commit,
+            has_remote,
+            status: "dirty".to_string(),
+            error: None,
+            ahead,
+            behind,
+        },
+        Err(error) => GitInfo {
+            branch: if branch.is_empty() {
+                "main".to_string()
+            } else {
+                branch
+            },
+            short_commit,
+            has_remote,
+            status: "error".to_string(),
+            error: Some(error),
+            ahead,
+            behind,
+        },
+    }
+}
+
+fn upstream_counts(vault: &Path) -> (u64, u64, bool) {
+    if run_git(
+        vault,
+        &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+    )
+    .is_err()
+    {
+        return (0, 0, false);
+    }
+
+    let Ok(output) = run_git(
+        vault,
+        &["rev-list", "--left-right", "--count", "HEAD...@{u}"],
+    ) else {
+        return (0, 0, true);
+    };
+    let mut counts = output.split_whitespace();
+    let ahead = counts
+        .next()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(0);
+    let behind = counts
+        .next()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(0);
+    (ahead, behind, true)
+}
+
+fn current_branch(vault: &Path) -> String {
+    let branch = run_git(vault, &["branch", "--show-current"])
+        .or_else(|_| run_git(vault, &["symbolic-ref", "--short", "HEAD"]))
+        .unwrap_or_else(|_| "main".to_string())
+        .trim()
+        .to_string();
+
+    if branch.is_empty() {
+        "main".to_string()
+    } else {
+        branch
+    }
+}
+
+fn git_remotes(vault: &Path) -> Vec<String> {
+    run_git(vault, &["remote"])
+        .unwrap_or_default()
+        .lines()
+        .map(str::trim)
+        .filter(|remote| !remote.is_empty())
+        .map(ToString::to_string)
+        .collect()
+}
+
+fn default_remote(vault: &Path) -> Option<String> {
+    let remotes = git_remotes(vault);
+    remotes
+        .iter()
+        .find(|remote| remote.as_str() == "origin")
+        .cloned()
+        .or_else(|| remotes.into_iter().next())
+}
+
+fn ensure_no_unfinished_git_operation(vault: &Path) -> Result<(), String> {
+    if has_rebase_in_progress(vault) {
+        return Err("Vault 中有未完成的 Git rebase。请先解决冲突或在 Vault 里执行 git rebase --abort 后再同步。".to_string());
+    }
+
+    if git_internal_path_exists(vault, "MERGE_HEAD") {
+        return Err("Vault 中有未完成的 Git merge。请先解决冲突或在 Vault 里执行 git merge --abort 后再同步。".to_string());
+    }
+
+    Ok(())
+}
+
+fn has_rebase_in_progress(vault: &Path) -> bool {
+    git_internal_path_exists(vault, "rebase-merge")
+        || git_internal_path_exists(vault, "rebase-apply")
+}
+
+fn git_internal_path_exists(vault: &Path, name: &str) -> bool {
+    let Ok(path) = run_git(vault, &["rev-parse", "--git-path", name]) else {
+        return false;
+    };
+
+    let path = PathBuf::from(path.trim());
+    let path = if path.is_absolute() {
+        path
+    } else {
+        vault.join(path)
+    };
+
+    path.exists()
+}
+
+fn format_git_sync_error(error: &str) -> String {
+    let lower = error.to_lowercase();
+    if lower.contains("conflict")
+        || lower.contains("could not apply")
+        || lower.contains("resolve all conflicts")
+    {
+        return format!(
+            "同步遇到 Git 冲突。Shard 已保留本地提交并停止自动同步，请在 Vault 中解决冲突后再同步。\n\n{error}"
+        );
+    }
+
+    if lower.contains("authentication failed")
+        || lower.contains("permission denied")
+        || lower.contains("could not read username")
+        || lower.contains("terminal prompts disabled")
+    {
+        return format!(
+            "Git 认证失败。请先在终端确认当前 Vault 可以执行 git fetch 和 git push，再回到 Shard 同步。\n\n{error}"
+        );
+    }
+
+    if lower.contains("cannot pull with rebase") {
+        return format!(
+            "Git 仍检测到未提交变更，无法 rebase。Shard 会先提交 vault 变更并使用 autostash；如果问题持续，请检查 Vault 中是否有未完成的 Git 操作。\n\n{error}"
+        );
+    }
+
+    error.to_string()
+}
+
+fn gh_path() -> Result<PathBuf, String> {
     let mut candidates = Vec::new();
 
-    candidates.push(PathBuf::from("/opt/homebrew/bin/codex"));
-
     if let Some(paths) = env::var_os("PATH") {
-        candidates.extend(env::split_paths(&paths).map(|path| path.join("codex")));
+        candidates.extend(env::split_paths(&paths).map(|path| path.join("gh")));
     }
 
     candidates.extend([
-        PathBuf::from("/usr/local/bin/codex"),
-        PathBuf::from("/usr/bin/codex"),
+        PathBuf::from("/opt/homebrew/bin/gh"),
+        PathBuf::from("/usr/local/bin/gh"),
+        PathBuf::from("/usr/bin/gh"),
     ]);
 
     candidates
         .into_iter()
         .find(|path| path.is_file())
-        .ok_or_else(|| "未检测到 Codex CLI。".to_string())
+        .ok_or_else(|| "未检测到 GitHub CLI。".to_string())
+}
+
+fn ai_agent_path(agent: AiAgentKind) -> Result<PathBuf, String> {
+    let mut candidates = Vec::new();
+
+    if let Some(paths) = env::var_os("PATH") {
+        candidates.extend(env::split_paths(&paths).map(|path| path.join(agent.binary_name())));
+    }
+
+    if let Some(user_home) = env::var_os("HOME") {
+        let user_home = PathBuf::from(user_home);
+        match agent {
+            AiAgentKind::Claude => candidates.push(user_home.join(".local/bin/claude")),
+            AiAgentKind::Kimi => candidates.push(user_home.join(".kimi-code/bin/kimi")),
+            AiAgentKind::Opencode => candidates.push(user_home.join(".opencode/bin/opencode")),
+            AiAgentKind::Codex => {}
+        }
+    }
+
+    candidates.extend(
+        ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"]
+            .into_iter()
+            .map(|directory| PathBuf::from(directory).join(agent.binary_name())),
+    );
+
+    candidates
+        .into_iter()
+        .find(|path| path.is_file())
+        .ok_or_else(|| format!("未检测到 {} CLI。", agent.display_name()))
 }
 
 fn codex_review_prompt(request: &CodexReviewTaskRequest) -> String {
     let task_prompt = match request.task {
-        CodexReviewTask::Insight => format!(
-            "{}\n\n来源说明：下方“来源笔记”覆盖用户全部未归档笔记（不含密匣与既往 AI 洞察），按时间从早到晚排列；超长笔记已截断，截断处以 ... 标注。分析时可以利用这种时间顺序观察主题的演变。",
-            codex_insight_prompt(request.lens.unwrap_or(CodexInsightLens::Default))
-        ),
+        CodexReviewTask::Insight => {
+            // 来源说明按是否包含密匣动态生成；含密匣时追加转述约束，避免逐字复述敏感原文
+            let source_note = if request.include_lockbox {
+                "来源说明：下方“来源笔记”覆盖用户全部未归档笔记（含密匣私密笔记，不含既往 AI 洞察），按时间从早到晚排列；超长笔记已截断，截断处以 ... 标注。分析时可以利用这种时间顺序观察主题的演变。来源中含用户加密私密笔记，分析引用时以转述为主，避免逐字复述敏感原文。"
+            } else {
+                "来源说明：下方“来源笔记”覆盖用户全部未归档笔记（不含密匣与既往 AI 洞察），按时间从早到晚排列；超长笔记已截断，截断处以 ... 标注。分析时可以利用这种时间顺序观察主题的演变。"
+            };
+            format!(
+                "{}\n\n{source_note}",
+                codex_insight_prompt(request.lens.unwrap_or(CodexInsightLens::Default))
+            )
+        }
         CodexReviewTask::Walk => {
             r#"当前任务：随机漫步。
 
@@ -3319,8 +4035,82 @@ fn codex_fragment_context(fragments: &[CodexReviewFragment]) -> String {
         .join("\n")
 }
 
+fn run_ai_agent(agent: AiAgentKind, vault: &Path, prompt: &str) -> Result<String, String> {
+    match agent {
+        AiAgentKind::Codex => run_codex_exec(vault, prompt),
+        AiAgentKind::Claude => run_isolated_agent(agent, prompt, |path, directory, prompt| {
+            let mut command = Command::new(path);
+            command
+                .args([
+                    "--print",
+                    "--output-format",
+                    "text",
+                    "--permission-mode",
+                    "plan",
+                    "--no-session-persistence",
+                    "--tools",
+                    "",
+                ])
+                .current_dir(directory);
+            run_agent_command_with_stdin(agent, &mut command, prompt)
+        }),
+        AiAgentKind::Kimi => run_isolated_agent(agent, prompt, |path, directory, prompt| {
+            let agent_file = directory.join("shard-insight-agent.md");
+            fs::write(
+                &agent_file,
+                r#"---
+name: shard-insight
+description: Analyze the prompt without using tools or subagents.
+tools: []
+subagents: []
+---
+
+You are Shard's text-only insight engine. Use only the prompt content. Do not use tools, read files, or perform external actions.
+"#,
+            )
+            .map_err(|error| format!("无法创建 Kimi 隔离 Agent：{error}"))?;
+            let mut command = Command::new(path);
+            command
+                .arg("--agent-file")
+                .arg(agent_file)
+                .args(["--output-format", "text", "--prompt", prompt])
+                .env("KIMI_CODE_EXPERIMENTAL_FLAG", "1")
+                .env("KIMI_DISABLE_TELEMETRY", "1")
+                .env("KIMI_CODE_NO_AUTO_UPDATE", "1")
+                .current_dir(directory);
+            run_agent_command(agent, &mut command)
+        }),
+        AiAgentKind::Opencode => run_isolated_agent(agent, prompt, |path, directory, prompt| {
+            let mut command = Command::new(path);
+            command
+                    .args(["run", "--pure", "--agent", "plan", "--dir"])
+                    .arg(directory)
+                    .arg(prompt)
+                    .env(
+                        "OPENCODE_CONFIG_CONTENT",
+                        r#"{"permission":"deny","share":"disabled","snapshot":false,"autoupdate":false}"#,
+                    )
+                    .current_dir(directory);
+            run_agent_command(agent, &mut command)
+        }),
+    }
+}
+
+fn run_isolated_agent<T>(
+    agent: AiAgentKind,
+    prompt: &str,
+    operation: impl FnOnce(&Path, &Path, &str) -> Result<T, String>,
+) -> Result<T, String> {
+    let agent_path = ai_agent_path(agent)?;
+    let directory = env::temp_dir().join(format!("shard-agent-{}", unique_suffix()));
+    fs::create_dir_all(&directory).map_err(|error| format!("无法创建 AI 隔离目录：{error}"))?;
+    let result = operation(&agent_path, &directory, prompt);
+    let _ = fs::remove_dir_all(&directory);
+    result
+}
+
 fn run_codex_exec(vault: &Path, prompt: &str) -> Result<String, String> {
-    let codex = codex_path()?;
+    let codex = ai_agent_path(AiAgentKind::Codex)?;
     let mut child = Command::new(codex)
         .args([
             "-s",
@@ -3364,6 +4154,64 @@ fn run_codex_exec(vault: &Path, prompt: &str) -> Result<String, String> {
     extract_codex_agent_message(&stdout)
 }
 
+fn run_agent_command_with_stdin(
+    agent: AiAgentKind,
+    command: &mut Command,
+    prompt: &str,
+) -> Result<String, String> {
+    let mut child = command
+        .env("NO_COLOR", "1")
+        .env("TERM", "dumb")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("无法启动 {}：{error}", agent.display_name()))?;
+
+    if let Some(stdin) = child.stdin.as_mut() {
+        stdin
+            .write_all(prompt.as_bytes())
+            .map_err(|error| format!("无法写入 {} prompt：{error}", agent.display_name()))?;
+    }
+
+    let output = child
+        .wait_with_output()
+        .map_err(|error| format!("{} 执行失败：{error}", agent.display_name()))?;
+    agent_command_output(agent, output)
+}
+
+fn run_agent_command(agent: AiAgentKind, command: &mut Command) -> Result<String, String> {
+    let output = command
+        .env("NO_COLOR", "1")
+        .env("TERM", "dumb")
+        .output()
+        .map_err(|error| format!("无法启动 {}：{error}", agent.display_name()))?;
+    agent_command_output(agent, output)
+}
+
+fn agent_command_output(
+    agent: AiAgentKind,
+    output: std::process::Output,
+) -> Result<String, String> {
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if !output.status.success() {
+        let message = stderr.trim();
+        return Err(if message.is_empty() {
+            stdout.trim().to_string()
+        } else {
+            message.to_string()
+        });
+    }
+
+    let text = stdout.trim();
+    if text.is_empty() {
+        Err(format!("{} 没有返回可展示的文本。", agent.display_name()))
+    } else {
+        Ok(text.to_string())
+    }
+}
+
 fn extract_codex_agent_message(output: &str) -> Result<String, String> {
     let mut final_text = None;
 
@@ -3393,9 +4241,56 @@ fn extract_codex_agent_message(output: &str) -> Result<String, String> {
     final_text.ok_or_else(|| "Codex 没有返回可展示的文本。".to_string())
 }
 
+fn run_gh_in(vault: &Path, args: &[&str]) -> Result<String, String> {
+    let gh = gh_path()?;
+    run_command(Command::new(gh).args(args).current_dir(vault))
+}
 
+fn run_gh_with_path(gh: &Path, args: &[&str]) -> Result<String, String> {
+    run_command(Command::new(gh).args(args))
+}
 
+fn parse_gh_login(output: &str) -> Option<String> {
+    output.lines().find_map(|line| {
+        let (_, login) = line.split_once("account ")?;
+        login
+            .split_whitespace()
+            .next()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToString::to_string)
+    })
+}
 
+fn sanitize_repo_name(repo_name: &str) -> Result<String, String> {
+    let repo_name = repo_name.trim().trim_matches('/').to_string();
+    if repo_name.is_empty() {
+        return Err("GitHub 仓库名不能为空".to_string());
+    }
+
+    let parts = repo_name.split('/').collect::<Vec<_>>();
+    if parts.len() > 2 || parts.iter().any(|part| part.is_empty()) {
+        return Err("仓库名应为 repo 或 owner/repo。".to_string());
+    }
+
+    let is_valid = repo_name.chars().all(|character| {
+        character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.' | '/')
+    });
+    if !is_valid {
+        return Err("仓库名只能包含字母、数字、横线、下划线、点和一个斜杠。".to_string());
+    }
+
+    Ok(repo_name)
+}
+
+fn run_git(vault: &Path, args: &[&str]) -> Result<String, String> {
+    run_command(
+        Command::new("git")
+            .args(args)
+            .current_dir(vault)
+            .env("GIT_TERMINAL_PROMPT", "0"),
+    )
+}
 
 fn run_command(command: &mut Command) -> Result<String, String> {
     let output = command.output().map_err(|error| error.to_string())?;
@@ -3424,18 +4319,8 @@ fn relative_path(vault: &Path, path: &Path) -> Result<String, String> {
 pub fn run() {
     tauri::Builder::default()
         .manage(Arc::new(Mutex::new(LockboxSession::default())))
-        .manage(debt::DebtDb::default())
-        .manage(notes::NotesDb::default())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        // 图片直接由 webview 按 URL 取，不再走 base64-over-IPC：省掉 33% 的编码
-        // 膨胀，也不用把每张图常驻在 JS 堆里。
-        .register_asynchronous_uri_scheme_protocol("shard-attachment", |ctx, request, responder| {
-            let app = ctx.app_handle().clone();
-            tauri::async_runtime::spawn(async move {
-                responder.respond(attachment_response(&app, request.uri().path()).await);
-            });
-        })
         .setup(|app| {
             for window in app.webview_windows().values() {
                 restore_default_window_frame(window)?;
@@ -3451,8 +4336,12 @@ pub fn run() {
             write_mind_map,
             delete_mind_map,
             set_vault_path,
-            codex_agent_status,
-            run_codex_review_task,
+            initialize_vault_git,
+            set_vault_remote,
+            github_cli_status,
+            ai_agent_statuses,
+            run_ai_review_task,
+            create_github_vault_repo,
             setup_lockbox,
             unlock_lockbox,
             lock_lockbox,
@@ -3465,6 +4354,7 @@ pub fn run() {
             set_fragment_pinned,
             move_fragment_to_lockbox,
             save_fragment_image,
+            read_fragment_image,
             fragment_image_file_path,
             reveal_fragment_image_in_dir,
             save_recovery_key,
@@ -3472,25 +4362,7 @@ pub fn run() {
             copy_exported_image,
             set_window_controls_hidden,
             restore_window_frame,
-            debt::list_debts,
-            debt::create_debt,
-            debt::update_debt,
-            debt::set_debt_archived,
-            debt::delete_debt,
-            debt::add_repayment,
-            debt::delete_repayment,
-            debt::get_turso_config,
-            debt::set_turso_config,
-            notes::commands::import_vault_markdown,
-            notes::commands::notes_db_stats,
-            notes::commands::search_fragments_db,
-            notes::commands::rebuild_search_index,
-            notes::commands::export_vault_markdown,
-            notes::commands::verify_export,
-            notes::commands::get_sync_config,
-            notes::commands::set_sync_config,
-            notes::commands::sync_status,
-            notes::commands::sync_now
+            sync_vault
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -3498,104 +4370,30 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-
-    fn lockbox_payload(id: &str, body: &str) -> LockboxFragmentPayload {
-        LockboxFragmentPayload {
-            frontmatter: FragmentFrontmatter {
-                id: id.to_string(),
-                created_at: "2026-07-26T10:00:00+08:00".to_string(),
-                updated_at: "2026-07-26T10:00:00+08:00".to_string(),
-                tags: vec!["密匣".to_string()],
-                category: None,
-                ai_status: Some("none".to_string()),
-                pinned: false,
-                source: "desktop-lockbox".to_string(),
-            },
-            body: body.to_string(),
-        }
-    }
-
-    /// 拆分后的核心保证：加密不再依赖文件系统，且密文仍能被解开。
-    /// 这是把密文写进库的 cipher_* 列的前提。
-    #[test]
-    fn lockbox_envelope_round_trips_without_touching_disk() {
-        let master_key = random_bytes(32);
-        let payload = lockbox_payload("f1", "会议室密码是 1234");
-
-        let encrypted =
-            encrypt_lockbox_fragment(&payload, &LockboxWriteKey::Master(master_key.clone()))
-                .unwrap();
-
-        assert_eq!(encrypted.id, "f1");
-        assert_eq!(encrypted.version, LOCKBOX_VERSION);
-        // 主密钥直封路径不带信封密钥。
-        assert!(encrypted.key_algorithm.is_none());
-        assert!(encrypted.key_ciphertext.is_none());
-        // 密文里不该出现任何明文片段。
-        assert!(!encrypted.ciphertext.contains("1234"));
-        assert!(!encrypted.ciphertext.contains("会议"));
-
-        let keys = LockboxReadKeys {
-            master_key,
-            write_private_key: None,
-        };
-        let decoded = decrypt_lockbox_fragment(&encrypted, &keys).unwrap();
-        assert_eq!(decoded.body, "会议室密码是 1234");
-        assert_eq!(decoded.frontmatter.id, "f1");
-        assert_eq!(decoded.frontmatter.tags, vec!["密匣".to_string()]);
-    }
-
-    /// 公钥路径：锁定态也能写入，解开需要私钥。
-    #[test]
-    fn public_key_envelope_round_trips_and_needs_private_key() {
-        let master_key = random_bytes(32);
-        let private_key = RsaPrivateKey::new(&mut OsRng, 2048).unwrap();
-        let payload = lockbox_payload("f2", "锁定时写入的内容");
-
-        let encrypted = encrypt_lockbox_fragment(
-            &payload,
-            &LockboxWriteKey::Public(private_key.to_public_key()),
-        )
-        .unwrap();
-
-        // 信封路径必须带上密钥算法与被封装的片段密钥。
-        assert_eq!(
-            encrypted.key_algorithm.as_deref(),
-            Some(LOCKBOX_FRAGMENT_KEY_ALGORITHM)
-        );
-        assert!(encrypted.key_ciphertext.is_some());
-
-        // 只有主密钥、没有私钥时解不开。
-        let without = LockboxReadKeys {
-            master_key: master_key.clone(),
-            write_private_key: None,
-        };
-        assert!(decrypt_lockbox_fragment(&encrypted, &without).is_err());
-
-        let with = LockboxReadKeys {
-            master_key,
-            write_private_key: Some(private_key),
-        };
-        let decoded = decrypt_lockbox_fragment(&encrypted, &with).unwrap();
-        assert_eq!(decoded.body, "锁定时写入的内容");
-    }
-
-    /// 同一份明文两次加密必须产生不同密文（nonce 与片段密钥都是随机的），
-    /// 否则密文可比对，等于泄漏「这两条内容相同」。
-    #[test]
-    fn encryption_is_randomized_across_calls() {
-        let master_key = random_bytes(32);
-        let payload = lockbox_payload("f3", "同样的内容");
-
-        let a = encrypt_lockbox_fragment(&payload, &LockboxWriteKey::Master(master_key.clone()))
-            .unwrap();
-        let b =
-            encrypt_lockbox_fragment(&payload, &LockboxWriteKey::Master(master_key)).unwrap();
-
-        assert_ne!(a.nonce, b.nonce);
-        assert_ne!(a.ciphertext, b.ciphertext);
-    }
     use super::*;
+
+    #[test]
+    fn serializes_supported_ai_agent_ids() {
+        let ids = [
+            AiAgentKind::Codex,
+            AiAgentKind::Claude,
+            AiAgentKind::Kimi,
+            AiAgentKind::Opencode,
+        ]
+        .into_iter()
+        .map(|agent| serde_json::to_value(agent).unwrap())
+        .collect::<Vec<_>>();
+
+        assert_eq!(
+            ids,
+            vec![
+                serde_json::json!("codex"),
+                serde_json::json!("claude"),
+                serde_json::json!("kimi"),
+                serde_json::json!("opencode"),
+            ]
+        );
+    }
 
     #[test]
     fn extracts_last_codex_agent_message_from_jsonl() {
@@ -3629,35 +4427,112 @@ mod tests {
     #[test]
     fn detects_extensionless_png_images() {
         let bytes = b"\x89PNG\r\n\x1a\nrest";
-        // 缓存里的附件文件名就是摘要，没有扩展名可依。
-        let path = Path::new(".cache/attachments/ab/abcdef");
+        let path = Path::new("assets/2026/06/clipboard-png");
 
-        assert_eq!(detect_image_mime(path, bytes).unwrap(), "image/png");
+        assert_eq!(image_mime_type(path, bytes).unwrap(), "image/png");
     }
 
     #[test]
-    fn accepts_both_spellings_of_an_attachment_reference() {
+    fn resolves_content_addressed_attachment_references() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let vault = tempdir.path();
         let hash = "a".repeat(64);
-        assert_eq!(attachment_hash_from_ref(&hash).unwrap(), hash);
-        assert_eq!(
-            attachment_hash_from_ref(&format!("shard-attachment:{hash}")).unwrap(),
-            hash
-        );
+        let asset_dir = vault.join("assets").join("aa");
+        fs::create_dir_all(&asset_dir).unwrap();
+        let expected = asset_dir.join(format!("{hash}.png"));
+        fs::write(&expected, b"\x89PNG\r\n\x1a\nrest").unwrap();
+
+        let resolved =
+            resolve_vault_asset_path(vault, &format!("shard-attachment:{hash}")).unwrap();
+
+        assert_eq!(resolved, expected.canonicalize().unwrap());
     }
 
-    /// 安全关键：协议只认 hash。路径一律拒绝，穿越在结构上无法表达。
     #[test]
-    fn rejects_anything_that_is_not_a_hash() {
-        for raw in [
-            "../../etc/passwd",
-            "assets/2026/07/a.png",
-            "/Users/x/secret.png",
-            "shard-attachment:../../etc/passwd",
-            "",
-            &"a".repeat(63),
-        ] {
-            assert!(attachment_hash_from_ref(raw).is_err(), "不该接受 {raw:?}");
-        }
+    fn rejects_malformed_content_addressed_attachment_references() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let vault = tempdir.path();
+        fs::create_dir_all(vault.join("assets")).unwrap();
+
+        assert!(resolve_vault_asset_path(vault, "shard-attachment:../../etc/passwd").is_err());
+        assert!(resolve_vault_asset_path(vault, "shard-attachment:abc").is_err());
+    }
+
+    #[test]
+    fn automatic_commit_does_not_include_unrelated_staged_files() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let vault = tempdir.path();
+        ensure_vault_layout(vault).unwrap();
+        ensure_git_repo(vault).unwrap();
+
+        fs::write(vault.join("README.md"), "vault\n").unwrap();
+        run_git(vault, &["add", "README.md"]).unwrap();
+        run_git(vault, &["commit", "-m", "bootstrap"]).unwrap();
+
+        fs::write(vault.join("personal.txt"), "user work\n").unwrap();
+        run_git(vault, &["add", "personal.txt"]).unwrap();
+        fs::write(vault.join("fragments").join("managed.md"), "managed\n").unwrap();
+
+        commit_path(vault, "fragments/managed.md", "save managed fragment").unwrap();
+
+        let committed = run_git(vault, &["show", "--format=", "--name-only", "HEAD"]).unwrap();
+        assert!(committed.lines().any(|path| path == "fragments/managed.md"));
+        assert!(!committed.lines().any(|path| path == "personal.txt"));
+
+        let status = run_git(vault, &["status", "--porcelain"]).unwrap();
+        assert!(status.lines().any(|line| line == "A  personal.txt"));
+    }
+
+    #[test]
+    fn git_sync_pushes_local_files_and_pulls_remote_files() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let root = tempdir.path();
+        let remote = root.join("remote.git");
+        let first = root.join("first");
+        let second = root.join("second");
+
+        run_command(Command::new("git").arg("init").arg("--bare").arg(&remote)).unwrap();
+
+        ensure_vault_layout(&first).unwrap();
+        ensure_git_repo(&first).unwrap();
+        let branch = current_branch(&first);
+        fs::write(first.join("fragments").join("first.md"), "first\n").unwrap();
+        commit_path(&first, "fragments/first.md", "create first fragment").unwrap();
+        run_git(
+            &first,
+            &["remote", "add", "origin", remote.to_str().unwrap()],
+        )
+        .unwrap();
+        push_vault(&first).unwrap();
+
+        run_command(Command::new("git").arg("clone").arg(&remote).arg(&second)).unwrap();
+        ensure_vault_layout(&second).unwrap();
+        ensure_git_identity(&second).unwrap();
+        fs::write(second.join("fragments").join("remote.md"), "remote\n").unwrap();
+        commit_path(&second, "fragments/remote.md", "create remote fragment").unwrap();
+        run_git(&second, &["push"]).unwrap();
+
+        fs::write(first.join("fragments").join("local.md"), "local\n").unwrap();
+        fs::write(first.join("personal.txt"), "unmanaged user file\n").unwrap();
+        push_vault(&first).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(first.join("fragments").join("remote.md")).unwrap(),
+            "remote\n"
+        );
+        assert_eq!(
+            fs::read_to_string(first.join("personal.txt")).unwrap(),
+            "unmanaged user file\n"
+        );
+
+        let remote_ref = format!("origin/{branch}");
+        let remote_tree = run_git(&first, &["ls-tree", "-r", "--name-only", &remote_ref]).unwrap();
+        assert!(remote_tree.lines().any(|path| path == "fragments/first.md"));
+        assert!(remote_tree.lines().any(|path| path == "fragments/local.md"));
+        assert!(remote_tree
+            .lines()
+            .any(|path| path == "fragments/remote.md"));
+        assert!(!remote_tree.lines().any(|path| path == "personal.txt"));
     }
 
     #[test]
@@ -3668,41 +4543,35 @@ mod tests {
         let fragment_id = write_public_test_fragment(vault, "linked public note");
 
         let created =
-            build_mind_map_document(vault, "Launch Plan".to_string(), Some(fragment_id.clone()))
+            create_mind_map_in_vault(vault, "Launch Plan".to_string(), Some(fragment_id.clone()))
                 .unwrap();
 
-        assert_eq!(created.kind, SHARD_MAP_KIND);
-        assert_eq!(created.schema_version, SHARD_MAP_SCHEMA_VERSION);
-        assert_eq!(created.revision, 1);
+        assert_eq!(created.file.kind, SHARD_MAP_KIND);
+        assert_eq!(created.file.schema_version, SHARD_MAP_SCHEMA_VERSION);
+        assert_eq!(created.file.revision, 1);
+        assert!(!created.last_saved_hash.is_empty());
 
-        let root = created.nodes.get(&created.root_id).unwrap();
+        let root = created.file.nodes.get(&created.file.root_id).unwrap();
         assert_eq!(root.links.len(), 1);
         let root_children = created
+            .file
             .nodes
             .values()
-            .filter(|node| node.parent_id.as_deref() == Some(created.root_id.as_str()))
+            .filter(|node| node.parent_id.as_deref() == Some(created.file.root_id.as_str()))
             .collect::<Vec<_>>();
         assert_eq!(root_children.len(), 1);
         assert_eq!(root_children[0].text, "");
         match &root.links[0] {
             ShardDocumentLink::Fragment { target_id, .. } => {
-                assert_eq!(target_id.as_str(), fragment_id.as_str());
+                assert_eq!(target_id, &fragment_id);
             }
             _ => panic!("expected fragment link"),
         }
 
-        // 入库后再列出，验证转换层与 summary 口径。
-        let row = notes::maps::row_from_file(&created, Some("maps/x.shardmap.json".into())).unwrap();
-        assert_eq!(row.node_count, 2);
-        let summary = notes::maps::to_summary(&row);
-        assert_eq!(summary.id, created.id);
-        assert_eq!(summary.node_count, 2);
-
-        // 往返：库里的 doc_json 能还原成同一份文档。
-        let restored = notes::maps::to_read_result(&row).unwrap();
-        assert_eq!(restored.file.id, created.id);
-        assert_eq!(restored.file.nodes.len(), created.nodes.len());
-        assert_eq!(restored.last_saved_hash, row.doc_hash);
+        let summaries = list_mind_maps_in_vault(vault).unwrap();
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(summaries[0].id, created.file.id);
+        assert_eq!(summaries[0].node_count, 2);
     }
 
     #[test]
@@ -3710,8 +4579,8 @@ mod tests {
         let tempdir = tempfile::tempdir().unwrap();
         let vault = tempdir.path();
         ensure_vault_layout(vault).unwrap();
-        let created = build_mind_map_document(vault, "Draft".to_string(), None).unwrap();
-        let mut edited = created.clone();
+        let created = create_mind_map_in_vault(vault, "Draft".to_string(), None).unwrap();
+        let mut edited = created.file.clone();
         let child_id = edited
             .nodes
             .values()
@@ -3741,7 +4610,7 @@ mod tests {
         )
         .unwrap();
 
-        let error = build_mind_map_document(vault, "Private Map".to_string(), Some(private.id))
+        let error = create_mind_map_in_vault(vault, "Private Map".to_string(), Some(private.id))
             .unwrap_err();
         assert!(error.contains("密匣片段"));
     }
@@ -3751,22 +4620,23 @@ mod tests {
         let tempdir = tempfile::tempdir().unwrap();
         let vault = tempdir.path();
         ensure_vault_layout(vault).unwrap();
-        let created = build_mind_map_document(vault, "Draft".to_string(), None).unwrap();
-        let mut edited = created.clone();
+        let created = create_mind_map_in_vault(vault, "Draft".to_string(), None).unwrap();
+        let mut edited = created.file.clone();
         edited.title = "Edited Draft".to_string();
 
-        // CAS 冲突后要另存一份副本供人工比对——不覆盖、不丢弃。
-        // CAS 判定本身由 notes::maps 的单测覆盖，这里只验证副本确实落盘。
-        let path = write_mind_map_conflict(vault, &edited).unwrap();
-        assert!(path.exists());
+        let error = write_mind_map_in_vault(
+            vault,
+            &created.file.id,
+            edited,
+            created.file.revision,
+            "stale-hash",
+        )
+        .unwrap_err();
 
+        assert!(error.contains("冲突副本"));
         let mut conflicts = Vec::new();
         collect_mind_map_files(&vault.join("maps").join(".conflicts"), &mut conflicts).unwrap();
         assert_eq!(conflicts.len(), 1);
-
-        // 副本内容必须是被拒绝的那一版，否则拿它比对没有意义。
-        let (restored, _) = read_mind_map_file(&conflicts[0]).unwrap();
-        assert_eq!(restored.title, "Edited Draft");
     }
 
     #[test]
@@ -3889,6 +4759,7 @@ mod tests {
             ai_status: Some("none".to_string()),
             pinned: false,
             source: "test".to_string(),
+            conflict_of: None,
         };
         write_fragment_file(&path, &frontmatter, body).unwrap();
         id

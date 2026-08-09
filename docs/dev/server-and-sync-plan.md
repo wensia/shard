@@ -1,4 +1,9 @@
-# Shard：自建服务端与多端同步
+# Shard：自建服务端与多端同步（历史方案）
+
+> 状态：已于 2026-08-03 暂停并归档。Shard 当前重新以
+> Markdown / 加密文件作为唯一真相源，由本地 Git 自动提交并通过 remote
+> 执行同步。本文仅保留 SQLite 与自建服务端方案的设计背景；对应客户端数据库、
+> `shard-core`、`shard-server` 和部署代码已从当前构建中移除。
 
 ## Context
 
@@ -166,9 +171,9 @@ CREATE TABLE sync_state (
 
 - 服务端只存 token 的 argon2 hash，比较走常量时间
 - Caddy 终止 TLS 并反代到 `127.0.0.1:<port>`，服务本体不监听公网
-- 客户端配置 `shard_server_url` + `shard_server_token`，与现有 `turso_*` 同级放进 `AppConfig`
+- 客户端配置 `shard_server_url` + `shard_server_token`，统一放进 `AppConfig`
 
-**已知问题**：`AppConfig` 是明文 JSON，token 会明文落盘——现有的 `turso_auth_token` 已经是这个待遇。本轮保持一致、不引入新机制，但记进风险表；换到系统 keychain 是独立的一件事。
+**已知问题**：`AppConfig` 是明文 JSON，token 会明文落盘。本轮不引入新机制，但记进风险表；换到系统 keychain 是独立的一件事。
 
 ## 六、部署
 
