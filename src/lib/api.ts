@@ -6,8 +6,6 @@ import type {
   CodexReviewFragment,
   CodexReviewTask,
   CodexReviewTaskResult,
-  Debt,
-  DebtDirection,
   Fragment,
   GithubCliInfo,
   GitInfo,
@@ -15,7 +13,6 @@ import type {
   MindMapReadResult,
   MindMapSummary,
   ShardMapFile,
-  TursoConfigView,
   VaultState,
 } from "@/types"
 
@@ -224,88 +221,4 @@ export function createGithubVaultRepo(repoName: string) {
 
 export function syncVault() {
   return desktopInvoke<GitInfo>("sync_vault")
-}
-
-export function listDebts() {
-  return desktopInvoke<Debt[]>("list_debts")
-}
-
-export function createDebt(input: {
-  direction: DebtDirection
-  counterparty: string
-  principalCents: number
-  dueDate?: string | null
-  note?: string
-  tags?: string[]
-  createdAt?: string | null
-}) {
-  return desktopInvoke<Debt>("create_debt", {
-    direction: input.direction,
-    counterparty: input.counterparty,
-    principalCents: input.principalCents,
-    dueDate: input.dueDate ?? null,
-    note: input.note ?? "",
-    tags: input.tags ?? [],
-  })
-}
-
-export function updateDebt(input: {
-  id: string
-  counterparty: string
-  principalCents: number
-  dueDate?: string | null
-  note?: string
-  tags?: string[]
-  createdAt?: string | null
-}) {
-  return desktopInvoke<Debt>("update_debt", {
-    id: input.id,
-    counterparty: input.counterparty,
-    principalCents: input.principalCents,
-    dueDate: input.dueDate ?? null,
-    note: input.note ?? "",
-    tags: input.tags ?? [],
-  })
-}
-
-export function setDebtArchived(id: string, archived: boolean) {
-  return desktopInvoke<Debt>("set_debt_archived", { id, archived })
-}
-
-export function deleteDebt(id: string) {
-  return desktopInvoke<Debt[]>("delete_debt", { id })
-}
-
-export function addRepayment(input: {
-  debtId: string
-  amountCents: number
-  paidOn: string
-  note?: string
-}) {
-  return desktopInvoke<Debt>("add_repayment", {
-    debtId: input.debtId,
-    amountCents: input.amountCents,
-    paidOn: input.paidOn,
-    note: input.note ?? "",
-  })
-}
-
-export function deleteRepayment(debtId: string, repaymentId: string) {
-  return desktopInvoke<Debt>("delete_repayment", { debtId, repaymentId })
-}
-
-/** 读取记账模块当前的 Turso 云端配置（不含 token 明文）。 */
-export function getTursoConfig() {
-  return desktopInvoke<TursoConfigView>("get_turso_config")
-}
-
-/**
- * 配置记账模块的 Turso 云端同步。`token` 传 `undefined` 表示保留原值，传空串
- * 表示清除；`url` 为空/undefined 时退化为纯本地 libSQL（不同步）。
- */
-export function setTursoConfig(input: { url?: string | null; token?: string }) {
-  return desktopInvoke<TursoConfigView>("set_turso_config", {
-    url: input.url ?? null,
-    token: input.token,
-  })
 }
