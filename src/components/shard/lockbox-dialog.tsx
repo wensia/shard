@@ -1,15 +1,17 @@
-import {
-  LockKeyholeIcon,
-  XIcon,
-} from "lucide-react"
 import { useEffect, useMemo, useState, type FormEvent } from "react"
 import { save } from "@tauri-apps/plugin-dialog"
+import { XIcon } from "lucide-react"
+import { toast } from "sonner"
 
-import { Button } from "@astryxdesign/core/Button"
-import { HStack } from "@astryxdesign/core/HStack"
-import { Stack } from "@astryxdesign/core/Stack"
-import { TextInput } from "@astryxdesign/core/TextInput"
-import { useToast } from "@astryxdesign/core/Toast"
+import { Button } from "@/components/ui/button"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import { Input } from "@/components/ui/input"
 import { getApiErrorMessage, saveRecoveryKey } from "@/lib/api"
 
 export type LockboxDialogMode = "change" | "reset" | "setup" | "unlock"
@@ -24,6 +26,12 @@ interface LockboxDialogProps {
   onSetup: (password: string) => Promise<void>
   onUnlock: (password: string) => Promise<void>
 }
+
+const PASSWORD_INPUT_STYLE = {
+  height: "var(--shard-space-8)",
+  minHeight: "var(--shard-space-8)",
+  borderRadius: "var(--shard-radius-control)",
+} as const
 
 export function LockboxDialog({
   mode,
@@ -94,106 +102,39 @@ export function LockboxDialog({
   }
 
   return (
-    <div
-      style={{
-        position: "fixed",
-        inset: 0,
-        zIndex: 60,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        background: "color-mix(in oklab, var(--background) 89%, transparent)",
-        paddingInline: "var(--shard-content-inset)",
-        paddingBlock: "var(--shard-space-4)",
-        backdropFilter: "blur(4px)",
+    <Dialog
+      open
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen && !isBusy && !recoveryKey) onClose()
       }}
     >
-      <section
-        aria-labelledby="lockbox-dialog-title"
-        aria-modal="true"
-        role="dialog"
-        style={{
-          position: "relative",
-          width: "100%",
-          maxWidth: 520,
-          borderRadius: "var(--shard-surface-radius)",
-          border: "1px solid var(--border)",
-          background: "var(--card)",
-          boxShadow: "var(--shard-shadow-popover)",
-        }}
+      <DialogContent
+        aria-busy={isBusy}
+        className="gap-0 overflow-hidden p-0 sm:max-w-[440px]"
+        showCloseButton={false}
       >
-        <Button
-          icon={<XIcon size={16} />}
-          isDisabled={isBusy || Boolean(recoveryKey)}
-          isIconOnly
-          label="关闭密匣弹窗"
-          onClick={onClose}
-          size="sm"
-          style={{
-            position: "absolute",
-            top: "var(--shard-space-3)",
-            right: "var(--shard-space-3)",
-          }}
-          type="button"
-          variant="ghost"
-        />
-
-        <header
-          style={{
-            borderBottom: "1px solid var(--border)",
-            paddingInline: "var(--shard-space-5)",
-            paddingBlock: "var(--shard-space-4)",
-            paddingRight: "calc(var(--shard-space-8) + 32px)",
-          }}
-        >
-          <HStack gap={3} vAlign="center">
-            <span
-              style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                width: 36,
-                height: 36,
-                flexShrink: 0,
-                borderRadius: "var(--shard-radius-control)",
-                border: "1px solid var(--border)",
-                background: "var(--background)",
-                color: "var(--shard-sapphire)",
-              }}
+        <DialogHeader className="relative gap-1 border-b border-border px-4 py-3">
+          <DialogTitle>{title()}</DialogTitle>
+          <DialogDescription>
+            本地加密，解锁后闲置数分钟自动上锁。
+          </DialogDescription>
+          {!isBusy && !recoveryKey ? (
+            <Button
+              aria-label="关闭"
+              className="absolute right-2 top-2"
+              onClick={onClose}
+              size="icon-sm"
+              type="button"
+              variant="ghost"
             >
-              <LockKeyholeIcon size={18} strokeWidth={1.75} />
-            </span>
-            <div style={{ minWidth: 0 }}>
-              <h2
-                id="lockbox-dialog-title"
-                style={{
-                  margin: 0,
-                  fontSize: "1rem",
-                  lineHeight: "1.5rem",
-                  fontWeight: 600,
-                  textWrap: "balance",
-                }}
-              >
-                {title()}
-              </h2>
-              <p
-                style={{
-                  margin: 0,
-                  marginTop: "var(--shard-space-1)",
-                  fontSize: "0.75rem",
-                  lineHeight: "1.25rem",
-                  textWrap: "pretty",
-                  color: "var(--muted-foreground)",
-                }}
-              >
-                本地加密，解锁后 15 分钟闲置自动上锁。
-              </p>
-            </div>
-          </HStack>
-        </header>
-
-        <Stack gap={4} padding={5}>
-          {recoveryKey ? (
+              <XIcon aria-hidden="true" />
+              <span className="sr-only">关闭</span>
+            </Button>
+          ) : null}
+        </DialogHeader>
+        <div className="p-4">
+          <div className="flex flex-col gap-4">
+            {recoveryKey ? (
             <RecoveryKeyStep
               code={recoveryCode}
               recoveryKey={recoveryKey}
@@ -224,31 +165,36 @@ export function LockboxDialog({
                 void submit(() => onUnlock(password))
               }}
             >
-              <TextInput
-                hasAutoFocus
-                isDisabled={isBusy}
-                isLabelHidden
-                label="密匣密码"
-                onChange={(value) => setPassword(value)}
+              <label className="sr-only" htmlFor="lockbox-password">
+                密匣密码
+              </label>
+              <Input
+                autoFocus
+                disabled={isBusy}
+                id="lockbox-password"
+                onChange={(event) => setPassword(event.target.value)}
                 placeholder="密匣密码"
+                style={PASSWORD_INPUT_STYLE}
                 type="password"
                 value={password}
               />
-              <HStack gap={3} hAlign="between" vAlign="center">
+              <div className="flex items-center justify-between gap-3">
                 <Button
-                  isDisabled={isBusy}
-                  label="忘记密码"
+                  disabled={isBusy}
                   onClick={() => onModeChange("reset")}
                   type="button"
                   variant="ghost"
-                />
+                >
+                  忘记密码
+                </Button>
                 <Button
-                  isDisabled={isBusy || !password}
-                  label={isBusy ? "解锁中" : "解锁"}
+                  disabled={isBusy || !password}
                   type="submit"
-                  variant="primary"
-                />
-              </HStack>
+                  variant="default"
+                >
+                  {isBusy ? "解锁中" : "解锁"}
+                </Button>
+              </div>
             </form>
           ) : mode === "reset" ? (
             <form
@@ -259,11 +205,13 @@ export function LockboxDialog({
                 void submit(() => onReset(recoveryInput, newPassword))
               }}
             >
-              <TextInput
-                isDisabled={isBusy}
-                isLabelHidden
-                label="恢复密钥"
-                onChange={(value) => setRecoveryInput(value)}
+              <label className="sr-only" htmlFor="lockbox-recovery-key">
+                恢复密钥
+              </label>
+              <Input
+                disabled={isBusy}
+                id="lockbox-recovery-key"
+                onChange={(event) => setRecoveryInput(event.target.value)}
                 placeholder="恢复密钥"
                 value={recoveryInput}
               />
@@ -274,21 +222,23 @@ export function LockboxDialog({
                 onNewPassword={setNewPassword}
                 onRepeatPassword={setRepeatPassword}
               />
-              <HStack gap={3} hAlign="between">
+              <div className="flex justify-between gap-3">
                 <Button
-                  isDisabled={isBusy}
-                  label="返回解锁"
+                  disabled={isBusy}
                   onClick={() => onModeChange("unlock")}
                   type="button"
                   variant="ghost"
-                />
+                >
+                  返回解锁
+                </Button>
                 <Button
-                  isDisabled={isBusy || !recoveryInput}
-                  label={isBusy ? "重置中" : "重置密码"}
+                  disabled={isBusy || !recoveryInput}
                   type="submit"
-                  variant="primary"
-                />
-              </HStack>
+                  variant="default"
+                >
+                  {isBusy ? "重置中" : "重置密码"}
+                </Button>
+              </div>
             </form>
           ) : mode === "change" ? (
             <form
@@ -299,13 +249,16 @@ export function LockboxDialog({
                 void submit(() => onChangePassword(currentPassword, newPassword))
               }}
             >
-              <TextInput
-                hasAutoFocus
-                isDisabled={isBusy}
-                isLabelHidden
-                label="当前密码"
-                onChange={(value) => setCurrentPassword(value)}
+              <label className="sr-only" htmlFor="lockbox-current-password">
+                当前密码
+              </label>
+              <Input
+                autoFocus
+                disabled={isBusy}
+                id="lockbox-current-password"
+                onChange={(event) => setCurrentPassword(event.target.value)}
                 placeholder="当前密码"
+                style={PASSWORD_INPUT_STYLE}
                 type="password"
                 value={currentPassword}
               />
@@ -317,33 +270,35 @@ export function LockboxDialog({
                 onRepeatPassword={setRepeatPassword}
               />
               <Button
-                isDisabled={isBusy || !currentPassword}
-                label={isBusy ? "修改中" : "修改密码"}
+                disabled={isBusy || !currentPassword}
                 type="submit"
-                variant="primary"
-              />
+                variant="default"
+              >
+                {isBusy ? "修改中" : "修改密码"}
+              </Button>
             </form>
           ) : null}
 
-          {error ? (
-            <div
-              style={{
-                borderRadius: "var(--shard-radius-control)",
-                border: "1px solid rgb(var(--shard-ruby-rgb) / var(--shard-alpha-34))",
-                background: "rgb(var(--shard-ruby-rgb) / var(--shard-alpha-8))",
-                paddingInline: "var(--shard-space-3)",
-                paddingBlock: "var(--shard-space-2)",
-                fontSize: "0.75rem",
-                lineHeight: "1.25rem",
-                color: "var(--shard-ruby)",
-              }}
-            >
-              {error}
-            </div>
-          ) : null}
-        </Stack>
-      </section>
-    </div>
+            {error ? (
+              <div
+                style={{
+                  borderRadius: "var(--shard-radius-control)",
+                  border: "1px solid rgb(var(--shard-ruby-rgb) / var(--shard-alpha-34))",
+                  background: "rgb(var(--shard-ruby-rgb) / var(--shard-alpha-8))",
+                  paddingInline: "var(--shard-space-3)",
+                  paddingBlock: "var(--shard-space-2)",
+                  fontSize: "0.75rem",
+                  lineHeight: "1.25rem",
+                  color: "var(--shard-ruby)",
+                }}
+              >
+                {error}
+              </div>
+            ) : null}
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
   )
 }
 
@@ -379,11 +334,12 @@ function PasswordPairForm({
         onRepeatPassword={onRepeatPassword}
       />
       <Button
-        isDisabled={isBusy}
-        label={isBusy ? busyLabel : submitLabel}
+        disabled={isBusy}
         type="submit"
-        variant="primary"
-      />
+        variant="default"
+      >
+        {isBusy ? busyLabel : submitLabel}
+      </Button>
     </form>
   )
 }
@@ -403,22 +359,28 @@ function PasswordPairFields({
 }) {
   return (
     <>
-      <TextInput
-        hasAutoFocus
-        isDisabled={isBusy}
-        isLabelHidden
-        label="新密码，至少 8 个字符"
-        onChange={(value) => onNewPassword(value)}
+      <label className="sr-only" htmlFor="lockbox-new-password">
+        新密码，至少 8 个字符
+      </label>
+      <Input
+        autoFocus
+        disabled={isBusy}
+        id="lockbox-new-password"
+        onChange={(event) => onNewPassword(event.target.value)}
         placeholder="新密码，至少 8 个字符"
+        style={PASSWORD_INPUT_STYLE}
         type="password"
         value={newPassword}
       />
-      <TextInput
-        isDisabled={isBusy}
-        isLabelHidden
-        label="再次输入新密码"
-        onChange={(value) => onRepeatPassword(value)}
+      <label className="sr-only" htmlFor="lockbox-repeat-password">
+        再次输入新密码
+      </label>
+      <Input
+        disabled={isBusy}
+        id="lockbox-repeat-password"
+        onChange={(event) => onRepeatPassword(event.target.value)}
         placeholder="再次输入新密码"
+        style={PASSWORD_INPUT_STYLE}
         type="password"
         value={repeatPassword}
       />
@@ -439,7 +401,6 @@ function RecoveryKeyStep({
   setRecoveryVerify: (value: string) => void
   onClose: () => void
 }) {
-  const toast = useToast()
   const [isDownloading, setIsDownloading] = useState(false)
   const confirmed = recoveryVerify.trim().toLowerCase() === code.toLowerCase()
 
@@ -455,11 +416,10 @@ function RecoveryKeyStep({
       if (!path) return
 
       await saveRecoveryKey(path, recoveryKey)
-      toast({ body: "恢复密钥已下载" })
+      toast("恢复密钥已下载")
     } catch (error) {
-      toast({
-        body: `下载恢复密钥失败：${getApiErrorMessage(error)}`,
-        type: "error",
+      toast.error(`下载恢复密钥失败：${getApiErrorMessage(error)}`, {
+        duration: Infinity,
       })
     } finally {
       setIsDownloading(false)
@@ -467,7 +427,7 @@ function RecoveryKeyStep({
   }
 
   return (
-    <Stack gap={3}>
+    <div className="flex flex-col gap-3">
       <p
         style={{
           margin: 0,
@@ -493,24 +453,26 @@ function RecoveryKeyStep({
       >
         {recoveryKey}
       </div>
-      <HStack gap={2} vAlign="center" wrap="wrap">
+      <div className="flex flex-wrap items-center gap-2">
         <Button
-          label="复制"
           onClick={() => {
             void navigator.clipboard?.writeText(recoveryKey)
           }}
           type="button"
           variant="secondary"
-        />
+        >
+          复制
+        </Button>
         <Button
-          isDisabled={isDownloading}
-          label={isDownloading ? "下载中" : "下载"}
+          disabled={isDownloading}
           onClick={() => {
             void downloadRecoveryKey()
           }}
           type="button"
           variant="secondary"
-        />
+        >
+          {isDownloading ? "下载中" : "下载"}
+        </Button>
         <span
           style={{
             minWidth: 220,
@@ -527,22 +489,25 @@ function RecoveryKeyStep({
           </span>{" "}
           确认已保存。
         </span>
-      </HStack>
-      <TextInput
-        isLabelHidden
-        label="确认恢复密钥"
-        onChange={(value) => setRecoveryVerify(value)}
+      </div>
+      <label className="sr-only" htmlFor="lockbox-recovery-confirmation">
+        确认恢复密钥
+      </label>
+      <Input
+        id="lockbox-recovery-confirmation"
+        onChange={(event) => setRecoveryVerify(event.target.value)}
         placeholder={code}
         value={recoveryVerify}
       />
       <Button
-        isDisabled={!confirmed}
-        label="我已保存恢复密钥"
+        disabled={!confirmed}
         onClick={onClose}
         type="button"
-        variant="primary"
-      />
-    </Stack>
+        variant="default"
+      >
+        我已保存恢复密钥
+      </Button>
+    </div>
   )
 }
 

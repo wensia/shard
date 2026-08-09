@@ -1,13 +1,24 @@
 import { isTauri } from "@tauri-apps/api/core"
 import { save } from "@tauri-apps/plugin-dialog"
-import { CheckIcon, ImageIcon, Loader2Icon } from "lucide-react"
+import {
+  CopyIcon,
+  DownloadIcon,
+  ImageIcon,
+  Loader2Icon,
+  XIcon,
+} from "lucide-react"
 import { useEffect, useMemo, useState } from "react"
+import { toast } from "sonner"
 
-import { Button } from "@astryxdesign/core/Button"
-import { Dialog, DialogHeader } from "@astryxdesign/core/Dialog"
-import { HStack } from "@astryxdesign/core/HStack"
-import { Layout, LayoutContent, LayoutFooter } from "@astryxdesign/core/Layout"
-import { useToast } from "@astryxdesign/core/Toast"
+import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 
 import {
   EXPORT_IMAGE_TEMPLATES,
@@ -39,7 +50,6 @@ export function FragmentImageExporter({
   open,
   vaultPath,
 }: FragmentImageExporterProps) {
-  const toast = useToast()
   const [templateId, setTemplateId] = useState<ExportImageTemplateId>("paper")
   const [showCreatedDate, setShowCreatedDate] = useState(true)
   const [showCreatedTime, setShowCreatedTime] = useState(false)
@@ -82,9 +92,8 @@ export function FragmentImageExporter({
       })
       .catch((error) => {
         if (cancelled) return
-        toast({
-          body: `预览生成失败：${getApiErrorMessage(error)}`,
-          type: "error",
+        toast.error(`预览生成失败：${getApiErrorMessage(error)}`, {
+          duration: Infinity,
         })
       })
       .finally(() => {
@@ -105,11 +114,8 @@ export function FragmentImageExporter({
     vaultPath,
   ])
 
-  // 用 JS 精确计算并设置 canvas 的显示宽高（而不是靠 CSS 的
-  // aspect-ratio + width/height:auto + max-*:100% 隐式求解），因为
-  // Tauri 原生窗口的 WKWebView 在这套隐式尺寸计算上和 Chromium 表现不一致，
-  // 会导致预览画布在真机上被撑得又长又窄、内容挤在顶部一小块。容器尺寸变化
-  // （对话框自身随视口 resize）时也要重新适配，故监听 ResizeObserver。
+  // 预览只按可用宽度缩小，不再强制塞进可用高度。长图保持导出图片的真实比例，
+  // 由右侧预览区负责滚动；否则内容越长，整张图会被压成截图里的细长缩略条。
   useEffect(() => {
     if (!previewCanvas || !previewFrame) return
 
@@ -149,11 +155,10 @@ export function FragmentImageExporter({
         await copyBlobImage(blob)
       }
 
-      toast({ body: "分享图片已复制" })
+      toast("分享图片已复制")
     } catch (error) {
-      toast({
-        body: `复制分享图片失败：${getApiErrorMessage(error)}`,
-        type: "error",
+      toast.error(`复制分享图片失败：${getApiErrorMessage(error)}`, {
+        duration: Infinity,
       })
     } finally {
       setIsCopying(false)
@@ -180,18 +185,17 @@ export function FragmentImageExporter({
 
         const bytes = await blobToBytes(blob)
         await saveExportedImage(path, bytes)
-        toast({ body: "分享图片已保存" })
+        toast("分享图片已保存")
         onClose()
         return
       }
 
       downloadBlob(blob, fileName)
-      toast({ body: "分享图片已下载" })
+      toast("分享图片已下载")
       onClose()
     } catch (error) {
-      toast({
-        body: `保存分享图片失败：${getApiErrorMessage(error)}`,
-        type: "error",
+      toast.error(`保存分享图片失败：${getApiErrorMessage(error)}`, {
+        duration: Infinity,
       })
     } finally {
       setIsExporting(false)
@@ -200,173 +204,190 @@ export function FragmentImageExporter({
 
   return (
     <Dialog
-      isOpen={open}
-      maxHeight="min(860px, calc(100dvh - 32px))"
+      open={open}
       onOpenChange={(nextOpen) => {
-        if (!nextOpen) onClose()
+        if (!nextOpen && !isBusy) onClose()
       }}
-      padding={0}
-      width="min(1040px, calc(100vw - 32px))"
     >
-      <Layout
-        header={
-          <DialogHeader
-            hasDivider
-            onOpenChange={(nextOpen) => {
-              if (!nextOpen) onClose()
-            }}
-            startContent={
-              <span
-                style={{
-                  display: "flex",
-                  width: 32,
-                  height: 32,
-                  flexShrink: 0,
-                  alignItems: "center",
-                  justifyContent: "center",
-                  borderRadius: "var(--shard-radius-control)",
-                  border: "1px solid var(--border)",
-                  background: "var(--background)",
-                  color: "var(--shard-sapphire)",
-                }}
-              >
-                <ImageIcon size={16} strokeWidth={1.75} />
-              </span>
-            }
-            subtitle={`${activeTemplate.label} · PNG`}
-            title="分享"
-          />
-        }
-        height="fill"
-        style={{ height: "min(860px, calc(100dvh - 32px))" }}
-        content={
-          <LayoutContent isScrollable={false} padding={0}>
-            <div className={styles.body}>
-              <div className={styles.templateList}>
-                {EXPORT_IMAGE_TEMPLATES.map((template) => (
-                  <button
-                    aria-label={`${template.label}，${template.description}`}
-                    aria-pressed={template.id === templateId}
-                    className={cn(
-                      styles.templateButton,
-                      template.id === templateId && styles.templateButtonActive
-                    )}
-                    key={template.id}
-                    onClick={() => setTemplateId(template.id)}
-                    type="button"
-                  >
-                    <TemplateThumbnail
-                      active={template.id === templateId}
-                      templateId={template.id}
-                    />
-                    <span className={styles.templateLabel}>
-                      {template.label}
-                    </span>
-                  </button>
-                ))}
-              </div>
-
-              <div aria-busy={isPreviewing} className={styles.previewArea}>
-                <div className={styles.previewFrame} ref={setPreviewFrame}>
-                  {isPreviewing ? (
-                    <div className={styles.previewOverlay}>
-                      <Loader2Icon
-                        className={styles.spin}
-                        size={20}
-                        style={{ color: "var(--muted-foreground)" }}
-                      />
-                    </div>
-                  ) : null}
-                  <canvas
-                    aria-label="分享图片预览"
-                    className={styles.previewCanvas}
-                    ref={setPreviewCanvas}
-                  />
+      <DialogContent
+        aria-busy={isBusy}
+        className="flex flex-col gap-0 overflow-hidden p-0"
+        showCloseButton={false}
+        style={{
+          width: "min(960px, calc(100vw - 32px))",
+          maxWidth: "none",
+          height: "min(760px, calc(100dvh - 32px))",
+          maxHeight: "min(760px, calc(100dvh - 32px))",
+        }}
+      >
+        <DialogHeader className="shrink-0 gap-0 border-b border-border p-4">
+          <div className={styles.header}>
+            <span className={styles.headerIcon} aria-hidden="true">
+              <ImageIcon size={15} strokeWidth={1.75} />
+            </span>
+            <div className={styles.headerText}>
+              <DialogTitle className={styles.headerTitle}>
+                导出分享图片
+              </DialogTitle>
+              <DialogDescription className={styles.headerSubtitle}>
+                PNG · {activeTemplate.width}px 宽 · 高度随内容
+              </DialogDescription>
+            </div>
+            <Button
+              aria-label="关闭分享图片对话框"
+              className={styles.headerClose}
+              disabled={isBusy}
+              onClick={onClose}
+              size="icon-sm"
+              type="button"
+              variant="ghost"
+            >
+              <XIcon aria-hidden="true" />
+              <span className="sr-only">关闭分享图片对话框</span>
+            </Button>
+          </div>
+        </DialogHeader>
+        <div
+          className="grid min-h-0 flex-1"
+          style={{
+            gridTemplateColumns:
+              "var(--shard-sidebar-width) minmax(0, 1fr)",
+          }}
+        >
+          <aside
+            className="min-h-0 overflow-y-auto border-r border-border p-4"
+            style={{ width: "var(--shard-sidebar-width)" }}
+          >
+            <div className={styles.settingsPanel}>
+              <section className={styles.settingsSection}>
+                <div>
+                  <h2 className={styles.sectionTitle}>样式</h2>
+                  <p className={styles.sectionDescription}>
+                    选择分享图片的纸张与阅读氛围。
+                  </p>
                 </div>
+                <div className={styles.templateList}>
+                  {EXPORT_IMAGE_TEMPLATES.map((template) => (
+                    <button
+                      aria-label={`${template.label}，${template.description}`}
+                      aria-pressed={template.id === templateId}
+                      className={cn(
+                        styles.templateButton,
+                        template.id === templateId && styles.templateButtonActive
+                      )}
+                      key={template.id}
+                      onClick={() => setTemplateId(template.id)}
+                      type="button"
+                    >
+                      <TemplateThumbnail
+                        active={template.id === templateId}
+                        templateId={template.id}
+                      />
+                      <span className={styles.templateCopy}>
+                        <span className={styles.templateLabel}>
+                          {template.label}
+                        </span>
+                        <span className={styles.templateDescription}>
+                          {template.description}
+                        </span>
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </section>
+
+              <section className={styles.settingsSection}>
+                <div>
+                  <h2 className={styles.sectionTitle}>信息</h2>
+                  <p className={styles.sectionDescription}>
+                    控制图片顶部显示的时间信息。
+                  </p>
+                </div>
+                <div className={styles.checkboxList}>
+                  <label
+                    className="flex items-center gap-2 text-sm"
+                    htmlFor="export-show-created-date"
+                  >
+                    <Checkbox
+                      checked={showCreatedDate}
+                      id="export-show-created-date"
+                      onCheckedChange={setShowCreatedDate}
+                    />
+                    创建日期
+                  </label>
+                  <label
+                    className="flex items-center gap-2 text-sm"
+                    htmlFor="export-show-created-time"
+                  >
+                    <Checkbox
+                      checked={showCreatedTime}
+                      id="export-show-created-time"
+                      onCheckedChange={setShowCreatedTime}
+                    />
+                    创建时间
+                  </label>
+                </div>
+              </section>
+            </div>
+          </aside>
+          <main className="min-h-0 overflow-hidden">
+            <div aria-busy={isPreviewing} className={styles.previewArea}>
+              <div className={styles.previewFrame} ref={setPreviewFrame}>
+                {isPreviewing ? (
+                  <div className={styles.previewOverlay}>
+                    <Loader2Icon
+                      className={styles.spin}
+                      size={20}
+                      style={{ color: "var(--muted-foreground)" }}
+                    />
+                  </div>
+                ) : null}
+                <canvas
+                  aria-label="分享图片预览"
+                  className={styles.previewCanvas}
+                  ref={setPreviewCanvas}
+                />
               </div>
             </div>
-          </LayoutContent>
-        }
-        footer={
-          <LayoutFooter hasDivider padding={4}>
-            <HStack hAlign="between" vAlign="center">
-              <HStack gap={1}>
-                <FooterCheckbox
-                  checked={showCreatedDate}
-                  label="创建日期"
-                  onChange={setShowCreatedDate}
-                />
-                <FooterCheckbox
-                  checked={showCreatedTime}
-                  label="创建时间"
-                  onChange={setShowCreatedTime}
-                />
-              </HStack>
-              <HStack gap={2}>
-                <Button
-                  isDisabled={isBusy}
-                  label="取消"
-                  onClick={onClose}
-                  variant="secondary"
-                />
-                <Button
-                  icon={
-                    isCopying ? (
-                      <Loader2Icon className={styles.spin} />
-                    ) : undefined
-                  }
-                  isDisabled={isBusy || isPreviewing || !fragment}
-                  label={isCopying ? "复制中" : "复制图片"}
-                  onClick={() => {
-                    void handleCopy()
-                  }}
-                  variant="secondary"
-                />
-                <Button
-                  isDisabled={isBusy || isPreviewing || !fragment}
-                  label={isExporting ? "保存中" : "保存图片"}
-                  onClick={() => {
-                    void handleExport()
-                  }}
-                  variant="primary"
-                />
-              </HStack>
-            </HStack>
-          </LayoutFooter>
-        }
-      />
+          </main>
+        </div>
+        <footer className="shrink-0 border-t border-border p-4">
+          <div className="flex items-center justify-end gap-2">
+            <Button disabled={isBusy} onClick={onClose} variant="secondary">
+              取消
+            </Button>
+            <Button
+              disabled={isBusy || isPreviewing || !fragment}
+              onClick={() => {
+                void handleCopy()
+              }}
+              variant="secondary"
+            >
+              {isCopying ? (
+                <Loader2Icon aria-hidden="true" className={styles.spin} />
+              ) : (
+                <CopyIcon aria-hidden="true" />
+              )}
+              {isCopying ? "复制中" : "复制图片"}
+            </Button>
+            <Button
+              disabled={isBusy || isPreviewing || !fragment}
+              onClick={() => {
+                void handleExport()
+              }}
+              variant="default"
+            >
+              {isExporting ? (
+                <Loader2Icon aria-hidden="true" className={styles.spin} />
+              ) : (
+                <DownloadIcon aria-hidden="true" />
+              )}
+              {isExporting ? "保存中" : "保存图片"}
+            </Button>
+          </div>
+        </footer>
+      </DialogContent>
     </Dialog>
-  )
-}
-
-function FooterCheckbox({
-  checked,
-  label,
-  onChange,
-}: {
-  checked: boolean
-  label: string
-  onChange: (checked: boolean) => void
-}) {
-  return (
-    <button
-      aria-checked={checked}
-      className={styles.footerCheckbox}
-      onClick={() => onChange(!checked)}
-      role="checkbox"
-      type="button"
-    >
-      <span
-        aria-hidden="true"
-        className={cn(
-          styles.footerCheckboxBox,
-          checked && styles.footerCheckboxBoxChecked
-        )}
-      >
-        {checked ? <CheckIcon size={12} strokeWidth={2.5} /> : null}
-      </span>
-      {label}
-    </button>
   )
 }
 
@@ -576,18 +597,14 @@ function fitCanvasToContainer(
 ) {
   if (!container) return
 
-  const canvasWidth = canvas.width
-  const canvasHeight = canvas.height
+  const canvasWidth = Number(canvas.dataset.logicalWidth) || canvas.width
+  const canvasHeight = Number(canvas.dataset.logicalHeight) || canvas.height
   const availableWidth = container.clientWidth
-  const availableHeight = container.clientHeight
-  if (!canvasWidth || !canvasHeight || !availableWidth || !availableHeight) {
+  if (!canvasWidth || !canvasHeight || !availableWidth) {
     return
   }
 
-  const scale = Math.min(
-    availableWidth / canvasWidth,
-    availableHeight / canvasHeight
-  )
+  const scale = Math.min(1, availableWidth / canvasWidth)
   canvas.style.width = `${Math.round(canvasWidth * scale)}px`
   canvas.style.height = `${Math.round(canvasHeight * scale)}px`
 }

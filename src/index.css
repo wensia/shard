@@ -1,96 +1,126 @@
-@import "@astryxdesign/core/reset.css";
-@import "@astryxdesign/core/astryx.css";
-@import "@astryxdesign/theme-neutral/theme.css";
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+@import "../vendor/kiln/tokens/colors.css";
+@import "../vendor/kiln/tokens/radius.css";
+@import "../vendor/kiln/tokens/elevation.css";
+@import "../vendor/kiln/tokens/typography.css";
 @import "./styles/frontend-rules.css";
 
-/* 全局关闭 astryx 组件的键盘 focus-visible 高亮环。astryx.css 用 :not(#\#) 把这些
-   规则的优先级抬到接近 ID 选择器（但不加 !important），常规选择器覆盖不掉，只能
-   用 !important 顶。三条选择器对应 astryx 里的三种呈现方式：直接画在被聚焦元素
-   本身上 / 画在"含聚焦后代"的容器上 / 画在聚焦容器内的装饰性子元素上。 */
-:focus-visible,
-:has(:focus-visible),
-:has(:focus-visible) * {
-    outline: none !important;
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+    --font-heading: var(--font-sans);
+    --font-sans: "Noto Sans SC", -apple-system, "Helvetica Neue", Arial, "Noto Sans SC", "Hiragino Sans GB", STHeiti, "Microsoft YaHei", "Microsoft JhengHei", "Source Han Sans SC", "Noto Sans CJK SC", "Source Han Sans CN", "Source Han Sans TC", "Noto Sans CJK TC", SimSun, sans-serif;
+    --text-page-title: var(--text-page-title);
+    --text-section-title: var(--text-section-title);
+    --text-body: var(--text-body);
+    --text-meta: var(--text-meta);
+    --text-tiny: var(--text-tiny);
+    --text-data: var(--text-data);
+    --color-sidebar-ring: var(--sidebar-ring);
+    --color-sidebar-border: var(--sidebar-border);
+    --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+    --color-sidebar-accent: var(--sidebar-accent);
+    --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+    --color-sidebar-primary: var(--sidebar-primary);
+    --color-sidebar-foreground: var(--sidebar-foreground);
+    --color-sidebar: var(--sidebar);
+    --color-chart-5: var(--chart-5);
+    --color-chart-4: var(--chart-4);
+    --color-chart-3: var(--chart-3);
+    --color-chart-2: var(--chart-2);
+    --color-chart-1: var(--chart-1);
+    --color-ring: var(--ring);
+    --color-input: var(--input);
+    --color-border-visible: var(--border-visible);
+    --color-border: var(--border);
+    --color-destructive: var(--destructive);
+    --color-warning: var(--warning);
+    --color-info: var(--info);
+    --color-success: var(--success);
+    --color-accent-foreground: var(--accent-foreground);
+    --color-accent: var(--accent);
+    --color-muted-foreground: var(--muted-foreground);
+    --color-muted: var(--muted);
+    --color-secondary-foreground: var(--secondary-foreground);
+    --color-secondary: var(--secondary);
+    --color-primary-foreground: var(--primary-foreground);
+    --color-primary-subtle: var(--primary-subtle);
+    --color-primary: var(--primary);
+    --color-solid-foreground: var(--solid-foreground);
+    --color-solid: var(--solid);
+    --color-popover-foreground: var(--popover-foreground);
+    --color-popover: var(--popover);
+    --color-card-foreground: var(--card-foreground);
+    --color-card: var(--card);
+    --color-foreground: var(--foreground);
+    --color-background: var(--background);
+    --radius-sm: 2px;
+    --radius-md: var(--shard-radius-control);
+    --radius-lg: var(--shard-radius-card);
+    --radius-xl: var(--shard-radius-panel);
+    --radius-2xl: var(--shard-radius-panel);
+    --radius-3xl: var(--shard-radius-panel);
+    --radius-4xl: var(--shard-radius-panel);
+    --shadow-xs: var(--shard-shadow-xs);
+    --shadow-card: var(--shard-shadow-card);
+    --shadow-popover: var(--shard-shadow-popover);
+    --shadow-input: var(--shard-shadow-input);
+    --shadow-card-hover: var(--shard-shadow-card-hover);
 }
 
 :root {
-    --font-sans: "Noto Sans SC", -apple-system, "Helvetica Neue", Arial, "Hiragino Sans GB", STHeiti, "Microsoft YaHei", "Microsoft JhengHei", "Source Han Sans SC", "Noto Sans CJK SC", "Source Han Sans CN", "Source Han Sans TC", "Noto Sans CJK TC", SimSun, sans-serif;
-    --font-heading: var(--font-sans);
-
-    /* Shard 语义色角色：变量名不变，真值改指向 astryx neutral 主题 token。
-       astryx neutral 没有独立的 --color-info，用 --color-accent 顶上（最接近的
-       "非状态强调色"）。--solid/--solid-foreground 是旧 shadcn Button 的"墨色实心"
-       角色，Phase 3 删除 ui/button.tsx 后这两个 token 会变成未使用的遗留，先保留
-       定义避免野指针，不强行现在清理。 */
-
-    /* 可切换强调色：默认值（孔雀蓝，与升级前行为一致）。真正的切换靠下面 4 个
-       :root[data-theme="..."] 块覆盖这 7 个 token——Button primary/焦点环/选中态
-       等组件都直接消费它们，--primary/--ring/--sidebar-primary 等 Shard 语义
-       token 通过 var(--color-accent) 间接引用会自动跟随，不需要逐个改。
-       data-theme 属性由 <html> 携带，src/lib/theme.ts 负责读写。
-       --shard-primary-rgb / --shard-primary-soft-rgb 是给 rgb(var(..) / alpha)
-       写法准备的手写整数三元组——CSS 没有能从十六进制派生出这种分量三元组的函数，
-       只能每套主题各存一份，务必和同一 data-theme 块里的 --color-accent 保持同一
-       个色。soft 是往白色方向淡化约 40% 的版本，目前只有从未真正接通的 .dark 用到。 */
-    --color-accent: #2e6e79;
-    --color-accent-muted: color-mix(in srgb, var(--color-accent) 14%, white);
-    --color-text-accent: var(--color-accent);
-    --color-icon-accent: var(--color-accent);
-    --color-on-accent: #ffffff;
-    --shard-primary-rgb: 46 110 121;
-    --shard-primary-soft-rgb: 130 168 175;
-    --background: var(--color-background-body);
-    --foreground: var(--color-text-primary);
-    --card: var(--color-background-card);
-    --card-foreground: var(--color-text-primary);
-    --popover: var(--color-background-popover);
-    --popover-foreground: var(--color-text-primary);
-    --primary: var(--color-accent);
-    --primary-foreground: var(--color-on-accent);
-    --primary-subtle: var(--color-accent-muted);
-    --solid: var(--color-text-primary);
-    --solid-foreground: var(--color-on-dark);
-    --secondary: var(--color-background-surface);
-    --secondary-foreground: var(--color-text-primary);
-    --muted: var(--color-background-muted);
-    --muted-foreground: var(--color-text-secondary);
-    --accent: var(--color-accent-muted);
-    --accent-foreground: var(--color-text-accent);
-    --success: var(--color-success);
-    --info: var(--color-accent);
-    --warning: var(--color-warning);
-    --destructive: var(--color-error);
-    --border: var(--color-border);
-    --border-visible: var(--color-border-emphasized);
-    --input: var(--color-border-emphasized);
-    --ring: var(--color-accent);
-    --chart-1: var(--color-accent);
-    --chart-2: var(--color-success);
-    --chart-3: var(--color-warning);
-    --chart-4: var(--color-error);
-    --chart-5: var(--color-text-secondary);
-    --radius: var(--radius-container);
+    --background: var(--palette-canvas);
+    --foreground: var(--palette-ink);
+    --card: var(--palette-white);
+    --card-foreground: var(--palette-ink);
+    --popover: var(--palette-white);
+    --popover-foreground: var(--palette-ink);
+    --shard-accent: var(--palette-peacock);
+    --shard-accent-hover: color-mix(in srgb, var(--shard-accent), black 12%);
+    --shard-accent-soft: color-mix(in srgb, var(--shard-accent) 14%, white);
+    --shard-accent-text: var(--shard-accent);
+    --primary: var(--shard-accent);
+    --primary-foreground: var(--palette-white);
+    --primary-subtle: var(--shard-accent-soft);
+    --solid: var(--palette-ink);
+    --solid-foreground: var(--palette-white);
+    --secondary: var(--palette-surface);
+    --secondary-foreground: var(--palette-ink);
+    --muted: var(--palette-surface);
+    --muted-foreground: var(--palette-muted-ink);
+    --accent: var(--shard-accent-soft);
+    --accent-foreground: var(--shard-accent-text);
+    --success: var(--palette-teal);
+    --info: var(--shard-accent);
+    --warning: var(--palette-amber);
+    --destructive: var(--palette-clay);
+    --border: color-mix(in srgb, var(--palette-line) 45%, var(--palette-white));
+    --border-visible: var(--palette-line);
+    --input: color-mix(in srgb, var(--palette-line) 82%, var(--palette-white));
+    --ring: var(--shard-accent);
+    --chart-1: var(--shard-accent);
+    --chart-2: var(--palette-teal);
+    --chart-3: var(--palette-peacock);
+    --chart-4: var(--palette-amber);
+    --chart-5: var(--muted-foreground);
+    --radius: var(--radius-card);
     --sidebar: var(--card);
-    --sidebar-foreground: var(--foreground);
-    --sidebar-primary: var(--primary);
-    --sidebar-primary-foreground: var(--primary-foreground);
-    --sidebar-accent: var(--muted);
-    --sidebar-accent-foreground: var(--foreground);
+    --sidebar-foreground: var(--palette-ink);
+    --sidebar-primary: var(--shard-accent);
+    --sidebar-primary-foreground: var(--palette-white);
+    --sidebar-accent: color-mix(in srgb, var(--palette-surface) 70%, var(--palette-white));
+    --sidebar-accent-foreground: var(--palette-ink);
     --sidebar-border: var(--border);
-    --sidebar-ring: var(--ring);
-
-    /* Shard 自有扩展 token —— 与 astryx/Tailwind 无关，原样保留 */
-    --shard-accent: var(--primary);
-    --shard-accent-hover: color-mix(in srgb, var(--primary), black 12%);
-    --shard-accent-soft: var(--primary-subtle);
-    --shard-accent-text: var(--accent-foreground);
+    --sidebar-ring: var(--shard-accent);
     --shard-sapphire: var(--shard-accent);
     --shard-sapphire-hover: var(--shard-accent-hover);
     --shard-sapphire-soft: var(--shard-accent-soft);
     --shard-sapphire-text: var(--shard-accent-text);
     --shard-ink-rgb: 47 47 47;
-    --shard-primary-rgb: 46 110 121;
-    --shard-primary-soft-rgb: 120 180 189;
+    --shard-primary-rgb: 182 83 60;
+    --shard-primary-soft-rgb: 222 150 129;
     --shard-success: var(--success);
     --shard-success-rgb: 62 140 125;
     --shard-info: var(--info);
@@ -133,12 +163,8 @@
     --shard-sidebar-inset: var(--shard-space-4);
     --shard-content-inset: var(--shard-space-4);
     --shard-content-inset-lg: var(--shard-space-6);
-    /* Shared top datum below the macOS overlay traffic lights. Measured from
-       a real dev-window screenshot: traffic light top sits ~9.5pt below the
-       window top, button height ~12.5pt — so 9.5 + 12.5 + 9.5 (symmetric
-       bottom gap) ≈ 32px, which also happens to land exactly on the
-       --shard-space-8 grid step. Sidebar header and composer both align to
-       this line. */
+    /* Shared top datum below the macOS overlay traffic lights. Current
+       geometry is preserved from the pre-migration WKWebView baseline. */
     --shard-top-inset: 32px;
     --shard-composer-top-gap: var(--shard-top-inset);
     --shard-composer-bottom-gap: var(--shard-space-4);
@@ -174,50 +200,41 @@
     --shard-caret-color: var(--shard-sapphire);
     --shard-caret-height-ratio: 1.22;
     --shard-caret-width: 1.5px;
-
-    /* 阴影：astryx 只暴露三档（low/med/high），没有 kiln 那种 xs/card/popover/input
-       专用命名，按语义就近映射，变量名保留以免全仓改动。 */
-    --shard-shadow-xs: var(--shadow-low);
-    --shard-shadow-card: var(--shadow-low);
-    --shard-shadow-card-hover: var(--shadow-med);
-    --shard-shadow-popover: var(--shadow-high);
-    --shard-shadow-input: var(--shadow-low);
+    --shard-shadow-xs: var(--shadow-xs);
+    --shard-shadow-card: var(--shadow-card);
+    --shard-shadow-card-hover: var(--shadow-card-hover);
+    --shard-shadow-popover: var(--shadow-popover);
+    --shard-shadow-input: var(--shadow-input);
     --shard-composer-shadow: var(--shard-shadow-card);
     --shard-chip-bg: var(--muted);
     --shard-chip-fg: var(--foreground);
     --shard-chip-hover: color-mix(in srgb, var(--muted), black 6%);
 }
 
-/* 陶土红 clay */
-:root[data-theme="clay"] {
-    --color-accent: #b6533c;
+:root[data-shard-theme="clay"] {
+    --shard-accent: var(--palette-clay);
     --shard-primary-rgb: 182 83 60;
     --shard-primary-soft-rgb: 211 152 138;
 }
 
-/* 窑青绿 teal */
-:root[data-theme="teal"] {
-    --color-accent: #3e8c7d;
+:root[data-shard-theme="teal"] {
+    --shard-accent: var(--palette-teal);
     --shard-primary-rgb: 62 140 125;
     --shard-primary-soft-rgb: 139 186 177;
 }
 
-/* 孔雀蓝 peacock（默认值，与升级前行为一致） */
-:root[data-theme="peacock"] {
-    --color-accent: #2e6e79;
+:root[data-shard-theme="peacock"] {
+    --shard-accent: var(--palette-peacock);
     --shard-primary-rgb: 46 110 121;
     --shard-primary-soft-rgb: 130 168 175;
 }
 
-/* 暖琥珀 amber */
-:root[data-theme="amber"] {
-    --color-accent: #be7c32;
+:root[data-shard-theme="amber"] {
+    --shard-accent: var(--palette-amber);
     --shard-primary-rgb: 190 124 50;
     --shard-primary-soft-rgb: 216 176 132;
 }
 
-/* dark mode 全仓库未真正接通（无 ThemeProvider、无切换入口），降级为占位保留，
-   不投入精力对齐 astryx token —— 保持原有手写深色值不变。 */
 .dark {
     --background: oklch(0.145 0 0);
     --foreground: oklch(0.985 0 0);
@@ -225,9 +242,9 @@
     --card-foreground: oklch(0.985 0 0);
     --popover: oklch(0.205 0 0);
     --popover-foreground: oklch(0.985 0 0);
-    --primary: #78b4bd;
+    --primary: #de9681;
     --primary-foreground: oklch(0.145 0 0);
-    --primary-subtle: rgb(120 180 189 / var(--shard-alpha-21));
+    --primary-subtle: rgb(222 150 129 / var(--shard-alpha-21));
     --solid: oklch(0.985 0 0);
     --solid-foreground: oklch(0.205 0 0);
     --secondary: oklch(0.269 0 0);
@@ -243,7 +260,7 @@
     --border: oklch(1 0 0 / 10%);
     --border-visible: oklch(1 0 0 / 18%);
     --input: oklch(1 0 0 / 15%);
-    --ring: #78b4bd;
+    --ring: #de9681;
     --chart-1: #de9681;
     --chart-2: #3e8c7d;
     --chart-3: #2e6e79;
@@ -251,12 +268,12 @@
     --chart-5: oklch(0.708 0 0);
     --sidebar: var(--background);
     --sidebar-foreground: oklch(0.985 0 0);
-    --sidebar-primary: #78b4bd;
+    --sidebar-primary: #de9681;
     --sidebar-primary-foreground: oklch(0.145 0 0);
     --sidebar-accent: oklch(0.269 0 0);
     --sidebar-accent-foreground: oklch(0.985 0 0);
     --sidebar-border: oklch(1 0 0 / 10%);
-    --sidebar-ring: #78b4bd;
+    --sidebar-ring: #de9681;
     --shard-composer-shadow: none;
     --shard-memo-content-color: oklch(0.985 0 0);
     --shard-tag-bg: rgb(var(--shard-primary-rgb) / var(--shard-alpha-21));
@@ -276,21 +293,18 @@
 
 @layer base {
   * {
-    border-color: var(--border);
-    outline-color: color-mix(in srgb, var(--ring) 55%, transparent);
-  }
+    @apply border-border outline-ring/[var(--shard-alpha-55)];
+    }
   body {
-    background: var(--background);
-    color: var(--foreground);
-    -webkit-font-smoothing: antialiased;
-  }
+    @apply bg-background text-foreground antialiased;
+    }
   html {
-    font-family: var(--font-sans);
+    @apply font-sans antialiased;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     height: 100%;
     overflow: hidden;
-  }
+    }
   body,
   #root {
     height: 100%;

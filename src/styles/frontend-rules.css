@@ -30,17 +30,19 @@
  * - 55: secondary glyphs, close controls, and medium overlays
  * - 89: strong tinted text that should still read as color, not black
  * Use 0 and 1 only for binary visibility states such as caret animation.
+ * Values are stored as percentages so they stay valid both in
+ * `rgb(<color> / <alpha>)` and in `color-mix()` (which requires <percentage>).
  */
 
 @layer base {
   :root {
-    --shard-alpha-5: 0.05;
-    --shard-alpha-8: 0.08;
-    --shard-alpha-13: 0.13;
-    --shard-alpha-21: 0.21;
-    --shard-alpha-34: 0.34;
-    --shard-alpha-55: 0.55;
-    --shard-alpha-89: 0.89;
+    --shard-alpha-5: 5%;
+    --shard-alpha-8: 8%;
+    --shard-alpha-13: 13%;
+    --shard-alpha-21: 21%;
+    --shard-alpha-34: 34%;
+    --shard-alpha-55: 55%;
+    --shard-alpha-89: 89%;
   }
 
   textarea,
@@ -101,14 +103,15 @@
   }
 
   /*
-   * Password mask dots render with the field's font; Barlow/PingFang draw a
-   * small baseline-hugging bullet. Verdana's bullet glyph is large and
-   * vertically centered, so swap to it only once real input exists --
-   * :not(:placeholder-shown) keeps the placeholder in the app font.
+   * WKWebView can render Verdana's password glyph as a hollow square. Keep
+   * placeholders in the app font, then let the platform UI font and WebKit's
+   * native text-security glyph paint entered characters as centered discs.
    */
   input[type="password"]:not(:placeholder-shown) {
-    font-family: Verdana, var(--font-sans);
-    letter-spacing: 0.14em;
+    -webkit-text-security: disc;
+    font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+      "Segoe UI", sans-serif;
+    letter-spacing: 0;
   }
 }
 
@@ -159,38 +162,6 @@
     background: var(--shard-info);
   }
 
-  /* astryx 没有 Sheet/Drawer 组件，用 astryx 的 Dialog（原生 <dialog> 元素）打底
-     手写一个右侧滑入面板：覆盖默认居中定位，改成贴右满高，backdrop 淡入、
-     面板从右侧平移进入。仅 debt-detail-sheet.tsx 一处消费，只做右侧滑入。 */
-  .shard-sheet-panel {
-    position: fixed;
-    inset-block: 0;
-    right: 0;
-    left: auto;
-    margin: 0;
-    height: 100%;
-    max-height: 100%;
-    max-width: min(24rem, 100vw);
-    border: 0;
-    border-radius: 0;
-    box-shadow: var(--shard-shadow-popover);
-    transform: translateX(100%);
-    transition: transform 200ms ease-in-out;
-  }
-
-  .shard-sheet-panel[open] {
-    transform: translateX(0);
-  }
-
-  .shard-sheet-panel::backdrop {
-    background: rgb(0 0 0 / var(--shard-alpha-13));
-    opacity: 0;
-    transition: opacity 200ms ease-in-out;
-  }
-
-  .shard-sheet-panel[open]::backdrop {
-    opacity: 1;
-  }
 }
 
 @layer utilities {
@@ -845,7 +816,7 @@
 
   .shard-edge-action-row {
     --shard-edge-action-inset: var(--shard-space-3);
-    --shard-edge-action-size: 36px;
+    --shard-edge-action-size: var(--shard-space-8);
     min-height: calc(
       var(--shard-edge-action-size) + var(--shard-edge-action-inset) +
         var(--shard-edge-action-inset)
@@ -855,8 +826,8 @@
 
   .shard-edge-action {
     position: relative;
-    width: var(--shard-edge-action-size, 28px);
-    height: var(--shard-edge-action-size, 28px);
+    width: var(--shard-edge-action-size, var(--shard-space-8));
+    height: var(--shard-edge-action-size, var(--shard-space-8));
   }
 
   .shard-edge-action::after {
@@ -868,15 +839,6 @@
     border-radius: inherit;
     content: "";
     transform: translate(-50%, -50%);
-  }
-
-  .shard-edge-action-save {
-    width: calc(var(--shard-space-5) * 2);
-    height: calc(var(--shard-space-5) * 2);
-    border-radius: 999px;
-    box-shadow:
-      0 1px 2px rgb(17 19 21 / var(--shard-alpha-13)),
-      inset 0 1px 0 rgb(255 255 255 / var(--shard-alpha-34));
   }
 }
 

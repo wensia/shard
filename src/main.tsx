@@ -1,7 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import { Theme } from "@astryxdesign/core/theme";
-import { neutralTheme } from "@astryxdesign/theme-neutral/built";
+import { Toaster } from "@/components/ui/sonner";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import App from "./App";
 import { initAccentTheme } from "./lib/theme";
 import "./index.css";
@@ -20,7 +20,11 @@ function allowsCustomContextMenu(event: Event) {
   const target = event.target;
   return (
     target instanceof Element &&
-    Boolean(target.closest("[data-image-attachment-context-menu]"))
+    Boolean(
+      target.closest(
+        "[data-image-attachment-context-menu], [data-mind-map-context-menu]",
+      )
+    )
   );
 }
 
@@ -56,8 +60,9 @@ document.addEventListener("auxclick", suppressSecondaryPointerAction, {
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
-    <Theme theme={neutralTheme} mode="light">
+    <TooltipProvider>
       <App />
-    </Theme>
+      <Toaster />
+    </TooltipProvider>
   </React.StrictMode>,
 );

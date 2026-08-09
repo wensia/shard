@@ -1,6 +1,6 @@
 import { getTagRanges, parseMarkdownImageLine } from "@/lib/editor-format"
 import {
-  resolveFragmentImageSrc,
+  loadFragmentImageSrc,
   toDrawableImageSource,
 } from "@/lib/fragment-images"
 import type { Fragment } from "@/types"
@@ -140,6 +140,8 @@ export async function drawFragmentExportImage(
   const images = await loadImages(blocks, vaultPath)
   const logicalHeight = measureImageHeight(blocks, images, template, textStyle)
 
+  canvas.dataset.logicalWidth = String(template.width)
+  canvas.dataset.logicalHeight = String(logicalHeight)
   canvas.width = template.width * pixelRatio
   canvas.height = logicalHeight * pixelRatio
 
@@ -216,7 +218,10 @@ function readMemoTextStyle(template: ExportImageTemplate): MemoTextStyle {
   return {
     bodyColor:
       template.id === "paper"
-        ? readCssValue(root, "--shard-memo-content-color", template.text)
+        ? resolveCssColor(
+            readCssValue(root, "--shard-memo-content-color", template.text),
+            template.text
+          )
         : template.text,
     bodyFontSize,
     bodyFontWeight: parseCssNumber(
@@ -621,7 +626,7 @@ async function loadImages(blocks: ExportBlock[], vaultPath?: string) {
 
   await Promise.all(
     imageBlocks.map(async (block) => {
-      const source = resolveFragmentImageSrc(block.path, vaultPath)
+      const source = await loadFragmentImageSrc(block.path, vaultPath)
       if (!source) return
 
       let drawable = ""
@@ -759,6 +764,19 @@ function readCssValue(
 ) {
   const value = declaration.getPropertyValue(name).trim()
   return value.length > 0 ? value : fallback
+}
+
+function resolveCssColor(value: string, fallback: string) {
+  const probe = document.createElement("span")
+  probe.style.color = fallback
+  probe.style.color = value
+  probe.style.position = "fixed"
+  probe.style.pointerEvents = "none"
+  probe.style.visibility = "hidden"
+  document.body.append(probe)
+  const resolved = getComputedStyle(probe).color
+  probe.remove()
+  return resolved || fallback
 }
 
 function parseCssPx(value: string, fallback: number) {

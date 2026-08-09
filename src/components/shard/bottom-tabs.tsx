@@ -1,6 +1,6 @@
 import {
+  ArchiveIcon,
   GitBranchIcon,
-  HandCoinsIcon,
   HelpCircleIcon,
   InboxIcon,
   KeyboardIcon,
@@ -10,15 +10,23 @@ import {
   SettingsIcon,
   SparklesIcon,
   TagIcon,
-ArchiveIcon,
 } from "lucide-react"
 import { useState } from "react"
 
-import { DropdownMenu } from "@astryxdesign/core/DropdownMenu"
-import { HStack } from "@astryxdesign/core/HStack"
-import { Stack } from "@astryxdesign/core/Stack"
-import { Tooltip } from "@astryxdesign/core/Tooltip"
 import shardAppIconUrl from "@/assets/shard-app-icon.png"
+import { Button } from "@/components/ui/button"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"
 import { dailyReviewCount, insightReviewCount } from "@/lib/review-workflows"
 import { useAppVersion } from "@/lib/use-app-version"
 import type { Fragment, FragmentFilter } from "@/types"
@@ -30,7 +38,6 @@ interface BottomTabsProps {
   fragments: Fragment[]
   onFilterChange: (filter: FragmentFilter) => void
   onHelp: () => void
-  onOpenDebts: () => void
   onOpenMindMaps: () => void
   onOpenSearch: () => void
   onOpenSettings: () => void
@@ -56,7 +63,6 @@ export function BottomTabs({
   fragments,
   onFilterChange,
   onHelp,
-  onOpenDebts,
   onOpenMindMaps,
   onOpenSearch,
   onOpenSettings,
@@ -91,16 +97,22 @@ export function BottomTabs({
         paddingBottom: "var(--shard-space-3)",
       }}
     >
-      <Stack gap={2} width="100%" maxWidth={720} style={{ marginInline: "auto" }}>
-        <HStack
-          gap={3}
-          hAlign="between"
-          vAlign="center"
+      <div
+        style={{
+          display: "flex",
+          width: "100%",
+          maxWidth: 720,
+          marginInline: "auto",
+          flexDirection: "column",
+          gap: "var(--shard-space-2)",
+        }}
+      >
+        <div
           style={{ height: 28, minWidth: 0, fontSize: "var(--font-size-sm)" }}
+          className="flex items-center justify-between gap-3"
         >
-          <HStack
-            gap={2}
-            vAlign="center"
+          <div
+            className="flex items-center gap-2"
             style={{ minWidth: 0, color: "var(--sidebar-foreground)" }}
           >
             <img
@@ -122,26 +134,28 @@ export function BottomTabs({
                 v{appVersion}
               </span>
             ) : null}
-          </HStack>
+          </div>
 
-          <HStack
-            gap={2}
-            hAlign="end"
-            vAlign="center"
+          <div
+            className="flex items-center justify-end gap-2"
             style={{ minWidth: 0, color: "var(--muted-foreground)" }}
           >
-            <Tooltip
-              content={vaultPath || "Vault not loaded"}
-              placement="above"
-            >
-              <span className={`${styles.vaultPath} ${styles.truncate}`}>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <span className={`${styles.vaultPath} ${styles.truncate}`} />
+                }
+              >
                 {vaultPath || "Vault not loaded"}
-              </span>
+              </TooltipTrigger>
+              <TooltipContent side="top">
+                {vaultPath || "Vault not loaded"}
+              </TooltipContent>
             </Tooltip>
-          </HStack>
-        </HStack>
+          </div>
+        </div>
 
-        <HStack gap={2} vAlign="center">
+        <div className="flex items-center gap-2">
           <div
             style={{
               minWidth: 0,
@@ -219,61 +233,75 @@ export function BottomTabs({
             </nav>
           </div>
 
-          <DropdownMenu
-            button={{
-              icon: <MoreHorizontalIcon />,
-              isIconOnly: true,
-              label: "更多操作",
-              size: "sm",
-              variant: "ghost",
-            }}
-            isMenuOpen={isMenuOpen}
-            items={[
-              {
-                icon: <SearchIcon />,
-                label: "搜索笔记",
-                onClick: () => window.setTimeout(onOpenSearch, 0),
-              },
-              {
-                icon: <GitBranchIcon />,
-                label: "思维导图",
-                onClick: () => window.setTimeout(onOpenMindMaps, 0),
-              },
-              {
-                icon: <HandCoinsIcon />,
-                label: "债务",
-                onClick: () => window.setTimeout(onOpenDebts, 0),
-              },
-              { type: "divider" },
-              {
-                icon: <Maximize2Icon />,
-                label: "还原窗口尺寸",
-                onClick: () => window.setTimeout(onRestoreWindow, 0),
-              },
-              { type: "divider" },
-              {
-                icon: <SettingsIcon />,
-                label: "设置",
-                onClick: () => window.setTimeout(onOpenSettings, 0),
-              },
-              {
-                icon: <KeyboardIcon />,
-                label: "快捷键",
-                onClick: () => window.setTimeout(onShortcuts, 0),
-              },
-              {
-                icon: <HelpCircleIcon />,
-                label: "帮助",
-                onClick: () => window.setTimeout(onHelp, 0),
-              },
-            ]}
-            menuWidth={160}
-            onOpenChange={setIsMenuOpen}
-            placement="above"
-          />
-        </HStack>
-      </Stack>
+          <DropdownMenu open={isMenuOpen} onOpenChange={setIsMenuOpen}>
+            <DropdownMenuTrigger
+              render={
+                <Button
+                  aria-label="更多操作"
+                  data-shard-utility-menu-trigger
+                  size="icon-sm"
+                  variant="ghost"
+                />
+              }
+            >
+              <MoreHorizontalIcon aria-hidden="true" />
+              <span className="sr-only">更多操作</span>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" side="top" style={{ width: 160 }}>
+              <BottomMenuItem
+                icon={SearchIcon}
+                label="搜索笔记"
+                onSelect={onOpenSearch}
+              />
+              <BottomMenuItem
+                icon={GitBranchIcon}
+                label="思维导图"
+                onSelect={onOpenMindMaps}
+              />
+              <DropdownMenuSeparator />
+              <BottomMenuItem
+                icon={Maximize2Icon}
+                label="还原窗口尺寸"
+                onSelect={onRestoreWindow}
+              />
+              <DropdownMenuSeparator />
+              <BottomMenuItem
+                icon={SettingsIcon}
+                label="设置"
+                onSelect={onOpenSettings}
+              />
+              <BottomMenuItem
+                icon={KeyboardIcon}
+                label="快捷键"
+                onSelect={onShortcuts}
+              />
+              <BottomMenuItem
+                icon={HelpCircleIcon}
+                label="帮助"
+                onSelect={onHelp}
+              />
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      </div>
     </footer>
+  )
+}
+
+function BottomMenuItem({
+  icon: Icon,
+  label,
+  onSelect,
+}: {
+  icon: typeof SearchIcon
+  label: string
+  onSelect: () => void
+}) {
+  return (
+    <DropdownMenuItem onClick={() => window.setTimeout(onSelect, 0)}>
+      <Icon aria-hidden="true" />
+      <span>{label}</span>
+    </DropdownMenuItem>
   )
 }
 

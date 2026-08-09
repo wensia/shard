@@ -3,9 +3,6 @@
    （光标位置、滚动同步等）完全不在这里，仍然是 lib/editor-caret.ts 里的
    JS 逻辑，本文件不涉及。
    - .composerFrame 需要 :focus-within 切换描边色。
-   - .saveButton 需要 :hover / :disabled 两个交互态背景色，Button 组件
-     自身的 primary 变体样式可能和这里的自定义配色同优先级，用 !important
-     保证覆盖生效（等价于原来 Tailwind utilities 层必定覆盖组件样式的效果）。
    - .spin 补回 Tailwind animate-spin 工具类卸载后缺失的加载动画。 */
 
 .composerFrame {
@@ -22,20 +19,6 @@
 
 .composerFrame:focus-within {
   border-color: var(--shard-sapphire);
-}
-
-.saveButton {
-  background: var(--shard-sapphire) !important;
-  color: white !important;
-}
-
-.saveButton:hover:not(:disabled) {
-  background: var(--shard-sapphire-hover) !important;
-}
-
-.saveButton:disabled {
-  background: transparent !important;
-  color: var(--muted-foreground) !important;
 }
 
 @keyframes fragment-editor-spin {

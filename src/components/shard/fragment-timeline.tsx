@@ -1,11 +1,9 @@
 import { useEffect, useMemo, useRef, useState, type UIEvent } from "react"
 import { InboxIcon } from "lucide-react"
 
-import { Grid } from "@astryxdesign/core/Grid"
-import { Stack } from "@astryxdesign/core/Stack"
-
 import { FragmentCard } from "@/components/shard/fragment-card"
 import { MindMapTimelineCard } from "@/components/shard/mind-map-timeline-card"
+import { ScrollArea } from "@/components/ui/scroll-area"
 import type { Fragment, MindMapSummary } from "@/types"
 
 const WIDE_TIMELINE_QUERY = "(min-width: 96rem)"
@@ -264,10 +262,10 @@ export function FragmentTimeline({
 
   return (
     <div style={{ display: "flex", minHeight: 0, flex: 1, flexDirection: "column" }}>
-      <div
-        onScroll={handleViewportScroll}
-        ref={viewportRef}
-        style={{ minHeight: 0, flex: 1, overflowY: "auto" }}
+      <ScrollArea
+        className="min-h-0 flex-1"
+        onViewportScroll={handleViewportScroll}
+        viewportRef={viewportRef}
       >
         {isLoading ? (
           <div
@@ -284,12 +282,13 @@ export function FragmentTimeline({
             正在读取 Shard vault...
           </div>
         ) : timelineItems.length === 0 ? (
-          <Stack
-            gap={3}
-            hAlign="center"
-            height="100%"
-            style={{ textAlign: "center", color: "var(--muted-foreground)" }}
-            vAlign="center"
+          <div
+            className="flex h-full items-center justify-center gap-3"
+            style={{
+              flexDirection: "column",
+              textAlign: "center",
+              color: "var(--muted-foreground)",
+            }}
           >
             <InboxIcon size={32} />
             <div
@@ -301,20 +300,31 @@ export function FragmentTimeline({
             >
               {emptyMessage}
             </div>
-          </Stack>
+          </div>
         ) : (
           <div
             className="shard-content-inset"
             style={{ paddingBottom: "var(--shard-space-8)" }}
           >
-            <Grid
-              align="start"
+            <div
               className="shard-content-measure"
-              columns={usesWaterfallColumns ? 2 : 1}
-              gap={4}
+              style={{
+                display: "grid",
+                gridTemplateColumns: `repeat(${usesWaterfallColumns ? 2 : 1}, minmax(0, 1fr))`,
+                alignItems: "start",
+                gap: "var(--shard-space-4)",
+              }}
             >
               {timelineColumns.map((column, columnIndex) => (
-                <Stack gap={4} key={columnIndex} style={{ minWidth: 0 }}>
+                <div
+                  key={columnIndex}
+                  style={{
+                    display: "flex",
+                    minWidth: 0,
+                    flexDirection: "column",
+                    gap: "var(--shard-space-4)",
+                  }}
+                >
                   {column.map((item) =>
                     item.kind === "fragment" ? (
                       <FragmentCard
@@ -342,12 +352,12 @@ export function FragmentTimeline({
                       />
                     )
                   )}
-                </Stack>
+                </div>
               ))}
-            </Grid>
+            </div>
           </div>
         )}
-      </div>
+      </ScrollArea>
     </div>
   )
 }

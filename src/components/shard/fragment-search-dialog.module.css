@@ -1,7 +1,5 @@
-/* fragment-search-dialog.tsx 专属样式：
-   astryx Stack/HStack 覆盖不到的交互态（hover/focus-visible）和
-   "hover 或键盘选中才淡入"的 group-hover 效果需要真正的 CSS 伪类，
-   内联 style 做不到，因此单独建这个同名 CSS Module。 */
+/* fragment-search-dialog.tsx 专属样式：交互态和“hover 或键盘选中才
+   淡入”的效果需要真正的 CSS 伪类，内联 style 无法表达。 */
 
 .resultButton {
   display: grid;

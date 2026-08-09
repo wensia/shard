@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useId,
   useLayoutEffect,
@@ -13,6 +14,7 @@ import {
 } from "react"
 import { isTauri } from "@tauri-apps/api/core"
 import { Loader2Icon, SendHorizontalIcon, XIcon } from "lucide-react"
+import { toast } from "sonner"
 
 import { EditorToolbar } from "@/components/shard/editor-toolbar"
 import {
@@ -27,8 +29,7 @@ import {
   TagCompletionPopover,
   type TagSuggestion,
 } from "@/components/shard/tag-completion-popover"
-import { Button } from "@astryxdesign/core/Button"
-import { useToast } from "@astryxdesign/core/Toast"
+import { Button } from "@/components/ui/button"
 import {
   applyActiveTagCompletion,
   applyInlineFormat,
@@ -102,7 +103,6 @@ export function FragmentEditor({
   variant = "zen",
   vaultPath,
 }: FragmentEditorProps) {
-  const toast = useToast()
   const [content, setContent] = useState("")
   const [caretEpoch, setCaretEpoch] = useState(0)
   const [customCaret, setCustomCaret] = useState<EditorCaretBox | null>(null)
@@ -136,6 +136,16 @@ export function FragmentEditor({
   const isZen = variant === "zen"
   const isDraft = fragment === null && draft !== null
   const isOpen = fragment !== null || draft !== null
+
+  const syncInlineEditorHeight = useCallback(() => {
+    if (isZen) return
+
+    const textarea = textareaRef.current
+    resizeInlineEditorTextarea(textarea)
+    if (textarea) {
+      setEditorScrollTop(textarea.scrollTop)
+    }
+  }, [isZen])
 
   const rawActiveTag = useMemo(
     () => getActiveTag(content, selectionStart),
@@ -277,6 +287,29 @@ export function FragmentEditor({
       setIsEditorFocused(true)
     })
   }, [draft?.id, fragment?.id])
+
+  useLayoutEffect(() => {
+    syncInlineEditorHeight()
+  }, [content, syncInlineEditorHeight])
+
+  useEffect(() => {
+    if (isZen) return
+
+    function handleViewportResize() {
+      syncInlineEditorHeight()
+    }
+
+    window.addEventListener("resize", handleViewportResize)
+    window.visualViewport?.addEventListener("resize", handleViewportResize)
+
+    return () => {
+      window.removeEventListener("resize", handleViewportResize)
+      window.visualViewport?.removeEventListener(
+        "resize",
+        handleViewportResize
+      )
+    }
+  }, [isZen, syncInlineEditorHeight])
 
   useLayoutEffect(() => {
     const textarea = textareaRef.current
@@ -547,7 +580,7 @@ export function FragmentEditor({
   async function saveDraft(nextContent: string) {
     if (nextContent.trim().length === 0) {
       setSaveState("error")
-      toast({ body: "片段内容不能为空", type: "error" })
+      toast.error("片段内容不能为空", { duration: Infinity })
       return false
     }
 
@@ -574,10 +607,7 @@ export function FragmentEditor({
       return true
     } catch (error) {
       setSaveState("error")
-      toast({
-        body: `${isDraft ? "保存失败" : "自动保存失败"}：${getApiErrorMessage(error)}`,
-        type: "error",
-      })
+      toast.error(`${isDraft ? "保存失败" : "自动保存失败"}：${getApiErrorMessage(error)}`, { duration: Infinity })
       return false
     }
   }
@@ -649,10 +679,7 @@ export function FragmentEditor({
     if (!textarea) return
     const tags = normalizeTagList(["inbox", ...extractTags(draftContent)])
     if (fragment?.lockbox || wantsLockbox(draftContent, tags)) {
-      toast({
-        body: "密匣暂不支持图片附件：请先移除 #密匣，或在公开笔记中上传图片。",
-        type: "error",
-      })
+      toast.error("密匣暂不支持图片附件：请先移除 #密匣，或在公开笔记中上传图片。", { duration: Infinity })
       return
     }
 
@@ -674,10 +701,7 @@ export function FragmentEditor({
       })
     } catch (error) {
       URL.revokeObjectURL(previewUrl)
-      toast({
-        body: `图片上传失败：${getApiErrorMessage(error)}`,
-        type: "error",
-      })
+      toast.error(`图片上传失败：${getApiErrorMessage(error)}`, { duration: Infinity })
     }
   }
 
@@ -821,7 +845,7 @@ export function FragmentEditor({
     : {
         minHeight: 144,
         maxHeight: "min(52dvh, 520px)",
-        overflowY: "auto",
+        overflowY: "hidden",
         borderTopLeftRadius: "var(--shard-surface-radius)",
         borderTopRightRadius: "var(--shard-surface-radius)",
         borderBottomLeftRadius: 0,
@@ -863,20 +887,26 @@ export function FragmentEditor({
         <div
           aria-hidden="true"
           className="shard-editor-highlight-layer shard-memo-tags"
-          style={{
-            ...editorPadding,
-            transform: `translateY(-${editorScrollTop}px)`,
-          }}
         >
-          <FragmentContent
-            caretAligned
-            content={content}
-            highlightTags
-            onTaskToggle={toggleTask}
-            selectionEnd={isEditorFocused ? selectionEnd : undefined}
-            selectionStart={isEditorFocused ? selectionStart : undefined}
-            vaultPath={vaultPath}
-          />
+          <div
+            style={{
+              ...editorPadding,
+              transform:
+                editorScrollTop > 0
+                  ? `translateY(-${editorScrollTop}px)`
+                  : undefined,
+            }}
+          >
+            <FragmentContent
+              caretAligned
+              content={content}
+              highlightTags
+              onTaskToggle={toggleTask}
+              selectionEnd={isEditorFocused ? selectionEnd : undefined}
+              selectionStart={isEditorFocused ? selectionStart : undefined}
+              vaultPath={vaultPath}
+            />
+          </div>
         </div>
       ) : null}
       <textarea
@@ -888,6 +918,8 @@ export function FragmentEditor({
         style={{
           position: "relative",
           zIndex: 10,
+          display: "block",
+          width: "100%",
           resize: "none",
           border: "none",
           background: "transparent",
@@ -1016,14 +1048,13 @@ export function FragmentEditor({
                   {content.trim().length}
                 </span>
                 <Button
+                  disabled={saveState === "saving"}
                   style={{
                     height: 32,
                     borderRadius: "var(--shard-radius-control)",
                     paddingInline: "var(--shard-space-2)",
                     color: "var(--muted-foreground)",
                   }}
-                  isDisabled={saveState === "saving"}
-                  label="取消"
                   onMouseDown={(event) => {
                     event.preventDefault()
                     void handleClose()
@@ -1031,31 +1062,30 @@ export function FragmentEditor({
                   size="sm"
                   type="button"
                   variant="ghost"
-                />
+                >
+                  取消
+                </Button>
                 <Button
-                  className={`shard-edge-action shard-edge-action-save ${styles.saveButton}`}
-                  icon={
-                    saveState === "saving" ? (
-                      <Loader2Icon
-                        className={styles.spin}
-                        data-icon="inline-start"
-                      />
-                    ) : (
-                      <SendHorizontalIcon data-icon="inline-start" />
-                    )
-                  }
-                  isDisabled={!canSubmit}
-                  isIconOnly
-                  label={saveState === "saving" ? "保存中" : "保存修改"}
+                  aria-label={saveState === "saving" ? "保存中" : "保存修改"}
+                  className="shard-edge-action"
+                  disabled={!canSubmit}
                   onMouseDown={(event) => {
                     event.preventDefault()
                     void handleSubmit()
                   }}
-                  size="sm"
-                  tooltip={saveState === "saving" ? "保存中" : "保存修改"}
+                  size="icon-sm"
                   type="button"
-                  variant="primary"
-                />
+                  variant="default"
+                >
+                  {saveState === "saving" ? (
+                    <Loader2Icon className={styles.spin} />
+                  ) : (
+                    <SendHorizontalIcon />
+                  )}
+                  <span className="sr-only">
+                    {saveState === "saving" ? "保存中" : "保存修改"}
+                  </span>
+                </Button>
               </>
             }
           />
@@ -1130,23 +1160,23 @@ export function FragmentEditor({
                   }}
                 />
                 <Button
+                  aria-label="退出编辑"
                   className="shard-edge-action"
-                  icon={<XIcon data-icon="inline-start" />}
-                  isIconOnly
-                  label="退出编辑"
                   onMouseDown={(event) => {
                     event.preventDefault()
                     void handleClose()
                   }}
-                  size="sm"
+                  size="icon-sm"
                   style={{
                     borderRadius: "var(--shard-radius-control)",
                     color: "var(--muted-foreground)",
                   }}
-                  tooltip="退出编辑"
                   type="button"
                   variant="ghost"
-                />
+                >
+                  <XIcon />
+                  <span className="sr-only">退出编辑</span>
+                </Button>
               </>
             }
           />
@@ -1163,6 +1193,29 @@ interface PointerPoint {
 }
 
 const MAX_TAG_SUGGESTIONS = 8
+
+function resizeInlineEditorTextarea(textarea: HTMLTextAreaElement | null) {
+  if (!textarea) return
+
+  textarea.style.height = "auto"
+
+  const styles = window.getComputedStyle(textarea)
+  const minimumHeight = toPixelValue(styles.minHeight, 144)
+  const maximumHeight = toPixelValue(styles.maxHeight, 520)
+  const contentHeight = Math.ceil(textarea.scrollHeight)
+  const nextHeight = Math.min(
+    Math.max(contentHeight, minimumHeight),
+    maximumHeight
+  )
+  const isScrollable = contentHeight > nextHeight + 1
+
+  textarea.style.height = `${nextHeight}px`
+  textarea.style.overflowY = isScrollable ? "auto" : "hidden"
+
+  if (!isScrollable && textarea.scrollTop !== 0) {
+    textarea.scrollTop = 0
+  }
+}
 
 function splitContentImageAttachments(value: string) {
   const contentLines: string[] = []
@@ -1202,6 +1255,11 @@ function buildContentWithImageAttachments(
 
 function escapeMarkdownImageAlt(alt: string) {
   return alt.replace(/\\/g, "\\\\").replace(/]/g, "\\]")
+}
+
+function toPixelValue(value: string, fallback: number) {
+  const parsed = Number.parseFloat(value)
+  return Number.isFinite(parsed) ? parsed : fallback
 }
 
 function revokeEditorImagePreviewUrls(images: EditorImageAttachment[]) {

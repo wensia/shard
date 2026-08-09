@@ -3,6 +3,7 @@ import {
   FileTextIcon,
   LockKeyholeIcon,
   SearchIcon,
+  XIcon,
 } from "lucide-react"
 import {
   useDeferredValue,
@@ -13,13 +14,17 @@ import {
   type KeyboardEvent,
 } from "react"
 
-import { Dialog, DialogHeader } from "@astryxdesign/core/Dialog"
-import { HStack } from "@astryxdesign/core/HStack"
-import { Layout, LayoutContent } from "@astryxdesign/core/Layout"
-import { Stack } from "@astryxdesign/core/Stack"
-import { TextInput } from "@astryxdesign/core/TextInput"
 import { FragmentBody } from "@/components/shard/fragment-body"
 import styles from "@/components/shard/fragment-search-dialog.module.css"
+import { Button } from "@/components/ui/button"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import { Input } from "@/components/ui/input"
 import { searchFragments } from "@/lib/fragment-search"
 import { LOCKBOX_TAG } from "@/lib/lockbox"
 import { cn } from "@/lib/utils"
@@ -28,20 +33,6 @@ import type { Fragment } from "@/types"
 const MAX_RESULTS = 40
 const RECENT_COUNT = 8
 const SEARCH_RESULTS_ID = "shard-floating-search-results"
-
-// 视觉上隐藏但保留给屏幕阅读器的标题（原 Tailwind "sr-only"，
-// Tailwind 卸载后手写等价的裁剪样式）。
-const SR_ONLY_STYLE = {
-  position: "absolute",
-  width: 1,
-  height: 1,
-  padding: 0,
-  margin: -1,
-  overflow: "hidden",
-  clip: "rect(0, 0, 0, 0)",
-  whiteSpace: "nowrap",
-  borderWidth: 0,
-} as const
 
 interface FragmentSearchDialogProps {
   fragments: Fragment[]
@@ -152,123 +143,148 @@ export function FragmentSearchDialog({
 
   return (
     <Dialog
-      isOpen={open}
-      onOpenChange={onOpenChange}
-      padding={0}
-      position={{ top: "clamp(16px, 10dvh, 80px)" }}
-      width="min(720px, calc(100vw - 32px))"
+      open={open}
+      onOpenChange={(nextOpen, eventDetails) => {
+        if (
+          !nextOpen &&
+          eventDetails.reason === "escape-key" &&
+          query
+        ) {
+          clearSearch()
+          return
+        }
+        onOpenChange(nextOpen)
+      }}
     >
-      <Layout
-        header={
-          <DialogHeader
-            style={SR_ONLY_STYLE}
-            subtitle="搜索未归档笔记的正文和标签。"
-            title="搜索笔记"
-          />
-        }
-        content={
-          <LayoutContent isScrollable={false} padding={0}>
-            <div
-              style={{
-                borderBottom: "1px solid var(--border)",
-                padding: "var(--shard-space-3)",
-              }}
-            >
-              <TextInput
-                aria-controls={SEARCH_RESULTS_ID}
-                aria-expanded={items.length > 0}
-                hasClear
-                isLabelHidden
-                label="搜索笔记"
-                onChange={setQuery}
-                onKeyDown={handleKeyDown}
-                placeholder="搜索正文或标签"
-                ref={inputRef}
-                role="combobox"
-                size="lg"
-                startIcon={<SearchIcon />}
-                value={query}
-              />
-            </div>
+      <DialogContent
+        className="gap-0 overflow-hidden p-0"
+        showCloseButton={false}
+        style={{
+          top: "clamp(16px, 10dvh, 80px)",
+          width: "min(720px, calc(100vw - 32px))",
+          maxWidth: "none",
+          transform: "translate(-50%, 0)",
+        }}
+      >
+        <DialogHeader className="sr-only">
+          <DialogTitle>搜索笔记</DialogTitle>
+          <DialogDescription>搜索未归档笔记的正文和标签。</DialogDescription>
+        </DialogHeader>
+        <div
+          style={{
+            borderBottom: "1px solid var(--border)",
+            padding: "var(--shard-space-3)",
+          }}
+        >
+          <div className="relative">
+            <label className="sr-only" htmlFor="shard-fragment-search">
+              搜索笔记
+            </label>
+            <SearchIcon
+              aria-hidden="true"
+              className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
+            />
+            <Input
+              aria-controls={SEARCH_RESULTS_ID}
+              aria-expanded={items.length > 0}
+              className="h-10 pl-9 pr-9"
+              id="shard-fragment-search"
+              onChange={(event) => setQuery(event.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder="搜索正文或标签"
+              ref={inputRef}
+              role="combobox"
+              value={query}
+            />
+            {query ? (
+              <Button
+                aria-label="清空搜索"
+                className="absolute right-1 top-1/2 -translate-y-1/2"
+                onClick={clearSearch}
+                size="icon-sm"
+                type="button"
+                variant="ghost"
+              >
+                <XIcon aria-hidden="true" />
+                <span className="sr-only">清空搜索</span>
+              </Button>
+            ) : null}
+          </div>
+        </div>
 
-            <div
-              aria-busy={isSearching}
-              id={SEARCH_RESULTS_ID}
-              role="listbox"
-              style={{
-                minHeight: 260,
-                overflow: "hidden",
-                background: "var(--popover)",
-              }}
-            >
-              {fragments.length === 0 ? (
-                <SearchEmptyState message="还没有可搜索的笔记。" />
-              ) : items.length === 0 ? (
-                <SearchEmptyState message="没有匹配的笔记。" />
-              ) : (
-                <>
-                  <HStack
-                    hAlign="between"
-                    style={{
-                      height: 36,
-                      borderBottom: "1px solid var(--border)",
-                      paddingInline: "var(--shard-space-3)",
-                      fontSize: "0.75rem",
-                      fontWeight: 600,
-                      color: "var(--muted-foreground)",
-                    }}
-                    vAlign="center"
-                  >
-                    <span>{hasQuery ? "搜索结果" : "最近笔记"}</span>
-                    <span style={{ fontVariantNumeric: "tabular-nums" }}>
-                      {formatResultCount(totalResultCount)}
-                    </span>
-                  </HStack>
-                  <div
-                    style={{
-                      maxHeight: "min(58dvh, 480px)",
-                      overflowY: "auto",
-                    }}
-                  >
-                    {items.map((item, index) => (
-                      <SearchResultButton
-                        isSelected={index === selectedIndex}
-                        item={item}
-                        key={item.fragment.id}
-                        onMouseEnter={() => setSelectedIndex(index)}
-                        onOpen={handleOpenFragment}
-                        vaultPath={vaultPath}
-                      />
-                    ))}
-                  </div>
-                </>
-              )}
-            </div>
-          </LayoutContent>
-        }
-      />
+        <div
+          aria-busy={isSearching}
+          id={SEARCH_RESULTS_ID}
+          role="listbox"
+          style={{
+            minHeight: 260,
+            overflow: "hidden",
+            background: "var(--popover)",
+          }}
+        >
+          {fragments.length === 0 ? (
+            <SearchEmptyState message="还没有可搜索的笔记。" />
+          ) : items.length === 0 ? (
+            <SearchEmptyState message="没有匹配的笔记。" />
+          ) : (
+            <>
+              <div
+                className="flex items-center justify-between"
+                style={{
+                  height: 36,
+                  borderBottom: "1px solid var(--border)",
+                  paddingInline: "var(--shard-space-3)",
+                  fontSize: "0.75rem",
+                  fontWeight: 600,
+                  color: "var(--muted-foreground)",
+                }}
+              >
+                <span>{hasQuery ? "搜索结果" : "最近笔记"}</span>
+                <span style={{ fontVariantNumeric: "tabular-nums" }}>
+                  {formatResultCount(totalResultCount)}
+                </span>
+              </div>
+              <div
+                style={{
+                  maxHeight: "min(58dvh, 480px)",
+                  overflowY: "auto",
+                }}
+              >
+                {items.map((item, index) => (
+                  <SearchResultButton
+                    isSelected={index === selectedIndex}
+                    item={item}
+                    key={item.fragment.id}
+                    onMouseEnter={() => setSelectedIndex(index)}
+                    onOpen={handleOpenFragment}
+                    vaultPath={vaultPath}
+                  />
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      </DialogContent>
     </Dialog>
   )
 }
 
 function SearchEmptyState({ message }: { message: string }) {
   return (
-    <Stack
-      gap={3}
-      hAlign="center"
+    <div
+      className="flex flex-col items-center justify-center gap-3"
       style={{
         minHeight: 260,
         paddingInline: "var(--shard-space-6)",
         textAlign: "center",
         color: "var(--muted-foreground)",
       }}
-      vAlign="center"
     >
       <SearchIcon size={24} strokeWidth={1.6} />
       <p style={{ fontSize: "0.875rem", fontWeight: 600, textWrap: "balance" }}>
         {message}
       </p>
-    </Stack>
+    </div>
   )
 }
 

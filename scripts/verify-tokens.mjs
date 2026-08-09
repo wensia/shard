@@ -2,30 +2,27 @@
 /**
  * 设计 token 契约校验。
  *
- * 存在的理由：颜色/圆角/阴影这些设计值必须来自真相源（astryx 主题包 + 本项目扩展），
- * 不能靠印象编一个数值出来——这正是本仓库上一次设计系统迁移（kiln）踩过的坑
- * （散文写的阴影值和 CSS 真值不一致，只能靠肉眼发现）。
+ * 存在的理由：设计规范的散文（SKILL.md / references/*.md）只给 token 的**名字和用途**，
+ * 不给数值。一旦有人（尤其是 AI）从散文里「推导」出一个数值，就只能靠肉眼验证对不对 ——
+ * 这正是这个项目踩过的坑（--shadow-primary-focus 被推成 `0 0 0 3px`，真值是
+ * `0 0 0 1px + 0 10px 24px`；--shadow-topbar 被推成 inset，真值不是）。
  *
- * 这个脚本把「token 必须来自真相源，不能自己编」变成一条会失败的构建检查：
+ * 这个脚本把「token 必须来自 Design，不能自己编」变成一条会失败的构建检查：
  *
  *   1. 契约里有、本地没定义        → 缺 token，失败
  *   2. 本地定义了、契约里没有       → 自造 token，失败（除非登记在 knownDeviations）
- *   3. 业务代码/CSS 里出现裸 hex 颜色 → 失败（颜色必须走语义 token）
- *   4. 业务代码/CSS 里出现写死的像素高度 → 失败（高度必须由 shell/token 提供）
+ *   3. 业务代码里出现裸 hex 颜色    → 失败（颜色必须走语义 token）
+ *   4. 业务代码里出现写死的像素高度 → 失败（高度必须由 shell/token 提供，见 DataTableDock 规范）
  *
- * 契约来源：contract/tokens.json —— astryx neutral 主题的 token 全集 + 本项目在
- *          astryx 之上的扩展（--shard-* 前缀，以及 --background/--primary 等
- *          指向 astryx token 的语义色别名）。
- * astryx token 真相源：node_modules/@astryxdesign/theme-neutral/dist/theme.css
- *          （随 pnpm install 一起就位，不在本仓库保留手抄副本——那是第二个真相源，
- *          必然漂移。要升级 astryx 主题版本？改 package.json，pnpm install，
- *          然后重新生成 contract/tokens.json 里 astryx 那部分）。
+ * 本仓库把 kiln 作为 git submodule 挂在 vendor/kiln（不是 npm 包），路径因此与
+ * kiln 自带的模板（node_modules/kiln/...）不同：
+ *
+ * 契约来源：contract/tokens.json —— kiln 的 token 全集 + 本项目在 kiln 之上的扩展
+ *          （--shard-* 前缀，kiln 未覆盖的角色：卡片间距、标签配色、编辑器排版等）。
+ * kiln token 真相源：vendor/kiln/tokens/*.css —— kiln 包（github.com/wensia/kiln）。
+ *              本仓库不再保留手抄副本：那是第二个真相源，必然漂移。
+ *              要改 kiln 部分的数值？去 vendor/kiln 改，然后 git submodule update --remote。
  * shard 扩展 token 真相源：src/index.css 的 :root 块。
- *
- * 本项目已经从 Tailwind v4 + shadcn 迁移到 astryx（React + StyleX 预编译产物），
- * 不再有 Tailwind 工具类字符串可扫，所以 Tailwind 调色板类 / 出厂阴影类这两条
- * 历史检查已经退休（见文件末尾说明），改为扫描手写 CSS 文件里的裸 hex / 写死高度，
- * 以及 TSX 里用 inline style 逃逸门禁的写死高度。
  */
 
 import { readFileSync, readdirSync, statSync } from "node:fs";
@@ -36,14 +33,12 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, "..");
 const REPO = ROOT;
 
-// 契约 = astryx 主题 token 全集 + 本项目的 --shard-* 与语义色别名扩展。
+// 契约 = kiln 的 token 全集 + 本项目的 --shard-* 扩展（见 contract/tokens.json 的 _comment）。
 const CONTRACT = join(ROOT, "contract/tokens.json");
-// astryx token 真相源：已安装的 @astryxdesign/theme-neutral 包，不是本仓库的副本。
-const ASTRYX_THEME_CSS = join(
-  ROOT,
-  "node_modules/@astryxdesign/theme-neutral/dist/theme.css"
-);
-const LOCAL_CSS = join(ROOT, "src/index.css"); // ★ 全局 CSS（只会读它的 :root 块）
+// token 真相源 = kiln 包（github.com/wensia/kiln），本仓库以 git submodule 形式挂在 vendor/kiln。
+// 本地不再保留手抄的 ds-tokens.css —— 那是第二个真相源，必然漂移。
+const KILN_TOKENS = join(ROOT, "vendor/kiln/tokens");
+const LOCAL_CSS = join(ROOT, "src/index.css");  // ★ 你的全局 CSS（只会读它的 :root 块）
 const SRC = join(ROOT, "src");
 
 const failures = [];
@@ -54,20 +49,15 @@ const contract = JSON.parse(readFileSync(CONTRACT, "utf8"));
 const allowed = new Set(contract.tokens);
 const known = new Set(Object.keys(contract.knownDeviations ?? {}));
 
-let astryxThemeCss = "";
-try {
-  astryxThemeCss = readFileSync(ASTRYX_THEME_CSS, "utf8");
-} catch {
-  fail(
-    `找不到 astryx 主题 CSS：${relative(REPO, ASTRYX_THEME_CSS)} —— ` +
-      `先跑 pnpm install（@astryxdesign/theme-neutral 未安装或路径变了）。`
-  );
-}
-
 const tokensCss =
-  astryxThemeCss +
+  readdirSync(KILN_TOKENS)
+    .filter((f) => f.endsWith(".css") && f !== "index.css" && f !== "fonts.css")
+    .map((f) => readFileSync(join(KILN_TOKENS, f), "utf8"))
+    .join("\n") +
   "\n" +
-  // 本项目在 astryx 之上的扩展 —— **只取 :root 块**，不含 .dark 覆盖块。
+  // 本项目在 kiln 之上的扩展 —— **只取 :root 块**。
+  // @theme inline 里的 `--color-*` 是 Tailwind 的映射变量（把 token 变成工具类），
+  // 不是设计 token；把它们算进来会误报成一大堆「自造 token」。
   (readFileSync(LOCAL_CSS, "utf8").match(/^:root \{[\s\S]*?^\}/m)?.[0] ?? "");
 // 匹配定义 `--foo:`，不匹配引用 `var(--foo)` / `var(--foo, x)` —— 引用后面跟的是 `)` 或 `,`，不是 `:`。
 // 不要锚定行首：那样单行写法 `:root { --foo: x }` 会整个漏掉（这个洞是负向测试抓出来的）。
@@ -80,74 +70,102 @@ const defined = new Set(
 
 for (const t of allowed) {
   if (!defined.has(t)) {
-    fail(`缺少 token：${t} —— 契约里有，astryx 主题 CSS 或 src/index.css 的 :root 没定义。`);
+    fail(`缺少 token：${t} —— 契约里有，kiln 的 tokens/*.css 或 src/index.css 的 :root 没定义。`);
   }
 }
 for (const t of defined) {
   if (!allowed.has(t) && !known.has(t)) {
     fail(
       `自造 token：${t} —— 不在设计系统的合法清单里。` +
-        `不要自己编数值，要么这是 astryx 主题升级带来的新 token（补进 contract/tokens.json），` +
-        `要么是本项目的合理扩展（同样补进 contract/tokens.json 的 tokens 数组），` +
-        `或登记到 knownDeviations 并说明理由。`
+        `不要自己编数值，去 vendor/kiln 加 token（github.com/wensia/kiln），` +
+        `或作为本项目扩展登记进 contract/tokens.json 的 tokens 数组，或登记到 knownDeviations 并说明理由。`
     );
   }
 }
 
-// ── 3 & 4. 业务代码 / CSS 不得写死设计值 ────────────────────────────
-const walk = (dir, test) => {
+// ── 2b. 散文不得与 token 真值漂移 ────────────────────────────────
+// references/tokens.md 是给人和 AI 读的速查表，它**重述**了调色板的 hex 值。
+// 只要散文里有数值，它就会和 CSS 悄悄分家 —— 上游就是这么坏掉的：
+// readme.md 写画布 #F7F4F0、SKILL.md 写 #F6F3EF，而 colors.css 真值是 #FBFAF8。
+// 三套值，谁照散文实现谁错，且只能靠肉眼发现。
+// 这里把「散文 == CSS」变成一条会失败的检查。
+const SKILL_TOKENS_MD = join(ROOT, "vendor/kiln/references/tokens.md");
+try {
+  const prose = readFileSync(SKILL_TOKENS_MD, "utf8");
+  // 匹配表格行： | `--palette-clay` | `#B6533C` | …
+  for (const m of prose.matchAll(
+    /`(--[a-z0-9-]+)`[^|\n]*\|[^|\n]*?`?(#[0-9a-fA-F]{6})`?/g
+  )) {
+    const [, token, proseHex] = m;
+    const cssMatch = tokensCss.match(
+      new RegExp(`${token}:\\s*(#[0-9a-fA-F]{6})`, "i")
+    );
+    if (!cssMatch) continue; // 该 token 在 CSS 里不是字面 hex（是 color-mix / var），跳过
+    if (cssMatch[1].toLowerCase() !== proseHex.toLowerCase()) {
+      fail(
+        `散文与 token 漂移：${token} —— tokens.md 写 ${proseHex}，` +
+          `kiln 的 CSS 真值 。数值以 CSS 为准，去 kiln 修散文。`
+      );
+    }
+  }
+} catch {
+  // skill 目录不存在时不阻塞（例如浅克隆、子模块未初始化）
+}
+
+// ── 3 & 4. 业务代码不得写死设计值 ────────────────────────────────
+const walk = (dir) => {
   const out = [];
   for (const name of readdirSync(dir)) {
     const p = join(dir, name);
-    if (statSync(p).isDirectory()) out.push(...walk(p, test));
-    else if (test(p)) out.push(p);
+    if (statSync(p).isDirectory()) out.push(...walk(p));
+    else if (/\.(tsx|ts)$/.test(p)) out.push(p);
   }
   return out;
 };
 
 const HEX = /#[0-9a-fA-F]{6}\b/;
-// 写死的固定像素高度：CSS 里的 height: 580px，或 TSX inline style 里的 height: 580。
-// 只查 height，不查 min-height/max-height —— 后者是合法的约束（弹窗 max-height、
-// 滚动容器上限），规范禁止的是「用组件专属固定高度替代 shell 的高度契约」。
-const CSS_HARDCODED_HEIGHT = /(?<![a-z-])height\s*:\s*\d+px/;
-const INLINE_STYLE_HEIGHT = /style=\{\{[^}]*\bheight:\s*\d+(?!px)/;
+
+// Tailwind 调色板裸色：bg-blue-100 / text-green-700 / border-red-500…
+// 规范：「不要用 local purple、Tailwind emerald/amber/sky 状态色，或裸 hex」。
+// 状态必须走语义 token（success / info / warning / destructive），否则同一个「成功」
+// 在不同页面会长成不同的绿。设计系统自己的 token 名不带数字，不会被误伤。
+const TW_PALETTE =
+  /\b(?:bg|text|border|ring|from|via|to|decoration|outline|shadow|accent|caret|divide)-(?:slate|gray|zinc|neutral|stone|red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose)-\d{2,3}\b/;
+
+// Tailwind 出厂阴影：shadow-sm / shadow-md / shadow-lg / shadow-xl / shadow-2xl。
+// 它们是**冷调** rgba(0,0,0,·)，绕过了设计系统的暖黑阴影 token。
+// shadcn 的出厂组件几乎全带这个 —— 而它在页面上肉眼分辨不出来，
+// 必须静态拦下：阴影一律走 token（shadow-card / shadow-popover / shadow-input / shadow-xs）。
+const TW_SHADOW = /\bshadow-(?:sm|md|lg|xl|2xl)\b/;
+
+// 写死的固定像素高度：h-[580px]。
+// 只查固定高度，不查 min-h/max-h —— 后者是合法的约束（弹窗 max-h、滚动容器上限），
+// 规范禁止的是「用页面专属固定高度替代 shell 的高度契约」。
+const HARDCODED_HEIGHT = /(?<![a-z-])h-\[\d+px\]/;
 
 // 存量违规按「文件 → 各类计数」记账。新增会让计数超过基线 → 失败。
 // 用计数而不是行号：行号会随无关编辑漂移，计数不会。
 const BASELINE = join(ROOT, "design-debt.json");
 const counts = {};
 const bump = (rel, kind) => {
-  counts[rel] ??= { hex: 0, height: 0 };
+  counts[rel] ??= { hex: 0, palette: 0, shadow: 0, height: 0 };
   counts[rel][kind]++;
 };
 
-const tsFiles = walk(SRC, (p) => /\.(tsx|ts)$/.test(p));
-// CSS 文件：手写样式(frontend-rules.css 等)现在是唯一的裸色/写死高度可能出现的地方，
-// 排除 index.css —— 那是 token 定义本身（:root 块允许字面 hex/color-mix，
-// 不能被自己的裸色检查拦下）。
-const cssFiles = walk(SRC, (p) => /\.css$/.test(p) && !p.endsWith("index.css"));
-
-for (const file of tsFiles) {
+for (const file of walk(SRC)) {
   const rel = relative(REPO, file);
   const lines = readFileSync(file, "utf8").split("\n");
   lines.forEach((line, i) => {
     // 显式豁免：在元素上方写 `design-exempt: <理由>`。
-    // 往上看 6 行 —— JSX 属性列表里插不了注释，注释只能挂在开标签上方。
+    // 用于真正无法遵守规范的场景（例：跨域 iframe 的内容高度不可知，flex-1 撑不开，必须给显式高度）。
+    // 往上看 6 行 —— JSX 属性列表里插不了注释，所以注释只能挂在开标签上方，
+    // 而 className 往往落在开标签之后好几行。强制写理由，避免变成静音开关。
     if (lines.slice(Math.max(0, i - 6), i + 1).some((l) => /design-exempt/.test(l))) return;
 
     if (HEX.test(line)) bump(rel, "hex");
-    if (INLINE_STYLE_HEIGHT.test(line)) bump(rel, "height");
-  });
-}
-
-for (const file of cssFiles) {
-  const rel = relative(REPO, file);
-  const lines = readFileSync(file, "utf8").split("\n");
-  lines.forEach((line, i) => {
-    if (lines.slice(Math.max(0, i - 6), i + 1).some((l) => /design-exempt/.test(l))) return;
-
-    if (HEX.test(line)) bump(rel, "hex");
-    if (CSS_HARDCODED_HEIGHT.test(line)) bump(rel, "height");
+    if (TW_PALETTE.test(line)) bump(rel, "palette");
+    if (TW_SHADOW.test(line)) bump(rel, "shadow");
+    if (HARDCODED_HEIGHT.test(line)) bump(rel, "height");
   });
 }
 
@@ -159,15 +177,15 @@ if (updating) {
     JSON.stringify(
       {
         _comment:
-          "设计债基线：业务代码/CSS 里尚未清理的裸 hex 颜色与写死像素高度，按文件计数。" +
-          "新增违规会让 verify:tokens 失败；清理后跑 `pnpm verify:tokens -- --update-baseline` 下调基线。目标是清零。",
+          "设计债基线：业务代码里尚未清理的裸 hex 颜色与写死像素高度，按文件计数。" +
+          "新增违规会让 verify:tokens 失败；清理后跑 `npm run verify:tokens -- --update-baseline` 下调基线。目标是清零。",
         debt: counts,
       },
       null,
       2
     ) + "\n"
   );
-  const total = Object.values(counts).reduce((s, c) => s + c.hex + c.height, 0);
+  const total = Object.values(counts).reduce((s, c) => s + c.hex + c.palette + c.shadow + c.height, 0);
   console.log(`✓ 已更新设计债基线：${Object.keys(counts).length} 个文件，共 ${total} 项。`);
   process.exit(0);
 }
@@ -183,15 +201,21 @@ try {
 }
 
 const KIND_HINT = {
-  hex: "颜色必须走语义 token（var(--primary) / var(--success)…），或者用 astryx 组件自己的 variant。",
+  hex: "颜色必须走语义 token（bg-primary / text-success…）。",
+  shadow:
+    "禁止 Tailwind 出厂阴影（shadow-sm / md / lg / xl）—— 它们是冷调 rgba(0,0,0,·)，" +
+    "绕过了暖黑阴影 token。改用 shadow-card / shadow-popover / shadow-input / shadow-xs。",
+  palette:
+    "禁止 Tailwind 调色板裸色（bg-green-100 / text-red-500…）。状态走语义 token：" +
+    "success=teal、info=peacock、warning=amber、destructive=clay。",
   height:
-    "禁止组件专属的写死像素高度，高度应由父级 flex/Stack 布局或 astryx 组件自身的 size/height prop 提供。",
+    "规范禁止「页面专属的固定高度」，高度应由 shell 通过 flex-1 + min-h-0 提供（见 DataTableDock）。",
 };
-const KIND_NAME = { hex: "裸 hex 颜色", height: "写死像素高度" };
+const KIND_NAME = { hex: "裸 hex 颜色", palette: "Tailwind 裸色", shadow: "Tailwind 出厂阴影", height: "写死像素高度" };
 
 for (const [rel, c] of Object.entries(counts)) {
-  const base = baseline[rel] ?? { hex: 0, height: 0 };
-  for (const kind of ["hex", "height"]) {
+  const base = baseline[rel] ?? { hex: 0, palette: 0, shadow: 0, height: 0 };
+  for (const kind of ["hex", "palette", "shadow", "height"]) {
     const was = base[kind] ?? 0;
     if (c[kind] > was) {
       fail(
@@ -206,13 +230,13 @@ if (failures.length) {
   console.error(`\n✗ 设计契约校验未通过（${failures.length} 项）：\n`);
   for (const f of failures) console.error(`  · ${f}`);
   console.error(
-    `\n真相源：node_modules/@astryxdesign/theme-neutral/dist/theme.css（astryx 主题包） + src/index.css 的 :root 块（本项目扩展）` +
+    `\n真相源：vendor/kiln/tokens/*.css（github.com/wensia/kiln） + src/index.css 的 :root 块（本项目扩展）` +
       `\n契约：  contract/tokens.json\n`
   );
   process.exit(1);
 }
 
-const debtTotal = Object.values(counts).reduce((s, c) => s + c.hex + c.height, 0);
+const debtTotal = Object.values(counts).reduce((s, c) => s + c.hex + c.palette + c.shadow + c.height, 0);
 console.log(
   `✓ 设计契约通过：${allowed.size} 个 token 全部定义且无自造值。` +
     (debtTotal

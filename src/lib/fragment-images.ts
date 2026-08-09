@@ -1,12 +1,13 @@
 import { convertFileSrc, isTauri } from "@tauri-apps/api/core"
 import { save } from "@tauri-apps/plugin-dialog"
 
-import { saveExportedImage } from "@/lib/api"
+import { readFragmentImage, saveExportedImage } from "@/lib/api"
 
 const ABSOLUTE_WINDOWS_PATH_PATTERN = /^[a-z]:[\\/]/i
 const URL_LIKE_PATTERN = /^(?:[a-z][a-z\d+.-]*:|\/\/)/i
 export const ATTACHMENT_SCHEME = "shard-attachment:"
 const ATTACHMENT_HASH_PATTERN = /^[a-f\d]{64}$/i
+const imageSrcCache = new Map<string, string>()
 
 // 正文里的引用 → webview 能直接取的地址。
 //
@@ -24,6 +25,29 @@ export function resolveFragmentImageSrc(path: string, vaultPath?: string) {
   if (URL_LIKE_PATTERN.test(normalizedPath)) return normalizedPath
 
   return resolveFragmentImagePath(normalizedPath, vaultPath)
+}
+
+// Vault 中跟踪的 assets/... 引用不能直接作为 WKWebView 的 img src 使用。
+// 这类本地路径通过异步 Tauri command 读取；旧的内容寻址引用仍走自定义协议。
+export async function loadFragmentImageSrc(path: string, vaultPath?: string) {
+  const normalizedPath = path.trim()
+  if (!normalizedPath) return ""
+
+  const hash = attachmentHash(normalizedPath)
+  if (!hash && URL_LIKE_PATTERN.test(normalizedPath)) {
+    return resolveFragmentImageSrc(normalizedPath, vaultPath)
+  }
+
+  if (!isTauri()) {
+    return resolveFragmentImageSrc(normalizedPath, vaultPath)
+  }
+
+  const cachedSrc = imageSrcCache.get(normalizedPath)
+  if (cachedSrc) return cachedSrc
+
+  const loadedSrc = await readFragmentImage(normalizedPath)
+  imageSrcCache.set(normalizedPath, loadedSrc)
+  return loadedSrc
 }
 
 // 引用指向的附件 hash；不是附件引用时返回 null。
@@ -51,7 +75,7 @@ export async function downloadFragmentImageAttachment(
   alt: string,
   vaultPath?: string
 ) {
-  const source = resolveFragmentImageSrc(path, vaultPath)
+  const source = await loadFragmentImageSrc(path, vaultPath)
   if (!source) {
     throw new Error("图片附件无法载入。")
   }

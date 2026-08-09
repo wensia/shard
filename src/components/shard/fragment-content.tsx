@@ -14,11 +14,16 @@ import {
   Loader2Icon,
   XIcon,
 } from "lucide-react"
+import { toast } from "sonner"
 
-import { Button } from "@astryxdesign/core/Button"
-import { Dialog } from "@astryxdesign/core/Dialog"
-import { Layout, LayoutContent, LayoutFooter } from "@astryxdesign/core/Layout"
-import { useToast } from "@astryxdesign/core/Toast"
+import { Button } from "@/components/ui/button"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 
 import {
   getTagRanges,
@@ -28,7 +33,7 @@ import {
 import {
   attachmentHash,
   downloadFragmentImageAttachment,
-  resolveFragmentImageSrc,
+  loadFragmentImageSrc,
 } from "@/lib/fragment-images"
 import {
   getApiErrorMessage,
@@ -260,7 +265,6 @@ export function FragmentImageAttachment({
   vaultPath,
   wrapped = true,
 }: FragmentImageAttachmentProps) {
-  const toast = useToast()
   const label = alt ? `图片附件：${alt}` : "图片附件"
   const previewLabel = alt ? `放大查看图片附件：${alt}` : "放大查看图片附件"
   const [imageSrc, setImageSrc] = useState(src ?? "")
@@ -269,20 +273,35 @@ export function FragmentImageAttachment({
   const [isDownloading, setIsDownloading] = useState(false)
   const [isPreviewOpen, setIsPreviewOpen] = useState(false)
   const contextMenuRef = useRef<HTMLDivElement>(null)
+  const previewButtonRef = useRef<HTMLButtonElement>(null)
   const canUseFileActions =
     Boolean(imageSrc) &&
     isLocalImageAttachmentPath(path) &&
     (downloadable || Boolean(vaultPath))
 
   useEffect(() => {
+    let cancelled = false
+
     if (src) {
       setImageSrc(src)
-      return
+      return () => {
+        cancelled = true
+      }
     }
 
-    // 附件地址是同步解析出来的，没有中间的加载态可言。
     setIsPreviewOpen(false)
-    setImageSrc(resolveFragmentImageSrc(path, vaultPath))
+    setImageSrc("")
+    loadFragmentImageSrc(path, vaultPath)
+      .then((loadedSrc) => {
+        if (!cancelled) setImageSrc(loadedSrc)
+      })
+      .catch(() => {
+        if (!cancelled) setImageSrc("")
+      })
+
+    return () => {
+      cancelled = true
+    }
   }, [path, src, vaultPath])
 
   useEffect(() => {
@@ -341,12 +360,11 @@ export function FragmentImageAttachment({
     try {
       const saved = await downloadFragmentImageAttachment(path, alt, vaultPath)
       if (saved) {
-        toast({ body: "图片附件已下载" })
+        toast("图片附件已下载")
       }
     } catch (error) {
-      toast({
-        body: `图片附件下载失败：${getApiErrorMessage(error)}`,
-        type: "error",
+      toast.error(`图片附件下载失败：${getApiErrorMessage(error)}`, {
+        duration: Infinity,
       })
     } finally {
       setIsDownloading(false)
@@ -378,11 +396,10 @@ export function FragmentImageAttachment({
       }
 
       await clipboard.writeText(filePath)
-      toast({ body: `已复制图片文件路径：${filePath}` })
+      toast(`已复制图片文件路径：${filePath}`)
     } catch (error) {
-      toast({
-        body: `图片路径复制失败：${getApiErrorMessage(error)}`,
-        type: "error",
+      toast.error(`图片路径复制失败：${getApiErrorMessage(error)}`, {
+        duration: Infinity,
       })
     }
   }
@@ -390,11 +407,10 @@ export function FragmentImageAttachment({
   async function revealImageInDir() {
     try {
       await revealFragmentImageInDir(path)
-      toast({ body: "已打开图片所在目录" })
+      toast("已打开图片所在目录")
     } catch (error) {
-      toast({
-        body: `图片所在目录打开失败：${getApiErrorMessage(error)}`,
-        type: "error",
+      toast.error(`图片所在目录打开失败：${getApiErrorMessage(error)}`, {
+        duration: Infinity,
       })
     }
   }
@@ -417,6 +433,7 @@ export function FragmentImageAttachment({
             event.stopPropagation()
             setIsPreviewOpen(true)
           }}
+          ref={previewButtonRef}
           type="button"
         >
           <img
@@ -512,49 +529,42 @@ export function FragmentImageAttachment({
       {attachmentNode}
       {contextMenu}
       {imageSrc && previewable ? (
-        <Dialog
-          aria-label={label}
-          className="shard-image-preview-dialog"
-          isOpen={isPreviewOpen}
-          onOpenChange={setIsPreviewOpen}
-          padding={3}
-        >
-          <Layout
-            height="auto"
-            content={
-              <LayoutContent isScrollable={false} padding={0}>
-                <div className="shard-image-preview-frame">
-                  <img
-                    alt={label}
-                    className="shard-image-preview-image"
-                    data-source-path={path}
-                    src={imageSrc}
-                  />
-                </div>
-              </LayoutContent>
-            }
-            footer={
-              downloadable ? (
-                <LayoutFooter className="shard-image-preview-actions" padding={0}>
-                  <Button
-                    icon={
-                      isDownloading ? (
-                        <Loader2Icon className={styles.spin} />
-                      ) : (
-                        <DownloadIcon />
-                      )
-                    }
-                    isDisabled={isDownloading}
-                    label={isDownloading ? "下载中" : "下载图片"}
-                    onClick={() => {
-                      void downloadImage()
-                    }}
-                    variant="secondary"
-                  />
-                </LayoutFooter>
-              ) : undefined
-            }
-          />
+        <Dialog open={isPreviewOpen} onOpenChange={setIsPreviewOpen}>
+          <DialogContent
+            className="shard-image-preview-dialog gap-3 p-3"
+            finalFocus={previewButtonRef}
+          >
+            <DialogHeader className="sr-only">
+              <DialogTitle>{label}</DialogTitle>
+              <DialogDescription>放大查看图片附件。</DialogDescription>
+            </DialogHeader>
+            <div className="shard-image-preview-frame">
+              <img
+                alt={label}
+                className="shard-image-preview-image"
+                data-source-path={path}
+                src={imageSrc}
+              />
+            </div>
+            {downloadable ? (
+              <div className="shard-image-preview-actions flex">
+                <Button
+                  disabled={isDownloading}
+                  onClick={() => {
+                    void downloadImage()
+                  }}
+                  variant="default"
+                >
+                  {isDownloading ? (
+                    <Loader2Icon aria-hidden="true" className={styles.spin} />
+                  ) : (
+                    <DownloadIcon aria-hidden="true" />
+                  )}
+                  {isDownloading ? "下载中" : "下载图片"}
+                </Button>
+              </div>
+            ) : null}
+          </DialogContent>
         </Dialog>
       ) : null}
     </>

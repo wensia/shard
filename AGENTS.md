@@ -23,6 +23,6 @@
 
 ## Dependency Watch
 
-- `@astryxdesign/core` / `@astryxdesign/theme-neutral`（前端设计系统，当前 ^0.1.8）和 `libsql`（Rust 侧 Turso 数据库客户端，当前 0.9，来自 tursodatabase 组织）都是刚起步不久、API 仍在快速演进的库，不能当成稳定依赖装完就不再理会。
-- 涉及这两个库的任务开始前，主动查一下是否有新版本、CHANGELOG 或 breaking changes；发现上游已经补上了本项目之前绕过/手写的缺口（例如 astryx 缺失的 Sheet/Drawer、ScrollArea 等组件），评估是否值得替换掉本地的临时方案。
+- `@base-ui/react` 和 shadcn CLI 的 Base UI 组件模板仍在快速演进，升级前先核对当前文档、CHANGELOG 和 breaking changes，再同步更新仓库内拥有的 `src/components/ui/*` 源码。
+- `libsql`（Rust 侧 Turso 数据库客户端，当前 0.9，来自 tursodatabase 组织）也处于快速演进阶段；涉及它的任务开始前主动检查新版本与兼容性，不要把当前 API 当成长期稳定接口。
 - 升级前先确认改动范围（新增 API、废弃 API、语义变化），再决定是否需要连带调整 Shard 自己的适配代码。

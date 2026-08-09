@@ -1,12 +1,12 @@
 import {
   ArchiveIcon,
   GitBranchIcon,
-  HandCoinsIcon,
   HelpCircleIcon,
   InboxIcon,
   KeyboardIcon,
   Maximize2Icon,
   MoreHorizontalIcon,
+  RefreshCwIcon,
   SearchIcon,
   SettingsIcon,
   SparklesIcon,
@@ -18,27 +18,32 @@ import {
   type CSSProperties,
 } from "react"
 
-import { Button } from "@astryxdesign/core/Button"
-import { DropdownMenu } from "@astryxdesign/core/DropdownMenu"
-import { Grid } from "@astryxdesign/core/Grid"
-import { HStack } from "@astryxdesign/core/HStack"
-import { Stack } from "@astryxdesign/core/Stack"
-import { Tooltip } from "@astryxdesign/core/Tooltip"
+import { Button } from "@/components/ui/button"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"
 import shardAppIconUrl from "@/assets/shard-app-icon.png"
 import { dailyReviewCount, insightReviewCount } from "@/lib/review-workflows"
 import { useAppVersion } from "@/lib/use-app-version"
-import type { Fragment, FragmentFilter } from "@/types"
+import type { Fragment, FragmentFilter, GitInfo } from "@/types"
 
 import styles from "./sidebar-nav.module.css"
 
 interface SidebarNavProps {
   activeFilter: FragmentFilter
   fragments: Fragment[]
+  git: GitInfo | null
+  isSyncing: boolean
   mindMapCount: number
   mindMapViewActive: boolean
-  debtCount: number
-  debtViewActive: boolean
-  onOpenDebts: () => void
   onFilterChange: (filter: FragmentFilter) => void
   onHelp: () => void
   onOpenMindMaps: () => void
@@ -46,6 +51,7 @@ interface SidebarNavProps {
   onOpenSettings: () => void
   onRestoreWindow: () => void
   onShortcuts: () => void
+  onSync: () => void
 }
 
 const navItems: Array<{
@@ -77,7 +83,6 @@ const SIDEBAR_COPY: Record<
       pending: string
       synced: string
     }
-    debts: string
     help: string
     mindMaps: string
     noCommit: string
@@ -113,7 +118,6 @@ const SIDEBAR_COPY: Record<
       pending: "待同步",
       synced: "已同步",
     },
-    debts: "债务",
     help: "帮助",
     mindMaps: "思维导图",
     noCommit: "无提交",
@@ -156,7 +160,6 @@ const SIDEBAR_COPY: Record<
       pending: "Pending",
       synced: "Synced",
     },
-    debts: "Debts",
     help: "Help",
     mindMaps: "Mind maps",
     noCommit: "no commit",
@@ -217,6 +220,9 @@ const MONTH_LABELS: Record<SidebarLanguage, readonly string[]> = {
   ],
 }
 
+const TOOLTIP_DIM_COLOR =
+  "color-mix(in oklab, var(--background) calc(var(--shard-alpha-55) * 100%), transparent)"
+
 const NAV_COUNT_BADGE_STYLE: CSSProperties = {
   minWidth: 28,
   borderRadius: "var(--shard-radius-card)",
@@ -241,11 +247,10 @@ const NAV_LABEL_STYLE: CSSProperties = {
 export function SidebarNav({
   activeFilter,
   fragments,
+  git,
+  isSyncing,
   mindMapCount,
   mindMapViewActive,
-  debtCount,
-  debtViewActive,
-  onOpenDebts,
   onFilterChange,
   onHelp,
   onOpenMindMaps,
@@ -253,6 +258,7 @@ export function SidebarNav({
   onOpenSettings,
   onRestoreWindow,
   onShortcuts,
+  onSync,
 }: SidebarNavProps) {
   const [isUtilityMenuOpen, setIsUtilityMenuOpen] = useState(false)
   const appVersion = useAppVersion()
@@ -271,19 +277,31 @@ export function SidebarNav({
     walk: activeFragments.length,
     archive: archivedFragments.length,
   }
+  const gitStateLabel = getGitStateLabel(git, copy)
+  const gitSummary = `${git?.branch || "main"} · ${
+    git?.shortCommit || copy.noCommit
+  }`
+  const gitDivergence =
+    git && (git.ahead > 0 || git.behind > 0)
+      ? `↑${git.ahead} ↓${git.behind}`
+      : null
+  const isSyncDisabled =
+    isSyncing || !git || git.status === "no_git" || !git.hasRemote
   const heatmap = buildSidebarHeatmap(activeFragments, language)
 
   return (
-    <Stack
-      as="aside"
-      height="100%"
-      minHeight={0}
-      style={{ background: "var(--sidebar)" }}
+    <aside
+      style={{
+        display: "flex",
+        height: "100%",
+        minHeight: 0,
+        flexDirection: "column",
+        background: "var(--sidebar)",
+      }}
     >
-      <HStack
+      <div
         data-tauri-drag-region="true"
-        gap={3}
-        vAlign="center"
+        className="flex items-center gap-3"
         style={{
           paddingInline: "var(--shard-sidebar-inset)",
           paddingTop: "var(--shard-top-inset)",
@@ -324,7 +342,7 @@ export function SidebarNav({
             {appVersion ? `v${appVersion}` : "\u00A0"}
           </div>
         </div>
-      </HStack>
+      </div>
 
       <div
         style={{
@@ -368,14 +386,17 @@ export function SidebarNav({
           paddingBottom: "var(--shard-space-5)",
         }}
       >
-        <Grid aria-label={copy.aria.stats} columns={3} gap={2}>
+        <div
+          aria-label={copy.aria.stats}
+          className="grid grid-cols-3 gap-2"
+        >
           <SidebarStat
             label={copy.stats.fragments}
             value={activeFragments.length}
           />
           <SidebarStat label={copy.stats.tags} value={heatmap.tagCount} />
           <SidebarStat label={copy.stats.days} value={heatmap.daySpan} />
-        </Grid>
+        </div>
 
         <div
           aria-label={copy.aria.heatmap}
@@ -428,11 +449,18 @@ export function SidebarNav({
         </div>
       </div>
 
-      <Stack as="nav" aria-label={copy.aria.filters} gap={1} paddingInline={3}>
+      <nav
+        aria-label={copy.aria.filters}
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          gap: "var(--shard-space-1)",
+          paddingInline: "var(--shard-space-3)",
+        }}
+      >
         {navItems.map((item) => {
           const Icon = item.icon
-          const isActive =
-            item.id === activeFilter && !mindMapViewActive && !debtViewActive
+          const isActive = item.id === activeFilter && !mindMapViewActive
 
           return (
             <ReactFragment key={item.id}>
@@ -480,23 +508,7 @@ export function SidebarNav({
             </ReactFragment>
           )
         })}
-
-        <button
-          aria-current={debtViewActive ? "page" : undefined}
-          className={`${styles.navItem} ${
-            debtViewActive ? styles.navItemActive : styles.navItemInactive
-          }`}
-          onClick={onOpenDebts}
-          type="button"
-        >
-          {debtViewActive ? (
-            <span aria-hidden="true" className={styles.activeIndicator} />
-          ) : null}
-          <HandCoinsIcon size={16} strokeWidth={1.75} style={{ flexShrink: 0 }} />
-          <span style={NAV_LABEL_STYLE}>{copy.debts}</span>
-          <span style={NAV_COUNT_BADGE_STYLE}>{debtCount}</span>
-        </button>
-      </Stack>
+      </nav>
 
       <div
         style={{
@@ -506,50 +518,141 @@ export function SidebarNav({
           paddingBottom: "var(--shard-space-5)",
         }}
       >
-        <HStack hAlign="between" vAlign="center">
-          <Tooltip content={copy.restoreWindow} placement="above">
-            <Button
-              icon={<Maximize2Icon />}
-              isIconOnly
-              label={copy.restoreWindow}
-              onClick={onRestoreWindow}
-              size="sm"
-              variant="ghost"
-            />
+        <div className="flex items-center justify-between">
+          <Tooltip>
+            <TooltipTrigger
+              render={<div style={{ position: "relative" }} />}
+            >
+              <Button
+                aria-label={copy.syncGitVault}
+                disabled={isSyncDisabled}
+                onClick={onSync}
+                size="icon-sm"
+                variant="ghost"
+              >
+                <RefreshCwIcon
+                  aria-hidden="true"
+                  className={isSyncing ? styles.spin : undefined}
+                />
+                <span className="sr-only">{copy.syncGitVault}</span>
+              </Button>
+              <span
+                aria-hidden="true"
+                style={{
+                  position: "absolute",
+                  top: 8,
+                  right: 8,
+                  width: 6,
+                  height: 6,
+                  borderRadius: 9999,
+                  background: getGitStatusDotColor(git),
+                  boxShadow: "0 0 0 1px var(--sidebar)",
+                  pointerEvents: "none",
+                }}
+              />
+            </TooltipTrigger>
+            <TooltipContent side="top">
+              <div
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "var(--shard-space-1)",
+                }}
+              >
+                <span>
+                  {isSyncing ? copy.syncing : `Git ${gitStateLabel}`}
+                </span>
+                <span style={{ color: TOOLTIP_DIM_COLOR }}>
+                  {gitSummary}
+                  {gitDivergence ? ` · ${gitDivergence}` : ""}
+                </span>
+                {git?.error ? (
+                  <span
+                    style={{
+                      maxWidth: 256,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                      color: TOOLTIP_DIM_COLOR,
+                    }}
+                  >
+                    {git.error}
+                  </span>
+                ) : null}
+              </div>
+            </TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  aria-label={copy.restoreWindow}
+                  onClick={onRestoreWindow}
+                  size="icon-sm"
+                  variant="ghost"
+                />
+              }
+            >
+              <Maximize2Icon aria-hidden="true" />
+              <span className="sr-only">{copy.restoreWindow}</span>
+            </TooltipTrigger>
+            <TooltipContent side="top">{copy.restoreWindow}</TooltipContent>
           </Tooltip>
           <DropdownMenu
-            button={{
-              icon: <MoreHorizontalIcon />,
-              isIconOnly: true,
-              label: copy.aria.utilityMenu,
-              size: "sm",
-              variant: "ghost",
-            }}
-            isMenuOpen={isUtilityMenuOpen}
-            items={[
-              {
-                icon: <SettingsIcon />,
-                label: copy.settings,
-                onClick: () => window.setTimeout(onOpenSettings, 0),
-              },
-              {
-                icon: <KeyboardIcon />,
-                label: copy.shortcuts,
-                onClick: () => window.setTimeout(onShortcuts, 0),
-              },
-              {
-                icon: <HelpCircleIcon />,
-                label: copy.help,
-                onClick: () => window.setTimeout(onHelp, 0),
-              },
-            ]}
-            menuWidth={160}
+            open={isUtilityMenuOpen}
             onOpenChange={setIsUtilityMenuOpen}
-            placement="above"
-          />
-        </HStack>
+          >
+            <DropdownMenuTrigger
+              render={
+                <Button
+                  aria-label={copy.aria.utilityMenu}
+                  data-shard-utility-menu-trigger
+                  size="icon-sm"
+                  variant="ghost"
+                />
+              }
+            >
+              <MoreHorizontalIcon aria-hidden="true" />
+              <span className="sr-only">{copy.aria.utilityMenu}</span>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" side="top" style={{ width: 160 }}>
+              <SidebarMenuItem
+                icon={SettingsIcon}
+                label={copy.settings}
+                onSelect={onOpenSettings}
+              />
+              <SidebarMenuItem
+                icon={KeyboardIcon}
+                label={copy.shortcuts}
+                onSelect={onShortcuts}
+              />
+              <SidebarMenuItem
+                icon={HelpCircleIcon}
+                label={copy.help}
+                onSelect={onHelp}
+              />
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
       </div>
-    </Stack>
+    </aside>
+  )
+}
+
+function SidebarMenuItem({
+  icon: Icon,
+  label,
+  onSelect,
+}: {
+  icon: typeof SettingsIcon
+  label: string
+  onSelect: () => void
+}) {
+  return (
+    <DropdownMenuItem onClick={() => window.setTimeout(onSelect, 0)}>
+      <Icon aria-hidden="true" />
+      <span>{label}</span>
+    </DropdownMenuItem>
   )
 }
 
@@ -562,6 +665,43 @@ function getSidebarLanguage(): SidebarLanguage {
   return preferredLanguage.toLowerCase().startsWith("zh") ? "zh" : "en"
 }
 
+function getGitStateLabel(
+  git: GitInfo | null,
+  copy: (typeof SIDEBAR_COPY)[SidebarLanguage]
+) {
+  if (!git) return copy.gitState.noVault
+  if (git.status === "no_git") return copy.gitState.noGit
+  if (git.status === "error") return copy.gitState.error
+  if (!git.hasRemote) return copy.gitState.noRemote
+  if (
+    git.status === "dirty" ||
+    git.status === "syncing" ||
+    git.ahead > 0 ||
+    git.behind > 0
+  ) {
+    return copy.gitState.pending
+  }
+  return copy.gitState.synced
+}
+
+function getGitStatusDotColor(git: GitInfo | null) {
+  if (git?.status === "error") return "var(--shard-danger)"
+  if (
+    git &&
+    (git.status === "dirty" ||
+      git.status === "syncing" ||
+      git.ahead > 0 ||
+      git.behind > 0 ||
+      !git.hasRemote)
+  ) {
+    return "var(--shard-warning)"
+  }
+  if (git?.status === "ready" && git.hasRemote) {
+    return "var(--shard-success)"
+  }
+  return "color-mix(in oklab, var(--muted-foreground) calc(var(--shard-alpha-55) * 100%), transparent)"
+}
+
 interface SidebarStatProps {
   label: string
   value: number
@@ -569,10 +709,13 @@ interface SidebarStatProps {
 
 function SidebarStat({ label, value }: SidebarStatProps) {
   return (
-    <Stack
-      paddingInline={1}
-      paddingBlock={2}
-      style={{ minWidth: 0, textAlign: "center" }}
+    <div
+      style={{
+        minWidth: 0,
+        paddingInline: "var(--shard-space-1)",
+        paddingBlock: "var(--shard-space-2)",
+        textAlign: "center",
+      }}
     >
       <div
         style={{
@@ -596,7 +739,7 @@ function SidebarStat({ label, value }: SidebarStatProps) {
       >
         {label}
       </div>
-    </Stack>
+    </div>
   )
 }
 

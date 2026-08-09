@@ -30,7 +30,7 @@ export function getEditorCaretBox(
   textarea: HTMLTextAreaElement,
   frame: HTMLElement,
   selectionStart: number
-): EditorCaretBox {
+): EditorCaretBox | null {
   const styles = window.getComputedStyle(textarea)
   const fontSize = toPixelValue(styles.fontSize, 14)
   const heightRatio = toPixelValue(
@@ -43,11 +43,13 @@ export function getEditorCaretBox(
   if (rendered && rendered.height >= MIN_GLYPH_RECT_HEIGHT) {
     const frameRect = frame.getBoundingClientRect()
     const height = Math.min(caretHeight, rendered.height)
-    return {
+    const caret = {
       height,
       left: rendered.left - frameRect.left,
       top: rendered.top - frameRect.top + (rendered.height - height) / 2,
     }
+
+    return isCaretInsideTextarea(textarea, frameRect, caret) ? caret : null
   }
 
   const mirrored = getTextareaCaretBox(textarea, selectionStart)
@@ -56,11 +58,35 @@ export function getEditorCaretBox(
       ? mirrored.glyphHeight
       : mirrored.lineHeight
   const height = Math.min(caretHeight, glyphHeight)
-  return {
+  const caret = {
     height,
     left: mirrored.left,
     top: mirrored.lineTop + (glyphHeight - height) / 2,
   }
+
+  return isCaretInsideTextarea(
+    textarea,
+    frame.getBoundingClientRect(),
+    caret
+  )
+    ? caret
+    : null
+}
+
+function isCaretInsideTextarea(
+  textarea: HTMLTextAreaElement,
+  frameRect: DOMRect,
+  caret: EditorCaretBox
+) {
+  const textareaRect = textarea.getBoundingClientRect()
+  const caretTop = frameRect.top + caret.top
+  const caretBottom = caretTop + caret.height
+  const boundaryTolerance = 0.5
+
+  return (
+    caretTop >= textareaRect.top - boundaryTolerance &&
+    caretBottom <= textareaRect.bottom + boundaryTolerance
+  )
 }
 
 function getRenderedCaretRect(

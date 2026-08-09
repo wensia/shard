@@ -1,7 +1,5 @@
 import { LockKeyholeIcon, TagIcon } from "lucide-react"
 
-import { HStack } from "@astryxdesign/core/HStack"
-import { Stack } from "@astryxdesign/core/Stack"
 import type { LockboxState } from "@/types"
 
 export interface TaggedSummary {
@@ -38,16 +36,24 @@ export function TaggedPanel({
         paddingTop: "var(--shard-top-inset)",
       }}
     >
-      <Stack className="shard-content-measure" gap={3}>
-        <HStack
-          gap={2}
+      <div
+        className="shard-content-measure"
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          gap: "var(--shard-space-3)",
+        }}
+      >
+        <div
           style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "var(--shard-space-2)",
             height: "var(--shard-chip-height)",
             fontSize: "0.75rem",
             fontWeight: 500,
             color: "var(--muted-foreground)",
           }}
-          vAlign="center"
         >
           <TagIcon size={14} strokeWidth={1.75} style={{ flexShrink: 0 }} />
           <span style={{ fontVariantNumeric: "tabular-nums" }}>
@@ -57,7 +63,7 @@ export function TaggedPanel({
           <span style={{ fontVariantNumeric: "tabular-nums" }}>
             {totalCount} 条
           </span>
-        </HStack>
+        </div>
 
         <div
           className="shard-tag-filters"
@@ -112,7 +118,7 @@ export function TaggedPanel({
             />
           ))}
         </div>
-      </Stack>
+      </div>
     </div>
   )
 }

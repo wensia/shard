@@ -9,15 +9,19 @@ import {
   PinOffIcon,
   Share2Icon,
 } from "lucide-react"
-
-import { DropdownMenu, DropdownMenuItem } from "@astryxdesign/core/DropdownMenu"
-import { HStack } from "@astryxdesign/core/HStack"
-import { Stack } from "@astryxdesign/core/Stack"
+import { useState, type ReactNode } from "react"
 
 import { FragmentEditor } from "@/components/shard/fragment-editor"
 import { FragmentBody } from "@/components/shard/fragment-body"
 import { ShardZenIcon } from "@/components/shard/shard-zen-icon"
 import { TagBadge } from "@/components/shard/tag-badge"
+import { Button } from "@/components/ui/button"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { cn } from "@/lib/utils"
 import type { Fragment } from "@/types"
 
@@ -54,9 +58,15 @@ export function FragmentCard({
   onToggleTask,
   vaultPath,
 }: FragmentCardProps) {
+  const [isMenuOpen, setIsMenuOpen] = useState(false)
   const createdTime = formatCreatedTime(fragment.createdAt)
   const displayContent = fragment.content.trimEnd()
   const displayTags = fragment.tags.filter((tag) => tag !== "inbox")
+
+  function openNextSurface(action: () => void) {
+    setIsMenuOpen(false)
+    window.setTimeout(action, 0)
+  }
 
   if (isEditing && onSave) {
     return (
@@ -78,11 +88,12 @@ export function FragmentCard({
   }
 
   return (
-    <Stack
-      as="article"
+    <article
       className={cn(isHighlighted && "shard-fragment-card-highlight")}
       data-shard-fragment-id={fragment.id}
       style={{
+        display: "flex",
+        flexDirection: "column",
         borderRadius: "var(--shard-surface-radius)",
         background: "var(--card)",
         paddingInline: "var(--shard-card-padding-x)",
@@ -90,7 +101,7 @@ export function FragmentCard({
         paddingBottom: "var(--shard-card-padding-bottom)",
       }}
     >
-      <HStack gap={4} vAlign="start">
+      <div className="flex items-start gap-4">
         <div style={{ minWidth: 0, flex: "1 1 0%" }}>
           <time
             className="shard-memo-meta"
@@ -107,11 +118,14 @@ export function FragmentCard({
           fragment.lockbox ||
           fragment.conflictOf ||
           displayTags.length > 0 ? (
-            <HStack
+            <div
               className="shard-card-tags"
-              gap={2}
-              style={{ marginBottom: "var(--shard-space-3)" }}
-              wrap="wrap"
+              style={{
+                display: "flex",
+                flexWrap: "wrap",
+                gap: "var(--shard-space-2)",
+                marginBottom: "var(--shard-space-3)",
+              }}
             >
               {fragment.pinned ? (
                 <span
@@ -146,7 +160,7 @@ export function FragmentCard({
               {displayTags.map((tag) => (
                 <TagBadge key={tag} tag={tag} />
               ))}
-            </HStack>
+            </div>
           ) : null}
           <FragmentBody
             content={displayContent}
@@ -160,57 +174,110 @@ export function FragmentCard({
         </div>
 
         <div style={{ display: "flex", flexShrink: 0, alignItems: "center" }}>
-          <DropdownMenu
-            button={{
-              icon: <MoreHorizontalIcon />,
-              isIconOnly: true,
-              label: "片段操作",
-              size: "sm",
-              variant: "ghost",
-            }}
-          >
-            <DropdownMenuItem
-              icon={PencilLineIcon}
-              label="编辑"
-              onClick={() => onEdit?.(fragment)}
-            />
-            {onOpenZen ? (
-              <DropdownMenuItem
-                icon={<ShardZenIcon />}
-                label="禅模式"
-                onClick={() => onOpenZen(fragment)}
+          <DropdownMenu open={isMenuOpen} onOpenChange={setIsMenuOpen}>
+            <DropdownMenuTrigger
+              render={
+                <Button
+                  aria-label="片段操作"
+                  size="icon-sm"
+                  variant="ghost"
+                />
+              }
+            >
+              <MoreHorizontalIcon aria-hidden="true" />
+              <span className="sr-only">片段操作</span>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent
+              align="end"
+              className="w-fit min-w-0 p-1"
+            >
+              <CardMenuItem
+                icon={<PencilLineIcon aria-hidden="true" />}
+                label="编辑"
+                onSelect={() =>
+                  openNextSurface(() => onEdit?.(fragment))
+                }
               />
-            ) : null}
-            {onPin ? (
-              <DropdownMenuItem
-                icon={fragment.pinned ? PinOffIcon : PinIcon}
-                isDisabled={fragment.archived}
-                label={fragment.pinned ? "取消置顶" : "置顶"}
-                onClick={() => onPin(fragment)}
+              {onOpenZen ? (
+                <CardMenuItem
+                  icon={<ShardZenIcon aria-hidden="true" />}
+                  label="禅模式"
+                  onSelect={() =>
+                    openNextSurface(() => onOpenZen(fragment))
+                  }
+                />
+              ) : null}
+              {onPin ? (
+                <CardMenuItem
+                  disabled={fragment.archived}
+                  icon={
+                    fragment.pinned ? (
+                      <PinOffIcon aria-hidden="true" />
+                    ) : (
+                      <PinIcon aria-hidden="true" />
+                    )
+                  }
+                  label={fragment.pinned ? "取消置顶" : "置顶"}
+                  onSelect={() => onPin(fragment)}
+                />
+              ) : null}
+              <CardMenuItem
+                icon={<Share2Icon aria-hidden="true" />}
+                label="分享"
+                onSelect={() =>
+                  openNextSurface(() => onExportImage?.(fragment))
+                }
               />
-            ) : null}
-            <DropdownMenuItem
-              icon={Share2Icon}
-              label="分享"
-              onClick={() => onExportImage?.(fragment)}
-            />
-            {!fragment.lockbox ? (
-              <DropdownMenuItem
-                icon={LockKeyholeIcon}
-                isDisabled={fragment.archived}
-                label="移入密匣"
-                onClick={() => onMoveToLockbox?.(fragment)}
+              {!fragment.lockbox ? (
+                <CardMenuItem
+                  disabled={fragment.archived}
+                  icon={<LockKeyholeIcon aria-hidden="true" />}
+                  label="移入密匣"
+                  onSelect={() =>
+                    openNextSurface(() => onMoveToLockbox?.(fragment))
+                  }
+                />
+              ) : null}
+              <CardMenuItem
+                icon={
+                  fragment.archived ? (
+                    <ArchiveRestoreIcon aria-hidden="true" />
+                  ) : (
+                    <ArchiveIcon aria-hidden="true" />
+                  )
+                }
+                label={fragment.archived ? "移回收件箱" : "归档"}
+                onSelect={() => onArchive?.(fragment)}
               />
-            ) : null}
-            <DropdownMenuItem
-              icon={fragment.archived ? ArchiveRestoreIcon : ArchiveIcon}
-              label={fragment.archived ? "移回收件箱" : "归档"}
-              onClick={() => onArchive?.(fragment)}
-            />
+            </DropdownMenuContent>
           </DropdownMenu>
         </div>
-      </HStack>
-    </Stack>
+      </div>
+    </article>
+  )
+}
+
+function CardMenuItem({
+  disabled = false,
+  icon,
+  label,
+  onSelect,
+}: {
+  disabled?: boolean
+  icon: ReactNode
+  label: string
+  onSelect: () => void
+}) {
+  return (
+    <DropdownMenuItem
+      className="h-8 gap-2 px-2 text-[13px] font-medium"
+      disabled={disabled}
+      onClick={onSelect}
+      style={{ display: "grid", gridTemplateColumns: "14px max-content" }}
+    >
+      <span className="[&>svg]:size-3.5 [&>svg]:stroke-[1.65]">{icon}</span>
+      <span>{label}</span>
+    </DropdownMenuItem>
   )
 }
 

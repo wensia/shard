@@ -11,9 +11,7 @@ import {
   UnderlineIcon,
 } from "lucide-react"
 
-import { Button } from "@astryxdesign/core/Button"
-import { Divider } from "@astryxdesign/core/Divider"
-import { HStack } from "@astryxdesign/core/HStack"
+import { Button } from "@/components/ui/button"
 import { ShardZenIcon } from "@/components/shard/shard-zen-icon"
 import type { InlineFormat, LineFormat } from "@/lib/editor-format"
 
@@ -49,7 +47,15 @@ export function EditorToolbar({
   }
 
   return (
-    <HStack hAlign="between" vAlign="center" gap={3} style={{ minWidth: 0 }}>
+    <div
+      style={{
+        display: "flex",
+        minWidth: 0,
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: "var(--shard-space-3)",
+      }}
+    >
       <input
         accept="image/*"
         onChange={handleFileChange}
@@ -58,7 +64,15 @@ export function EditorToolbar({
         type="file"
       />
 
-      <HStack gap={1} vAlign="center" wrap="wrap" style={{ minWidth: 0 }}>
+      <div
+        style={{
+          display: "flex",
+          minWidth: 0,
+          alignItems: "center",
+          flexWrap: "wrap",
+          gap: "var(--shard-space-1)",
+        }}
+      >
         <ToolbarButton
           disabled={disabled}
           icon={<ImageIcon />}
@@ -126,14 +140,21 @@ export function EditorToolbar({
             />
           </>
         ) : null}
-      </HStack>
+      </div>
 
       {trailing ? (
-        <HStack style={{ flexShrink: 0 }} vAlign="center">
+        <div
+          style={{
+            display: "flex",
+            flexShrink: 0,
+            alignItems: "center",
+            gap: "var(--shard-space-2)",
+          }}
+        >
           {trailing}
-        </HStack>
+        </div>
       ) : null}
-    </HStack>
+    </div>
   )
 }
 
@@ -147,29 +168,36 @@ interface ToolbarButtonProps {
 function ToolbarButton({ disabled, icon, label, onClick }: ToolbarButtonProps) {
   return (
     <Button
+      aria-label={label}
       className="shard-edge-action"
-      icon={icon}
-      isDisabled={disabled}
-      isIconOnly
-      label={label}
+      disabled={disabled}
       onMouseDown={(event) => {
         event.preventDefault()
         onClick()
       }}
-      size="sm"
+      size="icon-sm"
       style={{ borderRadius: "var(--shard-radius-control)", color: "var(--muted-foreground)" }}
-      tooltip={label}
       type="button"
       variant="ghost"
-    />
+    >
+      {icon}
+      <span className="sr-only">{label}</span>
+    </Button>
   )
 }
 
 function ToolbarDivider() {
   return (
-    <Divider
-      orientation="vertical"
-      style={{ marginInline: "var(--shard-space-1)" }}
+    <span
+      aria-orientation="vertical"
+      role="separator"
+      style={{
+        flexShrink: 0,
+        height: 20,
+        width: 1,
+        marginInline: "var(--shard-space-1)",
+        background: "var(--border)",
+      }}
     />
   )
 }

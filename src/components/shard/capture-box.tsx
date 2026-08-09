@@ -10,6 +10,7 @@ import {
   type KeyboardEvent,
 } from "react"
 import { Loader2Icon, SendHorizontalIcon } from "lucide-react"
+import { toast } from "sonner"
 
 import { EditorToolbar } from "@/components/shard/editor-toolbar"
 import {
@@ -24,9 +25,7 @@ import {
   TagCompletionPopover,
   type TagSuggestion,
 } from "@/components/shard/tag-completion-popover"
-import { Button } from "@astryxdesign/core/Button"
-import { HStack } from "@astryxdesign/core/HStack"
-import { useToast } from "@astryxdesign/core/Toast"
+import { Button } from "@/components/ui/button"
 import { getClipboardImageFiles } from "@/lib/clipboard-images"
 import {
   applyActiveTagCompletion,
@@ -80,7 +79,6 @@ export function CaptureBox({
   onCreate,
   onOpenZen,
 }: CaptureBoxProps) {
-  const toast = useToast()
   const [content, setContent] = useState("")
   const [caretEpoch, setCaretEpoch] = useState(0)
   const [customCaret, setCustomCaret] = useState<EditorCaretBox | null>(null)
@@ -269,10 +267,7 @@ export function CaptureBox({
 
     const draftTags = normalizeTagList(["inbox", ...extractTags(content)])
     if (wantsLockbox(content, draftTags) && pendingImages.length > 0) {
-      toast({
-        body: "密匣暂不支持图片附件：请先移除图片，再保存到密匣，避免附件写入公开 assets 目录。",
-        type: "error",
-      })
+      toast.error("密匣暂不支持图片附件：请先移除图片，再保存到密匣，避免附件写入公开 assets 目录。", { duration: Infinity })
       setIsEditorExpanded(true)
       return
     }
@@ -282,10 +277,7 @@ export function CaptureBox({
       for (const image of pendingImages) {
         const path = await saveFragmentImage(image.fileName, image.bytes).catch(
           (error) => {
-            toast({
-              body: `图片保存失败：${getApiErrorMessage(error)}`,
-              type: "error",
-            })
+            toast.error(`图片保存失败：${getApiErrorMessage(error)}`, { duration: Infinity })
             throw error
           }
         )
@@ -373,10 +365,7 @@ export function CaptureBox({
     if (!onOpenZen) return
 
     if (pendingImages.length > 0) {
-      toast({
-        body: "带图片的草稿暂不能切换到禅模式：请先保存当前片段，或移除图片后再进入禅模式。",
-        type: "error",
-      })
+      toast.error("带图片的草稿暂不能切换到禅模式：请先保存当前片段，或移除图片后再进入禅模式。", { duration: Infinity })
       return
     }
 
@@ -417,10 +406,7 @@ export function CaptureBox({
         textarea.focus()
       })
     } catch (error) {
-      toast({
-        body: `图片上传失败：${getApiErrorMessage(error)}`,
-        type: "error",
-      })
+      toast.error(`图片上传失败：${getApiErrorMessage(error)}`, { duration: Infinity })
       URL.revokeObjectURL(previewUrl)
     }
   }
@@ -825,39 +811,36 @@ export function CaptureBox({
             onOpenZen={onOpenZen ? openZenEditor : undefined}
             trailing={
               <Button
-                className={`shard-edge-action shard-edge-action-save ${
-                  styles.saveButton
-                } ${isCreating ? "" : styles.saveButtonIdle}`}
-                icon={
-                  isCreating ? (
-                    <Loader2Icon
-                      className={styles.spin}
-                      data-icon="inline-start"
-                    />
-                  ) : (
-                    <SendHorizontalIcon data-icon="inline-start" />
-                  )
-                }
-                isDisabled={!canSubmit}
-                isIconOnly
-                label={isCreating ? "保存中" : "保存片段"}
+                aria-label={isCreating ? "保存中" : "保存片段"}
+                className="shard-edge-action"
+                disabled={!canSubmit}
                 onClick={() => void submit()}
-                size="sm"
+                size="icon-sm"
                 type="button"
                 variant="primary"
-              />
+              >
+                {isCreating ? (
+                  <Loader2Icon className={styles.spin} />
+                ) : (
+                  <SendHorizontalIcon />
+                )}
+                <span className="sr-only">
+                  {isCreating ? "保存中" : "保存片段"}
+                </span>
+              </Button>
             }
           />
         </div>
       </div>
       {isCreating ? (
-        <HStack
-          gap={1.5}
-          vAlign="center"
+        <div
           style={{
+            display: "flex",
             position: "absolute",
             top: "var(--shard-space-4)",
             right: "var(--shard-space-4)",
+            alignItems: "center",
+            gap: "var(--shard-space-micro)",
             pointerEvents: "none",
             fontSize: 12,
             fontWeight: 400,
@@ -866,7 +849,7 @@ export function CaptureBox({
         >
           <Loader2Icon className={styles.spin} size={14} />
           <span>保存中</span>
-        </HStack>
+        </div>
       ) : null}
     </div>
   )

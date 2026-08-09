@@ -37,7 +37,7 @@ export function getStoredAccentTheme(): AccentTheme {
 }
 
 function setDomTheme(theme: AccentTheme): void {
-  document.documentElement.setAttribute("data-theme", theme)
+  document.documentElement.setAttribute("data-shard-theme", theme)
 }
 
 /** 切换配色：立即生效并持久化，供设置面板里的色板按钮调用。 */
@@ -50,7 +50,7 @@ export function applyAccentTheme(theme: AccentTheme): void {
   }
 }
 
-/** 启动时调用一次：把上次持久化的配色应用到 <html data-theme>。 */
+/** 启动时调用一次：把上次持久化的配色应用到 <html data-shard-theme>。 */
 export function initAccentTheme(): void {
   setDomTheme(getStoredAccentTheme())
 }

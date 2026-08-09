@@ -1,13 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { LockKeyholeIcon, TagIcon } from "lucide-react"
-import { HStack } from "@astryxdesign/core/HStack"
-import { Stack } from "@astryxdesign/core/Stack"
-import { useToast } from "@astryxdesign/core/Toast"
+import { toast } from "sonner"
 
 import styles from "./App.module.css"
 import { BottomTabs } from "@/components/shard/bottom-tabs"
 import { CaptureBox } from "@/components/shard/capture-box"
-import { DebtWorkspace } from "@/components/shard/debt-workspace"
 import { FragmentEditor } from "@/components/shard/fragment-editor"
 import { FragmentImageExporter } from "@/components/shard/fragment-image-exporter"
 import { FragmentSearchDialog } from "@/components/shard/fragment-search-dialog"
@@ -31,17 +28,21 @@ import {
   saveAppSettings,
   type AppSettings,
 } from "@/lib/app-settings"
-import { Button } from "@astryxdesign/core/Button"
-import { Dialog, DialogHeader } from "@astryxdesign/core/Dialog"
-import { Layout, LayoutFooter } from "@astryxdesign/core/Layout"
-import { ToastViewport } from "@astryxdesign/core/Toast"
+import { Button } from "@/components/ui/button"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import {
   setFragmentArchived,
   changeLockboxPassword,
   createFragment,
   DESKTOP_RUNTIME_MESSAGE,
   getApiErrorMessage,
-  listDebts,
   listFragments,
   listMindMaps,
   lockLockbox,
@@ -50,6 +51,7 @@ import {
   restoreWindowFrame,
   resetLockboxPassword,
   setupLockbox,
+  syncVault,
   unlockLockbox,
   updateFragment,
 } from "@/lib/api"
@@ -62,9 +64,9 @@ import {
   wantsLockbox,
 } from "@/lib/lockbox"
 import type {
-  Debt,
   Fragment,
   FragmentFilter,
+  GitInfo,
   LockboxState,
   MindMapSummary,
   VaultState,
@@ -79,12 +81,13 @@ interface ZenDraft {
 }
 
 function App() {
-  const toast = useToast()
   const [fragments, setFragments] = useState<Fragment[]>([])
+  const [git, setGit] = useState<GitInfo | null>(null)
   const [vaultPath, setVaultPath] = useState("")
   const [filter, setFilter] = useState<FragmentFilter>("inbox")
   const [isLoading, setIsLoading] = useState(true)
   const [isCreating, setIsCreating] = useState(false)
+  const [isSyncing, setIsSyncing] = useState(false)
   const [lockbox, setLockbox] = useState<LockboxState | null>(null)
   const [lockboxDialogMode, setLockboxDialogMode] =
     useState<LockboxDialogMode | null>(null)
@@ -112,43 +115,57 @@ function App() {
   const [isMindMapViewActive, setIsMindMapViewActive] = useState(false)
   const [activeMindMapId, setActiveMindMapId] = useState<string | null>(null)
   const [mindMaps, setMindMaps] = useState<MindMapSummary[]>([])
-  const [isDebtViewActive, setIsDebtViewActive] = useState(false)
-  const [debts, setDebts] = useState<Debt[]>([])
   const [selectedLockboxTag, setSelectedLockboxTag] = useState<string | null>(null)
   const [selectedTag, setSelectedTag] = useState<string | null>(null)
   const [selectedInboxTag, setSelectedInboxTag] = useState<string | null>(null)
+  const [insightIncludeLockbox, setInsightIncludeLockbox] = useState(false)
   const filterRef = useRef(filter)
+  // 本次解锁弹窗由「洞察包含密匣」勾选发起（解锁成功即视为已重新校验密码）
+  const insightUnlockIntentRef = useRef(false)
+  // 当前解锁会话是洞察流程打开的（取消勾选时需要回落上锁）
+  const unlockedForInsightRef = useRef(false)
 
   useEffect(() => {
     void refreshFragments()
     void refreshMindMaps()
-    void refreshDebts()
   }, [])
 
   useEffect(() => {
     filterRef.current = filter
   }, [filter])
 
-  // 离开「标签」区域（标签面板 / 密匣视图）即重新上锁，再次进入需要密码
+  // 离开「标签」区域（标签面板 / 密匣视图）即重新上锁，再次进入需要密码；
+  // 洞察勾选含密匣期间视为仍在密匣区，豁免自动上锁
   useEffect(() => {
     if (filter === "tagged" || filter === "lockbox") return
+    if (
+      filter === "insight" &&
+      (insightIncludeLockbox || insightUnlockIntentRef.current)
+    ) {
+      return
+    }
     if (!lockbox?.unlocked) return
     void autoLockLockbox()
-  }, [filter, lockbox?.unlocked])
+  }, [filter, lockbox?.unlocked, insightIncludeLockbox])
 
-  // 密匣页 3 分钟无操作后自动上锁，并回到标签页。
+  // 密匣页 / 含密匣洞察 3 分钟无操作后自动上锁；密匣页额外回到标签页。
   useEffect(() => {
-    if (filter !== "lockbox" || !lockbox?.unlocked) return
+    const isLockboxIdleScope = filter === "lockbox" && lockbox?.unlocked
+    const isInsightIdleScope =
+      filter === "insight" && insightIncludeLockbox && lockbox?.unlocked
+    if (!isLockboxIdleScope && !isInsightIdleScope) return
 
-    let timeoutId = window.setTimeout(() => {
-      void autoLockLockbox({ returnToTagged: true })
-    }, LOCKBOX_IDLE_TIMEOUT_MS)
+    const onIdleTimeout = () => {
+      void autoLockLockbox(
+        isLockboxIdleScope ? { returnToTagged: true } : undefined
+      )
+    }
+
+    let timeoutId = window.setTimeout(onIdleTimeout, LOCKBOX_IDLE_TIMEOUT_MS)
 
     const resetTimer = () => {
       window.clearTimeout(timeoutId)
-      timeoutId = window.setTimeout(() => {
-        void autoLockLockbox({ returnToTagged: true })
-      }, LOCKBOX_IDLE_TIMEOUT_MS)
+      timeoutId = window.setTimeout(onIdleTimeout, LOCKBOX_IDLE_TIMEOUT_MS)
     }
 
     const activityEvents = [
@@ -170,7 +187,20 @@ function App() {
         window.removeEventListener(eventName, resetTimer, { capture: true })
       })
     }
-  }, [filter, lockbox?.unlocked])
+  }, [filter, lockbox?.unlocked, insightIncludeLockbox])
+
+  // 任何原因上锁后（闲置 / 手动 / 切视角），洞察的「包含密匣」勾选同步取消
+  useEffect(() => {
+    if (lockbox?.unlocked) return
+    unlockedForInsightRef.current = false
+    if (insightIncludeLockbox) setInsightIncludeLockbox(false)
+  }, [lockbox?.unlocked, insightIncludeLockbox])
+
+  // 离开洞察视角即取消勾选；复锁由上面两条与既有切 filter 上锁规则处理
+  useEffect(() => {
+    if (filter === "insight") return
+    if (insightIncludeLockbox) setInsightIncludeLockbox(false)
+  }, [filter, insightIncludeLockbox])
 
   async function refreshFragments() {
     setIsLoading(true)
@@ -182,6 +212,7 @@ function App() {
 
       if (message === DESKTOP_RUNTIME_MESSAGE) {
         setFragments([])
+        setGit(null)
         setLockbox(null)
         setVaultPath("")
         setNeedsVaultSetup(false)
@@ -190,6 +221,7 @@ function App() {
 
       if (isVaultNotConfigured(error)) {
         setFragments([])
+        setGit(null)
         setLockbox(null)
         setVaultPath("")
         setNeedsVaultSetup(true)
@@ -197,7 +229,7 @@ function App() {
         return
       }
 
-      toast({ body: `${"读取 Shard vault 失败"}：${message}`, type: "error" })
+      toast.error(`${"读取 Shard vault 失败"}：${message}`, { duration: Infinity })
     } finally {
       setIsLoading(false)
     }
@@ -212,20 +244,7 @@ function App() {
         setMindMaps([])
         return
       }
-      toast({ body: `${"读取思维导图失败"}：${message}`, type: "error" })
-    }
-  }
-
-  async function refreshDebts() {
-    try {
-      setDebts(await listDebts())
-    } catch (error) {
-      const message = getApiErrorMessage(error)
-      if (message === DESKTOP_RUNTIME_MESSAGE || isVaultNotConfigured(error)) {
-        setDebts([])
-        return
-      }
-      toast({ body: `${"读取债务记录失败"}：${message}`, type: "error" })
+      toast.error(`${"读取思维导图失败"}：${message}`, { duration: Infinity })
     }
   }
 
@@ -235,6 +254,7 @@ function App() {
       : publicFragments(state.fragments)
 
     setFragments(sortFragmentsForDisplay(visibleFragments))
+    setGit(state.git)
     setLockbox(state.lockbox)
     setVaultPath(state.vaultPath)
     setNeedsVaultSetup(false)
@@ -250,7 +270,6 @@ function App() {
       setSelectedTag(null)
       setSelectedInboxTag(null)
       setIsMindMapViewActive(false)
-      setIsDebtViewActive(false)
       setFilter("inbox")
     }
     setIsVaultGuideOpen(true)
@@ -271,11 +290,13 @@ function App() {
 
         const created = await createFragment(content, tags)
         setFragments((current) => [created, ...current])
-        toast({ body: "已保存到密匣" })
+        toast("已保存到密匣")
         void refreshFragments()
       } catch (error) {
         const message = getApiErrorMessage(error)
-        toast({ body: `${"创建密匣片段失败"}：${message}`, type: "error" })
+        toast.error(`${"创建密匣片段失败"}：${message}`, {
+          duration: Infinity,
+        })
         throw new Error(message)
       } finally {
         setIsCreating(false)
@@ -292,6 +313,8 @@ function App() {
       tags,
       category: null,
       path: "",
+      gitStatus: "saved",
+      error: null,
       archived: false,
       lockbox: false,
       pinned: false,
@@ -308,17 +331,50 @@ function App() {
           )
         )
       )
-      toast({ body: "片段已保存" })
+      if (created.gitStatus === "commit_failed") {
+        toast(
+          `${"片段已保存，但 Git commit 失败"}：${
+            created.error ?? "可以继续记录，之后再处理 Git 配置。"
+          }`
+        )
+      } else {
+        toast("片段已保存")
+      }
       void refreshFragments()
     } catch (error) {
       const message = getApiErrorMessage(error)
       setFragments((current) =>
         current.filter((fragment) => fragment.id !== optimisticId)
       )
-      toast({ body: `${"创建片段失败"}：${message}`, type: "error" })
+      toast.error(`${"创建片段失败"}：${message}`, { duration: Infinity })
       throw new Error(message)
     } finally {
       setIsCreating(false)
+    }
+  }
+
+  async function handleSync() {
+    setIsSyncing(true)
+    try {
+      const synced = await syncVault()
+      setGit(synced)
+      toast("同步完成")
+      void refreshFragments()
+      void refreshMindMaps()
+    } catch (error) {
+      if (isGitSetupError(error)) {
+        setSettingsSection("git")
+        setIsVaultGuideOpen(true)
+        void refreshFragments()
+        toast(`${"需要完成 Git 配置"}：${getApiErrorMessage(error)}`)
+        return
+      }
+
+      toast.error(`${"同步失败"}：${getApiErrorMessage(error)}`, {
+        duration: Infinity,
+      })
+    } finally {
+      setIsSyncing(false)
     }
   }
 
@@ -401,21 +457,19 @@ function App() {
           currentFragment.id === fragment.id ? fragment : currentFragment
         )
       )
-      toast({ body: `${"更新复选框失败"}：${getApiErrorMessage(error)}`, type: "error" })
+      toast.error(`${"更新复选框失败"}：${getApiErrorMessage(error)}`, { duration: Infinity })
     }
   }
 
   async function handleArchiveFragment(fragment: Fragment) {
-    if (fragment.archived) return
-
-    if (fragment.lockbox) {
-      setPendingLockboxArchiveFragment(fragment)
-      return
-    }
-
     // 取消归档不需要确认：它是个可撤销的、低风险的还原动作。
     if (fragment.archived) {
       await archiveFragmentWithFeedback(fragment, false)
+      return
+    }
+
+    if (fragment.lockbox) {
+      setPendingLockboxArchiveFragment(fragment)
       return
     }
 
@@ -439,10 +493,12 @@ function App() {
       if (editingFragmentId === fragment.id) {
         closeEditor()
       }
-      toast({ body: archived ? "已归档" : "已移回收件箱" })
+      toast(archived ? "已归档" : "已移回收件箱")
       return true
     } catch (error) {
-      toast({ body: `${"归档失败"}：${getApiErrorMessage(error)}`, type: "error" })
+      toast.error(`${"归档失败"}：${getApiErrorMessage(error)}`, {
+        duration: Infinity,
+      })
       return false
     }
   }
@@ -470,7 +526,7 @@ function App() {
           )
         )
       )
-      toast({ body: nextPinned ? "已置顶" : "已取消置顶" })
+      toast(nextPinned ? "已置顶" : "已取消置顶")
     } catch (error) {
       setFragments((current) =>
         sortFragmentsForDisplay(
@@ -479,14 +535,17 @@ function App() {
           )
         )
       )
-      toast({ body: `${nextPinned ? "置顶失败" : "取消置顶失败"}：${getApiErrorMessage(error)}`, type: "error" })
+      toast.error(
+        `${nextPinned ? "置顶失败" : "取消置顶失败"}：${getApiErrorMessage(error)}`,
+        { duration: Infinity }
+      )
     }
   }
 
   async function handleMoveFragmentToLockbox(fragment: Fragment) {
     if (fragment.lockbox || fragment.archived) return
     if (hasMarkdownImage(fragment.content)) {
-      toast({ body: `${"密匣暂不支持图片附件"}：${"请先移除图片，再移入密匣，避免附件留在公开 assets 目录。"}`, type: "error" })
+      toast.error(`${"密匣暂不支持图片附件"}：${"请先移除图片，再移入密匣，避免附件留在公开 assets 目录。"}`, { duration: Infinity })
       return
     }
 
@@ -498,7 +557,7 @@ function App() {
     if (!lockbox?.configured) {
       setPendingLockboxMoveId(fragment.id)
       openLockboxGate()
-      toast({ body: "设置密匣后会移入笔记" })
+      toast("设置密匣后会移入笔记")
       return
     }
 
@@ -513,10 +572,12 @@ function App() {
       const state = await moveFragmentToLockbox(fragmentId)
       applyVaultState(state)
       closeEditor()
-      toast({ body: successMessage })
+      toast(successMessage)
       return true
     } catch (error) {
-      toast({ body: `${"移入密匣失败"}：${getApiErrorMessage(error)}`, type: "error" })
+      toast.error(`${"移入密匣失败"}：${getApiErrorMessage(error)}`, {
+        duration: Infinity,
+      })
       return false
     }
   }
@@ -565,15 +626,19 @@ function App() {
   }
 
   function showHelp() {
-    toast({ body: `${"帮助"}：${"先在 Inbox 写片段，用 #标签归类。需要持久化和同步时，在设置里选择或创建 vault。"}` })
+    toast(
+      `${"帮助"}：${"先在 Inbox 写片段，用 #标签归类。需要持久化和同步时，在设置里选择或创建 vault。"}`
+    )
   }
 
   async function handleRestoreWindow() {
     try {
       await restoreWindowFrame()
-      toast({ body: "已还原窗口尺寸" })
+      toast("已还原窗口尺寸")
     } catch (error) {
-      toast({ body: `${"还原窗口尺寸失败"}：${getApiErrorMessage(error)}`, type: "error" })
+      toast.error(`${"还原窗口尺寸失败"}：${getApiErrorMessage(error)}`, {
+        duration: Infinity,
+      })
     }
   }
 
@@ -589,7 +654,7 @@ function App() {
       return
     }
 
-    toast({ body: "密匣已设置" })
+    toast("密匣已设置")
   }
 
   async function handleUnlockLockbox(password: string) {
@@ -604,10 +669,43 @@ function App() {
       return
     }
 
+    // 洞察勾选发起的解锁：后端已校验密码，直接并入候选，不跳转密匣视图
+    if (insightUnlockIntentRef.current) {
+      insightUnlockIntentRef.current = false
+      unlockedForInsightRef.current = true
+      setInsightIncludeLockbox(true)
+      toast("密匣已解锁，将包含在洞察中")
+      return
+    }
+
     setSelectedTag(null)
     setSelectedLockboxTag(null)
     setFilter("lockbox")
-    toast({ body: "密匣已解锁" })
+    toast("密匣已解锁")
+  }
+
+  // 勾选「包含密匣内容」一律要求重新输入密码：即使当前已解锁也先上锁，
+  // 保证这次合入经过后端真实校验，而不是放行既有会话
+  async function handleInsightIncludeLockboxChange(next: boolean) {
+    if (next) {
+      insightUnlockIntentRef.current = true
+      if (lockbox?.unlocked) {
+        try {
+          const state = await lockLockbox()
+          applyVaultState(state)
+        } catch {
+          // 上锁失败仍弹解锁窗，由后端 unlock 校验兜底
+        }
+      }
+      setLockboxDialogMode(lockbox?.configured ? "unlock" : "setup")
+      return
+    }
+
+    setInsightIncludeLockbox(false)
+    if (unlockedForInsightRef.current) {
+      unlockedForInsightRef.current = false
+      void autoLockLockbox()
+    }
   }
 
   async function handleLockLockbox() {
@@ -619,9 +717,11 @@ function App() {
       if (filter === "lockbox") {
         setFilter("tagged")
       }
-      toast({ body: "密匣已上锁" })
+      toast("密匣已上锁")
     } catch (error) {
-      toast({ body: `${"密匣上锁失败"}：${getApiErrorMessage(error)}`, type: "error" })
+      toast.error(`${"密匣上锁失败"}：${getApiErrorMessage(error)}`, {
+        duration: Infinity,
+      })
     }
   }
 
@@ -648,7 +748,7 @@ function App() {
     const state = await changeLockboxPassword(currentPassword, newPassword)
     applyVaultState(state)
     setLockboxDialogMode(null)
-    toast({ body: "密匣密码已修改" })
+    toast("密匣密码已修改")
   }
 
   async function handleResetLockboxPassword(
@@ -658,6 +758,7 @@ function App() {
     const result = await resetLockboxPassword(nextRecoveryKey, newPassword)
     applyVaultState(result.vault)
     setRecoveryKey(result.recoveryKey)
+    insightUnlockIntentRef.current = false
 
     if (pendingLockboxMoveId) {
       const fragmentId = pendingLockboxMoveId
@@ -666,13 +767,14 @@ function App() {
       return
     }
 
-    toast({ body: "密匣密码已重置" })
+    toast("密匣密码已重置")
   }
 
   function closeLockboxDialog() {
     setPendingLockboxMoveId(null)
     setLockboxDialogMode(null)
     setRecoveryKey(null)
+    insightUnlockIntentRef.current = false
   }
 
   function handleOpenSearchResult(fragment: Fragment) {
@@ -682,7 +784,6 @@ function App() {
     setEditingFragmentId(null)
     setSelectedLockboxTag(null)
     setIsMindMapViewActive(false)
-    setIsDebtViewActive(false)
 
     if (fragment.archived) {
       setSelectedTag(null)
@@ -690,7 +791,7 @@ function App() {
     } else if (fragment.lockbox) {
       if (!lockbox?.unlocked) {
         openLockboxGate()
-        toast({ body: "请先解锁密匣后查看笔记" })
+        toast("请先解锁密匣后查看笔记")
         return
       }
 
@@ -704,7 +805,7 @@ function App() {
       setSelectedTag(visibleTag)
       setFilter("tagged")
     } else {
-      toast({ body: "这条笔记当前不在时间线列表中" })
+      toast("这条笔记当前不在时间线列表中")
       return
     }
 
@@ -720,18 +821,18 @@ function App() {
     if (!tag) return false
 
     if (/\s/.test(tag)) {
-      toast({ body: "标签不能包含空格", type: "error" })
+      toast.error("标签不能包含空格", { duration: Infinity })
       return false
     }
 
     if (tag === "inbox" || tag === LOCKBOX_TAG) {
-      toast({ body: `#${tag} 是保留标签，不能新建`, type: "error" })
+      toast.error(`#${tag} 是保留标签，不能新建`, { duration: Infinity })
       return false
     }
 
     if (inboxTagSummaries.some((summary) => summary.tag === tag)) {
       setSelectedInboxTag(tag)
-      toast({ body: `标签 #${tag} 已存在` })
+      toast(`标签 #${tag} 已存在`)
       return true
     }
 
@@ -739,12 +840,11 @@ function App() {
       customTags: [...appSettings.customTags, tag],
     })
     setSelectedInboxTag(tag)
-    toast({ body: `${`标签 #${tag} 已创建`}：${`写片段时输入 #${tag} 即可归入这个标签。`}` })
+    toast(`${`标签 #${tag} 已创建`}：${`写片段时输入 #${tag} 即可归入这个标签。`}`)
     return true
   }
 
   function openMindMap(map?: MindMapSummary) {
-    setIsDebtViewActive(false)
     if (!map) {
       setIsMindMapViewActive(true)
       return
@@ -753,14 +853,8 @@ function App() {
     setActiveMindMapId(map.id)
   }
 
-  function openDebts() {
-    setIsMindMapViewActive(false)
-    setIsDebtViewActive(true)
-  }
-
   function handleFilterChange(nextFilter: FragmentFilter) {
     setIsMindMapViewActive(false)
-    setIsDebtViewActive(false)
     setFilter(nextFilter)
   }
 
@@ -913,11 +1007,9 @@ function App() {
         : null,
     [editingFragmentId, fragments]
   )
-  const isInboxView =
-    filter === "inbox" && !isMindMapViewActive && !isDebtViewActive
+  const isInboxView = filter === "inbox" && !isMindMapViewActive
   const isReviewView =
     !isMindMapViewActive &&
-    !isDebtViewActive &&
     (filter === "dailyReview" || filter === "insight" || filter === "walk")
   const isVaultDialogOpen = isVaultGuideOpen || needsVaultSetup
   const isExportSheetOpen = exportingFragment !== null
@@ -965,16 +1057,62 @@ function App() {
     }
   }, [isModalBusy])
 
+  const autoSyncFailureNotifiedRef = useRef(false)
+  const autoSyncTickRef = useRef<() => void>(() => {})
+  autoSyncTickRef.current = () => {
+    if (
+      !appSettings.autoSyncEnabled ||
+      !git?.hasRemote ||
+      isSyncing ||
+      isCreating ||
+      isBlockingDialogOpen ||
+      activeMindMapId !== null ||
+      editingFragmentId !== null
+    ) {
+      return
+    }
+
+    setIsSyncing(true)
+    void syncVault()
+      .then((synced) => {
+        setGit(synced)
+        autoSyncFailureNotifiedRef.current = false
+        void refreshFragments()
+        void refreshMindMaps()
+      })
+      .catch((error) => {
+        if (!autoSyncFailureNotifiedRef.current) {
+          autoSyncFailureNotifiedRef.current = true
+          toast.error(`${"自动同步失败"}：${getApiErrorMessage(error)}`, {
+            duration: Infinity,
+          })
+        }
+      })
+      .finally(() => {
+        setIsSyncing(false)
+      })
+  }
+
+  useEffect(() => {
+    if (!appSettings.autoSyncEnabled) return
+
+    const timer = window.setInterval(
+      () => autoSyncTickRef.current(),
+      appSettings.autoSyncIntervalMinutes * 60_000
+    )
+
+    return () => {
+      window.clearInterval(timer)
+    }
+  }, [appSettings.autoSyncEnabled, appSettings.autoSyncIntervalMinutes])
+
   if (activeMindMapId) {
     return (
-      <>
-        <MindMapWorkspace
-          mapId={activeMindMapId}
-          onClose={() => setActiveMindMapId(null)}
-          onMapsChange={setMindMaps}
-        />
-        <ToastViewport />
-      </>
+      <MindMapWorkspace
+        mapId={activeMindMapId}
+        onClose={() => setActiveMindMapId(null)}
+        onMapsChange={setMindMaps}
+      />
     )
   }
 
@@ -988,11 +1126,10 @@ function App() {
           <SidebarNav
             activeFilter={filter}
             fragments={publicOnlyFragments}
+            git={git}
+            isSyncing={isSyncing}
             mindMapCount={mindMaps.length}
             mindMapViewActive={isMindMapViewActive}
-            debtCount={debts.filter((debt) => !debt.archived && !debt.settled).length}
-            debtViewActive={isDebtViewActive}
-            onOpenDebts={openDebts}
             onFilterChange={handleFilterChange}
             onHelp={showHelp}
             onOpenMindMaps={() => openMindMap()}
@@ -1000,14 +1137,19 @@ function App() {
             onOpenSettings={() => openSettings("vault")}
             onRestoreWindow={handleRestoreWindow}
             onShortcuts={showShortcuts}
+            onSync={handleSync}
           />
         </div>
-        <Stack
-          as="section"
-          height="100%"
-          minHeight={0}
-          isScrollable={false}
-          style={{ minWidth: 0, overflow: "hidden", background: "var(--background)" }}
+        <section
+          style={{
+            display: "flex",
+            height: "100%",
+            minHeight: 0,
+            minWidth: 0,
+            flexDirection: "column",
+            overflow: "hidden",
+            background: "var(--background)",
+          }}
         >
           {isInboxView ? (
             <div className={styles.composerPadding} data-tauri-drag-region>
@@ -1031,7 +1173,7 @@ function App() {
             />
           ) : null}
 
-          {filter === "tagged" && !isMindMapViewActive && !isDebtViewActive ? (
+          {filter === "tagged" && !isMindMapViewActive ? (
             <TaggedPanel
               lockbox={lockbox}
               selectedTag={selectedTag}
@@ -1042,7 +1184,7 @@ function App() {
             />
           ) : null}
 
-          {filter === "lockbox" && !isMindMapViewActive && !isDebtViewActive ? (
+          {filter === "lockbox" && !isMindMapViewActive ? (
             <LockboxHeader
               lockbox={lockbox}
               selectedTag={selectedLockboxTag}
@@ -1055,9 +1197,7 @@ function App() {
             />
           ) : null}
 
-          {isDebtViewActive ? (
-            <DebtWorkspace debts={debts} onDebtsChange={setDebts} />
-          ) : isMindMapViewActive ? (
+          {isMindMapViewActive ? (
             <MindMapPanel
               onMapsChange={setMindMaps}
               onOpenMap={setActiveMindMapId}
@@ -1067,15 +1207,24 @@ function App() {
               editingFragmentId={
                 editingVariant === "inline" ? editingFragmentId : null
               }
-              fragments={publicOnlyFragments}
+              fragments={
+                filter === "insight" &&
+                insightIncludeLockbox &&
+                lockbox?.unlocked
+                  ? fragments
+                  : publicOnlyFragments
+              }
+              insightIncludeLockbox={insightIncludeLockbox}
               isLoading={isLoading}
               knownTags={knownTags}
+              lockboxConfigured={Boolean(lockbox?.configured)}
               mode={filter}
               onArchive={handleArchiveFragment}
               onCancelEdit={closeEditor}
               onCreate={handleCreate}
               onEdit={openInlineEditor}
               onExportImage={setExportingFragment}
+              onInsightIncludeLockboxChange={handleInsightIncludeLockboxChange}
               onMoveToLockbox={handleMoveFragmentToLockbox}
               onOpenZen={openZenEditor}
               onPin={handlePinFragment}
@@ -1127,14 +1276,13 @@ function App() {
               vaultPath={vaultPath}
             />
           )}
-        </Stack>
+        </section>
         <div className={styles.bottomTabsSlot}>
           <BottomTabs
             activeFilter={filter}
             fragments={publicOnlyFragments}
             onFilterChange={handleFilterChange}
             onHelp={showHelp}
-            onOpenDebts={openDebts}
             onOpenMindMaps={() => openMindMap()}
             onOpenSearch={openSearch}
             onOpenSettings={() => openSettings("vault")}
@@ -1184,12 +1332,18 @@ function App() {
         }}
       />
       <VaultGuide
+        autoSyncEnabled={appSettings.autoSyncEnabled}
+        autoSyncIntervalMinutes={appSettings.autoSyncIntervalMinutes}
+        git={git}
         initialSection={settingsSection}
+        isSyncing={isSyncing}
+        onAutoSyncChange={updateAppSettings}
         onClose={() => {
           if (!needsVaultSetup) {
             setIsVaultGuideOpen(false)
           }
         }}
+        onSync={() => void handleSync()}
         onVaultState={handleVaultState}
         open={isVaultDialogOpen}
         required={needsVaultSetup}
@@ -1205,7 +1359,6 @@ function App() {
         onSetup={handleSetupLockbox}
         onUnlock={handleUnlockLockbox}
       />
-      <ToastViewport />
     </>
   )
 }
@@ -1225,38 +1378,37 @@ function LockboxArchiveConfirmDialog({
 }) {
   return (
     <Dialog
-      isOpen={fragment !== null}
+      disablePointerDismissal={isArchiving}
+      open={fragment !== null}
       onOpenChange={(nextOpen: boolean) => {
         if (!nextOpen && !isArchiving) onCancel()
       }}
-      purpose={isArchiving ? "required" : "form"}
-      width={420}
     >
-      <Layout
-        header={
-          <DialogHeader
-            onOpenChange={isArchiving ? undefined : () => onCancel()}
-            subtitle="这条笔记属于密匣。归档后会从密匣列表移除，并且不会出现在「归档/回收站」列表中。"
-            title="确认归档密匣笔记"
-          />
-        }
-        footer={
-          <LayoutFooter hasDivider>
-            <Button
-              isDisabled={isArchiving}
-              label="取消"
-              onClick={onCancel}
-              variant="secondary"
-            />
-            <Button
-              isDisabled={isArchiving}
-              label={isArchiving ? "归档中" : "仍然归档"}
-              onClick={onConfirm}
-              variant="destructive"
-            />
-          </LayoutFooter>
-        }
-      />
+      <DialogContent
+        aria-busy={isArchiving}
+        role="alertdialog"
+        showCloseButton={!isArchiving}
+        style={{ maxWidth: 420 }}
+      >
+        <DialogHeader>
+          <DialogTitle>确认归档密匣笔记</DialogTitle>
+          <DialogDescription>
+            这条笔记属于密匣。归档后会从密匣列表移除，并且不会出现在「归档/回收站」列表中。
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter className="flex-row justify-end">
+          <Button disabled={isArchiving} onClick={onCancel} variant="secondary">
+            取消
+          </Button>
+          <Button
+            disabled={isArchiving}
+            onClick={onConfirm}
+            variant="destructive"
+          >
+            {isArchiving ? "归档中" : "仍然归档"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
     </Dialog>
   )
 }
@@ -1296,8 +1448,24 @@ function LockboxHeader({
           paddingBottom: "var(--shard-space-4)",
         }}
       >
-        <HStack gap={3} hAlign="between" vAlign="center" wrap="wrap">
-          <HStack gap={3} vAlign="center" style={{ minWidth: 0 }}>
+        <div
+          style={{
+            display: "flex",
+            minWidth: 0,
+            alignItems: "center",
+            justifyContent: "space-between",
+            flexWrap: "wrap",
+            gap: "var(--shard-space-3)",
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              minWidth: 0,
+              alignItems: "center",
+              gap: "var(--shard-space-3)",
+            }}
+          >
             <span
               style={{
                 display: "flex",
@@ -1339,27 +1507,48 @@ function LockboxHeader({
                   : "需要密码访问。私密笔记不会出现在主页、回顾或普通统计中。"}
               </p>
             </div>
-          </HStack>
+          </div>
 
-          <HStack gap={2} vAlign="center" style={{ flexShrink: 0 }}>
+          <div
+            style={{
+              display: "flex",
+              flexShrink: 0,
+              alignItems: "center",
+              gap: "var(--shard-space-2)",
+            }}
+          >
             {lockbox?.unlocked ? (
               <>
-                <Button label="修改密码" onClick={onChangePassword} size="sm" variant="secondary" />
-                <Button label="上锁" onClick={onLock} size="sm" variant="secondary" />
+                <Button onClick={onChangePassword} size="sm" variant="secondary">
+                  修改密码
+                </Button>
+                <Button onClick={onLock} size="sm" variant="secondary">
+                  上锁
+                </Button>
               </>
             ) : (
-              <Button label="解锁" onClick={onUnlock} size="sm" variant="primary" />
+              <Button onClick={onUnlock} size="sm" variant="primary">
+                解锁
+              </Button>
             )}
-          </HStack>
-        </HStack>
+          </div>
+        </div>
 
         {lockbox?.unlocked ? (
-          <Stack gap={2} style={{ marginTop: "var(--shard-space-3)" }}>
-            <HStack
-              gap={2}
-              vAlign="center"
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: "var(--shard-space-2)",
+              marginTop: "var(--shard-space-3)",
+            }}
+          >
+            <div
               style={{
+                display: "flex",
                 height: "var(--shard-chip-height)",
+                alignItems: "center",
+                gap: "var(--shard-space-2)",
                 fontSize: 12,
                 fontWeight: 500,
                 color: "var(--muted-foreground)",
@@ -1369,7 +1558,7 @@ function LockboxHeader({
               <span className="tabular-nums">{summaries.length} 子标签</span>
               <span aria-hidden="true">·</span>
               <span className="tabular-nums">{totalCount} 条</span>
-            </HStack>
+            </div>
 
             <div
               className="shard-tag-filters"
@@ -1399,7 +1588,7 @@ function LockboxHeader({
                 />
               ))}
             </div>
-          </Stack>
+          </div>
         ) : null}
       </div>
     </div>
@@ -1439,6 +1628,11 @@ function LockboxTagFilterButton({
 
 function isVaultNotConfigured(error: unknown) {
   return String(error).includes("vault_not_configured")
+}
+
+function isGitSetupError(error: unknown) {
+  const message = String(error)
+  return message.includes("Git 未初始化") || message.includes("Git remote 未配置")
 }
 
 function hasVisibleTag(fragment: Fragment) {
