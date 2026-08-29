@@ -10,8 +10,8 @@
 - 不改 `.md` 文件格式、不改时间线只读渲染（`FragmentContent` 非 `caretAligned` 路径）、不动工具栏 UI。
 - `editor-format.ts` 的 20 个纯字符串函数签名不变，所有编辑操作经由 TextEdit 桥接。
 - 旧 textarea 实现在 P0 **保留**，由 kill switch 控制；不要在 P0 删除 `editor-caret.ts` 或覆盖层代码（那是 P4）。
-- 每完成一个任务做一次小 commit；提交信息格式 `cm6(p0): <任务号> <摘要>`。
-- 每个任务结束跑 `pnpm build`（含 `scripts/verify-tokens.mjs` + tsc）和 `git diff --check`；改了 UI 的任务再跑相关 Playwright 用例。
+- **Codex 不执行任何 git 写操作**（不 commit、不 branch、不 stash、不 reset）：Codex 沙箱对 `.git` 只读。分支 `editor/cm6` 与迁移前快照已由 Claude 提交（T0 已完成）。每完成一个任务，在 `docs/dev/editor-cm6-p0-report.md` 追加一段「T 编号 / 改动文件 / 验证结果」，提交由 Claude 在验收后按任务分批完成。
+- 每个任务结束跑 `pnpm build`（含 `scripts/verify-tokens.mjs` + tsc）和 `git diff --check`（只读，允许）；改了 UI 的任务再跑相关 Playwright 用例。
 - 遇到与方案冲突、或需要产品决策的问题：**不要自行拍板**，记到 §3「未决问题」，继续做不受影响的部分。
 
 ## 1. 现状速查（动手前先读）
@@ -32,10 +32,10 @@
 
 ## 2. 任务
 
-### T0 分支与快照
-- `git checkout -b editor/cm6`（保留工作区现有未提交改动）。
-- 把当前工作区全部未提交改动提交为一个快照：`wip: CM6 迁移前工作区快照（用户未提交改动，原样保留）`。这样后续每个 commit 只包含迁移改动，可单独回退。
-- 记录基线：`pnpm build` 输出的 `dist/assets/index-*.js` gzip 大小写入 `docs/dev/editor-cm6-p0-report.md` 的「bundle 基线」。
+### T0 分支与快照 —— **已由 Claude 完成，Codex 跳过**
+- 分支 `editor/cm6` 已创建，迁移前工作区快照已提交（见 `git log -1`）。
+- bundle 基线已写入 `docs/dev/editor-cm6-p0-report.md`。
+- Codex 从 T1 开始；后续所有任务**不做 git 写操作**。
 
 ### T1 依赖
 - 依赖已由 Claude 预装（见 `package.json`）：`@codemirror/state`、`@codemirror/view`、`@codemirror/language`、`@codemirror/lang-markdown`、`@lezer/markdown`、`@codemirror/autocomplete`、`@codemirror/commands`。确认 `pnpm install` 干净、版本写进 report。若未预装，自行 `pnpm add` 上述 7 个包。
