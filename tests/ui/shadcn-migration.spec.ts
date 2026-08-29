@@ -1,7 +1,13 @@
 import { expect, test, type Page } from "@playwright/test"
 
-async function installTauriMock(page: Page) {
-  await page.addInitScript(() => {
+async function installTauriMock(
+  page: Page,
+  options: {
+    relations?: Record<string, { targetId: string; note?: string }[]>
+    walkResult?: string
+  } = {}
+) {
+  await page.addInitScript((injected: typeof options) => {
     const now = "2026-08-03T10:00:00.000Z"
     const fragments = Array.from({ length: 24 }, (_, index) => ({
       id: `fragment-${index + 1}`,
@@ -20,6 +26,20 @@ async function installTauriMock(page: Page) {
       lockbox: false,
       pinned: index === 1,
     }))
+
+    for (const fragment of fragments) {
+      const relations = injected.relations?.[fragment.id]
+      if (relations) {
+        ;(fragment as Record<string, unknown>).related = relations.map(
+          (relation) => ({
+            targetId: relation.targetId,
+            origin: "manual",
+            createdAt: now,
+            ...(relation.note ? { note: relation.note } : {}),
+          })
+        )
+      }
+    }
 
     fragments.push({
       id: "archived-1",
@@ -210,6 +230,36 @@ async function installTauriMock(page: Page) {
               fragment.pinned = Boolean(args.pinned)
               return clone(fragment)
             }
+            case "link_fragments": {
+              const fragment = fragments.find((item) => item.id === args.sourceId)
+              if (!fragment) throw new Error("Fragment not found")
+              const related =
+                ((fragment as Record<string, unknown>).related as
+                  | Array<Record<string, unknown>>
+                  | undefined) ?? []
+              if (!related.some((relation) => relation.targetId === args.targetId)) {
+                related.push({
+                  targetId: args.targetId,
+                  origin: args.origin,
+                  createdAt: new Date().toISOString(),
+                  ...(args.note ? { note: args.note } : {}),
+                })
+              }
+              ;(fragment as Record<string, unknown>).related = related
+              return clone(fragment)
+            }
+            case "unlink_fragments": {
+              const fragment = fragments.find((item) => item.id === args.sourceId)
+              if (!fragment) throw new Error("Fragment not found")
+              const related =
+                ((fragment as Record<string, unknown>).related as
+                  | Array<Record<string, unknown>>
+                  | undefined) ?? []
+              ;(fragment as Record<string, unknown>).related = related.filter(
+                (relation) => relation.targetId !== args.targetId
+              )
+              return clone(fragment)
+            }
             case "move_fragment_to_lockbox":
               return clone(state)
             case "unlock_lockbox":
@@ -238,7 +288,13 @@ async function installTauriMock(page: Page) {
                 { agent: "opencode", installed: true, version: "1.18.0", path: "/tmp/opencode", error: null },
               ]
             case "run_ai_review_task":
-              return { text: "测试洞察结果" }
+              return {
+                text:
+                  (args.request as { task?: string } | undefined)?.task === "walk" &&
+                  injected.walkResult
+                    ? injected.walkResult
+                    : "测试洞察结果",
+              }
             case "plugin:app|version":
               return "0.1.3"
             case "save_fragment_image":
@@ -247,6 +303,7 @@ async function installTauriMock(page: Page) {
               return ""
             case "fragment_image_file_path":
               return "/tmp/shard-ui-test-vault/assets/test.png"
+            case "unhide_pointer":
             case "set_window_controls_hidden":
             case "restore_window_frame":
             case "reveal_fragment_image_in_dir":
@@ -260,7 +317,7 @@ async function installTauriMock(page: Page) {
         },
       },
     })
-  })
+  }, options)
 }
 
 test.beforeEach(async ({ page }) => {
@@ -268,6 +325,253 @@ test.beforeEach(async ({ page }) => {
   await page.goto("/")
   await expect(page.getByPlaceholder("想到什么，写什么...")).toBeFocused()
   await expect(page.locator("[data-shard-fragment-id]")).toHaveCount(24)
+})
+
+test("editor toolbars expose visible labels through the shared icon button", async ({
+  page,
+}) => {
+  const textarea = page.getByPlaceholder("想到什么，写什么...")
+  const uploadButton = page.getByRole("button", { name: "上传图片" })
+
+  await uploadButton.hover()
+  await expect(page.getByRole("tooltip", { name: "上传图片" })).toBeVisible()
+
+  await textarea.fill("禅模式工具栏提示回归")
+  await textarea.press("Control+Shift+f")
+  await expect(page.getByRole("button", { name: "退出编辑" })).toBeVisible()
+
+  await page.getByRole("button", { name: "退出编辑" }).hover()
+  await expect(page.getByRole("tooltip", { name: "退出编辑" })).toBeVisible()
+})
+
+test("editor renders one selection surface while normal text keeps Kiln selection", async ({
+  page,
+}) => {
+  const textarea = page.getByPlaceholder("想到什么，写什么...")
+  await textarea.fill("第一行选中文字\n第二行继续选中")
+
+  const selectionColors = await textarea.evaluate((element) => {
+    element.focus()
+    element.setSelectionRange(0, element.value.length)
+    element.dispatchEvent(new Event("select", { bubbles: true }))
+
+    return {
+      editor: getComputedStyle(element, "::selection").backgroundColor,
+      global: getComputedStyle(document.body, "::selection").backgroundColor,
+      textFill: getComputedStyle(element).webkitTextFillColor,
+    }
+  })
+
+  await expect(page.locator(".shard-editor-selection-highlight").first()).toBeVisible()
+  expect(selectionColors.editor).toBe("rgba(0, 0, 0, 0)")
+  expect(selectionColors.global).not.toBe("rgba(0, 0, 0, 0)")
+  expect(selectionColors.textFill).toBe("rgba(0, 0, 0, 0)")
+})
+
+test("选区高亮铺满行盒且字形垂直居中", async ({ page }) => {
+  const textarea = page.getByPlaceholder("想到什么，写什么...")
+  await textarea.fill("单独单独 abc 后文\n第二行继续选中 xyz")
+  await textarea.evaluate((element) => {
+    element.focus()
+    element.setSelectionRange(2, 16)
+    element.dispatchEvent(new Event("select", { bubbles: true }))
+  })
+  await expect(
+    page.locator(".shard-editor-selection-highlight").first()
+  ).toBeVisible()
+
+  const metrics = await page.evaluate(() => {
+    const layer = document.querySelector<HTMLElement>(
+      ".shard-editor-highlight-layer"
+    )
+    const context = document.createElement("canvas").getContext("2d")
+    if (!layer || !context) return null
+    const spans = Array.from(
+      layer.querySelectorAll<HTMLElement>(".shard-editor-selection-highlight")
+    )
+    const first = spans[0]
+    if (!first) return null
+    const rect = first.getBoundingClientRect()
+
+    // 基线：紧跟高亮块放一个 0 高 inline-block，它的顶边就是这一行的基线
+    const probe = document.createElement("span")
+    probe.style.cssText =
+      "display:inline-block;width:0;height:0;vertical-align:baseline"
+    first.after(probe)
+    const baseline = probe.getBoundingClientRect().top
+    probe.remove()
+
+    const styles = getComputedStyle(layer)
+    context.font = `${styles.fontWeight} ${styles.fontSize} ${styles.fontFamily}`
+    const glyph = context.measureText("独")
+    const inkTop = baseline - glyph.actualBoundingBoxAscent
+    const inkBottom = baseline + glyph.actualBoundingBoxDescent
+
+    const rows = spans
+      .map((span) => span.getBoundingClientRect())
+      .sort((a, b) => a.top - b.top)
+    return {
+      gapAbove: inkTop - rect.top,
+      gapBelow: rect.bottom - inkBottom,
+      height: rect.height,
+      lineHeight: parseFloat(styles.lineHeight),
+      rowCount: rows.length,
+      seam: rows.length > 1 ? rows[1].top - rows[0].bottom : null,
+    }
+  })
+
+  expect(metrics).not.toBeNull()
+  // 块高 = 行盒高（同 flomo / 原生 ::selection），不是只有字那么高
+  expect(
+    Math.abs((metrics?.height ?? 0) - (metrics?.lineHeight ?? 0))
+  ).toBeLessThan(1)
+  // 汉字字形在块内垂直居中，上下留白之差不超过 1px
+  expect(
+    Math.abs((metrics?.gapAbove ?? 0) - (metrics?.gapBelow ?? 99))
+  ).toBeLessThan(1)
+  // 跨行选中时上下两行的块首尾相接，连成一整片
+  expect(metrics?.rowCount ?? 0).toBeGreaterThanOrEqual(2)
+  expect(Math.abs(metrics?.seam ?? 99)).toBeLessThan(1)
+})
+
+test("荧光笔高亮与选区共用行盒高度", async ({ page }) => {
+  const textarea = page.getByPlaceholder("想到什么，写什么...")
+  await textarea.fill("前面 ==荧光笔== 后面")
+  await expect(
+    page.locator(".shard-editor-markdown-highlight").first()
+  ).toBeVisible()
+  // 选中荧光笔里的「荧光笔」三个字，让选区块嵌在荧光笔块里
+  await textarea.evaluate((element) => {
+    element.focus()
+    element.setSelectionRange(5, 8)
+    element.dispatchEvent(new Event("select", { bubbles: true }))
+  })
+  await expect(
+    page.locator(".shard-editor-selection-highlight").first()
+  ).toBeVisible()
+
+  const metrics = await page.evaluate(() => {
+    const layer = document.querySelector<HTMLElement>(
+      ".shard-editor-highlight-layer"
+    )
+    const context = document.createElement("canvas").getContext("2d")
+    const marker = layer?.querySelector<HTMLElement>(
+      ".shard-editor-markdown-highlight"
+    )
+    const selection = layer?.querySelector<HTMLElement>(
+      ".shard-editor-selection-highlight"
+    )
+    if (!layer || !context || !marker || !selection) return null
+    const rect = marker.getBoundingClientRect()
+
+    const probe = document.createElement("span")
+    probe.style.cssText =
+      "display:inline-block;width:0;height:0;vertical-align:baseline"
+    marker.after(probe)
+    const baseline = probe.getBoundingClientRect().top
+    probe.remove()
+
+    const styles = getComputedStyle(layer)
+    context.font = `${styles.fontWeight} ${styles.fontSize} ${styles.fontFamily}`
+    const glyph = context.measureText("荧")
+    return {
+      gapAbove: baseline - glyph.actualBoundingBoxAscent - rect.top,
+      gapBelow: rect.bottom - (baseline + glyph.actualBoundingBoxDescent),
+      height: rect.height,
+      lineHeight: parseFloat(styles.lineHeight),
+      markerPadding: getComputedStyle(marker).paddingTop,
+      selectionHeight: selection.getBoundingClientRect().height,
+      selectionPadding: getComputedStyle(selection).paddingTop,
+    }
+  })
+
+  expect(metrics).not.toBeNull()
+  expect(
+    Math.abs((metrics?.height ?? 0) - (metrics?.lineHeight ?? 0))
+  ).toBeLessThan(1)
+  expect(
+    Math.abs((metrics?.gapAbove ?? 0) - (metrics?.gapBelow ?? 99))
+  ).toBeLessThan(1)
+  // 荧光笔与选区走同一个 token，外扩量和块高必须一致
+  expect(metrics?.markerPadding).toBe(metrics?.selectionPadding)
+  expect(
+    Math.abs((metrics?.height ?? 0) - (metrics?.selectionHeight ?? 99))
+  ).toBeLessThan(0.5)
+})
+
+test("zen editor renders highlight markup with hidden markers", async ({ page }) => {
+  const textarea = page.getByPlaceholder("想到什么，写什么...")
+  await textarea.fill("禅模式荧光笔")
+  await textarea.press("Control+Shift+f")
+
+  const zenTextarea = page.getByRole("textbox").last()
+  await zenTextarea.fill("==禅模式荧光笔==")
+
+  const renderedHighlight = page
+    .locator(".shard-editor-markdown-highlight")
+    .last()
+  await expect(renderedHighlight).toBeVisible()
+  await expect(renderedHighlight).toContainText("禅模式荧光笔")
+
+  const renderedStyles = await renderedHighlight.evaluate((element) => {
+    const markers = Array.from(
+      element.querySelectorAll<HTMLElement>(
+        ".shard-editor-markdown-marker"
+      )
+    )
+    const marker = markers[0]
+
+    return {
+      backgroundColor: getComputedStyle(element).backgroundColor,
+      markerColor: marker ? getComputedStyle(marker).color : null,
+      markerWidths: markers.map((item) => item.getBoundingClientRect().width),
+      markerTextFill: marker
+        ? getComputedStyle(marker).webkitTextFillColor
+        : null,
+    }
+  })
+
+  expect(renderedStyles.backgroundColor).not.toBe("rgba(0, 0, 0, 0)")
+  expect(renderedStyles.markerColor).toBe("rgba(0, 0, 0, 0)")
+  expect(renderedStyles.markerWidths).toEqual([0, 0])
+  expect(renderedStyles.markerTextFill).toBe("rgba(0, 0, 0, 0)")
+
+  const highlightBox = await renderedHighlight.boundingBox()
+  expect(highlightBox).not.toBeNull()
+  if (!highlightBox) return
+
+  await page.mouse.move(
+    highlightBox.x + 1,
+    highlightBox.y + highlightBox.height / 2
+  )
+  await page.mouse.down()
+  expect(await zenTextarea.evaluate((element) => element.selectionStart)).toBe(2)
+  await page.mouse.up()
+
+  await page.mouse.move(
+    highlightBox.x + highlightBox.width - 1,
+    highlightBox.y + highlightBox.height / 2
+  )
+  await page.mouse.down()
+  expect(await zenTextarea.evaluate((element) => element.selectionStart)).toBe(8)
+  await page.mouse.up()
+
+  await page.mouse.move(
+    highlightBox.x + 1,
+    highlightBox.y + highlightBox.height / 2
+  )
+  await page.mouse.down()
+  await page.mouse.move(
+    highlightBox.x + highlightBox.width - 1,
+    highlightBox.y + highlightBox.height / 2
+  )
+  expect(
+    await zenTextarea.evaluate((element) => ({
+      end: element.selectionEnd,
+      start: element.selectionStart,
+    }))
+  ).toEqual({ end: 8, start: 2 })
+  await page.mouse.up()
 })
 
 test("main shell keeps geometry and local scrolling", async ({ page }) => {
@@ -327,9 +631,20 @@ test("capture, card menu, and share dialog remain functional", async ({
   await expect(page.getByText("#work").first()).toBeVisible()
   await expect(page.getByText("片段已保存")).toBeVisible()
 
+  const copiedCard = page
+    .locator("[data-shard-fragment-id]")
+    .filter({ hasText: "迁移后的新片段" })
   const firstCard = page.locator("[data-shard-fragment-id]").first()
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"])
+  await copiedCard.getByRole("button", { name: "片段操作" }).click()
+  await page.getByRole("menuitem", { name: "复制" }).click()
+  await expect(page.getByText("已复制片段内容")).toBeVisible()
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
+    "迁移后的新片段 #work"
+  )
+
   await firstCard.getByRole("button", { name: "片段操作" }).click()
-  await page.getByRole("menuitem", { name: "分享" }).click()
+  await page.getByRole("menuitem", { name: "分享" }).last().click()
 
   const dialog = page.getByRole("dialog")
   await expect(
@@ -357,21 +672,265 @@ test("capture, card menu, and share dialog remain functional", async ({
   await expect(dialog).toBeHidden()
 })
 
-test("search and settings preserve Escape and focus contracts", async ({
+test("超宽表格导出时单元格文本不溢出内容区", async ({ page }) => {
+  const textarea = page.getByPlaceholder("想到什么，写什么...")
+  await textarea.fill(
+    [
+      "超宽排期",
+      "| 序号 | 日期 | 时间段 | 学校全称 | 负责人 | 事项说明 | 年级 | 备注信息 |",
+      "| :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |",
+      "| 1 | 8月24日 | 8:30-11:00 | 行知中学高中部 | 张老师 | 市场采单与返校登记 | 高一 | 需带宣传物料 |",
+    ].join("\n")
+  )
+  await textarea.press("Control+Enter")
+
+  const card = page
+    .locator("[data-shard-fragment-id]")
+    .filter({ hasText: "超宽排期" })
+  await card.getByRole("button", { name: "片段操作" }).click()
+  await page.getByRole("menuitem", { name: "分享" }).last().click()
+
+  const canvas = page.getByRole("dialog").getByLabel("分享图片预览")
+  await expect(canvas).toBeVisible()
+
+  // 中文没有空格，整串是一个 token；折行必须逐字切分，
+  // 否则窄列里的单元格会原样画出去、越过内容区右边界互相重叠。
+  const darkPixelsOutsideContent = await canvas.evaluate(
+    (element: HTMLCanvasElement) => {
+      const logicalWidth = Number(element.dataset.logicalWidth ?? 0)
+      const ratio = element.width / logicalWidth
+      const context = element.getContext("2d")
+      if (!context || !logicalWidth) return -1
+
+      // 右侧页边距区域：表格内容不该出现在这里
+      const x = Math.round((logicalWidth - 20) * ratio)
+      const width = Math.round(20 * ratio)
+      const y = Math.round(90 * ratio)
+      const height = Math.round(200 * ratio)
+      const { data } = context.getImageData(x, y, width, height)
+
+      let dark = 0
+      for (let i = 0; i < data.length; i += 4) {
+        const [r, g, b, a] = [data[i], data[i + 1], data[i + 2], data[i + 3]]
+        if ((a ?? 0) > 10 && (r ?? 255) < 150 && (g ?? 255) < 150 && (b ?? 255) < 150) {
+          dark += 1
+        }
+      }
+      return dark
+    }
+  )
+
+  expect(darkPixelsOutsideContent).toBe(0)
+})
+
+test("table fragment exports a non-empty PNG", async ({ page }) => {
+  const textarea = page.getByPlaceholder("想到什么，写什么...")
+  await textarea.fill(
+    [
+      "学校安排",
+      "| 日期 | 学校 | 活动 |",
+      "| :--- | :---: | ---: |",
+      "| 8 月 27 日 | 行知中学 | 返校 |",
+      "| 8 月 28 日 | 卓群中学 | 市场采单 |",
+    ].join("\n")
+  )
+  await textarea.press("Control+Enter")
+
+  const tableCard = page
+    .locator("[data-shard-fragment-id]")
+    .filter({ hasText: "行知中学" })
+  await expect(tableCard.locator("table")).toBeVisible()
+  await tableCard.getByRole("button", { name: "片段操作" }).click()
+  await page.getByRole("menuitem", { name: "分享" }).last().click()
+
+  const dialog = page.getByRole("dialog")
+  const canvas = dialog.getByLabel("分享图片预览")
+  await expect(canvas).toBeVisible()
+  await expect
+    .poll(() =>
+      canvas.evaluate((element: HTMLCanvasElement) =>
+        Math.min(
+          element.height,
+          Number(element.dataset.logicalHeight ?? 0),
+          element.width
+        )
+      )
+    )
+    .toBeGreaterThan(0)
+  await expect(dialog.getByRole("button", { name: "复制图片" })).toBeEnabled()
+  await dialog.getByRole("button", { name: "复制图片" }).click()
+  await expect(page.getByText("分享图片已复制")).toBeVisible()
+
+  const pngByteLength = await page.evaluate(() => {
+    const calls = (
+      globalThis as typeof globalThis & {
+        __SHARD_TEST_CALLS__?: Array<{
+          args: { bytes?: unknown }
+          command: string
+        }>
+      }
+    ).__SHARD_TEST_CALLS__
+    const copyCall = calls
+      ?.filter((call) => call.command === "copy_exported_image")
+      .at(-1)
+    return Array.isArray(copyCall?.args.bytes) ? copyCall.args.bytes.length : 0
+  })
+  expect(pngByteLength).toBeGreaterThan(0)
+})
+
+test("search recall mode preserves context, focus, and timeline scrolling", async ({
   page,
 }) => {
+  const composer = page.getByPlaceholder("想到什么，写什么...")
+  const composerBefore = await composer.boundingBox()
+  const documentScrollBefore = await page.evaluate(
+    () => document.scrollingElement?.scrollTop ?? -1
+  )
+
   await page.keyboard.press("Control+k")
   const search = page.getByRole("combobox", { name: "搜索笔记" })
   await expect(search).toBeFocused()
+  await search.fill("密匣中的")
+  await expect(page.getByText("没有找到“密匣中的”")).toBeVisible()
+  await expect(page.getByRole("option")).toHaveCount(0)
   await search.fill("work")
+  await expect(page.getByRole("option")).toHaveCount(12)
+  await expect(page.getByText(/fragments\/2026/)).toHaveCount(0)
+
+  await search.fill("不存在的快速查询")
+  await search.press("Enter")
+  await expect(page.getByRole("search")).toBeVisible()
+  await expect(page.getByRole("button", { name: "返回搜索结果" })).toHaveCount(0)
+  await expect(page.getByText("没有找到“不存在的快速查询”")).toBeVisible()
+  await search.fill("work")
+  await expect(page.getByRole("option")).toHaveCount(12)
+
+  await page.waitForTimeout(200)
+  const searchStyles = await search.evaluate((element) => {
+    const style = getComputedStyle(element)
+    const focusProbe = document.createElement("div")
+    focusProbe.style.cssText = [
+      "all: initial",
+      "position: absolute",
+      "border: 1px solid color-mix(in oklab, var(--primary) 70%, transparent)",
+      "box-shadow: var(--shadow-primary-focus)",
+    ].join(";")
+    element.parentElement?.append(focusProbe)
+    const focusProbeStyle = getComputedStyle(focusProbe)
+    const expectedBorderColor = focusProbeStyle.borderColor
+    const expectedBoxShadow = focusProbeStyle.boxShadow
+    focusProbe.remove()
+    return {
+      borderRadius: style.borderRadius,
+      borderColor: style.borderColor,
+      boxShadow: style.boxShadow,
+      expectedBorderColor,
+      expectedBoxShadow,
+      fontFamily: style.fontFamily,
+      height: style.height,
+    }
+  })
+  expect(searchStyles.height).toBe("36px")
+  expect(searchStyles.borderRadius).toBe("4px")
+  expect(searchStyles.borderColor).toBe(searchStyles.expectedBorderColor)
+  expect(searchStyles.boxShadow.endsWith(searchStyles.expectedBoxShadow)).toBe(
+    true
+  )
+  expect(searchStyles.boxShadow).not.toContain("0px 0px 0px 3px")
+  expect(searchStyles.fontFamily).toContain("Noto Sans SC")
 
   await page.keyboard.press("Escape")
-  await expect(search).toHaveValue("")
-  await expect(page.getByRole("dialog")).toBeVisible()
+  await expect(page.getByRole("search")).toBeHidden()
+  await expect(composer).toBeFocused()
 
-  await page.keyboard.press("Escape")
-  await expect(page.getByRole("dialog")).toBeHidden()
-  await expect(page.getByPlaceholder("想到什么，写什么...")).toBeFocused()
+  await page.keyboard.press("Control+k")
+  await search.fill("work")
+  await expect(page.getByRole("option")).toHaveCount(12)
+  for (let index = 0; index < 9; index += 1) {
+    await search.press("ArrowDown")
+  }
+  const selectedOption = page.getByRole("option").nth(9)
+  await expect(selectedOption).toHaveAttribute("aria-selected", "true")
+  await search.press("Enter")
+
+  await expect(
+    page.getByRole("button", { name: "返回搜索结果" })
+  ).toBeVisible()
+  const locatedFragment = page.locator(
+    '[data-shard-fragment-id="fragment-19"]'
+  )
+  await expect(locatedFragment).toBeVisible()
+  await expect(locatedFragment).toBeInViewport()
+
+  const scrollContract = await page.evaluate(() => {
+    const composer = document.querySelector<HTMLElement>(
+      'textarea[placeholder="想到什么，写什么..."]'
+    )
+    const target = document.querySelector<HTMLElement>(
+      '[data-shard-fragment-id="fragment-19"]'
+    )
+    const viewport = target?.closest<HTMLElement>(
+      '[data-slot="scroll-area-viewport"]'
+    )
+    return {
+      composerTop: composer?.getBoundingClientRect().top,
+      documentScroll: document.scrollingElement?.scrollTop ?? -1,
+      targetBottom: target?.getBoundingClientRect().bottom,
+      targetTop: target?.getBoundingClientRect().top,
+      viewportBottom: viewport?.getBoundingClientRect().bottom,
+      viewportScroll: viewport?.scrollTop,
+      viewportTop: viewport?.getBoundingClientRect().top,
+    }
+  })
+  expect(scrollContract.documentScroll).toBe(documentScrollBefore)
+  expect(scrollContract.composerTop).toBe(composerBefore?.y)
+  expect(scrollContract.viewportScroll).toBeGreaterThan(0)
+  expect(scrollContract.targetTop).toBeGreaterThanOrEqual(
+    scrollContract.viewportTop ?? 0
+  )
+  expect(scrollContract.targetBottom).toBeLessThanOrEqual(
+    scrollContract.viewportBottom ?? Number.POSITIVE_INFINITY
+  )
+
+  await page.getByRole("button", { name: "返回搜索结果" }).click()
+  await expect(search).toBeFocused()
+  await expect(search).toHaveValue("work")
+  await page.getByRole("button", { name: "退出搜索" }).click()
+  await page.getByRole("button", { name: "结束搜索" }).click()
+
+  await page.keyboard.press("Control+k")
+  await search.fill("已归档")
+  await expect(page.getByRole("option")).toHaveCount(1)
+  await page.getByRole("button", { name: "未归档" }).click()
+  await expect(page.getByText("没有找到“已归档”")).toBeVisible()
+  await page.getByRole("button", { name: "退出搜索" }).click()
+
+  await page.setViewportSize({ height: 640, width: 720 })
+  await page.keyboard.press("Control+k")
+  await search.fill("work")
+  await expect(page.getByRole("option")).toHaveCount(12)
+  const compactGeometry = await page.getByRole("search").evaluate((element) => {
+    const input = element.querySelector<HTMLInputElement>(
+      '[role="combobox"]'
+    )
+    const inputRect = input?.getBoundingClientRect()
+    const inputStyle = input ? getComputedStyle(input) : null
+    return {
+      clientWidth: element.clientWidth,
+      inputBottom: inputRect?.bottom,
+      inputLeft: inputRect?.left,
+      inputRight: inputRect?.right,
+      inputShadow: inputStyle?.boxShadow,
+      scrollWidth: element.scrollWidth,
+    }
+  })
+  expect(compactGeometry.scrollWidth).toBe(compactGeometry.clientWidth)
+  expect(compactGeometry.inputLeft).toBeGreaterThan(0)
+  expect(compactGeometry.inputRight).toBeLessThan(720)
+  expect(compactGeometry.inputBottom).toBeLessThan(640)
+  expect(compactGeometry.inputShadow).toContain("rgb")
+  await page.getByRole("button", { name: "退出搜索" }).click()
+  await page.setViewportSize({ height: 720, width: 1280 })
 
   const utilityTrigger = page.locator(
     "[data-shard-utility-menu-trigger]:visible"
@@ -900,6 +1459,720 @@ test("small windows use bottom tabs without document scrolling", async ({
   expect(overflow).toEqual({ body: "hidden", root: "hidden" })
 })
 
+test.describe("片段关系层", () => {
+  test.beforeEach(async ({ page }) => {
+    await installTauriMock(page, {
+      relations: {
+        "fragment-1": [
+          { targetId: "fragment-3", note: "同一次漫步里被连起来" },
+        ],
+      },
+      walkResult: [
+        "## 漫步路径",
+        "测试漫步正文。",
+        "",
+        "## 意外连接",
+        "两条片段可以互相补充。",
+        "",
+        "```json",
+        '{"edges":[{"from":1,"to":3,"reason":"共同指向同一个后续行动"}]}',
+        "```",
+      ].join("\n"),
+    })
+    await page.goto("/")
+    await expect(page.locator("[data-shard-fragment-id]")).toHaveCount(24)
+  })
 
+  test("有关联的卡片显示折叠入口，展开后可跳转到目标片段", async ({
+    page,
+  }) => {
+    const card = page.locator('[data-shard-fragment-id="fragment-1"]')
+    const toggle = card.getByRole("button", { name: "1 条关联" })
 
+    // 折叠态：只有一行入口，不展开内容
+    await expect(toggle).toBeVisible()
+    await expect(toggle).toHaveAttribute("aria-expanded", "false")
 
+    await toggle.click()
+    await expect(toggle).toHaveAttribute("aria-expanded", "true")
+
+    // 已确认的边排在最前，并带上建边理由
+    const linkedRow = card.locator('button[title="同一次漫步里被连起来"]')
+    await expect(linkedRow).toBeVisible()
+    await expect(linkedRow).toContainText("第 3 条回归片段")
+
+    // 点击跳转后目标卡片进入高亮
+    await linkedRow.click()
+    await expect(
+      page.locator('[data-shard-fragment-id="fragment-3"]')
+    ).toHaveClass(/shard-fragment-card-highlight/)
+  })
+
+  test("没有关联的卡片不占用垂直空间，可从菜单显式打开", async ({ page }) => {
+    const card = page.locator('[data-shard-fragment-id="fragment-5"]')
+
+    // 默认时间线密度不变：无边的卡片没有任何关系入口
+    await expect(card.getByRole("button", { name: /条关联/ })).toHaveCount(0)
+    await expect(card.getByRole("button", { name: "相关片段" })).toHaveCount(0)
+
+    await card.getByRole("button", { name: "片段操作" }).click()
+    await page.getByRole("menuitem", { name: "相关片段" }).click()
+
+    // 展开后按标签共现给出候选
+    await expect(card.getByRole("button", { name: "相关片段" })).toHaveAttribute(
+      "aria-expanded",
+      "true"
+    )
+    await expect(card.locator('span[aria-label="同标签"]').first()).toBeVisible()
+  })
+
+  test("可从卡片菜单搜索目标并建立手动关联", async ({ page }) => {
+    const card = page.locator('[data-shard-fragment-id="fragment-5"]')
+    await card.getByRole("button", { name: "片段操作" }).click()
+    await page.getByRole("menuitem", { name: "关联到片段…" }).click()
+
+    const dialog = page.getByRole("dialog", { name: "关联到片段" })
+    await expect(dialog).toBeVisible()
+    await dialog.getByRole("textbox", { name: "搜索片段" }).fill("第 8 条")
+    await dialog.getByRole("option", { name: /第 8 条回归片段/ }).click()
+
+    await expect(dialog).toBeHidden()
+    await expect(card.getByRole("button", { name: "1 条关联" })).toBeVisible()
+
+    const linkCall = await page.evaluate(() => {
+      const calls = (globalThis as typeof globalThis & {
+        __SHARD_TEST_CALLS__: Array<{
+          args: Record<string, unknown>
+          command: string
+        }>
+      }).__SHARD_TEST_CALLS__
+      return calls.find(
+        (call) =>
+          call.command === "link_fragments" && call.args.origin === "manual"
+      )
+    })
+    expect(linkCall?.args).toMatchObject({
+      origin: "manual",
+      sourceId: "fragment-5",
+      targetId: "fragment-8",
+    })
+  })
+
+  test("移除反向关联使用真实边 owner，且不会触发卡片跳转", async ({ page }) => {
+    const card = page.locator('[data-shard-fragment-id="fragment-3"]')
+    await card.getByRole("button", { name: "片段操作" }).click()
+    await page.getByRole("menuitem", { name: "相关片段" }).click()
+
+    const removeButton = card.getByRole("button", { name: "移除关联" })
+    await expect(removeButton).toBeVisible()
+    await removeButton.click()
+
+    await expect(removeButton).toBeHidden()
+    await expect(
+      page.locator('[data-shard-fragment-id="fragment-1"]')
+    ).not.toHaveClass(/shard-fragment-card-highlight/)
+
+    const unlinkCall = await page.evaluate(() => {
+      const calls = (globalThis as typeof globalThis & {
+        __SHARD_TEST_CALLS__: Array<{
+          args: Record<string, unknown>
+          command: string
+        }>
+      }).__SHARD_TEST_CALLS__
+      return calls.find((call) => call.command === "unlink_fragments")
+    })
+    expect(unlinkCall?.args).toMatchObject({
+      sourceId: "fragment-1",
+      targetId: "fragment-3",
+    })
+  })
+
+  test("随机漫步建议边可逐条保留并持久化为 walk 关联", async ({ page }) => {
+    await page.getByRole("button", { name: /随机漫步/ }).click()
+    await page.getByRole("button", { name: "生成连接理由" }).click()
+
+    const suggestions = page.getByRole("region", { name: "建议的关联" })
+    await expect(suggestions).toBeVisible()
+    await expect(suggestions).toContainText("共同指向同一个后续行动")
+
+    await suggestions.getByRole("button", { name: "保留" }).click()
+    await expect(suggestions.getByText("已保留")).toBeVisible()
+
+    const linkCall = await page.evaluate(() => {
+      const calls = (globalThis as typeof globalThis & {
+        __SHARD_TEST_CALLS__: Array<{
+          args: Record<string, unknown>
+          command: string
+        }>
+      }).__SHARD_TEST_CALLS__
+      return calls.find(
+        (call) =>
+          call.command === "link_fragments" && call.args.origin === "walk"
+      )
+    })
+    expect(linkCall?.args).toMatchObject({
+      note: "共同指向同一个后续行动",
+      origin: "walk",
+    })
+    expect(linkCall?.args.sourceId).toMatch(/^fragment-/)
+    expect(linkCall?.args.targetId).toMatch(/^fragment-/)
+  })
+})
+
+test("插入标签按需补空格，汉字后不粘连", async ({ page }) => {
+  const composer = page.getByPlaceholder("想到什么，写什么...")
+  const insertTag = page.getByRole("button", { name: "插入标签" })
+
+  // 汉字后面必须补空格：isTagBoundary 把汉字当边界是为了识别，
+  // 插入时沿用会得到 `#密匣#高菲` 这种粘连。
+  await composer.fill("密匣")
+  await composer.press("End")
+  await insertTag.click()
+  await expect(composer).toHaveValue("密匣 #")
+
+  // 已经有空白分隔时不重复补
+  await composer.fill("密匣 ")
+  await composer.press("End")
+  await insertTag.click()
+  await expect(composer).toHaveValue("密匣 #")
+
+  // 中文标点后同样不补，保持 `你好，#标签` 的自然写法
+  await composer.fill("你好，")
+  await composer.press("End")
+  await insertTag.click()
+  await expect(composer).toHaveValue("你好，#")
+})
+
+test("从建议里选中标签后自动补空格", async ({ page }) => {
+  const composer = page.getByPlaceholder("想到什么，写什么...")
+
+  await composer.fill("#wo")
+  await composer.press("End")
+  const suggestion = page
+    .getByRole("listbox", { name: "标签建议" })
+    .getByRole("option", { name: /work/ })
+  await suggestion.click()
+
+  // 补全后必须留出分隔空格，否则接着写下一个标签会粘连
+  await expect(composer).toHaveValue("#work ")
+
+  // 这个空格还得在视觉上看得见：芯片外扩不能把它吃掉，光标要离芯片有可见间隔
+  await expect(page.locator(".shard-custom-caret")).toBeVisible()
+  const caretGap = await page.evaluate(() => {
+    const chip = document
+      .querySelector(".shard-editor-tag-highlight")
+      ?.getBoundingClientRect()
+    const caret = document
+      .querySelector(".shard-custom-caret")
+      ?.getBoundingClientRect()
+    return chip && caret ? caret.left - chip.right : null
+  })
+  expect(caretGap).not.toBeNull()
+  expect(caretGap ?? 0).toBeGreaterThanOrEqual(3)
+})
+
+test("编辑模式选中标签后留出输入边距", async ({ page }) => {
+  const card = page.locator('[data-shard-fragment-id="fragment-1"]')
+  await card.getByRole("button", { name: "片段操作" }).click()
+  await page.getByRole("menuitem", { name: "编辑" }).click()
+
+  const editor = page.locator("textarea").nth(1)
+  await expect(editor).toBeFocused()
+  await editor.fill("#wo")
+  await editor.press("End")
+  await page
+    .getByRole("listbox", { name: "标签建议" })
+    .getByRole("option", { name: /work/ })
+    .click()
+
+  await expect(editor).toHaveValue("#work ")
+  await expect(editor).toBeFocused()
+  expect(await editor.evaluate((element) => element.selectionStart)).toBe(6)
+})
+
+test("连续标签高亮保留可见空格", async ({ page }) => {
+  const composer = page.getByPlaceholder("想到什么，写什么...")
+  await composer.fill("#work #notes ")
+
+  const tagGap = await page
+    .locator(".shard-editor-tag-highlight")
+    .evaluateAll((tags) => {
+      const first = tags[0]?.getBoundingClientRect()
+      const second = tags[1]?.getBoundingClientRect()
+      return first && second ? second.left - first.right : null
+    })
+  expect(tagGap).not.toBeNull()
+  // 两个标签之间的空格必须完整可见，不能只是「没重叠」
+  expect(tagGap ?? 0).toBeGreaterThanOrEqual(3)
+})
+
+test("编辑态标签只着色不画芯片，且与 textarea 逐字符对齐", async ({ page }) => {
+  const composer = page.getByPlaceholder("想到什么，写什么...")
+  const content = "笔记#密匣 前文 #work #notes 后文 #a 尾"
+  await composer.fill(content)
+
+  const metrics = await composer.evaluate((element, text) => {
+    const textarea = element as HTMLTextAreaElement
+    const layer = document.querySelector(".shard-editor-highlight-layer")
+    if (!layer) return null
+
+    // 叠加层里「尾」的位置：前面每个标签芯片的占位只要偏一点，这里就会累计偏移。
+    const walker = document.createTreeWalker(layer, NodeFilter.SHOW_TEXT)
+    let tail: Text | null = null
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      if (node.textContent?.includes("尾")) tail = node as Text
+    }
+    if (!tail) return null
+    const tailIndex = tail.textContent?.indexOf("尾") ?? 0
+    const tailRange = document.createRange()
+    tailRange.setStart(tail, tailIndex)
+    tailRange.setEnd(tail, tailIndex + 1)
+    const tailRect = tailRange.getBoundingClientRect()
+
+    // textarea 里同一段文本的真实宽度。
+    const styles = getComputedStyle(textarea)
+    const mirror = document.createElement("span")
+    for (const property of [
+      "font-family",
+      "font-size",
+      "font-weight",
+      "letter-spacing",
+      "font-feature-settings",
+      "font-variant-numeric",
+    ]) {
+      mirror.style.setProperty(property, styles.getPropertyValue(property))
+    }
+    mirror.style.position = "absolute"
+    mirror.style.visibility = "hidden"
+    mirror.style.whiteSpace = "pre"
+    mirror.textContent = text.slice(0, text.indexOf("尾"))
+    document.body.appendChild(mirror)
+    const expectedLeft =
+      textarea.getBoundingClientRect().left +
+      parseFloat(styles.paddingLeft) +
+      mirror.getBoundingClientRect().width
+    mirror.remove()
+
+    const layerStyles = getComputedStyle(layer)
+    const chips = Array.from(
+      layer.querySelectorAll<HTMLElement>(".shard-editor-tag-highlight")
+    ).map((chip) => {
+      const styles = getComputedStyle(chip)
+      return {
+        background: styles.backgroundColor,
+        boxShadow: styles.boxShadow,
+        color: styles.color,
+        fontSize: styles.fontSize,
+        fontWeight: styles.fontWeight,
+        padding: styles.padding,
+        text: chip.textContent ?? "",
+      }
+    })
+
+    // 「#notes 后文」：标签后的空格要给下一个字留出可见间隔
+    const chipBeforeText = layer
+      .querySelectorAll(".shard-editor-tag-highlight")[2]
+      ?.getBoundingClientRect()
+    let nextCharGap: number | null = null
+    const textWalker = document.createTreeWalker(layer, NodeFilter.SHOW_TEXT)
+    for (
+      let node = textWalker.nextNode();
+      node && chipBeforeText;
+      node = textWalker.nextNode()
+    ) {
+      const index = node.textContent?.indexOf("后") ?? -1
+      if (index < 0) continue
+      const charRange = document.createRange()
+      charRange.setStart(node, index)
+      charRange.setEnd(node, index + 1)
+      nextCharGap =
+        charRange.getBoundingClientRect().left - chipBeforeText.right
+    }
+
+    return {
+      body: {
+        color: layerStyles.color,
+        fontSize: layerStyles.fontSize,
+        fontWeight: layerStyles.fontWeight,
+      },
+      chips,
+      drift: tailRect.left - expectedLeft,
+      nextCharGap,
+      tailX: tailRect.left + tailRect.width / 2,
+      tailY: tailRect.top + tailRect.height / 2,
+    }
+  }, content)
+
+  expect(metrics).not.toBeNull()
+  expect(Math.abs(metrics?.drift ?? Number.POSITIVE_INFINITY)).toBeLessThan(0.5)
+  // 标签后面补出来的空格必须完整可见，下一个字不能贴着标签
+  expect(metrics?.nextCharGap ?? 0).toBeGreaterThanOrEqual(3)
+  expect(metrics?.chips.map((chip) => chip.text)).toEqual([
+    "#密匣",
+    "#work",
+    "#notes",
+    "#a",
+  ])
+  // 编辑态只着色不画芯片（同 flomo）：没有背景、描边、内边距，字号字重与正文一致
+  for (const chip of metrics?.chips ?? []) {
+    expect(chip.background).toBe("rgba(0, 0, 0, 0)")
+    expect(chip.boxShadow).toBe("none")
+    expect(chip.padding).toBe("0px")
+    expect(chip.fontSize).toBe(metrics?.body.fontSize)
+    expect(chip.fontWeight).toBe(metrics?.body.fontWeight)
+    expect(chip.color).not.toBe(metrics?.body.color)
+  }
+
+  await page.mouse.click(metrics?.tailX ?? 0, metrics?.tailY ?? 0)
+  const tailOffset = content.indexOf("尾")
+  expect([tailOffset, tailOffset + 1]).toContain(
+    await composer.evaluate(
+      (element) => (element as HTMLTextAreaElement).selectionStart
+    )
+  )
+})
+
+test("末行换行后自绘光标保持在新行", async ({ page }) => {
+  const composer = page.getByPlaceholder("想到什么，写什么...")
+  const content = Array.from(
+    { length: 80 },
+    (_, index) => `第 ${index + 1} 行`
+  ).join("\n")
+  await composer.fill(content)
+  await composer.press("End")
+
+  const caret = page.locator(".shard-custom-caret")
+  const before = await caret.boundingBox()
+  await composer.press("Enter")
+
+  await expect(composer).toBeFocused()
+  await expect(composer).toHaveValue(`${content}\n`)
+  await expect(caret).toHaveCount(1)
+  const after = await caret.boundingBox()
+  expect(after).not.toBeNull()
+  expect(after?.y ?? 0).toBeGreaterThan(before?.y ?? 0)
+  expect(await composer.evaluate((element) => element.selectionStart)).toBe(
+    `${content}\n`.length
+  )
+})
+
+test("可见层滚动状态滞后时光标回退到实时文本框几何", async ({ page }) => {
+  const composer = page.getByPlaceholder("想到什么，写什么...")
+  await composer.fill("光标回退验证")
+  await composer.press("End")
+
+  await page.locator(".shard-editor-highlight-layer").first().evaluate((layer) => {
+    layer.style.transform = "translateY(-1000px)"
+  })
+  await composer.press("ArrowLeft")
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) => {
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+      })
+  )
+
+  const caretGeometry = await page.locator(".shard-custom-caret").evaluate((caret) => {
+    const textarea = document.querySelector<HTMLTextAreaElement>(
+      'textarea[placeholder="想到什么，写什么..."]'
+    )
+    const caretRect = caret.getBoundingClientRect()
+    const textareaRect = textarea?.getBoundingClientRect()
+    return {
+      caretBottom: caretRect.bottom,
+      caretTop: caretRect.top,
+      textareaBottom: textareaRect?.bottom,
+      textareaTop: textareaRect?.top,
+    }
+  })
+  expect(caretGeometry.caretTop).toBeGreaterThanOrEqual(
+    caretGeometry.textareaTop ?? Number.NEGATIVE_INFINITY
+  )
+  expect(caretGeometry.caretBottom).toBeLessThanOrEqual(
+    caretGeometry.textareaBottom ?? Number.POSITIVE_INFINITY
+  )
+})
+
+test("输入框达到窗口上限时上下留白对称", async ({ page }) => {
+  const composer = page.getByPlaceholder("想到什么，写什么...")
+  await composer.fill(
+    Array.from({ length: 80 }, (_, index) => `第 ${index + 1} 行`).join("\n")
+  )
+
+  async function readGeometry() {
+    return composer.evaluate((element) => {
+      const frame = element.closest<HTMLElement>(".shard-content-measure")
+      const column = element.closest<HTMLElement>("section")
+      const frameRect = frame?.getBoundingClientRect()
+      const columnRect = column?.getBoundingClientRect()
+      return {
+        bottomGap:
+          frameRect && columnRect ? columnRect.bottom - frameRect.bottom : null,
+        capped: frame?.dataset.heightCapped,
+        topGap:
+          frameRect && columnRect ? frameRect.top - columnRect.top : null,
+      }
+    })
+  }
+
+  await expect
+    .poll(async () => {
+      const geometry = await readGeometry()
+      return Math.abs(
+        (geometry.topGap ?? 0) - (geometry.bottomGap ?? 0)
+      )
+    })
+    .toBeLessThanOrEqual(1)
+  const geometry = await readGeometry()
+
+  expect(geometry.capped).toBe("true")
+  expect(geometry.topGap).not.toBeNull()
+  expect(geometry.bottomGap).not.toBeNull()
+  expect(
+    Math.abs((geometry.topGap ?? 0) - (geometry.bottomGap ?? 0))
+  ).toBeLessThanOrEqual(1)
+
+  const overflow = await composer.evaluate((element) => ({
+    clientHeight: element.clientHeight,
+    documentScrollTop: document.scrollingElement?.scrollTop ?? -1,
+    overflowY: getComputedStyle(element).overflowY,
+    scrollHeight: element.scrollHeight,
+  }))
+  expect(overflow.overflowY).toBe("auto")
+  expect(overflow.scrollHeight).toBeGreaterThan(overflow.clientHeight)
+  expect(overflow.documentScrollTop).toBe(0)
+
+  await composer.fill("恢复短内容")
+  await expect
+    .poll(async () => {
+      const restored = await readGeometry()
+      return restored.topGap
+    })
+    .toBe(32)
+  expect((await readGeometry()).capped).toBeUndefined()
+
+  await page.setViewportSize({ height: 640, width: 720 })
+  await composer.fill(
+    Array.from({ length: 80 }, (_, index) => `窄窗口第 ${index + 1} 行`).join(
+      "\n"
+    )
+  )
+  await expect
+    .poll(async () => {
+      const narrow = await readGeometry()
+      return narrow.topGap
+    })
+    .toBe(32)
+  expect((await readGeometry()).capped).toBeUndefined()
+})
+
+test("自动同步失败通知可关闭且不堆叠", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.setItem(
+      "shard.app-settings.v1",
+      JSON.stringify({
+        autoSyncEnabled: true,
+        autoSyncIntervalMinutes: 5,
+        customTags: [],
+      })
+    )
+
+    const runtime = globalThis as typeof globalThis & {
+      __SHARD_RUN_AUTO_SYNC__?: () => void
+      __SHARD_SYNC_ATTEMPTS__?: number
+      __TAURI_INTERNALS__: {
+        invoke: (
+          command: string,
+          args?: Record<string, unknown>
+        ) => Promise<unknown>
+      }
+    }
+    const originalInvoke = runtime.__TAURI_INTERNALS__.invoke
+    const results = ["failure", "success", "failure", "failure"]
+    runtime.__SHARD_SYNC_ATTEMPTS__ = 0
+    runtime.__TAURI_INTERNALS__.invoke = async (command, args) => {
+      if (command !== "sync_vault") return originalInvoke(command, args)
+
+      const attempt = runtime.__SHARD_SYNC_ATTEMPTS__ ?? 0
+      runtime.__SHARD_SYNC_ATTEMPTS__ = attempt + 1
+      if (results[attempt] === "success") return originalInvoke(command, args)
+      throw new Error("TLS 连接失败")
+    }
+
+    const originalSetInterval = window.setInterval.bind(window)
+    window.setInterval = ((handler: TimerHandler, timeout?: number) => {
+      if (timeout === 5 * 60_000) {
+        runtime.__SHARD_RUN_AUTO_SYNC__ = () => {
+          if (typeof handler === "function") handler()
+        }
+      }
+      return originalSetInterval(handler, timeout)
+    }) as typeof window.setInterval
+  })
+  await page.reload()
+
+  async function runAutoSync(attempt: number) {
+    await page.evaluate(() => {
+      const runtime = globalThis as typeof globalThis & {
+        __SHARD_RUN_AUTO_SYNC__?: () => void
+      }
+      runtime.__SHARD_RUN_AUTO_SYNC__?.()
+    })
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () =>
+            (
+              globalThis as typeof globalThis & {
+                __SHARD_SYNC_ATTEMPTS__?: number
+              }
+            ).__SHARD_SYNC_ATTEMPTS__ ?? 0
+        )
+      )
+      .toBe(attempt)
+  }
+
+  const failureToast = page.getByText(/\u81ea\u52a8\u540c\u6b65\u5931\u8d25：TLS 连接失败/)
+  const errorToast = page.locator('[data-sonner-toast][data-type="error"]')
+  await runAutoSync(1)
+  await expect(failureToast).toBeVisible()
+  await expect(errorToast).toHaveCount(1)
+
+  const toastPresentation = await errorToast.evaluate((toast) => {
+    const closeButton = toast.querySelector<HTMLElement>("[data-close-button]")
+    if (!closeButton) throw new Error("缺少通知关闭按钮")
+
+    const colorAlpha = (color: string) => {
+      const canvas = document.createElement("canvas")
+      canvas.width = 1
+      canvas.height = 1
+      const context = canvas.getContext("2d")
+      if (!context) throw new Error("无法读取通知颜色")
+      context.clearRect(0, 0, 1, 1)
+      context.fillStyle = color
+      context.fillRect(0, 0, 1, 1)
+      return context.getImageData(0, 0, 1, 1).data[3]
+    }
+
+    const toastRect = toast.getBoundingClientRect()
+    const closeRect = closeButton.getBoundingClientRect()
+    return {
+      closeButtonContained:
+        closeRect.top >= toastRect.top &&
+        closeRect.right <= toastRect.right &&
+        closeRect.bottom <= toastRect.bottom &&
+        closeRect.left >= toastRect.left,
+      closeButtonBackgroundAlpha: colorAlpha(
+        getComputedStyle(closeButton).backgroundColor
+      ),
+      toastBackgroundAlpha: colorAlpha(getComputedStyle(toast).backgroundColor),
+    }
+  })
+  expect(toastPresentation).toEqual({
+    closeButtonContained: true,
+    closeButtonBackgroundAlpha: 255,
+    toastBackgroundAlpha: 255,
+  })
+
+  await runAutoSync(2)
+  await expect(failureToast).toBeHidden()
+
+  await runAutoSync(3)
+  await expect(failureToast).toBeVisible()
+  await expect(errorToast).toHaveCount(1)
+  await page.getByRole("button", { name: "关闭通知" }).click()
+  await expect(failureToast).toBeHidden()
+
+  await runAutoSync(4)
+  await expect(failureToast).toBeHidden()
+})
+
+test.describe("正文表格", () => {
+  const TABLE = [
+    "|   日期  |      时间     |   学校  |   事项   | 年级/备注 |",
+    "| :---: | :---------: | :---: | :----: | :---: |",
+    "| 8月24日 |  8:30-11:00 |  行知中学 |  市场采单  |   —   |",
+    "| 8月27日 |     8:30    | 四十二中学 | 返校+可采单 |   —   |",
+  ].join("\n")
+
+  test("GFM 表格渲染成真正的表格并保留列对齐", async ({ page }) => {
+    const composer = page.getByPlaceholder("想到什么，写什么...")
+    await composer.fill(`本周安排\n${TABLE}`)
+    await page.keyboard.press("Meta+Enter")
+
+    const card = page
+      .locator("[data-shard-fragment-id]")
+      .filter({ hasText: "本周安排" })
+      .first()
+    const table = card.locator("table.shard-markdown-table")
+    await expect(table).toBeVisible()
+
+    // 表头与数据行按分隔行的列数解析
+    await expect(table.locator("thead th")).toHaveCount(5)
+    await expect(table.locator("tbody tr")).toHaveCount(2)
+    await expect(table.locator("thead th").first()).toHaveText("日期")
+    await expect(table.locator("tbody tr").first().locator("td").nth(2)).toHaveText("行知中学")
+
+    // :---: 落成居中对齐
+    await expect(table.locator("thead th").first()).toHaveCSS(
+      "text-align",
+      "center"
+    )
+
+    // 表格上方的普通段落仍走内联流
+    await expect(card).toContainText("本周安排")
+  })
+
+  test("完整真实表格：8 行数据、破折号与含连字符时间都正常", async ({
+    page,
+  }) => {
+    const REAL = [
+      "|   日期  |      时间     |   学校  |   事项   | 年级/备注 |",
+      "| :---: | :---------: | :---: | :----: | :---: |",
+      "| 8月24日 |  8:30-11:00 |  行知中学 |  市场采单  |   —   |",
+      "| 8月25日 |  8:30-11:00 |  行知中学 |  市场采单  |   —   |",
+      "| 8月26日 |  8:30-11:00 |  行知中学 |  市场采单  |   —   |",
+      "| 8月26日 |   上午 8:30   |  卓群中学 |  市场采单  | 2024年 |",
+      "| 8月27日 |  8:30-11:00 |  觉民中学 |  初一返校  |   —   |",
+      "| 8月27日 |     8:30    | 四十二中学 | 返校+可采单 |   —   |",
+      "| 8月27日 | 14:00-16:00 |  觉民中学 |  高一返校  |   —   |",
+      "| 8月28日 |      —      |  觉民中学 |  市场采单  |   —   |",
+    ].join("\n")
+
+    const composer = page.getByPlaceholder("想到什么，写什么...")
+    await composer.fill(`超宽排期\n${REAL}`)
+    await page.keyboard.press("Meta+Enter")
+
+    const card = page
+      .locator("[data-shard-fragment-id]")
+      .filter({ hasText: "超宽排期" })
+      .first()
+    const table = card.locator("table.shard-markdown-table")
+
+    await expect(table).toBeVisible()
+    await expect(table.locator("tbody tr")).toHaveCount(8)
+    // 含连字符的时间不能被误判成分隔行
+    await expect(
+      table.locator("tbody tr").first().locator("td").nth(1)
+    ).toHaveText("8:30-11:00")
+    // 破折号单元格保留
+    await expect(
+      table.locator("tbody tr").last().locator("td").nth(1)
+    ).toHaveText("—")
+  })
+
+  test("编辑态给出可编辑表格，但源文本仍逐字符保留", async ({ page }) => {
+    const composer = page.getByPlaceholder("想到什么，写什么...")
+    await composer.fill(TABLE)
+
+    // 编辑态的表格是 EditorTable，不是只读的展示态表格
+    await expect(page.locator("table.shard-markdown-table")).toHaveCount(0)
+    await expect(page.locator("table.shard-editor-table")).toHaveCount(1)
+
+    // 可视化表格盖在测量层上，测量层必须仍是完整原文——高亮层逐字符对齐
+    // textarea 靠的就是它，原文一旦被替换掉，光标位置就全错了
+    await expect(
+      page.locator(".shard-editor-table-measure").first()
+    ).toContainText("| :---: |")
+  })
+})

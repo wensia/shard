@@ -136,7 +136,10 @@ source: desktop
 
 ## Design
 
-The frontend direction is documented in [DESIGN.md](DESIGN.md).
+Shard uses [Kiln](vendor/kiln) as its frontend design system. Kiln owns the
+shared tokens, component rules, layouts, and migration checks; Shard-specific
+editor and timeline geometry lives in `src/styles/frontend-rules.css` as a
+product extension rather than a second design system.
 
 ## License
 

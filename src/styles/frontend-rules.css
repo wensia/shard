@@ -1,10 +1,10 @@
 /*
- * Shard geometry contract.
+ * Kiln host-product geometry extensions for Shard.
  *
- * The interface should read as quiet and simple, but every visible distance is
- * still deliberate. Build from the 4px lattice in src/index.css, use the 6px
- * micro step only for dense icon/chip gaps, and keep component geometry derived
- * from tokens instead of one-off pixel values.
+ * Kiln owns reusable visual tokens and component language. This file only owns
+ * Shard-specific editor, timeline, attachment, and macOS shell geometry that
+ * cannot live in the shared design system. Prefer Kiln tokens from
+ * vendor/kiln/tokens/index.css before adding a local --shard-* extension.
  *
  * Core relationships:
  * - control radius = 4px; surface radius = 6px; large panel cap = 8px
@@ -117,8 +117,28 @@
 
 @layer components {
   .cn-toast {
+    padding-right: calc(var(--shard-space-6) * 2) !important;
     font-family: var(--font-sans) !important;
     box-shadow: var(--shard-shadow-popover) !important;
+  }
+
+  .cn-toast [data-close-button] {
+    top: var(--shard-space-2) !important;
+    right: var(--shard-space-2) !important;
+    left: auto !important;
+    width: var(--shard-space-6) !important;
+    height: var(--shard-space-6) !important;
+    transform: none !important;
+    border-color: var(--border-visible) !important;
+    border-radius: var(--shard-radius-control) !important;
+    background: var(--popover) !important;
+    color: var(--popover-foreground) !important;
+    box-shadow: var(--shard-shadow-xs) !important;
+  }
+
+  .cn-toast [data-close-button]:hover {
+    border-color: var(--border-visible) !important;
+    background: var(--muted) !important;
   }
 
   .cn-toast-description {
@@ -131,26 +151,58 @@
   }
 
   .cn-toast-success {
-    --success-bg: rgb(var(--shard-success-rgb) / var(--shard-alpha-8));
-    --success-border: rgb(var(--shard-success-rgb) / var(--shard-alpha-34));
+    --success-bg: color-mix(
+      in srgb,
+      var(--shard-success) var(--shard-alpha-8),
+      var(--popover)
+    );
+    --success-border: color-mix(
+      in srgb,
+      var(--shard-success) var(--shard-alpha-34),
+      var(--popover)
+    );
     --success-text: var(--shard-success);
   }
 
   .cn-toast-info {
-    --info-bg: rgb(var(--shard-info-rgb) / var(--shard-alpha-8));
-    --info-border: rgb(var(--shard-info-rgb) / var(--shard-alpha-34));
+    --info-bg: color-mix(
+      in srgb,
+      var(--shard-info) var(--shard-alpha-8),
+      var(--popover)
+    );
+    --info-border: color-mix(
+      in srgb,
+      var(--shard-info) var(--shard-alpha-34),
+      var(--popover)
+    );
     --info-text: var(--shard-info);
   }
 
   .cn-toast-warning {
-    --warning-bg: rgb(var(--shard-warning-rgb) / var(--shard-alpha-8));
-    --warning-border: rgb(var(--shard-warning-rgb) / var(--shard-alpha-34));
+    --warning-bg: color-mix(
+      in srgb,
+      var(--shard-warning) var(--shard-alpha-8),
+      var(--popover)
+    );
+    --warning-border: color-mix(
+      in srgb,
+      var(--shard-warning) var(--shard-alpha-34),
+      var(--popover)
+    );
     --warning-text: var(--shard-warning);
   }
 
   .cn-toast-error {
-    --error-bg: rgb(var(--shard-danger-rgb) / var(--shard-alpha-8));
-    --error-border: rgb(var(--shard-danger-rgb) / var(--shard-alpha-34));
+    --error-bg: color-mix(
+      in srgb,
+      var(--shard-danger) var(--shard-alpha-8),
+      var(--popover)
+    );
+    --error-border: color-mix(
+      in srgb,
+      var(--shard-danger) var(--shard-alpha-34),
+      var(--popover)
+    );
     --error-text: var(--shard-danger);
   }
 
@@ -375,10 +427,6 @@
     text-rendering: optimizeLegibility;
   }
 
-  .shard-search-result-body {
-    line-height: 1.55;
-  }
-
   .shard-memo-meta {
     font-size: var(--shard-memo-meta-font-size);
     font-variant-numeric: tabular-nums;
@@ -395,6 +443,278 @@
     --shard-fragment-divider-extension: calc(
       var(--shard-card-gap) + var(--shard-space-8)
     );
+  }
+
+  /* 正文里的 GFM 表格。内容是内联文本流（white-space: pre-wrap），
+     表格必须自己关掉换行保留，否则单元格里会多出源文本的缩进空白。
+     过宽时在自己的容器里横向滚动，不撑破卡片。 */
+  .shard-markdown-table {
+    display: block;
+    width: fit-content;
+    max-width: 100%;
+    margin-block: var(--shard-space-3);
+    overflow-x: auto;
+    border-collapse: collapse;
+    border: 1px solid var(--border);
+    border-radius: var(--shard-radius-control);
+    white-space: normal;
+    font-size: var(--shard-memo-font-size);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .shard-markdown-table th,
+  .shard-markdown-table td {
+    padding: var(--shard-space-2) var(--shard-space-3);
+    border-bottom: 1px solid var(--border);
+    text-align: left;
+    vertical-align: top;
+  }
+
+  .shard-markdown-table th {
+    background: var(--muted);
+    color: var(--foreground);
+    font-weight: 600;
+    white-space: nowrap;
+  }
+
+  .shard-markdown-table tr:last-child td {
+    border-bottom: none;
+  }
+
+  .shard-markdown-table th + th,
+  .shard-markdown-table td + td {
+    border-left: 1px solid var(--border);
+  }
+
+  /* 编辑态的表格。测量层保留表格源文本（透明）撑出这一块的真实高度，
+     交互层绝对定位铺在上面——高亮层本身盖在 textarea 之上，所以这里只要
+     把 pointer-events 打开，单元格就能直接点。表格因此不参与文档流高度，
+     后面的正文和光标几何都不会被表格样式带偏。 */
+  .shard-editor-table-block {
+    position: relative;
+    display: inline-block;
+    width: 100%;
+    vertical-align: top;
+  }
+
+  .shard-editor-table-measure {
+    display: block;
+    color: transparent;
+    -webkit-text-fill-color: transparent;
+  }
+
+  .shard-editor-table-surface {
+    position: absolute;
+    display: block;
+    overflow: hidden;
+    border-radius: var(--shard-radius-control);
+    background: var(--card);
+    inset: 0;
+    pointer-events: auto;
+    transition: opacity 120ms ease;
+  }
+
+  /* 光标落回这段源文本时让位给源码编辑：表格淡成参照，原文重新可读。 */
+  .shard-editor-table-block[data-source-active] .shard-editor-table-measure {
+    color: var(--shard-memo-content-color);
+    -webkit-text-fill-color: currentColor;
+  }
+
+  .shard-editor-table-block[data-source-active] .shard-editor-table-surface {
+    opacity: 0.14;
+  }
+
+  .shard-editor-table {
+    width: 100%;
+    height: 100%;
+    border-collapse: collapse;
+    font-size: var(--shard-memo-font-size);
+    font-variant-numeric: tabular-nums;
+    table-layout: fixed;
+    white-space: normal;
+  }
+
+  .shard-editor-table th,
+  .shard-editor-table td {
+    overflow: hidden;
+    border: 1px solid var(--border);
+    padding: 0;
+    vertical-align: middle;
+  }
+
+  .shard-editor-table th {
+    background: var(--muted);
+  }
+
+  .shard-editor-table-input {
+    display: block;
+    width: 100%;
+    border: 0;
+    background: transparent;
+    padding-block: 0;
+    padding-inline: var(--shard-space-2);
+    color: inherit;
+    font: inherit;
+    line-height: inherit;
+    outline: none;
+  }
+
+  .shard-editor-table th .shard-editor-table-input {
+    font-weight: 600;
+  }
+
+  .shard-editor-table-input:focus {
+    background: rgb(var(--shard-primary-rgb) / var(--shard-alpha-8));
+  }
+
+  .shard-editor-table-input::placeholder {
+    color: var(--muted-foreground);
+    opacity: var(--shard-alpha-55);
+  }
+
+  /* 行列操作条：平时不占视线，鼠标进表格或光标进单元格时才出现。 */
+  .shard-editor-table-actions {
+    position: absolute;
+    top: var(--shard-space-1);
+    right: var(--shard-space-1);
+    display: flex;
+    gap: 2px;
+    border-radius: var(--shard-radius-control);
+    background: var(--popover);
+    padding: 2px;
+    box-shadow: var(--shadow-popover);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 120ms ease;
+  }
+
+  .shard-editor-table-surface:hover .shard-editor-table-actions,
+  .shard-editor-table-surface:focus-within .shard-editor-table-actions {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .shard-editor-table-action {
+    height: 20px;
+    border: 1px solid var(--border);
+    border-radius: var(--shard-radius-control);
+    background: var(--card);
+    padding-inline: var(--shard-space-1);
+    color: var(--muted-foreground);
+    cursor: pointer;
+    font-size: 11px;
+    line-height: 1;
+  }
+
+  .shard-editor-table-action:hover:not(:disabled) {
+    border-color: var(--border-visible);
+    color: var(--foreground);
+  }
+
+  .shard-editor-table-action:disabled {
+    cursor: default;
+    opacity: var(--shard-alpha-34);
+  }
+
+  /* 表格文档拖进编辑器时的落点提示，也复用为导入中的状态。 */
+  .shard-editor-drop-hint {
+    position: absolute;
+    z-index: 25;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px dashed var(--shard-sapphire);
+    border-radius: var(--shard-surface-radius);
+    background: rgb(var(--shard-primary-rgb) / var(--shard-alpha-8));
+    color: var(--muted-foreground);
+    font-size: var(--shard-memo-font-size);
+    inset: var(--shard-space-2);
+    pointer-events: none;
+    backdrop-filter: blur(1px);
+  }
+
+  /* 工具栏的插入表格网格。 */
+  .shard-table-size-picker {
+    position: absolute;
+    z-index: 40;
+    display: flex;
+    flex-direction: column;
+    gap: var(--shard-space-2);
+    border: 1px solid var(--border);
+    border-radius: var(--shard-surface-radius);
+    background: var(--popover);
+    padding: var(--shard-space-2);
+    box-shadow: var(--shadow-popover);
+  }
+
+  /* 上方放不下就翻到按钮下面；靠窗口右缘时改成右对齐。 */
+  .shard-table-size-picker[data-side="top"] {
+    bottom: calc(100% + var(--shard-space-2));
+  }
+
+  .shard-table-size-picker[data-side="bottom"] {
+    top: calc(100% + var(--shard-space-2));
+  }
+
+  .shard-table-size-picker[data-align="start"] {
+    left: 0;
+  }
+
+  .shard-table-size-picker[data-align="end"] {
+    right: 0;
+  }
+
+  .shard-table-size-grid {
+    display: grid;
+    grid-template-columns: repeat(6, 16px);
+    gap: 3px;
+  }
+
+  .shard-table-size-cell {
+    width: 16px;
+    height: 16px;
+    border: 1px solid var(--border-visible);
+    border-radius: 2px;
+    background: transparent;
+    padding: 0;
+    cursor: pointer;
+  }
+
+  .shard-table-size-cell[data-selected] {
+    border-color: var(--shard-sapphire);
+    background: rgb(var(--shard-primary-rgb) / var(--shard-alpha-21));
+  }
+
+  .shard-table-size-import {
+    display: flex;
+    width: 100%;
+    align-items: center;
+    justify-content: center;
+    gap: var(--shard-space-1);
+    border: 1px solid var(--border);
+    border-radius: var(--shard-radius-control);
+    background: var(--card);
+    padding-block: var(--shard-space-1);
+    color: var(--muted-foreground);
+    cursor: pointer;
+    font-size: 12px;
+  }
+
+  .shard-table-size-import:hover {
+    border-color: var(--border-visible);
+    color: var(--foreground);
+  }
+
+  .shard-table-size-import svg {
+    width: 13px;
+    height: 13px;
+  }
+
+  .shard-table-size-label {
+    color: var(--muted-foreground);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    text-align: center;
   }
 
   .shard-fragment-divider {
@@ -450,11 +770,6 @@
     white-space: normal;
   }
 
-  .shard-search-result-body .shard-image-attachment-row {
-    margin-top: var(--shard-space-2);
-    margin-bottom: 0;
-  }
-
   .shard-image-attachment {
     --shard-image-attachment-size: 86px;
     --shard-image-attachment-radius: calc(
@@ -471,10 +786,6 @@
     background: var(--muted);
     box-shadow: 0 1px 2px rgb(17 19 21 / var(--shard-alpha-8));
     vertical-align: top;
-  }
-
-  .shard-search-result-body .shard-image-attachment {
-    --shard-image-attachment-size: 64px;
   }
 
   .dark .shard-image-attachment {
@@ -747,17 +1058,6 @@
     text-rendering: optimizeLegibility;
   }
 
-  .shard-editor-overlay-field {
-    color: transparent !important;
-    -webkit-text-fill-color: transparent;
-  }
-
-  .shard-editor-overlay-field::selection {
-    color: transparent;
-    background: transparent;
-    -webkit-text-fill-color: transparent;
-  }
-
   .shard-editor-highlight-layer {
     position: absolute;
     inset: 0;
@@ -777,15 +1077,29 @@
     text-rendering: optimizeLegibility;
   }
 
+  /* 编辑区行内标签：照 flomo 的做法，编辑态只着色、不画芯片。
+   * 叠加层必须和 textarea 逐字符对齐，任何 padding / 字号 / 字重的变化
+   * 都会让后面的文字错位，或者吃掉标签后面那个补出来的空格；
+   * 芯片形态只留给只读卡片（.shard-tag）。 */
   .shard-editor-tag-highlight {
-    display: inline;
     color: var(--shard-editor-tag-fg);
-    font-weight: inherit;
-    line-height: inherit;
-    vertical-align: baseline;
+  }
+
+  /* 荧光笔和选区这两种高亮块都要填满行盒、多行连成一片（同 flomo），
+   * 共用同一个外扩 token。行内元素的垂直 padding 只扩大背景绘制区、
+   * 不参与排版，所以叠加层仍和 textarea 逐字符对齐。 */
+  .shard-editor-markdown-highlight {
+    padding-block: var(--shard-editor-highlight-pad-y);
+    border-radius: calc(var(--shard-radius-control) / 2);
+    background: rgb(
+      var(--shard-warning-rgb) / var(--shard-alpha-21)
+    );
+    box-decoration-break: clone;
+    -webkit-box-decoration-break: clone;
   }
 
   .shard-editor-selection-highlight {
+    padding-block: var(--shard-editor-highlight-pad-y);
     border-radius: calc(var(--shard-radius-control) / 3);
     background: rgb(17 19 21 / var(--shard-alpha-13));
     box-decoration-break: clone;
@@ -840,6 +1154,28 @@
     content: "";
     transform: translate(-50%, -50%);
   }
+}
+
+/* Kiln's global form and ::selection rules are intentionally unlayered. Keep
+ * these editor-overlay constraints unlayered too: WKWebView must never paint
+ * the raw textarea or Markdown markers above Shard's visible highlight layer. */
+.shard-editor-overlay-field {
+  color: transparent !important;
+  -webkit-text-fill-color: transparent !important;
+}
+
+.shard-editor-markdown-marker {
+  display: inline-block;
+  width: 0;
+  color: transparent !important;
+  white-space: nowrap;
+  -webkit-text-fill-color: transparent !important;
+}
+
+.shard-editor-overlay-field::selection {
+  color: transparent;
+  background: transparent;
+  -webkit-text-fill-color: transparent;
 }
 
 @keyframes shard-caret-blink {

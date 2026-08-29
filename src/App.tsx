@@ -7,7 +7,11 @@ import { BottomTabs } from "@/components/shard/bottom-tabs"
 import { CaptureBox } from "@/components/shard/capture-box"
 import { FragmentEditor } from "@/components/shard/fragment-editor"
 import { FragmentImageExporter } from "@/components/shard/fragment-image-exporter"
-import { FragmentSearchDialog } from "@/components/shard/fragment-search-dialog"
+import {
+  FragmentSearchWorkspace,
+  SearchContextBar,
+  type FragmentSearchSession,
+} from "@/components/shard/fragment-search-workspace"
 import { FragmentTimeline } from "@/components/shard/fragment-timeline"
 import { InboxTagBar } from "@/components/shard/inbox-tag-bar"
 import {
@@ -43,6 +47,7 @@ import {
   createFragment,
   DESKTOP_RUNTIME_MESSAGE,
   getApiErrorMessage,
+  linkFragments,
   listFragments,
   listMindMaps,
   lockLockbox,
@@ -53,6 +58,7 @@ import {
   setupLockbox,
   syncVault,
   unlockLockbox,
+  unlinkFragments,
   updateFragment,
 } from "@/lib/api"
 import { toggleTaskLine } from "@/lib/editor-format"
@@ -72,6 +78,7 @@ import type {
   VaultState,
 } from "@/types"
 
+const AUTO_SYNC_FAILURE_TOAST_ID = "auto-sync-failure"
 const DEFAULT_PROJECT_TAGS: readonly string[] = ["日程"]
 const LOCKBOX_IDLE_TIMEOUT_MS = 3 * 60 * 1000
 type EditingVariant = "inline" | "zen"
@@ -111,13 +118,17 @@ function App() {
   const [pendingScrollFragmentId, setPendingScrollFragmentId] = useState<
     string | null
   >(null)
-  const [isSearchDialogOpen, setIsSearchDialogOpen] = useState(false)
+  const [isSearchModeActive, setIsSearchModeActive] = useState(false)
+  const [searchFocusSignal, setSearchFocusSignal] = useState(0)
+  const [searchSession, setSearchSession] =
+    useState<FragmentSearchSession | null>(null)
   const [isMindMapViewActive, setIsMindMapViewActive] = useState(false)
   const [activeMindMapId, setActiveMindMapId] = useState<string | null>(null)
   const [mindMaps, setMindMaps] = useState<MindMapSummary[]>([])
   const [selectedLockboxTag, setSelectedLockboxTag] = useState<string | null>(null)
   const [selectedTag, setSelectedTag] = useState<string | null>(null)
   const [selectedInboxTag, setSelectedInboxTag] = useState<string | null>(null)
+  const searchReturnFocusRef = useRef<HTMLElement | null>(null)
   const [insightIncludeLockbox, setInsightIncludeLockbox] = useState(false)
   const filterRef = useRef(filter)
   // 本次解锁弹窗由「洞察包含密匣」勾选发起（解锁成功即视为已重新校验密码）
@@ -253,6 +264,7 @@ function App() {
       ? state.fragments
       : publicFragments(state.fragments)
 
+    if (!state.lockbox.unlocked) setSearchSession(null)
     setFragments(sortFragmentsForDisplay(visibleFragments))
     setGit(state.git)
     setLockbox(state.lockbox)
@@ -358,6 +370,8 @@ function App() {
     try {
       const synced = await syncVault()
       setGit(synced)
+      toast.dismiss(AUTO_SYNC_FAILURE_TOAST_ID)
+      autoSyncFailureNotifiedRef.current = false
       toast("同步完成")
       void refreshFragments()
       void refreshMindMaps()
@@ -539,6 +553,40 @@ function App() {
         `${nextPinned ? "置顶失败" : "取消置顶失败"}：${getApiErrorMessage(error)}`,
         { duration: Infinity }
       )
+    }
+  }
+
+  async function handleLinkFragment(sourceId: string, targetId: string) {
+    try {
+      const updated = await linkFragments(sourceId, targetId, "manual")
+      setFragments((current) =>
+        current.map((fragment) =>
+          fragment.id === updated.id ? updated : fragment
+        )
+      )
+      toast.success("已关联")
+    } catch (error) {
+      toast.error(`关联失败：${getApiErrorMessage(error)}`, {
+        duration: Infinity,
+      })
+      throw error
+    }
+  }
+
+  async function handleUnlinkFragment(sourceId: string, targetId: string) {
+    try {
+      const updated = await unlinkFragments(sourceId, targetId)
+      setFragments((current) =>
+        current.map((fragment) =>
+          fragment.id === updated.id ? updated : fragment
+        )
+      )
+      toast.success("已移除关联")
+    } catch (error) {
+      toast.error(`移除关联失败：${getApiErrorMessage(error)}`, {
+        duration: Infinity,
+      })
+      throw error
     }
   }
 
@@ -777,7 +825,10 @@ function App() {
     insightUnlockIntentRef.current = false
   }
 
-  function handleOpenSearchResult(fragment: Fragment) {
+  function handleOpenSearchResult(
+    fragment: Fragment,
+    session?: FragmentSearchSession
+  ) {
     const visibleTag = getFirstVisibleTag(fragment)
 
     setEditingVariant("inline")
@@ -790,6 +841,9 @@ function App() {
       setFilter("archive")
     } else if (fragment.lockbox) {
       if (!lockbox?.unlocked) {
+        setIsSearchModeActive(false)
+        setSearchSession(null)
+        searchReturnFocusRef.current = null
         openLockboxGate()
         toast("请先解锁密匣后查看笔记")
         return
@@ -809,11 +863,46 @@ function App() {
       return
     }
 
+    setIsSearchModeActive(false)
+    if (session) setSearchSession(session)
+    searchReturnFocusRef.current = null
     setPendingScrollFragmentId(fragment.id)
   }
 
   function openSearch() {
-    setIsSearchDialogOpen(true)
+    if (!isSearchModeActive && document.activeElement instanceof HTMLElement) {
+      searchReturnFocusRef.current = document.activeElement
+    }
+    setIsSearchModeActive(true)
+    setSearchFocusSignal((current) => current + 1)
+  }
+
+  function exitSearchMode() {
+    setIsSearchModeActive(false)
+    if (searchSession) return
+
+    const returnFocus = searchReturnFocusRef.current
+    searchReturnFocusRef.current = null
+    window.requestAnimationFrame(() => returnFocus?.focus())
+  }
+
+  function endSearchSession() {
+    setIsSearchModeActive(false)
+    setSearchSession(null)
+    searchReturnFocusRef.current = null
+  }
+
+  function navigateSearchResult(nextIndex: number) {
+    if (!searchSession) return
+    const fragmentId = searchSession.resultIds[nextIndex]
+    const fragment = fragments.find((candidate) => candidate.id === fragmentId)
+    if (!fragment) {
+      toast("这条笔记已不在当前搜索范围中")
+      return
+    }
+
+    const nextSession = { ...searchSession, activeIndex: nextIndex }
+    handleOpenSearchResult(fragment, nextSession)
   }
 
   function handleCreateInboxTag(rawTag: string) {
@@ -845,6 +934,9 @@ function App() {
   }
 
   function openMindMap(map?: MindMapSummary) {
+    setIsSearchModeActive(false)
+    setSearchSession(null)
+    searchReturnFocusRef.current = null
     if (!map) {
       setIsMindMapViewActive(true)
       return
@@ -854,6 +946,9 @@ function App() {
   }
 
   function handleFilterChange(nextFilter: FragmentFilter) {
+    setIsSearchModeActive(false)
+    setSearchSession(null)
+    searchReturnFocusRef.current = null
     setIsMindMapViewActive(false)
     setFilter(nextFilter)
   }
@@ -1019,11 +1114,11 @@ function App() {
     lockboxDialogMode !== null ||
     isExportSheetOpen ||
     isLockboxArchiveConfirmOpen
-  const isBlockingDialogOpen = isModalBusy || isSearchDialogOpen
+  const isBlockingDialogOpen = isModalBusy
 
   const timelineScrollTargetId =
     pendingScrollFragmentId &&
-    !isSearchDialogOpen &&
+    !isSearchModeActive &&
     !isReviewView &&
     filteredFragments.some((fragment) => fragment.id === pendingScrollFragmentId)
       ? pendingScrollFragmentId
@@ -1055,7 +1150,7 @@ function App() {
     return () => {
       window.removeEventListener("keydown", handleGlobalSearchShortcut)
     }
-  }, [isModalBusy])
+  }, [isModalBusy, isSearchModeActive])
 
   const autoSyncFailureNotifiedRef = useRef(false)
   const autoSyncTickRef = useRef<() => void>(() => {})
@@ -1076,6 +1171,7 @@ function App() {
     void syncVault()
       .then((synced) => {
         setGit(synced)
+        toast.dismiss(AUTO_SYNC_FAILURE_TOAST_ID)
         autoSyncFailureNotifiedRef.current = false
         void refreshFragments()
         void refreshMindMaps()
@@ -1084,6 +1180,7 @@ function App() {
         if (!autoSyncFailureNotifiedRef.current) {
           autoSyncFailureNotifiedRef.current = true
           toast.error(`${"自动同步失败"}：${getApiErrorMessage(error)}`, {
+            id: AUTO_SYNC_FAILURE_TOAST_ID,
             duration: Infinity,
           })
         }
@@ -1094,7 +1191,11 @@ function App() {
   }
 
   useEffect(() => {
-    if (!appSettings.autoSyncEnabled) return
+    if (!appSettings.autoSyncEnabled) {
+      toast.dismiss(AUTO_SYNC_FAILURE_TOAST_ID)
+      autoSyncFailureNotifiedRef.current = false
+      return
+    }
 
     const timer = window.setInterval(
       () => autoSyncTickRef.current(),
@@ -1163,119 +1264,152 @@ function App() {
             </div>
           ) : null}
 
-          {isInboxView ? (
-            <InboxTagBar
-              selectedTag={selectedInboxTag}
-              summaries={inboxTagSummaries}
-              totalCount={inboxFragments.length}
-              onCreateTag={handleCreateInboxTag}
-              onSelectTag={setSelectedInboxTag}
-            />
-          ) : null}
+          <div className={styles.workAreaStage}>
+            <div
+              aria-hidden={isSearchModeActive ? true : undefined}
+              className={styles.normalWorkArea}
+              data-search-hidden={isSearchModeActive ? "true" : undefined}
+            >
+              {isInboxView ? (
+                <InboxTagBar
+                  selectedTag={selectedInboxTag}
+                  summaries={inboxTagSummaries}
+                  totalCount={inboxFragments.length}
+                  onCreateTag={handleCreateInboxTag}
+                  onSelectTag={setSelectedInboxTag}
+                />
+              ) : null}
 
-          {filter === "tagged" && !isMindMapViewActive ? (
-            <TaggedPanel
-              lockbox={lockbox}
-              selectedTag={selectedTag}
-              summaries={tagSummaries}
-              totalCount={taggedFragments.length}
-              onOpenLockbox={openLockboxGate}
-              onSelectTag={setSelectedTag}
-            />
-          ) : null}
+              {filter === "tagged" && !isMindMapViewActive ? (
+                <TaggedPanel
+                  lockbox={lockbox}
+                  selectedTag={selectedTag}
+                  summaries={tagSummaries}
+                  totalCount={taggedFragments.length}
+                  onOpenLockbox={openLockboxGate}
+                  onSelectTag={setSelectedTag}
+                />
+              ) : null}
 
-          {filter === "lockbox" && !isMindMapViewActive ? (
-            <LockboxHeader
-              lockbox={lockbox}
-              selectedTag={selectedLockboxTag}
-              summaries={lockboxTagSummaries}
-              totalCount={lockboxFragments.length}
-              onChangePassword={() => setLockboxDialogMode("change")}
-              onLock={() => void handleLockLockbox()}
-              onSelectTag={setSelectedLockboxTag}
-              onUnlock={openLockboxGate}
-            />
-          ) : null}
+              {filter === "lockbox" && !isMindMapViewActive ? (
+                <LockboxHeader
+                  lockbox={lockbox}
+                  selectedTag={selectedLockboxTag}
+                  summaries={lockboxTagSummaries}
+                  totalCount={lockboxFragments.length}
+                  onChangePassword={() => setLockboxDialogMode("change")}
+                  onLock={() => void handleLockLockbox()}
+                  onSelectTag={setSelectedLockboxTag}
+                  onUnlock={openLockboxGate}
+                />
+              ) : null}
 
-          {isMindMapViewActive ? (
-            <MindMapPanel
-              onMapsChange={setMindMaps}
-              onOpenMap={setActiveMindMapId}
-            />
-          ) : isReviewView ? (
-            <ReviewWorkspace
-              editingFragmentId={
-                editingVariant === "inline" ? editingFragmentId : null
-              }
-              fragments={
-                filter === "insight" &&
-                insightIncludeLockbox &&
-                lockbox?.unlocked
-                  ? fragments
-                  : publicOnlyFragments
-              }
-              insightIncludeLockbox={insightIncludeLockbox}
-              isLoading={isLoading}
-              knownTags={knownTags}
-              lockboxConfigured={Boolean(lockbox?.configured)}
-              mode={filter}
-              onArchive={handleArchiveFragment}
-              onCancelEdit={closeEditor}
-              onCreate={handleCreate}
-              onEdit={openInlineEditor}
-              onExportImage={setExportingFragment}
-              onInsightIncludeLockboxChange={handleInsightIncludeLockboxChange}
-              onMoveToLockbox={handleMoveFragmentToLockbox}
-              onOpenZen={openZenEditor}
-              onPin={handlePinFragment}
-              onSave={handleUpdateFragment}
-              onToggleTask={(fragment, lineIndex) => {
-                void handleToggleFragmentTask(fragment, lineIndex)
-              }}
-              vaultPath={vaultPath}
-            />
-          ) : (
-            <FragmentTimeline
-              editingFragmentId={
-                editingVariant === "inline" ? editingFragmentId : null
-              }
-              emptyMessage={
-                filter === "tagged"
-                  ? "还没有带标签的内容。到 Inbox 输入 #标签 即可归类。"
-                  : filter === "lockbox"
-                    ? lockbox?.unlocked
-                      ? "密匣里还没有笔记。到 Inbox 输入 #密匣 即可保存到这里。"
-                      : "密匣已上锁。"
-                  : filter === "archive"
-                    ? "还没有归档内容。"
-                    : isInboxView && selectedInboxTag
-                      ? `#${selectedInboxTag} 下还没有片段。写片段时输入 #${selectedInboxTag} 即可归入。`
-                      : undefined
-              }
-              fragments={filteredFragments}
-              isLoading={isLoading}
-              knownTags={knownTags}
-              mindMaps={isInboxView && !selectedInboxTag ? mindMaps : []}
-              onArchive={handleArchiveFragment}
-              onCancelEdit={closeEditor}
-              onEdit={openInlineEditor}
-              onExportImage={setExportingFragment}
-              onMoveToLockbox={handleMoveFragmentToLockbox}
-              onOpenMindMap={openMindMap}
-              onOpenZen={openZenEditor}
-              onPin={handlePinFragment}
-              onScrollDown={() => {
-                setComposerCollapseSignal((current) => current + 1)
-              }}
-              onScrollToFragmentComplete={handleTimelineScrollComplete}
-              onSave={handleUpdateFragment}
-              onToggleTask={(fragment, lineIndex) => {
-                void handleToggleFragmentTask(fragment, lineIndex)
-              }}
-              scrollToFragmentId={timelineScrollTargetId}
-              vaultPath={vaultPath}
-            />
-          )}
+              {searchSession && !isMindMapViewActive && !isReviewView ? (
+                <SearchContextBar
+                  onBack={openSearch}
+                  onClose={endSearchSession}
+                  onNavigate={navigateSearchResult}
+                  session={searchSession}
+                />
+              ) : null}
+
+              {isMindMapViewActive ? (
+                <MindMapPanel
+                  onMapsChange={setMindMaps}
+                  onOpenMap={setActiveMindMapId}
+                />
+              ) : isReviewView ? (
+                <ReviewWorkspace
+                  editingFragmentId={
+                    editingVariant === "inline" ? editingFragmentId : null
+                  }
+                  fragments={
+                    filter === "insight" &&
+                    insightIncludeLockbox &&
+                    lockbox?.unlocked
+                      ? fragments
+                      : publicOnlyFragments
+                  }
+                  insightIncludeLockbox={insightIncludeLockbox}
+                  isLoading={isLoading}
+                  knownTags={knownTags}
+                  lockboxConfigured={Boolean(lockbox?.configured)}
+                  mode={filter}
+                  onArchive={handleArchiveFragment}
+                  onCancelEdit={closeEditor}
+                  onCreate={handleCreate}
+                  onEdit={openInlineEditor}
+                  onExportImage={setExportingFragment}
+                  onInsightIncludeLockboxChange={
+                    handleInsightIncludeLockboxChange
+                  }
+                  onMoveToLockbox={handleMoveFragmentToLockbox}
+                  onOpenZen={openZenEditor}
+                  onPin={handlePinFragment}
+                  onSave={handleUpdateFragment}
+                  onToggleTask={(fragment, lineIndex) => {
+                    void handleToggleFragmentTask(fragment, lineIndex)
+                  }}
+                  vaultPath={vaultPath}
+                />
+              ) : (
+                <FragmentTimeline
+                  editingFragmentId={
+                    editingVariant === "inline" ? editingFragmentId : null
+                  }
+                  emptyMessage={
+                    filter === "tagged"
+                      ? "还没有带标签的内容。到 Inbox 输入 #标签 即可归类。"
+                      : filter === "lockbox"
+                        ? lockbox?.unlocked
+                          ? "密匣里还没有笔记。到 Inbox 输入 #密匣 即可保存到这里。"
+                          : "密匣已上锁。"
+                      : filter === "archive"
+                        ? "还没有归档内容。"
+                        : isInboxView && selectedInboxTag
+                          ? `#${selectedInboxTag} 下还没有片段。写片段时输入 #${selectedInboxTag} 即可归入。`
+                          : undefined
+                  }
+                  fragments={filteredFragments}
+                  isLoading={isLoading}
+                  knownTags={knownTags}
+                  onArchive={handleArchiveFragment}
+                  onCancelEdit={closeEditor}
+                  onEdit={openInlineEditor}
+                  onExportImage={setExportingFragment}
+                  onLinkFragment={handleLinkFragment}
+                  onMoveToLockbox={handleMoveFragmentToLockbox}
+                  onOpenZen={openZenEditor}
+                  onPin={handlePinFragment}
+                  onScrollDown={() => {
+                    setComposerCollapseSignal((current) => current + 1)
+                  }}
+                  onNavigateToFragment={setPendingScrollFragmentId}
+                  onScrollToFragmentComplete={handleTimelineScrollComplete}
+                  onSave={handleUpdateFragment}
+                  onToggleTask={(fragment, lineIndex) => {
+                    void handleToggleFragmentTask(fragment, lineIndex)
+                  }}
+                  onUnlinkFragment={handleUnlinkFragment}
+                  scrollToFragmentId={timelineScrollTargetId}
+                  vaultPath={vaultPath}
+                />
+              )}
+            </div>
+
+            {isSearchModeActive ? (
+              <div className={styles.searchWorkArea}>
+                <FragmentSearchWorkspace
+                  focusSignal={searchFocusSignal}
+                  fragments={fragments}
+                  initialSession={searchSession}
+                  lockboxSearchAvailable={Boolean(lockbox?.unlocked)}
+                  onExit={exitSearchMode}
+                  onOpenFragment={handleOpenSearchResult}
+                />
+              </div>
+            ) : null}
+          </div>
         </section>
         <div className={styles.bottomTabsSlot}>
           <BottomTabs
@@ -1305,13 +1439,6 @@ function App() {
         fragment={exportingFragment}
         onClose={() => setExportingFragment(null)}
         open={isExportSheetOpen}
-        vaultPath={vaultPath}
-      />
-      <FragmentSearchDialog
-        fragments={activeFragments}
-        open={isSearchDialogOpen}
-        onOpenChange={setIsSearchDialogOpen}
-        onOpenFragment={handleOpenSearchResult}
         vaultPath={vaultPath}
       />
       <LockboxArchiveConfirmDialog

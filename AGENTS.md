@@ -15,6 +15,13 @@
 - 前端只能等待异步 Promise，并给受影响的局部组件展示 loading / disabled / `aria-busy` 状态；不得用同步循环、阻塞等待或成功后强制关闭配置界面来掩盖耗时。
 - 新增或修改这类能力时，必须全局检查同类阻塞点，并用 `pnpm build`、`cargo check`、`git diff --check` 或等价验证确认不会引入 UI 线程阻塞。
 
+## Design System
+
+- 前端设计系统的唯一真相源是 `vendor/kiln/SKILL.md`、`vendor/kiln/references/` 与 `vendor/kiln/tokens/`；所有 UI 设计、实现和审查先读取 Kiln 对应规范。
+- `src/styles/frontend-rules.css` 只保存 Kiln 未覆盖的 Shard 编辑器、时间线、附件与 macOS 壳层几何，不得发展成第二套通用设计系统。
+- 可复用的颜色、字体、间距、圆角、阴影和控件规格必须消费 Kiln token；新增 Shard 扩展前先确认不能由 Kiln 语义 token 表达。
+- UI 改动至少运行 `pnpm build` 与 `git diff --check`；涉及视觉一致性时还要运行 `pnpm test:ui` 并核对真实计算样式。
+
 ## Main Layout / Scroll Rules
 
 - Shard 主界面顶部 composer 是固定交互区；搜索结果打开片段、标签切换、定位卡片等行为只能滚动 composer 下方的时间线 viewport，不得让页面、内容列或 `document/window` 参与滚动定位。

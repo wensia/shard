@@ -103,6 +103,15 @@ Playwright 覆盖折叠-展开-持久化-边界。
 
 子树复制/剪切/粘贴（⌘C/⌘X/⌘V）。T1 落地、误删有退路后再评估。
 
+## 空格抓手光标的升级路径
+
+当前首选方案是在现有 JS 焦点判断之后，通过主线程 `NSCursor` 调用立即恢复并设置抓手光标。若真实窗口人工验证后仍需移动鼠标才出现，按以下顺序升级：
+
+1. 在 command 内对当前鼠标位置执行零位移 `CGWarpMouseCursorPosition`，生成真实 `mouseMoved` 并强制 WebKit 重算。它可能扰动鼠标加速，因此不作为首选。
+2. 若仍失败，改用自绘光标：`NSCursor::hide()` 后在画布上绘制跟随指针的抓手 SVG，松开空格时恢复系统光标。
+
+不要用 `NSEvent` local monitor 在事件到达 WebView 前拦截空格。原生侧无法可靠判断焦点是否在 textarea 或 IME 中；`isTextInputTarget`、`isComposing` 与 `repeat` 的判断必须留在现有 JS 路径。
+
 ## 全局约束
 
 - 每项交付都要 `tsc`、`scripts/verify-tokens.mjs`、Playwright 全量通过。

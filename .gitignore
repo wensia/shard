@@ -37,8 +37,6 @@ GEMINI.md
 *.rules.md
 *.md
 !README.md
-!DESIGN.md
-!DESIGN.zh-CN.md
 !AGENTS.md
 docs/*
 !docs/design/

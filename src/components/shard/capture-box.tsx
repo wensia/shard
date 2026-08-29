@@ -8,8 +8,11 @@ import {
   useState,
   type ClipboardEvent,
   type KeyboardEvent,
+  type MouseEvent,
 } from "react"
 import { Loader2Icon, SendHorizontalIcon } from "lucide-react"
+import { isTauri } from "@tauri-apps/api/core"
+import { open } from "@tauri-apps/plugin-dialog"
 import { toast } from "sonner"
 
 import { EditorToolbar } from "@/components/shard/editor-toolbar"
@@ -25,7 +28,7 @@ import {
   TagCompletionPopover,
   type TagSuggestion,
 } from "@/components/shard/tag-completion-popover"
-import { Button } from "@/components/ui/button"
+import { ToolbarIconButton } from "@/components/ui/toolbar-icon-button"
 import { getClipboardImageFiles } from "@/lib/clipboard-images"
 import {
   applyActiveTagCompletion,
@@ -38,6 +41,8 @@ import {
   getActiveTag,
   getMarkdownImageAlt,
   insertHorizontalRule,
+  insertMarkdownBlock,
+  insertMarkdownTable,
   insertTagMarker,
   normalizeTag,
   normalizeTagList,
@@ -46,9 +51,27 @@ import {
   type LineFormat,
   type TextEdit,
 } from "@/lib/editor-format"
-import { getApiErrorMessage, saveFragmentImage } from "@/lib/api"
-import { getEditorCaretBox, type EditorCaretBox } from "@/lib/editor-caret"
+import {
+  convertTableDocumentToMarkdown,
+  getApiErrorMessage,
+  saveFragmentImage,
+} from "@/lib/api"
+import {
+  getEditorCaretBox,
+  startEditorPointerSelection,
+  type EditorCaretBox,
+} from "@/lib/editor-caret"
 import { wantsLockbox } from "@/lib/lockbox"
+import {
+  hasOversizedTable,
+  MAX_EDITABLE_TABLE_CELLS,
+  replaceTableLines,
+  type MarkdownTable,
+} from "@/lib/markdown-table"
+import {
+  TABLE_DOCUMENT_FILTER,
+  useTableDocumentDrop,
+} from "@/lib/use-table-document-drop"
 import {
   buildTagSearchIndex,
   getMatchingTagsBySearchQuery,
@@ -94,11 +117,13 @@ export function CaptureBox({
   const [selectionEnd, setSelectionEnd] = useState(0)
   const containerRef = useRef<HTMLDivElement>(null)
   const editorFrameRef = useRef<HTMLDivElement>(null)
+  const [isImportingTable, setIsImportingTable] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const tagPopoverId = useId()
   const hasSkippedInitialFocusRef = useRef(false)
   const isComposingRef = useRef(false)
   const pendingImagesRef = useRef<PendingImage[]>([])
+  const stopPointerSelectionRef = useRef<(() => void) | null>(null)
 
   const activeTag = useMemo(
     () => getActiveTag(content, selectionStart),
@@ -169,6 +194,7 @@ export function CaptureBox({
 
   useEffect(() => {
     return () => {
+      stopPointerSelectionRef.current?.()
       pendingImagesRef.current.forEach((image) => {
         URL.revokeObjectURL(image.previewUrl)
       })
@@ -359,6 +385,114 @@ export function CaptureBox({
         textarea.selectionEnd
       )
     )
+  }
+
+  function insertTable(columns: number, rows: number) {
+    const textarea = textareaRef.current
+    if (!textarea) return
+
+    setIsEditorExpanded(true)
+    const nextEdit = insertMarkdownTable(
+      content,
+      textarea.selectionStart,
+      textarea.selectionEnd,
+      columns,
+      rows
+    )
+    applyTextEdit(nextEdit)
+    focusInsertedTable(nextEdit.content, nextEdit.selectionStart)
+  }
+
+  /** 插完表格直接进第一个表头格，省得用户再点一下。 */
+  function focusInsertedTable(nextContent: string, cursor: number) {
+    const tableStart = nextContent.lastIndexOf("\n", cursor - 1) + 1
+
+    requestAnimationFrame(() => {
+      editorFrameRef.current
+        ?.querySelector<HTMLInputElement>(
+          `[data-table-start="${tableStart}"] [data-cell="-1:0"]`
+        )
+        ?.focus()
+    })
+  }
+
+  /**
+   * 表格里改一个格子只重写它占的那几行。这里不碰焦点也不动选区——焦点正在
+   * 单元格里，抢回 textarea 会把用户正在打的字打断。
+   */
+  function updateTable(
+    startLine: number,
+    lineCount: number,
+    table: MarkdownTable
+  ) {
+    const nextContent = replaceTableLines(content, startLine, lineCount, table)
+    if (nextContent === content) return
+
+    setIsEditorExpanded(true)
+    setContent(nextContent)
+  }
+
+  /**
+   * 表格文档导入：转成 Markdown 表格插进正文，原文件不进 vault。
+   * 数据留在正文里，搜索、标签、git diff 才都还能用上。
+   */
+  const { isDropTarget: isTableDropTarget } = useTableDocumentDrop({
+    frameRef: editorFrameRef,
+    onDrop: (paths) => insertTableDocuments(paths),
+  })
+
+  async function insertTableDocuments(paths: string[]) {
+    const textarea = textareaRef.current
+    if (!textarea || paths.length === 0 || isImportingTable) return
+
+    setIsEditorExpanded(true)
+    setIsImportingTable(true)
+    try {
+      const blocks: string[] = []
+      for (const path of paths) {
+        blocks.push(await convertTableDocumentToMarkdown(path))
+      }
+
+      const markdown = blocks.join("\n\n")
+      if (hasOversizedTable(markdown)) {
+        toast.info(
+          `表格较大，已作为纯文本插入：超过 ${MAX_EDITABLE_TABLE_CELLS} 个单元格不提供可视化编辑，源码照常可改。`
+        )
+      }
+
+      applyTextEdit(
+        insertMarkdownBlock(
+          textarea.value,
+          textarea.selectionStart,
+          textarea.selectionEnd,
+          markdown
+        )
+      )
+    } catch (error) {
+      toast.error(`导入表格失败：${getApiErrorMessage(error)}`, {
+        duration: Infinity,
+      })
+    } finally {
+      setIsImportingTable(false)
+    }
+  }
+
+  async function pickTableDocument() {
+    try {
+      const selected = await open({
+        filters: [TABLE_DOCUMENT_FILTER],
+        multiple: false,
+        title: "选择表格文件",
+      })
+      const path = Array.isArray(selected) ? selected[0] : selected
+      if (!path) return
+
+      await insertTableDocuments([path])
+    } catch (error) {
+      toast.error(`选择文件失败：${getApiErrorMessage(error)}`, {
+        duration: Infinity,
+      })
+    }
   }
 
   function openZenEditor() {
@@ -652,6 +786,26 @@ export function CaptureBox({
     setSelectionEnd(textarea.selectionEnd)
   }
 
+  function startPointerSelection(event: MouseEvent<HTMLTextAreaElement>) {
+    setIsEditorExpanded(true)
+    showCaretImmediately()
+    const frame = editorFrameRef.current
+    if (!frame) return
+    const textarea = event.currentTarget
+
+    stopPointerSelectionRef.current?.()
+    stopPointerSelectionRef.current = startEditorPointerSelection(
+      textarea,
+      frame,
+      event.nativeEvent,
+      (start, end) => {
+        setSelectionStart(start)
+        setSelectionEnd(end)
+      },
+      () => syncSelection(textarea)
+    )
+  }
+
   return (
     <div
       className={`shard-content-measure ${styles.composer}`}
@@ -680,6 +834,10 @@ export function CaptureBox({
                 onTaskToggle={toggleTask}
                 selectionEnd={isEditorFocused ? selectionEnd : undefined}
                 selectionStart={isEditorFocused ? selectionStart : undefined}
+                tableEditing={{
+                  onChange: updateTable,
+                  onExit: () => textareaRef.current?.focus(),
+                }}
               />
             </div>
           </div>
@@ -691,10 +849,6 @@ export function CaptureBox({
           aria-expanded={activeTag ? true : undefined}
           autoFocus
           className={`shard-editor-field shard-editor-overlay-field ${styles.textareaField}`}
-          onClick={(event) => {
-            setIsEditorExpanded(true)
-            syncSelection(event.currentTarget)
-          }}
           onChange={(event) => {
             setIsEditorExpanded(true)
             setContent(event.currentTarget.value)
@@ -716,7 +870,7 @@ export function CaptureBox({
             setIsEditorExpanded(true)
           }}
           onKeyDown={handleKeyDown}
-          onMouseDown={showCaretImmediately}
+          onMouseDown={startPointerSelection}
           onPaste={handlePaste}
           onKeyUp={(event) => {
             syncSelection(event.currentTarget)
@@ -757,6 +911,11 @@ export function CaptureBox({
               top: customCaret.top,
             }}
           />
+        ) : null}
+        {isTableDropTarget || isImportingTable ? (
+          <div className="shard-editor-drop-hint">
+            {isImportingTable ? "正在导入表格…" : "松手导入为表格"}
+          </div>
         ) : null}
       </div>
       {activeTag ? (
@@ -804,18 +963,19 @@ export function CaptureBox({
           <EditorToolbar
             disabled={isCreating}
             onImageUpload={uploadImage}
+            onImportTable={isTauri() ? pickTableDocument : undefined}
             onInlineFormat={formatInline}
             onInsertHorizontalRule={insertDivider}
+            onInsertTable={insertTable}
             onInsertTag={insertTag}
             onLineFormat={formatLines}
             onOpenZen={onOpenZen ? openZenEditor : undefined}
             trailing={
-              <Button
-                aria-label={isCreating ? "保存中" : "保存片段"}
+              <ToolbarIconButton
                 className="shard-edge-action"
                 disabled={!canSubmit}
+                label={isCreating ? "保存中" : "保存片段"}
                 onClick={() => void submit()}
-                size="icon-sm"
                 type="button"
                 variant="primary"
               >
@@ -824,10 +984,7 @@ export function CaptureBox({
                 ) : (
                   <SendHorizontalIcon />
                 )}
-                <span className="sr-only">
-                  {isCreating ? "保存中" : "保存片段"}
-                </span>
-              </Button>
+              </ToolbarIconButton>
             }
           />
         </div>
@@ -915,7 +1072,11 @@ function resizeTextarea(
     : CAPTURE_COLLAPSED_ROWS
   const minimumHeight = getTextareaRowsHeight(textarea, targetRows)
   const contentHeight = getTextareaContentHeight(textarea)
-  const maximumHeight = getCaptureTextareaMaxHeight(container, editorFrame)
+  const maximumHeight = getCaptureTextareaMaxHeight(
+    container,
+    editorFrame,
+    contentHeight
+  )
   const boundedMinimumHeight =
     maximumHeight === null
       ? minimumHeight
@@ -942,7 +1103,8 @@ function resizeTextarea(
 
 function getCaptureTextareaMaxHeight(
   container: HTMLDivElement | null,
-  editorFrame: HTMLDivElement | null
+  editorFrame: HTMLDivElement | null,
+  contentHeight: number
 ) {
   if (!container || !editorFrame) return null
 
@@ -950,6 +1112,10 @@ function getCaptureTextareaMaxHeight(
   const editorFrameRect = editorFrame.getBoundingClientRect()
   const viewportBottom = getCaptureViewportBottom(container)
   const rootStyles = window.getComputedStyle(document.documentElement)
+  const topGap = toPixelValue(
+    rootStyles.getPropertyValue("--shard-composer-top-gap"),
+    32
+  )
   const bottomGap = toPixelValue(
     rootStyles.getPropertyValue("--shard-composer-bottom-gap"),
     16
@@ -958,13 +1124,37 @@ function getCaptureTextareaMaxHeight(
     0,
     containerRect.height - editorFrameRect.height
   )
-
-  return Math.max(
+  const currentReclaim = toPixelValue(
+    container.dataset.composerTopReclaim ?? "",
+    0
+  )
+  const currentMaximumHeight = Math.max(
     1,
     Math.floor(
       viewportBottom - containerRect.top - bottomGap - composerChromeHeight
     )
   )
+  const normalMaximumHeight = Math.max(
+    1,
+    currentMaximumHeight - currentReclaim
+  )
+  const reclaimLimit = window.matchMedia("(min-width: 64rem)").matches
+    ? Math.max(0, topGap - bottomGap)
+    : 0
+  const nextReclaim = Math.min(
+    Math.max(contentHeight - normalMaximumHeight, 0),
+    reclaimLimit
+  )
+
+  container.dataset.composerTopReclaim = String(nextReclaim)
+  if (reclaimLimit > 0 && nextReclaim >= reclaimLimit) {
+    container.dataset.heightCapped = "true"
+  } else {
+    delete container.dataset.heightCapped
+  }
+  container.style.marginTop = nextReclaim > 0 ? `-${nextReclaim}px` : ""
+
+  return normalMaximumHeight + nextReclaim
 }
 
 function getCaptureViewportBottom(container: HTMLDivElement) {

@@ -2,7 +2,6 @@ import {
   useEffect,
   useRef,
   useState,
-  type FormEvent,
   type KeyboardEvent,
 } from "react"
 import {
@@ -13,6 +12,7 @@ import {
   PlusIcon,
   RefreshCwIcon,
   Share2Icon,
+  TextCursorInputIcon,
 } from "lucide-react"
 import { toast } from "sonner"
 
@@ -32,7 +32,9 @@ import {
   getApiErrorMessage,
   listMindMaps,
   readMindMap,
+  writeMindMap,
 } from "@/lib/api"
+import { updateMindMapTitle } from "@/lib/mind-map-tree"
 import type { MindMapReadResult, MindMapSummary } from "@/types"
 
 import styles from "./mind-map-panel.module.css"
@@ -43,10 +45,10 @@ interface MindMapPanelProps {
 }
 
 const CARD_PREVIEW_HEIGHT = 168
+const DEFAULT_MAP_TITLE = "未命名思维导图"
 
 export function MindMapPanel({ onMapsChange, onOpenMap }: MindMapPanelProps) {
   const [maps, setMaps] = useState<MindMapSummary[]>([])
-  const [title, setTitle] = useState("")
   const [isCreating, setIsCreating] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
 
@@ -68,15 +70,11 @@ export function MindMapPanel({ onMapsChange, onOpenMap }: MindMapPanelProps) {
     }
   }
 
-  async function handleCreate(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    const nextTitle = title.trim()
-    if (!nextTitle) return
-
+  async function handleCreate() {
     setIsCreating(true)
     try {
-      const created = await createMindMap(nextTitle)
-      setTitle("")
+      // 捕捉优先：新建不要求先想标题，事后可在卡片菜单里重命名
+      const created = await createMindMap(DEFAULT_MAP_TITLE)
       updateMaps([
         {
           id: created.file.id,
@@ -97,6 +95,32 @@ export function MindMapPanel({ onMapsChange, onOpenMap }: MindMapPanelProps) {
     } finally {
       setIsCreating(false)
     }
+  }
+
+  async function handleRename(map: MindMapSummary, nextTitle: string) {
+    const trimmed = nextTitle.trim()
+    if (!trimmed || trimmed === map.title) return
+
+    // 标题与根节点文本是同一份数据，读回最新版本再写，避免覆盖他处改动
+    const read = await readMindMap(map.id)
+    const next = updateMindMapTitle(read.file, trimmed)
+    const written = await writeMindMap(
+      map.id,
+      next,
+      read.file.revision,
+      read.lastSavedHash
+    )
+    updateMaps(
+      maps.map((current) =>
+        current.id === map.id
+          ? {
+              ...current,
+              title: written.file.title,
+              updatedAt: written.file.updatedAt,
+            }
+          : current
+      )
+    )
   }
 
   function updateMaps(nextMaps: MindMapSummary[]) {
@@ -177,43 +201,20 @@ export function MindMapPanel({ onMapsChange, onOpenMap }: MindMapPanelProps) {
               />
               <span className="sr-only">刷新思维导图列表</span>
             </Button>
-            <form
-              className={styles.createForm}
-              onSubmit={handleCreate}
-              style={{
-                alignItems: "center",
-                display: "flex",
-                gap: "var(--shard-space-2)",
-                minWidth: 0,
-              }}
+            <Button
+              disabled={isCreating}
+              onClick={() => void handleCreate()}
+              size="sm"
+              type="button"
+              variant="default"
             >
-              <div style={{ flex: "1 1 0%", minWidth: 0 }}>
-                <Input
-                  aria-label="思维导图标题"
-                  className={styles.createInput}
-                  disabled={isCreating}
-                  onChange={(event) => setTitle(event.currentTarget.value)}
-                  placeholder="新建导图标题"
-                  value={title}
-                />
-              </div>
-              <Button
-                disabled={!title.trim() || isCreating}
-                size="sm"
-                type="submit"
-                variant="default"
-              >
-                {isCreating ? (
-                  <Loader2Icon
-                    aria-hidden="true"
-                    className={styles.spinner}
-                  />
-                ) : (
-                  <PlusIcon aria-hidden="true" />
-                )}
-                <span>新建</span>
-              </Button>
-            </form>
+              {isCreating ? (
+                <Loader2Icon aria-hidden="true" className={styles.spinner} />
+              ) : (
+                <PlusIcon aria-hidden="true" />
+              )}
+              <span>新建</span>
+            </Button>
           </div>
         </div>
       </div>
@@ -278,6 +279,7 @@ export function MindMapPanel({ onMapsChange, onOpenMap }: MindMapPanelProps) {
                   key={map.id}
                   map={map}
                   onOpen={() => onOpenMap(map.id)}
+                  onRename={(nextTitle) => handleRename(map, nextTitle)}
                 />
               ))}
             </div>
@@ -291,15 +293,32 @@ export function MindMapPanel({ onMapsChange, onOpenMap }: MindMapPanelProps) {
 function MindMapGridCard({
   map,
   onOpen,
+  onRename,
 }: {
   map: MindMapSummary
   onOpen: () => void
+  onRename: (nextTitle: string) => Promise<void>
 }) {
+  const [isRenaming, setIsRenaming] = useState(false)
+  const [draftTitle, setDraftTitle] = useState(map.title)
   const cardRef = useRef<HTMLElement | null>(null)
   const [readResult, setReadResult] = useState<MindMapReadResult | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const hasRequestedRef = useRef(false)
+
+  async function commitRename() {
+    if (!isRenaming) return
+    setIsRenaming(false)
+    try {
+      await onRename(draftTitle)
+    } catch (error) {
+      setDraftTitle(map.title)
+      toast.error(`重命名失败：${getApiErrorMessage(error)}`, {
+        duration: Infinity,
+      })
+    }
+  }
 
   useEffect(() => {
     const element = cardRef.current
@@ -412,20 +431,44 @@ function MindMapGridCard({
         }}
       >
         <div style={{ flex: "1 1 0%", minWidth: 0 }}>
-          <h2
-            style={{
-              color: "var(--foreground)",
-              fontSize: 14,
-              fontWeight: 600,
-              lineHeight: "20px",
-              margin: 0,
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-            }}
-          >
-            {map.title}
-          </h2>
+          {isRenaming ? (
+            <Input
+              aria-label="重命名思维导图"
+              autoFocus
+              onBlur={() => void commitRename()}
+              onChange={(event) => setDraftTitle(event.currentTarget.value)}
+              onClick={(event) => event.stopPropagation()}
+              onKeyDown={(event) => {
+                event.stopPropagation()
+                if (event.key === "Enter") {
+                  event.preventDefault()
+                  void commitRename()
+                }
+                if (event.key === "Escape") {
+                  event.preventDefault()
+                  setDraftTitle(map.title)
+                  setIsRenaming(false)
+                }
+              }}
+              style={{ height: 28, fontSize: 14 }}
+              value={draftTitle}
+            />
+          ) : (
+            <h2
+              style={{
+                color: "var(--foreground)",
+                fontSize: 14,
+                fontWeight: 600,
+                lineHeight: "20px",
+                margin: 0,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {map.title}
+            </h2>
+          )}
           <div
             style={{
               color: "var(--muted-foreground)",
@@ -463,6 +506,17 @@ function MindMapGridCard({
               <DropdownMenuItem onClick={() => window.setTimeout(onOpen, 0)}>
                 <PencilLineIcon aria-hidden="true" />
                 <span>编辑</span>
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() =>
+                  window.setTimeout(() => {
+                    setDraftTitle(map.title)
+                    setIsRenaming(true)
+                  }, 0)
+                }
+              >
+                <TextCursorInputIcon aria-hidden="true" />
+                <span>重命名</span>
               </DropdownMenuItem>
               <DropdownMenuItem onClick={() => void shareMindMap()}>
                 <Share2Icon aria-hidden="true" />

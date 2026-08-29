@@ -17,6 +17,96 @@ interface ReviewCandidate {
   timestamp: number
 }
 
+export interface SuggestedEdge {
+  fromId: string
+  toId: string
+  reason: string
+}
+
+/**
+ * 从漫步结果里提取建议边。
+ * fragments 必须是本次发给 AI 的同一个有序列表（「笔记 N」按 1 起编号）。
+ */
+export function parseSuggestedEdges(
+  markdown: string,
+  fragments: Fragment[]
+): SuggestedEdge[] {
+  try {
+    const jsonBlocks = [...markdown.matchAll(/```json\s*([\s\S]*?)```/gi)]
+    const json = jsonBlocks[jsonBlocks.length - 1]?.[1]
+    if (!json) return []
+
+    const parsed: unknown = JSON.parse(json)
+    if (
+      typeof parsed !== "object" ||
+      parsed === null ||
+      !("edges" in parsed) ||
+      !Array.isArray(parsed.edges)
+    ) {
+      return []
+    }
+
+    const rawEdges: Array<{ from: number; to: number; reason: string }> = []
+    for (const edge of parsed.edges) {
+      if (
+        typeof edge !== "object" ||
+        edge === null ||
+        !("from" in edge) ||
+        !("to" in edge) ||
+        !("reason" in edge) ||
+        !Number.isInteger(edge.from) ||
+        !Number.isInteger(edge.to) ||
+        typeof edge.reason !== "string" ||
+        edge.from < 1 ||
+        edge.from > fragments.length ||
+        edge.to < 1 ||
+        edge.to > fragments.length
+      ) {
+        return []
+      }
+
+      rawEdges.push({
+        from: edge.from as number,
+        to: edge.to as number,
+        reason: edge.reason,
+      })
+    }
+
+    const seen = new Set<string>()
+    const suggested: SuggestedEdge[] = []
+    for (const edge of rawEdges) {
+      const from = fragments[edge.from - 1]
+      const to = fragments[edge.to - 1]
+      const key =
+        edge.from < edge.to
+          ? `${edge.from}:${edge.to}`
+          : `${edge.to}:${edge.from}`
+
+      if (
+        from.id === to.id ||
+        from.archived ||
+        from.lockbox ||
+        to.archived ||
+        to.lockbox ||
+        seen.has(key)
+      ) {
+        continue
+      }
+
+      seen.add(key)
+      suggested.push({
+        fromId: from.id,
+        toId: to.id,
+        reason: Array.from(edge.reason).slice(0, 40).join(""),
+      })
+    }
+
+    return suggested
+  } catch {
+    return []
+  }
+}
+
 export function dailyReviewFragments(
   fragments: Fragment[],
   seed: number,

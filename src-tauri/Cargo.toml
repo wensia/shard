@@ -19,6 +19,9 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 aes-gcm = "0.10"
+# 表格文档导入：Excel / CSV 等转 Markdown。按文件内容识别格式，
+# 扩展名只在无签名格式（CSV）时兜底。
+anydoc = "0.1.8"
 argon2 = "0.5"
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
@@ -37,6 +40,7 @@ objc2-app-kit = { version = "0.3.2", default-features = false, features = [
     "std",
     "NSButton",
     "NSControl",
+    "NSCursor",
     "NSPasteboard",
     "NSResponder",
     "NSView",

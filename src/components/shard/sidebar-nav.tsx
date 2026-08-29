@@ -9,6 +9,7 @@ import {
   RefreshCwIcon,
   SearchIcon,
   SettingsIcon,
+  RouteIcon,
   SparklesIcon,
   TagIcon,
 } from "lucide-react"
@@ -61,6 +62,7 @@ const navItems: Array<{
   { id: "inbox", icon: InboxIcon },
   { id: "tagged", icon: TagIcon },
   { id: "insight", icon: SparklesIcon },
+  { id: "walk", icon: RouteIcon },
   { id: "archive", icon: ArchiveIcon },
 ]
 

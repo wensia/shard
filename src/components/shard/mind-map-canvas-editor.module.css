@@ -34,12 +34,17 @@
   touch-action: none;
 }
 
-/* 按住空格 = 抓手工具（Photoshop 约定）。 */
-.canvasSvgSpacePan {
+/* 按住空格 = 抓手工具（Photoshop 约定）。
+   抓手期间整块画布都是抓手，节点和文字的光标不能再冒出来。 */
+.canvasSvgSpacePan,
+.canvasSvgSpacePan .grabbable,
+.canvasSvgSpacePan .textCursor {
   cursor: grab;
 }
 
-.canvasSvgPanning {
+.canvasSvgPanning,
+.canvasSvgPanning .grabbable,
+.canvasSvgPanning .textCursor {
   cursor: grabbing;
 }
 

@@ -3,6 +3,10 @@ import {
   loadFragmentImageSrc,
   toDrawableImageSource,
 } from "@/lib/fragment-images"
+import {
+  parseMarkdownTable,
+  type TableAlign,
+} from "@/lib/markdown-table"
 import type { Fragment } from "@/types"
 
 export type ExportImageTemplateId = "paper" | "focus" | "night"
@@ -41,6 +45,12 @@ type ExportBlock =
   | { kind: "blank" }
   | { body: string; checked: boolean; kind: "task" }
   | { kind: "image"; key: string; alt: string; path: string }
+  | {
+      kind: "table"
+      header: string[]
+      rows: string[][]
+      align: TableAlign[]
+    }
   | { kind: "text"; text: string }
 
 type LoadedImages = Map<string, HTMLImageElement>
@@ -52,6 +62,11 @@ const EXPORT_CAPTION = "LOCAL MEMO · GIT VAULT"
 const MAX_IMAGE_HEIGHT = 260
 const HEADER_BODY_GAP = 24
 const FOOTER_HEIGHT = 86
+const TABLE_CELL_PADDING_X = 10
+const TABLE_CELL_PADDING_Y = 6
+const TABLE_MIN_COL_WIDTH = 36
+const TABLE_MAX_CELL_LINES = 2
+const TABLE_ELLIPSIS_COL_WIDTH = 16
 
 // One refined minimal system in three moods: cool white, warm ivory, deep ink.
 // Every template is full-bleed with the same breathing room, a plain-date
@@ -418,6 +433,21 @@ function renderBody(
     )
     context.fillStyle = textStyle.bodyColor
 
+    if (block.kind === "table") {
+      const tableHeight = renderTableBlock(
+        context,
+        block,
+        template,
+        textStyle,
+        layout,
+        y,
+        options.draw,
+        options.maxY
+      )
+      y += tableHeight + 4
+      continue
+    }
+
     if (block.kind === "task") {
       const checkboxSize = Math.round(textStyle.bodyFontSize)
       const checkboxGap = 10
@@ -451,6 +481,236 @@ function renderBody(
   }
 
   return { truncated, y }
+}
+
+function renderTableBlock(
+  context: CanvasRenderingContext2D,
+  table: Extract<ExportBlock, { kind: "table" }>,
+  template: ExportImageTemplate,
+  textStyle: MemoTextStyle,
+  layout: ReturnType<typeof layoutMetrics>,
+  y: number,
+  draw: boolean,
+  maxY: number
+) {
+  setFont(
+    context,
+    textStyle.bodyFontSize,
+    textStyle.bodyFontWeight,
+    textStyle.bodyLetterSpacing
+  )
+  const columnLayout = layoutTableColumns(context, table, layout.contentWidth)
+  const widths = columnLayout.widths.slice(
+    0,
+    columnLayout.visibleColumnCount
+  )
+  const rows = [table.header, ...table.rows]
+  const rowLayouts = rows.map((cells, rowIndex) => {
+    setFont(
+      context,
+      textStyle.bodyFontSize,
+      rowIndex === 0 ? 600 : textStyle.bodyFontWeight,
+      textStyle.bodyLetterSpacing
+    )
+    const cellLines = widths.map((width, columnIndex) =>
+      wrapTableCell(context, cells[columnIndex] ?? "", width)
+    )
+    const lineCount = Math.max(1, ...cellLines.map((lines) => lines.length))
+    return {
+      cellLines,
+      height:
+        lineCount * textStyle.bodyLineHeight + TABLE_CELL_PADDING_Y * 2,
+    }
+  })
+  const tableHeight = rowLayouts.reduce((sum, row) => sum + row.height, 0)
+
+  if (!draw || y + tableHeight > maxY) return tableHeight
+
+  const tableWidth =
+    widths.reduce((sum, width) => sum + width, 0) +
+    (columnLayout.truncatedColumns ? TABLE_ELLIPSIS_COL_WIDTH : 0)
+  context.fillStyle = template.imageBg
+  context.fillRect(layout.contentX, y, tableWidth, rowLayouts[0]?.height ?? 0)
+
+  let rowY = y
+  rowLayouts.forEach((row, rowIndex) => {
+    setFont(
+      context,
+      textStyle.bodyFontSize,
+      rowIndex === 0 ? 600 : textStyle.bodyFontWeight,
+      textStyle.bodyLetterSpacing
+    )
+    context.fillStyle = textStyle.bodyColor
+
+    let cellX = layout.contentX
+    widths.forEach((width, columnIndex) => {
+      const align = table.align[columnIndex] ?? "left"
+      context.textAlign = align
+      const textX =
+        align === "center"
+          ? cellX + width / 2
+          : align === "right"
+            ? cellX + width - TABLE_CELL_PADDING_X
+            : cellX + TABLE_CELL_PADDING_X
+      const lines = row.cellLines[columnIndex] ?? [""]
+      lines.forEach((line, lineIndex) => {
+        context.fillText(
+          line,
+          textX,
+          rowY + TABLE_CELL_PADDING_Y + lineIndex * textStyle.bodyLineHeight
+        )
+      })
+      cellX += width
+    })
+
+    if (columnLayout.truncatedColumns && rowIndex === 0) {
+      context.fillStyle = template.muted
+      context.textAlign = "center"
+      context.fillText(
+        "…",
+        cellX + TABLE_ELLIPSIS_COL_WIDTH / 2,
+        rowY + TABLE_CELL_PADDING_Y
+      )
+    }
+    rowY += row.height
+  })
+
+  context.beginPath()
+  context.strokeStyle = template.headerMark
+  context.lineWidth = 1
+  context.rect(layout.contentX, y, tableWidth, tableHeight)
+
+  let boundaryX = layout.contentX
+  widths.forEach((width) => {
+    boundaryX += width
+    context.moveTo(boundaryX, y)
+    context.lineTo(boundaryX, y + tableHeight)
+  })
+
+  let boundaryY = y
+  rowLayouts.slice(0, -1).forEach((row) => {
+    boundaryY += row.height
+    context.moveTo(layout.contentX, boundaryY)
+    context.lineTo(layout.contentX + tableWidth, boundaryY)
+  })
+  context.stroke()
+  context.textAlign = "left"
+
+  return tableHeight
+}
+
+function layoutTableColumns(
+  context: CanvasRenderingContext2D,
+  table: Extract<ExportBlock, { kind: "table" }>,
+  contentWidth: number
+): { widths: number[]; visibleColumnCount: number; truncatedColumns: boolean } {
+  const bodyFont = context.font
+  const headerFont = bodyFont.replace(
+    /^(?:normal|bold|[1-9]00)\s+/u,
+    "600 "
+  )
+  const widths = table.align.map((_, columnIndex) => {
+    context.font = headerFont
+    let textWidth = context.measureText(table.header[columnIndex] ?? "").width
+    context.font = bodyFont
+    for (const row of table.rows) {
+      textWidth = Math.max(
+        textWidth,
+        context.measureText(row[columnIndex] ?? "").width
+      )
+    }
+    return textWidth + TABLE_CELL_PADDING_X * 2
+  })
+  context.font = bodyFont
+
+  const intrinsicWidth = widths.reduce((sum, width) => sum + width, 0)
+  if (intrinsicWidth <= contentWidth) {
+    return {
+      truncatedColumns: false,
+      visibleColumnCount: widths.length,
+      widths,
+    }
+  }
+
+  const floorWidths = widths.map((width) =>
+    Math.min(width, TABLE_MIN_COL_WIDTH)
+  )
+  const compressibleWidths = widths.map(
+    (width, index) => width - (floorWidths[index] ?? 0)
+  )
+  const compressibleWidth = compressibleWidths.reduce(
+    (sum, width) => sum + width,
+    0
+  )
+  const floorWidth = floorWidths.reduce((sum, width) => sum + width, 0)
+
+  if (floorWidth <= contentWidth && compressibleWidth > 0) {
+    const reduction = intrinsicWidth - contentWidth
+    return {
+      truncatedColumns: false,
+      visibleColumnCount: widths.length,
+      widths: widths.map(
+        (width, index) =>
+          width -
+          reduction * ((compressibleWidths[index] ?? 0) / compressibleWidth)
+      ),
+    }
+  }
+
+  let visibleColumnCount = 0
+  let visibleWidth = 0
+  for (const width of floorWidths) {
+    if (
+      visibleWidth + width + TABLE_ELLIPSIS_COL_WIDTH >
+      contentWidth
+    ) {
+      break
+    }
+    visibleWidth += width
+    visibleColumnCount += 1
+  }
+
+  return {
+    truncatedColumns: visibleColumnCount < widths.length,
+    visibleColumnCount,
+    widths: floorWidths,
+  }
+}
+
+function wrapTableCell(
+  context: CanvasRenderingContext2D,
+  text: string,
+  columnWidth: number
+) {
+  const maxTextWidth = Math.max(0, columnWidth - TABLE_CELL_PADDING_X * 2)
+  const lines = wrapText(context, text || " ", maxTextWidth)
+  if (lines.length <= TABLE_MAX_CELL_LINES) return lines
+
+  const visibleLines = lines.slice(0, TABLE_MAX_CELL_LINES)
+  visibleLines[TABLE_MAX_CELL_LINES - 1] = truncateWithEllipsis(
+    context,
+    visibleLines[TABLE_MAX_CELL_LINES - 1] ?? "",
+    maxTextWidth
+  )
+  return visibleLines
+}
+
+function truncateWithEllipsis(
+  context: CanvasRenderingContext2D,
+  text: string,
+  maxWidth: number
+) {
+  const ellipsis = "…"
+  if (context.measureText(ellipsis).width > maxWidth) return ellipsis
+
+  const chars = Array.from(text)
+  while (
+    chars.length > 0 &&
+    context.measureText(`${chars.join("")}…`).width > maxWidth
+  ) {
+    chars.pop()
+  }
+  return `${chars.join("").trimEnd()}…`
 }
 
 function drawWrappedLines(
@@ -592,29 +852,55 @@ function drawActivityGrid(
 }
 
 function fragmentToBlocks(fragment: Fragment): ExportBlock[] {
-  return fragment.content.trimEnd().split("\n").map((line, index) => {
+  const lines = fragment.content.trimEnd().split("\n")
+  const blocks: ExportBlock[] = []
+  let index = 0
+
+  while (index < lines.length) {
+    const table = parseMarkdownTable(lines, index)
+    if (table) {
+      blocks.push({
+        align: table.align,
+        header: table.header,
+        kind: "table",
+        rows: table.rows,
+      })
+      index += table.lineCount
+      continue
+    }
+
+    const line = lines[index] ?? ""
     const image = parseMarkdownImageLine(line)
     if (image) {
-      return {
+      blocks.push({
         alt: image.alt,
         key: `image-${index}`,
         kind: "image",
         path: image.path,
-      }
+      })
+      index += 1
+      continue
     }
 
     const task = line.match(/^(\s*)((?:[-*+]|\d+[.)])\s+)(\[([ xX])\]\s*)(.*)$/u)
     if (task) {
-      return {
+      blocks.push({
         body: stripTagsFromLine(task[5] ?? ""),
         checked: task[4].toLowerCase() === "x",
         kind: "task",
-      }
+      })
+      index += 1
+      continue
     }
 
     const text = stripTagsFromLine(line)
-    return text.length === 0 ? { kind: "blank" } : { kind: "text", text }
-  })
+    blocks.push(
+      text.length === 0 ? { kind: "blank" } : { kind: "text", text }
+    )
+    index += 1
+  }
+
+  return blocks
 }
 
 async function loadImages(blocks: ExportBlock[], vaultPath?: string) {
@@ -680,20 +966,28 @@ function wrapText(
   let line = ""
 
   for (const token of tokens) {
-    const next = line ? `${line}${token}` : token.trimStart()
-    if (!line || context.measureText(next).width <= maxWidth) {
-      line = next
+    const candidate = line ? `${line}${token}` : token.trimStart()
+    if (context.measureText(candidate).width <= maxWidth) {
+      line = candidate
       continue
     }
 
-    lines.push(line.trimEnd())
-    line = token.trimStart()
+    // 放不下就先把已攒的一行推出去
+    if (line) {
+      lines.push(line.trimEnd())
+      line = ""
+    }
 
-    if (context.measureText(line).width <= maxWidth) continue
+    const piece = token.trimStart()
+    if (context.measureText(piece).width <= maxWidth) {
+      line = piece
+      continue
+    }
 
-    const chars = Array.from(line)
-    line = ""
-    for (const char of chars) {
+    // 单个 token 自己就超宽（中文整句没有空格，常常如此）时逐字切分。
+    // 这里不能用 `!line` 提前放行，否则第一个 token 会被原样接受，
+    // 在窄列里就会溢出单元格。
+    for (const char of Array.from(piece)) {
       const charNext = `${line}${char}`
       if (!line || context.measureText(charNext).width <= maxWidth) {
         line = charNext

@@ -2,9 +2,9 @@ import { useEffect, useMemo, useRef, useState, type UIEvent } from "react"
 import { InboxIcon } from "lucide-react"
 
 import { FragmentCard } from "@/components/shard/fragment-card"
-import { MindMapTimelineCard } from "@/components/shard/mind-map-timeline-card"
 import { ScrollArea } from "@/components/ui/scroll-area"
-import type { Fragment, MindMapSummary } from "@/types"
+import { useFragmentRelations } from "@/lib/use-fragment-relations"
+import type { Fragment } from "@/types"
 
 const WIDE_TIMELINE_QUERY = "(min-width: 96rem)"
 
@@ -14,19 +14,26 @@ interface FragmentTimelineProps {
   fragments: Fragment[]
   isLoading: boolean
   knownTags?: string[]
-  mindMaps?: MindMapSummary[]
   onArchive?: (fragment: Fragment) => void
   onCancelEdit?: () => void
   onEdit?: (fragment: Fragment) => void
   onExportImage?: (fragment: Fragment) => void
-  onOpenMindMap?: (map: MindMapSummary) => void
+  onLinkFragment?: (
+    sourceId: string,
+    targetId: string
+  ) => Promise<void> | void
   onMoveToLockbox?: (fragment: Fragment) => void
   onOpenZen?: (fragment: Fragment) => void
   onPin?: (fragment: Fragment) => void
+  onNavigateToFragment?: (fragmentId: string) => void
   onScrollDown?: () => void
   onScrollToFragmentComplete?: (fragmentId: string) => void
   onSave?: (id: string, content: string, tags: string[]) => Promise<Fragment>
   onToggleTask?: (fragment: Fragment, lineIndex: number) => void
+  onUnlinkFragment?: (
+    sourceId: string,
+    targetId: string
+  ) => Promise<void> | void
   scrollToFragmentId?: string | null
   vaultPath?: string
 }
@@ -37,19 +44,20 @@ export function FragmentTimeline({
   fragments,
   isLoading,
   knownTags = [],
-  mindMaps = [],
   onArchive,
   onCancelEdit,
   onEdit,
   onExportImage,
-  onOpenMindMap,
+  onLinkFragment,
   onMoveToLockbox,
+  onNavigateToFragment,
   onOpenZen,
   onPin,
   onScrollDown,
   onScrollToFragmentComplete,
   onSave,
   onToggleTask,
+  onUnlinkFragment,
   scrollToFragmentId = null,
   vaultPath,
 }: FragmentTimelineProps) {
@@ -60,6 +68,8 @@ export function FragmentTimeline({
   const programmaticScrollRef = useRef(false)
   const programmaticScrollTimeoutRef = useRef<number | null>(null)
   const viewportRef = useRef<HTMLDivElement>(null)
+  // 关系 worker 挂在时间线层级，整条时间线共用一个实例
+  const { requestRelated } = useFragmentRelations(fragments)
   const [highlightedFragmentId, setHighlightedFragmentId] = useState<
     string | null
   >(null)
@@ -68,10 +78,7 @@ export function FragmentTimeline({
       ? false
       : window.matchMedia(WIDE_TIMELINE_QUERY).matches
   )
-  const timelineItems = useMemo(
-    () => buildTimelineItems(fragments, mindMaps),
-    [fragments, mindMaps]
-  )
+  const timelineItems = useMemo(() => buildTimelineItems(fragments), [fragments])
   const timelineColumns = useMemo(
     () => splitIntoColumns(timelineItems, usesWaterfallColumns ? 2 : 1),
     [timelineItems, usesWaterfallColumns]
@@ -325,33 +332,30 @@ export function FragmentTimeline({
                     gap: "var(--shard-space-4)",
                   }}
                 >
-                  {column.map((item) =>
-                    item.kind === "fragment" ? (
-                      <FragmentCard
-                        fragment={item.fragment}
-                        isHighlighted={highlightedFragmentId === item.fragment.id}
-                        isEditing={editingFragmentId === item.fragment.id}
-                        key={item.id}
-                        knownTags={knownTags}
-                        onArchive={onArchive}
-                        onCancelEdit={onCancelEdit}
-                        onEdit={onEdit}
-                        onExportImage={onExportImage}
-                        onMoveToLockbox={onMoveToLockbox}
-                        onOpenZen={onOpenZen}
-                        onPin={onPin}
-                        onSave={onSave}
-                        onToggleTask={onToggleTask}
-                        vaultPath={vaultPath}
-                      />
-                    ) : (
-                      <MindMapTimelineCard
-                        key={item.id}
-                        map={item.map}
-                        onOpen={onOpenMindMap}
-                      />
-                    )
-                  )}
+                  {column.map((item) => (
+                    <FragmentCard
+                      fragment={item.fragment}
+                      fragments={fragments}
+                      isHighlighted={highlightedFragmentId === item.fragment.id}
+                      isEditing={editingFragmentId === item.fragment.id}
+                      key={item.id}
+                      knownTags={knownTags}
+                      onArchive={onArchive}
+                      onCancelEdit={onCancelEdit}
+                      onEdit={onEdit}
+                      onExportImage={onExportImage}
+                      onLinkFragment={onLinkFragment}
+                      onMoveToLockbox={onMoveToLockbox}
+                      onNavigateToFragment={onNavigateToFragment}
+                      onOpenZen={onOpenZen}
+                      onPin={onPin}
+                      onSave={onSave}
+                      onToggleTask={onToggleTask}
+                      onUnlinkFragment={onUnlinkFragment}
+                      requestRelated={requestRelated}
+                      vaultPath={vaultPath}
+                    />
+                  ))}
                 </div>
               ))}
             </div>
@@ -412,45 +416,25 @@ function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max)
 }
 
-type TimelineItem =
-  | {
-      id: string
-      kind: "fragment"
-      fragment: Fragment
-      pinned: boolean
-      timestamp: string
-    }
-  | {
-      id: string
-      kind: "mindMap"
-      map: MindMapSummary
-      pinned: false
-      timestamp: string
-    }
+type TimelineItem = {
+  id: string
+  fragment: Fragment
+  pinned: boolean
+  timestamp: string
+}
 
-function buildTimelineItems(
-  fragments: Fragment[],
-  mindMaps: MindMapSummary[]
-): TimelineItem[] {
-  return [
-    ...fragments.map((fragment) => ({
+function buildTimelineItems(fragments: Fragment[]): TimelineItem[] {
+  return fragments
+    .map((fragment) => ({
       id: `fragment:${fragment.id}`,
-      kind: "fragment" as const,
       fragment,
       pinned: fragment.pinned,
       timestamp: fragment.createdAt,
-    })),
-    ...mindMaps.map((map) => ({
-      id: `mind-map:${map.id}`,
-      kind: "mindMap" as const,
-      map,
-      pinned: false as const,
-      timestamp: map.createdAt,
-    })),
-  ].sort((a, b) => {
-    if (a.pinned !== b.pinned) return a.pinned ? -1 : 1
-    return b.timestamp.localeCompare(a.timestamp)
-  })
+    }))
+    .sort((a, b) => {
+      if (a.pinned !== b.pinned) return a.pinned ? -1 : 1
+      return b.timestamp.localeCompare(a.timestamp)
+    })
 }
 
 function splitIntoColumns(items: TimelineItem[], columnCount: number) {

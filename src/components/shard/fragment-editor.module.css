@@ -21,6 +21,56 @@
   border-color: var(--shard-sapphire);
 }
 
+.zenEditorShell {
+  --zen-editor-inline-padding: max(
+    var(--shard-content-inset),
+    calc((100% - var(--shard-content-max-width)) / 2)
+  );
+}
+
+.zenFooter {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: var(--shard-space-3);
+  padding-bottom: var(--shard-space-4);
+}
+
+.zenToolbar {
+  grid-column: 2;
+}
+
+.zenStats {
+  grid-column: 3;
+  justify-self: end;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  line-height: 20px;
+  white-space: nowrap;
+}
+
+@media (width < 48rem) {
+  .zenFooter {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .zenToolbar,
+  .zenStats {
+    grid-column: 1;
+    justify-self: center;
+  }
+}
+
+@media (width >= 64rem) {
+  .zenEditorShell {
+    --zen-editor-inline-padding: max(
+      var(--shard-content-inset-lg),
+      calc((100% - var(--shard-content-max-width)) / 2)
+    );
+  }
+}
+
 @keyframes fragment-editor-spin {
   from {
     transform: rotate(0deg);

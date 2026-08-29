@@ -8,6 +8,7 @@ import type {
   CodexReviewTask,
   CodexReviewTaskResult,
   Fragment,
+  FragmentRelation,
   GithubCliInfo,
   GitInfo,
   LockboxSetupResult,
@@ -97,6 +98,27 @@ export function updateFragmentTags(id: string, tags: string[]) {
   return desktopInvoke<Fragment>("update_fragment_tags", { id, tags })
 }
 
+export function linkFragments(
+  sourceId: string,
+  targetId: string,
+  origin: FragmentRelation["origin"],
+  note?: string
+): Promise<Fragment> {
+  return desktopInvoke<Fragment>("link_fragments", {
+    sourceId,
+    targetId,
+    origin,
+    note: note ?? null,
+  })
+}
+
+export function unlinkFragments(
+  sourceId: string,
+  targetId: string
+): Promise<Fragment> {
+  return desktopInvoke<Fragment>("unlink_fragments", { sourceId, targetId })
+}
+
 /**
  * 归档与取消归档是同一个操作的两个方向。传 `archived: false` 可以把片段
  * 从归档区移回收件箱——旧版只能单向归档，移进去就取不回来了。
@@ -112,6 +134,11 @@ export function pinFragment(id: string, pinned: boolean) {
 
 export function moveFragmentToLockbox(id: string) {
   return desktopInvoke<VaultState>("move_fragment_to_lockbox", { id })
+}
+
+// Excel / CSV 转成 Markdown 表格文本。只转换、不落盘，结果由调用方插进正文。
+export function convertTableDocumentToMarkdown(path: string) {
+  return desktopInvoke<string>("convert_table_document_to_markdown", { path })
 }
 
 // 返回 assets 目录下的相对路径，可直接写入 Markdown 正文。
@@ -145,6 +172,16 @@ export function copyExportedImage(bytes: number[]) {
 
 export function setWindowControlsHidden(hidden: boolean) {
   return desktopInvoke<void>("set_window_controls_hidden", { hidden })
+}
+
+/**
+ * 切换画布抓手光标。
+ *
+ * 走原生而不是 CSS：WebKit 只在指针移动时重算 `cursor`，macOS 又会在按键时
+ * 隐藏指针，两者叠加会让空格抓手必须动一下鼠标才出现。
+ */
+export function setCanvasGrabCursor(active: boolean) {
+  return desktopInvoke<void>("set_canvas_grab_cursor", { active })
 }
 
 export function restoreWindowFrame() {

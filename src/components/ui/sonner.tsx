@@ -36,6 +36,7 @@ function Toaster({
       position="bottom-right"
       visibleToasts={5}
       duration={5000}
+      closeButton
       className={cn("toaster group z-[60]", className)}
       offset={{ bottom: 24, right: 24 }}
       mobileOffset={{ bottom: 16, left: 16, right: 16 }}
@@ -57,6 +58,7 @@ function Toaster({
         } as CSSProperties
       }
       toastOptions={{
+        closeButtonAriaLabel: "关闭通知",
         ...toastOptions,
         classNames: {
           ...toastClassNames,

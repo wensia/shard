@@ -22,6 +22,35 @@
   padding-bottom: var(--shard-composer-bottom-gap);
 }
 
+.workAreaStage {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  overflow: hidden;
+}
+
+.normalWorkArea,
+.searchWorkArea {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.normalWorkArea[data-search-hidden="true"] {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.searchWorkArea {
+  z-index: 2;
+  background: var(--background);
+}
+
 @media (min-width: 1024px) {
   .appShell {
     grid-template-columns: var(--shard-sidebar-width) minmax(0, 1fr);

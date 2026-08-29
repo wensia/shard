@@ -57,6 +57,7 @@ struct Fragment {
     archived: bool,
     lockbox: bool,
     pinned: bool,
+    related: Vec<FragmentRelation>,
     #[serde(skip_serializing_if = "Option::is_none")]
     conflict_of: Option<String>,
 }
@@ -334,6 +335,17 @@ struct LockboxReadKeys {
     write_private_key: Option<RsaPrivateKey>,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+struct FragmentRelation {
+    target_id: String,
+    /// manual | walk | insight | tag
+    origin: String,
+    created_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    note: Option<String>,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 struct FragmentFrontmatter {
     id: String,
@@ -347,6 +359,8 @@ struct FragmentFrontmatter {
     source: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     conflict_of: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    related: Vec<FragmentRelation>,
 }
 
 fn is_false(value: &bool) -> bool {
@@ -432,6 +446,34 @@ async fn delete_mind_map(
         let vault = ensure_vault_dirs(&app)?;
         delete_mind_map_in_vault(&vault, &id, expected_revision)?;
         list_mind_maps_in_vault(&vault)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn link_fragments(
+    app: tauri::AppHandle,
+    source_id: String,
+    target_id: String,
+    origin: String,
+    note: Option<String>,
+) -> Result<Fragment, String> {
+    run_blocking(move || {
+        let vault = ensure_vault_dirs(&app)?;
+        link_fragments_in_vault(&vault, &source_id, &target_id, &origin, note)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn unlink_fragments(
+    app: tauri::AppHandle,
+    source_id: String,
+    target_id: String,
+) -> Result<Fragment, String> {
+    run_blocking(move || {
+        let vault = ensure_vault_dirs(&app)?;
+        unlink_fragments_in_vault(&vault, &source_id, &target_id)
     })
     .await
 }
@@ -974,6 +1016,7 @@ async fn create_fragment(
             pinned: false,
             source: "desktop".to_string(),
             conflict_of: None,
+            related: Vec::new(),
         };
 
         write_fragment_file(&path, &frontmatter, &content)?;
@@ -1229,6 +1272,103 @@ async fn move_fragment_to_lockbox(
         list_fragments_in_vault(&vault, &lockbox_runtime)
     })
     .await
+}
+
+/// 表格文档能有多大——25MB 的 xlsx 已经远超"能塞进一条笔记"的范畴了。
+/// 注意文件大小拦不住真正的问题：16 万字节的 xlsx 能转出 5000 行表格。
+const MAX_TABLE_DOCUMENT_BYTES: u64 = 25 * 1024 * 1024;
+
+/// 转换结果的规模上限。真正会拖垮编辑器的是表格行数和单元格数，不是文件大小：
+/// 5000 行 × 6 列在编辑态是三万个受控 input，每敲一个字要 860ms。
+/// 这两个数字是硬上限，超过就拒绝导入——这种规模的数据本来也不该进笔记正文。
+const MAX_TABLE_DOCUMENT_ROWS: usize = 3000;
+const MAX_TABLE_DOCUMENT_CELLS: usize = 20000;
+
+/// 只收表格类文档。anydoc 本身还能转 Word / PDF / PPT，但那些转出来是长文，
+/// 不是表格，插进正文的语义完全不同——真要支持得是另一个入口。
+const TABLE_DOCUMENT_EXTENSIONS: [&str; 5] = ["csv", "xls", "xlsb", "xlsm", "xlsx"];
+
+/// 把 Excel / CSV 转成 Markdown 表格文本。只做转换，不落盘、不写 vault，
+/// 结果交给前端插进正文——这样表格数据留在 markdown 里，搜索、标签、
+/// git diff 才都还能用上。
+#[tauri::command]
+async fn convert_table_document_to_markdown(path: String) -> Result<String, String> {
+    run_blocking(move || convert_table_document(Path::new(&path))).await
+}
+
+fn convert_table_document(source: &Path) -> Result<String, String> {
+    let extension = source
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(|value| value.to_ascii_lowercase())
+        .unwrap_or_default();
+    if !TABLE_DOCUMENT_EXTENSIONS.contains(&extension.as_str()) {
+        return Err(format!(
+            "不支持的表格文件：.{extension}（支持 {}）",
+            TABLE_DOCUMENT_EXTENSIONS.join(" / ")
+        ));
+    }
+
+    let metadata = fs::metadata(source).map_err(|error| format!("读取文件失败：{error}"))?;
+    if !metadata.is_file() {
+        return Err("选中的不是文件".to_string());
+    }
+    if metadata.len() > MAX_TABLE_DOCUMENT_BYTES {
+        return Err(format!(
+            "文件太大（{:.1} MB），表格文档上限 {} MB",
+            metadata.len() as f64 / (1024.0 * 1024.0),
+            MAX_TABLE_DOCUMENT_BYTES / (1024 * 1024)
+        ));
+    }
+
+    let markdown =
+        anydoc::to_markdown(source).map_err(|error| format!("解析表格失败：{error}"))?;
+    let trimmed = markdown.trim();
+    if trimmed.is_empty() {
+        return Err("这个文件里没有解析出内容".to_string());
+    }
+
+    let (rows, cells) = measure_markdown_tables(trimmed);
+    if rows > MAX_TABLE_DOCUMENT_ROWS {
+        return Err(format!(
+            "表格太大：{rows} 行，上限 {MAX_TABLE_DOCUMENT_ROWS} 行。\
+             这个量级的数据更适合留在表格文件里，用链接或摘要引用。"
+        ));
+    }
+    if cells > MAX_TABLE_DOCUMENT_CELLS {
+        return Err(format!(
+            "表格太大：{cells} 个单元格，上限 {MAX_TABLE_DOCUMENT_CELLS} 个。\
+             这个量级的数据更适合留在表格文件里，用链接或摘要引用。"
+        ));
+    }
+
+    Ok(trimmed.to_string())
+}
+
+/// 数一数转换结果里有多少表格行和单元格。以 `|` 开头的行才算表格行，
+/// 分隔行（`| --- |`）不计入——它不是数据。
+fn measure_markdown_tables(markdown: &str) -> (usize, usize) {
+    let mut rows = 0;
+    let mut cells = 0;
+
+    for line in markdown.lines() {
+        let trimmed = line.trim();
+        if !trimmed.starts_with('|') {
+            continue;
+        }
+        if trimmed
+            .trim_matches('|')
+            .split('|')
+            .all(|cell| !cell.trim().is_empty() && cell.trim().chars().all(|c| c == '-' || c == ':'))
+        {
+            continue;
+        }
+
+        rows += 1;
+        cells += trimmed.trim_matches('|').split('|').count();
+    }
+
+    (rows, cells)
 }
 
 #[tauri::command]
@@ -1533,6 +1673,48 @@ fn set_window_controls_hidden(window: tauri::Window, hidden: bool) -> Result<(),
 #[cfg(not(target_os = "macos"))]
 #[tauri::command]
 fn set_window_controls_hidden(_window: tauri::Window, _hidden: bool) -> Result<(), String> {
+    Ok(())
+}
+
+/// 画布抓手光标。
+///
+/// 这里必须绕过 CSS：WebKit 只在指针移动时才重新 hit-test 并重算 `cursor`，
+/// 而 macOS 又会在按下会产生字符的键（空格也算）时调用
+/// `setHiddenUntilMouseMoves(true)` 把指针藏起来。两件事叠加，用户按住空格会
+/// 先丢指针、动一下鼠标才看到抓手。所以这里直接操作 AppKit 光标：先解除系统
+/// 的隐藏，再立即 set 抓手/箭头。指针移动后 WebView 会用 CSS 值重设光标，
+/// 两侧取值一致，视觉上无缝。
+#[cfg(target_os = "macos")]
+#[tauri::command]
+fn set_canvas_grab_cursor(window: tauri::Window, active: bool) -> Result<(), String> {
+    // NSCursor 只能在主线程操作。
+    let follow_up_window = window.clone();
+    window
+        .run_on_main_thread(move || {
+            use objc2_app_kit::NSCursor;
+
+            NSCursor::setHiddenUntilMouseMoves(false);
+            NSCursor::unhide();
+            if active {
+                NSCursor::openHandCursor().set();
+            } else {
+                NSCursor::arrowCursor().set();
+            }
+
+            if active {
+                let _ = follow_up_window.run_on_main_thread(|| {
+                    NSCursor::setHiddenUntilMouseMoves(false);
+                    NSCursor::unhide();
+                    NSCursor::openHandCursor().set();
+                });
+            }
+        })
+        .map_err(|error| error.to_string())
+}
+
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+fn set_canvas_grab_cursor(_window: tauri::Window, _active: bool) -> Result<(), String> {
     Ok(())
 }
 
@@ -2160,6 +2342,7 @@ fn read_fragment(
         archived,
         lockbox: false,
         pinned: frontmatter.pinned,
+        related: frontmatter.related,
         conflict_of: frontmatter.conflict_of,
     })
 }
@@ -2187,6 +2370,98 @@ fn write_fragment_file(
     let yaml = yaml.strip_prefix("---\n").unwrap_or(&yaml);
     let text = format!("---\n{}---\n\n{}\n", yaml, body.trim_end());
     write_text_atomically(path, &text)
+}
+
+fn link_fragments_in_vault(
+    vault: &Path,
+    source_id: &str,
+    target_id: &str,
+    origin: &str,
+    note: Option<String>,
+) -> Result<Fragment, String> {
+    ensure_public_fragment_id(vault, source_id)?;
+    ensure_public_fragment_id(vault, target_id)?;
+    if source_id == target_id {
+        return Err("片段不能关联自身。".to_string());
+    }
+    if !matches!(origin, "manual" | "walk" | "insight" | "tag") {
+        return Err(format!("不支持的片段关系来源：{origin}"));
+    }
+
+    let path = find_fragment_path(vault, source_id)?
+        .ok_or_else(|| format!("找不到公开片段 {source_id}"))?;
+    let text = fs::read_to_string(&path).map_err(|error| error.to_string())?;
+    let (mut frontmatter, body) = parse_fragment_text(&text)?;
+    if frontmatter
+        .related
+        .iter()
+        .any(|relation| relation.target_id == target_id)
+    {
+        let dirty = dirty_paths(vault);
+        return read_fragment(&path, vault, &dirty, None);
+    }
+
+    let now = Local::now().to_rfc3339();
+    frontmatter.related.push(FragmentRelation {
+        target_id: target_id.to_string(),
+        origin: origin.to_string(),
+        created_at: now.clone(),
+        note,
+    });
+    frontmatter.updated_at = now;
+    write_fragment_file(&path, &frontmatter, body.trim_start_matches('\n'))?;
+
+    let rel_path = relative_path(vault, &path)?;
+    let source_short = source_id.chars().take(8).collect::<String>();
+    let target_short = target_id.chars().take(8).collect::<String>();
+    commit_path(
+        vault,
+        &rel_path,
+        &format!("link fragment {source_short} -> {target_short}"),
+    )?;
+    let dirty = dirty_paths(vault);
+
+    read_fragment(&path, vault, &dirty, None)
+}
+
+fn unlink_fragments_in_vault(
+    vault: &Path,
+    source_id: &str,
+    target_id: &str,
+) -> Result<Fragment, String> {
+    ensure_public_fragment_id(vault, source_id)?;
+    ensure_public_fragment_id(vault, target_id)?;
+    if source_id == target_id {
+        return Err("片段不能取消关联自身。".to_string());
+    }
+
+    let path = find_fragment_path(vault, source_id)?
+        .ok_or_else(|| format!("找不到公开片段 {source_id}"))?;
+    let text = fs::read_to_string(&path).map_err(|error| error.to_string())?;
+    let (mut frontmatter, body) = parse_fragment_text(&text)?;
+    let previous_len = frontmatter.related.len();
+    frontmatter
+        .related
+        .retain(|relation| relation.target_id != target_id);
+    if frontmatter.related.len() == previous_len {
+        let dirty = dirty_paths(vault);
+        return read_fragment(&path, vault, &dirty, None);
+    }
+
+    frontmatter.updated_at = Local::now().to_rfc3339();
+    write_fragment_file(&path, &frontmatter, body.trim_start_matches('\n'))?;
+
+    let rel_path = relative_path(vault, &path)?;
+    let source_short = source_id.chars().take(8).collect::<String>();
+    let target_short = target_id.chars().take(8).collect::<String>();
+    commit_path(
+        vault,
+        &rel_path,
+        &format!("unlink fragment {source_short} -> {target_short}"),
+    )?;
+    let dirty = dirty_paths(vault);
+
+    read_fragment(&path, vault, &dirty, None)
 }
 
 fn set_public_fragment_pinned_in_vault(
@@ -2246,6 +2521,7 @@ fn create_lockbox_fragment_in_vault(
         pinned: false,
         source: "desktop-lockbox".to_string(),
         conflict_of: None,
+        related: Vec::new(),
     };
 
     write_lockbox_fragment_file(&path, &write_key, &frontmatter, content)?;
@@ -2558,6 +2834,7 @@ fn lockbox_fragment_from_parts(
         archived,
         lockbox: true,
         pinned: frontmatter.pinned,
+        related: frontmatter.related,
         conflict_of: frontmatter.conflict_of,
     })
 }
@@ -2579,6 +2856,7 @@ fn write_lockbox_fragment_file(
             pinned: frontmatter.pinned,
             source: frontmatter.source.clone(),
             conflict_of: frontmatter.conflict_of.clone(),
+            related: Vec::new(),
         },
         body: body.trim_end().to_string(),
     };
@@ -3777,7 +4055,11 @@ fn codex_review_prompt(request: &CodexReviewTaskRequest) -> String {
 - “意外连接”提炼 2-4 个跨笔记关联。
 - 每条判断必须引用来源笔记，例如 [笔记 3]。
 - 不要虚构笔记之外的事实。
-- 不要建议修改文件。"#
+- 不要建议修改文件。
+- 最后单独输出一个 json 代码块，格式严格为：
+  {"edges":[{"from":1,"to":3,"reason":"一句话理由"}]}
+  from / to 使用上面的来源笔记编号，reason 不超过 30 字。
+  这个块供程序解析，不要加任何额外说明文字。"#
             .to_string()
         }
     };
@@ -4335,6 +4617,8 @@ pub fn run() {
             read_mind_map,
             write_mind_map,
             delete_mind_map,
+            link_fragments,
+            unlink_fragments,
             set_vault_path,
             initialize_vault_git,
             set_vault_remote,
@@ -4353,6 +4637,7 @@ pub fn run() {
             set_fragment_archived,
             set_fragment_pinned,
             move_fragment_to_lockbox,
+            convert_table_document_to_markdown,
             save_fragment_image,
             read_fragment_image,
             fragment_image_file_path,
@@ -4361,6 +4646,7 @@ pub fn run() {
             save_exported_image,
             copy_exported_image,
             set_window_controls_hidden,
+            set_canvas_grab_cursor,
             restore_window_frame,
             sync_vault
         ])
@@ -4744,6 +5030,166 @@ mod tests {
         assert_eq!(state.fragments[0].content, "reset survives");
     }
 
+    #[test]
+    fn test_link_fragments_basic() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let vault = tempdir.path();
+        ensure_vault_layout(vault).unwrap();
+        ensure_git_repo(vault).unwrap();
+        let source_id = write_public_test_fragment(vault, "source note");
+        let target_id = write_public_test_fragment(vault, "target note");
+
+        let fragment = link_fragments_in_vault(
+            vault,
+            &source_id,
+            &target_id,
+            "manual",
+            Some("useful context".to_string()),
+        )
+        .unwrap();
+
+        assert_eq!(fragment.related.len(), 1);
+        assert_eq!(fragment.related[0].target_id, target_id);
+        assert_eq!(fragment.related[0].origin, "manual");
+        assert_eq!(fragment.related[0].note.as_deref(), Some("useful context"));
+        assert!(!fragment.related[0].created_at.is_empty());
+
+        let path = find_fragment_path(vault, &source_id).unwrap().unwrap();
+        let text = fs::read_to_string(path).unwrap();
+        assert!(text.contains("related:"));
+        let (frontmatter, _) = parse_fragment_text(&text).unwrap();
+        assert_eq!(frontmatter.related, fragment.related);
+    }
+
+    #[test]
+    fn test_link_fragments_idempotent() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let vault = tempdir.path();
+        ensure_vault_layout(vault).unwrap();
+        ensure_git_repo(vault).unwrap();
+        let source_id = write_public_test_fragment(vault, "source note");
+        let target_id = write_public_test_fragment(vault, "target note");
+
+        let first = link_fragments_in_vault(vault, &source_id, &target_id, "walk", None).unwrap();
+        let path = find_fragment_path(vault, &source_id).unwrap().unwrap();
+        let first_bytes = fs::read(&path).unwrap();
+        let second = link_fragments_in_vault(
+            vault,
+            &source_id,
+            &target_id,
+            "manual",
+            Some("ignored".to_string()),
+        )
+        .unwrap();
+
+        assert_eq!(second.related.len(), 1);
+        assert_eq!(second.related[0].origin, "walk");
+        assert_eq!(second.updated_at, first.updated_at);
+        assert_eq!(fs::read(path).unwrap(), first_bytes);
+    }
+
+    #[test]
+    fn test_link_fragments_rejects_self() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let vault = tempdir.path();
+        ensure_vault_layout(vault).unwrap();
+        let fragment_id = write_public_test_fragment(vault, "standalone note");
+
+        assert!(
+            link_fragments_in_vault(vault, &fragment_id, &fragment_id, "manual", None).is_err()
+        );
+    }
+
+    #[test]
+    fn test_link_fragments_rejects_lockbox() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let vault = tempdir.path();
+        let runtime = Arc::new(Mutex::new(LockboxSession::default()));
+        ensure_vault_layout(vault).unwrap();
+        setup_lockbox_in_vault(vault, &runtime, "correct horse").unwrap();
+        let public_id = write_public_test_fragment(vault, "public note");
+        let private = create_lockbox_fragment_in_vault(
+            vault,
+            &runtime,
+            "private note",
+            vec![LOCKBOX_TAG.to_string()],
+        )
+        .unwrap();
+
+        assert!(link_fragments_in_vault(vault, &private.id, &public_id, "manual", None).is_err());
+        assert!(link_fragments_in_vault(vault, &public_id, &private.id, "manual", None).is_err());
+    }
+
+    #[test]
+    fn test_link_fragments_rejects_bad_origin() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let vault = tempdir.path();
+        ensure_vault_layout(vault).unwrap();
+        let source_id = write_public_test_fragment(vault, "source note");
+        let target_id = write_public_test_fragment(vault, "target note");
+
+        assert!(link_fragments_in_vault(vault, &source_id, &target_id, "automatic", None).is_err());
+    }
+
+    #[test]
+    fn test_unlink_fragments() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let vault = tempdir.path();
+        ensure_vault_layout(vault).unwrap();
+        ensure_git_repo(vault).unwrap();
+        let source_id = write_public_test_fragment(vault, "source note");
+        let target_id = write_public_test_fragment(vault, "target note");
+        link_fragments_in_vault(vault, &source_id, &target_id, "tag", None).unwrap();
+
+        let fragment = unlink_fragments_in_vault(vault, &source_id, &target_id).unwrap();
+
+        assert!(fragment.related.is_empty());
+        let path = find_fragment_path(vault, &source_id).unwrap().unwrap();
+        let text = fs::read_to_string(path).unwrap();
+        assert!(!text.contains("related:"));
+    }
+
+    #[test]
+    fn test_legacy_fragment_roundtrip() {
+        #[derive(Serialize)]
+        struct LegacyFragmentFrontmatter {
+            id: String,
+            created_at: String,
+            updated_at: String,
+            tags: Vec<String>,
+            category: Option<String>,
+            ai_status: Option<String>,
+            source: String,
+        }
+
+        let tempdir = tempfile::tempdir().unwrap();
+        let vault = tempdir.path();
+        ensure_vault_layout(vault).unwrap();
+        let path = vault.join("fragments").join("legacy.md");
+        let legacy = LegacyFragmentFrontmatter {
+            id: "legacy-fragment".to_string(),
+            created_at: "2026-08-18T08:00:00+08:00".to_string(),
+            updated_at: "2026-08-18T08:00:00+08:00".to_string(),
+            tags: vec!["inbox".to_string()],
+            category: None,
+            ai_status: Some("none".to_string()),
+            source: "test".to_string(),
+        };
+        let yaml = serde_yaml::to_string(&legacy).unwrap();
+        let yaml = yaml.strip_prefix("---\n").unwrap_or(&yaml);
+        let original = format!("---\n{}---\n\nlegacy body\n", yaml);
+        fs::write(&path, original.as_bytes()).unwrap();
+
+        let before = fs::read(&path).unwrap();
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(!text.contains("related:"));
+        let (frontmatter, body) = parse_fragment_text(&text).unwrap();
+        assert!(frontmatter.related.is_empty());
+        write_fragment_file(&path, &frontmatter, body.trim_start_matches('\n')).unwrap();
+
+        assert_eq!(fs::read(path).unwrap(), before);
+    }
+
     fn write_public_test_fragment(vault: &Path, body: &str) -> String {
         let now = Local::now();
         let id = format!("test-{}", unique_suffix());
@@ -4760,8 +5206,68 @@ mod tests {
             pinned: false,
             source: "test".to_string(),
             conflict_of: None,
+            related: Vec::new(),
         };
         write_fragment_file(&path, &frontmatter, body).unwrap();
         id
     }
+
+    #[test]
+    fn converts_csv_to_a_markdown_table() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("采单.csv");
+        fs::write(&path, "日期,学校\n2026-08-24,行知中学\n").unwrap();
+
+        let markdown = convert_table_document(&path).unwrap();
+
+        assert!(markdown.contains("| 日期 | 学校 |"), "{markdown}");
+        assert!(markdown.contains("| 2026-08-24 | 行知中学 |"), "{markdown}");
+    }
+
+    #[test]
+    fn rejects_non_table_documents() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("note.txt");
+        fs::write(&path, "不是表格").unwrap();
+
+        let error = convert_table_document(&path).unwrap_err();
+
+        assert!(error.contains("不支持的表格文件"), "{error}");
+    }
+
+    #[test]
+    fn reports_missing_table_documents() {
+        let dir = tempfile::tempdir().unwrap();
+        let error = convert_table_document(&dir.path().join("缺席.xlsx")).unwrap_err();
+
+        assert!(error.contains("读取文件失败"), "{error}");
+    }
+
+
+    #[test]
+    fn rejects_oversized_tables() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("巨表.csv");
+        let mut csv = String::from("日期,学校\n");
+        for index in 0..(MAX_TABLE_DOCUMENT_ROWS + 10) {
+            csv.push_str(&format!("2026-08-01,第{index}中学\n"));
+        }
+        fs::write(&path, csv).unwrap();
+
+        let error = convert_table_document(&path).unwrap_err();
+
+        assert!(error.contains("表格太大"), "{error}");
+    }
+
+    #[test]
+    fn measures_table_rows_without_counting_delimiters() {
+        let markdown = "## 表\n\n| a | b |\n| --- | --- |\n| 1 | 2 |\n";
+
+        let (rows, cells) = measure_markdown_tables(markdown);
+
+        // 表头 + 一行数据 = 2 行 4 格，分隔行不算
+        assert_eq!(rows, 2);
+        assert_eq!(cells, 4);
+    }
+
 }

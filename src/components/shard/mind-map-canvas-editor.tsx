@@ -9,6 +9,7 @@ import {
 } from "react"
 import { MaximizeIcon, MoveIcon } from "lucide-react"
 
+import { setCanvasGrabCursor } from "@/lib/api"
 import { Button } from "@/components/ui/button"
 import {
   ContextMenu,
@@ -277,17 +278,21 @@ export function MindMapCanvasEditor({
       event.preventDefault()
       spaceHeldRef.current = true
       setSpaceHeld(true)
+      // 抓手必须在按下的瞬间就可见，不能等鼠标移动，所以直接设原生光标。
+      void setCanvasGrabCursor(true).catch(() => {})
     }
 
     function handleKeyUp(event: globalThis.KeyboardEvent) {
       if (event.key !== " ") return
       spaceHeldRef.current = false
       setSpaceHeld(false)
+      void setCanvasGrabCursor(false).catch(() => {})
     }
 
     function handleWindowBlur() {
       spaceHeldRef.current = false
       setSpaceHeld(false)
+      void setCanvasGrabCursor(false).catch(() => {})
     }
 
     window.addEventListener("keydown", handleKeyDown)

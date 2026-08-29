@@ -1,10 +1,7 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
-@import "../vendor/kiln/tokens/colors.css";
-@import "../vendor/kiln/tokens/radius.css";
-@import "../vendor/kiln/tokens/elevation.css";
-@import "../vendor/kiln/tokens/typography.css";
+@import "../vendor/kiln/tokens/index.css";
 @import "./styles/frontend-rules.css";
 
 @custom-variant dark (&:is(.dark *));
@@ -56,18 +53,18 @@
     --color-card: var(--card);
     --color-foreground: var(--foreground);
     --color-background: var(--background);
-    --radius-sm: 2px;
-    --radius-md: var(--shard-radius-control);
-    --radius-lg: var(--shard-radius-card);
-    --radius-xl: var(--shard-radius-panel);
-    --radius-2xl: var(--shard-radius-panel);
-    --radius-3xl: var(--shard-radius-panel);
-    --radius-4xl: var(--shard-radius-panel);
-    --shadow-xs: var(--shard-shadow-xs);
-    --shadow-card: var(--shard-shadow-card);
-    --shadow-popover: var(--shard-shadow-popover);
-    --shadow-input: var(--shard-shadow-input);
-    --shadow-card-hover: var(--shard-shadow-card-hover);
+    --radius-sm: var(--radius-sm);
+    --radius-md: var(--radius-md);
+    --radius-lg: var(--radius-lg);
+    --radius-xl: var(--radius-xl);
+    --radius-2xl: var(--radius-panel);
+    --radius-3xl: var(--radius-panel);
+    --radius-4xl: var(--radius-panel);
+    --shadow-xs: var(--shadow-xs);
+    --shadow-card: var(--shadow-card);
+    --shadow-popover: var(--shadow-popover);
+    --shadow-input: var(--shadow-input);
+    --shadow-card-hover: var(--shadow-card-hover);
 }
 
 :root {
@@ -140,23 +137,24 @@
     --shard-tag-hover: rgb(var(--shard-primary-rgb) / var(--shard-alpha-13));
     --shard-tag-fg: rgb(var(--shard-primary-rgb) / var(--shard-alpha-89));
     --shard-tag-fg-strong: rgb(var(--shard-primary-rgb) / 1);
-    --shard-editor-tag-fg: var(--shard-info);
+    /* 编辑态标签只着色不画芯片（同 flomo），颜色跟随只读卡片的标签文字色 */
+    --shard-editor-tag-fg: var(--shard-tag-fg);
     --shard-tag-ring: rgb(var(--shard-primary-rgb) / var(--shard-alpha-13));
     --shard-tag-active-bg: rgb(var(--shard-primary-rgb) / var(--shard-alpha-21));
     --shard-tag-active-ring: rgb(var(--shard-primary-rgb) / var(--shard-alpha-34));
     --shard-tag-muted-bg: var(--muted);
     --shard-tag-muted-fg: var(--muted-foreground);
-    --shard-space-1: 4px;
-    --shard-space-2: 8px;
-    --shard-space-3: 12px;
-    --shard-space-4: 16px;
+    --shard-space-1: var(--space-1);
+    --shard-space-2: var(--space-2);
+    --shard-space-3: var(--space-3);
+    --shard-space-4: var(--space-4);
     --shard-space-5: 20px;
-    --shard-space-6: 24px;
-    --shard-space-8: 32px;
+    --shard-space-6: var(--space-6);
+    --shard-space-8: var(--space-8);
     --shard-space-micro: 6px;
-    --shard-radius-control: 4px;
-    --shard-radius-card: 6px;
-    --shard-radius-panel: 8px;
+    --shard-radius-control: var(--radius-control);
+    --shard-radius-card: var(--radius-card);
+    --shard-radius-panel: var(--radius-panel);
     --shard-surface-radius: var(--shard-radius-card);
     --shard-sidebar-width: 240px;
     --shard-content-max-width: 900px;
@@ -174,7 +172,7 @@
     --shard-card-padding-bottom: calc(var(--shard-card-padding-y) - 2px);
     --shard-card-gap: var(--shard-space-4);
     --shard-memo-content-color: var(--foreground);
-    --shard-memo-font-family: "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", "Microsoft YaHei", "Microsoft JhengHei", "Source Han Sans SC", "Noto Sans CJK SC", "Source Han Sans CN", "Source Han Sans TC", "Noto Sans CJK TC", -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
+    --shard-memo-font-family: var(--font-sans);
     --shard-memo-font-size: 14px;
     --shard-memo-font-weight: 400;
     --shard-memo-letter-spacing: 0px;
@@ -190,13 +188,17 @@
     --shard-tag-height: 28px;
     --shard-tag-font-size: 13px;
     --shard-tag-padding-x: 11px;
-    --shard-editor-tag-pad-x: 0.2em;
-    --shard-editor-tag-pad-y: 2px;
-    --shard-editor-tag-radius: var(--shard-radius-control);
     --shard-editor-font-size: var(--shard-memo-font-size);
     --shard-editor-font-weight: var(--shard-memo-font-weight);
     --shard-editor-letter-spacing: var(--shard-memo-letter-spacing);
     --shard-editor-line-height: var(--shard-memo-line-height);
+    /* 编辑区高亮块（选区、荧光笔）上下各外扩多少，让块填满整个行盒
+     * （同 flomo / 原生 ::selection）。行内元素的 padding-block 不参与行高
+     * 计算，只扩大背景绘制区，所以不影响与 textarea 的对齐。取值 =
+     * (行高 − 字体 content area) / 2：行高 1.8em，系统字体 content area
+     * ≈ 1.14em → 0.33em。换字体要重测；tests/ui 里有「块高 = 行高、
+     * 字形居中、选区与荧光笔同高」的断言守着。 */
+    --shard-editor-highlight-pad-y: 0.33em;
     --shard-caret-color: var(--shard-sapphire);
     --shard-caret-height-ratio: 1.22;
     --shard-caret-width: 1.5px;
@@ -280,7 +282,7 @@
     --shard-tag-hover: rgb(var(--shard-primary-rgb) / var(--shard-alpha-34));
     --shard-tag-fg: rgb(var(--shard-primary-soft-rgb) / var(--shard-alpha-89));
     --shard-tag-fg-strong: rgb(var(--shard-primary-soft-rgb) / 1);
-    --shard-editor-tag-fg: #78b4bd;
+    --shard-editor-tag-fg: var(--shard-tag-fg);
     --shard-tag-ring: rgb(var(--shard-primary-soft-rgb) / var(--shard-alpha-13));
     --shard-tag-active-bg: rgb(var(--shard-primary-rgb) / var(--shard-alpha-34));
     --shard-tag-active-ring: rgb(var(--shard-primary-soft-rgb) / var(--shard-alpha-21));

@@ -44,6 +44,19 @@ const SRC = join(ROOT, "src");
 const failures = [];
 const fail = (msg) => failures.push(msg);
 
+// 运行时必须消费 kiln 的单一入口。只让校验器读取所有 token 文件、而页面
+// 分散导入其中几份，会造成“契约通过但浏览器没加载”的假阳性。
+const localCssSource = readFileSync(LOCAL_CSS, "utf8");
+if (!/@import\s+["']\.\.\/vendor\/kiln\/tokens\/index\.css["']\s*;/.test(localCssSource)) {
+  fail(
+    "Kiln 入口未接入：src/index.css 必须导入 ../vendor/kiln/tokens/index.css，" +
+      "不要分散导入 tokens/*.css。"
+  );
+}
+if (/@import\s+["']\.\.\/vendor\/kiln\/tokens\/(?!index\.css)[^"']+\.css["']\s*;/.test(localCssSource)) {
+  fail("检测到分散的 Kiln token 导入；只保留 tokens/index.css 这一入口。");
+}
+
 // ── 1 & 2. token 契约 ────────────────────────────────────────────
 const contract = JSON.parse(readFileSync(CONTRACT, "utf8"));
 const allowed = new Set(contract.tokens);
@@ -58,7 +71,7 @@ const tokensCss =
   // 本项目在 kiln 之上的扩展 —— **只取 :root 块**。
   // @theme inline 里的 `--color-*` 是 Tailwind 的映射变量（把 token 变成工具类），
   // 不是设计 token；把它们算进来会误报成一大堆「自造 token」。
-  (readFileSync(LOCAL_CSS, "utf8").match(/^:root \{[\s\S]*?^\}/m)?.[0] ?? "");
+  (localCssSource.match(/^:root \{[\s\S]*?^\}/m)?.[0] ?? "");
 // 匹配定义 `--foo:`，不匹配引用 `var(--foo)` / `var(--foo, x)` —— 引用后面跟的是 `)` 或 `,`，不是 `:`。
 // 不要锚定行首：那样单行写法 `:root { --foo: x }` 会整个漏掉（这个洞是负向测试抓出来的）。
 // \\. 处理 --space-0\.5 这种 CSS 转义。

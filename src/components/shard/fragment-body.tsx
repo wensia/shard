@@ -1,6 +1,7 @@
 import type { CSSProperties } from "react"
 
 import { FragmentContent } from "@/components/shard/fragment-content"
+import { parseMarkdownTable } from "@/lib/markdown-table"
 import { cn } from "@/lib/utils"
 
 interface FragmentBodyProps {
@@ -50,8 +51,11 @@ export function FragmentBody({
   )
   const bodyClassName = cn("shard-memo-body", className)
   const bodyStyle: CSSProperties = { whiteSpace: "pre-wrap" }
+  // <table> 不能合法嵌在 <p> 里，含表格时容器降级为 div；
+  // 其余情况保持原有的段落语义。
+  const hasTable = containsMarkdownTable(content)
 
-  if (as === "div") {
+  if (as === "div" || hasTable) {
     return (
       <div className={bodyClassName} style={bodyStyle}>
         {body}
@@ -64,4 +68,11 @@ export function FragmentBody({
       {body}
     </p>
   )
+}
+
+function containsMarkdownTable(content: string) {
+  if (!content.includes("|")) return false
+
+  const lines = content.split("\n")
+  return lines.some((_, index) => parseMarkdownTable(lines, index) !== null)
 }

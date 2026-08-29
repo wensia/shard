@@ -13,6 +13,13 @@ export type FragmentFilter =
   | "walk"
   | "archive"
 
+export interface FragmentRelation {
+  targetId: string
+  origin: "manual" | "walk" | "insight" | "tag"
+  createdAt: string
+  note?: string
+}
+
 export interface Fragment {
   id: string
   content: string
@@ -27,6 +34,7 @@ export interface Fragment {
   archived: boolean
   lockbox: boolean
   pinned: boolean
+  related?: FragmentRelation[]
   /**
    * 非空表示这是一份冲突副本，值是原件的 id。
    *

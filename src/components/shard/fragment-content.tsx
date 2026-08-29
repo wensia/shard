@@ -16,6 +16,7 @@ import {
 } from "lucide-react"
 import { toast } from "sonner"
 
+import { EditorTable } from "@/components/shard/editor-table"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -25,6 +26,12 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 
+import {
+  getTableCellCount,
+  MAX_EDITABLE_TABLE_CELLS,
+  parseMarkdownTable,
+  type MarkdownTable,
+} from "@/lib/markdown-table"
 import {
   getTagRanges,
   isMarkdownHorizontalRuleLine,
@@ -44,6 +51,16 @@ import { cn } from "@/lib/utils"
 
 import styles from "./fragment-content.module.css"
 
+/** 编辑态把表格交给 EditorTable 直接改，回调负责写回正文那几行。 */
+export interface TableEditing {
+  onChange: (
+    startLine: number,
+    lineCount: number,
+    table: MarkdownTable
+  ) => void
+  onExit?: () => void
+}
+
 interface ContextMenuPosition {
   left: number
   top: number
@@ -61,11 +78,13 @@ interface FragmentContentProps {
   renderImages?: boolean
   selectionEnd?: number
   selectionStart?: number
+  tableEditing?: TableEditing
   vaultPath?: string
 }
 
 const TASK_MARKER_PATTERN =
   /^(\s*)((?:[-*+]|\d+[.)])\s+)(\[([ xX])\]\s*)(.*)$/
+const INLINE_HIGHLIGHT_PATTERN = /==(.+?)==/g
 
 export function FragmentContent({
   caretAligned = false,
@@ -79,9 +98,15 @@ export function FragmentContent({
   renderImages = false,
   selectionEnd,
   selectionStart,
+  tableEditing,
   vaultPath,
 }: FragmentContentProps) {
   const lines = content.split("\n")
+  // caretAligned 是 textarea 背后的逐字符对齐叠加层，正文必须保持纯文本，
+  // 否则光标位置会全错。表格是唯一的例外：EditorTable 把源文本原样留在
+  // 测量层里撑住高度，只在上面盖一层可交互的表格，对齐照旧成立。
+  const editsTables = caretAligned && Boolean(tableEditing)
+  const renderTables = !caretAligned || editsTables
   const selectionRange = getSelectionRange(selectionStart, selectionEnd)
   const displayLines = lines.map((line) => {
     const isImageLine = renderImages && parseMarkdownImageLine(line) !== null
@@ -100,36 +125,134 @@ export function FragmentContent({
     if (!entry.hidden) lastVisibleIndex = index
   })
   let lineStart = 0
+  const nodes: ReactNode[] = []
+  let index = 0
+
+  // 表格是唯一的跨行结构，必须先把连续几行聚合成一块再渲染；
+  // 其余内容仍然逐行走内联流，保持"选中即得原文"的行为。
+  while (index < lines.length) {
+    const line = lines[index]
+    if (line === undefined) break
+
+    const entry = displayLines[index]
+    const currentLineStart = lineStart
+    let table = renderTables ? parseMarkdownTable(lines, index) : null
+    // 编辑态的表格每格一个受控 input，规模一大打字就会卡到几百毫秒。
+    // 超过阈值当普通文本行渲染：源码照样能改，只是没有可视化表格。
+    if (
+      table &&
+      editsTables &&
+      getTableCellCount(table) > MAX_EDITABLE_TABLE_CELLS
+    ) {
+      table = null
+    }
+
+    if (table) {
+      const consumed = table.lineCount
+      const startLine = index
+      const sourceText = lines.slice(index, index + consumed).join("\n")
+      for (let offset = 0; offset < consumed; offset += 1) {
+        lineStart += (lines[index + offset]?.length ?? 0) + 1
+      }
+      const lastTableIndex = index + consumed - 1
+      nodes.push(
+        <Fragment key={`table-${startLine}`}>
+          {tableEditing && editsTables ? (
+            <EditorTable
+              measure={renderSelectedText(
+                sourceText,
+                currentLineStart,
+                `table-source-${startLine}`,
+                selectionRange
+              )}
+              onChange={(nextTable) =>
+                tableEditing.onChange(startLine, consumed, nextTable)
+              }
+              onExit={tableEditing.onExit}
+              sourceActive={
+                selectionStart !== undefined &&
+                selectionStart >= currentLineStart &&
+                selectionStart <= currentLineStart + sourceText.length
+              }
+              sourceStart={currentLineStart}
+              table={table}
+            />
+          ) : (
+            <MarkdownTableBlock table={table} />
+          )}
+          {lastTableIndex < lastVisibleIndex ? "\n" : null}
+        </Fragment>
+      )
+      index += consumed
+      continue
+    }
+
+    lineStart += line.length + 1
+    index += 1
+
+    if (entry?.hidden) continue
+
+    nodes.push(
+      <Fragment key={`${index - 1}-${line}`}>
+        {renderLine(
+          entry?.display ?? line,
+          highlightTags,
+          index - 1,
+          currentLineStart,
+          selectionRange,
+          onTaskToggle,
+          previewImages,
+          renderImages,
+          vaultPath,
+          caretAligned,
+          downloadableImages
+        )}
+        {index - 1 < lastVisibleIndex && !entry?.isImageLine ? "\n" : null}
+      </Fragment>
+    )
+  }
 
   return (
-    <span className={cn("shard-fragment-content", className)}>
-      {lines.map((line, index) => {
-        const entry = displayLines[index]
-        const currentLineStart = lineStart
-        lineStart += line.length + 1
+    <span className={cn("shard-fragment-content", className)}>{nodes}</span>
+  )
+}
 
-        if (entry.hidden) return null
-
-        return (
-          <Fragment key={`${index}-${line}`}>
-            {renderLine(
-              entry.display,
-              highlightTags,
-              index,
-              currentLineStart,
-              selectionRange,
-              onTaskToggle,
-              previewImages,
-              renderImages,
-              vaultPath,
-              caretAligned,
-              downloadableImages
-            )}
-            {index < lastVisibleIndex && !entry.isImageLine ? "\n" : null}
-          </Fragment>
-        )
-      })}
-    </span>
+function MarkdownTableBlock({ table }: { table: MarkdownTable }) {
+  return (
+    <table className="shard-markdown-table">
+      <thead>
+        <tr>
+          {table.header.map((cell, cellIndex) => (
+            <th
+              key={cellIndex}
+              style={{ textAlign: table.align[cellIndex] ?? undefined }}
+            >
+              {renderInlineContent(cell, false, `th-${cellIndex}`, 0, null)}
+            </th>
+          ))}
+        </tr>
+      </thead>
+      <tbody>
+        {table.rows.map((row, rowIndex) => (
+          <tr key={rowIndex}>
+            {row.map((cell, cellIndex) => (
+              <td
+                key={cellIndex}
+                style={{ textAlign: table.align[cellIndex] ?? undefined }}
+              >
+                {renderInlineContent(
+                  cell,
+                  false,
+                  `td-${rowIndex}-${cellIndex}`,
+                  0,
+                  null
+                )}
+              </td>
+            ))}
+          </tr>
+        ))}
+      </tbody>
+    </table>
   )
 }
 
@@ -779,6 +902,82 @@ function renderInlineContent(
     return renderSelectedText(text, textStart, keyPrefix, selectionRange)
   }
 
+  const nodes: ReactNode[] = []
+  let cursor = 0
+
+  for (const match of text.matchAll(INLINE_HIGHLIGHT_PATTERN)) {
+    const token = match[0]
+    const highlightedText = match[1]
+    const start = match.index ?? 0
+
+    if (start > cursor) {
+      nodes.push(
+        renderTagHighlights(
+          text.slice(cursor, start),
+          textStart + cursor,
+          `${keyPrefix}-text-${cursor}`,
+          selectionRange
+        )
+      )
+    }
+
+    const openMarkerStart = textStart + start
+    const highlightedTextStart = openMarkerStart + 2
+    const closeMarkerStart = highlightedTextStart + highlightedText.length
+    nodes.push(
+      <span
+        className="shard-editor-markdown-highlight"
+        key={`${keyPrefix}-highlight-${start}`}
+      >
+        <span className="shard-editor-markdown-marker">
+          {renderSelectedText(
+            "==",
+            openMarkerStart,
+            `${keyPrefix}-highlight-open-${start}`,
+            selectionRange
+          )}
+        </span>
+        {renderTagHighlights(
+          highlightedText,
+          highlightedTextStart,
+          `${keyPrefix}-highlight-text-${start}`,
+          selectionRange
+        )}
+        <span className="shard-editor-markdown-marker">
+          {renderSelectedText(
+            "==",
+            closeMarkerStart,
+            `${keyPrefix}-highlight-close-${start}`,
+            selectionRange
+          )}
+        </span>
+      </span>
+    )
+    cursor = start + token.length
+  }
+
+  if (cursor < text.length) {
+    nodes.push(
+      renderTagHighlights(
+        text.slice(cursor),
+        textStart + cursor,
+        `${keyPrefix}-text-${cursor}`,
+        selectionRange
+      )
+    )
+  }
+
+  return nodes.length > 0
+    ? nodes
+    : renderTagHighlights(text, textStart, keyPrefix, selectionRange)
+}
+
+function renderTagHighlights(
+  text: string,
+  textStart: number,
+  keyPrefix: string,
+  selectionRange: SelectionRange | null
+): ReactNode {
   const ranges = getTagRanges(text)
   const nodes: ReactNode[] = []
   let cursor = 0
@@ -795,6 +994,8 @@ function renderInlineContent(
       )
     }
 
+    // 编辑态只着色、不画芯片（同 flomo）：这个 span 不能带任何影响排版的
+    // 样式，文字才能和 textarea 逐字符同宽；它同时是标签建议弹层的定位锚点。
     nodes.push(
       <span
         className="shard-editor-tag-highlight"

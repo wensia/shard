@@ -5,6 +5,7 @@ import {
   SparklesIcon,
 } from "lucide-react"
 import { useEffect, useMemo, useState, type ReactNode } from "react"
+import { toast } from "sonner"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -15,14 +16,17 @@ import { MarkdownDocument } from "@/components/shard/markdown-document"
 import {
   getAiAgentStatuses,
   getApiErrorMessage,
+  linkFragments,
   runAiReviewTask,
 } from "@/lib/api"
+import { markdownToSearchText } from "@/lib/fragment-search"
 import { LOCKBOX_TAG } from "@/lib/lockbox"
 import {
   codexReviewFragments,
   dailyReviewFragments,
   insightFragmentCharLimit,
   insightReviewFragments,
+  parseSuggestedEdges,
   randomWalkFragments,
   reviewFragmentSummary,
 } from "@/lib/review-workflows"
@@ -195,6 +199,12 @@ export function ReviewWorkspace({
     useState(false)
   const [walkText, setWalkText] = useState("")
   const [walkResultAgent, setWalkResultAgent] = useState<AiAgentKind | null>(null)
+  const [preservedWalkEdges, setPreservedWalkEdges] = useState<Set<string>>(
+    () => new Set()
+  )
+  const [savingWalkEdges, setSavingWalkEdges] = useState<Set<string>>(
+    () => new Set()
+  )
   const [isSavingInsight, setIsSavingInsight] = useState(false)
 
   const dailyFragments = useMemo(
@@ -211,6 +221,10 @@ export function ReviewWorkspace({
   const walkFragments = useMemo(
     () => randomWalkFragments(fragments, walkSeed),
     [fragments, walkSeed]
+  )
+  const suggestedWalkEdges = useMemo(
+    () => parseSuggestedEdges(walkText, walkFragments),
+    [walkFragments, walkText]
   )
   const displayFragments =
     mode === "walk"
@@ -299,6 +313,8 @@ export function ReviewWorkspace({
       if (task === "walk") {
         setWalkText(result.text)
         setWalkResultAgent(runningAgent)
+        setPreservedWalkEdges(new Set())
+        setSavingWalkEdges(new Set())
       } else {
         // 结果标题记录实际来源视角；之后再切换选择不影响已生成内容。
         setInsightResultLens(selectedInsightLens)
@@ -333,6 +349,31 @@ export function ReviewWorkspace({
     }
   }
 
+  async function preserveWalkEdge(
+    fromId: string,
+    toId: string,
+    reason: string
+  ) {
+    const edgeKey = walkEdgeKey(fromId, toId)
+    if (preservedWalkEdges.has(edgeKey) || savingWalkEdges.has(edgeKey)) return
+
+    setSavingWalkEdges((current) => new Set(current).add(edgeKey))
+    try {
+      await linkFragments(fromId, toId, "walk", reason)
+      setPreservedWalkEdges((current) => new Set(current).add(edgeKey))
+    } catch (error) {
+      toast.error(`保留关联失败：${getApiErrorMessage(error)}`, {
+        duration: Infinity,
+      })
+    } finally {
+      setSavingWalkEdges((current) => {
+        const next = new Set(current)
+        next.delete(edgeKey)
+        return next
+      })
+    }
+  }
+
   return (
     <div
       style={{
@@ -357,6 +398,8 @@ export function ReviewWorkspace({
         onRefreshWalk={() => {
           setWalkSeed((current) => current + 1)
           setWalkText("")
+          setPreservedWalkEdges(new Set())
+          setSavingWalkEdges(new Set())
         }}
       />
 
@@ -501,6 +544,68 @@ export function ReviewWorkspace({
                     result={walkText}
                     title={`连接理由${walkResultAgent ? ` · ${agentLabels[walkResultAgent]}` : ""}`}
                   />
+                  {suggestedWalkEdges.length > 0 ? (
+                    <section
+                      aria-labelledby="suggested-walk-edges-title"
+                      className={styles.suggestedEdges}
+                    >
+                      <h2
+                        className={styles.suggestedEdgesTitle}
+                        id="suggested-walk-edges-title"
+                      >
+                        建议的关联
+                      </h2>
+                      <div className={styles.suggestedEdgeList}>
+                        {suggestedWalkEdges.map((edge) => {
+                          const edgeKey = walkEdgeKey(edge.fromId, edge.toId)
+                          const fromFragment = walkFragments.find(
+                            (fragment) => fragment.id === edge.fromId
+                          )
+                          const toFragment = walkFragments.find(
+                            (fragment) => fragment.id === edge.toId
+                          )
+                          const isPreserved = preservedWalkEdges.has(edgeKey)
+                          const isSaving = savingWalkEdges.has(edgeKey)
+
+                          if (!fromFragment || !toFragment) return null
+
+                          return (
+                            <div className={styles.suggestedEdgeRow} key={edgeKey}>
+                              <div className={styles.suggestedEdgeCopy}>
+                                <div className={styles.suggestedEdgeRoute}>
+                                  <span>{walkFragmentSummary(fromFragment)}</span>
+                                  <span aria-hidden="true">→</span>
+                                  <span>{walkFragmentSummary(toFragment)}</span>
+                                </div>
+                                <div className={styles.suggestedEdgeReason}>
+                                  {edge.reason}
+                                </div>
+                              </div>
+                              {isPreserved ? (
+                                <span className={styles.suggestedEdgeSaved}>已保留</span>
+                              ) : (
+                                <Button
+                                  aria-busy={isSaving}
+                                  disabled={isSaving}
+                                  onClick={() =>
+                                    void preserveWalkEdge(
+                                      edge.fromId,
+                                      edge.toId,
+                                      edge.reason
+                                    )
+                                  }
+                                  size="sm"
+                                  variant="default"
+                                >
+                                  {isSaving ? "保留中" : "保留"}
+                                </Button>
+                              )}
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </section>
+                  ) : null}
                 </>
               ) : null}
 
@@ -589,6 +694,16 @@ export function ReviewWorkspace({
       </div>
     </div>
   )
+}
+
+function walkEdgeKey(fromId: string, toId: string) {
+  return `${fromId}\u0000${toId}`
+}
+
+function walkFragmentSummary(fragment: Fragment) {
+  const summary = markdownToSearchText(fragment.content).trim()
+  if (summary.length <= 48) return summary
+  return `${summary.slice(0, 48).trimEnd()}…`
 }
 
 interface ReviewHeaderProps {

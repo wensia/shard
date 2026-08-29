@@ -13,6 +13,7 @@ import {
   type MouseEvent,
 } from "react"
 import { isTauri } from "@tauri-apps/api/core"
+import { open } from "@tauri-apps/plugin-dialog"
 import { Loader2Icon, SendHorizontalIcon, XIcon } from "lucide-react"
 import { toast } from "sonner"
 
@@ -30,6 +31,7 @@ import {
   type TagSuggestion,
 } from "@/components/shard/tag-completion-popover"
 import { Button } from "@/components/ui/button"
+import { ToolbarIconButton } from "@/components/ui/toolbar-icon-button"
 import {
   applyActiveTagCompletion,
   applyInlineFormat,
@@ -42,6 +44,8 @@ import {
   getTagRanges,
   getMarkdownImageAlt,
   insertHorizontalRule,
+  insertMarkdownBlock,
+  insertMarkdownTable,
   insertTagMarker,
   normalizeTag,
   normalizeTagList,
@@ -52,17 +56,32 @@ import {
   type TextEdit,
 } from "@/lib/editor-format"
 import {
+  convertTableDocumentToMarkdown,
   getApiErrorMessage,
   saveFragmentImage,
   setWindowControlsHidden,
 } from "@/lib/api"
 import { getClipboardImageFiles } from "@/lib/clipboard-images"
-import { getEditorCaretBox, type EditorCaretBox } from "@/lib/editor-caret"
+import {
+  getEditorCaretBox,
+  startEditorPointerSelection,
+  type EditorCaretBox,
+} from "@/lib/editor-caret"
 import { hasMarkdownImage, wantsLockbox } from "@/lib/lockbox"
+import {
+  hasOversizedTable,
+  MAX_EDITABLE_TABLE_CELLS,
+  replaceTableLines,
+  type MarkdownTable,
+} from "@/lib/markdown-table"
 import {
   buildTagSearchIndex,
   getMatchingTagsBySearchQuery,
 } from "@/lib/tag-index"
+import {
+  TABLE_DOCUMENT_FILTER,
+  useTableDocumentDrop,
+} from "@/lib/use-table-document-drop"
 import type { Fragment } from "@/types"
 import styles from "./fragment-editor.module.css"
 
@@ -131,6 +150,8 @@ export function FragmentEditor({
   const saveTimerRef = useRef<number | null>(null)
   const editorFrameRef = useRef<HTMLDivElement>(null)
   const lastPointerRef = useRef<PointerPoint | null>(null)
+  const stopPointerSelectionRef = useRef<(() => void) | null>(null)
+  const [isImportingTable, setIsImportingTable] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const tagPopoverId = useId()
   const isZen = variant === "zen"
@@ -219,6 +240,7 @@ export function FragmentEditor({
   useEffect(() => {
     return () => {
       clearBlurCommitTimer()
+      stopPointerSelectionRef.current?.()
       revokeEditorImagePreviewUrls(imageAttachmentsRef.current)
     }
   }, [])
@@ -571,6 +593,22 @@ export function FragmentEditor({
       y: event.clientY,
     }
     showCaretImmediately()
+
+    const frame = editorFrameRef.current
+    if (!frame) return
+    const textarea = event.currentTarget
+
+    stopPointerSelectionRef.current?.()
+    stopPointerSelectionRef.current = startEditorPointerSelection(
+      textarea,
+      frame,
+      event.nativeEvent,
+      (start, end) => {
+        setSelectionStart(start)
+        setSelectionEnd(end)
+      },
+      () => syncSelection(textarea)
+    )
   }
 
   function showCaretImmediately() {
@@ -672,6 +710,112 @@ export function FragmentEditor({
         textarea.selectionEnd
       )
     )
+  }
+
+  function insertTable(columns: number, rows: number) {
+    const textarea = textareaRef.current
+    if (!textarea) return
+
+    setSuppressedActiveTag(null)
+    const nextEdit = insertMarkdownTable(
+      content,
+      textarea.selectionStart,
+      textarea.selectionEnd,
+      columns,
+      rows
+    )
+    applyTextEdit(nextEdit)
+    focusInsertedTable(nextEdit.content, nextEdit.selectionStart)
+  }
+
+  /** 插完表格直接进第一个表头格，省得用户再点一下。 */
+  function focusInsertedTable(nextContent: string, cursor: number) {
+    const tableStart = nextContent.lastIndexOf("\n", cursor - 1) + 1
+
+    requestAnimationFrame(() => {
+      editorFrameRef.current
+        ?.querySelector<HTMLInputElement>(
+          `[data-table-start="${tableStart}"] [data-cell="-1:0"]`
+        )
+        ?.focus()
+    })
+  }
+
+  /**
+   * 表格里改一个格子只重写它占的那几行。这里不碰焦点也不动选区——焦点正在
+   * 单元格里，抢回 textarea 会把用户正在打的字打断。
+   */
+  function updateTable(
+    startLine: number,
+    lineCount: number,
+    table: MarkdownTable
+  ) {
+    const nextContent = replaceTableLines(content, startLine, lineCount, table)
+    if (nextContent === content) return
+
+    setContent(nextContent)
+  }
+
+  /**
+   * 表格文档导入：转成 Markdown 表格插进正文，原文件不进 vault。
+   * 数据留在正文里，搜索、标签、git diff 才都还能用上。
+   */
+  const { isDropTarget: isTableDropTarget } = useTableDocumentDrop({
+    frameRef: editorFrameRef,
+    onDrop: (paths) => insertTableDocuments(paths),
+  })
+
+  async function insertTableDocuments(paths: string[]) {
+    const textarea = textareaRef.current
+    if (!textarea || paths.length === 0 || isImportingTable) return
+
+    setIsImportingTable(true)
+    try {
+      const blocks: string[] = []
+      for (const path of paths) {
+        blocks.push(await convertTableDocumentToMarkdown(path))
+      }
+
+      const markdown = blocks.join("\n\n")
+      if (hasOversizedTable(markdown)) {
+        toast.info(
+          `表格较大，已作为纯文本插入：超过 ${MAX_EDITABLE_TABLE_CELLS} 个单元格不提供可视化编辑，源码照常可改。`
+        )
+      }
+
+      applyTextEdit(
+        insertMarkdownBlock(
+          textarea.value,
+          textarea.selectionStart,
+          textarea.selectionEnd,
+          markdown
+        )
+      )
+    } catch (error) {
+      toast.error(`导入表格失败：${getApiErrorMessage(error)}`, {
+        duration: Infinity,
+      })
+    } finally {
+      setIsImportingTable(false)
+    }
+  }
+
+  async function pickTableDocument() {
+    try {
+      const selected = await open({
+        filters: [TABLE_DOCUMENT_FILTER],
+        multiple: false,
+        title: "选择表格文件",
+      })
+      const path = Array.isArray(selected) ? selected[0] : selected
+      if (!path) return
+
+      await insertTableDocuments([path])
+    } catch (error) {
+      toast.error(`选择文件失败：${getApiErrorMessage(error)}`, {
+        duration: Infinity,
+      })
+    }
   }
 
   async function uploadImage(file: File) {
@@ -830,7 +974,10 @@ export function FragmentEditor({
   // 高亮层要和 textarea 用完全相同的内边距才能像素级对齐，两者都从这份
   // editorPadding 派生，避免各写一份 padding 字符串导致后续改一处漏一处。
   const editorPadding: CSSProperties = isZen
-    ? { paddingInline: 0, paddingBlock: "var(--shard-space-4)" }
+    ? {
+        paddingInline: "var(--zen-editor-inline-padding)",
+        paddingBlock: "var(--shard-space-4)",
+      }
     : {
         paddingInline: "var(--shard-composer-padding)",
         paddingBlock: "var(--shard-composer-padding)",
@@ -853,7 +1000,10 @@ export function FragmentEditor({
         ...editorPadding,
       }
   const imageRowStyle: CSSProperties = isZen
-    ? { paddingInline: 0, paddingBottom: "var(--shard-space-4)" }
+    ? {
+        paddingInline: "var(--zen-editor-inline-padding)",
+        paddingBottom: "var(--shard-space-4)",
+      }
     : {
         paddingInline: "var(--shard-composer-padding)",
         paddingBottom: "var(--shard-space-3)",
@@ -875,6 +1025,8 @@ export function FragmentEditor({
       </div>
     ) : null
   const canSubmit = saveState !== "saving" && draftContent.trim().length > 0
+  const characterCount = Array.from(content.replace(/\s/g, "")).length
+  const lineCount = content.length > 0 ? content.split(/\r\n?|\n/).length : 0
   const editorFrame = (
     <div
       ref={editorFrameRef}
@@ -904,6 +1056,10 @@ export function FragmentEditor({
               onTaskToggle={toggleTask}
               selectionEnd={isEditorFocused ? selectionEnd : undefined}
               selectionStart={isEditorFocused ? selectionStart : undefined}
+              tableEditing={{
+                onChange: updateTable,
+                onExit: () => textareaRef.current?.focus(),
+              }}
               vaultPath={vaultPath}
             />
           </div>
@@ -942,9 +1098,6 @@ export function FragmentEditor({
 
           setSuppressedActiveTag(null)
           setContent(event.currentTarget.value)
-          syncSelection(event.currentTarget)
-        }}
-        onClick={(event) => {
           syncSelection(event.currentTarget)
         }}
         onCompositionEnd={() => {
@@ -987,6 +1140,11 @@ export function FragmentEditor({
           }}
         />
       ) : null}
+      {isTableDropTarget || isImportingTable ? (
+        <div className="shard-editor-drop-hint">
+          {isImportingTable ? "正在导入表格…" : "松手导入为表格"}
+        </div>
+      ) : null}
       {activeTag ? (
         <TagCompletionPopover
           activeIndex={boundedActiveSuggestionIndex}
@@ -1020,8 +1178,10 @@ export function FragmentEditor({
           <EditorToolbar
             disabled={saveState === "saving"}
             onImageUpload={uploadImage}
+            onImportTable={isTauri() ? pickTableDocument : undefined}
             onInlineFormat={formatInline}
             onInsertHorizontalRule={insertDivider}
+            onInsertTable={insertTable}
             onInsertTag={insertTag}
             onLineFormat={formatLines}
             trailing={
@@ -1065,15 +1225,14 @@ export function FragmentEditor({
                 >
                   取消
                 </Button>
-                <Button
-                  aria-label={saveState === "saving" ? "保存中" : "保存修改"}
+                <ToolbarIconButton
                   className="shard-edge-action"
                   disabled={!canSubmit}
+                  label={saveState === "saving" ? "保存中" : "保存修改"}
                   onMouseDown={(event) => {
                     event.preventDefault()
                     void handleSubmit()
                   }}
-                  size="icon-sm"
                   type="button"
                   variant="default"
                 >
@@ -1082,10 +1241,7 @@ export function FragmentEditor({
                   ) : (
                     <SendHorizontalIcon />
                   )}
-                  <span className="sr-only">
-                    {saveState === "saving" ? "保存中" : "保存修改"}
-                  </span>
-                </Button>
+                </ToolbarIconButton>
               </>
             }
           />
@@ -1096,6 +1252,7 @@ export function FragmentEditor({
 
   return (
     <div
+      className={styles.zenEditorShell}
       style={{
         position: "fixed",
         inset: 0,
@@ -1107,12 +1264,10 @@ export function FragmentEditor({
       }}
     >
       <div
-        className="shard-content-inset"
         data-tauri-drag-region
         style={{ minHeight: 0, paddingTop: "var(--shard-top-inset)" }}
       >
         <div
-          className="shard-content-measure"
           style={{
             display: "flex",
             height: "100%",
@@ -1126,12 +1281,11 @@ export function FragmentEditor({
       </div>
 
       <footer
-        className="shard-content-inset"
-        style={{ paddingBottom: "var(--shard-space-4)" }}
+        className={`shard-content-inset ${styles.zenFooter}`}
       >
         <div
+          className={styles.zenToolbar}
           style={{
-            marginInline: "auto",
             width: "fit-content",
             maxWidth: "100%",
             borderRadius: "var(--shard-surface-radius)",
@@ -1143,8 +1297,10 @@ export function FragmentEditor({
           <EditorToolbar
             disabled={saveState === "saving"}
             onImageUpload={uploadImage}
+            onImportTable={isTauri() ? pickTableDocument : undefined}
             onInlineFormat={formatInline}
             onInsertHorizontalRule={insertDivider}
+            onInsertTable={insertTable}
             onInsertTag={insertTag}
             onLineFormat={formatLines}
             trailing={
@@ -1159,14 +1315,13 @@ export function FragmentEditor({
                     opacity: "var(--shard-alpha-55)",
                   }}
                 />
-                <Button
-                  aria-label="退出编辑"
+                <ToolbarIconButton
                   className="shard-edge-action"
+                  label="退出编辑"
                   onMouseDown={(event) => {
                     event.preventDefault()
                     void handleClose()
                   }}
-                  size="icon-sm"
                   style={{
                     borderRadius: "var(--shard-radius-control)",
                     color: "var(--muted-foreground)",
@@ -1175,12 +1330,19 @@ export function FragmentEditor({
                   variant="ghost"
                 >
                   <XIcon />
-                  <span className="sr-only">退出编辑</span>
-                </Button>
+                </ToolbarIconButton>
               </>
             }
           />
         </div>
+        <span
+          aria-label={`${characterCount} 字，${lineCount} 行`}
+          className={styles.zenStats}
+          title="字数不计空格与换行"
+        >
+          {characterCount.toLocaleString("zh-CN")} 字 ·{" "}
+          {lineCount.toLocaleString("zh-CN")} 行
+        </span>
       </footer>
     </div>
   )

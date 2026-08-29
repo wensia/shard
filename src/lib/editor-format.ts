@@ -1,3 +1,8 @@
+import {
+  createMarkdownTable,
+  serializeMarkdownTable,
+} from "@/lib/markdown-table"
+
 export interface TextEdit {
   content: string
   selectionEnd: number
@@ -45,9 +50,17 @@ const INLINE_FORMATS: Record<InlineFormat, { close: string; open: string }> = {
   underline: { close: "</u>", open: "<u>" },
 }
 
+// 插入 `#` 时要不要补一个前置空格，判断标准和 isTagBoundary 不同：
+// isTagBoundary 为了识别中文里紧贴汉字写的标签（`今天想说#灵感`），
+// 把汉字也算作边界；插入时若沿用它，在 `#密匣` 后面插入就会得到
+// `#密匣#`，两个标签粘在一起。这里只把空白和开括号、成对标点视为
+// 天然分隔，汉字、字母、数字之后一律补空格。
+const TAG_MARKER_NEEDS_NO_SPACE = /[\s([{<"'“‘，。！？；：、,.!?;:]/u
+
 export function insertTagMarker(value: string, cursor: number): TextEdit {
   const previous = cursor > 0 ? value[cursor - 1] : ""
-  const marker = previous && !isTagBoundary(previous) ? " #" : "#"
+  const marker =
+    previous && !TAG_MARKER_NEEDS_NO_SPACE.test(previous) ? " #" : "#"
   const nextCursor = cursor + marker.length
 
   return {
@@ -179,6 +192,58 @@ export function insertHorizontalRule(
 
   return {
     content: before + markdown + after,
+    selectionEnd: cursor,
+    selectionStart: cursor,
+  }
+}
+
+export function insertMarkdownTable(
+  value: string,
+  selectionStart: number,
+  selectionEnd: number,
+  columns: number,
+  rows: number
+): TextEdit {
+  const rangeStart = Math.min(selectionStart, selectionEnd)
+  const rangeEnd = Math.max(selectionStart, selectionEnd)
+  const before = value.slice(0, rangeStart)
+  const after = value.slice(rangeEnd)
+  // 表格和分割线一样是块级结构：前后各留一个空行，免得贴上一段正文。
+  const prefix = getHorizontalRulePrefix(before)
+  const suffix = getHorizontalRuleSuffix(after)
+  const markdown = serializeMarkdownTable(createMarkdownTable(columns, rows))
+  const tableStart = before.length + prefix.length
+  // 光标落进第一个表头单元格，插完就能直接打字。
+  const cursor = tableStart + markdown.indexOf("|") + 2
+
+  return {
+    content: before + prefix + markdown + suffix + after,
+    selectionEnd: cursor,
+    selectionStart: cursor,
+  }
+}
+
+/**
+ * 把一整块 Markdown（导入的表格、多张表加小标题等）插进光标处，
+ * 前后各留一个空行——和分割线、表格用的是同一套块级间距规则。
+ */
+export function insertMarkdownBlock(
+  value: string,
+  selectionStart: number,
+  selectionEnd: number,
+  markdown: string
+): TextEdit {
+  const rangeStart = Math.min(selectionStart, selectionEnd)
+  const rangeEnd = Math.max(selectionStart, selectionEnd)
+  const before = value.slice(0, rangeStart)
+  const after = value.slice(rangeEnd)
+  const body = markdown.trim()
+  const prefix = getHorizontalRulePrefix(before)
+  const suffix = getHorizontalRuleSuffix(after)
+  const cursor = before.length + prefix.length + body.length
+
+  return {
+    content: before + prefix + body + suffix + after,
     selectionEnd: cursor,
     selectionStart: cursor,
   }

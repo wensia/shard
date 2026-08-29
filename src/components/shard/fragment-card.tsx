@@ -1,7 +1,10 @@
 import {
   ArchiveIcon,
   ArchiveRestoreIcon,
+  CopyIcon,
   GitBranchIcon,
+  Link2Icon,
+  LinkIcon,
   LockKeyholeIcon,
   MoreHorizontalIcon,
   PencilLineIcon,
@@ -10,9 +13,12 @@ import {
   Share2Icon,
 } from "lucide-react"
 import { useState, type ReactNode } from "react"
+import { toast } from "sonner"
 
 import { FragmentEditor } from "@/components/shard/fragment-editor"
 import { FragmentBody } from "@/components/shard/fragment-body"
+import { FragmentLinkDialog } from "@/components/shard/fragment-link-dialog"
+import { FragmentRelated } from "@/components/shard/fragment-related"
 import { ShardZenIcon } from "@/components/shard/shard-zen-icon"
 import { TagBadge } from "@/components/shard/tag-badge"
 import { Button } from "@/components/ui/button"
@@ -22,11 +28,14 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { getApiErrorMessage } from "@/lib/api"
+import type { RelatedFragment } from "@/lib/relations"
 import { cn } from "@/lib/utils"
 import type { Fragment } from "@/types"
 
 interface FragmentCardProps {
   fragment: Fragment
+  fragments?: Fragment[]
   isHighlighted?: boolean
   isEditing?: boolean
   knownTags?: string[]
@@ -35,15 +44,29 @@ interface FragmentCardProps {
   onEdit?: (fragment: Fragment) => void
   onExportImage?: (fragment: Fragment) => void
   onMoveToLockbox?: (fragment: Fragment) => void
+  onLinkFragment?: (
+    sourceId: string,
+    targetId: string
+  ) => Promise<void> | void
+  onNavigateToFragment?: (fragmentId: string) => void
   onOpenZen?: (fragment: Fragment) => void
   onPin?: (fragment: Fragment) => void
   onSave?: (id: string, content: string, tags: string[]) => Promise<Fragment>
   onToggleTask?: (fragment: Fragment, lineIndex: number) => void
+  onUnlinkFragment?: (
+    sourceId: string,
+    targetId: string
+  ) => Promise<void> | void
+  requestRelated?: (
+    targetId: string,
+    limit?: number
+  ) => Promise<RelatedFragment[]>
   vaultPath?: string
 }
 
 export function FragmentCard({
   fragment,
+  fragments = [],
   isHighlighted = false,
   isEditing = false,
   knownTags = [],
@@ -51,14 +74,20 @@ export function FragmentCard({
   onCancelEdit,
   onEdit,
   onExportImage,
+  onLinkFragment,
   onMoveToLockbox,
   onOpenZen,
   onPin,
+  onNavigateToFragment,
   onSave,
   onToggleTask,
+  onUnlinkFragment,
+  requestRelated,
   vaultPath,
 }: FragmentCardProps) {
   const [isMenuOpen, setIsMenuOpen] = useState(false)
+  const [isLinkDialogOpen, setIsLinkDialogOpen] = useState(false)
+  const [isRelatedOpen, setIsRelatedOpen] = useState(false)
   const createdTime = formatCreatedTime(fragment.createdAt)
   const displayContent = fragment.content.trimEnd()
   const displayTags = fragment.tags.filter((tag) => tag !== "inbox")
@@ -66,6 +95,22 @@ export function FragmentCard({
   function openNextSurface(action: () => void) {
     setIsMenuOpen(false)
     window.setTimeout(action, 0)
+  }
+
+  async function copyFragmentContent() {
+    try {
+      const clipboard = navigator.clipboard
+      if (!clipboard) {
+        throw new Error("当前环境不支持复制到剪贴板")
+      }
+
+      await clipboard.writeText(fragment.content)
+      toast("已复制片段内容")
+    } catch (error) {
+      toast.error(`复制片段失败：${getApiErrorMessage(error)}`, {
+        duration: Infinity,
+      })
+    }
   }
 
   if (isEditing && onSave) {
@@ -198,6 +243,29 @@ export function FragmentCard({
                   openNextSurface(() => onEdit?.(fragment))
                 }
               />
+              <CardMenuItem
+                icon={<CopyIcon aria-hidden="true" />}
+                label="复制"
+                onSelect={() => void copyFragmentContent()}
+              />
+              {requestRelated ? (
+                <CardMenuItem
+                  icon={<LinkIcon aria-hidden="true" />}
+                  label="相关片段"
+                  onSelect={() =>
+                    openNextSurface(() => setIsRelatedOpen(true))
+                  }
+                />
+              ) : null}
+              {onLinkFragment ? (
+                <CardMenuItem
+                  icon={<Link2Icon aria-hidden="true" />}
+                  label="关联到片段…"
+                  onSelect={() =>
+                    openNextSurface(() => setIsLinkDialogOpen(true))
+                  }
+                />
+              ) : null}
               {onOpenZen ? (
                 <CardMenuItem
                   icon={<ShardZenIcon aria-hidden="true" />}
@@ -253,6 +321,24 @@ export function FragmentCard({
           </DropdownMenu>
         </div>
       </div>
+
+      <FragmentRelated
+        fragment={fragment}
+        isOpen={isRelatedOpen}
+        onNavigate={onNavigateToFragment}
+        onToggle={() => setIsRelatedOpen((open) => !open)}
+        onUnlinkFragment={onUnlinkFragment}
+        requestRelated={requestRelated}
+      />
+      {onLinkFragment ? (
+        <FragmentLinkDialog
+          fragments={fragments}
+          isOpen={isLinkDialogOpen}
+          onConfirm={(targetId) => onLinkFragment(fragment.id, targetId)}
+          onOpenChange={setIsLinkDialogOpen}
+          source={fragment}
+        />
+      ) : null}
     </article>
   )
 }
