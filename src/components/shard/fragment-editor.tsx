@@ -14,6 +14,7 @@ import {
 } from "react"
 import { isTauri } from "@tauri-apps/api/core"
 import { open } from "@tauri-apps/plugin-dialog"
+import { keymap } from "@codemirror/view"
 import { Loader2Icon, SendHorizontalIcon, XIcon } from "lucide-react"
 import { toast } from "sonner"
 
@@ -32,6 +33,11 @@ import {
 } from "@/components/shard/tag-completion-popover"
 import { Button } from "@/components/ui/button"
 import { ToolbarIconButton } from "@/components/ui/toolbar-icon-button"
+import {
+  ShardEditor,
+  type ShardEditorHandle,
+} from "@/editor/shard-editor"
+import { isLegacyEditorEnabled } from "@/editor/kill-switch"
 import {
   applyActiveTagCompletion,
   applyInlineFormat,
@@ -149,6 +155,8 @@ export function FragmentEditor({
   const blurCommitTimerRef = useRef<number | null>(null)
   const saveTimerRef = useRef<number | null>(null)
   const editorFrameRef = useRef<HTMLDivElement>(null)
+  const shardEditorRef = useRef<ShardEditorHandle>(null)
+  const closeEditorRef = useRef<() => void>(() => undefined)
   const lastPointerRef = useRef<PointerPoint | null>(null)
   const stopPointerSelectionRef = useRef<(() => void) | null>(null)
   const [isImportingTable, setIsImportingTable] = useState(false)
@@ -157,6 +165,29 @@ export function FragmentEditor({
   const isZen = variant === "zen"
   const isDraft = fragment === null && draft !== null
   const isOpen = fragment !== null || draft !== null
+  const useLegacyEditor = isLegacyEditorEnabled()
+  const editorDocumentKey = fragment?.id ?? `draft:${draft?.id ?? "closed"}`
+  const editorId = isZen
+    ? `zen:${fragment?.id ?? `draft:${draft?.id ?? "closed"}`}`
+    : `fragment:${fragment?.id ?? "closed"}`
+  const fragmentEditorExtensions = useMemo(
+    () =>
+      keymap.of([
+        {
+          key: "Escape",
+          run: (view) => {
+            if (view.composing) return false
+            closeEditorRef.current()
+            return true
+          },
+        },
+      ]),
+    []
+  )
+  const fragmentEditorExtensionSet = useMemo(
+    () => [fragmentEditorExtensions],
+    [fragmentEditorExtensions]
+  )
 
   const syncInlineEditorHeight = useCallback(() => {
     if (isZen) return
@@ -246,6 +277,8 @@ export function FragmentEditor({
   }, [])
 
   useEffect(() => {
+    if (!useLegacyEditor) return
+
     // React's onSelect stays silent while the mouse is still down, so drag
     // selection needs the document-level selectionchange stream to paint the
     // highlight live instead of only after mouseup
@@ -261,7 +294,7 @@ export function FragmentEditor({
     return () => {
       document.removeEventListener("selectionchange", handleSelectionChange)
     }
-  }, [])
+  }, [useLegacyEditor])
 
   useEffect(() => {
     if (!fragment && !draft) {
@@ -294,6 +327,18 @@ export function FragmentEditor({
     setSaveState(fragment || !initialContent ? "saved" : "dirty")
 
     requestAnimationFrame(() => {
+      if (!useLegacyEditor) {
+        const view = shardEditorRef.current?.view
+        if (!view) return
+
+        view.focus()
+        view.dispatch({
+          selection: { anchor: cursor },
+          scrollIntoView: true,
+        })
+        return
+      }
+
       const textarea = textareaRef.current
       if (!textarea) return
 
@@ -308,14 +353,15 @@ export function FragmentEditor({
       setSelectionEnd(cursor)
       setIsEditorFocused(true)
     })
-  }, [draft?.id, fragment?.id])
+  }, [draft?.id, fragment?.id, useLegacyEditor])
 
   useLayoutEffect(() => {
+    if (!useLegacyEditor) return
     syncInlineEditorHeight()
-  }, [content, syncInlineEditorHeight])
+  }, [content, syncInlineEditorHeight, useLegacyEditor])
 
   useEffect(() => {
-    if (isZen) return
+    if (isZen || !useLegacyEditor) return
 
     function handleViewportResize() {
       syncInlineEditorHeight()
@@ -331,9 +377,10 @@ export function FragmentEditor({
         handleViewportResize
       )
     }
-  }, [isZen, syncInlineEditorHeight])
+  }, [isZen, syncInlineEditorHeight, useLegacyEditor])
 
   useLayoutEffect(() => {
+    if (!useLegacyEditor) return
     const textarea = textareaRef.current
     const frame = editorFrameRef.current
 
@@ -348,9 +395,17 @@ export function FragmentEditor({
     }
 
     setCustomCaret(getEditorCaretBox(textarea, frame, selectionStart))
-  }, [content, editorScrollTop, isEditorFocused, selectionEnd, selectionStart])
+  }, [
+    content,
+    editorScrollTop,
+    isEditorFocused,
+    selectionEnd,
+    selectionStart,
+    useLegacyEditor,
+  ])
 
   useLayoutEffect(() => {
+    if (!useLegacyEditor) return
     if (!activeTag || !textareaRef.current || !editorFrameRef.current) return
 
     const nextPosition = getTagCompletionPopoverPosition(
@@ -366,7 +421,7 @@ export function FragmentEditor({
 
       return isSamePosition ? currentPosition : nextPosition
     })
-  }, [activeTag, content, editorScrollTop, selectionStart])
+  }, [activeTag, content, editorScrollTop, selectionStart, useLegacyEditor])
 
   useEffect(() => {
     if (!isOpen) return
@@ -403,6 +458,20 @@ export function FragmentEditor({
     }
   }, [draft?.id, fragment?.id, isOpen, isZen])
 
+  /**
+   * 表格文档导入：转成 Markdown 表格插进正文，原文件不进 vault。
+   * 数据留在正文里，搜索、标签、git diff 才都还能用上。
+   *
+   * 必须放在下面的 `if (!isOpen) return null` 之前：hook 一旦排在提前
+   * return 之后，编辑器从关闭到打开时 hooks 数量就会变化，React 会报
+   * "Rendered more hooks than during the previous render" 并卸载整棵树
+   * （禅模式白屏就是这么来的）。`insertTableDocuments` 是函数声明，提升后可用。
+   */
+  const { isDropTarget: isTableDropTarget } = useTableDocumentDrop({
+    frameRef: editorFrameRef,
+    onDrop: (paths) => insertTableDocuments(paths),
+  })
+
   if (!isOpen) return null
 
   async function handleClose() {
@@ -414,24 +483,30 @@ export function FragmentEditor({
       return
     }
 
-    if (draftContent !== lastSavedContentRef.current) {
-      const saved = await saveDraft(draftContent)
+    const currentDraftContent = getCurrentDraftContent()
+    if (currentDraftContent !== lastSavedContentRef.current) {
+      const saved = await saveDraft(currentDraftContent)
       if (!saved) return
     }
 
     onClose()
   }
 
+  closeEditorRef.current = () => {
+    void handleClose()
+  }
+
   async function handleSubmit() {
     clearBlurCommitTimer()
     clearSaveTimer()
 
-    if (draftContent === lastSavedContentRef.current) {
+    const currentDraftContent = getCurrentDraftContent()
+    if (currentDraftContent === lastSavedContentRef.current) {
       onClose()
       return
     }
 
-    const saved = await saveDraft(draftContent)
+    const saved = await saveDraft(currentDraftContent)
     if (saved) {
       onClose()
     }
@@ -651,9 +726,9 @@ export function FragmentEditor({
   }
 
   function insertTag() {
-    const cursor = textareaRef.current?.selectionStart ?? selectionStart
+    const { start: cursor } = getEditorSelection()
     setSuppressedActiveTag(null)
-    applyTextEdit(insertTagMarker(content, cursor))
+    applyTextEdit(insertTagMarker(getEditorValue(), cursor))
   }
 
   function applyTag(tag: string) {
@@ -671,61 +746,63 @@ export function FragmentEditor({
   }
 
   function formatLines(format: LineFormat) {
-    const textarea = textareaRef.current
-    if (!textarea) return
+    const selection = getEditorSelection()
+    const currentContent = getEditorValue()
 
     applyTextEdit(
       applyLineFormat(
-        content,
-        textarea.selectionStart,
-        textarea.selectionEnd,
+        currentContent,
+        selection.start,
+        selection.end,
         format
       )
     )
   }
 
   function formatInline(format: InlineFormat) {
-    const textarea = textareaRef.current
-    if (!textarea) return
+    const selection = getEditorSelection()
+    const currentContent = getEditorValue()
 
     applyTextEdit(
       applyInlineFormat(
-        content,
-        textarea.selectionStart,
-        textarea.selectionEnd,
+        currentContent,
+        selection.start,
+        selection.end,
         format
       )
     )
   }
 
   function insertDivider() {
-    const textarea = textareaRef.current
-    if (!textarea) return
+    const selection = getEditorSelection()
+    const currentContent = getEditorValue()
 
     setSuppressedActiveTag(null)
     applyTextEdit(
       insertHorizontalRule(
-        content,
-        textarea.selectionStart,
-        textarea.selectionEnd
+        currentContent,
+        selection.start,
+        selection.end
       )
     )
   }
 
   function insertTable(columns: number, rows: number) {
-    const textarea = textareaRef.current
-    if (!textarea) return
+    const selection = getEditorSelection()
+    const currentContent = getEditorValue()
 
     setSuppressedActiveTag(null)
     const nextEdit = insertMarkdownTable(
-      content,
-      textarea.selectionStart,
-      textarea.selectionEnd,
+      currentContent,
+      selection.start,
+      selection.end,
       columns,
       rows
     )
     applyTextEdit(nextEdit)
-    focusInsertedTable(nextEdit.content, nextEdit.selectionStart)
+    if (useLegacyEditor) {
+      focusInsertedTable(nextEdit.content, nextEdit.selectionStart)
+    }
   }
 
   /** 插完表格直接进第一个表头格，省得用户再点一下。 */
@@ -753,21 +830,16 @@ export function FragmentEditor({
     const nextContent = replaceTableLines(content, startLine, lineCount, table)
     if (nextContent === content) return
 
-    setContent(nextContent)
+    if (useLegacyEditor) {
+      setContent(nextContent)
+      return
+    }
+
+    shardEditorRef.current?.replaceDocument(nextContent)
   }
 
-  /**
-   * 表格文档导入：转成 Markdown 表格插进正文，原文件不进 vault。
-   * 数据留在正文里，搜索、标签、git diff 才都还能用上。
-   */
-  const { isDropTarget: isTableDropTarget } = useTableDocumentDrop({
-    frameRef: editorFrameRef,
-    onDrop: (paths) => insertTableDocuments(paths),
-  })
-
   async function insertTableDocuments(paths: string[]) {
-    const textarea = textareaRef.current
-    if (!textarea || paths.length === 0 || isImportingTable) return
+    if (paths.length === 0 || isImportingTable) return
 
     setIsImportingTable(true)
     try {
@@ -783,11 +855,13 @@ export function FragmentEditor({
         )
       }
 
+      const currentContent = getEditorValue()
+      const selection = getEditorSelection()
       applyTextEdit(
         insertMarkdownBlock(
-          textarea.value,
-          textarea.selectionStart,
-          textarea.selectionEnd,
+          currentContent,
+          selection.start,
+          selection.end,
           markdown
         )
       )
@@ -819,10 +893,14 @@ export function FragmentEditor({
   }
 
   async function uploadImage(file: File) {
-    const textarea = textareaRef.current
-    if (!textarea) return
-    const tags = normalizeTagList(["inbox", ...extractTags(draftContent)])
-    if (fragment?.lockbox || wantsLockbox(draftContent, tags)) {
+    if (!useLegacyEditor && !shardEditorRef.current?.view) return
+    if (useLegacyEditor && !textareaRef.current) return
+    const currentDraftContent = getCurrentDraftContent()
+    const tags = normalizeTagList([
+      "inbox",
+      ...extractTags(currentDraftContent),
+    ])
+    if (fragment?.lockbox || wantsLockbox(currentDraftContent, tags)) {
       toast.error("密匣暂不支持图片附件：请先移除 #密匣，或在公开笔记中上传图片。", { duration: Infinity })
       return
     }
@@ -841,7 +919,7 @@ export function FragmentEditor({
         },
       ])
       requestAnimationFrame(() => {
-        textareaRef.current?.focus()
+        focusEditor()
       })
     } catch (error) {
       URL.revokeObjectURL(previewUrl)
@@ -873,11 +951,17 @@ export function FragmentEditor({
       return current.filter((image) => image.id !== id)
     })
     requestAnimationFrame(() => {
-      textareaRef.current?.focus()
+      focusEditor()
     })
   }
 
   function applyTextEdit(nextEdit: TextEdit) {
+    if (!useLegacyEditor) {
+      setSuppressedActiveTag(null)
+      shardEditorRef.current?.applyTextEdit(nextEdit)
+      return
+    }
+
     showCaretImmediately()
     setContent(nextEdit.content)
     setSelectionEnd(nextEdit.selectionEnd)
@@ -971,6 +1055,44 @@ export function FragmentEditor({
     })
   }
 
+  function getEditorSelection() {
+    if (!useLegacyEditor) {
+      return shardEditorRef.current?.getSelection() ?? {
+        start: selectionStart,
+        end: selectionEnd,
+      }
+    }
+
+    return {
+      start: textareaRef.current?.selectionStart ?? selectionStart,
+      end: textareaRef.current?.selectionEnd ?? selectionEnd,
+    }
+  }
+
+  function getEditorValue() {
+    if (!useLegacyEditor) {
+      return shardEditorRef.current?.view?.state.doc.toString() ?? content
+    }
+
+    return textareaRef.current?.value ?? content
+  }
+
+  function getCurrentDraftContent() {
+    return buildContentWithImageAttachments(
+      getEditorValue(),
+      imageAttachmentsRef.current
+    )
+  }
+
+  function focusEditor() {
+    if (useLegacyEditor) {
+      textareaRef.current?.focus()
+      return
+    }
+
+    shardEditorRef.current?.focus()
+  }
+
   // 高亮层要和 textarea 用完全相同的内边距才能像素级对齐，两者都从这份
   // editorPadding 派生，避免各写一份 padding 字符串导致后续改一处漏一处。
   const editorPadding: CSSProperties = isZen
@@ -999,6 +1121,10 @@ export function FragmentEditor({
         borderBottomRightRadius: 0,
         ...editorPadding,
       }
+  const codeMirrorFieldStyle: CSSProperties = {
+    ...fieldStyle,
+    overflowY: "auto",
+  }
   const imageRowStyle: CSSProperties = isZen
     ? {
         paddingInline: "var(--zen-editor-inline-padding)",
@@ -1027,14 +1153,8 @@ export function FragmentEditor({
   const canSubmit = saveState !== "saving" && draftContent.trim().length > 0
   const characterCount = Array.from(content.replace(/\s/g, "")).length
   const lineCount = content.length > 0 ? content.split(/\r\n?|\n/).length : 0
-  const editorFrame = (
-    <div
-      ref={editorFrameRef}
-      style={{
-        position: "relative",
-        ...(isZen ? { minHeight: 0, flex: "1 1 auto" } : {}),
-      }}
-    >
+  const legacyEditor = (
+    <>
       {content ? (
         <div
           aria-hidden="true"
@@ -1140,11 +1260,6 @@ export function FragmentEditor({
           }}
         />
       ) : null}
-      {isTableDropTarget || isImportingTable ? (
-        <div className="shard-editor-drop-hint">
-          {isImportingTable ? "正在导入表格…" : "松手导入为表格"}
-        </div>
-      ) : null}
       {activeTag ? (
         <TagCompletionPopover
           activeIndex={boundedActiveSuggestionIndex}
@@ -1155,6 +1270,57 @@ export function FragmentEditor({
           suggestions={tagSuggestions}
           top={tagPopoverPosition.top}
         />
+      ) : null}
+    </>
+  )
+  const editorFrame = (
+    <div
+      ref={editorFrameRef}
+      style={{
+        position: "relative",
+        ...(isZen ? { minHeight: 0, flex: "1 1 auto" } : {}),
+      }}
+    >
+      {useLegacyEditor ? (
+        legacyEditor
+      ) : (
+        <div style={codeMirrorFieldStyle}>
+          <ShardEditor
+            ariaLabel={isZen ? "禅模式片段编辑器" : "片段编辑器"}
+            autoFocus
+            documentKey={editorDocumentKey}
+            editorId={editorId}
+            extensions={fragmentEditorExtensionSet}
+            onChange={(nextContent) => {
+              setSuppressedActiveTag(null)
+              setContent(nextContent)
+            }}
+            onDropFiles={(files) => {
+              void uploadPastedImages(files)
+            }}
+            onFocus={() => {
+              setIsEditorFocused(true)
+            }}
+            onPasteFiles={(files) => {
+              void uploadPastedImages(files)
+            }}
+            onSelectionChange={(start, end) => {
+              setSelectionStart(start)
+              setSelectionEnd(end)
+            }}
+            onSubmit={() => {
+              void handleSubmit()
+            }}
+            ref={shardEditorRef}
+            value={content}
+            variant={isZen ? "zen" : "inline"}
+          />
+        </div>
+      )}
+      {isTableDropTarget || isImportingTable ? (
+        <div className="shard-editor-drop-hint">
+          {isImportingTable ? "正在导入表格…" : "松手导入为表格"}
+        </div>
       ) : null}
     </div>
   )
