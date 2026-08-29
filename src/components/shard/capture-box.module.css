@@ -16,6 +16,14 @@
   border-color: var(--shard-sapphire);
 }
 
+.codeMirrorViewport {
+  position: relative;
+  width: 100%;
+  overflow: hidden;
+  border-radius: var(--shard-surface-radius) var(--shard-surface-radius) 0 0;
+  transition: height 0.2s ease-in-out;
+}
+
 .textareaField {
   position: relative;
   z-index: 10;

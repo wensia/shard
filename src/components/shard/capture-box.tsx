@@ -9,6 +9,7 @@ import {
   type ClipboardEvent,
   type KeyboardEvent,
   type MouseEvent,
+  type RefObject,
 } from "react"
 import { Loader2Icon, SendHorizontalIcon } from "lucide-react"
 import { isTauri } from "@tauri-apps/api/core"
@@ -29,6 +30,11 @@ import {
   type TagSuggestion,
 } from "@/components/shard/tag-completion-popover"
 import { ToolbarIconButton } from "@/components/ui/toolbar-icon-button"
+import {
+  ShardEditor,
+  type ShardEditorHandle,
+} from "@/editor/shard-editor"
+import { isLegacyEditorEnabled } from "@/editor/kill-switch"
 import { getClipboardImageFiles } from "@/lib/clipboard-images"
 import {
   applyActiveTagCompletion,
@@ -115,9 +121,13 @@ export function CaptureBox({
   })
   const [isEditorFocused, setIsEditorFocused] = useState(false)
   const [selectionEnd, setSelectionEnd] = useState(0)
+  const legacyEditorEnabled = isLegacyEditorEnabled()
   const containerRef = useRef<HTMLDivElement>(null)
   const editorFrameRef = useRef<HTMLDivElement>(null)
+  const codeMirrorViewportRef = useRef<HTMLDivElement>(null)
+  const codeMirrorContentHeightRef = useRef(0)
   const [isImportingTable, setIsImportingTable] = useState(false)
+  const shardEditorRef = useRef<ShardEditorHandle>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const tagPopoverId = useId()
   const hasSkippedInitialFocusRef = useRef(false)
@@ -171,7 +181,35 @@ export function CaptureBox({
   const canSubmit =
     (content.trim().length > 0 || pendingImages.length > 0) && !isCreating
 
+  function getCurrentSelection() {
+    if (legacyEditorEnabled) {
+      const textarea = textareaRef.current
+      return textarea
+        ? { start: textarea.selectionStart, end: textarea.selectionEnd }
+        : { start: selectionStart, end: selectionEnd }
+    }
+
+    return (
+      shardEditorRef.current?.getSelection() ?? {
+        start: selectionStart,
+        end: selectionEnd,
+      }
+    )
+  }
+
+  function getCurrentEditorValue() {
+    return legacyEditorEnabled
+      ? (textareaRef.current?.value ?? content)
+      : (shardEditorRef.current?.view?.state.doc.toString() ?? content)
+  }
+
+  function focusActiveEditor() {
+    if (legacyEditorEnabled) textareaRef.current?.focus()
+    else shardEditorRef.current?.focus()
+  }
+
   const syncTextareaGeometry = useCallback(() => {
+    if (!legacyEditorEnabled) return
     const textarea = textareaRef.current
     resizeTextarea(
       textarea,
@@ -182,7 +220,38 @@ export function CaptureBox({
     if (textarea) {
       setEditorScrollTop(textarea.scrollTop)
     }
-  }, [isEditorExpanded])
+  }, [isEditorExpanded, legacyEditorEnabled])
+
+  const syncCodeMirrorGeometry = useCallback(() => {
+    if (legacyEditorEnabled || codeMirrorContentHeightRef.current <= 0) return
+    resizeCodeMirrorEditor(
+      codeMirrorViewportRef.current,
+      codeMirrorContentHeightRef.current,
+      isEditorExpanded,
+      containerRef.current,
+      editorFrameRef.current
+    )
+  }, [isEditorExpanded, legacyEditorEnabled])
+
+  function handleCodeMirrorHeightChange(height: number) {
+    codeMirrorContentHeightRef.current = height
+    resizeCodeMirrorEditor(
+      codeMirrorViewportRef.current,
+      height,
+      isEditorExpanded,
+      containerRef.current,
+      editorFrameRef.current
+    )
+  }
+
+  function handleEditorFocus() {
+    if (!hasSkippedInitialFocusRef.current) {
+      hasSkippedInitialFocusRef.current = true
+      return
+    }
+
+    setIsEditorExpanded(true)
+  }
 
   useEffect(() => {
     setActiveSuggestionIndex(0)
@@ -208,6 +277,8 @@ export function CaptureBox({
   }, [collapseSignal])
 
   useEffect(() => {
+    if (!legacyEditorEnabled) return
+
     // React's onSelect stays silent while the mouse is still down, so drag
     // selection needs the document-level selectionchange stream to paint the
     // highlight live instead of only after mouseup
@@ -223,15 +294,23 @@ export function CaptureBox({
     return () => {
       document.removeEventListener("selectionchange", handleSelectionChange)
     }
-  }, [])
+  }, [legacyEditorEnabled])
 
   useLayoutEffect(() => {
-    syncTextareaGeometry()
-  }, [content, pendingImages.length, syncTextareaGeometry])
+    if (legacyEditorEnabled) syncTextareaGeometry()
+    else syncCodeMirrorGeometry()
+  }, [
+    content,
+    legacyEditorEnabled,
+    pendingImages.length,
+    syncCodeMirrorGeometry,
+    syncTextareaGeometry,
+  ])
 
   useEffect(() => {
     function handleViewportResize() {
-      syncTextareaGeometry()
+      if (legacyEditorEnabled) syncTextareaGeometry()
+      else syncCodeMirrorGeometry()
     }
 
     window.addEventListener("resize", handleViewportResize)
@@ -244,9 +323,14 @@ export function CaptureBox({
         handleViewportResize
       )
     }
-  }, [syncTextareaGeometry])
+  }, [legacyEditorEnabled, syncCodeMirrorGeometry, syncTextareaGeometry])
 
   useLayoutEffect(() => {
+    if (!legacyEditorEnabled) {
+      setCustomCaret(null)
+      return
+    }
+
     const textarea = textareaRef.current
     const frame = editorFrameRef.current
 
@@ -268,9 +352,11 @@ export function CaptureBox({
     isEditorFocused,
     selectionEnd,
     selectionStart,
+    legacyEditorEnabled,
   ])
 
   useLayoutEffect(() => {
+    if (!legacyEditorEnabled) return
     if (!activeTag || !textareaRef.current || !containerRef.current) return
 
     const nextPosition = getTagCompletionPopoverPosition(
@@ -286,7 +372,7 @@ export function CaptureBox({
 
       return isSamePosition ? currentPosition : nextPosition
     })
-  }, [activeTag, content, editorScrollTop, selectionStart])
+  }, [activeTag, content, editorScrollTop, legacyEditorEnabled, selectionStart])
 
   async function submit() {
     if (isCreating) return
@@ -322,35 +408,37 @@ export function CaptureBox({
       setSelectionStart(0)
       setSelectionEnd(0)
       requestAnimationFrame(() => {
-        const textarea = textareaRef.current
-        if (!textarea) return
-
-        textarea.value = ""
-        textarea.setSelectionRange(0, 0)
+        if (legacyEditorEnabled) {
+          const textarea = textareaRef.current
+          if (!textarea) return
+          textarea.value = ""
+          textarea.setSelectionRange(0, 0)
+        } else {
+          shardEditorRef.current?.replaceDocument("")
+        }
       })
     } catch {
       setIsEditorExpanded(true)
       requestAnimationFrame(() => {
-        textareaRef.current?.focus()
+        focusActiveEditor()
       })
     }
   }
 
   function insertTag() {
-    const cursor = textareaRef.current?.selectionStart ?? selectionStart
+    const cursor = getCurrentSelection().start
     const nextEdit = insertTagMarker(content, cursor)
     setIsEditorExpanded(true)
     applyTextEdit(nextEdit)
   }
 
   function formatLines(format: LineFormat) {
-    const textarea = textareaRef.current
-    if (!textarea) return
+    const selection = getCurrentSelection()
 
     const nextEdit = applyLineFormat(
       content,
-      textarea.selectionStart,
-      textarea.selectionEnd,
+      selection.start,
+      selection.end,
       format
     )
 
@@ -359,13 +447,12 @@ export function CaptureBox({
   }
 
   function formatInline(format: InlineFormat) {
-    const textarea = textareaRef.current
-    if (!textarea) return
+    const selection = getCurrentSelection()
 
     const nextEdit = applyInlineFormat(
       content,
-      textarea.selectionStart,
-      textarea.selectionEnd,
+      selection.start,
+      selection.end,
       format
     )
 
@@ -374,28 +461,26 @@ export function CaptureBox({
   }
 
   function insertDivider() {
-    const textarea = textareaRef.current
-    if (!textarea) return
+    const selection = getCurrentSelection()
 
     setIsEditorExpanded(true)
     applyTextEdit(
       insertHorizontalRule(
         content,
-        textarea.selectionStart,
-        textarea.selectionEnd
+        selection.start,
+        selection.end
       )
     )
   }
 
   function insertTable(columns: number, rows: number) {
-    const textarea = textareaRef.current
-    if (!textarea) return
+    const selection = getCurrentSelection()
 
     setIsEditorExpanded(true)
     const nextEdit = insertMarkdownTable(
       content,
-      textarea.selectionStart,
-      textarea.selectionEnd,
+      selection.start,
+      selection.end,
       columns,
       rows
     )
@@ -408,6 +493,19 @@ export function CaptureBox({
     const tableStart = nextContent.lastIndexOf("\n", cursor - 1) + 1
 
     requestAnimationFrame(() => {
+      if (!legacyEditorEnabled) {
+        const handle = shardEditorRef.current
+        const selection = handle?.getSelection()
+        if (handle?.view && selection?.start !== cursor) {
+          handle.view.dispatch({
+            selection: { anchor: cursor },
+            scrollIntoView: true,
+          })
+        }
+        handle?.focus()
+        return
+      }
+
       editorFrameRef.current
         ?.querySelector<HTMLInputElement>(
           `[data-table-start="${tableStart}"] [data-cell="-1:0"]`
@@ -442,8 +540,7 @@ export function CaptureBox({
   })
 
   async function insertTableDocuments(paths: string[]) {
-    const textarea = textareaRef.current
-    if (!textarea || paths.length === 0 || isImportingTable) return
+    if (paths.length === 0 || isImportingTable) return
 
     setIsEditorExpanded(true)
     setIsImportingTable(true)
@@ -462,9 +559,9 @@ export function CaptureBox({
 
       applyTextEdit(
         insertMarkdownBlock(
-          textarea.value,
-          textarea.selectionStart,
-          textarea.selectionEnd,
+          getCurrentEditorValue(),
+          getCurrentSelection().start,
+          getCurrentSelection().end,
           markdown
         )
       )
@@ -503,24 +600,25 @@ export function CaptureBox({
       return
     }
 
-    const draftContent = textareaRef.current?.value ?? content
+    const draftContent = getCurrentEditorValue()
     onOpenZen(draftContent)
     setContent("")
     setIsEditorExpanded(false)
     setSelectionStart(0)
     setSelectionEnd(0)
     requestAnimationFrame(() => {
-      const textarea = textareaRef.current
-      if (!textarea) return
-
-      textarea.value = ""
-      textarea.setSelectionRange(0, 0)
+      if (legacyEditorEnabled) {
+        const textarea = textareaRef.current
+        if (!textarea) return
+        textarea.value = ""
+        textarea.setSelectionRange(0, 0)
+      } else {
+        shardEditorRef.current?.replaceDocument("")
+      }
     })
   }
 
   async function uploadImage(file: File) {
-    const textarea = textareaRef.current
-    if (!textarea) return
     const previewUrl = URL.createObjectURL(file)
 
     try {
@@ -537,7 +635,7 @@ export function CaptureBox({
         },
       ])
       requestAnimationFrame(() => {
-        textarea.focus()
+        focusActiveEditor()
       })
     } catch (error) {
       toast.error(`图片上传失败：${getApiErrorMessage(error)}`, { duration: Infinity })
@@ -568,6 +666,11 @@ export function CaptureBox({
     setContent(nextEdit.content)
     setSelectionStart(nextEdit.selectionStart)
     setSelectionEnd(nextEdit.selectionEnd)
+    if (!legacyEditorEnabled) {
+      shardEditorRef.current?.applyTextEdit(nextEdit)
+      return
+    }
+
     if (textareaRef.current) {
       textareaRef.current.value = nextEdit.content
       textareaRef.current.focus()
@@ -750,20 +853,25 @@ export function CaptureBox({
     const nextContent = toggleTaskLine(content, lineIndex)
     if (nextContent === content) return
 
-    const nextSelectionStart =
-      textareaRef.current?.selectionStart ?? selectionStart
-    const nextSelectionEnd = textareaRef.current?.selectionEnd ?? selectionEnd
+    const selection = getCurrentSelection()
+    const nextSelectionStart = selection.start
+    const nextSelectionEnd = selection.end
 
     setIsEditorExpanded(true)
     setContent(nextContent)
     setSelectionStart(nextSelectionStart)
     setSelectionEnd(nextSelectionEnd)
     requestAnimationFrame(() => {
-      textareaRef.current?.focus()
-      textareaRef.current?.setSelectionRange(
-        nextSelectionStart,
-        nextSelectionEnd
-      )
+      if (legacyEditorEnabled) {
+        textareaRef.current?.focus()
+        textareaRef.current?.setSelectionRange(
+          nextSelectionStart,
+          nextSelectionEnd
+        )
+      } else {
+        shardEditorRef.current?.replaceDocument(nextContent)
+        shardEditorRef.current?.focus()
+      }
     })
   }
 
@@ -777,7 +885,7 @@ export function CaptureBox({
       return current.filter((image) => image.id !== id)
     })
     requestAnimationFrame(() => {
-      textareaRef.current?.focus()
+      focusActiveEditor()
     })
   }
 
@@ -812,113 +920,90 @@ export function CaptureBox({
       ref={containerRef}
     >
       <div ref={editorFrameRef} style={{ position: "relative" }}>
-        {content ? (
-          <div
-            aria-hidden="true"
-            className="shard-editor-highlight-layer shard-memo-tags"
-          >
-            <div
-              style={{
-                paddingInline: "var(--shard-composer-padding)",
-                paddingBlock: "var(--shard-composer-padding)",
-                transform:
-                  editorScrollTop > 0
-                    ? `translateY(-${editorScrollTop}px)`
-                    : undefined,
-              }}
-            >
-              <FragmentContent
-                caretAligned
-                content={content}
-                highlightTags
-                onTaskToggle={toggleTask}
-                selectionEnd={isEditorFocused ? selectionEnd : undefined}
-                selectionStart={isEditorFocused ? selectionStart : undefined}
-                tableEditing={{
-                  onChange: updateTable,
-                  onExit: () => textareaRef.current?.focus(),
-                }}
-              />
-            </div>
-          </div>
-        ) : null}
-        <textarea
-          aria-activedescendant={activeSuggestionOptionId}
-          aria-autocomplete={activeTag ? "list" : undefined}
-          aria-controls={activeTag ? tagPopoverId : undefined}
-          aria-expanded={activeTag ? true : undefined}
-          autoFocus
-          className={`shard-editor-field shard-editor-overlay-field ${styles.textareaField}`}
-          onChange={(event) => {
-            setIsEditorExpanded(true)
-            setContent(event.currentTarget.value)
-            syncSelection(event.currentTarget)
-          }}
-          onCompositionEnd={() => {
-            isComposingRef.current = false
-          }}
-          onCompositionStart={() => {
-            isComposingRef.current = true
-          }}
-          onFocus={() => {
-            setIsEditorFocused(true)
-            if (!hasSkippedInitialFocusRef.current) {
-              hasSkippedInitialFocusRef.current = true
-              return
-            }
-
-            setIsEditorExpanded(true)
-          }}
-          onKeyDown={handleKeyDown}
-          onMouseDown={startPointerSelection}
-          onPaste={handlePaste}
-          onKeyUp={(event) => {
-            syncSelection(event.currentTarget)
-          }}
-          onSelect={(event) => {
-            syncSelection(event.currentTarget)
-          }}
-          onScroll={(event) => {
-            setEditorScrollTop(event.currentTarget.scrollTop)
-          }}
-          onBlur={() => {
-            setIsEditorFocused(false)
-          }}
-          placeholder="想到什么，写什么..."
-          ref={textareaRef}
-          value={content}
-        ></textarea>
-        {!content ? (
-          <span
-            aria-hidden="true"
-            className="shard-editor-placeholder"
-            style={{
-              left: "var(--shard-composer-padding)",
-              top: "var(--shard-composer-padding)",
+        {legacyEditorEnabled ? (
+          <LegacyComposerEditor
+            activeSuggestionOptionId={activeSuggestionOptionId}
+            activeTag={Boolean(activeTag)}
+            caretEpoch={caretEpoch}
+            content={content}
+            customCaret={customCaret}
+            editorScrollTop={editorScrollTop}
+            isEditorFocused={isEditorFocused}
+            onBlur={() => setIsEditorFocused(false)}
+            onChange={(textarea) => {
+              setIsEditorExpanded(true)
+              setContent(textarea.value)
+              syncSelection(textarea)
             }}
-          >
-            想到什么，写什么...
-          </span>
-        ) : null}
-        {customCaret ? (
-          <span
-            aria-hidden="true"
-            className="shard-custom-caret"
-            key={`${caretEpoch}-${selectionStart}-${selectionEnd}`}
-            style={{
-              height: customCaret.height,
-              left: customCaret.left,
-              top: customCaret.top,
+            onCompositionEnd={() => {
+              isComposingRef.current = false
             }}
+            onCompositionStart={() => {
+              isComposingRef.current = true
+            }}
+            onFocus={() => {
+              setIsEditorFocused(true)
+              handleEditorFocus()
+            }}
+            onKeyDown={handleKeyDown}
+            onMouseDown={startPointerSelection}
+            onPaste={handlePaste}
+            onScroll={setEditorScrollTop}
+            onSelectionChange={syncSelection}
+            onTaskToggle={toggleTask}
+            onTableChange={updateTable}
+            selectionEnd={selectionEnd}
+            selectionStart={selectionStart}
+            tagPopoverId={tagPopoverId}
+            textareaRef={textareaRef}
           />
-        ) : null}
+        ) : (
+          <div
+            className={styles.codeMirrorViewport}
+            data-expanded={isEditorExpanded ? "true" : undefined}
+            onMouseDown={(event) => {
+              if (event.target === event.currentTarget) {
+                setIsEditorExpanded(true)
+                shardEditorRef.current?.focus()
+              }
+            }}
+            ref={codeMirrorViewportRef}
+          >
+            <ShardEditor
+              ariaLabel="快速记录"
+              autoFocus
+              documentKey="composer"
+              editorId="composer"
+              onChange={(nextContent) => {
+                setIsEditorExpanded(true)
+                setContent(nextContent)
+              }}
+              onDropFiles={(files) => void uploadPastedImages(files)}
+              onFocus={handleEditorFocus}
+              onHeightChange={handleCodeMirrorHeightChange}
+              onPasteFiles={(files) => void uploadPastedImages(files)}
+              onSelectionChange={(start, end) => {
+                setSelectionStart(start)
+                setSelectionEnd(end)
+              }}
+              onSubmit={() => void submit()}
+              onToggleZen={
+                onOpenZen && !isCreating ? openZenEditor : undefined
+              }
+              placeholder="想到什么，写什么..."
+              ref={shardEditorRef}
+              value={content}
+              variant="composer"
+            />
+          </div>
+        )}
         {isTableDropTarget || isImportingTable ? (
           <div className="shard-editor-drop-hint">
             {isImportingTable ? "正在导入表格…" : "松手导入为表格"}
           </div>
         ) : null}
       </div>
-      {activeTag ? (
+      {legacyEditorEnabled && activeTag ? (
         <TagCompletionPopover
           activeIndex={boundedActiveSuggestionIndex}
           id={tagPopoverId}
@@ -1012,6 +1097,143 @@ export function CaptureBox({
   )
 }
 
+interface LegacyComposerEditorProps {
+  activeSuggestionOptionId?: string
+  activeTag: boolean
+  caretEpoch: number
+  content: string
+  customCaret: EditorCaretBox | null
+  editorScrollTop: number
+  isEditorFocused: boolean
+  onBlur: () => void
+  onChange: (textarea: HTMLTextAreaElement) => void
+  onCompositionEnd: () => void
+  onCompositionStart: () => void
+  onFocus: () => void
+  onKeyDown: (event: KeyboardEvent<HTMLTextAreaElement>) => void
+  onMouseDown: (event: MouseEvent<HTMLTextAreaElement>) => void
+  onPaste: (event: ClipboardEvent<HTMLTextAreaElement>) => void
+  onScroll: (scrollTop: number) => void
+  onSelectionChange: (textarea: HTMLTextAreaElement) => void
+  onTableChange: (
+    startLine: number,
+    lineCount: number,
+    table: MarkdownTable
+  ) => void
+  onTaskToggle: (lineIndex: number) => void
+  selectionEnd: number
+  selectionStart: number
+  tagPopoverId: string
+  textareaRef: RefObject<HTMLTextAreaElement | null>
+}
+
+function LegacyComposerEditor({
+  activeSuggestionOptionId,
+  activeTag,
+  caretEpoch,
+  content,
+  customCaret,
+  editorScrollTop,
+  isEditorFocused,
+  onBlur,
+  onChange,
+  onCompositionEnd,
+  onCompositionStart,
+  onFocus,
+  onKeyDown,
+  onMouseDown,
+  onPaste,
+  onScroll,
+  onSelectionChange,
+  onTableChange,
+  onTaskToggle,
+  selectionEnd,
+  selectionStart,
+  tagPopoverId,
+  textareaRef,
+}: LegacyComposerEditorProps) {
+  return (
+    <>
+      {content ? (
+        <div
+          aria-hidden="true"
+          className="shard-editor-highlight-layer shard-memo-tags"
+        >
+          <div
+            style={{
+              paddingInline: "var(--shard-composer-padding)",
+              paddingBlock: "var(--shard-composer-padding)",
+              transform:
+                editorScrollTop > 0
+                  ? `translateY(-${editorScrollTop}px)`
+                  : undefined,
+            }}
+          >
+            <FragmentContent
+              caretAligned
+              content={content}
+              highlightTags
+              onTaskToggle={onTaskToggle}
+              selectionEnd={isEditorFocused ? selectionEnd : undefined}
+              selectionStart={isEditorFocused ? selectionStart : undefined}
+              tableEditing={{
+                onChange: onTableChange,
+                onExit: () => textareaRef.current?.focus(),
+              }}
+            />
+          </div>
+        </div>
+      ) : null}
+      <textarea
+        aria-activedescendant={activeSuggestionOptionId}
+        aria-autocomplete={activeTag ? "list" : undefined}
+        aria-controls={activeTag ? tagPopoverId : undefined}
+        aria-expanded={activeTag ? true : undefined}
+        autoFocus
+        className={`shard-editor-field shard-editor-overlay-field ${styles.textareaField}`}
+        onBlur={onBlur}
+        onChange={(event) => onChange(event.currentTarget)}
+        onCompositionEnd={onCompositionEnd}
+        onCompositionStart={onCompositionStart}
+        onFocus={onFocus}
+        onKeyDown={onKeyDown}
+        onKeyUp={(event) => onSelectionChange(event.currentTarget)}
+        onMouseDown={onMouseDown}
+        onPaste={onPaste}
+        onScroll={(event) => onScroll(event.currentTarget.scrollTop)}
+        onSelect={(event) => onSelectionChange(event.currentTarget)}
+        placeholder="想到什么，写什么..."
+        ref={textareaRef}
+        value={content}
+      />
+      {!content ? (
+        <span
+          aria-hidden="true"
+          className="shard-editor-placeholder"
+          style={{
+            left: "var(--shard-composer-padding)",
+            top: "var(--shard-composer-padding)",
+          }}
+        >
+          想到什么，写什么...
+        </span>
+      ) : null}
+      {customCaret ? (
+        <span
+          aria-hidden="true"
+          className="shard-custom-caret"
+          key={`${caretEpoch}-${selectionStart}-${selectionEnd}`}
+          style={{
+            height: customCaret.height,
+            left: customCaret.left,
+            top: customCaret.top,
+          }}
+        />
+      ) : null}
+    </>
+  )
+}
+
 const MAX_TAG_SUGGESTIONS = 8
 const CAPTURE_COLLAPSED_ROWS = 2
 const CAPTURE_EXPANDED_ROWS = 4
@@ -1058,6 +1280,56 @@ const TEXTAREA_MIRROR_PROPERTIES = [
   "word-spacing",
   "overflow-wrap",
 ] as const
+
+function resizeCodeMirrorEditor(
+  viewport: HTMLDivElement | null,
+  contentHeight: number,
+  isExpanded: boolean,
+  container: HTMLDivElement | null,
+  editorFrame: HTMLDivElement | null
+) {
+  if (!viewport) return
+
+  const targetRows = isExpanded
+    ? CAPTURE_EXPANDED_ROWS
+    : CAPTURE_COLLAPSED_ROWS
+  const minimumHeight = getCodeMirrorRowsHeight(viewport, targetRows)
+  const maximumHeight = getCaptureTextareaMaxHeight(
+    container,
+    editorFrame,
+    contentHeight
+  )
+  const boundedMinimumHeight =
+    maximumHeight === null
+      ? minimumHeight
+      : Math.min(minimumHeight, maximumHeight)
+  const nextHeight =
+    maximumHeight === null
+      ? Math.max(contentHeight, minimumHeight)
+      : Math.min(Math.max(contentHeight, boundedMinimumHeight), maximumHeight)
+  const isScrollable = contentHeight > nextHeight + 1
+
+  viewport.style.minHeight = `${boundedMinimumHeight}px`
+  viewport.style.height = `${nextHeight}px`
+  viewport.style.overflowY = isScrollable ? "auto" : "hidden"
+  if (maximumHeight === null) viewport.style.removeProperty("max-height")
+  else viewport.style.maxHeight = `${maximumHeight}px`
+
+  if (!isScrollable && viewport.scrollTop !== 0) viewport.scrollTop = 0
+}
+
+function getCodeMirrorRowsHeight(viewport: HTMLDivElement, rows: number) {
+  const content = viewport.querySelector<HTMLElement>(".cm-content")
+  if (!content) return 0
+
+  const styles = window.getComputedStyle(content)
+  const fontSize = toPixelValue(styles.fontSize, 14)
+  const lineHeight = toPixelValue(styles.lineHeight, fontSize * 1.8)
+  const paddingTop = toPixelValue(styles.paddingTop, 0)
+  const paddingBottom = toPixelValue(styles.paddingBottom, 0)
+
+  return Math.ceil(lineHeight * rows + paddingTop + paddingBottom)
+}
 
 function resizeTextarea(
   textarea: HTMLTextAreaElement | null,
