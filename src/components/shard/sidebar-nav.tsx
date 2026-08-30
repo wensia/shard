@@ -1,9 +1,13 @@
 import {
   ArchiveIcon,
+  BookOpenIcon,
+  ClipboardListIcon,
   GitBranchIcon,
   HelpCircleIcon,
+  HistoryIcon,
   InboxIcon,
   KeyboardIcon,
+  LockKeyholeIcon,
   Maximize2Icon,
   MoreHorizontalIcon,
   RefreshCwIcon,
@@ -13,11 +17,7 @@ import {
   SparklesIcon,
   TagIcon,
 } from "lucide-react"
-import {
-  Fragment as ReactFragment,
-  useState,
-  type CSSProperties,
-} from "react"
+import { useState, type CSSProperties } from "react"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -31,39 +31,69 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
-import shardAppIconUrl from "@/assets/shard-app-icon.png"
 import { dailyReviewCount, insightReviewCount } from "@/lib/review-workflows"
 import { useAppVersion } from "@/lib/use-app-version"
 import type { Fragment, FragmentFilter, GitInfo } from "@/types"
+import type {
+  FragmentWorkspaceFilter,
+  ReviewWorkspaceMode,
+  WorkspaceRoute,
+} from "@/workspace/route"
 
 import styles from "./sidebar-nav.module.css"
 
 interface SidebarNavProps {
-  activeFilter: FragmentFilter
   fragments: Fragment[]
   git: GitInfo | null
   isSyncing: boolean
   mindMapCount: number
   mindMapViewActive: boolean
-  onFilterChange: (filter: FragmentFilter) => void
   onHelp: () => void
   onOpenMindMaps: () => void
   onOpenSearch: () => void
   onOpenSettings: () => void
   onRestoreWindow: () => void
+  onRouteChange: (route: WorkspaceRoute) => void
   onShortcuts: () => void
   onSync: () => void
+  route: WorkspaceRoute
 }
 
-const navItems: Array<{
-  id: FragmentFilter
+const SPACE_ITEMS: Array<{
+  id: WorkspaceRoute["space"]
+  icon: typeof InboxIcon
+  route: WorkspaceRoute
+}> = [
+  {
+    id: "fragments",
+    icon: InboxIcon,
+    route: { space: "fragments", params: { filter: "inbox" } },
+  },
+  { id: "library", icon: BookOpenIcon, route: { space: "library", params: {} } },
+  {
+    id: "review",
+    icon: HistoryIcon,
+    route: { space: "review", params: { mode: "dailyReview" } },
+  },
+]
+
+const FRAGMENT_ITEMS: Array<{
+  id: FragmentWorkspaceFilter
   icon: typeof InboxIcon
 }> = [
   { id: "inbox", icon: InboxIcon },
   { id: "tagged", icon: TagIcon },
+  { id: "lockbox", icon: LockKeyholeIcon },
+  { id: "archive", icon: ArchiveIcon },
+]
+
+const REVIEW_ITEMS: Array<{
+  id: ReviewWorkspaceMode
+  icon: typeof InboxIcon
+}> = [
+  { id: "dailyReview", icon: HistoryIcon },
   { id: "insight", icon: SparklesIcon },
   { id: "walk", icon: RouteIcon },
-  { id: "archive", icon: ArchiveIcon },
 ]
 
 type SidebarLanguage = "en" | "zh"
@@ -72,7 +102,7 @@ const SIDEBAR_COPY: Record<
   SidebarLanguage,
   {
     aria: {
-      filters: string
+      navigation: string
       heatmap: string
       utilityMenu: string
       stats: string
@@ -89,6 +119,7 @@ const SIDEBAR_COPY: Record<
     mindMaps: string
     noCommit: string
     nav: Record<FragmentFilter, string>
+    spaces: Record<WorkspaceRoute["space"], string>
     restoreWindow: string
     search: string
     searchPlaceholder: string
@@ -107,7 +138,7 @@ const SIDEBAR_COPY: Record<
 > = {
   zh: {
     aria: {
-      filters: "片段筛选",
+      navigation: "工作台导航",
       heatmap: "片段热力图",
       stats: "资料库统计",
       utilityMenu: "打开帮助与设置菜单",
@@ -132,6 +163,11 @@ const SIDEBAR_COPY: Record<
       tagged: "标签",
       walk: "随机漫步",
     },
+    spaces: {
+      fragments: "碎片",
+      library: "资料库",
+      review: "回顾",
+    },
     restoreWindow: "还原窗口尺寸",
     search: "搜索笔记",
     searchPlaceholder: "搜索正文或标签",
@@ -149,7 +185,7 @@ const SIDEBAR_COPY: Record<
   },
   en: {
     aria: {
-      filters: "Fragment filters",
+      navigation: "Workspace navigation",
       heatmap: "Fragment heatmap",
       stats: "Vault stats",
       utilityMenu: "Open help and settings menu",
@@ -173,6 +209,11 @@ const SIDEBAR_COPY: Record<
       lockbox: "Lockbox",
       tagged: "Tagged",
       walk: "Random Walk",
+    },
+    spaces: {
+      fragments: "Fragments",
+      library: "Library",
+      review: "Review",
     },
     restoreWindow: "Restore Window Size",
     search: "Search notes",
@@ -227,13 +268,13 @@ const TOOLTIP_DIM_COLOR =
 
 const NAV_COUNT_BADGE_STYLE: CSSProperties = {
   minWidth: 28,
-  borderRadius: "var(--shard-radius-card)",
+  borderRadius: "var(--radius-control)",
   background: "var(--muted)",
-  paddingInline: 8,
-  paddingBlock: 2,
+  paddingInline: "var(--space-2)",
+  paddingBlock: "var(--space-1)",
   textAlign: "center",
-  fontSize: 12,
-  fontWeight: 600,
+  fontSize: "var(--text-meta)",
+  fontWeight: 500,
   color: "var(--muted-foreground)",
   fontVariantNumeric: "tabular-nums",
 }
@@ -247,20 +288,20 @@ const NAV_LABEL_STYLE: CSSProperties = {
 }
 
 export function SidebarNav({
-  activeFilter,
   fragments,
   git,
   isSyncing,
   mindMapCount,
   mindMapViewActive,
-  onFilterChange,
   onHelp,
   onOpenMindMaps,
   onOpenSearch,
   onOpenSettings,
   onRestoreWindow,
+  onRouteChange,
   onShortcuts,
   onSync,
+  route,
 }: SidebarNavProps) {
   const [isUtilityMenuOpen, setIsUtilityMenuOpen] = useState(false)
   const appVersion = useAppVersion()
@@ -305,39 +346,41 @@ export function SidebarNav({
         data-tauri-drag-region="true"
         className="flex items-center gap-3"
         style={{
-          paddingInline: "var(--shard-sidebar-inset)",
+          paddingInline: "var(--space-3)",
           paddingTop: "var(--shard-top-inset)",
-          paddingBottom: "var(--shard-space-6)",
+          paddingBottom: "var(--space-3)",
         }}
       >
-        <img
-          alt=""
+        <span
           aria-hidden="true"
-          draggable={false}
-          src={shardAppIconUrl}
           style={{
+            display: "flex",
             width: 32,
             height: 32,
             flexShrink: 0,
-            borderRadius: "var(--shard-radius-control)",
-            objectFit: "contain",
+            alignItems: "center",
+            justifyContent: "center",
+            borderRadius: "var(--radius-panel)",
+            background: "var(--primary)",
+            color: "var(--primary-foreground)",
           }}
-        />
+        >
+          <ClipboardListIcon size={18} strokeWidth={1.75} />
+        </span>
         <div style={{ minWidth: 0 }}>
           <div
             style={{
-              fontSize: 20,
-              lineHeight: "24px",
-              fontWeight: 700,
-              textWrap: "balance",
+              fontSize: "var(--text-body)",
+              lineHeight: "var(--leading-tight)",
+              fontWeight: 600,
             }}
           >
             Shard
           </div>
           <div
             style={{
-              fontSize: 12,
-              fontWeight: 500,
+              fontSize: "var(--text-tiny)",
+              fontWeight: 400,
               color: "var(--muted-foreground)",
             }}
           >
@@ -452,64 +495,131 @@ export function SidebarNav({
       </div>
 
       <nav
-        aria-label={copy.aria.filters}
+        aria-label={copy.aria.navigation}
         style={{
           display: "flex",
           flexDirection: "column",
-          gap: "var(--shard-space-1)",
-          paddingInline: "var(--shard-space-3)",
+          gap: "var(--space-1)",
+          paddingInline: "var(--space-3)",
         }}
       >
-        {navItems.map((item) => {
+        {SPACE_ITEMS.map((item) => {
           const Icon = item.icon
-          const isActive = item.id === activeFilter && !mindMapViewActive
+          const isActive = item.id === route.space && !mindMapViewActive
 
           return (
-            <ReactFragment key={item.id}>
+            <div className={styles.navGroup} key={item.id}>
               <button
                 aria-current={isActive ? "page" : undefined}
                 className={`${styles.navItem} ${
                   isActive ? styles.navItemActive : styles.navItemInactive
                 }`}
-                onClick={() => onFilterChange(item.id)}
+                onClick={() => onRouteChange(item.route)}
                 type="button"
               >
-                {isActive ? (
-                  <span aria-hidden="true" className={styles.activeIndicator} />
-                ) : null}
-                <Icon size={16} strokeWidth={1.75} style={{ flexShrink: 0 }} />
-                <span style={NAV_LABEL_STYLE}>{copy.nav[item.id]}</span>
-                <span style={NAV_COUNT_BADGE_STYLE}>{counts[item.id]}</span>
+                <Icon
+                  aria-hidden="true"
+                  size={18}
+                  strokeWidth={1.75}
+                  style={{ flexShrink: 0 }}
+                />
+                <span style={NAV_LABEL_STYLE}>{copy.spaces[item.id]}</span>
               </button>
-              {item.id === "inbox" ? (
-                <button
-                  aria-current={mindMapViewActive ? "page" : undefined}
-                  className={`${styles.navSubItem} ${
-                    mindMapViewActive
-                      ? styles.navSubItemActive
-                      : styles.navSubItemInactive
-                  }`}
-                  onClick={onOpenMindMaps}
-                  type="button"
-                >
-                  {mindMapViewActive ? (
-                    <span
-                      aria-hidden="true"
-                      className={styles.activeIndicator}
-                    />
-                  ) : null}
-                  <GitBranchIcon
-                    size={14}
-                    strokeWidth={1.75}
-                    style={{ flexShrink: 0 }}
-                  />
-                  <span style={NAV_LABEL_STYLE}>{copy.mindMaps}</span>
-                  <span style={NAV_COUNT_BADGE_STYLE}>{mindMapCount}</span>
-                </button>
-              ) : null}
-            </ReactFragment>
+
+              {item.id === "fragments" && route.space === "fragments"
+                ? FRAGMENT_ITEMS.map((subItem) => {
+                    const SubIcon = subItem.icon
+                    const isSubItemActive = route.params.filter === subItem.id
+                    return (
+                      <button
+                        aria-current={isSubItemActive ? "page" : undefined}
+                        className={`${styles.navSubItem} ${
+                          isSubItemActive
+                            ? styles.navSubItemActive
+                            : styles.navSubItemInactive
+                        }`}
+                        key={subItem.id}
+                        onClick={() =>
+                          onRouteChange({
+                            space: "fragments",
+                            params: { filter: subItem.id },
+                          })
+                        }
+                        type="button"
+                      >
+                        <SubIcon
+                          aria-hidden="true"
+                          size={18}
+                          strokeWidth={1.75}
+                          style={{ flexShrink: 0 }}
+                        />
+                        <span style={NAV_LABEL_STYLE}>{copy.nav[subItem.id]}</span>
+                        <span style={NAV_COUNT_BADGE_STYLE}>
+                          {counts[subItem.id]}
+                        </span>
+                      </button>
+                    )
+                  })
+                : null}
+
+              {item.id === "review" && route.space === "review"
+                ? REVIEW_ITEMS.map((subItem) => {
+                    const SubIcon = subItem.icon
+                    const isSubItemActive = route.params.mode === subItem.id
+                    return (
+                      <button
+                        aria-current={isSubItemActive ? "page" : undefined}
+                        className={`${styles.navSubItem} ${
+                          isSubItemActive
+                            ? styles.navSubItemActive
+                            : styles.navSubItemInactive
+                        }`}
+                        key={subItem.id}
+                        onClick={() =>
+                          onRouteChange({
+                            space: "review",
+                            params: { mode: subItem.id },
+                          })
+                        }
+                        type="button"
+                      >
+                        <SubIcon
+                          aria-hidden="true"
+                          size={18}
+                          strokeWidth={1.75}
+                          style={{ flexShrink: 0 }}
+                        />
+                        <span style={NAV_LABEL_STYLE}>{copy.nav[subItem.id]}</span>
+                        <span style={NAV_COUNT_BADGE_STYLE}>
+                          {counts[subItem.id]}
+                        </span>
+                      </button>
+                    )
+                  })
+                : null}
+            </div>
           )
         })}
+
+        <div className={styles.navActionBoundary}>
+          <button
+            aria-pressed={mindMapViewActive}
+            className={`${styles.navItem} ${
+              mindMapViewActive ? styles.navItemActive : styles.navItemInactive
+            }`}
+            onClick={onOpenMindMaps}
+            type="button"
+          >
+            <GitBranchIcon
+              aria-hidden="true"
+              size={18}
+              strokeWidth={1.75}
+              style={{ flexShrink: 0 }}
+            />
+            <span style={NAV_LABEL_STYLE}>{copy.mindMaps}</span>
+            <span style={NAV_COUNT_BADGE_STYLE}>{mindMapCount}</span>
+          </button>
+        </div>
       </nav>
 
       <div

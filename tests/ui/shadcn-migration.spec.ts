@@ -1518,7 +1518,8 @@ test("mind map workspace keeps Tab focus out of global actions", async ({
 test("insight workspace selects lenses and AI runners", async ({
   page,
 }) => {
-  await page.getByRole("button", { name: /洞察视角/ }).click()
+  await page.getByRole("button", { name: "回顾", exact: true }).click()
+  await page.getByRole("button", { name: "洞察视角", exact: true }).click()
 
   // 设置面板：分组单选列表，默认选中"默认洞察"；结果区标题常显。
   const defaultLens = page.getByRole("radio", { name: "默认洞察" })
@@ -1567,7 +1568,9 @@ test("small windows use bottom tabs without document scrolling", async ({
 }) => {
   await page.setViewportSize({ height: 720, width: 820 })
 
-  await expect(page.getByRole("navigation", { name: "Fragment filters" }))
+  await expect(page.getByRole("navigation", { name: "工作台" }))
+    .toBeVisible()
+  await expect(page.getByRole("navigation", { name: "碎片空间" }))
     .toBeVisible()
   await expect(page.locator("aside").first()).toBeHidden()
 
@@ -1707,7 +1710,8 @@ test.describe("片段关系层", () => {
   })
 
   test("随机漫步建议边可逐条保留并持久化为 walk 关联", async ({ page }) => {
-    await page.getByRole("button", { name: /随机漫步/ }).click()
+    await page.getByRole("button", { name: "回顾", exact: true }).click()
+    await page.getByRole("button", { name: "随机漫步", exact: true }).click()
     await page.getByRole("button", { name: "生成连接理由" }).click()
 
     const suggestions = page.getByRole("region", { name: "建议的关联" })

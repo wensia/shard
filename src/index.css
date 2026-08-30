@@ -156,7 +156,7 @@
     --shard-radius-card: var(--radius-card);
     --shard-radius-panel: var(--radius-panel);
     --shard-surface-radius: var(--shard-radius-card);
-    --shard-sidebar-width: 240px;
+    --shard-sidebar-width: 248px;
     --shard-content-max-width: 900px;
     --shard-sidebar-inset: var(--shard-space-4);
     --shard-content-inset: var(--shard-space-4);

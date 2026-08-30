@@ -250,13 +250,12 @@ export function FragmentImageExporter({
         <div
           className="grid min-h-0 flex-1"
           style={{
-            gridTemplateColumns:
-              "var(--shard-sidebar-width) minmax(0, 1fr)",
+            gridTemplateColumns: "240px minmax(0, 1fr)",
           }}
         >
           <aside
             className="min-h-0 overflow-y-auto border-r border-border p-4"
-            style={{ width: "var(--shard-sidebar-width)" }}
+            style={{ width: "240px" }}
           >
             <div className={styles.settingsPanel}>
               <section className={styles.settingsSection}>

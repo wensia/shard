@@ -1,9 +1,12 @@
 import {
   ArchiveIcon,
+  BookOpenIcon,
   GitBranchIcon,
   HelpCircleIcon,
+  HistoryIcon,
   InboxIcon,
   KeyboardIcon,
+  LockKeyholeIcon,
   Maximize2Icon,
   MoreHorizontalIcon,
   SearchIcon,
@@ -30,44 +33,84 @@ import {
 import { dailyReviewCount, insightReviewCount } from "@/lib/review-workflows"
 import { useAppVersion } from "@/lib/use-app-version"
 import type { Fragment, FragmentFilter } from "@/types"
+import type {
+  FragmentWorkspaceFilter,
+  ReviewWorkspaceMode,
+  WorkspaceRoute,
+} from "@/workspace/route"
 
 import styles from "./bottom-tabs.module.css"
 
 interface BottomTabsProps {
-  activeFilter: FragmentFilter
   fragments: Fragment[]
-  onFilterChange: (filter: FragmentFilter) => void
   onHelp: () => void
   onOpenMindMaps: () => void
   onOpenSearch: () => void
   onOpenSettings: () => void
   onRestoreWindow: () => void
+  onRouteChange: (route: WorkspaceRoute) => void
   onShortcuts: () => void
+  route: WorkspaceRoute
   vaultPath: string
 }
 
-const tabItems: Array<{
-  id: FragmentFilter
+const SPACE_TABS: Array<{
+  id: WorkspaceRoute["space"]
   label: string
-  fullLabel: string
+  icon: typeof InboxIcon
+  route: WorkspaceRoute
+}> = [
+  {
+    id: "fragments",
+    label: "碎片",
+    icon: InboxIcon,
+    route: { space: "fragments", params: { filter: "inbox" } },
+  },
+  {
+    id: "library",
+    label: "资料库",
+    icon: BookOpenIcon,
+    route: { space: "library", params: {} },
+  },
+  {
+    id: "review",
+    label: "回顾",
+    icon: HistoryIcon,
+    route: { space: "review", params: { mode: "dailyReview" } },
+  },
+]
+
+const FRAGMENT_TABS: Array<{
+  id: FragmentWorkspaceFilter
+  label: string
   icon: typeof InboxIcon
 }> = [
-  { id: "inbox", label: "Inbox", fullLabel: "Inbox", icon: InboxIcon },
-  { id: "tagged", label: "Tagged", fullLabel: "Tagged", icon: TagIcon },
-  { id: "insight", label: "洞察", fullLabel: "洞察视角", icon: SparklesIcon },
-  { id: "archive", label: "Archive", fullLabel: "Archive", icon: ArchiveIcon },
+  { id: "inbox", label: "收件箱", icon: InboxIcon },
+  { id: "tagged", label: "标签", icon: TagIcon },
+  { id: "lockbox", label: "密匣", icon: LockKeyholeIcon },
+  { id: "archive", label: "归档", icon: ArchiveIcon },
+]
+
+const REVIEW_TABS: Array<{
+  id: ReviewWorkspaceMode
+  label: string
+  icon: typeof InboxIcon
+}> = [
+  { id: "dailyReview", label: "每日回顾", icon: HistoryIcon },
+  { id: "insight", label: "洞察", icon: SparklesIcon },
+  { id: "walk", label: "漫步", icon: GitBranchIcon },
 ]
 
 export function BottomTabs({
-  activeFilter,
   fragments,
-  onFilterChange,
   onHelp,
   onOpenMindMaps,
   onOpenSearch,
   onOpenSettings,
   onRestoreWindow,
+  onRouteChange,
   onShortcuts,
+  route,
   vaultPath,
 }: BottomTabsProps) {
   const [isMenuOpen, setIsMenuOpen] = useState(false)
@@ -155,82 +198,91 @@ export function BottomTabs({
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
-          <div
-            style={{
-              minWidth: 0,
-              flex: "1 1 0%",
-              overflowX: "auto",
-              borderRadius: 8,
-              background: "var(--muted)",
-              padding: "var(--shard-space-1)",
-            }}
-          >
-            <nav
-              aria-label="Fragment filters"
-              style={{
-                display: "grid",
-                minWidth: 304,
-                gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
-                gap: "var(--shard-space-1)",
-              }}
-            >
-              {tabItems.map((item) => {
+        <div className="flex items-end gap-2">
+          <div className={styles.navigationStack}>
+            <nav aria-label="工作台" className={styles.primaryTabs}>
+              {SPACE_TABS.map((item) => {
                 const Icon = item.icon
-                const isActive = item.id === activeFilter
+                const isActive = item.id === route.space
 
                 return (
                   <button
-                    aria-label={item.fullLabel}
+                    aria-current={isActive ? "page" : undefined}
                     className={`${styles.tab} ${
                       isActive ? styles.tabActive : styles.tabInactive
                     }`}
                     key={item.id}
-                    onClick={() => onFilterChange(item.id)}
+                    onClick={() => onRouteChange(item.route)}
                     type="button"
                   >
-                    {isActive ? (
-                      <span
-                        aria-hidden="true"
-                        style={{
-                          position: "absolute",
-                          insetInline: "var(--shard-space-3)",
-                          top: "var(--shard-space-1)",
-                          height: 2,
-                          borderRadius: 9999,
-                          background: "var(--shard-sapphire)",
-                        }}
-                      />
-                    ) : null}
-                    <Icon style={{ width: 16, height: 16, flexShrink: 0 }} />
-                    <span
-                      className={styles.truncate}
-                      style={{ maxWidth: "100%" }}
-                    >
-                      {item.label}
-                    </span>
-                    <span
-                      style={{
-                        position: "absolute",
-                        top: "var(--shard-space-1)",
-                        right: "var(--shard-space-1)",
-                        minWidth: 16,
-                        borderRadius: 9999,
-                        background: "var(--background)",
-                        paddingInline: "var(--shard-space-1)",
-                        fontSize: 10,
-                        lineHeight: "16px",
-                        fontWeight: 700,
-                        color: "var(--muted-foreground)",
-                        fontVariantNumeric: "tabular-nums",
-                      }}
-                    >
-                      {counts[item.id]}
-                    </span>
+                    <Icon aria-hidden="true" size={18} strokeWidth={1.75} />
+                    <span className={styles.truncate}>{item.label}</span>
                   </button>
                 )
               })}
             </nav>
+
+            {route.space === "fragments" ? (
+              <nav aria-label="碎片空间" className={styles.secondaryTabs}>
+                {FRAGMENT_TABS.map((item) => {
+                  const Icon = item.icon
+                  const isActive = route.params.filter === item.id
+                  return (
+                    <button
+                      aria-current={isActive ? "page" : undefined}
+                      className={`${styles.secondaryTab} ${
+                        isActive
+                          ? styles.secondaryTabActive
+                          : styles.secondaryTabInactive
+                      }`}
+                      key={item.id}
+                      onClick={() =>
+                        onRouteChange({
+                          space: "fragments",
+                          params: { filter: item.id },
+                        })
+                      }
+                      type="button"
+                    >
+                      <Icon aria-hidden="true" size={14} strokeWidth={1.75} />
+                      <span className={styles.truncate}>{item.label}</span>
+                      <span className={styles.count}>{counts[item.id]}</span>
+                    </button>
+                  )
+                })}
+              </nav>
+            ) : null}
+
+            {route.space === "review" ? (
+              <nav aria-label="回顾空间" className={styles.secondaryTabs}>
+                {REVIEW_TABS.map((item) => {
+                  const Icon = item.icon
+                  const isActive = route.params.mode === item.id
+                  return (
+                    <button
+                      aria-current={isActive ? "page" : undefined}
+                      className={`${styles.secondaryTab} ${
+                        isActive
+                          ? styles.secondaryTabActive
+                          : styles.secondaryTabInactive
+                      }`}
+                      key={item.id}
+                      onClick={() =>
+                        onRouteChange({
+                          space: "review",
+                          params: { mode: item.id },
+                        })
+                      }
+                      type="button"
+                    >
+                      <Icon aria-hidden="true" size={14} strokeWidth={1.75} />
+                      <span className={styles.truncate}>{item.label}</span>
+                      <span className={styles.count}>{counts[item.id]}</span>
+                    </button>
+                  )
+                })}
+              </nav>
+            ) : null}
           </div>
 
           <DropdownMenu open={isMenuOpen} onOpenChange={setIsMenuOpen}>

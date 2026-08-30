@@ -16,6 +16,16 @@
   display: block;
 }
 
+.workspaceColumn {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--background);
+}
+
 .composerPadding {
   padding-inline: var(--shard-content-inset);
   padding-top: var(--shard-composer-top-gap);
