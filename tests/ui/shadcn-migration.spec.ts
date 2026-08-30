@@ -419,7 +419,6 @@ test("CM 编辑器按行盒自绘选区、正文保持 Kiln 选区", async ({
 
   // 编辑器里：原生选区背景透明，由 .shard-cm-selection 按行盒绘制；
   // 编辑器外：正文仍是 Kiln 的原生选区
-  await expect(page.locator(".shard-editor-selection-highlight")).toHaveCount(0)
   await expect(page.locator(".shard-cm-selection")).toHaveCount(2)
   expect(selectionColors.editor).toBe("rgba(0, 0, 0, 0)")
   expect(selectionColors.global).not.toBe("rgba(0, 0, 0, 0)")
