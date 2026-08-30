@@ -1,6 +1,4 @@
-/* Fragment capture composer. The card needs :focus-within and the textarea
-   overlay needs ::placeholder/:focus-visible, which inline styles cannot
-   express. */
+/* Fragment capture composer. */
 
 .composer {
   position: relative;
@@ -22,31 +20,6 @@
   overflow: hidden;
   border-radius: var(--shard-surface-radius) var(--shard-surface-radius) 0 0;
   transition: height 0.2s ease-in-out;
-}
-
-.textareaField {
-  position: relative;
-  z-index: 10;
-  display: block;
-  width: 100%;
-  resize: none;
-  overflow: hidden;
-  border: 0;
-  border-radius: var(--shard-surface-radius) var(--shard-surface-radius) 0 0;
-  background: transparent;
-  padding: var(--shard-composer-padding);
-  box-shadow: none;
-  transition: height 0.2s ease-in-out;
-}
-
-.textareaField::placeholder {
-  color: transparent;
-}
-
-.textareaField:focus-visible {
-  border-color: transparent;
-  outline: none;
-  box-shadow: none;
 }
 
 @keyframes spin {

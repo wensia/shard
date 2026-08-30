@@ -24,9 +24,9 @@ import {
 
 interface ShardTagAutocompleteOptions {
   getKnownTags: () => string[]
-  maxSuggestions: number
 }
 
+const MAX_TAG_SUGGESTIONS = 8
 const TAG_COMPLETION_TYPE = "shard-tag"
 const NEW_TAG_COMPLETION_TYPE = "shard-tag-new"
 
@@ -111,7 +111,6 @@ function createCompositionBoundary() {
 
 export function createShardTagAutocomplete({
   getKnownTags,
-  maxSuggestions,
 }: ShardTagAutocompleteOptions): Extension {
   let cachedTags: string[] | null = null
   let normalizedKnownTags: string[] = []
@@ -138,7 +137,7 @@ export function createShardTagAutocomplete({
     const matches = getMatchingTagsBySearchQuery(
       index,
       query,
-      maxSuggestions,
+      MAX_TAG_SUGGESTIONS,
     )
     const options: Completion[] = matches.map((tag) => ({
       apply: applyCompletion,

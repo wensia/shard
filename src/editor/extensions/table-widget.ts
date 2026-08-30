@@ -31,7 +31,7 @@ export interface TableDescriptor {
   table: MarkdownTable
 }
 
-export type TableWidgetProps = Omit<EditorTableProps, "measure">
+export type TableWidgetProps = EditorTableProps
 
 export interface TableWidgetHostApi {
   mount(container: HTMLElement, props: TableWidgetProps): void
@@ -169,7 +169,6 @@ class TableWidget extends WidgetType {
         view.dispatch({ selection: { anchor: from } })
         view.focus()
       },
-      sourceActive: false,
       sourceStart: from,
     }
   }

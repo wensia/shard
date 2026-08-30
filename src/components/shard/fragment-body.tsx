@@ -14,8 +14,6 @@ interface FragmentBodyProps {
   onTaskToggle?: (lineIndex: number) => void
   previewImages?: boolean
   renderImages?: boolean
-  selectionEnd?: number
-  selectionStart?: number
   trimEnd?: boolean
   vaultPath?: string
 }
@@ -30,8 +28,6 @@ export function FragmentBody({
   onTaskToggle,
   previewImages = true,
   renderImages = false,
-  selectionEnd,
-  selectionStart,
   trimEnd = false,
   vaultPath,
 }: FragmentBodyProps) {
@@ -44,8 +40,6 @@ export function FragmentBody({
       onTaskToggle={onTaskToggle}
       previewImages={previewImages}
       renderImages={renderImages}
-      selectionEnd={selectionEnd}
-      selectionStart={selectionStart}
       vaultPath={vaultPath}
     />
   )

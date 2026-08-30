@@ -1,7 +1,5 @@
 /* fragment-editor.tsx 专属样式。
-   只放内联 style 做不到的部分（伪类 / 动画），几何测量相关的坐标计算
-   （光标位置、滚动同步等）完全不在这里，仍然是 lib/editor-caret.ts 里的
-   JS 逻辑，本文件不涉及。
+   只放内联 style 做不到的部分（伪类 / 动画）。
    - .composerFrame 需要 :focus-within 切换描边色。
    - .spin 补回 Tailwind animate-spin 工具类卸载后缺失的加载动画。 */
 

@@ -96,16 +96,6 @@ export function applyTagCompletion(
   }
 }
 
-export function applyActiveTagCompletion(
-  value: string,
-  cursor: number
-): TextEdit | null {
-  const activeTag = getActiveTag(value, cursor)
-  if (!activeTag || !normalizeTag(activeTag.query)) return null
-
-  return applyTagCompletion(value, activeTag, activeTag.query)
-}
-
 export function applyLineFormat(
   value: string,
   selectionStart: number,

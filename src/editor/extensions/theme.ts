@@ -50,7 +50,7 @@ export function createShardEditorTheme(variant: ShardEditorProps["variant"]) {
         padding: contentPadding,
       },
       // 选区由 extensions/selection.ts 按行盒绘制；原生选区只留逻辑、不画背景。
-      // 颜色沿用旧覆盖层 .shard-editor-selection-highlight 的语义。
+      // 选区颜色保持迁移前的视觉语义。
       ".cm-content ::selection": {
         backgroundColor: "transparent",
       },

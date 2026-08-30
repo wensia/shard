@@ -1,4 +1,4 @@
-import { useRef, useState, type KeyboardEvent, type ReactNode } from "react"
+import { useRef, useState, type KeyboardEvent } from "react"
 
 import {
   withInsertedTableColumn,
@@ -20,12 +20,8 @@ interface CellDraft extends CellPosition {
 }
 
 export interface EditorTableProps {
-  /** 表格源文本的逐字符测量层，由渲染层提供，决定这块占多高 */
-  measure?: ReactNode
   onChange: (table: MarkdownTable) => void
   onExit?: () => void
-  /** textarea 的光标正落在这段源文本里：让位给源码编辑 */
-  sourceActive: boolean
   sourceStart: number
   table: MarkdownTable
 }
@@ -33,18 +29,11 @@ export interface EditorTableProps {
 /**
  * 编辑态的表格。
  *
- * 高亮层本身盖在 textarea 上方（z-index 20 / pointer-events: none），所以这里
- * 只要把交互面重新打开 pointer-events，单元格就能直接点、直接改，不需要另做
- * 一层坐标同步的浮层。
- *
- * 对齐靠 measure：透明的源文本撑出这一块的真实高度（含软换行），表格绝对定位
- * 铺在上面，因此表格后面的正文不会因为表格样式而错位，光标几何也照旧。
+ * 由 CM6 widget 挂载，单元格直接编辑并把变更写回文档。
  */
 export function EditorTable({
-  measure,
   onChange,
   onExit,
-  sourceActive,
   sourceStart,
   table,
 }: EditorTableProps) {
@@ -175,14 +164,9 @@ export function EditorTable({
   return (
     <span
       className="shard-editor-table-block"
-      data-source-active={sourceActive ? "" : undefined}
       data-table-start={sourceStart}
     >
-      {measure === undefined ? null : (
-        <span className="shard-editor-table-measure">{measure}</span>
-      )}
       <span
-        aria-hidden={sourceActive ? "true" : undefined}
         className="shard-editor-table-surface"
         ref={surfaceRef}
       >
