@@ -79,6 +79,61 @@ struct CsvFileSummary {
     path: String,
 }
 
+#[derive(Debug, Serialize, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+struct LibraryTreeEntry {
+    name: String,
+    path: String,
+    kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    children: Option<Vec<LibraryTreeEntry>>,
+}
+
+#[derive(Debug, Serialize, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+struct FragmentMonthSummary {
+    month: String,
+    count: usize,
+}
+
+#[derive(Debug, Serialize, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+struct FragmentYearSummary {
+    year: String,
+    total_count: usize,
+    months: Vec<FragmentMonthSummary>,
+}
+
+#[derive(Debug, Serialize, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+struct FragmentStreamSummary {
+    total_count: usize,
+    years: Vec<FragmentYearSummary>,
+}
+
+#[derive(Debug, Serialize, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+struct LibraryTreeSnapshot {
+    entries: Vec<LibraryTreeEntry>,
+    fragment_stream: FragmentStreamSummary,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LibraryMutationResult {
+    tree: LibraryTreeSnapshot,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    fragment: Option<Fragment>,
+    updated_links: usize,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LegacyNoteMigrationResult {
+    tree: LibraryTreeSnapshot,
+    migrated_count: usize,
+}
+
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
 #[serde(rename_all = "camelCase")]
 struct AppConfig {
@@ -438,6 +493,125 @@ async fn list_csv_files(app: tauri::AppHandle) -> Result<Vec<CsvFileSummary>, St
     run_blocking(move || {
         let vault = ensure_vault_dirs(&app)?;
         list_csv_files_in_vault(&vault)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn list_library_tree(app: tauri::AppHandle) -> Result<LibraryTreeSnapshot, String> {
+    run_blocking(move || {
+        let vault = ensure_vault_dirs(&app)?;
+        build_library_tree(&vault)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn migrate_legacy_notes(app: tauri::AppHandle) -> Result<LegacyNoteMigrationResult, String> {
+    run_blocking(move || {
+        let vault = ensure_vault_dirs(&app)?;
+        let migrated_count = migrate_legacy_notes_in_vault(&vault)?;
+        Ok(LegacyNoteMigrationResult {
+            tree: build_library_tree(&vault)?,
+            migrated_count,
+        })
+    })
+    .await
+}
+
+#[tauri::command]
+async fn create_library_note(
+    app: tauri::AppHandle,
+    title: String,
+    parent_path: Option<String>,
+) -> Result<LibraryMutationResult, String> {
+    run_blocking(move || {
+        let vault = ensure_vault_dirs(&app)?;
+        let fragment = create_library_note_in_vault(&vault, &title, parent_path.as_deref())?;
+        library_mutation_result(&vault, Some(fragment), 0)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn create_library_directory(
+    app: tauri::AppHandle,
+    name: String,
+    parent_path: Option<String>,
+) -> Result<LibraryMutationResult, String> {
+    run_blocking(move || {
+        let vault = ensure_vault_dirs(&app)?;
+        create_library_directory_in_vault(&vault, &name, parent_path.as_deref())?;
+        library_mutation_result(&vault, None, 0)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn rename_library_entry(
+    app: tauri::AppHandle,
+    path: String,
+    new_name: String,
+) -> Result<LibraryMutationResult, String> {
+    run_blocking(move || {
+        let vault = ensure_vault_dirs(&app)?;
+        let updated_links = rename_library_entry_in_vault(&vault, &path, &new_name)?;
+        library_mutation_result(&vault, None, updated_links)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn move_library_entry(
+    app: tauri::AppHandle,
+    path: String,
+    destination_directory: Option<String>,
+) -> Result<LibraryMutationResult, String> {
+    run_blocking(move || {
+        let vault = ensure_vault_dirs(&app)?;
+        move_library_entry_in_vault(&vault, &path, destination_directory.as_deref())?;
+        library_mutation_result(&vault, None, 0)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn delete_library_entry(
+    app: tauri::AppHandle,
+    path: String,
+) -> Result<LibraryMutationResult, String> {
+    run_blocking(move || {
+        let vault = ensure_vault_dirs(&app)?;
+        delete_library_entry_in_vault(&vault, &path)?;
+        library_mutation_result(&vault, None, 0)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn convert_fragment_to_note(
+    app: tauri::AppHandle,
+    id: String,
+    destination_directory: Option<String>,
+) -> Result<LibraryMutationResult, String> {
+    run_blocking(move || {
+        let vault = ensure_vault_dirs(&app)?;
+        let (fragment, updated_links) =
+            convert_fragment_to_note_in_vault(&vault, &id, destination_directory.as_deref())?;
+        library_mutation_result(&vault, Some(fragment), updated_links)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn convert_note_to_fragment(
+    app: tauri::AppHandle,
+    id: String,
+) -> Result<LibraryMutationResult, String> {
+    run_blocking(move || {
+        let vault = ensure_vault_dirs(&app)?;
+        let (fragment, updated_links) = convert_note_to_fragment_in_vault(&vault, &id)?;
+        library_mutation_result(&vault, Some(fragment), updated_links)
     })
     .await
 }
@@ -941,12 +1115,9 @@ fn write_organized_note(
     let now = Local::now();
     let id = new_fragment_id(&now);
     let created_at = now.to_rfc3339();
-    let dir = vault
-        .join("fragments")
-        .join(now.format("%Y").to_string())
-        .join(now.format("%m").to_string());
+    let dir = vault.join("notes");
     fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
-    let path = dir.join(format!("{id}.md"));
+    let path = unique_note_path(&dir, &note_title(&markdown));
 
     let sources_section = sources
         .iter()
@@ -1035,6 +1206,7 @@ fn list_fragments_in_vault(
     let mut files = Vec::new();
     collect_markdown_files(&vault.join("fragments"), &mut files)?;
     collect_markdown_files(&vault.join("archive"), &mut files)?;
+    collect_markdown_files(&vault.join("notes"), &mut files)?;
 
     let dirty_paths = dirty_paths(&vault);
     let mut fragments = files
@@ -2123,6 +2295,7 @@ fn ensure_vault_dirs(app: &tauri::AppHandle) -> Result<PathBuf, String> {
 
 fn ensure_vault_layout(vault: &Path) -> Result<(), String> {
     fs::create_dir_all(vault.join("fragments")).map_err(|error| error.to_string())?;
+    fs::create_dir_all(vault.join("notes")).map_err(|error| error.to_string())?;
     fs::create_dir_all(vault.join("archive")).map_err(|error| error.to_string())?;
     fs::create_dir_all(vault.join("assets")).map_err(|error| error.to_string())?;
     fs::create_dir_all(vault.join("maps")).map_err(|error| error.to_string())?;
@@ -2208,15 +2381,736 @@ fn collect_markdown_files(dir: &Path, files: &mut Vec<PathBuf>) -> Result<(), St
 
     for entry in fs::read_dir(dir).map_err(|error| error.to_string())? {
         let entry = entry.map_err(|error| error.to_string())?;
+        let file_type = entry.file_type().map_err(|error| error.to_string())?;
+        if file_type.is_symlink() {
+            continue;
+        }
         let path = entry.path();
-        if path.is_dir() {
+        if file_type.is_dir() {
             collect_markdown_files(&path, files)?;
-        } else if path.extension().and_then(|ext| ext.to_str()) == Some("md") {
+        } else if file_type.is_file()
+            && path.extension().and_then(|ext| ext.to_str()) == Some("md")
+        {
             files.push(path);
         }
     }
 
     Ok(())
+}
+
+fn build_library_tree(vault: &Path) -> Result<LibraryTreeSnapshot, String> {
+    Ok(LibraryTreeSnapshot {
+        entries: collect_library_entries(vault, &vault.join("notes"))?,
+        fragment_stream: summarize_fragment_stream(vault)?,
+    })
+}
+
+fn collect_library_entries(
+    vault: &Path,
+    directory: &Path,
+) -> Result<Vec<LibraryTreeEntry>, String> {
+    let mut entries = Vec::new();
+    for entry in fs::read_dir(directory).map_err(|error| error.to_string())? {
+        let entry = entry.map_err(|error| error.to_string())?;
+        let file_type = entry.file_type().map_err(|error| error.to_string())?;
+        if file_type.is_symlink() {
+            continue;
+        }
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().to_string();
+        if file_type.is_dir() {
+            entries.push(LibraryTreeEntry {
+                name,
+                path: relative_path(vault, &path)?,
+                kind: "directory".to_string(),
+                children: Some(collect_library_entries(vault, &path)?),
+            });
+        } else if file_type.is_file() {
+            let kind = match path
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .map(|extension| extension.to_ascii_lowercase())
+                .as_deref()
+            {
+                Some("md") => "markdown",
+                Some("csv") => "csv",
+                _ => continue,
+            };
+            entries.push(LibraryTreeEntry {
+                name,
+                path: relative_path(vault, &path)?,
+                kind: kind.to_string(),
+                children: None,
+            });
+        }
+    }
+    entries.sort_by(|left, right| {
+        let left_rank = if left.kind == "directory" { 0 } else { 1 };
+        let right_rank = if right.kind == "directory" { 0 } else { 1 };
+        left_rank
+            .cmp(&right_rank)
+            .then_with(|| left.name.to_lowercase().cmp(&right.name.to_lowercase()))
+    });
+    Ok(entries)
+}
+
+fn summarize_fragment_stream(vault: &Path) -> Result<FragmentStreamSummary, String> {
+    let fragments_root = vault.join("fragments");
+    let mut by_year = BTreeMap::<String, BTreeMap<String, usize>>::new();
+    if fragments_root.exists() {
+        for year_entry in fs::read_dir(&fragments_root).map_err(|error| error.to_string())? {
+            let year_entry = year_entry.map_err(|error| error.to_string())?;
+            if year_entry
+                .file_type()
+                .map_err(|error| error.to_string())?
+                .is_symlink()
+                || !year_entry.path().is_dir()
+            {
+                continue;
+            }
+            let year = year_entry.file_name().to_string_lossy().to_string();
+            if year.len() != 4 || !year.bytes().all(|byte| byte.is_ascii_digit()) {
+                continue;
+            }
+            for month_entry in fs::read_dir(year_entry.path()).map_err(|error| error.to_string())? {
+                let month_entry = month_entry.map_err(|error| error.to_string())?;
+                if month_entry
+                    .file_type()
+                    .map_err(|error| error.to_string())?
+                    .is_symlink()
+                    || !month_entry.path().is_dir()
+                {
+                    continue;
+                }
+                let month = month_entry.file_name().to_string_lossy().to_string();
+                if month.len() != 2
+                    || !month.bytes().all(|byte| byte.is_ascii_digit())
+                    || !("01"..="12").contains(&month.as_str())
+                {
+                    continue;
+                }
+                let count = fs::read_dir(month_entry.path())
+                    .map_err(|error| error.to_string())?
+                    .filter_map(Result::ok)
+                    .filter(|entry| {
+                        entry
+                            .file_type()
+                            .map(|kind| kind.is_file())
+                            .unwrap_or(false)
+                            && entry
+                                .path()
+                                .extension()
+                                .and_then(|extension| extension.to_str())
+                                == Some("md")
+                    })
+                    .count();
+                if count > 0 {
+                    by_year
+                        .entry(year.clone())
+                        .or_default()
+                        .insert(month, count);
+                }
+            }
+        }
+    }
+    let mut years = by_year
+        .into_iter()
+        .map(|(year, months)| {
+            let months = months
+                .into_iter()
+                .map(|(month, count)| FragmentMonthSummary { month, count })
+                .collect::<Vec<_>>();
+            FragmentYearSummary {
+                year,
+                total_count: months.iter().map(|month| month.count).sum(),
+                months,
+            }
+        })
+        .collect::<Vec<_>>();
+    years.sort_by(|left, right| right.year.cmp(&left.year));
+    for year in &mut years {
+        year.months
+            .sort_by(|left, right| right.month.cmp(&left.month));
+    }
+    Ok(FragmentStreamSummary {
+        total_count: years.iter().map(|year| year.total_count).sum(),
+        years,
+    })
+}
+
+fn library_mutation_result(
+    vault: &Path,
+    fragment: Option<Fragment>,
+    updated_links: usize,
+) -> Result<LibraryMutationResult, String> {
+    Ok(LibraryMutationResult {
+        tree: build_library_tree(vault)?,
+        fragment,
+        updated_links,
+    })
+}
+
+fn validate_library_name(name: &str) -> Result<&str, String> {
+    let name = name.trim();
+    if name.is_empty() || name == "." || name == ".." {
+        return Err("名称不能为空。".to_string());
+    }
+    if name.chars().any(|character| {
+        character.is_control()
+            || matches!(
+                character,
+                '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|'
+            )
+    }) {
+        return Err("名称包含不允许的路径字符。".to_string());
+    }
+    Ok(name)
+}
+
+fn library_relative_path(rel_path: &str) -> Result<&Path, String> {
+    let rel_path = rel_path.trim();
+    let path = Path::new(rel_path);
+    if rel_path.is_empty() || rel_path.contains('\\') || path.is_absolute() {
+        return Err("资料库路径必须是 notes/ 下的相对路径。".to_string());
+    }
+    let mut components = path.components();
+    if !matches!(components.next(), Some(Component::Normal(value)) if value == "notes")
+        || components.any(|component| !matches!(component, Component::Normal(_)))
+    {
+        return Err("资料库路径必须位于 notes/ 且不能包含 . 或 ..。".to_string());
+    }
+    Ok(path)
+}
+
+fn existing_library_path(vault: &Path, rel_path: &str) -> Result<PathBuf, String> {
+    let path = vault.join(library_relative_path(rel_path)?);
+    if !path.exists() {
+        return Err(format!("找不到资料库条目 {rel_path}"));
+    }
+    if fs::symlink_metadata(&path)
+        .map_err(|error| error.to_string())?
+        .file_type()
+        .is_symlink()
+    {
+        return Err("资料库操作不允许符号链接。".to_string());
+    }
+    let notes = vault
+        .join("notes")
+        .canonicalize()
+        .map_err(|error| error.to_string())?;
+    let canonical = path.canonicalize().map_err(|error| error.to_string())?;
+    if !canonical.starts_with(&notes) || canonical == notes {
+        return Err("不能操作资料库根目录或 vault 外路径。".to_string());
+    }
+    Ok(path)
+}
+
+fn existing_library_directory(vault: &Path, rel_path: Option<&str>) -> Result<PathBuf, String> {
+    let path = match rel_path.map(str::trim).filter(|path| !path.is_empty()) {
+        Some("notes") | None => vault.join("notes"),
+        Some(path) => existing_library_path(vault, path)?,
+    };
+    if !path.is_dir() {
+        return Err("目标必须是资料库目录。".to_string());
+    }
+    Ok(path)
+}
+
+fn sanitized_note_stem(title: &str) -> String {
+    let mut stem = title
+        .trim()
+        .chars()
+        .filter(|character| !character.is_control())
+        .map(|character| {
+            if matches!(
+                character,
+                '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|'
+            ) {
+                ' '
+            } else {
+                character
+            }
+        })
+        .collect::<String>();
+    stem = stem.split_whitespace().collect::<Vec<_>>().join(" ");
+    stem = stem
+        .trim_matches(|character| character == '.' || character == ' ')
+        .to_string();
+    if stem.is_empty() {
+        "未命名笔记".to_string()
+    } else {
+        stem
+    }
+}
+
+fn unique_note_path(directory: &Path, title: &str) -> PathBuf {
+    let stem = sanitized_note_stem(title);
+    let first = directory.join(format!("{stem}.md"));
+    if !first.exists() {
+        return first;
+    }
+    let mut suffix = 2;
+    loop {
+        let candidate = directory.join(format!("{stem}-{suffix}.md"));
+        if !candidate.exists() {
+            return candidate;
+        }
+        suffix += 1;
+    }
+}
+
+fn note_title(body: &str) -> String {
+    body.lines()
+        .find_map(|line| {
+            line.trim()
+                .strip_prefix("# ")
+                .map(str::trim)
+                .filter(|line| !line.is_empty())
+        })
+        .or_else(|| body.lines().map(str::trim).find(|line| !line.is_empty()))
+        .unwrap_or("未命名笔记")
+        .to_string()
+}
+
+fn create_library_note_in_vault(
+    vault: &Path,
+    title: &str,
+    directory: Option<&str>,
+) -> Result<Fragment, String> {
+    let title = title.trim();
+    if title.is_empty() {
+        return Err("笔记标题不能为空。".to_string());
+    }
+    let directory = existing_library_directory(vault, directory)?;
+    let path = unique_note_path(&directory, title);
+    let now = Local::now();
+    let created_at = now.to_rfc3339();
+    let frontmatter = FragmentFrontmatter {
+        id: new_fragment_id(&now),
+        created_at: created_at.clone(),
+        updated_at: created_at,
+        tags: vec!["note".to_string()],
+        category: None,
+        ai_status: Some("none".to_string()),
+        pinned: false,
+        source: "desktop".to_string(),
+        conflict_of: None,
+        related: Vec::new(),
+    };
+    write_fragment_file(&path, &frontmatter, &format!("# {title}"))?;
+    let rel_path = relative_path(vault, &path)?;
+    let commit_result = commit_path_if_git(vault, &rel_path, "create library note");
+    read_fragment(
+        &path,
+        vault,
+        &dirty_paths(vault),
+        commit_override_status(commit_result),
+    )
+}
+
+fn create_library_directory_in_vault(
+    vault: &Path,
+    name: &str,
+    parent: Option<&str>,
+) -> Result<(), String> {
+    let name = validate_library_name(name)?;
+    let parent = existing_library_directory(vault, parent)?;
+    let path = parent.join(name);
+    if path.exists() {
+        return Err(format!("资料库条目已存在：{name}"));
+    }
+    fs::create_dir(&path).map_err(|error| error.to_string())
+}
+
+fn rename_library_entry_in_vault(
+    vault: &Path,
+    rel_path: &str,
+    new_name: &str,
+) -> Result<usize, String> {
+    let source = existing_library_path(vault, rel_path)?;
+    let new_name = validate_library_name(new_name)?;
+    let file_type = fs::metadata(&source).map_err(|error| error.to_string())?;
+    let old_stem = source
+        .file_stem()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default()
+        .to_string();
+    let final_name = if file_type.is_file() {
+        let extension = source
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .ok_or_else(|| "只允许重命名 Markdown 或 CSV 文件。".to_string())?;
+        if !matches!(extension.to_ascii_lowercase().as_str(), "md" | "csv") {
+            return Err("只允许重命名 Markdown 或 CSV 文件。".to_string());
+        }
+        let requested = Path::new(new_name);
+        match requested.extension().and_then(|value| value.to_str()) {
+            Some(requested_extension) if requested_extension.eq_ignore_ascii_case(extension) => {
+                new_name.to_string()
+            }
+            Some(_) => return Err("重命名不能改变文件类型。".to_string()),
+            None => format!("{new_name}.{extension}"),
+        }
+    } else {
+        new_name.to_string()
+    };
+    let destination = source
+        .parent()
+        .ok_or_else(|| "资料库条目缺少父目录。".to_string())?
+        .join(final_name);
+    if destination.exists() {
+        return Err("目标名称已存在。".to_string());
+    }
+    let new_stem = destination
+        .file_stem()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default();
+    let link_updates = if file_type.is_file()
+        && destination
+            .extension()
+            .and_then(|extension| extension.to_str())
+            == Some("md")
+    {
+        plan_vault_wikilink_updates(vault, &old_stem, new_stem)?
+    } else {
+        Vec::new()
+    };
+    fs::rename(&source, &destination).map_err(|error| error.to_string())?;
+
+    let mut written = Vec::<(PathBuf, String)>::new();
+    let mut updated_links = 0;
+    for (original_path, original_text, next_text, count) in link_updates {
+        let path = if original_path == source {
+            destination.clone()
+        } else {
+            original_path
+        };
+        if let Err(error) = write_text_atomically(&path, &next_text) {
+            for (written_path, previous_text) in written.into_iter().rev() {
+                let _ = write_text_atomically(&written_path, &previous_text);
+            }
+            let _ = fs::rename(&destination, &source);
+            return Err(format!("重命名后的 wikilink 更新失败，已回滚：{error}"));
+        }
+        written.push((path, original_text));
+        updated_links += count;
+    }
+    let old_rel = rel_path.to_string();
+    let new_rel = relative_path(vault, &destination)?;
+    let mut changed_paths = vec![old_rel, new_rel];
+    for (path, _) in &written {
+        let rel_path = relative_path(vault, path)?;
+        if !changed_paths.contains(&rel_path) {
+            changed_paths.push(rel_path);
+        }
+    }
+    commit_paths_best_effort(
+        vault,
+        &changed_paths,
+        &format!("rename library entry {old_stem}"),
+    );
+    Ok(updated_links)
+}
+
+fn move_library_entry_in_vault(
+    vault: &Path,
+    rel_path: &str,
+    target_directory: Option<&str>,
+) -> Result<(), String> {
+    let source = existing_library_path(vault, rel_path)?;
+    let target_directory = existing_library_directory(vault, target_directory)?;
+    if source.is_dir() && target_directory.starts_with(&source) {
+        return Err("目录不能移动到自身内部。".to_string());
+    }
+    let destination = target_directory.join(
+        source
+            .file_name()
+            .ok_or_else(|| "资料库条目名称无效。".to_string())?,
+    );
+    if destination == source {
+        return Ok(());
+    }
+    if destination.exists() {
+        return Err("目标目录中已有同名条目。".to_string());
+    }
+    fs::rename(&source, &destination).map_err(|error| error.to_string())?;
+    commit_paths_best_effort(
+        vault,
+        &[rel_path.to_string(), relative_path(vault, &destination)?],
+        "move library entry",
+    );
+    Ok(())
+}
+
+fn delete_library_entry_in_vault(vault: &Path, rel_path: &str) -> Result<(), String> {
+    let path = existing_library_path(vault, rel_path)?;
+    if path.is_dir() {
+        if fs::read_dir(&path)
+            .map_err(|error| error.to_string())?
+            .next()
+            .is_some()
+        {
+            return Err("非空目录不能删除。".to_string());
+        }
+        fs::remove_dir(&path).map_err(|error| error.to_string())?;
+    } else {
+        fs::remove_file(&path).map_err(|error| error.to_string())?;
+    }
+    commit_paths_best_effort(vault, &[rel_path.to_string()], "delete library entry");
+    Ok(())
+}
+
+fn convert_fragment_to_note_in_vault(
+    vault: &Path,
+    id: &str,
+    directory: Option<&str>,
+) -> Result<(Fragment, usize), String> {
+    let source = find_fragment_path(vault, id)?.ok_or_else(|| format!("找不到片段 {id}"))?;
+    let source_rel = relative_path(vault, &source)?;
+    if source_rel.starts_with("notes/") {
+        return Err("该内容已经是笔记。".to_string());
+    }
+    if !source_rel.starts_with("fragments/") {
+        return Err("只有碎片流中的公开碎片可以转为笔记。".to_string());
+    }
+    let text = fs::read_to_string(&source).map_err(|error| error.to_string())?;
+    let (mut frontmatter, body) = parse_fragment_text(&text)?;
+    if !frontmatter.tags.iter().any(|tag| tag == "note") {
+        frontmatter.tags.push("note".to_string());
+        frontmatter.tags.sort();
+        frontmatter.tags.dedup();
+    }
+    frontmatter.updated_at = Local::now().to_rfc3339();
+    let directory = existing_library_directory(vault, directory)?;
+    let destination = unique_note_path(&directory, &note_title(body));
+    write_fragment_file(&destination, &frontmatter, body.trim_start_matches('\n'))?;
+    fs::remove_file(&source).map_err(|error| {
+        let _ = fs::remove_file(&destination);
+        error.to_string()
+    })?;
+    let destination_rel = relative_path(vault, &destination)?;
+    let old_target = source
+        .file_stem()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default();
+    let new_target = destination
+        .file_stem()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default();
+    let (updated_links, link_paths) = apply_vault_wikilink_updates(vault, old_target, new_target)?;
+    let mut changed_paths = vec![source_rel, destination_rel];
+    append_unique_paths(&mut changed_paths, link_paths);
+    commit_paths_best_effort(
+        vault,
+        &changed_paths,
+        &format!("convert fragment to note {id}"),
+    );
+    Ok((
+        read_fragment(&destination, vault, &dirty_paths(vault), None)?,
+        updated_links,
+    ))
+}
+
+fn convert_note_to_fragment_in_vault(vault: &Path, id: &str) -> Result<(Fragment, usize), String> {
+    let source = find_fragment_path(vault, id)?.ok_or_else(|| format!("找不到笔记 {id}"))?;
+    let source_rel = relative_path(vault, &source)?;
+    if !source_rel.starts_with("notes/") {
+        return Err("只有 notes/ 中的笔记可以转回碎片。".to_string());
+    }
+    let text = fs::read_to_string(&source).map_err(|error| error.to_string())?;
+    let (mut frontmatter, body) = parse_fragment_text(&text)?;
+    let old_stem = source
+        .file_stem()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default()
+        .to_string();
+    let old_title = note_title(body);
+    frontmatter.tags.retain(|tag| tag != "note");
+    if frontmatter.tags.is_empty() {
+        frontmatter.tags.push("inbox".to_string());
+    }
+    frontmatter.updated_at = Local::now().to_rfc3339();
+    let now = Local::now();
+    let directory = vault
+        .join("fragments")
+        .join(now.format("%Y").to_string())
+        .join(now.format("%m").to_string());
+    fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
+    let destination = directory.join(format!("{}.md", frontmatter.id));
+    if destination.exists() {
+        return Err("目标月份中已存在同 ID 碎片。".to_string());
+    }
+    write_fragment_file(&destination, &frontmatter, body.trim_start_matches('\n'))?;
+    fs::remove_file(&source).map_err(|error| {
+        let _ = fs::remove_file(&destination);
+        error.to_string()
+    })?;
+    let destination_rel = relative_path(vault, &destination)?;
+    let (mut updated_links, first_link_paths) =
+        apply_vault_wikilink_updates(vault, &old_stem, &frontmatter.id)?;
+    let mut link_paths = first_link_paths;
+    if old_title != old_stem {
+        let (title_updates, title_paths) =
+            apply_vault_wikilink_updates(vault, &old_title, &frontmatter.id)?;
+        updated_links += title_updates;
+        append_unique_paths(&mut link_paths, title_paths);
+    }
+    let mut changed_paths = vec![source_rel, destination_rel];
+    append_unique_paths(&mut changed_paths, link_paths);
+    commit_paths_best_effort(
+        vault,
+        &changed_paths,
+        &format!("convert note to fragment {id}"),
+    );
+    Ok((
+        read_fragment(&destination, vault, &dirty_paths(vault), None)?,
+        updated_links,
+    ))
+}
+
+fn migrate_legacy_notes_in_vault(vault: &Path) -> Result<usize, String> {
+    let mut files = Vec::new();
+    collect_markdown_files(&vault.join("fragments"), &mut files)?;
+    let mut migrated = 0;
+    for source in files {
+        let text = match fs::read_to_string(&source) {
+            Ok(text) => text,
+            Err(_) => continue,
+        };
+        let (frontmatter, body) = match parse_fragment_text(&text) {
+            Ok(parsed) => parsed,
+            Err(_) => continue,
+        };
+        if !frontmatter.tags.iter().any(|tag| tag == "note") {
+            continue;
+        }
+        let destination = unique_note_path(&vault.join("notes"), &note_title(body));
+        fs::rename(&source, &destination).map_err(|error| error.to_string())?;
+        commit_paths_best_effort(
+            vault,
+            &[
+                relative_path(vault, &source)?,
+                relative_path(vault, &destination)?,
+            ],
+            "migrate legacy note",
+        );
+        migrated += 1;
+    }
+    Ok(migrated)
+}
+
+fn plan_vault_wikilink_updates(
+    vault: &Path,
+    old_target: &str,
+    new_target: &str,
+) -> Result<Vec<(PathBuf, String, String, usize)>, String> {
+    if old_target == new_target {
+        return Ok(Vec::new());
+    }
+    let mut files = Vec::new();
+    collect_public_vault_markdown(vault, vault, &mut files)?;
+    let mut updates = Vec::new();
+    for path in files {
+        let text = fs::read_to_string(&path).map_err(|error| error.to_string())?;
+        let (next, count) = replace_wikilink_targets(&text, old_target, new_target);
+        if count > 0 {
+            updates.push((path, text, next, count));
+        }
+    }
+    Ok(updates)
+}
+
+fn apply_vault_wikilink_updates(
+    vault: &Path,
+    old_target: &str,
+    new_target: &str,
+) -> Result<(usize, Vec<String>), String> {
+    let updates = plan_vault_wikilink_updates(vault, old_target, new_target)?;
+    let mut written = Vec::<(PathBuf, String)>::new();
+    let mut count = 0;
+    let mut paths = Vec::new();
+    for (path, original, next, updated_count) in updates {
+        if let Err(error) = write_text_atomically(&path, &next) {
+            for (written_path, previous_text) in written.into_iter().rev() {
+                let _ = write_text_atomically(&written_path, &previous_text);
+            }
+            return Err(format!("wikilink 批量更新失败，已回滚：{error}"));
+        }
+        let rel_path = relative_path(vault, &path)?;
+        if !paths.contains(&rel_path) {
+            paths.push(rel_path);
+        }
+        written.push((path, original));
+        count += updated_count;
+    }
+    Ok((count, paths))
+}
+
+fn append_unique_paths(paths: &mut Vec<String>, additions: Vec<String>) {
+    for path in additions {
+        if !paths.contains(&path) {
+            paths.push(path);
+        }
+    }
+}
+
+fn collect_public_vault_markdown(
+    vault: &Path,
+    directory: &Path,
+    files: &mut Vec<PathBuf>,
+) -> Result<(), String> {
+    for entry in fs::read_dir(directory).map_err(|error| error.to_string())? {
+        let entry = entry.map_err(|error| error.to_string())?;
+        let file_type = entry.file_type().map_err(|error| error.to_string())?;
+        if file_type.is_symlink() {
+            continue;
+        }
+        let path = entry.path();
+        if file_type.is_dir() {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if name == ".git" || name == ".shard" || name.eq_ignore_ascii_case("lockbox") {
+                continue;
+            }
+            collect_public_vault_markdown(vault, &path, files)?;
+        } else if file_type.is_file()
+            && path.extension().and_then(|extension| extension.to_str()) == Some("md")
+            && path.starts_with(vault)
+        {
+            files.push(path);
+        }
+    }
+    Ok(())
+}
+
+fn replace_wikilink_targets(text: &str, old_target: &str, new_target: &str) -> (String, usize) {
+    let mut output = String::with_capacity(text.len());
+    let mut remaining = text;
+    let mut count = 0;
+    while let Some(open_index) = remaining.find("[[") {
+        output.push_str(&remaining[..open_index + 2]);
+        remaining = &remaining[(open_index + 2)..];
+        let Some(close_index) = remaining.find("]]") else {
+            output.push_str(remaining);
+            return (output, count);
+        };
+        let inner = &remaining[..close_index];
+        let (target, suffix) = inner
+            .find('|')
+            .map(|index| (&inner[..index], &inner[index..]))
+            .unwrap_or((inner, ""));
+        if target == old_target {
+            output.push_str(new_target);
+            output.push_str(suffix);
+            count += 1;
+        } else {
+            output.push_str(inner);
+        }
+        output.push_str("]]");
+        remaining = &remaining[(close_index + 2)..];
+    }
+    output.push_str(remaining);
+    (output, count)
 }
 
 fn collect_lockbox_files(dir: &Path, files: &mut Vec<PathBuf>) -> Result<(), String> {
@@ -3340,6 +4234,7 @@ fn find_fragment_path(vault: &Path, id: &str) -> Result<Option<PathBuf>, String>
     let mut files = Vec::new();
     collect_markdown_files(&vault.join("fragments"), &mut files)?;
     collect_markdown_files(&vault.join("archive"), &mut files)?;
+    collect_markdown_files(&vault.join("notes"), &mut files)?;
     for path in files {
         let text = fs::read_to_string(&path).map_err(|error| error.to_string())?;
         if let Ok((frontmatter, _)) = parse_fragment_text(&text) {
@@ -4997,6 +5892,15 @@ pub fn run() {
             list_fragments,
             list_mind_maps,
             list_csv_files,
+            list_library_tree,
+            migrate_legacy_notes,
+            create_library_note,
+            create_library_directory,
+            rename_library_entry,
+            move_library_entry,
+            delete_library_entry,
+            convert_fragment_to_note,
+            convert_note_to_fragment,
             read_csv_file,
             open_csv_file,
             create_mind_map,
@@ -5777,6 +6681,222 @@ mod tests {
         };
         write_fragment_file(&path, &frontmatter, body).unwrap();
         id
+    }
+
+    fn write_t6_fragment(path: &Path, id: &str, tags: Vec<&str>, body: &str) {
+        let now = Local::now().to_rfc3339();
+        let frontmatter = FragmentFrontmatter {
+            id: id.to_string(),
+            created_at: now.clone(),
+            updated_at: now,
+            tags: tags.into_iter().map(str::to_string).collect(),
+            category: None,
+            ai_status: Some("none".to_string()),
+            pinned: false,
+            source: "test".to_string(),
+            conflict_of: None,
+            related: Vec::new(),
+        };
+        write_fragment_file(path, &frontmatter, body).unwrap();
+    }
+
+    #[test]
+    fn library_tree_only_lists_notes_markdown_csv_and_aggregates_fragments() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let vault = tempdir.path();
+        ensure_vault_layout(vault).unwrap();
+        fs::create_dir_all(vault.join("notes/项目")).unwrap();
+        fs::create_dir_all(vault.join("fragments/2026/08")).unwrap();
+        fs::create_dir_all(vault.join("assets")).unwrap();
+        fs::write(vault.join("notes/项目/说明.md"), "note").unwrap();
+        fs::write(vault.join("notes/项目/数据.csv"), "a,b").unwrap();
+        fs::write(vault.join("notes/项目/忽略.txt"), "ignored").unwrap();
+        fs::write(vault.join("assets/隐藏.md"), "hidden").unwrap();
+        fs::write(vault.join("fragments/2026/08/a.md"), "a").unwrap();
+        fs::write(vault.join("fragments/2026/08/b.md"), "b").unwrap();
+
+        let tree = build_library_tree(vault).unwrap();
+
+        assert_eq!(tree.entries.len(), 1);
+        assert_eq!(tree.entries[0].kind, "directory");
+        let children = tree.entries[0].children.as_ref().unwrap();
+        assert_eq!(children.len(), 2);
+        assert!(children.iter().any(|entry| entry.kind == "markdown"));
+        assert!(children.iter().any(|entry| entry.kind == "csv"));
+        assert_eq!(tree.fragment_stream.total_count, 2);
+        assert_eq!(tree.fragment_stream.years[0].year, "2026");
+        assert_eq!(tree.fragment_stream.years[0].months[0].month, "08");
+        assert_eq!(tree.fragment_stream.years[0].months[0].count, 2);
+    }
+
+    #[test]
+    fn migrates_legacy_notes_idempotently_and_uses_collision_suffix() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let vault = tempdir.path();
+        ensure_vault_layout(vault).unwrap();
+        fs::create_dir_all(vault.join("fragments/2026/08")).unwrap();
+        fs::write(vault.join("notes/中文标题.md"), "existing").unwrap();
+        write_t6_fragment(
+            &vault.join("fragments/2026/08/legacy.md"),
+            "legacy",
+            vec!["note"],
+            "# 中文标题\n\n正文",
+        );
+
+        assert_eq!(migrate_legacy_notes_in_vault(vault).unwrap(), 1);
+        assert!(vault.join("notes/中文标题-2.md").is_file());
+        assert_eq!(migrate_legacy_notes_in_vault(vault).unwrap(), 0);
+    }
+
+    #[test]
+    fn converts_fragment_to_note_and_back_with_physical_filename_rules() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let vault = tempdir.path();
+        ensure_vault_layout(vault).unwrap();
+        fs::create_dir_all(vault.join("fragments/2026/08")).unwrap();
+        let id = "20260830-120000-aabbcc-dd0011";
+        write_t6_fragment(
+            &vault.join(format!("fragments/2026/08/{id}.md")),
+            id,
+            vec!["inbox"],
+            "# 中文/标题:示例\n\n正文",
+        );
+
+        let (note, upgraded_links) = convert_fragment_to_note_in_vault(vault, id, None).unwrap();
+        assert_eq!(upgraded_links, 0);
+        assert_eq!(note.path, "notes/中文 标题 示例.md");
+        assert!(note.tags.iter().any(|tag| tag == "note"));
+        assert!(!vault.join(format!("fragments/2026/08/{id}.md")).exists());
+
+        let (fragment, downgraded_links) = convert_note_to_fragment_in_vault(vault, id).unwrap();
+        assert_eq!(downgraded_links, 0);
+        let now = Local::now();
+        assert_eq!(
+            fragment.path,
+            format!(
+                "fragments/{}/{}/{}.md",
+                now.format("%Y"),
+                now.format("%m"),
+                id
+            )
+        );
+        assert!(!fragment.tags.iter().any(|tag| tag == "note"));
+    }
+
+    #[test]
+    fn rejects_library_path_escape_and_non_empty_directory_delete() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let vault = tempdir.path();
+        ensure_vault_layout(vault).unwrap();
+        fs::create_dir_all(vault.join("notes/目录")).unwrap();
+        fs::write(vault.join("notes/目录/note.md"), "note").unwrap();
+
+        for invalid in [
+            "",
+            "notes",
+            "../outside",
+            "notes/../outside",
+            "/tmp/outside",
+        ] {
+            assert!(existing_library_path(vault, invalid).is_err(), "{invalid}");
+        }
+        let error = delete_library_entry_in_vault(vault, "notes/目录").unwrap_err();
+        assert!(error.contains("非空目录"), "{error}");
+    }
+
+    #[test]
+    fn supports_library_create_move_and_empty_directory_delete() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let vault = tempdir.path();
+        ensure_vault_layout(vault).unwrap();
+        create_library_directory_in_vault(vault, "来源", None).unwrap();
+        create_library_directory_in_vault(vault, "目标", None).unwrap();
+        let note = create_library_note_in_vault(vault, "移动测试", Some("notes/来源")).unwrap();
+        assert_eq!(note.path, "notes/来源/移动测试.md");
+
+        move_library_entry_in_vault(
+            vault,
+            "notes/来源/移动测试.md",
+            Some("notes/目标"),
+        )
+        .unwrap();
+        assert!(vault.join("notes/目标/移动测试.md").is_file());
+        delete_library_entry_in_vault(vault, "notes/来源").unwrap();
+        assert!(!vault.join("notes/来源").exists());
+    }
+
+    #[test]
+    fn converting_between_fragment_and_note_updates_wikilink_targets() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let vault = tempdir.path();
+        ensure_vault_layout(vault).unwrap();
+        fs::create_dir_all(vault.join("fragments/2026/08")).unwrap();
+        let id = "20260830-130000-aabbcc-dd0011";
+        write_t6_fragment(
+            &vault.join(format!("fragments/2026/08/{id}.md")),
+            id,
+            vec!["inbox"],
+            "# 升级标题\n\n正文",
+        );
+        write_t6_fragment(
+            &vault.join("fragments/2026/08/ref.md"),
+            "ref",
+            vec!["inbox"],
+            &format!("[[{id}]] [[{id}|旧别名]]"),
+        );
+
+        let (_, upgraded_links) = convert_fragment_to_note_in_vault(vault, id, None).unwrap();
+        assert_eq!(upgraded_links, 2);
+        let upgraded_ref = fs::read_to_string(vault.join("fragments/2026/08/ref.md")).unwrap();
+        assert!(upgraded_ref.contains("[[升级标题]] [[升级标题|旧别名]]"));
+
+        fs::write(
+            vault.join("notes/title-ref.md"),
+            "[[升级标题]] [[升级标题|标题别名]]",
+        )
+        .unwrap();
+        let (_, downgraded_links) = convert_note_to_fragment_in_vault(vault, id).unwrap();
+        assert_eq!(downgraded_links, 4);
+        let downgraded_ref = fs::read_to_string(vault.join("fragments/2026/08/ref.md")).unwrap();
+        assert!(downgraded_ref.contains(&format!("[[{id}]] [[{id}|旧别名]]")));
+        let title_ref = fs::read_to_string(vault.join("notes/title-ref.md")).unwrap();
+        assert_eq!(title_ref, format!("[[{id}]] [[{id}|标题别名]]"));
+    }
+
+    #[test]
+    fn renaming_markdown_updates_plain_and_aliased_wikilinks_across_public_vault() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let vault = tempdir.path();
+        ensure_vault_layout(vault).unwrap();
+        fs::create_dir_all(vault.join("fragments/2026/08")).unwrap();
+        fs::create_dir_all(vault.join("lockbox/fragments")).unwrap();
+        write_t6_fragment(
+            &vault.join("notes/旧名.md"),
+            "note-id",
+            vec!["note"],
+            "# 标题",
+        );
+        write_t6_fragment(
+            &vault.join("fragments/2026/08/source.md"),
+            "source-id",
+            vec!["inbox"],
+            "[[旧名]] [[旧名|别名]] [[旧名字]]",
+        );
+        fs::write(vault.join("lockbox/fragments/secret.md"), "[[旧名]]").unwrap();
+
+        let updated = rename_library_entry_in_vault(vault, "notes/旧名.md", "新名").unwrap();
+
+        assert_eq!(updated, 2);
+        assert!(vault.join("notes/新名.md").is_file());
+        let source = fs::read_to_string(vault.join("fragments/2026/08/source.md")).unwrap();
+        assert!(
+            source.contains("[[新名]] [[新名|别名]] [[旧名字]]"),
+            "{source}"
+        );
+        assert_eq!(
+            fs::read_to_string(vault.join("lockbox/fragments/secret.md")).unwrap(),
+            "[[旧名]]"
+        );
     }
 
     #[test]

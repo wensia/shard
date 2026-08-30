@@ -59,6 +59,47 @@ export interface CsvFileSummary {
   path: string
 }
 
+export type LibraryTreeEntryKind = "directory" | "markdown" | "csv"
+
+export interface LibraryTreeEntry {
+  name: string
+  path: string
+  kind: LibraryTreeEntryKind
+  children?: LibraryTreeEntry[]
+}
+
+export interface LibraryFragmentMonth {
+  month: string
+  count: number
+}
+
+export interface LibraryFragmentYear {
+  year: string
+  totalCount: number
+  months: LibraryFragmentMonth[]
+}
+
+export interface LibraryFragmentStream {
+  totalCount: number
+  years: LibraryFragmentYear[]
+}
+
+export interface LibraryTreeSnapshot {
+  entries: LibraryTreeEntry[]
+  fragmentStream: LibraryFragmentStream
+}
+
+export interface LibraryMutationResult {
+  tree: LibraryTreeSnapshot
+  fragment?: Fragment
+  updatedLinks: number
+}
+
+export interface LegacyNoteMigrationResult {
+  tree: LibraryTreeSnapshot
+  migratedCount: number
+}
+
 export interface GithubCliInfo {
   installed: boolean
   authenticated: boolean

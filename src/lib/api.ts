@@ -14,6 +14,9 @@ import type {
   GithubCliInfo,
   GitInfo,
   LockboxSetupResult,
+  LegacyNoteMigrationResult,
+  LibraryMutationResult,
+  LibraryTreeSnapshot,
   MindMapReadResult,
   MindMapSummary,
   ShardMapFile,
@@ -26,6 +29,9 @@ type StoredVaultState = Omit<VaultState, "fragments"> & {
 }
 type StoredLockboxSetupResult = Omit<LockboxSetupResult, "vault"> & {
   vault: StoredVaultState
+}
+type StoredLibraryMutationResult = Omit<LibraryMutationResult, "fragment"> & {
+  fragment?: StoredFragment
 }
 
 export const DESKTOP_RUNTIME_MESSAGE =
@@ -85,6 +91,60 @@ export function listMindMaps() {
 
 export function listCsvFiles() {
   return desktopInvoke<CsvFileSummary[]>("list_csv_files")
+}
+
+export function listLibraryTree() {
+  return desktopInvoke<LibraryTreeSnapshot>("list_library_tree")
+}
+
+export function migrateLegacyNotes() {
+  return desktopInvoke<LegacyNoteMigrationResult>("migrate_legacy_notes")
+}
+
+function invokeLibraryMutation(command: string, args?: Record<string, unknown>) {
+  return desktopInvoke<StoredLibraryMutationResult>(command, args).then(
+    (result): LibraryMutationResult => ({
+      ...result,
+      fragment: result.fragment ? hydrateFragment(result.fragment) : undefined,
+    })
+  )
+}
+
+export function createLibraryNote(parentPath: string, title: string) {
+  return invokeLibraryMutation("create_library_note", { parentPath, title })
+}
+
+export function createLibraryDirectory(parentPath: string, name: string) {
+  return invokeLibraryMutation("create_library_directory", { parentPath, name })
+}
+
+export function renameLibraryEntry(path: string, newName: string) {
+  return invokeLibraryMutation("rename_library_entry", { path, newName })
+}
+
+export function moveLibraryEntry(path: string, destinationDirectory: string) {
+  return invokeLibraryMutation("move_library_entry", {
+    path,
+    destinationDirectory,
+  })
+}
+
+export function deleteLibraryEntry(path: string) {
+  return invokeLibraryMutation("delete_library_entry", { path })
+}
+
+export function convertFragmentToNote(
+  id: string,
+  destinationDirectory?: string
+) {
+  return invokeLibraryMutation("convert_fragment_to_note", {
+    id,
+    destinationDirectory: destinationDirectory ?? null,
+  })
+}
+
+export function convertNoteToFragment(id: string) {
+  return invokeLibraryMutation("convert_note_to_fragment", { id })
 }
 
 export function readCsvFile(path: string) {

@@ -10,6 +10,7 @@ describe("WorkspaceRoute", () => {
   it.each<WorkspaceRoute>([
     DEFAULT_WORKSPACE_ROUTE,
     { space: "fragments", params: { filter: "lockbox" } },
+    { space: "fragments", params: { filter: "inbox", month: "2026-08" } },
     { space: "library", params: {} },
     { space: "review", params: { mode: "insight" } },
   ])("remains pure data after JSON round-trip", (route) => {
@@ -22,6 +23,9 @@ describe("WorkspaceRoute", () => {
   it.each([
     null,
     { space: "fragments", params: { filter: "insight" } },
+    { space: "fragments", params: { filter: "inbox", month: "2026-8" } },
+    { space: "fragments", params: { filter: "archive", month: "2026-08" } },
+    { space: "fragments", params: { filter: "inbox", month: "2026-08", tag: "x" } },
     { space: "library", params: { noteId: "1" } },
     { space: "review", params: { mode: "archive" } },
     { space: "review", params: { mode: "walk" }, onOpen: () => undefined },

@@ -85,6 +85,148 @@
   margin-left: auto;
 }
 
+.rootButton {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: var(--space-2);
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--foreground);
+  font-size: var(--text-section-title);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-tight);
+  text-align: left;
+}
+
+.rootButton svg {
+  width: var(--space-4);
+  height: var(--space-4);
+  flex: none;
+}
+
+.rootButton:focus-visible,
+.treeButton:focus-visible,
+.treeMenuButton:focus-visible {
+  outline: none;
+  box-shadow: var(--ring-focus);
+}
+
+.treeToolbar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-2);
+  border-bottom: 1px solid var(--border);
+  padding: var(--space-2);
+}
+
+.treeViewportInner {
+  display: flex;
+  min-height: 100%;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-2);
+}
+
+.fragmentStream {
+  border-bottom: 1px solid var(--border);
+  padding-bottom: var(--space-2);
+}
+
+.tree,
+.tree ul {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-0\.5);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.tree ul {
+  padding-left: var(--space-3);
+}
+
+.treeRow {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+}
+
+.treeRow:hover,
+.treeButton:hover {
+  background: var(--muted);
+}
+
+.treeRow[data-selected="true"] {
+  border-color: color-mix(
+    in srgb,
+    var(--primary) var(--shard-alpha-21),
+    transparent
+  );
+  background: var(--primary-subtle);
+}
+
+.treeButton {
+  display: flex;
+  min-width: 0;
+  min-height: var(--control-height-sm);
+  flex: 1;
+  align-items: center;
+  gap: var(--space-2);
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  padding: var(--space-1) var(--space-2);
+  color: var(--foreground);
+  font-size: var(--text-body);
+  line-height: var(--leading-normal);
+  text-align: left;
+}
+
+.treeButton svg,
+.treeIndentIcon {
+  width: var(--space-4);
+  height: var(--space-4);
+  flex: none;
+}
+
+.treeButton[data-depth="1"] {
+  padding-left: var(--space-4);
+}
+
+.treeButton[data-depth="2"] {
+  padding-left: var(--space-8);
+}
+
+.treeLabel {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.treeCount {
+  margin-left: auto;
+  color: var(--muted-foreground);
+  font-size: var(--text-meta);
+  font-variant-numeric: tabular-nums;
+}
+
+.treeMenuButton {
+  flex: none;
+}
+
+.dialogFooter {
+  flex-direction: row;
+  justify-content: flex-end;
+}
+
 .noteListViewport,
 .editorViewport {
   min-height: 0;

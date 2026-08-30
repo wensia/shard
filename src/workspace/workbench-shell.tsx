@@ -36,15 +36,19 @@ import {
 import {
   setFragmentArchived,
   changeLockboxPassword,
+  convertFragmentToNote,
+  convertNoteToFragment,
   createFragment,
   DESKTOP_RUNTIME_MESSAGE,
   getApiErrorMessage,
   linkFragments,
   listCsvFiles,
   listFragments,
+  listLibraryTree,
   listMindMaps,
   lockLockbox,
   moveFragmentToLockbox,
+  migrateLegacyNotes,
   organizeFragments,
   pinFragment,
   restoreWindowFrame,
@@ -54,7 +58,6 @@ import {
   unlockLockbox,
   unlinkFragments,
   updateFragment,
-  updateFragmentTags,
   type OrganizeTemplate,
 } from "@/lib/api"
 import { deriveKind, isTypeTag } from "@/lib/content-kind"
@@ -77,6 +80,8 @@ import type {
   FragmentFilter,
   LockboxState,
   MindMapSummary,
+  LibraryMutationResult,
+  LibraryTreeSnapshot,
   VaultState,
 } from "@/types"
 import { FragmentsWorkspace } from "@/workspace/fragments-workspace"
@@ -179,6 +184,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
   const [activeMindMapId, setActiveMindMapId] = useState<string | null>(null)
   const [mindMaps, setMindMaps] = useState<MindMapSummary[]>([])
   const [csvFiles, setCsvFiles] = useState<CsvFileSummary[]>([])
+  const [libraryTree, setLibraryTree] = useState<LibraryTreeSnapshot | null>(null)
   const [selectedTag, setSelectedTag] = useState<string | null>(null)
   const [selectedInboxTag, setSelectedInboxTag] = useState<string | null>(null)
   const searchReturnFocusRef = useRef<HTMLElement | null>(null)
@@ -188,6 +194,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     requestId: number
   } | null>(null)
   const nextLibraryNavigationIdRef = useRef(0)
+  const migratedLibraryVaultRef = useRef<string | null>(null)
   const routeRef = useRef(route)
   const filter: FragmentFilter =
     route.space === "fragments"
@@ -205,6 +212,11 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     routeRef.current = route
     writeWorkspaceRoute(route)
   }, [route])
+
+  useEffect(() => {
+    if (route.space !== "library" || !vaultPath) return
+    void prepareLibraryTree(vaultPath)
+  }, [route.space, vaultPath])
 
   const registerLibrarySaveHandler = useCallback(
     (handler: LibrarySaveHandler | null) => {
@@ -305,6 +317,39 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     }
   }
 
+  async function refreshLibraryTree() {
+    try {
+      setLibraryTree(await listLibraryTree())
+    } catch (error) {
+      const message = getApiErrorMessage(error)
+      if (message === DESKTOP_RUNTIME_MESSAGE || isVaultNotConfigured(error)) {
+        setLibraryTree(null)
+        return
+      }
+      toast.error(`读取资料库目录失败：${message}`, { duration: Infinity })
+    }
+  }
+
+  async function prepareLibraryTree(currentVaultPath: string) {
+    if (migratedLibraryVaultRef.current !== currentVaultPath) {
+      try {
+        const migration = await migrateLegacyNotes()
+        migratedLibraryVaultRef.current = currentVaultPath
+        if (migration.migratedCount > 0) {
+          toast(`已迁移 ${migration.migratedCount} 篇旧笔记到资料库`)
+          await refreshFragments()
+          await refreshCsvFiles()
+        }
+      } catch (error) {
+        toast.error(`迁移旧笔记失败：${getApiErrorMessage(error)}`, {
+          duration: Infinity,
+        })
+        return
+      }
+    }
+    await refreshLibraryTree()
+  }
+
   function applyVaultState(state: VaultState) {
     const visibleFragments = state.lockbox.unlocked
       ? state.fragments
@@ -315,6 +360,10 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     setGit(state.git)
     setLockbox(state.lockbox)
     setVaultPath(state.vaultPath)
+    if (vaultPath && vaultPath !== state.vaultPath) {
+      setLibraryTree(null)
+      migratedLibraryVaultRef.current = null
+    }
     setNeedsVaultSetup(false)
     void refreshCsvFiles()
   }
@@ -687,16 +736,13 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
 
   async function handleToggleFragmentKind(fragment: Fragment) {
     const nextKind = fragment.kind === "note" ? "fragment" : "note"
-    const themeTags = fragment.tags.filter((tag) => !isTypeTag(tag))
-    const nextTags = nextKind === "note" ? [...themeTags, "note"] : themeTags
 
     try {
-      const updated = await updateFragmentTags(fragment.id, nextTags)
-      setFragments((current) =>
-        current.map((currentFragment) =>
-          currentFragment.id === fragment.id ? updated : currentFragment
-        )
-      )
+      const result =
+        nextKind === "note"
+          ? await convertFragmentToNote(fragment.id)
+          : await convertNoteToFragment(fragment.id)
+      handleLibraryMutation(result)
       toast(nextKind === "note" ? "已转为笔记" : "已转回碎片")
     } catch (error) {
       toast.error(
@@ -704,6 +750,20 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
         { duration: Infinity }
       )
     }
+  }
+
+  function handleLibraryMutation(result: LibraryMutationResult) {
+    setLibraryTree(result.tree)
+    if (result.fragment) {
+      setFragments((current) =>
+        sortFragmentsForDisplay([
+          result.fragment!,
+          ...current.filter((fragment) => fragment.id !== result.fragment!.id),
+        ])
+      )
+    }
+    void refreshFragments()
+    void refreshCsvFiles()
   }
 
   async function handleLinkFragment(sourceId: string, targetId: string) {
@@ -1076,6 +1136,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     setRoute({ space: "library", params: {} })
     toast("笔记已生成")
     void refreshFragments()
+    void refreshLibraryTree()
   }
 
   async function openSearch() {
@@ -1203,6 +1264,14 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     setRoute(nextRoute)
   }
 
+  async function handleSelectFragmentMonth(month: string) {
+    setSelectedInboxTag(null)
+    await handleRouteChange({
+      space: "fragments",
+      params: { filter: "inbox", month },
+    })
+  }
+
   const lockboxTagSummaries = useMemo(
     () => buildTagSummaries(lockboxFragments, []),
     [lockboxFragments]
@@ -1250,34 +1319,42 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
   }, [lockbox?.unlocked, lockboxTagSummaries, selectedLockboxTag])
 
   const filteredFragments = useMemo(() => {
+    let result: Fragment[]
     switch (filter) {
       case "tagged":
-        return selectedTag
+        result = selectedTag
           ? publicActiveFragments.filter((fragment) =>
               fragment.tags.includes(selectedTag)
             )
           : taggedFragments
+        break
       case "lockbox":
         if (!lockbox?.unlocked) return []
-        return selectedLockboxTag
+        result = selectedLockboxTag
           ? lockboxFragments.filter((fragment) =>
               fragment.tags.includes(selectedLockboxTag)
             )
           : lockboxFragments
+        break
       case "archive":
-        return archivedFragments
+        result = archivedFragments
+        break
       case "dailyReview":
       case "insight":
       case "walk":
         return []
       case "inbox":
       default:
-        return selectedInboxTag
+        result = selectedInboxTag
           ? inboxFragments.filter((fragment) =>
               fragment.tags.includes(selectedInboxTag)
             )
           : inboxFragments
+        break
     }
+
+    const month = route.space === "fragments" ? route.params.month : undefined
+    return month ? result.filter((fragment) => isFragmentInMonth(fragment, month)) : result
   }, [
     archivedFragments,
     filter,
@@ -1285,6 +1362,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     lockbox?.unlocked,
     lockboxFragments,
     publicActiveFragments,
+    route,
     selectedInboxTag,
     selectedLockboxTag,
     selectedTag,
@@ -1651,13 +1729,18 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
             csvFiles={csvFiles}
             fragments={publicActiveFragments}
             isLoading={isLoading}
+            libraryTree={libraryTree}
             knownTags={knownTags}
             navigateToNote={pendingLibraryNavigation}
             onNavigateToFragment={(fragmentId) => {
               void handleNavigateToFragment(fragmentId)
             }}
+            onLibraryMutation={handleLibraryMutation}
             onRegisterSaveHandler={registerLibrarySaveHandler}
             onSave={handleUpdateFragment}
+            onSelectFragmentMonth={(month) => {
+              void handleSelectFragmentMonth(month)
+            }}
             relationFragments={publicOnlyFragments}
           />
         )}
@@ -2035,6 +2118,16 @@ function sortFragmentsForDisplay(fragments: Fragment[]) {
     if (a.pinned !== b.pinned) return a.pinned ? -1 : 1
     return b.createdAt.localeCompare(a.createdAt)
   })
+}
+
+function isFragmentInMonth(fragment: Fragment, month: string) {
+  if (fragment.kind !== "fragment" || fragment.archived || fragment.lockbox) {
+    return false
+  }
+  const pathMonth = fragment.path.match(/^fragments\/(\d{4})\/(\d{2})\//u)
+  if (pathMonth) return `${pathMonth[1]}-${pathMonth[2]}` === month
+  if (!fragment.path.startsWith("fragments/")) return false
+  return fragment.createdAt.slice(0, 7) === month
 }
 
 function buildTagSummaries(

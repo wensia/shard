@@ -307,6 +307,34 @@ async function installTauriMock(
               }
             case "list_csv_files":
               return []
+            case "list_library_tree":
+              return {
+                entries: [],
+                fragmentStream: { totalCount: 0, years: [] },
+              }
+            case "migrate_legacy_notes":
+              return {
+                tree: {
+                  entries: [],
+                  fragmentStream: { totalCount: 0, years: [] },
+                },
+                migratedCount: 0,
+              }
+            case "create_library_note":
+            case "create_library_directory":
+            case "rename_library_entry":
+            case "move_library_entry":
+            case "delete_library_entry":
+            case "convert_fragment_to_note":
+            case "convert_note_to_fragment":
+              return {
+                tree: {
+                  entries: [],
+                  fragmentStream: { totalCount: 0, years: [] },
+                },
+                fragment: null,
+                updatedLinks: 0,
+              }
             case "plugin:app|version":
               return "0.1.3"
             case "save_fragment_image":

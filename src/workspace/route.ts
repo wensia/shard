@@ -10,7 +10,7 @@ export type ReviewWorkspaceMode = "dailyReview" | "insight" | "walk"
 
 export type FragmentsRoute = {
   space: "fragments"
-  params: { filter: FragmentWorkspaceFilter }
+  params: { filter: FragmentWorkspaceFilter; month?: string }
 }
 
 export type LibraryRoute = {
@@ -53,10 +53,22 @@ export function isWorkspaceRoute(value: unknown): value is WorkspaceRoute {
   }
 
   if (value.space === "fragments") {
-    return (
-      hasOnlyKeys(value.params, ["filter"]) &&
-      typeof value.params.filter === "string" &&
-      FRAGMENT_FILTERS.includes(value.params.filter as FragmentWorkspaceFilter)
+    const hasMonth = Object.prototype.hasOwnProperty.call(value.params, "month")
+    if (!hasOnlyKeys(value.params, hasMonth ? ["filter", "month"] : ["filter"])) {
+      return false
+    }
+
+    if (
+      typeof value.params.filter !== "string" ||
+      !FRAGMENT_FILTERS.includes(value.params.filter as FragmentWorkspaceFilter)
+    ) {
+      return false
+    }
+
+    return !hasMonth || (
+      value.params.filter === "inbox" &&
+      typeof value.params.month === "string" &&
+      /^\d{4}-(0[1-9]|1[0-2])$/u.test(value.params.month)
     )
   }
 

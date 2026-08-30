@@ -33,7 +33,7 @@ async function installWikilinkMock(page: Page) {
         updatedAt: now,
         tags: ["inbox", "note"],
         category: null,
-        path: "fragments/note-source.md",
+        path: "notes/来源笔记.md",
         gitStatus: "committed",
         error: null,
         archived: false,
@@ -54,7 +54,7 @@ async function installWikilinkMock(page: Page) {
         updatedAt: "2026-08-30T11:00:00.000Z",
         tags: ["inbox", "note"],
         category: null,
-        path: "fragments/note-target.md",
+        path: "notes/目标笔记.md",
         gitStatus: "committed",
         error: null,
         archived: false,
@@ -125,6 +125,61 @@ async function installWikilinkMock(page: Page) {
             )
             return clone(source)
           }
+          if (command === "list_library_tree") {
+            return {
+              entries: [
+                {
+                  name: "来源笔记.md",
+                  path: "notes/来源笔记.md",
+                  kind: "markdown",
+                },
+                {
+                  name: "目标笔记.md",
+                  path: "notes/目标笔记.md",
+                  kind: "markdown",
+                },
+              ],
+              fragmentStream: { totalCount: 0, years: [] },
+            }
+          }
+          if (command === "migrate_legacy_notes") {
+            return {
+              tree: {
+                entries: [
+                  {
+                    name: "来源笔记.md",
+                    path: "notes/来源笔记.md",
+                    kind: "markdown",
+                  },
+                  {
+                    name: "目标笔记.md",
+                    path: "notes/目标笔记.md",
+                    kind: "markdown",
+                  },
+                ],
+                fragmentStream: { totalCount: 0, years: [] },
+              },
+              migratedCount: 0,
+            }
+          }
+          if (
+            command === "create_library_note" ||
+            command === "create_library_directory" ||
+            command === "rename_library_entry" ||
+            command === "move_library_entry" ||
+            command === "delete_library_entry" ||
+            command === "convert_fragment_to_note" ||
+            command === "convert_note_to_fragment"
+          ) {
+            return {
+              tree: {
+                entries: [],
+                fragmentStream: { totalCount: 0, years: [] },
+              },
+              fragment: null,
+              updatedLinks: 0,
+            }
+          }
           throw new Error(`Unhandled Tauri test command: ${command}`)
         },
       },
@@ -157,7 +212,7 @@ test("链接点击复用资料库与时间线导航且不滚动 document", async
   await page.locator('[data-shard-editor="composer"] .shard-cm-wikilink').click()
   await expect(page.locator('[data-shard-editor="library:note-target"]')).toBeVisible()
 
-  await page.getByRole("button", { name: "碎片" }).click()
+  await page.getByRole("button", { name: "碎片", exact: true }).click()
   await fillEditor(page, "composer", "[[fragment-target]]")
   const documentScrollBefore = await page.evaluate(() => window.scrollY)
   await page.locator('[data-shard-editor="composer"] .shard-cm-wikilink').click()
@@ -185,9 +240,9 @@ test("断链使用待建样式，点击仅提示且编辑器可继续输入", as
 
 test("资料库保存通过现有 relation 命令同步 wikilink diff", async ({ page }) => {
   await page.getByRole("button", { name: "资料库", exact: true }).click()
-  await page.getByRole("complementary", { name: "笔记列表" }).getByRole("button", { name: /目标笔记/u }).click()
+  await page.getByRole("complementary", { name: "资料库目录" }).getByRole("button", { name: "目标笔记.md", exact: true }).click()
   await fillEditor(page, "library:note-target", "# 目标笔记\n[[fragment-target]]")
-  await page.getByRole("complementary", { name: "笔记列表" }).getByRole("button", { name: /来源笔记/u }).click()
+  await page.getByRole("complementary", { name: "资料库目录" }).getByRole("button", { name: "来源笔记.md", exact: true }).click()
 
   await expect
     .poll(() =>
@@ -214,7 +269,7 @@ test("资料库保存通过现有 relation 命令同步 wikilink diff", async ({
 
 test("资料库第三栏展示 wikilink 反向链接分组", async ({ page }) => {
   await page.getByRole("button", { name: "资料库", exact: true }).click()
-  await page.getByRole("complementary", { name: "笔记列表" }).getByRole("button", { name: /目标笔记/u }).click()
+  await page.getByRole("complementary", { name: "资料库目录" }).getByRole("button", { name: "目标笔记.md", exact: true }).click()
 
   const inspector = page.locator("[data-library-inspector-slot]")
   await expect(inspector.getByRole("region", { name: "反向链接" })).toBeVisible()

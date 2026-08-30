@@ -33,7 +33,7 @@ async function installLibraryMock(page: Page, includeNotes = true) {
               updatedAt: "2026-08-30T10:00:00.000Z",
               tags: ["inbox", "note", "work"],
               category: null,
-              path: "fragments/note-new.md",
+              path: "notes/最近更新的笔记.md",
               gitStatus: "committed",
               error: null,
               archived: false,
@@ -47,7 +47,7 @@ async function installLibraryMock(page: Page, includeNotes = true) {
               updatedAt: "2026-08-29T10:00:00.000Z",
               tags: ["inbox", "note", "notes"],
               category: null,
-              path: "fragments/note-old.md",
+              path: "notes/没有标题的旧笔记.md",
               gitStatus: "committed",
               error: null,
               archived: false,
@@ -122,6 +122,65 @@ async function installLibraryMock(page: Page, includeNotes = true) {
           }
 
           if (command === "list_csv_files") return []
+          if (command === "list_library_tree") {
+            return {
+              entries: withNotes
+                ? [
+                    {
+                      name: "最近更新的笔记.md",
+                      path: "notes/最近更新的笔记.md",
+                      kind: "markdown",
+                    },
+                    {
+                      name: "没有标题的旧笔记.md",
+                      path: "notes/没有标题的旧笔记.md",
+                      kind: "markdown",
+                    },
+                  ]
+                : [],
+              fragmentStream: { totalCount: 0, years: [] },
+            }
+          }
+          if (command === "migrate_legacy_notes") {
+            return {
+              tree: {
+                entries: withNotes
+                  ? [
+                      {
+                        name: "最近更新的笔记.md",
+                        path: "notes/最近更新的笔记.md",
+                        kind: "markdown",
+                      },
+                      {
+                        name: "没有标题的旧笔记.md",
+                        path: "notes/没有标题的旧笔记.md",
+                        kind: "markdown",
+                      },
+                    ]
+                  : [],
+                fragmentStream: { totalCount: 0, years: [] },
+              },
+              migratedCount: 0,
+            }
+          }
+          if (
+            command === "create_library_note" ||
+            command === "create_library_directory" ||
+            command === "rename_library_entry" ||
+            command === "move_library_entry" ||
+            command === "delete_library_entry" ||
+            command === "convert_fragment_to_note" ||
+            command === "convert_note_to_fragment"
+          ) {
+            return {
+              tree: {
+                entries: [],
+                fragmentStream: { totalCount: 0, years: [] },
+              },
+              fragment: null,
+              updatedLinks: 0,
+            }
+          }
           throw new Error(`Unhandled Tauri test command: ${command}`)
         },
       },
@@ -158,23 +217,29 @@ test("捕捉门禁：冷启动可输入保存并在时间线看见新条目", as
   await expect.poll(() => readEditor(page, "composer")).toBe("")
 })
 
-test("资料库按更新时间列笔记，并在切笔记、切空间与捕捉时自动保存", async ({
+test("资料库文件树选择笔记，并在切笔记、切空间与捕捉时自动保存", async ({
   page,
 }) => {
   await installLibraryMock(page)
   await page.goto("/")
   await page.getByRole("button", { name: "资料库", exact: true }).click()
 
-  const list = page.getByRole("complementary", { name: "笔记列表" })
-  const noteButtons = list.locator("button")
-  await expect(noteButtons).toHaveCount(2)
-  await expect(noteButtons.nth(0)).toContainText("最近更新的笔记")
-  await expect(noteButtons.nth(0)).toContainText("#work")
-  await expect(noteButtons.nth(1)).toContainText("没有标题的旧笔记")
+  const list = page.getByRole("complementary", { name: "资料库目录" })
+  const newestNote = list.getByRole("button", {
+    name: "最近更新的笔记.md",
+    exact: true,
+  })
+  const oldestNote = list.getByRole("button", {
+    name: "没有标题的旧笔记.md",
+    exact: true,
+  })
+  await expect(newestNote).toBeVisible()
+  await expect(oldestNote).toBeVisible()
   await expect(page.locator("[data-library-inspector-slot]")).toBeVisible()
 
+  await newestNote.click()
   await fillEditor(page, "library:note-new", "# 已自动保存的新标题\n正文 #work")
-  await noteButtons.nth(1).click()
+  await oldestNote.click()
   await expect.poll(() => getUpdateCalls(page)).toHaveLength(1)
   expect((await getUpdateCalls(page))[0].args).toMatchObject({
     id: "note-new",
@@ -187,11 +252,12 @@ test("资料库按更新时间列笔记，并在切笔记、切空间与捕捉�
   )
 
   await fillEditor(page, "library:note-old", "旧笔记离开空间前保存 #notes")
-  await page.getByRole("button", { name: "碎片" }).click()
+  await page.getByRole("button", { name: "碎片", exact: true }).click()
   await expect.poll(() => getUpdateCalls(page)).toHaveLength(2)
   await expect(page.locator('[data-shard-editor="composer"]')).toBeVisible()
 
   await page.getByRole("button", { name: "资料库", exact: true }).click()
+  await newestNote.click()
   await fillEditor(page, "library:note-new", "捕捉事件前保存 #work")
   await page.keyboard.press("ControlOrMeta+n")
   await expect.poll(() => getUpdateCalls(page)).toHaveLength(3)
@@ -214,17 +280,19 @@ test("窄屏资料库使用列表与编辑器两级导航", async ({ page }) => 
   await page.goto("/")
   await page.getByRole("button", { name: "资料库", exact: true }).click()
 
-  const list = page.getByRole("complementary", { name: "笔记列表" })
+  const list = page.getByRole("complementary", { name: "资料库目录" })
   const editor = page.getByRole("article", { name: "笔记编辑器" })
   await expect(list).toBeVisible()
   await expect(editor).toBeHidden()
 
-  await list.getByRole("button").first().click()
+  await list
+    .getByRole("button", { name: "最近更新的笔记.md", exact: true })
+    .click()
   await expect(list).toBeHidden()
   await expect(editor).toBeVisible()
-  await expect(page.getByRole("button", { name: "返回笔记列表" })).toBeVisible()
+  await expect(page.getByRole("button", { name: "返回资料库目录" })).toBeVisible()
 
-  await page.getByRole("button", { name: "返回笔记列表" }).click()
+  await page.getByRole("button", { name: "返回资料库目录" }).click()
   await expect(list).toBeVisible()
   await expect(editor).toBeHidden()
 })

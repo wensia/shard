@@ -81,7 +81,7 @@ async function installOrganizeMock(page: Page, mode: OrganizeMockMode) {
         updatedAt: now,
         tags: ["note"],
         category: null,
-        path: "fragments/2026/08/note-organized.md",
+        path: "notes/访谈问题与行动建议.md",
         gitStatus: "untracked",
         error: null,
         archived: false,
@@ -152,6 +152,51 @@ async function installOrganizeMock(page: Page, mode: OrganizeMockMode) {
           }
 
           if (command === "list_csv_files") return []
+          if (command === "list_library_tree") {
+            return {
+              entries: fragments
+                .filter((fragment) => fragment.tags.includes("note"))
+                .map((fragment) => ({
+                  name: "访谈问题与行动建议.md",
+                  path: fragment.path,
+                  kind: "markdown",
+                })),
+              fragmentStream: { totalCount: 0, years: [] },
+            }
+          }
+          if (command === "migrate_legacy_notes") {
+            return {
+              tree: {
+                entries: fragments
+                  .filter((fragment) => fragment.tags.includes("note"))
+                  .map((fragment) => ({
+                    name: "访谈问题与行动建议.md",
+                    path: fragment.path,
+                    kind: "markdown",
+                  })),
+                fragmentStream: { totalCount: 0, years: [] },
+              },
+              migratedCount: 0,
+            }
+          }
+          if (
+            command === "create_library_note" ||
+            command === "create_library_directory" ||
+            command === "rename_library_entry" ||
+            command === "move_library_entry" ||
+            command === "delete_library_entry" ||
+            command === "convert_fragment_to_note" ||
+            command === "convert_note_to_fragment"
+          ) {
+            return {
+              tree: {
+                entries: [],
+                fragmentStream: { totalCount: 0, years: [] },
+              },
+              fragment: null,
+              updatedLinks: 0,
+            }
+          }
           throw new Error(`Unhandled Tauri test command: ${command}`)
         },
       },
@@ -236,10 +281,12 @@ test("多选公开碎片并以模板生成笔记，生成中保持局部进度�
 
   await expect(page.getByRole("heading", { name: "资料库" })).toBeVisible()
   await expect(
-    page.getByRole("complementary", { name: "笔记列表" }).getByText(
-      "访谈问题与行动建议",
-      { exact: true }
-    )
+    page
+      .getByRole("complementary", { name: "资料库目录" })
+      .getByRole("button", {
+        name: "访谈问题与行动建议.md",
+        exact: true,
+      })
   ).toBeVisible()
   await expect(
     page.locator('[data-shard-editor="library:note-organized"]')

@@ -37,6 +37,7 @@ async function installCsvPreviewMock(page: Page) {
       fragment("timeline-link", "普通链接：[[data/large.csv]]"),
       fragment("timeline-slow", "![[data/slow.csv]]"),
     ]
+    fragments[0].path = "notes/CSV 资料笔记.md"
     const csvFiles = [
       { name: "large.csv", path: "data/large.csv" },
       { name: "wide.csv", path: "data/wide.csv" },
@@ -115,6 +116,51 @@ async function installCsvPreviewMock(page: Page) {
             throw new Error(`找不到 CSV 文件 ${path}`)
           }
           if (command === "open_csv_file") return null
+          if (command === "list_library_tree") {
+            return {
+              entries: [
+                {
+                  name: "CSV 资料笔记.md",
+                  path: "notes/CSV 资料笔记.md",
+                  kind: "markdown",
+                },
+              ],
+              fragmentStream: { totalCount: 0, years: [] },
+            }
+          }
+          if (command === "migrate_legacy_notes") {
+            return {
+              tree: {
+                entries: [
+                  {
+                    name: "CSV 资料笔记.md",
+                    path: "notes/CSV 资料笔记.md",
+                    kind: "markdown",
+                  },
+                ],
+                fragmentStream: { totalCount: 0, years: [] },
+              },
+              migratedCount: 0,
+            }
+          }
+          if (
+            command === "create_library_note" ||
+            command === "create_library_directory" ||
+            command === "rename_library_entry" ||
+            command === "move_library_entry" ||
+            command === "delete_library_entry" ||
+            command === "convert_fragment_to_note" ||
+            command === "convert_note_to_fragment"
+          ) {
+            return {
+              tree: {
+                entries: [],
+                fragmentStream: { totalCount: 0, years: [] },
+              },
+              fragment: null,
+              updatedLinks: 0,
+            }
+          }
 
           throw new Error(`Unhandled Tauri test command: ${command}`)
         },
@@ -151,8 +197,10 @@ test.beforeEach(async ({ page }) => {
 
 test("资料库与 Zen 的 CSV 嵌入预览最多展示 50 行", async ({ page }) => {
   await page.getByRole("button", { name: "资料库", exact: true }).click()
-  const noteList = page.getByRole("complementary", { name: "笔记列表" })
-  await noteList.getByRole("button", { name: /CSV 资料笔记/u }).click()
+  const noteList = page.getByRole("complementary", { name: "资料库目录" })
+  await noteList
+    .getByRole("button", { name: "CSV 资料笔记.md", exact: true })
+    .click()
 
   const libraryEditor = page.locator('[data-shard-editor="library:note-csv"]')
   await expect(csvPreview(libraryEditor, "data/large.csv")).toHaveAttribute(
