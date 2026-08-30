@@ -6,7 +6,7 @@ import {
   useRef,
   useState,
 } from "react"
-import { Loader2Icon, SendHorizontalIcon } from "lucide-react"
+import { Loader2Icon, LockKeyholeIcon, SendHorizontalIcon } from "lucide-react"
 import { startCompletion } from "@codemirror/autocomplete"
 import { isTauri } from "@tauri-apps/api/core"
 import { open } from "@tauri-apps/plugin-dialog"
@@ -105,6 +105,7 @@ export function CaptureBox({
     () => normalizeTagList(knownTags.filter((tag) => tag !== "inbox")),
     [knownTags]
   )
+  const willSaveToLockbox = useMemo(() => wantsLockbox(content, []), [content])
   const knownTagsRef = useRef(normalizedKnownTags)
   knownTagsRef.current = normalizedKnownTags
   const wikilinkCandidates = useMemo(
@@ -590,20 +591,31 @@ export function CaptureBox({
             onLineFormat={formatLines}
             onOpenZen={onOpenZen ? openZenEditor : undefined}
             trailing={
-              <ToolbarIconButton
-                className="shard-edge-action"
-                disabled={!canSubmit}
-                label={isCreating ? "保存中" : "保存片段"}
-                onClick={() => void submit()}
-                type="button"
-                variant="primary"
-              >
-                {isCreating ? (
-                  <Loader2Icon className={styles.spin} />
-                ) : (
-                  <SendHorizontalIcon />
-                )}
-              </ToolbarIconButton>
+              <>
+                {willSaveToLockbox ? (
+                  <span
+                    className="shard-tag shard-tag-lockbox"
+                    style={{ flexShrink: 0, fontWeight: 500 }}
+                  >
+                    <LockKeyholeIcon strokeWidth={1.75} />
+                    将保存到密匣
+                  </span>
+                ) : null}
+                <ToolbarIconButton
+                  className="shard-edge-action"
+                  disabled={!canSubmit}
+                  label={isCreating ? "保存中" : "保存片段"}
+                  onClick={() => void submit()}
+                  type="button"
+                  variant="primary"
+                >
+                  {isCreating ? (
+                    <Loader2Icon className={styles.spin} />
+                  ) : (
+                    <SendHorizontalIcon />
+                  )}
+                </ToolbarIconButton>
+              </>
             }
           />
         </div>

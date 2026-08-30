@@ -10,7 +10,7 @@ import { isTauri } from "@tauri-apps/api/core"
 import { open } from "@tauri-apps/plugin-dialog"
 import { startCompletion } from "@codemirror/autocomplete"
 import { keymap } from "@codemirror/view"
-import { Loader2Icon, SendHorizontalIcon, XIcon } from "lucide-react"
+import { Loader2Icon, LockKeyholeIcon, SendHorizontalIcon, XIcon } from "lucide-react"
 import { toast } from "sonner"
 
 import { EditorToolbar } from "@/components/shard/editor-toolbar"
@@ -687,6 +687,9 @@ export function FragmentEditor({
     ) : null
   const canSubmit = saveState !== "saving" && draftContent.trim().length > 0
   const characterCount = Array.from(content.replace(/\s/g, "")).length
+  // 公开笔记里出现 #密匣 意味着保存时会加密搬家，提前亮出目的地
+  const willRouteToLockbox =
+    !fragment?.lockbox && wantsLockbox(content, fragment?.tags ?? [])
   const lineCount = content.length > 0 ? content.split(/\r\n?|\n/).length : 0
   const editorFrame = (
     <div
@@ -759,6 +762,15 @@ export function FragmentEditor({
             onLineFormat={formatLines}
             trailing={
               <>
+                {willRouteToLockbox ? (
+                  <span
+                    className="shard-tag shard-tag-lockbox"
+                    style={{ flexShrink: 0, fontWeight: 500 }}
+                  >
+                    <LockKeyholeIcon strokeWidth={1.75} />
+                    {fragment ? "将移入密匣" : "将保存到密匣"}
+                  </span>
+                ) : null}
                 <span
                   aria-hidden="true"
                   style={{
@@ -878,6 +890,15 @@ export function FragmentEditor({
             onLineFormat={formatLines}
             trailing={
               <>
+                {willRouteToLockbox ? (
+                  <span
+                    className="shard-tag shard-tag-lockbox"
+                    style={{ flexShrink: 0, fontWeight: 500 }}
+                  >
+                    <LockKeyholeIcon strokeWidth={1.75} />
+                    {fragment ? "将移入密匣" : "将保存到密匣"}
+                  </span>
+                ) : null}
                 <span
                   aria-hidden="true"
                   style={{

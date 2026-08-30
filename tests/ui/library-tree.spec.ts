@@ -336,22 +336,31 @@ test("目录树 MVP 支持新建、重命名、菜单移动和非空目录删除
   const treePane = page.getByRole("complementary", { name: "资料库目录" })
 
   await treePane.getByRole("button", { name: "新建目录", exact: true }).click()
-  let dialog = page.getByRole("dialog", { name: "新建目录" })
-  await dialog.getByLabel("名称", { exact: true }).fill("空目录")
-  await dialog.getByRole("button", { name: "确认", exact: true }).click()
+  const dirInput = treePane.getByRole("textbox", {
+    name: "新目录名称",
+    exact: true,
+  })
+  await dirInput.fill("空目录")
+  await dirInput.press("Enter")
   await expect(treePane.getByRole("button", { name: "空目录", exact: true })).toBeVisible()
 
   await treePane.getByRole("button", { name: "新建笔记", exact: true }).click()
-  dialog = page.getByRole("dialog", { name: "新建笔记" })
-  await dialog.getByLabel("笔记标题", { exact: true }).fill("新笔记")
-  await dialog.getByRole("button", { name: "确认", exact: true }).click()
-  await expect(treePane.getByRole("button", { name: "新笔记.md", exact: true })).toBeVisible()
+  const noteNameInput = treePane.getByRole("textbox", {
+    name: "重命名名称",
+    exact: true,
+  })
+  await expect(noteNameInput).toHaveValue("未命名")
+  await noteNameInput.press("Escape")
+  await expect(treePane.getByRole("button", { name: "未命名.md", exact: true })).toBeVisible()
 
-  await treePane.getByRole("button", { name: "新笔记.md 操作", exact: true }).click()
-  await page.getByRole("menuitem", { name: "重命名", exact: true }).click()
-  dialog = page.getByRole("dialog", { name: "重命名" })
-  await dialog.getByLabel("名称", { exact: true }).fill("已改名")
-  await dialog.getByRole("button", { name: "确认", exact: true }).click()
+  await treePane.getByRole("button", { name: "未命名.md", exact: true }).click()
+  await page.getByRole("button", { name: "重命名文件", exact: true }).click()
+  const editorRenameInput = page.getByRole("textbox", {
+    name: "重命名名称",
+    exact: true,
+  })
+  await editorRenameInput.fill("已改名")
+  await editorRenameInput.press("Enter")
   await expect(treePane.getByRole("button", { name: "已改名.md", exact: true })).toBeVisible()
 
   await treePane.getByRole("button", { name: "已改名.md 操作", exact: true }).click()
@@ -367,7 +376,7 @@ test("目录树 MVP 支持新建、重命名、菜单移动和非空目录删除
 
   await treePane.getByRole("button", { name: "空目录 操作", exact: true }).click()
   await page.getByRole("menuitem", { name: "删除", exact: true }).last().click()
-  dialog = page.getByRole("dialog", { name: "确认删除" })
+  const dialog = page.getByRole("dialog", { name: "确认删除" })
   await dialog.getByRole("button", { name: "删除", exact: true }).click()
   await expect.poll(() => commandCalls(page, "delete_library_entry")).toHaveLength(1)
   await expect(treePane.getByRole("button", { name: "空目录", exact: true })).toHaveCount(0)
@@ -377,11 +386,11 @@ test("目录树 MVP 支持新建、重命名、菜单移动和非空目录删除
   })
   expect((await commandCalls(page, "create_library_note"))[0].args).toEqual({
     parentPath: "notes",
-    title: "新笔记",
+    title: "未命名",
   })
   expect((await commandCalls(page, "rename_library_entry"))[0].args).toEqual({
     newName: "已改名",
-    path: "notes/新笔记.md",
+    path: "notes/未命名.md",
   })
   expect((await commandCalls(page, "move_library_entry"))[0].args).toEqual({
     destinationDirectory: "notes/项目",
@@ -395,9 +404,12 @@ test("重命名批量更新旧 wikilink 后仍可从别名链接导航", async (
 
   await treePane.getByRole("button", { name: "旧笔记.md 操作", exact: true }).click()
   await page.getByRole("menuitem", { name: "重命名", exact: true }).click()
-  const dialog = page.getByRole("dialog", { name: "重命名" })
-  await dialog.getByLabel("名称", { exact: true }).fill("新笔记")
-  await dialog.getByRole("button", { name: "确认", exact: true }).click()
+  const renameInput = treePane.getByRole("textbox", {
+    name: "重命名名称",
+    exact: true,
+  })
+  await renameInput.fill("新笔记")
+  await renameInput.press("Enter")
   await expect(page.getByText("已更新 1 处双链引用", { exact: true })).toBeVisible()
   expect((await commandCalls(page, "rename_library_entry"))[0].args).toEqual({
     newName: "新笔记",

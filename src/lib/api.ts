@@ -2,6 +2,7 @@ import { invoke, isTauri } from "@tauri-apps/api/core"
 
 import { deriveKind } from "@/lib/content-kind"
 import type {
+  CheckpointResult,
   AiAgentKind,
   AiAgentStatus,
   CodexInsightLens,
@@ -384,4 +385,8 @@ export function createGithubVaultRepo(repoName: string) {
 
 export function syncVault() {
   return desktopInvoke<GitInfo>("sync_vault")
+}
+
+export function checkpointVault(trigger?: string) {
+  return desktopInvoke<CheckpointResult>("checkpoint_vault", { trigger })
 }

@@ -13,13 +13,13 @@ use rsa::{
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
-    collections::{BTreeMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     env, fs,
     fs::File,
     io::Write,
     path::{Component, Path, PathBuf},
     process::{Command, Stdio},
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, OnceLock},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tauri::Manager;
@@ -41,6 +41,21 @@ const SHARD_MAP_SCHEMA_VERSION: u32 = 1;
 const SHARD_MAP_MAX_NODES: usize = 400;
 const SHARD_MAP_MAX_NODE_TEXT_CHARS: usize = 2_000;
 const CSV_GIT_PATHSPEC: &str = ":(glob,icase)**/*.csv";
+
+/// Shard 托管的 vault 根目录。提交、脏检测、检查点、计数必须共用这一份清单——
+/// 目录在多处手写曾造成 notes 完全不入 git 状态的盲区。
+const MANAGED_VAULT_ROOTS: &[&str] = &[
+    "fragments", "notes", "archive", "assets", "maps", "lockbox", ".shard",
+];
+
+fn managed_pathspecs() -> Vec<String> {
+    let mut specs: Vec<String> = MANAGED_VAULT_ROOTS
+        .iter()
+        .map(|root| (*root).to_string())
+        .collect();
+    specs.push(CSV_GIT_PATHSPEC.to_string());
+    specs
+}
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -466,6 +481,30 @@ where
         .map_err(|error| format!("后台任务失败：{error}"))?
 }
 
+/// vault 级操作门。`run_blocking` 是裸线程池，命令之间没有任何隐式串行化：
+/// 保存、结构性多文件事务（rename→wikilink→commit）、检查点与同步的
+/// commit/pull 临界段可以并发交错，产生半成品提交或互抢 git index。
+/// 所有写 vault 的命令在拿到 vault 路径后必须立刻持门；纯读命令不持门。
+/// 网络阶段（push / ls-remote）必须放在门外，避免长网络延迟阻塞编辑保存。
+fn vault_gate(vault: &Path) -> &'static Mutex<()> {
+    static GATES: OnceLock<Mutex<HashMap<PathBuf, &'static Mutex<()>>>> = OnceLock::new();
+    let registry = GATES.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut registry = registry
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    registry
+        .entry(vault.to_path_buf())
+        .or_insert_with(|| Box::leak(Box::new(Mutex::new(()))))
+}
+
+/// 门内不可重入：持门代码不得再调用本函数（会自死锁）。
+/// 惯例：只在命令体最外层与 push_vault/checkpoint 的临界段取门，内部 helper 一律不取。
+fn lock_vault_gate(vault: &Path) -> std::sync::MutexGuard<'static, ()> {
+    vault_gate(vault)
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 #[tauri::command]
 async fn list_fragments(
     app: tauri::AppHandle,
@@ -510,6 +549,8 @@ async fn list_library_tree(app: tauri::AppHandle) -> Result<LibraryTreeSnapshot,
 async fn migrate_legacy_notes(app: tauri::AppHandle) -> Result<LegacyNoteMigrationResult, String> {
     run_blocking(move || {
         let vault = ensure_vault_dirs(&app)?;
+        let _gate = lock_vault_gate(&vault);
+        checkpoint_before_structural_locked(&vault);
         let migrated_count = migrate_legacy_notes_in_vault(&vault)?;
         Ok(LegacyNoteMigrationResult {
             tree: build_library_tree(&vault)?,
@@ -527,6 +568,7 @@ async fn create_library_note(
 ) -> Result<LibraryMutationResult, String> {
     run_blocking(move || {
         let vault = ensure_vault_dirs(&app)?;
+        let _gate = lock_vault_gate(&vault);
         let fragment = create_library_note_in_vault(&vault, &title, parent_path.as_deref())?;
         library_mutation_result(&vault, Some(fragment), 0)
     })
@@ -541,6 +583,7 @@ async fn create_library_directory(
 ) -> Result<LibraryMutationResult, String> {
     run_blocking(move || {
         let vault = ensure_vault_dirs(&app)?;
+        let _gate = lock_vault_gate(&vault);
         create_library_directory_in_vault(&vault, &name, parent_path.as_deref())?;
         library_mutation_result(&vault, None, 0)
     })
@@ -555,6 +598,8 @@ async fn rename_library_entry(
 ) -> Result<LibraryMutationResult, String> {
     run_blocking(move || {
         let vault = ensure_vault_dirs(&app)?;
+        let _gate = lock_vault_gate(&vault);
+        checkpoint_before_structural_locked(&vault);
         let updated_links = rename_library_entry_in_vault(&vault, &path, &new_name)?;
         library_mutation_result(&vault, None, updated_links)
     })
@@ -569,6 +614,8 @@ async fn move_library_entry(
 ) -> Result<LibraryMutationResult, String> {
     run_blocking(move || {
         let vault = ensure_vault_dirs(&app)?;
+        let _gate = lock_vault_gate(&vault);
+        checkpoint_before_structural_locked(&vault);
         move_library_entry_in_vault(&vault, &path, destination_directory.as_deref())?;
         library_mutation_result(&vault, None, 0)
     })
@@ -582,6 +629,8 @@ async fn delete_library_entry(
 ) -> Result<LibraryMutationResult, String> {
     run_blocking(move || {
         let vault = ensure_vault_dirs(&app)?;
+        let _gate = lock_vault_gate(&vault);
+        checkpoint_before_structural_locked(&vault);
         delete_library_entry_in_vault(&vault, &path)?;
         library_mutation_result(&vault, None, 0)
     })
@@ -596,6 +645,8 @@ async fn convert_fragment_to_note(
 ) -> Result<LibraryMutationResult, String> {
     run_blocking(move || {
         let vault = ensure_vault_dirs(&app)?;
+        let _gate = lock_vault_gate(&vault);
+        checkpoint_before_structural_locked(&vault);
         let (fragment, updated_links) =
             convert_fragment_to_note_in_vault(&vault, &id, destination_directory.as_deref())?;
         library_mutation_result(&vault, Some(fragment), updated_links)
@@ -610,6 +661,8 @@ async fn convert_note_to_fragment(
 ) -> Result<LibraryMutationResult, String> {
     run_blocking(move || {
         let vault = ensure_vault_dirs(&app)?;
+        let _gate = lock_vault_gate(&vault);
+        checkpoint_before_structural_locked(&vault);
         let (fragment, updated_links) = convert_note_to_fragment_in_vault(&vault, &id)?;
         library_mutation_result(&vault, Some(fragment), updated_links)
     })
@@ -644,6 +697,7 @@ async fn create_mind_map(
 ) -> Result<MindMapReadResult, String> {
     run_blocking(move || {
         let vault = ensure_vault_dirs(&app)?;
+        let _gate = lock_vault_gate(&vault);
         create_mind_map_in_vault(&vault, title, source_fragment_id)
     })
     .await
@@ -668,6 +722,7 @@ async fn write_mind_map(
 ) -> Result<MindMapReadResult, String> {
     run_blocking(move || {
         let vault = ensure_vault_dirs(&app)?;
+        let _gate = lock_vault_gate(&vault);
         write_mind_map_in_vault(&vault, &id, file, expected_revision, &last_saved_hash)
     })
     .await
@@ -681,6 +736,7 @@ async fn delete_mind_map(
 ) -> Result<Vec<MindMapSummary>, String> {
     run_blocking(move || {
         let vault = ensure_vault_dirs(&app)?;
+        let _gate = lock_vault_gate(&vault);
         delete_mind_map_in_vault(&vault, &id, expected_revision)?;
         list_mind_maps_in_vault(&vault)
     })
@@ -697,6 +753,7 @@ async fn link_fragments(
 ) -> Result<Fragment, String> {
     run_blocking(move || {
         let vault = ensure_vault_dirs(&app)?;
+        let _gate = lock_vault_gate(&vault);
         link_fragments_in_vault(&vault, &source_id, &target_id, &origin, note)
     })
     .await
@@ -710,6 +767,7 @@ async fn unlink_fragments(
 ) -> Result<Fragment, String> {
     run_blocking(move || {
         let vault = ensure_vault_dirs(&app)?;
+        let _gate = lock_vault_gate(&vault);
         unlink_fragments_in_vault(&vault, &source_id, &target_id)
     })
     .await
@@ -755,6 +813,7 @@ async fn initialize_vault_git(
     let lockbox_runtime = lockbox_runtime.inner().clone();
     run_blocking(move || {
         let vault = ensure_vault_dirs(&app)?;
+        let _gate = lock_vault_gate(&vault);
         ensure_git_repo(&vault)?;
         list_fragments_in_vault(&vault, &lockbox_runtime)
     })
@@ -775,6 +834,7 @@ async fn set_vault_remote(
         }
 
         let vault = ensure_vault_dirs(&app)?;
+        let _gate = lock_vault_gate(&vault);
         ensure_git_repo(&vault)?;
 
         let remotes = git_remotes(&vault);
@@ -1147,14 +1207,9 @@ fn write_organized_note(
     };
     write_fragment_file(&path, &frontmatter, &body)?;
 
-    let rel_path = relative_path(vault, &path)?;
-    let commit_result = commit_path_if_git(
-        vault,
-        &rel_path,
-        &format!("organize fragments into note {}", id),
-    );
     let dirty = dirty_paths(vault);
-    let override_status = commit_override_status(commit_result);
+    // 内容保存只落盘，提交由聚合检查点接管（docs/design/commit-coalescing-plan.md §7 A2）
+    let override_status = None;
     read_fragment(&path, vault, &dirty, override_status)
 }
 
@@ -1339,14 +1394,6 @@ fn create_mind_map_in_vault(
     let text = canonical_mind_map_text(&file)?;
     write_text_atomically(&path, &text)?;
     write_mind_map_last_good(vault, &file)?;
-    commit_paths_best_effort(
-        vault,
-        &[
-            relative_path(vault, &path)?,
-            mind_map_last_good_rel_path(&file),
-        ],
-        &format!("create mind map {}", file.id),
-    );
     mind_map_read_result(vault, &path, file, text)
 }
 
@@ -1374,11 +1421,6 @@ fn write_mind_map_in_vault(
 
     if current_file.revision != expected_revision || current_hash != last_saved_hash {
         let conflict_path = write_mind_map_conflict(vault, &file)?;
-        commit_paths_best_effort(
-            vault,
-            &[relative_path(vault, &conflict_path)?],
-            &format!("preserve mind map conflict {}", file.id),
-        );
         return Err(format!(
             "导图已被外部修改，已另存冲突副本：{}",
             relative_path(vault, &conflict_path)?
@@ -1395,14 +1437,6 @@ fn write_mind_map_in_vault(
     let text = canonical_mind_map_text(&file)?;
     write_text_atomically(&path, &text)?;
     write_mind_map_last_good(vault, &file)?;
-    commit_paths_best_effort(
-        vault,
-        &[
-            relative_path(vault, &path)?,
-            mind_map_last_good_rel_path(&file),
-        ],
-        &format!("update mind map {}", file.id),
-    );
     mind_map_read_result(vault, &path, file, text)
 }
 
@@ -1412,17 +1446,11 @@ fn delete_mind_map_in_vault(vault: &Path, id: &str, expected_revision: u64) -> R
     if file.revision != expected_revision {
         return Err("导图已被外部修改，请重新打开后再删除。".to_string());
     }
-    let rel_path = relative_path(vault, &path)?;
     fs::remove_file(&path).map_err(|error| error.to_string())?;
     let last_good = vault.join(mind_map_last_good_rel_path(&file));
     if last_good.exists() {
         fs::remove_file(&last_good).map_err(|error| error.to_string())?;
     }
-    commit_paths_best_effort(
-        vault,
-        &[rel_path, mind_map_last_good_rel_path(&file)],
-        &format!("delete mind map {}", file.id),
-    );
     Ok(())
 }
 
@@ -1441,6 +1469,7 @@ async fn create_fragment(
         }
 
         let vault = ensure_vault_dirs(&app)?;
+        let _gate = lock_vault_gate(&vault);
         let normalized_tags = normalize_tags(tags.unwrap_or_default(), true);
         if contains_lockbox_tag(&normalized_tags) {
             return create_lockbox_fragment_in_vault(
@@ -1476,19 +1505,10 @@ async fn create_fragment(
 
         write_fragment_file(&path, &frontmatter, &content)?;
 
-        let rel_path = relative_path(&vault, &path)?;
-        let commit_result = commit_path_if_git(
-            &vault,
-            &rel_path,
-            &format!("create fragment {}", now.format("%Y-%m-%d %H:%M:%S")),
-        );
 
         let dirty = dirty_paths(&vault);
-        let override_status = match commit_result {
-            Ok(Some(_)) => Some(("committed".to_string(), None)),
-            Ok(None) => Some(("saved".to_string(), None)),
-            Err(error) => Some(("commit_failed".to_string(), Some(error))),
-        };
+        // 内容保存只落盘，提交由聚合检查点接管（docs/design/commit-coalescing-plan.md §7 A2）
+        let override_status = None;
 
         read_fragment(&path, &vault, &dirty, override_status)
     })
@@ -1505,6 +1525,7 @@ async fn update_fragment_tags(
     let lockbox_runtime = lockbox_runtime.inner().clone();
     run_blocking(move || {
         let vault = ensure_vault_dirs(&app)?;
+        let _gate = lock_vault_gate(&vault);
         let normalized_tags = normalize_tags(tags, false);
 
         if let Some(lockbox_path) = find_lockbox_fragment_path(&vault, &id)? {
@@ -1534,19 +1555,10 @@ async fn update_fragment_tags(
         frontmatter.updated_at = Local::now().to_rfc3339();
         write_fragment_file(&path, &frontmatter, body.trim_start_matches('\n'))?;
 
-        let rel_path = relative_path(&vault, &path)?;
-        let commit_result = commit_path_if_git(
-            &vault,
-            &rel_path,
-            &format!("update fragment tags {}", frontmatter.id),
-        );
 
         let dirty = dirty_paths(&vault);
-        let override_status = match commit_result {
-            Ok(Some(_)) => Some(("committed".to_string(), None)),
-            Ok(None) => Some(("saved".to_string(), None)),
-            Err(error) => Some(("commit_failed".to_string(), Some(error))),
-        };
+        // 内容保存只落盘，提交由聚合检查点接管（docs/design/commit-coalescing-plan.md §7 A2）
+        let override_status = None;
 
         read_fragment(&path, &vault, &dirty, override_status)
     })
@@ -1568,6 +1580,7 @@ async fn update_fragment(
         }
 
         let vault = ensure_vault_dirs(&app)?;
+        let _gate = lock_vault_gate(&vault);
         let normalized_tags = normalize_tags(tags.unwrap_or_default(), false);
 
         if let Some(lockbox_path) = find_lockbox_fragment_path(&vault, &id)? {
@@ -1604,14 +1617,9 @@ async fn update_fragment(
         frontmatter.updated_at = Local::now().to_rfc3339();
         write_fragment_file(&path, &frontmatter, &content)?;
 
-        let rel_path = relative_path(&vault, &path)?;
-        let commit_result = commit_path_if_git(
-            &vault,
-            &rel_path,
-            &format!("update fragment {}", frontmatter.id),
-        );
         let dirty = dirty_paths(&vault);
-        let override_status = commit_override_status(commit_result);
+        // 内容保存只落盘，提交由聚合检查点接管（docs/design/commit-coalescing-plan.md §7 A2）
+        let override_status = None;
 
         read_fragment(&path, &vault, &dirty, override_status)
     })
@@ -1628,13 +1636,13 @@ async fn set_fragment_archived(
     let lockbox_runtime = lockbox_runtime.inner().clone();
     run_blocking(move || {
         let vault = ensure_vault_dirs(&app)?;
+        let _gate = lock_vault_gate(&vault);
         if let Some(lockbox_path) = find_lockbox_fragment_path(&vault, &id)? {
             let read_keys = require_unlocked_lockbox_read_keys(&vault, &lockbox_runtime)?;
             return set_lockbox_fragment_archived_in_vault(
                 &vault,
                 &lockbox_path,
                 &read_keys,
-                &id,
                 archived,
             );
         }
@@ -1674,18 +1682,10 @@ async fn set_fragment_archived(
             })
             .map_err(|error| error.to_string())?;
 
-        let commit_result = commit_paths_if_git(
-            &vault,
-            &[rel_path, relative_path(&vault, &target_path)?],
-            &format!(
-                "{} fragment {}",
-                if archived { "archive" } else { "restore" },
-                id
-            ),
-        );
 
         let dirty = dirty_paths(&vault);
-        let override_status = commit_override_status(commit_result);
+        // 内容保存只落盘，提交由聚合检查点接管（docs/design/commit-coalescing-plan.md §7 A2）
+        let override_status = None;
 
         read_fragment(&target_path, &vault, &dirty, override_status)
     })
@@ -1702,6 +1702,7 @@ async fn set_fragment_pinned(
     let lockbox_runtime = lockbox_runtime.inner().clone();
     run_blocking(move || {
         let vault = ensure_vault_dirs(&app)?;
+        let _gate = lock_vault_gate(&vault);
         if let Some(lockbox_path) = find_lockbox_fragment_path(&vault, &id)? {
             let read_keys = require_unlocked_lockbox_read_keys(&vault, &lockbox_runtime)?;
             return set_lockbox_fragment_pinned_in_vault(&vault, &lockbox_path, &read_keys, pinned);
@@ -1722,6 +1723,8 @@ async fn move_fragment_to_lockbox(
     let lockbox_runtime = lockbox_runtime.inner().clone();
     run_blocking(move || {
         let vault = ensure_vault_dirs(&app)?;
+        let _gate = lock_vault_gate(&vault);
+        checkpoint_before_structural_locked(&vault);
         let path = find_fragment_path(&vault, &id)?.ok_or_else(|| format!("找不到片段 {}", id))?;
         move_public_fragment_to_lockbox_in_vault(&vault, &lockbox_runtime, &path)?;
         list_fragments_in_vault(&vault, &lockbox_runtime)
@@ -1838,6 +1841,7 @@ async fn save_fragment_image(
         }
 
         let vault = ensure_vault_dirs(&app)?;
+        let _gate = lock_vault_gate(&vault);
         let mime_type = sniff_image_mime_type(&bytes)?;
         let extension = image_extension_for_mime_type(mime_type)
             .ok_or_else(|| "不支持的图片格式".to_string())?;
@@ -1850,11 +1854,6 @@ async fn save_fragment_image(
             write_bytes_atomically(&path, &bytes)?;
         }
         let rel_path = relative_path(&vault, &path)?;
-        commit_paths_best_effort(
-            &vault,
-            std::slice::from_ref(&rel_path),
-            &format!("add attachment {}", &hash[..12]),
-        );
         Ok(rel_path)
     })
     .await
@@ -2002,6 +2001,7 @@ async fn setup_lockbox(
     let lockbox_runtime = lockbox_runtime.inner().clone();
     run_blocking(move || {
         let vault = ensure_vault_dirs(&app)?;
+        let _gate = lock_vault_gate(&vault);
         let recovery_key = setup_lockbox_in_vault(&vault, &lockbox_runtime, &password)?;
         commit_paths_best_effort(
             &vault,
@@ -2025,6 +2025,7 @@ async fn unlock_lockbox(
     let lockbox_runtime = lockbox_runtime.inner().clone();
     run_blocking(move || {
         let vault = ensure_vault_dirs(&app)?;
+        let _gate = lock_vault_gate(&vault);
         unlock_lockbox_in_vault(&vault, &lockbox_runtime, &password)?;
         list_fragments_in_vault(&vault, &lockbox_runtime)
     })
@@ -2055,6 +2056,7 @@ async fn change_lockbox_password(
     let lockbox_runtime = lockbox_runtime.inner().clone();
     run_blocking(move || {
         let vault = ensure_vault_dirs(&app)?;
+        let _gate = lock_vault_gate(&vault);
         change_lockbox_password_in_vault(
             &vault,
             &lockbox_runtime,
@@ -2081,6 +2083,7 @@ async fn reset_lockbox_password(
     let lockbox_runtime = lockbox_runtime.inner().clone();
     run_blocking(move || {
         let vault = ensure_vault_dirs(&app)?;
+        let _gate = lock_vault_gate(&vault);
         let recovery_key = reset_lockbox_password_in_vault(
             &vault,
             &lockbox_runtime,
@@ -2234,25 +2237,38 @@ fn push_vault(vault: &Path) -> Result<(), String> {
         return Err("Git remote 未配置。请先在 ShardVault 中设置远端。".to_string());
     };
 
-    ensure_no_unfinished_git_operation(vault)?;
-    commit_all_if_dirty(vault, "sync local vault changes")?;
-
+    // 网络探测放在门外：ls-remote 的延迟不该阻塞任何编辑保存。
     let branch = current_branch(vault);
     let has_upstream = run_git(
         vault,
         &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
     )
     .is_ok();
-
-    if has_upstream {
-        pull_rebase_autostash(vault, None)?;
-        run_git(vault, &["push"])?;
+    let remote_has_branch = if has_upstream {
+        true
     } else {
-        let remote_branch =
-            run_git(vault, &["ls-remote", "--heads", &remote, &branch]).unwrap_or_default();
-        if !remote_branch.trim().is_empty() {
+        !run_git(vault, &["ls-remote", "--heads", &remote, &branch])
+            .unwrap_or_default()
+            .trim()
+            .is_empty()
+    };
+
+    {
+        // 本地临界段：提交与 pull --rebase 会改写工作树与索引，必须持门；
+        // pull 含网络传输，但 rebase 阶段与工作树不可分割，只能整体持门。
+        let _gate = lock_vault_gate(vault);
+        ensure_no_unfinished_git_operation(vault)?;
+        commit_all_if_dirty(vault, "sync local vault changes")?;
+        if has_upstream {
+            pull_rebase_autostash(vault, None)?;
+        } else if remote_has_branch {
             pull_rebase_autostash(vault, Some((&remote, &branch)))?;
         }
+    }
+
+    if has_upstream {
+        run_git(vault, &["push"])?;
+    } else {
         run_git(vault, &["push", "-u", &remote, &branch])?;
     }
     Ok(())
@@ -2698,13 +2714,11 @@ fn create_library_note_in_vault(
         related: Vec::new(),
     };
     write_fragment_file(&path, &frontmatter, &format!("# {title}"))?;
-    let rel_path = relative_path(vault, &path)?;
-    let commit_result = commit_path_if_git(vault, &rel_path, "create library note");
     read_fragment(
         &path,
         vault,
         &dirty_paths(vault),
-        commit_override_status(commit_result),
+        None,
     )
 }
 
@@ -3554,7 +3568,14 @@ fn write_bytes_atomically(path: &Path, bytes: &[u8]) -> Result<(), String> {
     fs::rename(&temp_path, path).map_err(|error| {
         let _ = fs::remove_file(&temp_path);
         error.to_string()
-    })
+    })?;
+    // rename 的断电持久性依赖父目录元数据落盘；尽力而为，内容本身已 fsync。
+    if let Some(parent) = path.parent() {
+        if let Ok(dir) = File::open(parent) {
+            let _ = dir.sync_all();
+        }
+    }
+    Ok(())
 }
 
 fn write_mind_map_last_good(vault: &Path, file: &ShardMapFile) -> Result<(), String> {
@@ -3685,14 +3706,6 @@ fn link_fragments_in_vault(
     frontmatter.updated_at = now;
     write_fragment_file(&path, &frontmatter, body.trim_start_matches('\n'))?;
 
-    let rel_path = relative_path(vault, &path)?;
-    let source_short = source_id.chars().take(8).collect::<String>();
-    let target_short = target_id.chars().take(8).collect::<String>();
-    commit_path(
-        vault,
-        &rel_path,
-        &format!("link fragment {source_short} -> {target_short}"),
-    )?;
     let dirty = dirty_paths(vault);
 
     read_fragment(&path, vault, &dirty, None)
@@ -3725,14 +3738,6 @@ fn unlink_fragments_in_vault(
     frontmatter.updated_at = Local::now().to_rfc3339();
     write_fragment_file(&path, &frontmatter, body.trim_start_matches('\n'))?;
 
-    let rel_path = relative_path(vault, &path)?;
-    let source_short = source_id.chars().take(8).collect::<String>();
-    let target_short = target_id.chars().take(8).collect::<String>();
-    commit_path(
-        vault,
-        &rel_path,
-        &format!("unlink fragment {source_short} -> {target_short}"),
-    )?;
     let dirty = dirty_paths(vault);
 
     read_fragment(&path, vault, &dirty, None)
@@ -3754,14 +3759,9 @@ fn set_public_fragment_pinned_in_vault(
     frontmatter.updated_at = Local::now().to_rfc3339();
     write_fragment_file(path, &frontmatter, body.trim_start_matches('\n'))?;
 
-    let commit_message = if pinned {
-        format!("pin fragment {}", frontmatter.id)
-    } else {
-        format!("unpin fragment {}", frontmatter.id)
-    };
-    let commit_result = commit_path_if_git(vault, &rel_path, &commit_message);
     let dirty = dirty_paths(vault);
-    let override_status = commit_override_status(commit_result);
+    // 内容保存只落盘，提交由聚合检查点接管（docs/design/commit-coalescing-plan.md §7 A2）
+    let override_status = None;
 
     read_fragment(path, vault, &dirty, override_status)
 }
@@ -3800,17 +3800,9 @@ fn create_lockbox_fragment_in_vault(
 
     write_lockbox_fragment_file(&path, &write_key, &frontmatter, content)?;
 
-    let rel_path = relative_path(vault, &path)?;
-    let commit_result = commit_path_if_git(
-        vault,
-        &rel_path,
-        &format!(
-            "create lockbox fragment {}",
-            now.format("%Y-%m-%d %H:%M:%S")
-        ),
-    );
     let dirty = dirty_paths(vault);
-    let override_status = commit_override_status(commit_result);
+    // 内容保存只落盘，提交由聚合检查点接管（docs/design/commit-coalescing-plan.md §7 A2）
+    let override_status = None;
 
     if let Some(read_keys) = unlocked_lockbox_read_keys(vault, lockbox_runtime) {
         read_lockbox_fragment(&path, vault, &dirty, &read_keys, override_status)
@@ -3841,14 +3833,9 @@ fn update_lockbox_fragment_in_vault(
     let write_key = LockboxWriteKey::Master(read_keys.master_key.clone());
     write_lockbox_payload(path, &write_key, &payload)?;
 
-    let rel_path = relative_path(vault, path)?;
-    let commit_result = commit_path_if_git(
-        vault,
-        &rel_path,
-        &format!("update lockbox fragment {}", payload.frontmatter.id),
-    );
     let dirty = dirty_paths(vault);
-    let override_status = commit_override_status(commit_result);
+    // 内容保存只落盘，提交由聚合检查点接管（docs/design/commit-coalescing-plan.md §7 A2）
+    let override_status = None;
 
     read_lockbox_fragment(path, vault, &dirty, read_keys, override_status)
 }
@@ -3865,14 +3852,9 @@ fn update_lockbox_fragment_tags_in_vault(
     let write_key = LockboxWriteKey::Master(read_keys.master_key.clone());
     write_lockbox_payload(path, &write_key, &payload)?;
 
-    let rel_path = relative_path(vault, path)?;
-    let commit_result = commit_path_if_git(
-        vault,
-        &rel_path,
-        &format!("update lockbox fragment tags {}", payload.frontmatter.id),
-    );
     let dirty = dirty_paths(vault);
-    let override_status = commit_override_status(commit_result);
+    // 内容保存只落盘，提交由聚合检查点接管（docs/design/commit-coalescing-plan.md §7 A2）
+    let override_status = None;
 
     read_lockbox_fragment(path, vault, &dirty, read_keys, override_status)
 }
@@ -3894,14 +3876,9 @@ fn set_lockbox_fragment_pinned_in_vault(
     let write_key = LockboxWriteKey::Master(read_keys.master_key.clone());
     write_lockbox_payload(path, &write_key, &payload)?;
 
-    let commit_message = if pinned {
-        format!("pin lockbox fragment {}", payload.frontmatter.id)
-    } else {
-        format!("unpin lockbox fragment {}", payload.frontmatter.id)
-    };
-    let commit_result = commit_path_if_git(vault, &rel_path, &commit_message);
     let dirty = dirty_paths(vault);
-    let override_status = commit_override_status(commit_result);
+    // 内容保存只落盘，提交由聚合检查点接管（docs/design/commit-coalescing-plan.md §7 A2）
+    let override_status = None;
 
     read_lockbox_fragment(path, vault, &dirty, read_keys, override_status)
 }
@@ -4004,7 +3981,6 @@ fn set_lockbox_fragment_archived_in_vault(
     vault: &Path,
     path: &Path,
     read_keys: &LockboxReadKeys,
-    id: &str,
     archived: bool,
 ) -> Result<Fragment, String> {
     let rel_path = relative_path(vault, path)?;
@@ -4041,17 +4017,9 @@ fn set_lockbox_fragment_archived_in_vault(
         })
         .map_err(|error| error.to_string())?;
 
-    let commit_result = commit_paths_if_git(
-        vault,
-        &[rel_path, relative_path(vault, &target_path)?],
-        &format!(
-            "{} lockbox fragment {}",
-            if archived { "archive" } else { "restore" },
-            id
-        ),
-    );
     let dirty = dirty_paths(vault);
-    let override_status = commit_override_status(commit_result);
+    // 内容保存只落盘，提交由聚合检查点接管（docs/design/commit-coalescing-plan.md §7 A2）
+    let override_status = None;
 
     read_lockbox_fragment(&target_path, vault, &dirty, read_keys, override_status)
 }
@@ -4982,19 +4950,168 @@ fn commit_paths_best_effort(vault: &Path, rel_paths: &[String], message: &str) {
 }
 
 fn commit_all_if_dirty(vault: &Path, message: &str) -> Result<(), String> {
-    commit_paths(
-        vault,
-        &[
-            "fragments".to_string(),
-            "archive".to_string(),
-            "assets".to_string(),
-            "maps".to_string(),
-            "lockbox".to_string(),
-            ".shard".to_string(),
-            CSV_GIT_PATHSPEC.to_string(),
-        ],
-        message,
-    )
+    commit_paths(vault, &managed_pathspecs(), message)
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CheckpointResult {
+    /// "not_git" | "blocked" | "no_changes" | "committed"
+    status: String,
+    /// committed 时提交中的变更路径数（rename 计 1）
+    changes: usize,
+    /// blocked 时的原因说明
+    reason: Option<String>,
+    git: GitInfo,
+}
+
+struct StagedChange {
+    status: char,
+    path: String,
+    renamed_to: Option<String>,
+}
+
+/// 解析 `diff --cached --name-status -z`：STATUS\0path\0；R/C 后跟第二个路径 token。
+fn parse_name_status_z(output: &str) -> Vec<StagedChange> {
+    let mut entries = Vec::new();
+    let mut tokens = output.split('\0');
+    while let Some(status) = tokens.next() {
+        if status.is_empty() {
+            continue;
+        }
+        let Some(path) = tokens.next() else { break };
+        let kind = status.chars().next().unwrap_or('M');
+        let renamed_to = if kind == 'R' || kind == 'C' {
+            tokens.next().map(|target| target.to_string())
+        } else {
+            None
+        };
+        entries.push(StagedChange {
+            status: kind,
+            path: path.to_string(),
+            renamed_to,
+        });
+    }
+    entries
+}
+
+/// 主题只放数量；body 放触发原因与清单（≤20 条），从受锁的 staged 快照生成——
+/// 提交后再生成同一条消息只能靠 amend，因此必须在 commit 之前算好。
+fn checkpoint_message(trigger: Option<&str>, entries: &[StagedChange]) -> (String, String) {
+    let subject = format!("检查点：更新 {} 个文件", entries.len());
+    const MAX_LISTED: usize = 20;
+    let mut lines = Vec::new();
+    if let Some(trigger) = trigger {
+        lines.push(format!("触发：{trigger}"));
+        lines.push(String::new());
+    }
+    for change in entries.iter().take(MAX_LISTED) {
+        match &change.renamed_to {
+            Some(target) => lines.push(format!("{} {} -> {}", change.status, change.path, target)),
+            None => lines.push(format!("{} {}", change.status, change.path)),
+        }
+    }
+    if entries.len() > MAX_LISTED {
+        lines.push(format!("另有 {} 个文件", entries.len() - MAX_LISTED));
+    }
+    (subject, lines.join("\n"))
+}
+
+/// 聚合检查点。必须在持 vault gate 的前提下调用（本函数不取门）。
+fn checkpoint_vault_locked(vault: &Path, trigger: Option<&str>) -> Result<CheckpointResult, String> {
+    let done = |status: &str, changes: usize, reason: Option<String>, vault: &Path| CheckpointResult {
+        status: status.to_string(),
+        changes,
+        reason,
+        git: git_info(vault),
+    };
+
+    if !vault.join(".git").exists() {
+        return Ok(done("not_git", 0, None, vault));
+    }
+    // 外部 Git 操作进行中：不 add、不 commit、更不 abort——静默让路，等下轮再试。
+    if let Err(reason) = ensure_no_unfinished_git_operation(vault) {
+        return Ok(done("blocked", 0, Some(reason), vault));
+    }
+    ensure_git_identity(vault)?;
+
+    // 先用 status 拿脏路径：pathspec 无匹配时 status 安全返回空，而 git add
+    // 对无匹配 pathspec（如空的 lockbox/ 目录）会直接 fatal。
+    let dirty = managed_dirty_paths(vault)?;
+    if dirty.is_empty() {
+        return Ok(done("no_changes", 0, None, vault));
+    }
+    // :(literal) 防止路径里的 [ ] 等字符被当 glob（文件名校验并未禁掉方括号）；
+    // 路径过多时回退到涉及的根目录，避免超出命令行长度（根目录必有匹配）。
+    let mut specs: Vec<String> = if dirty.len() <= 500 {
+        dirty.iter().map(|path| format!(":(literal){path}")).collect()
+    } else {
+        dirty
+            .iter()
+            .filter_map(|path| path.split('/').next())
+            .map(str::to_string)
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect()
+    };
+    specs.sort();
+
+    let mut add_args: Vec<String> = vec!["add".into(), "-A".into(), "--".into()];
+    add_args.extend(specs.iter().cloned());
+    let add_refs: Vec<&str> = add_args.iter().map(String::as_str).collect();
+    run_git(vault, &add_refs)?;
+
+    let mut diff_args: Vec<String> = vec![
+        "diff".into(),
+        "--cached".into(),
+        "--name-status".into(),
+        "-z".into(),
+        "--".into(),
+    ];
+    diff_args.extend(specs.iter().cloned());
+    let diff_refs: Vec<&str> = diff_args.iter().map(String::as_str).collect();
+    let staged = run_git(vault, &diff_refs)?;
+    let entries = parse_name_status_z(&staged);
+    if entries.is_empty() {
+        return Ok(done("no_changes", 0, None, vault));
+    }
+
+    let (subject, body) = checkpoint_message(trigger, &entries);
+    let mut commit_args: Vec<String> = vec![
+        "commit".into(),
+        "-m".into(),
+        subject,
+        "-m".into(),
+        body,
+        "--".into(),
+    ];
+    commit_args.extend(specs.iter().cloned());
+    let commit_refs: Vec<&str> = commit_args.iter().map(String::as_str).collect();
+    run_git(vault, &commit_refs)?;
+
+    Ok(done("committed", entries.len(), None, vault))
+}
+
+/// 结构操作（rename/move/delete/convert/移入密匣）前先把已有内容变更收进检查点，
+/// 让随后的语义提交只描述本次结构变化，不夹带此前的正文修改。
+/// 失败不阻塞文件操作：变更留在工作树，由下一次检查点接管。必须已持 vault gate。
+fn checkpoint_before_structural_locked(vault: &Path) {
+    if let Err(error) = checkpoint_vault_locked(vault, Some("结构操作前")) {
+        eprintln!("[shard] 结构操作前置检查点失败：{error}");
+    }
+}
+
+#[tauri::command]
+async fn checkpoint_vault(
+    app: tauri::AppHandle,
+    trigger: Option<String>,
+) -> Result<CheckpointResult, String> {
+    run_blocking(move || {
+        let vault = ensure_vault_dirs(&app)?;
+        let _gate = lock_vault_gate(&vault);
+        checkpoint_vault_locked(&vault, trigger.as_deref())
+    })
+    .await
 }
 
 fn ensure_git_identity(vault: &Path) -> Result<(), String> {
@@ -5018,36 +5135,53 @@ fn ensure_git_identity(vault: &Path) -> Result<(), String> {
 }
 
 fn dirty_paths(vault: &Path) -> HashSet<String> {
-    let mut paths = HashSet::new();
-    if !vault.join(".git").exists() {
-        return paths;
-    }
-
-    let Ok(output) = run_git(
-        vault,
-        &[
-            "status",
-            "--porcelain",
-            "--",
-            "fragments",
-            "archive",
-            "assets",
-            "maps",
-            "lockbox",
-            ".shard",
-            CSV_GIT_PATHSPEC,
-        ],
-    ) else {
-        return paths;
-    };
-
-    for line in output.lines() {
-        if line.len() >= 4 {
-            paths.insert(line[3..].trim().to_string());
+    match managed_dirty_paths(vault) {
+        Ok(paths) => paths,
+        Err(error) => {
+            // 探测失败不能伪装成 clean；片段读取链路暂无 Unknown 通道，先留日志。
+            eprintln!("[shard] git status 探测失败：{error}");
+            HashSet::new()
         }
     }
+}
 
-    paths
+/// NUL 分隔解析：普通 porcelain 会对中文/特殊字符路径做 C 风格转义、
+/// 折叠未跟踪目录，rename 还是 `old -> new` 双路径，行数解析全都会坑。
+fn managed_dirty_paths(vault: &Path) -> Result<HashSet<String>, String> {
+    let mut paths = HashSet::new();
+    if !vault.join(".git").exists() {
+        return Ok(paths);
+    }
+
+    let mut args: Vec<String> = vec![
+        "status".to_string(),
+        "--porcelain=v1".to_string(),
+        "-z".to_string(),
+        "--untracked-files=all".to_string(),
+        "--".to_string(),
+    ];
+    args.extend(managed_pathspecs());
+    let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    let output = run_git(vault, &arg_refs)?;
+
+    let mut tokens = output.split('\0');
+    while let Some(entry) = tokens.next() {
+        if entry.len() < 4 || !entry.is_char_boundary(3) {
+            continue;
+        }
+        let status = &entry[..2];
+        // rename/copy 条目：本条是新路径，紧随的下一个 token 是旧路径，两者都算脏
+        if status.starts_with('R') || status.starts_with('C') {
+            if let Some(old_path) = tokens.next() {
+                if !old_path.is_empty() {
+                    paths.insert(old_path.to_string());
+                }
+            }
+        }
+        paths.insert(entry[3..].to_string());
+    }
+
+    Ok(paths)
 }
 
 fn git_info(vault: &Path) -> GitInfo {
@@ -5202,6 +5336,18 @@ fn ensure_no_unfinished_git_operation(vault: &Path) -> Result<(), String> {
 
     if git_internal_path_exists(vault, "MERGE_HEAD") {
         return Err("Vault 中有未完成的 Git merge。请先解决冲突或在 Vault 里执行 git merge --abort 后再同步。".to_string());
+    }
+
+    if git_internal_path_exists(vault, "CHERRY_PICK_HEAD") {
+        return Err("Vault 中有未完成的 Git cherry-pick。请先在 Vault 里处理完成后再继续。".to_string());
+    }
+
+    if git_internal_path_exists(vault, "REVERT_HEAD") {
+        return Err("Vault 中有未完成的 Git revert。请先在 Vault 里处理完成后再继续。".to_string());
+    }
+
+    if git_internal_path_exists(vault, "sequencer") {
+        return Err("Vault 中有未完成的 Git 序列操作。请先在 Vault 里处理完成后再继续。".to_string());
     }
 
     Ok(())
@@ -5890,6 +6036,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             list_fragments,
+            checkpoint_vault,
             list_mind_maps,
             list_csv_files,
             list_library_tree,
@@ -6119,6 +6266,88 @@ mod tests {
 
         let status = run_git(vault, &["status", "--porcelain"]).unwrap();
         assert!(status.lines().any(|line| line == "A  personal.txt"));
+    }
+
+    #[test]
+    fn checkpoint_commits_notes_and_reports_outcomes() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let vault = tempdir.path();
+        ensure_vault_layout(vault).unwrap();
+
+        let result = checkpoint_vault_locked(vault, None).unwrap();
+        assert_eq!(result.status, "not_git");
+
+        ensure_git_repo(vault).unwrap();
+        fs::create_dir_all(vault.join("notes")).unwrap();
+        fs::write(vault.join("notes").join("方案笔记.md"), "# 中文\n").unwrap();
+        fs::write(vault.join("fragments").join("a.md"), "one\n").unwrap();
+
+        let result = checkpoint_vault_locked(vault, Some("测试")).unwrap();
+        assert_eq!(result.status, "committed");
+        assert_eq!(result.changes, 2);
+
+        let committed = run_git(vault, &["show", "--format=%B", "--name-only", "HEAD"]).unwrap();
+        assert!(committed.contains("检查点：更新 2 个文件"));
+        assert!(committed.contains("触发：测试"));
+        // 提交 body 的清单里应有未转义的中文路径（--name-only 段会被 quotepath 转义）
+        assert!(committed.contains("A notes/方案笔记.md"));
+
+        let result = checkpoint_vault_locked(vault, None).unwrap();
+        assert_eq!(result.status, "no_changes");
+    }
+
+    #[test]
+    fn checkpoint_blocks_on_external_git_operation_without_touching_index() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let vault = tempdir.path();
+        ensure_vault_layout(vault).unwrap();
+        ensure_git_repo(vault).unwrap();
+        fs::write(vault.join("notes").join("外部操作期间.md"), "body\n").unwrap();
+        fs::write(vault.join(".git").join("CHERRY_PICK_HEAD"), "deadbeef\n").unwrap();
+
+        let result = checkpoint_vault_locked(vault, None).unwrap();
+        assert_eq!(result.status, "blocked");
+        assert!(result.reason.is_some());
+
+        // 让路必须彻底：不 add、不 commit，工作树保持未暂存
+        let status = run_git(vault, &["status", "--porcelain"]).unwrap();
+        assert!(status.lines().any(|line| line.starts_with("??")));
+    }
+
+    #[test]
+    fn managed_dirty_paths_reports_chinese_notes_paths_unescaped() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let vault = tempdir.path();
+        ensure_vault_layout(vault).unwrap();
+        ensure_git_repo(vault).unwrap();
+        fs::create_dir_all(vault.join("notes").join("子 目录")).unwrap();
+        fs::write(
+            vault.join("notes").join("子 目录").join("中文 标题.md"),
+            "# t\n",
+        )
+        .unwrap();
+
+        let dirty = managed_dirty_paths(vault).unwrap();
+        assert!(
+            dirty.contains("notes/子 目录/中文 标题.md"),
+            "实际：{dirty:?}"
+        );
+    }
+
+    #[test]
+    fn content_saves_leave_worktree_dirty_until_checkpoint() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let vault = tempdir.path();
+        ensure_vault_layout(vault).unwrap();
+        ensure_git_repo(vault).unwrap();
+
+        let fragment = create_library_note_in_vault(vault, "未命名", None).unwrap();
+        let dirty = dirty_paths(vault);
+        assert!(dirty.contains(&fragment.path), "实际：{dirty:?}");
+
+        let result = checkpoint_vault_locked(vault, None).unwrap();
+        assert_eq!(result.status, "committed");
+        assert!(dirty_paths(vault).is_empty());
     }
 
     #[test]

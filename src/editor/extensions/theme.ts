@@ -127,6 +127,9 @@ export function createShardEditorTheme(variant: ShardEditorProps["variant"]) {
       ".shard-cm-tag": {
         color: "var(--shard-editor-tag-fg)",
       },
+      ".shard-cm-tag-lockbox": {
+        color: "rgb(var(--shard-warning-rgb) / var(--shard-alpha-89))",
+      },
       ".shard-cm-highlight": {
         background: "rgb(var(--shard-warning-rgb) / var(--shard-alpha-21))",
         borderRadius: "calc(var(--shard-radius-control) / 2)",

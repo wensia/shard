@@ -1,6 +1,5 @@
-import { LockKeyholeIcon, TagIcon } from "lucide-react"
+import { TagIcon } from "lucide-react"
 
-import type { LockboxState } from "@/types"
 import { isTypeTag } from "@/lib/content-kind"
 
 export interface TaggedSummary {
@@ -10,22 +9,16 @@ export interface TaggedSummary {
 }
 
 interface TaggedPanelProps {
-  isLockboxActive?: boolean
-  lockbox: LockboxState | null
   selectedTag: string | null
   summaries: TaggedSummary[]
   totalCount: number
-  onOpenLockbox: () => void
   onSelectTag: (tag: string | null) => void
 }
 
 export function TaggedPanel({
-  isLockboxActive = false,
-  lockbox,
   selectedTag,
   summaries,
   totalCount,
-  onOpenLockbox,
   onSelectTag,
 }: TaggedPanelProps) {
   const visibleSummaries = summaries.filter(
@@ -82,31 +75,6 @@ export function TaggedPanel({
             paddingRight: "var(--shard-space-1)",
           }}
         >
-          <button
-            aria-pressed={isLockboxActive}
-            className={["shard-tag", "shard-tag-lockbox", isLockboxActive ? "shard-tag-active" : ""]
-              .join(" ")
-              .trim()}
-            onClick={onOpenLockbox}
-            style={{
-              maxWidth: "100%",
-              gap: "var(--shard-space-micro)",
-              fontWeight: 500,
-            }}
-            title="密匣"
-            type="button"
-          >
-            <LockKeyholeIcon size={14} strokeWidth={1.75} />
-            <span
-              className="shard-chip-text"
-              style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
-            >
-              密匣
-            </span>
-            <span className="shard-chip-text shard-tag-count">
-              {lockbox?.unlocked ? "已解锁" : lockbox?.configured ? "已上锁" : "设置"}
-            </span>
-          </button>
           <TagFilterButton
             active={selectedTag === null}
             count={totalCount}

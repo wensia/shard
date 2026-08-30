@@ -54,6 +54,7 @@ import {
   restoreWindowFrame,
   resetLockboxPassword,
   setupLockbox,
+  checkpointVault,
   syncVault,
   unlockLockbox,
   unlinkFragments,
@@ -87,7 +88,7 @@ import type {
 import { FragmentsWorkspace } from "@/workspace/fragments-workspace"
 import {
   LibraryShell,
-  type LibrarySaveHandler,
+  type LibraryDraftHandle,
 } from "@/workspace/library-shell"
 import {
   writeWorkspaceRoute,
@@ -103,6 +104,7 @@ import {
   useVaultSync,
   useVaultSyncSchedule,
 } from "@/workspace/use-vault-sync"
+import { useAutoCheckpoint } from "@/workspace/use-auto-checkpoint"
 
 const AUTO_SYNC_FAILURE_TOAST_ID = "auto-sync-failure"
 const GLOBAL_CAPTURE_EVENT = "shard:capture"
@@ -202,7 +204,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
   const [selectedTag, setSelectedTag] = useState<string | null>(null)
   const [selectedInboxTag, setSelectedInboxTag] = useState<string | null>(null)
   const searchReturnFocusRef = useRef<HTMLElement | null>(null)
-  const librarySaveHandlerRef = useRef<LibrarySaveHandler | null>(null)
+  const librarySaveHandlerRef = useRef<LibraryDraftHandle | null>(null)
   const [pendingLibraryNavigation, setPendingLibraryNavigation] = useState<{
     id: string
     requestId: number
@@ -244,15 +246,15 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
   }, [route.space, vaultPath])
 
   const registerLibrarySaveHandler = useCallback(
-    (handler: LibrarySaveHandler | null) => {
-      librarySaveHandlerRef.current = handler
+    (handle: LibraryDraftHandle | null) => {
+      librarySaveHandlerRef.current = handle
     },
     []
   )
 
   const saveLibraryDraftBeforeNavigation = useCallback(async () => {
     if (routeRef.current.space !== "library") return true
-    return (await librarySaveHandlerRef.current?.()) ?? true
+    return (await librarySaveHandlerRef.current?.flush()) ?? true
   }, [])
 
   useEffect(() => {
@@ -409,6 +411,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
   }
 
   async function handleCreate(content: string, tags: string[]) {
+    recordContentActivity()
     setIsCreating(true)
     const shouldCreateInLockbox = wantsLockbox(content, tags)
 
@@ -519,6 +522,12 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
   }
 
   async function handleSync() {
+    // 同步会先提交磁盘版本再 pull——不 flush 的话，旧磁盘内容被提交，
+    // 之后迟到的自动保存还会把旧基线草稿盖回刚拉取的版本
+    if (!(await saveLibraryDraftBeforeNavigation())) {
+      toast.error("草稿保存失败，已取消同步", { duration: Infinity })
+      return
+    }
     setIsSyncing(true)
     try {
       const synced = await syncVault()
@@ -546,6 +555,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
   }
 
   async function handleUpdateFragment(id: string, content: string, tags: string[]) {
+    recordContentActivity()
     const currentFragment =
       fragments.find((fragment) => fragment.id === id) ?? null
     const movesToLockbox = !currentFragment?.lockbox && wantsLockbox(content, tags)
@@ -650,6 +660,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
   }
 
   async function handleToggleFragmentTask(fragment: Fragment, lineIndex: number) {
+    recordContentActivity()
     const nextContent = toggleTaskLine(fragment.content, lineIndex)
     if (nextContent === fragment.content) return
 
@@ -679,6 +690,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
   }
 
   async function handleArchiveFragment(fragment: Fragment) {
+    recordContentActivity()
     // 取消归档不需要确认：它是个可撤销的、低风险的还原动作。
     if (fragment.archived) {
       await archiveFragmentWithFeedback(fragment, false)
@@ -721,6 +733,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
   }
 
   async function handlePinFragment(fragment: Fragment) {
+    recordContentActivity()
     if (fragment.archived) return
 
     const nextPinned = !fragment.pinned
@@ -760,6 +773,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
   }
 
   async function handleToggleFragmentKind(fragment: Fragment) {
+    recordContentActivity()
     const nextKind = fragment.kind === "note" ? "fragment" : "note"
 
     try {
@@ -778,6 +792,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
   }
 
   function handleLibraryMutation(result: LibraryMutationResult) {
+    recordContentActivity()
     setLibraryTree(result.tree)
     if (result.fragment) {
       setFragments((current) =>
@@ -792,6 +807,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
   }
 
   async function handleLinkFragment(sourceId: string, targetId: string) {
+    recordContentActivity()
     try {
       const updated = await linkFragments(sourceId, targetId, "manual")
       setFragments((current) =>
@@ -809,6 +825,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
   }
 
   async function handleUnlinkFragment(sourceId: string, targetId: string) {
+    recordContentActivity()
     try {
       const updated = await unlinkFragments(sourceId, targetId)
       setFragments((current) =>
@@ -1142,6 +1159,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     target: string,
     template: OrganizeTemplate
   ) {
+    recordContentActivity()
     const created = await organizeFragments(
       selectedFragments.map((fragment) => fragment.path),
       target,
@@ -1551,7 +1569,8 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
       isCreating ||
       isBlockingDialogOpen ||
       activeMindMapId !== null ||
-      editingFragmentId !== null
+      editingFragmentId !== null ||
+      (librarySaveHandlerRef.current?.isDirty() ?? false)
     ) {
       return
     }
@@ -1588,6 +1607,95 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     },
     tickRef: autoSyncTickRef,
   })
+
+  // 自动检查点（合并保存）：内容保存只落盘，git 提交由 idle/失焦触发的检查点聚合
+  const { recordContentActivity } = useAutoCheckpoint({
+    enabled: Boolean(git && git.status !== "no_git"),
+    isStable: () =>
+      !isSyncing &&
+      !isCreating &&
+      !isBlockingDialogOpen &&
+      editingFragmentId === null &&
+      activeMindMapId === null &&
+      !(librarySaveHandlerRef.current?.isDirty() ?? false),
+    checkpoint: async (trigger) => {
+      try {
+        const result = await checkpointVault(trigger)
+        setGit(result.git)
+        if (result.status === "committed") {
+          // 逐文件 gitStatus 来自读取时的脏检测，必须整体刷新才会退回 clean
+          void refreshFragments()
+          void refreshMindMaps()
+        }
+        return result.status !== "blocked"
+      } catch (error) {
+        console.warn("[shard] 自动检查点失败：", error)
+        return false
+      }
+    },
+    flushDrafts: async () => {
+      await librarySaveHandlerRef.current?.flush().catch(() => false)
+    },
+  })
+
+  // 启动恢复识别：上次会话（或外部编辑）留下的未提交变更，纳入首次安全
+  // idle 检查点，而不是启动瞬间就 commit（外部半成品不该被立即固化）。
+  const startupRecoveryRef = useRef(false)
+  useEffect(() => {
+    if (startupRecoveryRef.current) return
+    if (git && git.status === "dirty") {
+      startupRecoveryRef.current = true
+      recordContentActivity()
+    }
+  }, [git, recordContentActivity])
+
+  // 退出兜底：close-requested 时先排空草稿、限时检查点，再放行关闭。
+  // 浏览器/测试环境没有 Tauri 窗口事件，动态导入或取窗口失败即静默跳过。
+  useEffect(() => {
+    let closing = false
+    let disposed = false
+    let unlisten: (() => void) | null = null
+    void (async () => {
+      try {
+        const { getCurrentWindow } = await import("@tauri-apps/api/window")
+        const currentWindow = getCurrentWindow()
+        const stop = await currentWindow.onCloseRequested(async (event) => {
+          if (closing) return
+          event.preventDefault()
+          closing = true
+          try {
+            const flushed =
+              (await librarySaveHandlerRef.current?.flush()) ?? true
+            if (!flushed) {
+              const leaveAnyway = window.confirm(
+                "还有草稿没能保存成功。仍要退出吗？（退出将丢失未保存的修改）"
+              )
+              if (!leaveAnyway) {
+                closing = false
+                return
+              }
+            }
+            // 数据已落盘，提交只是历史整理：限时尽力而为，失败不阻塞退出
+            await Promise.race([
+              checkpointVault("退出前").catch(() => null),
+              new Promise((resolve) => window.setTimeout(resolve, 5_000)),
+            ])
+          } finally {
+            void currentWindow.destroy()
+          }
+        })
+        if (disposed) stop()
+        else unlisten = stop
+      } catch {
+        // 非 Tauri 环境：无窗口关闭事件可挂
+      }
+    })()
+    return () => {
+      disposed = true
+      unlisten?.()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   if (activeMindMapId) {
     return (
@@ -1687,11 +1795,9 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
                 : null
             }
             taggedPanel={{
-              lockbox,
               selectedTag,
               summaries: tagSummaries,
               totalCount: taggedFragments.length,
-              onOpenLockbox: openLockboxGate,
               onSelectTag: setSelectedTag,
             }}
             timeline={{

@@ -164,6 +164,10 @@
     /* Shared top datum below the macOS overlay traffic lights. Current
        geometry is preserved from the pre-migration WKWebView baseline. */
     --shard-top-inset: 32px;
+    /* Overlay 标题栏工具条高度：36px 控件 + 上下 8px，资料库三列头部共用 */
+    --shard-titlebar-height: 52px;
+    /* macOS 红绿灯从窗口左缘算起的避让宽度（三颗灯止于约 68px） */
+    --shard-traffic-light-clearance: 80px;
     --shard-composer-top-gap: var(--shard-top-inset);
     --shard-composer-bottom-gap: var(--shard-space-4);
     --shard-composer-padding: var(--shard-space-4);

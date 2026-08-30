@@ -351,6 +351,21 @@ async function installTauriMock(
             case "save_exported_image":
             case "copy_exported_image":
               return null
+            case "checkpoint_vault":
+              return {
+              status: "no_changes",
+              changes: 0,
+              reason: null,
+              git: {
+                branch: "main",
+                shortCommit: "abc1234",
+                hasRemote: false,
+                status: "ready",
+                error: null,
+                ahead: 0,
+                behind: 0,
+              },
+            }
             default:
               throw new Error(`Unhandled Tauri test command: ${command}`)
           }
@@ -1097,7 +1112,7 @@ test("lockbox and mind map editing preserve adaptive node geometry", async ({
   page,
 }) => {
   await page.getByRole("button", { name: /^标签 \d+$/ }).click()
-  await page.getByRole("button", { name: /密匣 已上锁/ }).click()
+  await page.getByRole("button", { name: /^密匣 \d+$/ }).click()
   await expect(
     page.getByRole("heading", { name: "解锁密匣" })
   ).toBeVisible()

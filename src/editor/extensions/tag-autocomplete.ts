@@ -18,6 +18,7 @@ import {
   normalizeTagList,
 } from "@/lib/editor-format"
 import { isTypeTag } from "@/lib/content-kind"
+import { LOCKBOX_TAG } from "@/lib/lockbox"
 import {
   buildTagSearchIndex,
   getMatchingTagsBySearchQuery,
@@ -40,7 +41,11 @@ function isNewTagCompletion(completion: Completion) {
 function renderTagBadge(completion: Completion) {
   const badge = document.createElement("span")
   badge.className = "shard-cm-tag-completion-badge"
-  badge.textContent = isNewTagCompletion(completion) ? "新建" : "使用"
+  badge.textContent = isNewTagCompletion(completion)
+    ? "新建"
+    : completion.label === LOCKBOX_TAG
+      ? "保存到密匣"
+      : "使用"
   return badge
 }
 

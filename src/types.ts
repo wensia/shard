@@ -54,6 +54,13 @@ export interface GitInfo {
   behind: number
 }
 
+export interface CheckpointResult {
+  status: "not_git" | "blocked" | "no_changes" | "committed"
+  changes: number
+  reason: string | null
+  git: GitInfo
+}
+
 export interface CsvFileSummary {
   name: string
   path: string

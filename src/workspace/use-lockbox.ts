@@ -71,12 +71,9 @@ export function useLockboxSecurityEffects({
   const autoLockRef = useRef(autoLock)
   autoLockRef.current = autoLock
 
-  // 标签面板与密匣属于同一安全区域；洞察仅在本次已勾选或正在重新校验时豁免。
+  // 密匣视图是唯一安全区，离开即自动上锁；洞察仅在本次已勾选或正在重新校验时豁免。
   useEffect(() => {
-    if (
-      route.space === "fragments" &&
-      (route.params.filter === "tagged" || route.params.filter === "lockbox")
-    ) {
+    if (route.space === "fragments" && route.params.filter === "lockbox") {
       return
     }
     if (

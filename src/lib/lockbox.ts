@@ -1,4 +1,4 @@
-import { extractTags, normalizeTagList, parseMarkdownImageLine } from "@/lib/editor-format"
+import { extractTags, parseMarkdownImageLine } from "@/lib/editor-format"
 import type { Fragment, LockboxState } from "@/types"
 
 export const LOCKBOX_TAG = "密匣"
@@ -9,10 +9,6 @@ export function hasLockboxTag(tags: readonly string[]) {
 
 export function wantsLockbox(content: string, tags: readonly string[]) {
   return hasLockboxTag(tags) || hasLockboxTag(extractTags(content))
-}
-
-export function stripLockboxSystemTags(tags: readonly string[]) {
-  return normalizeTagList(tags.filter((tag) => tag !== LOCKBOX_TAG && tag !== "inbox"))
 }
 
 export function hasMarkdownImage(content: string) {

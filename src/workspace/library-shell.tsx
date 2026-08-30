@@ -1,5 +1,6 @@
 import {
   type Dispatch,
+  type ReactNode,
   type SetStateAction,
   useCallback,
   useEffect,
@@ -73,6 +74,12 @@ import styles from "./library-shell.module.css"
 
 export type LibrarySaveHandler = () => Promise<boolean>
 
+/** 工作台用来编排「保存门禁」的句柄：flush 排空草稿，isDirty 报告是否有未落盘内容或在飞保存。 */
+export interface LibraryDraftHandle {
+  flush: LibrarySaveHandler
+  isDirty: () => boolean
+}
+
 interface LibraryShellProps {
   csvFiles?: CsvFileSummary[]
   fragments: Fragment[]
@@ -83,15 +90,19 @@ interface LibraryShellProps {
   onNavigateToFragment?: (fragmentId: string) => void
   onLibraryMutation: (result: LibraryMutationResult) => void
   onSelectFragmentMonth: (month: string) => void
-  onRegisterSaveHandler: (handler: LibrarySaveHandler | null) => void
+  onRegisterSaveHandler: (handle: LibraryDraftHandle | null) => void
   onSave: (id: string, content: string, tags: string[]) => Promise<Fragment>
   relationFragments?: Fragment[]
 }
 
 type SaveState = "dirty" | "error" | "saved" | "saving"
-type TreeDialogState =
-  | { kind: "create-note" | "create-directory"; value: string }
-  | { kind: "rename" | "delete"; entry: LibraryTreeEntry; value: string }
+type TreeDialogState = { kind: "delete"; entry: LibraryTreeEntry }
+
+interface RenameState {
+  path: string
+  source: "editor" | "tree"
+  value: string
+}
 
 export function LibraryShell({
   csvFiles = [],
@@ -121,6 +132,11 @@ export function LibraryShell({
   const [expandedYears, setExpandedYears] = useState<Set<string>>(new Set())
   const [busyAction, setBusyAction] = useState<string | null>(null)
   const [treeDialog, setTreeDialog] = useState<TreeDialogState | null>(null)
+  const [renaming, setRenaming] = useState<RenameState | null>(null)
+  const [creatingDirectory, setCreatingDirectory] = useState<{
+    parent: string
+    value: string
+  } | null>(null)
   const [draft, setDraft] = useState("")
   const [mobilePane, setMobilePane] = useState<"editor" | "list">("list")
   const [saveState, setSaveState] = useState<SaveState>("saved")
@@ -217,16 +233,29 @@ export function LibraryShell({
   }, [selectedNote?.path])
 
   const saveCurrentNote = useCallback<LibrarySaveHandler>(async () => {
-    if (savePromiseRef.current) return savePromiseRef.current
+    // 排空式保存：在飞的保存只覆盖它启动瞬间的快照。等它结束后必须回头重查
+    // 草稿是否又变了，直到「无在飞 && 草稿==已落盘」才算 flush 完成，
+    // 否则慢保存期间的尾随输入会被吞掉（自动保存 800ms 与切换/同步都依赖这里）。
+    for (;;) {
+      const inFlight = savePromiseRef.current
+      if (inFlight) {
+        if (!(await inFlight)) return false
+        continue
+      }
 
-    const note = selectedNoteRef.current
-    const content = draftRef.current
-    if (!note || content === lastSavedContentRef.current) {
-      setSaveState("saved")
-      return true
+      const note = selectedNoteRef.current
+      const content = draftRef.current
+      if (!note || content === lastSavedContentRef.current) {
+        setSaveState("saved")
+        return true
+      }
+
+      const saved = await runSingleSave(note, content)
+      if (!saved) return false
     }
 
-    const savePromise = (async () => {
+    async function runSingleSave(note: Fragment, content: string) {
+      const savePromise = (async () => {
       if (content.trim().length === 0) {
         setSaveState("error")
         toast.error("笔记内容不能为空", { duration: Infinity })
@@ -242,11 +271,19 @@ export function LibraryShell({
         ])
         const updated = await onSave(note.id, content, tags)
         lastSavedContentRef.current = updated.content
-        if (selectedNoteRef.current?.id === updated.id) {
+        // 自动保存可能在用户继续输入时完成：只有草稿仍等于送出的内容才回写，
+        // 否则会覆盖保存期间的新键入
+        if (
+          selectedNoteRef.current?.id === updated.id &&
+          draftRef.current === content &&
+          updated.content !== content
+        ) {
           setDraft(updated.content)
           draftRef.current = updated.content
         }
-        setSaveState("saved")
+        setSaveState(
+          draftRef.current === lastSavedContentRef.current ? "saved" : "dirty"
+        )
         return true
       } catch (error) {
         setSaveState("error")
@@ -257,18 +294,51 @@ export function LibraryShell({
       }
     })()
 
-    savePromiseRef.current = savePromise
-    try {
-      return await savePromise
-    } finally {
-      savePromiseRef.current = null
+      savePromiseRef.current = savePromise
+      try {
+        return await savePromise
+      } finally {
+        savePromiseRef.current = null
+      }
     }
   }, [onSave])
 
+  const saveStateRef = useRef<SaveState>("saved")
+  saveStateRef.current = saveState
+
   useEffect(() => {
-    onRegisterSaveHandler(saveCurrentNote)
+    onRegisterSaveHandler({
+      flush: saveCurrentNote,
+      // error 也算 dirty：内容仍未落盘，检查点与同步都必须等它解决
+      isDirty: () =>
+        saveStateRef.current !== "saved" || savePromiseRef.current !== null,
+    })
     return () => onRegisterSaveHandler(null)
   }, [onRegisterSaveHandler, saveCurrentNote])
+
+  // 自动保存：停止输入 800ms 后落盘，与禅模式编辑器同节奏。
+  // 空内容不自动保存（避免重写时反复报错），交给显式保存与切换时的校验。
+  useEffect(() => {
+    if (!selectedNote || saveState !== "dirty") return
+    if (draft.trim().length === 0 || draft === lastSavedContentRef.current) {
+      return
+    }
+    const timerId = window.setTimeout(() => void saveCurrentNote(), 800)
+    return () => window.clearTimeout(timerId)
+  }, [draft, saveCurrentNote, saveState, selectedNote])
+
+  // Cmd/Ctrl+S 显式保存；资料库视图卸载时监听随之移除
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey)) return
+      if (event.shiftKey || event.altKey) return
+      if (event.key.toLowerCase() !== "s") return
+      event.preventDefault()
+      if (selectedNoteRef.current) void saveCurrentNote()
+    }
+    window.addEventListener("keydown", onKeyDown)
+    return () => window.removeEventListener("keydown", onKeyDown)
+  }, [saveCurrentNote])
 
   async function selectNote(noteId: string) {
     if (noteId !== selectedNoteRef.current?.id) {
@@ -307,7 +377,8 @@ export function LibraryShell({
 
   async function runMutation(
     label: string,
-    mutation: () => Promise<LibraryMutationResult>
+    mutation: () => Promise<LibraryMutationResult>,
+    { revealNote = true }: { revealNote?: boolean } = {}
   ) {
     if (busyAction) return null
     setBusyAction(label)
@@ -315,9 +386,11 @@ export function LibraryShell({
       const result = await mutation()
       onLibraryMutation(result)
       if (result.fragment) {
-        setSelectedNoteId(result.fragment.id)
+        if (revealNote) {
+          setSelectedNoteId(result.fragment.id)
+          setMobilePane("editor")
+        }
         setSelectedTreePath(result.fragment.path)
-        setMobilePane("editor")
       }
       if (result.updatedLinks > 0) {
         toast(`已更新 ${result.updatedLinks} 处双链引用`)
@@ -335,10 +408,11 @@ export function LibraryShell({
 
   async function runSavedMutation(
     label: string,
-    mutation: () => Promise<LibraryMutationResult>
+    mutation: () => Promise<LibraryMutationResult>,
+    options?: { revealNote?: boolean }
   ) {
     if (!(await saveCurrentNote())) return null
-    return runMutation(label, mutation)
+    return runMutation(label, mutation, options)
   }
 
   function requestDelete(entry: LibraryTreeEntry) {
@@ -346,45 +420,70 @@ export function LibraryShell({
       toast.error("目录非空，不能删除", { duration: Infinity })
       return
     }
-    setTreeDialog({ kind: "delete", entry, value: entry.name })
+    setTreeDialog({ kind: "delete", entry })
+  }
+
+  function startRename(path: string, source: RenameState["source"]) {
+    const fileName = path.split("/").pop() ?? ""
+    setRenaming({ path, source, value: fileName.replace(/\.(md|csv)$/iu, "") })
+  }
+
+  async function submitRename() {
+    if (!renaming || busyAction) return
+    const value = renaming.value.trim()
+    const currentName = (renaming.path.split("/").pop() ?? "").replace(
+      /\.(md|csv)$/iu,
+      ""
+    )
+    if (!value || value === currentName) {
+      setRenaming(null)
+      return
+    }
+    const result = await runSavedMutation("重命名", () =>
+      renameLibraryEntry(renaming.path, value)
+    )
+    if (result) setRenaming(null)
+  }
+
+  async function createNoteAndRename() {
+    const parent = selectedDirectory
+    const result = await runSavedMutation(
+      "新建笔记",
+      () => createLibraryNote(parent, "未命名"),
+      { revealNote: false }
+    )
+    if (!result?.fragment) return
+    if (parent !== "notes") {
+      setExpandedPaths((current) => new Set(current).add(parent))
+    }
+    setMobilePane("list")
+    startRename(result.fragment.path, "tree")
+  }
+
+  function startCreateDirectory() {
+    const parent = selectedDirectory
+    if (parent !== "notes") {
+      setExpandedPaths((current) => new Set(current).add(parent))
+    }
+    setMobilePane("list")
+    setCreatingDirectory({ parent, value: "" })
+  }
+
+  async function submitCreateDirectory() {
+    if (!creatingDirectory || busyAction) return
+    const value = creatingDirectory.value.trim()
+    if (!value) {
+      setCreatingDirectory(null)
+      return
+    }
+    const result = await runMutation("新建目录", () =>
+      createLibraryDirectory(creatingDirectory.parent, value)
+    )
+    if (result) setCreatingDirectory(null)
   }
 
   async function submitTreeDialog() {
     if (!treeDialog || busyAction) return
-    const value = treeDialog.value.trim()
-    if (treeDialog.kind !== "delete" && !value) return
-
-    if (treeDialog.kind === "create-note") {
-      const result = await runMutation("新建笔记", () =>
-        createLibraryNote(selectedDirectory, value)
-      )
-      if (result) setTreeDialog(null)
-      return
-    }
-    if (treeDialog.kind === "create-directory") {
-      const result = await runMutation("新建目录", () =>
-        createLibraryDirectory(selectedDirectory, value)
-      )
-      if (result) {
-        setExpandedPaths((current) => new Set(current).add(selectedDirectory))
-        setTreeDialog(null)
-      }
-      return
-    }
-    if (treeDialog.kind === "rename") {
-      const currentName = treeDialog.entry.name.replace(/\.(md|csv)$/iu, "")
-      if (value === currentName) {
-        setTreeDialog(null)
-        return
-      }
-      const result = await runSavedMutation("重命名", () =>
-        renameLibraryEntry(treeDialog.entry.path, value)
-      )
-      if (result) setTreeDialog(null)
-      return
-    }
-
-    if (treeDialog.kind !== "delete") return
     const deletedPath = treeDialog.entry.path
     const result = await runSavedMutation("删除", () =>
       deleteLibraryEntry(deletedPath)
@@ -420,12 +519,44 @@ export function LibraryShell({
     }
   }
 
+  function renderCreateDirectoryRow(parentPath: string) {
+    if (creatingDirectory?.parent !== parentPath) return null
+    return (
+      <li role="treeitem">
+        <div className={styles.renameRow}>
+          <span className={styles.treeIndentIcon} />
+          <FolderIcon aria-hidden="true" />
+          <div className={styles.renameWrap}>
+            <Input
+              aria-label="新目录名称"
+              autoFocus
+              disabled={busyAction !== null}
+              onBlur={() => void submitCreateDirectory()}
+              onChange={(event) =>
+                setCreatingDirectory((current) =>
+                  current ? { ...current, value: event.target.value } : null
+                )
+              }
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault()
+                  void submitCreateDirectory()
+                } else if (event.key === "Escape") {
+                  event.stopPropagation()
+                  setCreatingDirectory(null)
+                }
+              }}
+              placeholder="目录名称"
+              value={creatingDirectory.value}
+            />
+          </div>
+        </div>
+      </li>
+    )
+  }
+
   return (
     <section aria-label="资料库" className={styles.shell}>
-      <header className={styles.topbar} data-tauri-drag-region>
-        <h1 className={styles.pageTitle}>资料库</h1>
-      </header>
-
       <div className={styles.workspace}>
         <aside
           aria-busy={busyAction !== null || isLoading ? true : undefined}
@@ -433,46 +564,52 @@ export function LibraryShell({
           className={styles.noteListPane}
           data-mobile-hidden={mobilePane === "editor" ? "true" : undefined}
         >
-          <div className={styles.paneHeader}>
+          {/* 标题栏工具条：根目录 + 新建操作直接放进 Overlay 标题栏，空白处保持可拖拽 */}
+          <div className={styles.paneHeader} data-tauri-drag-region>
             <button
               aria-current={selectedTreePath === "notes" ? "page" : undefined}
+              aria-label={`资料库根目录（${notes.length}）`}
               className={styles.rootButton}
               onClick={() => {
-                setSelectedNoteId(null)
-                setSelectedTreePath("notes")
-                setMobilePane("list")
+                void (async () => {
+                  // 清掉选中会让 saveCurrentNote 失去保存对象，必须先 flush 草稿
+                  if (!(await saveCurrentNote())) return
+                  setSelectedNoteId(null)
+                  setSelectedTreePath("notes")
+                  setMobilePane("list")
+                })()
               }}
+              title="资料库根目录"
               type="button"
             >
               <FolderIcon aria-hidden="true" />
-              <span>资料库</span>
+              <span className={styles.rootLabel}>资料库</span>
+              <span className={styles.noteCount}>{notes.length}</span>
             </button>
-            <span className={styles.noteCount}>{notes.length}</span>
-          </div>
-
-          <div className={styles.treeToolbar}>
-            <Button
-              disabled={busyAction !== null}
-              onClick={() => setTreeDialog({ kind: "create-note", value: "" })}
-              size="sm"
-              type="button"
-              variant="primary"
-            >
-              <FilePlus2Icon aria-hidden="true" />
-              新建笔记
-            </Button>
-            <Button
-              disabled={busyAction !== null}
-              onClick={() =>
-                setTreeDialog({ kind: "create-directory", value: "" })
-              }
-              size="sm"
-              type="button"
-              variant="outline"
-            >
-              <FolderPlusIcon aria-hidden="true" />
-              新建目录
-            </Button>
+            <div className={styles.paneActions}>
+              <Button
+                aria-label="新建笔记"
+                disabled={busyAction !== null}
+                onClick={() => void createNoteAndRename()}
+                size="icon-sm"
+                title="新建笔记"
+                type="button"
+                variant="ghost"
+              >
+                <FilePlus2Icon aria-hidden="true" />
+              </Button>
+              <Button
+                aria-label="新建目录"
+                disabled={busyAction !== null}
+                onClick={() => startCreateDirectory()}
+                size="icon-sm"
+                title="新建目录"
+                type="button"
+                variant="ghost"
+              >
+                <FolderPlusIcon aria-hidden="true" />
+              </Button>
+            </div>
           </div>
 
           <div className={styles.noteListViewport}>
@@ -562,10 +699,11 @@ export function LibraryShell({
                   ) : null}
                 </div>
 
-                {libraryTree.entries.length === 0 ? (
+                {libraryTree.entries.length === 0 && !creatingDirectory ? (
                   <LibraryEmptyState message="到碎片流把一条内容转为笔记" />
                 ) : (
                   <ul aria-label="笔记和数据文件" className={styles.tree} role="tree">
+                    {renderCreateDirectoryRow("notes")}
                     <TreeEntries
                       busy={busyAction !== null}
                       directories={directories}
@@ -592,13 +730,16 @@ export function LibraryShell({
                           moveLibraryEntry(entry.path, destinationDirectory)
                         )
                       }}
-                      onRename={(entry) =>
-                        setTreeDialog({
-                          entry,
-                          kind: "rename",
-                          value: entry.name.replace(/\.(md|csv)$/iu, ""),
-                        })
+                      onRename={(entry) => startRename(entry.path, "tree")}
+                      onRenameCancel={() => setRenaming(null)}
+                      onRenameChange={(value) =>
+                        setRenaming((current) =>
+                          current ? { ...current, value } : null
+                        )
                       }
+                      onRenameSubmit={() => void submitRename()}
+                      renaming={renaming?.source === "tree" ? renaming : null}
+                      renderCreateRow={renderCreateDirectoryRow}
                       selectedPath={selectedTreePath}
                     />
                   </ul>
@@ -614,7 +755,7 @@ export function LibraryShell({
           className={styles.editorPane}
           data-mobile-hidden={mobilePane === "list" ? "true" : undefined}
         >
-          <div className={styles.editorHeader}>
+          <div className={styles.editorHeader} data-tauri-drag-region>
             <Button
               aria-label="返回资料库目录"
               className={styles.mobileBackButton}
@@ -625,9 +766,57 @@ export function LibraryShell({
             >
               <ChevronLeftIcon aria-hidden="true" />
             </Button>
-            <h2 className={styles.editorTitle}>{selectedTitle}</h2>
+            {selectedNote &&
+            renaming?.source === "editor" &&
+            renaming.path === selectedNote.path ? (
+              <div className={styles.renameWrap}>
+                <Input
+                  aria-label="重命名名称"
+                  autoFocus
+                  disabled={busyAction !== null}
+                  onBlur={() => void submitRename()}
+                  onChange={(event) =>
+                    setRenaming((current) =>
+                      current ? { ...current, value: event.target.value } : null
+                    )
+                  }
+                  onFocus={(event) => event.target.select()}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault()
+                      void submitRename()
+                    } else if (event.key === "Escape") {
+                      event.stopPropagation()
+                      setRenaming(null)
+                    }
+                  }}
+                  value={renaming.value}
+                />
+              </div>
+            ) : (
+              <h2 className={styles.editorTitle} data-tauri-drag-region>
+                {selectedNote ? (
+                  <button
+                    aria-label="重命名文件"
+                    className={styles.editorTitleButton}
+                    disabled={busyAction !== null}
+                    onClick={() => startRename(selectedNote.path, "editor")}
+                    title="重命名文件"
+                    type="button"
+                  >
+                    {selectedTitle}
+                  </button>
+                ) : (
+                  selectedTitle
+                )}
+              </h2>
+            )}
             {selectedNote ? (
-              <span className={styles.saveState} data-state={saveState}>
+              <span
+                className={styles.saveState}
+                data-state={saveState}
+                data-tauri-drag-region
+              >
                 {formatSaveState(saveState)}
               </span>
             ) : null}
@@ -664,6 +853,11 @@ export function LibraryShell({
           className={styles.inspectorSlot}
           data-library-inspector-slot
         >
+          <div
+            aria-hidden="true"
+            className={styles.inspectorHeader}
+            data-tauri-drag-region
+          />
           {selectedNote ? (
             <FragmentBacklinksPanel
               fragment={selectedNote}
@@ -686,39 +880,11 @@ export function LibraryShell({
           showCloseButton={busyAction === null}
         >
           <DialogHeader>
-            <DialogTitle>{getTreeDialogTitle(treeDialog)}</DialogTitle>
-            {treeDialog?.kind === "delete" ? (
-              <DialogDescription>
-                将永久删除「{treeDialog.entry.name}」，此操作不可撤销。
-              </DialogDescription>
-            ) : (
-              <DialogDescription>
-                {treeDialog?.kind === "rename"
-                  ? "引用当前名称的 wikilink 会在保存后自动更新。"
-                  : `将在「${formatDirectoryLabel(selectedDirectory)}」中创建。`}
-              </DialogDescription>
-            )}
+            <DialogTitle>确认删除</DialogTitle>
+            <DialogDescription>
+              将永久删除「{treeDialog?.entry.name}」，此操作不可撤销。
+            </DialogDescription>
           </DialogHeader>
-
-          {treeDialog && treeDialog.kind !== "delete" ? (
-            <Input
-              aria-label={treeDialog.kind === "create-note" ? "笔记标题" : "名称"}
-              autoFocus
-              disabled={busyAction !== null}
-              onChange={(event) =>
-                setTreeDialog((current) =>
-                  current ? { ...current, value: event.target.value } : null
-                )
-              }
-              onKeyDown={(event) => {
-                if (event.key === "Enter") void submitTreeDialog()
-              }}
-              placeholder={
-                treeDialog.kind === "create-note" ? "输入笔记标题" : "输入名称"
-              }
-              value={treeDialog.value}
-            />
-          ) : null}
 
           <DialogFooter className={styles.dialogFooter}>
             <Button
@@ -730,15 +896,12 @@ export function LibraryShell({
               取消
             </Button>
             <Button
-              disabled={
-                busyAction !== null ||
-                (treeDialog?.kind !== "delete" && !treeDialog?.value.trim())
-              }
+              disabled={busyAction !== null}
               onClick={() => void submitTreeDialog()}
               type="button"
-              variant={treeDialog?.kind === "delete" ? "destructive" : "default"}
+              variant="destructive"
             >
-              {busyAction ?? (treeDialog?.kind === "delete" ? "删除" : "确认")}
+              {busyAction ?? "删除"}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -757,6 +920,11 @@ interface TreeEntriesProps {
   onEntryClick: (entry: LibraryTreeEntry) => void
   onMove: (entry: LibraryTreeEntry, destinationDirectory: string) => void
   onRename: (entry: LibraryTreeEntry) => void
+  onRenameCancel: () => void
+  onRenameChange: (value: string) => void
+  onRenameSubmit: () => void
+  renaming: { path: string; value: string } | null
+  renderCreateRow: (parentPath: string) => ReactNode
   selectedPath: string
 }
 
@@ -770,6 +938,11 @@ function TreeEntries({
   onEntryClick,
   onMove,
   onRename,
+  onRenameCancel,
+  onRenameChange,
+  onRenameSubmit,
+  renaming,
+  renderCreateRow,
   selectedPath,
 }: TreeEntriesProps) {
   return entries.map((entry) => {
@@ -794,90 +967,125 @@ function TreeEntries({
         key={entry.path}
         role="treeitem"
       >
-        <div
-          className={styles.treeRow}
-          data-selected={selectedPath === entry.path ? "true" : undefined}
-        >
-          <button
-            aria-current={selectedPath === entry.path ? "page" : undefined}
-            className={styles.treeButton}
-            disabled={busy}
-            onClick={() => onEntryClick(entry)}
-            type="button"
-          >
-            {entry.kind === "directory" ? (
-              expanded ? (
-                <ChevronDownIcon aria-hidden="true" />
-              ) : (
-                <ChevronRightIcon aria-hidden="true" />
-              )
-            ) : (
-              <span className={styles.treeIndentIcon} />
-            )}
+        {renaming?.path === entry.path ? (
+          <div className={styles.renameRow}>
+            <span className={styles.treeIndentIcon} />
             <Icon aria-hidden="true" />
-            <span className={styles.treeLabel}>{entry.name}</span>
-          </button>
-          <DropdownMenu>
-            <DropdownMenuTrigger
+            <div className={styles.renameWrap}>
+              <Input
+                aria-label="重命名名称"
+                autoFocus
+                disabled={busy}
+                onBlur={onRenameSubmit}
+                onChange={(event) => onRenameChange(event.target.value)}
+                onFocus={(event) => event.target.select()}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault()
+                    onRenameSubmit()
+                  } else if (event.key === "Escape") {
+                    event.stopPropagation()
+                    onRenameCancel()
+                  }
+                }}
+                value={renaming.value}
+              />
+            </div>
+          </div>
+        ) : (
+          <div
+            className={styles.treeRow}
+            data-selected={selectedPath === entry.path ? "true" : undefined}
+          >
+            <button
+              aria-current={selectedPath === entry.path ? "page" : undefined}
+              className={styles.treeButton}
               disabled={busy}
-              render={
-                <Button
-                  aria-label={`${entry.name} 操作`}
-                  className={styles.treeMenuButton}
-                  size="icon-sm"
-                  type="button"
-                  variant="ghost"
-                />
-              }
+              onClick={() => onEntryClick(entry)}
+              type="button"
             >
-              <MoreHorizontalIcon aria-hidden="true" />
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem onClick={() => onRename(entry)}>
-                重命名
-              </DropdownMenuItem>
-              <DropdownMenuSub>
-                <DropdownMenuSubTrigger>移动到…</DropdownMenuSubTrigger>
-                <DropdownMenuSubContent>
-                  {destinations.map((directory) => (
-                    <DropdownMenuItem
-                      key={directory}
-                      onClick={() => onMove(entry, directory)}
-                    >
-                      {directory === "notes"
-                        ? "资料库根目录"
-                        : directory.replace(/^notes\//u, "")}
-                    </DropdownMenuItem>
-                  ))}
-                </DropdownMenuSubContent>
-              </DropdownMenuSub>
-              {entry.kind === "markdown" ? (
-                <DropdownMenuItem onClick={() => onConvertToFragment(entry)}>
-                  转为碎片
-                </DropdownMenuItem>
-              ) : null}
-              <DropdownMenuSeparator />
-              <DropdownMenuItem
-                onClick={() => onDelete(entry)}
-                variant="destructive"
+              {entry.kind === "directory" ? (
+                expanded ? (
+                  <ChevronDownIcon aria-hidden="true" />
+                ) : (
+                  <ChevronRightIcon aria-hidden="true" />
+                )
+              ) : (
+                <span className={styles.treeIndentIcon} />
+              )}
+              <Icon aria-hidden="true" />
+              <span className={styles.treeLabel}>{entry.name}</span>
+            </button>
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                disabled={busy}
+                render={
+                  <Button
+                    aria-label={`${entry.name} 操作`}
+                    className={styles.treeMenuButton}
+                    size="icon-sm"
+                    type="button"
+                    variant="ghost"
+                  />
+                }
               >
-                删除
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
-        {expanded && entry.children?.length ? (
+                <MoreHorizontalIcon aria-hidden="true" />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={() => onRename(entry)}>
+                  重命名
+                </DropdownMenuItem>
+                <DropdownMenuSub>
+                  <DropdownMenuSubTrigger>移动到…</DropdownMenuSubTrigger>
+                  <DropdownMenuSubContent>
+                    {destinations.map((directory) => (
+                      <DropdownMenuItem
+                        key={directory}
+                        onClick={() => onMove(entry, directory)}
+                      >
+                        {directory === "notes"
+                          ? "资料库根目录"
+                          : directory.replace(/^notes\//u, "")}
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuSubContent>
+                </DropdownMenuSub>
+                {entry.kind === "markdown" ? (
+                  <DropdownMenuItem onClick={() => onConvertToFragment(entry)}>
+                    转为碎片
+                  </DropdownMenuItem>
+                ) : null}
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  onClick={() => onDelete(entry)}
+                  variant="destructive"
+                >
+                  删除
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        )}
+        {expanded &&
+        ((entry.children?.length ?? 0) > 0 ||
+          renderCreateRow(entry.path) !== null) ? (
           <ul role="group">
+            {renderCreateRow(entry.path)}
             <TreeEntries
               busy={busy}
               directories={directories}
-              entries={entry.children}
+              entries={entry.children ?? []}
               expandedPaths={expandedPaths}
               onConvertToFragment={onConvertToFragment}
               onDelete={onDelete}
               onEntryClick={onEntryClick}
               onMove={onMove}
               onRename={onRename}
+              onRenameCancel={onRenameCancel}
+              onRenameChange={onRenameChange}
+              onRenameSubmit={onRenameSubmit}
+              renaming={renaming}
+              renderCreateRow={renderCreateRow}
               selectedPath={selectedPath}
             />
           </ul>
@@ -905,25 +1113,6 @@ function findTreeEntry(
     if (nested) return nested
   }
   return null
-}
-
-function getTreeDialogTitle(dialog: TreeDialogState | null) {
-  switch (dialog?.kind) {
-    case "create-note":
-      return "新建笔记"
-    case "create-directory":
-      return "新建目录"
-    case "rename":
-      return "重命名"
-    case "delete":
-      return "确认删除"
-    default:
-      return "资料库操作"
-  }
-}
-
-function formatDirectoryLabel(path: string) {
-  return path === "notes" ? "资料库根目录" : path.replace(/^notes\//u, "")
 }
 
 function toggleSetValue(

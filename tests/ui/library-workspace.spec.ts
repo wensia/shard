@@ -181,6 +181,22 @@ async function installLibraryMock(page: Page, includeNotes = true) {
               updatedLinks: 0,
             }
           }
+          if (command === "checkpoint_vault") {
+            return {
+              status: "no_changes",
+              changes: 0,
+              reason: null,
+              git: {
+                branch: "main",
+                shortCommit: "abc1234",
+                hasRemote: false,
+                status: "ready",
+                error: null,
+                ahead: 0,
+                behind: 0,
+              },
+            }
+          }
           throw new Error(`Unhandled Tauri test command: ${command}`)
         },
       },
@@ -262,6 +278,32 @@ test("资料库文件树选择笔记，并在切笔记、切空间与捕捉时�
   await page.keyboard.press("ControlOrMeta+n")
   await expect.poll(() => getUpdateCalls(page)).toHaveLength(3)
   await expect(page.locator('[data-shard-editor="composer"] .cm-content')).toBeFocused()
+})
+
+test("编辑停顿后自动保存，Cmd+S 立即保存", async ({ page }) => {
+  await installLibraryMock(page)
+  await page.goto("/")
+  await page.getByRole("button", { name: "资料库", exact: true }).click()
+
+  const list = page.getByRole("complementary", { name: "资料库目录" })
+  await list
+    .getByRole("button", { name: "最近更新的笔记.md", exact: true })
+    .click()
+
+  // 停止输入 800ms 后防抖自动保存，无需切换笔记或空间
+  await fillEditor(page, "library:note-new", "# 停顿自动保存\n正文 #work")
+  await expect.poll(() => getUpdateCalls(page)).toHaveLength(1)
+  expect((await getUpdateCalls(page))[0].args).toMatchObject({
+    id: "note-new",
+    tags: ["inbox", "note", "work"],
+  })
+  await expect(page.getByText("已保存", { exact: true })).toBeVisible()
+
+  // Cmd/Ctrl+S 显式保存，不等待防抖
+  await fillEditor(page, "library:note-new", "# 停顿自动保存\n第二段 #work")
+  await page.keyboard.press("ControlOrMeta+s")
+  await expect.poll(() => getUpdateCalls(page)).toHaveLength(2)
+  await expect(page.getByText("已保存", { exact: true })).toBeVisible()
 })
 
 test("空资料库保留入口并展示引导空状态", async ({ page }) => {

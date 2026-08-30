@@ -8,21 +8,6 @@
   background: var(--background);
 }
 
-.topbar {
-  flex: none;
-  border-bottom: 1px solid var(--border);
-  background: var(--topbar);
-  padding: var(--space-4) var(--shard-content-inset);
-  box-shadow: var(--shadow-topbar);
-  backdrop-filter: blur(var(--space-2));
-}
-
-.pageTitle {
-  font-size: var(--text-page-title);
-  font-weight: var(--weight-semibold);
-  line-height: var(--leading-tight);
-}
-
 .workspace {
   display: grid;
   min-height: 0;
@@ -51,15 +36,32 @@
   display: none;
 }
 
+/*
+ * 标题栏工具条：Tauri Overlay 标题栏下没有单独的页面标题带，
+ * 三列各自的头部就是窗口顶部条，带 data-tauri-drag-region 保留拖拽。
+ * 没有侧栏（窄窗）时 macOS 红绿灯直接落在内容列上，左侧先按安全宽度避让。
+ */
+.paneHeader,
+.editorHeader,
+.inspectorHeader {
+  min-height: var(--shard-titlebar-height);
+  flex: none;
+  border-bottom: 1px solid var(--border);
+  background: var(--topbar);
+  box-shadow: var(--shadow-topbar);
+}
+
 .paneHeader,
 .editorHeader {
   display: flex;
-  min-height: var(--control-height);
-  flex: none;
   align-items: center;
   gap: var(--space-2);
-  border-bottom: 1px solid var(--border);
-  padding: var(--space-2) var(--space-4);
+  padding: var(--space-2) var(--space-4) var(--space-2)
+    var(--shard-traffic-light-clearance);
+}
+
+.paneHeader {
+  padding-right: var(--space-2);
 }
 
 .paneTitle,
@@ -71,6 +73,23 @@
   line-height: var(--leading-tight);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.editorTitleButton {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  font: inherit;
+  color: inherit;
+  text-align: inherit;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border-radius: var(--shard-radius-control);
+  cursor: pointer;
+}
+
+.editorTitleButton:hover:not(:disabled) {
+  color: var(--primary);
 }
 
 .noteCount,
@@ -88,17 +107,47 @@
 .rootButton {
   display: flex;
   min-width: 0;
+  min-height: var(--control-height-sm);
   flex: 1;
   align-items: center;
   gap: var(--space-2);
-  border: 0;
+  border: 1px solid transparent;
   border-radius: var(--radius-control);
   background: transparent;
+  padding: var(--space-1) var(--space-2);
   color: var(--foreground);
   font-size: var(--text-section-title);
   font-weight: var(--weight-semibold);
   line-height: var(--leading-tight);
   text-align: left;
+}
+
+.rootButton:hover {
+  background: var(--muted);
+}
+
+/* 根目录被选中 = 新建笔记/目录会落在根目录，与树节点选中态同一套信号 */
+.rootButton[aria-current="page"] {
+  border-color: color-mix(
+    in srgb,
+    var(--primary) var(--shard-alpha-21),
+    transparent
+  );
+  background: var(--primary-subtle);
+}
+
+.rootLabel {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.paneActions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-1);
 }
 
 .rootButton svg {
@@ -112,15 +161,6 @@
 .treeMenuButton:focus-visible {
   outline: none;
   box-shadow: var(--ring-focus);
-}
-
-.treeToolbar {
-  display: flex;
-  flex: none;
-  align-items: center;
-  gap: var(--space-2);
-  border-bottom: 1px solid var(--border);
-  padding: var(--space-2);
 }
 
 .treeViewportInner {
@@ -222,6 +262,26 @@
   flex: none;
 }
 
+/* 行内重命名：树行或编辑器标题原位换成输入框，Enter/失焦提交、Esc 取消 */
+.renameRow {
+  display: flex;
+  min-height: var(--control-height-sm);
+  align-items: center;
+  gap: var(--space-2);
+  padding-inline: var(--space-2);
+}
+
+.renameRow svg {
+  width: var(--space-4);
+  height: var(--space-4);
+  flex: none;
+}
+
+.renameWrap {
+  min-width: 0;
+  flex: 1;
+}
+
 .dialogFooter {
   flex-direction: row;
   justify-content: flex-end;
@@ -298,10 +358,6 @@
   gap: var(--space-1);
 }
 
-.editorHeader {
-  min-height: calc(var(--control-height) + var(--space-4));
-}
-
 .editorTitle {
   flex: 1;
 }
@@ -350,12 +406,25 @@
 }
 
 @media (width >= 64rem) {
-  .topbar {
-    padding-inline: var(--shard-content-inset-lg);
-  }
-
   .workspace {
     grid-template-columns: var(--shard-sidebar-width) minmax(0, 1fr);
+  }
+
+  /* 展开的侧栏已经盖住红绿灯，头部恢复常规内边距 */
+  .paneHeader {
+    padding-left: var(--space-2);
+  }
+
+  .editorHeader {
+    padding-left: var(--space-4);
+  }
+
+  /* 侧栏折叠到 48px + 1px 时红绿灯仍会探入内容列，只让出剩余宽度 */
+  :global([data-sidebar-collapsed="true"]) .paneHeader,
+  :global([data-sidebar-collapsed="true"]) .editorHeader {
+    padding-left: calc(
+      var(--shard-traffic-light-clearance) - var(--space-12) - 1px
+    );
   }
 
   .noteListPane[data-mobile-hidden="true"],

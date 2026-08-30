@@ -17,9 +17,11 @@ import {
 import { textEditToTransaction } from "@/editor/text-edit"
 import {
   getTagRanges,
+  normalizeTag,
   parseMarkdownImageLine,
   toggleTaskLine,
 } from "@/lib/editor-format"
+import { LOCKBOX_TAG } from "@/lib/lockbox"
 import { loadFragmentImageSrc } from "@/lib/fragment-images"
 
 const refreshLivePreviewEffect = StateEffect.define<null>()
@@ -286,9 +288,14 @@ function buildLivePreviewDecorations(view: EditorView): DecorationSet {
       for (const tag of getTagRanges(lineText)) {
         const from = line.from + tag.start
         const to = line.from + tag.end
+        // #密匣 是保存目的地指令而非分类标签，用密匣的琥珀色与普通标签区分
+        const tagClass =
+          normalizeTag(tag.text) === LOCKBOX_TAG
+            ? "shard-cm-tag shard-cm-tag-lockbox"
+            : "shard-cm-tag"
         add(
           `tag:${from}:${to}`,
-          Decoration.mark({ class: "shard-cm-tag" }).range(from, to),
+          Decoration.mark({ class: tagClass }).range(from, to),
         )
       }
 
