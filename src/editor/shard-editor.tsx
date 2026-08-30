@@ -5,7 +5,10 @@ import {
   type Extension,
   type TransactionSpec,
 } from "@codemirror/state"
-import { EditorView, placeholder as placeholderExtension } from "@codemirror/view"
+import {
+  EditorView,
+  placeholder as placeholderExtension,
+} from "@codemirror/view"
 import {
   forwardRef,
   useEffect,
@@ -16,8 +19,11 @@ import {
 
 import type { TextEdit } from "@/lib/editor-format"
 import { createShardEditorClipboard } from "@/editor/extensions/clipboard"
+import { createShardLivePreview } from "@/editor/extensions/live-preview"
+import { createShardMarkdown } from "@/editor/extensions/markdown"
 import { createShardEditorTheme } from "@/editor/extensions/theme"
 import { createShardEditorKeymap } from "@/editor/extensions/keymap"
+import { createShardSelectionLayer } from "@/editor/extensions/selection"
 import { textEditToTransaction } from "@/editor/text-edit"
 import { registerShardEditorTestView } from "@/editor/test-bridge"
 
@@ -175,6 +181,11 @@ export const ShardEditor = forwardRef<ShardEditorHandle, ShardEditorProps>(
         onPasteFiles: (files) => callbacksRef.current.onPasteFiles.current?.(files),
         onDropFiles: (files) => callbacksRef.current.onDropFiles.current?.(files),
       }),
+      createShardMarkdown(),
+      createShardLivePreview(),
+      // 方案 §7 决策 C 复评：原生 ::selection 与 CM 自带的 drawSelection 都只盖到字符高度，
+      // 换成按行盒绘制的自定义 layer（见 extensions/selection.ts）。
+      createShardSelectionLayer(),
       EditorView.updateListener.of((update) => {
         if (update.selectionSet) {
           const selection = update.state.selection.main

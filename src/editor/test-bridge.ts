@@ -2,6 +2,7 @@ import { Transaction } from "@codemirror/state"
 import type { EditorView } from "@codemirror/view"
 
 export interface ShardEditorTestSnapshot {
+  composing: boolean
   value: string
   selectionStart: number
   selectionEnd: number
@@ -49,6 +50,7 @@ function ensureTestBridge() {
       const view = getView(id)
       const selection = view.state.selection.main
       return {
+        composing: view.composing,
         value: view.state.doc.toString(),
         selectionStart: selection.from,
         selectionEnd: selection.to,

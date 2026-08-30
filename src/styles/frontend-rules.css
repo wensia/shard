@@ -999,6 +999,47 @@
     transform: translateY(-50%);
   }
 
+  /* CM6 widget 直接复用卡片 checkbox；这里仅覆盖编辑器内联几何。 */
+  .shard-editor .shard-cm-task-checkbox {
+    position: relative;
+    top: auto;
+    left: auto;
+    cursor: pointer;
+    transform: none;
+    vertical-align: text-bottom;
+  }
+
+  .shard-editor .shard-cm-task-checkbox.shard-task-checkbox-checked {
+    transform: scale(1.06);
+  }
+
+  /* 编辑器里的分割线是行内 widget：卡片版是 block + 上下 margin，塞进
+   * .cm-line 会把一行撑成两行高。这里改成行内块、在本行行盒里垂直居中，
+   * 上下留白就是行高减 1px 自然分摊出来的。 */
+  .shard-editor .shard-cm-divider {
+    display: inline-block;
+    width: 100%;
+    margin-block: 0;
+    vertical-align: middle;
+  }
+
+  .shard-cm-image-widget {
+    white-space: normal;
+  }
+
+  .shard-cm-image-fallback {
+    display: flex;
+    width: 100%;
+    height: 100%;
+    align-items: center;
+    justify-content: center;
+    padding: var(--shard-space-2);
+    color: var(--muted-foreground);
+    font-size: var(--text-tiny);
+    line-height: var(--leading-normal);
+    text-align: center;
+  }
+
   .shard-task-toggle .shard-task-checkbox {
     position: static;
     width: 100%;
