@@ -1,6 +1,6 @@
 # Shard 编辑器迁移方案：textarea + 覆盖层 → CodeMirror 6
 
-状态：**审计通过，修订版 v2**（council-20260829-185911 裁决已吸收；分歧点按多数派定）· 2026-08-30
+状态：**已完成（P0–P4）**（council-20260829-185911 裁决已吸收；分歧点按多数派定）· 2026-08-30
 
 ## 1. 背景：问题不是一个个 bug，是架构
 
@@ -62,7 +62,6 @@ src/editor/
   shard-editor.tsx          React 包装，宿主无关：value / onChange / onSelectionChange / variant(inline|zen|composer) / placeholder / autoFocus
   text-edit.ts              TextEdit → Transaction 桥接（最小公共前后缀 diff）
   test-bridge.ts            window.__shardEditorTest：读写 doc / selection、dispatch transaction，供 Playwright 用
-  kill-switch.ts            临时开关（localStorage/env），IME 门禁期间可退回旧 textarea；过门禁即删
   extensions/
     markdown.ts             lang-markdown + GFM（任务列表、表格）+ Lezer MarkdownConfig 自定义 inline `==高亮==`
     live-preview.ts         Compartment 包裹；视口内按语法树生成 decorations（mark / replace / widget）
@@ -104,7 +103,15 @@ src/editor/
 **只读渲染**：`FragmentContent` 删掉 `caretAligned` 分支，只剩卡片渲染
 
 ### 4.4 删除清单
-`editor-caret.ts`；`fragment-content.tsx` caretAligned 分支；capture-box / fragment-editor 里的 `syncTextareaGeometry`、`editorScrollTop`、mirror 量高、`startPointerSelection`、composition 补丁；`tag-completion-popover.tsx`（语义迁入 autocomplete 后）；CSS：`.shard-editor-highlight-layer`、`.shard-custom-caret`、`.shard-editor-overlay-field`、`.shard-editor-tag-highlight`、`.shard-editor-markdown-marker`、`.shard-editor-selection-highlight`；token：`--shard-caret-*`、`--shard-editor-tag-fg`（改由 theme 消费）、`--shard-editor-highlight-pad-y`（视 P1 选区复评）
+
+- ✅ 删除 kill switch，以及 CaptureBox / FragmentEditor 的 legacy textarea 分支。
+- ✅ 删除 `editor-caret.ts` 与零引用的 `textarea-caret.ts`。
+- ✅ 删除 `fragment-content.tsx` 的 `caretAligned`、编辑态 selection/table/divider/highlight 分支；只读表格与 task checkbox 几何保持不变。
+- ✅ 删除 `tag-completion-popover.tsx` 与对应 CSS；补全语义由 CM6 autocomplete 承接。
+- ✅ 删除 `.shard-editor-highlight-layer`、`.shard-custom-caret`、`.shard-editor-overlay-field`、`.shard-editor-tag-highlight`、`.shard-editor-markdown-marker`、`.shard-editor-selection-highlight` 等 legacy CSS。
+- ✅ 删除仅供自绘光标使用的 `--shard-caret-height-ratio`；`--shard-caret-color` / `--shard-caret-width`、编辑器字体、标签与荧光笔 token 仍由 CM6 theme 消费，因此保留。
+- ✅ 删除旧类不存在断言；保留 test bridge 与 editor helpers，Playwright discovery 仍为 67 条。
+- ✅ 完成 P4 报告与迁移文档收口。
 
 ## 5. 分阶段（决策 D：先 CaptureBox，但 FragmentEditor 在 P0 同挂）
 
