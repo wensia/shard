@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react"
 import {
   ChevronDownIcon,
+  CornerUpLeftIcon,
   LinkIcon,
   Loader2Icon,
   TagIcon,
@@ -16,6 +17,7 @@ const EXCERPT_LENGTH = 64
 
 interface FragmentRelatedProps {
   fragment: Fragment
+  indexVersion?: number
   isOpen: boolean
   onNavigate?: (fragmentId: string) => void
   onToggle: () => void
@@ -31,6 +33,7 @@ interface FragmentRelatedProps {
 
 export function FragmentRelated({
   fragment,
+  indexVersion = 0,
   isOpen,
   onNavigate,
   onToggle,
@@ -74,7 +77,7 @@ export function FragmentRelated({
     return () => {
       cancelled = true
     }
-  }, [fragment.id, fragment.updatedAt, isOpen, requestRelated])
+  }, [fragment.id, fragment.updatedAt, indexVersion, isOpen, requestRelated])
 
   async function removeRelation(item: RelatedFragment) {
     if (!onUnlinkFragment || item.reason !== "linked") return
@@ -176,19 +179,117 @@ export function FragmentRelated({
             </span>
           ) : null}
 
-          {(items ?? []).map((item) => (
-            <RelatedRow
-              item={item}
-              key={item.fragment.id}
-              onNavigate={onNavigate}
-              onRemove={onUnlinkFragment ? removeRelation : undefined}
-              removing={removingFragmentId === item.fragment.id}
-            />
-          ))}
+          <RelatedGroups
+            items={items ?? []}
+            onNavigate={onNavigate}
+            onRemove={onUnlinkFragment ? removeRelation : undefined}
+            removingFragmentId={removingFragmentId}
+          />
         </div>
       ) : null}
     </div>
   )
+}
+
+export function FragmentBacklinksPanel({
+  fragment,
+  indexVersion = 0,
+  onNavigate,
+  requestRelated,
+}: Pick<
+  FragmentRelatedProps,
+  "fragment" | "indexVersion" | "onNavigate" | "requestRelated"
+>) {
+  const [items, setItems] = useState<RelatedFragment[] | null>(null)
+
+  useEffect(() => {
+    if (!requestRelated) return
+    let cancelled = false
+    setItems(null)
+    void requestRelated(fragment.id, 100).then((related) => {
+      if (cancelled) return
+      setItems(
+        related.filter(
+          (item) =>
+            item.direction === "backlink" && item.origin === "wikilink"
+        )
+      )
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [fragment.id, indexVersion, requestRelated])
+
+  return (
+    <section aria-label="反向链接" className="shard-backlinks-panel">
+      <header className="shard-backlinks-panel__header">
+        <h2>反向链接</h2>
+        {items && items.length > 0 ? <span>{items.length}</span> : null}
+      </header>
+      <div aria-busy={items === null} className="shard-backlinks-panel__body">
+        {items === null ? (
+          <span className="shard-memo-meta">正在查找…</span>
+        ) : items.length === 0 ? (
+          <span className="shard-memo-meta">暂无反向链接</span>
+        ) : (
+          items.map((item) => (
+            <RelatedRow
+              item={item}
+              key={`${item.fragment.id}:${item.direction}:${item.origin}`}
+              onNavigate={onNavigate}
+              removing={false}
+            />
+          ))
+        )}
+      </div>
+    </section>
+  )
+}
+
+function RelatedGroups({
+  items,
+  onNavigate,
+  onRemove,
+  removingFragmentId,
+}: {
+  items: RelatedFragment[]
+  onNavigate?: (fragmentId: string) => void
+  onRemove?: (item: RelatedFragment) => void
+  removingFragmentId: string | null
+}) {
+  const groups = [
+    {
+      label: "反向链接",
+      items: items.filter((item) => item.direction === "backlink"),
+    },
+    {
+      label: "已关联",
+      items: items.filter(
+        (item) => item.reason === "linked" && item.direction !== "backlink"
+      ),
+    },
+    {
+      label: "同标签",
+      items: items.filter((item) => item.reason === "tag"),
+    },
+  ].filter((group) => group.items.length > 0)
+
+  return groups.map((group) => (
+    <section aria-label={group.label} key={group.label}>
+      <h3 className="shard-related-group-title">{group.label}</h3>
+      {group.items.map((item) => (
+        <RelatedRow
+          item={item}
+          key={`${item.fragment.id}:${item.direction ?? item.reason}:${item.origin ?? "tag"}`}
+          onNavigate={onNavigate}
+          onRemove={
+            item.origin === "wikilink" ? undefined : onRemove
+          }
+          removing={removingFragmentId === item.fragment.id}
+        />
+      ))}
+    </section>
+  ))
 }
 
 function RelatedRow({
@@ -242,7 +343,9 @@ function RelatedRow({
             color: "var(--muted-foreground)",
           }}
         >
-          {isLinked ? (
+          {item.direction === "backlink" ? (
+            <CornerUpLeftIcon aria-hidden="true" size={12} strokeWidth={1.75} />
+          ) : isLinked ? (
             <LinkIcon aria-hidden="true" size={12} strokeWidth={1.75} />
           ) : (
             <TagIcon aria-hidden="true" size={12} strokeWidth={1.75} />

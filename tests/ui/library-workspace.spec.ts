@@ -150,8 +150,11 @@ test("捕捉门禁：冷启动可输入保存并在时间线看见新条目", as
   await focusEditor(page, "composer")
   await page.keyboard.press("Control+Enter")
 
-  await expect(page.getByText("捕捉门禁回归")).toBeVisible()
+  await expect(
+    page.locator("[data-shard-fragment-id]").getByText("捕捉门禁回归", { exact: true })
+  ).toBeVisible()
   await expect(page.locator("[data-shard-fragment-id]")).toHaveCount(4)
+  await expect.poll(() => readEditor(page, "composer")).toBe("")
 })
 
 test("资料库按更新时间列笔记，并在切笔记、切空间与捕捉时自动保存", async ({
@@ -176,7 +179,9 @@ test("资料库按更新时间列笔记，并在切笔记、切空间与捕捉�
     id: "note-new",
     tags: ["inbox", "note", "work"],
   })
-  await expect.poll(() => readEditor(page, "library:note-old")).toBe(
+  await expect
+    .poll(() => readEditor(page, "library:note-old").catch(() => null))
+    .toBe(
     "没有标题的旧笔记 #notes"
   )
 

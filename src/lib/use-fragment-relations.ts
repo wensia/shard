@@ -115,5 +115,5 @@ export function useFragmentRelations(fragments: Fragment[]) {
     })
   }, [])
 
-  return { isReady, requestRelated }
+  return { indexVersion: readyVersionRef.current, isReady, requestRelated }
 }

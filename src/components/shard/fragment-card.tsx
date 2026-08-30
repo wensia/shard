@@ -37,6 +37,7 @@ import type { Fragment } from "@/types"
 
 interface FragmentCardProps {
   fragment: Fragment
+  relationIndexVersion?: number
   fragments?: Fragment[]
   isHighlighted?: boolean
   isEditing?: boolean
@@ -69,6 +70,7 @@ interface FragmentCardProps {
 
 export function FragmentCard({
   fragment,
+  relationIndexVersion = 0,
   fragments = [],
   isHighlighted = false,
   isEditing = false,
@@ -128,8 +130,10 @@ export function FragmentCard({
         <FragmentEditor
           commitOnBlur
           fragment={fragment}
+          fragments={fragments}
           knownTags={knownTags}
           onClose={() => onCancelEdit?.()}
+          onNavigateToFragment={onNavigateToFragment}
           onSave={onSave}
           variant="inline"
           vaultPath={vaultPath}
@@ -347,6 +351,7 @@ export function FragmentCard({
 
       <FragmentRelated
         fragment={fragment}
+        indexVersion={relationIndexVersion}
         isOpen={isRelatedOpen}
         onNavigate={onNavigateToFragment}
         onToggle={() => setIsRelatedOpen((open) => !open)}

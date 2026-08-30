@@ -114,6 +114,76 @@
 }
 
 @layer components {
+  .shard-cm-wikilink {
+    border-radius: var(--radius-control);
+    color: var(--info);
+    cursor: pointer;
+    text-decoration: underline;
+    text-decoration-color: color-mix(in srgb, var(--info) 45%, transparent);
+    text-underline-offset: 0.16em;
+  }
+
+  .shard-cm-wikilink:hover {
+    background: var(--info-bg);
+    text-decoration-color: var(--info);
+  }
+
+  .shard-cm-wikilink--missing {
+    background: var(--muted);
+    color: var(--muted-foreground);
+    text-decoration-style: dotted;
+    text-decoration-color: var(--muted-foreground);
+  }
+
+  .shard-related-group-title {
+    margin-block: var(--space-2) var(--space-1);
+    color: var(--muted-foreground);
+    font-size: var(--text-tiny);
+    font-weight: var(--weight-medium);
+    line-height: var(--leading-tight);
+  }
+
+  .shard-backlinks-panel {
+    display: flex;
+    min-height: 0;
+    height: 100%;
+    flex-direction: column;
+    background: var(--card);
+  }
+
+  .shard-backlinks-panel__header {
+    display: flex;
+    min-height: var(--control-height);
+    flex: none;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid var(--border);
+    padding: var(--space-2) var(--space-4);
+  }
+
+  .shard-backlinks-panel__header h2 {
+    font-size: var(--text-section-title);
+    font-weight: var(--weight-semibold);
+    line-height: var(--leading-tight);
+  }
+
+  .shard-backlinks-panel__header span {
+    color: var(--muted-foreground);
+    font-size: var(--text-meta);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .shard-backlinks-panel__body {
+    display: flex;
+    min-height: 0;
+    flex: 1;
+    flex-direction: column;
+    gap: var(--space-1);
+    overflow: auto;
+    padding: var(--space-3) var(--space-4);
+    overscroll-behavior: contain;
+  }
+
   .cn-toast {
     padding-right: calc(var(--shard-space-6) * 2) !important;
     font-family: var(--font-sans) !important;

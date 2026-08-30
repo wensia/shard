@@ -57,6 +57,11 @@ import {
 import { deriveKind, isTypeTag } from "@/lib/content-kind"
 import { toggleTaskLine } from "@/lib/editor-format"
 import {
+  buildWikilinkCandidates,
+  resolveWikilinkTarget,
+} from "@/lib/wikilink"
+import { parseWikilinksInWorker } from "@/lib/wikilink-worker"
+import {
   hasMarkdownImage,
   isLockboxReady,
   LOCKBOX_TAG,
@@ -173,6 +178,11 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
   const [selectedInboxTag, setSelectedInboxTag] = useState<string | null>(null)
   const searchReturnFocusRef = useRef<HTMLElement | null>(null)
   const librarySaveHandlerRef = useRef<LibrarySaveHandler | null>(null)
+  const [pendingLibraryNavigation, setPendingLibraryNavigation] = useState<{
+    id: string
+    requestId: number
+  } | null>(null)
+  const nextLibraryNavigationIdRef = useRef(0)
   const routeRef = useRef(route)
   const filter: FragmentFilter =
     route.space === "fragments"
@@ -351,7 +361,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     setFragments((current) => sortFragmentsForDisplay([pendingFragment, ...current]))
 
     try {
-      const created = await createFragment(content, tags)
+      let created = await createFragment(content, tags)
       setFragments((current) =>
         sortFragmentsForDisplay(
           current.map((fragment) =>
@@ -359,6 +369,37 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
           )
         )
       )
+      try {
+        const links = await parseWikilinksInWorker(content)
+        const candidates = buildWikilinkCandidates([...fragments, created])
+        const targetIds = Array.from(
+          new Set(
+            links
+              .map((link) =>
+                resolveWikilinkTarget(link.target, candidates)?.fragmentId
+              )
+              .filter(
+                (targetId): targetId is string =>
+                  Boolean(targetId) && targetId !== created.id
+              )
+          )
+        )
+        for (const targetId of targetIds) {
+          created = await linkFragments(created.id, targetId, "wikilink")
+          setFragments((current) =>
+            sortFragmentsForDisplay(
+              current.map((fragment) =>
+                fragment.id === created.id ? created : fragment
+              )
+            )
+          )
+        }
+      } catch (error) {
+        toast.error(
+          `片段已保存，但双链同步失败：${getApiErrorMessage(error)}`,
+          { duration: Infinity }
+        )
+      }
       if (created.gitStatus === "commit_failed") {
         toast(
           `${"片段已保存，但 Git commit 失败"}：${
@@ -426,10 +467,60 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
       }
     }
 
-    const updated = await updateFragment(id, content, tags)
+    let updated = await updateFragment(id, content, tags)
     setFragments((current) =>
       current.map((fragment) => (fragment.id === id ? updated : fragment))
     )
+
+    if (currentFragment && !movesToLockbox && !editsLockbox) {
+      const links = await parseWikilinksInWorker(content)
+      const candidates = buildWikilinkCandidates(
+        fragments.map((fragment) =>
+          fragment.id === id ? { ...updated, content } : fragment
+        )
+      )
+      const nextTargets = new Set(
+        links
+          .map((link) =>
+            resolveWikilinkTarget(link.target, candidates)?.fragmentId
+          )
+          .filter(
+            (targetId): targetId is string =>
+              Boolean(targetId) && targetId !== id
+          )
+      )
+      const currentRelations = updated.related ?? []
+      const removedTargets = currentRelations
+        .filter(
+          (relation) =>
+            relation.origin === "wikilink" &&
+            !nextTargets.has(relation.targetId)
+        )
+        .map((relation) => relation.targetId)
+      const existingTargets = new Set(
+        currentRelations.map((relation) => relation.targetId)
+      )
+      const addedTargets = Array.from(nextTargets).filter(
+        (targetId) => !existingTargets.has(targetId)
+      )
+
+      for (const targetId of removedTargets) {
+        updated = await unlinkFragments(id, targetId)
+        setFragments((current) =>
+          current.map((fragment) =>
+            fragment.id === updated.id ? updated : fragment
+          )
+        )
+      }
+      for (const targetId of addedTargets) {
+        updated = await linkFragments(id, targetId, "wikilink")
+        setFragments((current) =>
+          current.map((fragment) =>
+            fragment.id === updated.id ? updated : fragment
+          )
+        )
+      }
+    }
     if (movesToLockbox) {
       closeEditor()
     }
@@ -913,6 +1004,32 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     setPendingScrollFragmentId(fragment.id)
   }
 
+  async function handleNavigateToFragment(fragmentId: string) {
+    const target = publicOnlyFragments.find(
+      (fragment) => fragment.id === fragmentId
+    )
+    if (!target) {
+      toast("链接目标已不存在")
+      return
+    }
+
+    if (target.kind === "note" && !target.archived) {
+      if (!(await saveLibraryDraftBeforeNavigation())) return
+      nextLibraryNavigationIdRef.current += 1
+      setPendingLibraryNavigation({
+        id: target.id,
+        requestId: nextLibraryNavigationIdRef.current,
+      })
+      if (routeRef.current.space !== "library") {
+        setRoute({ space: "library", params: {} })
+      }
+      return
+    }
+
+    if (!(await saveLibraryDraftBeforeNavigation())) return
+    handleOpenSearchResult(target)
+  }
+
   async function openSearch() {
     if (!(await saveLibraryDraftBeforeNavigation())) return
 
@@ -1336,9 +1453,13 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
           <FragmentsWorkspace
             capture={{
               collapseSignal: composerCollapseSignal,
+              fragments: publicOnlyFragments,
               isCreating,
               knownTags,
               onCreate: handleCreate,
+              onNavigateToFragment: (fragmentId) => {
+                void handleNavigateToFragment(fragmentId)
+              },
               onOpenZen: openZenDraft,
             }}
             filter={route.params.filter}
@@ -1422,7 +1543,9 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
               onScrollDown: () => {
                 setComposerCollapseSignal((current) => current + 1)
               },
-              onNavigateToFragment: setPendingScrollFragmentId,
+              onNavigateToFragment: (fragmentId) => {
+                void handleNavigateToFragment(fragmentId)
+              },
               onScrollToFragmentComplete: handleTimelineScrollComplete,
               onSave: handleUpdateFragment,
               onToggleKind: handleToggleFragmentKind,
@@ -1475,8 +1598,13 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
             fragments={publicActiveFragments}
             isLoading={isLoading}
             knownTags={knownTags}
+            navigateToNote={pendingLibraryNavigation}
+            onNavigateToFragment={(fragmentId) => {
+              void handleNavigateToFragment(fragmentId)
+            }}
             onRegisterSaveHandler={registerLibrarySaveHandler}
             onSave={handleUpdateFragment}
+            relationFragments={publicOnlyFragments}
           />
         )}
         <div className={styles.bottomTabsSlot}>
@@ -1497,9 +1625,13 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
       <FragmentEditor
         draft={editingVariant === "zen" ? zenDraft : null}
         fragment={editingVariant === "zen" ? editingFragment : null}
+        fragments={publicOnlyFragments}
         knownTags={knownTags}
         onClose={closeEditor}
         onCreate={handleCreate}
+        onNavigateToFragment={(fragmentId) => {
+          void handleNavigateToFragment(fragmentId)
+        }}
         onSave={handleUpdateFragment}
         vaultPath={vaultPath}
       />

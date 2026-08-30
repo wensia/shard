@@ -21,6 +21,10 @@ import {
 } from "@/editor/shard-editor"
 import { createShardTagAutocomplete } from "@/editor/extensions/tag-autocomplete"
 import {
+  createShardWikilinkCompletionSource,
+  createShardWikilinkExtension,
+} from "@/editor/extensions/wikilink"
+import {
   applyInlineFormat,
   applyLineFormat,
   extractTags,
@@ -49,14 +53,18 @@ import {
   TABLE_DOCUMENT_FILTER,
   useTableDocumentDrop,
 } from "@/lib/use-table-document-drop"
+import { buildWikilinkCandidates } from "@/lib/wikilink"
+import type { Fragment } from "@/types"
 
 import styles from "./capture-box.module.css"
 
 interface CaptureBoxProps {
   collapseSignal: number
+  fragments: Fragment[]
   isCreating: boolean
   knownTags: string[]
   onCreate: (content: string, tags: string[]) => void | Promise<void>
+  onNavigateToFragment?: (fragmentId: string) => void
   onOpenZen?: (content: string) => void
 }
 
@@ -70,9 +78,11 @@ interface PendingImage {
 
 export function CaptureBox({
   collapseSignal,
+  fragments,
   isCreating,
   knownTags,
   onCreate,
+  onNavigateToFragment,
   onOpenZen,
 }: CaptureBoxProps) {
   const [content, setContent] = useState("")
@@ -95,16 +105,43 @@ export function CaptureBox({
   )
   const knownTagsRef = useRef(normalizedKnownTags)
   knownTagsRef.current = normalizedKnownTags
-  const tagAutocompleteExtension = useMemo(
+  const wikilinkCandidates = useMemo(
+    () => buildWikilinkCandidates(fragments),
+    [fragments]
+  )
+  const wikilinkCandidatesRef = useRef(wikilinkCandidates)
+  const wikilinkNavigateRef = useRef(onNavigateToFragment)
+  wikilinkCandidatesRef.current = wikilinkCandidates
+  wikilinkNavigateRef.current = onNavigateToFragment
+  const wikilinkCompletionSource = useMemo(
     () =>
-      createShardTagAutocomplete({
-        getKnownTags: () => knownTagsRef.current,
+      createShardWikilinkCompletionSource({
+        getCandidates: () => wikilinkCandidatesRef.current,
       }),
     []
   )
+  const tagAutocompleteExtension = useMemo(
+    () =>
+      createShardTagAutocomplete({
+        additionalSources: [wikilinkCompletionSource],
+        getKnownTags: () => knownTagsRef.current,
+      }),
+    [wikilinkCompletionSource]
+  )
+  const wikilinkExtension = useMemo(
+    () =>
+      createShardWikilinkExtension({
+        getCandidates: () => wikilinkCandidatesRef.current,
+        onMissingTarget: (target) =>
+          toast(`待建链接「${target}」尚不存在，可在资料库新建笔记`),
+        onNavigate: (fragmentId) =>
+          wikilinkNavigateRef.current?.(fragmentId),
+      }),
+    [wikilinkCandidates]
+  )
   const codeMirrorExtensionSet = useMemo(
-    () => [tagAutocompleteExtension],
-    [tagAutocompleteExtension]
+    () => [tagAutocompleteExtension, wikilinkExtension],
+    [tagAutocompleteExtension, wikilinkExtension]
   )
   const canSubmit =
     (content.trim().length > 0 || pendingImages.length > 0) && !isCreating

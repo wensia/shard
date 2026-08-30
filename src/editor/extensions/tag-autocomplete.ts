@@ -5,6 +5,7 @@ import {
   startCompletion,
   type Completion,
   type CompletionContext,
+  type CompletionSource,
 } from "@codemirror/autocomplete"
 import { Transaction, type Extension } from "@codemirror/state"
 import { EditorView, ViewPlugin } from "@codemirror/view"
@@ -24,6 +25,7 @@ import {
 } from "@/lib/tag-index"
 
 interface ShardTagAutocompleteOptions {
+  additionalSources?: CompletionSource[]
   getKnownTags: () => string[]
 }
 
@@ -111,6 +113,7 @@ function createCompositionBoundary() {
 }
 
 export function createShardTagAutocomplete({
+  additionalSources = [],
   getKnownTags,
 }: ShardTagAutocompleteOptions): Extension {
   let cachedTags: string[] | null = null
@@ -181,7 +184,7 @@ export function createShardTagAutocomplete({
         isNewTagCompletion(completion)
           ? "shard-cm-tag-completion shard-cm-tag-completion--new"
           : "shard-cm-tag-completion",
-      override: [tagSource],
+      override: [tagSource, ...additionalSources],
       tooltipClass: () => "shard-cm-tag-tooltip",
     }),
     createCompletionListA11yPlugin(),

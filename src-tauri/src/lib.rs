@@ -339,7 +339,7 @@ struct LockboxReadKeys {
 #[serde(rename_all = "camelCase")]
 struct FragmentRelation {
     target_id: String,
-    /// manual | walk | insight | tag
+    /// manual | walk | insight | tag | wikilink
     origin: String,
     created_at: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -2384,7 +2384,7 @@ fn link_fragments_in_vault(
     if source_id == target_id {
         return Err("片段不能关联自身。".to_string());
     }
-    if !matches!(origin, "manual" | "walk" | "insight" | "tag") {
+    if !matches!(origin, "manual" | "walk" | "insight" | "tag" | "wikilink") {
         return Err(format!("不支持的片段关系来源：{origin}"));
     }
 
@@ -5129,6 +5129,21 @@ mod tests {
         let target_id = write_public_test_fragment(vault, "target note");
 
         assert!(link_fragments_in_vault(vault, &source_id, &target_id, "automatic", None).is_err());
+    }
+
+    #[test]
+    fn test_link_fragments_accepts_wikilink_origin() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let vault = tempdir.path();
+        ensure_vault_layout(vault).unwrap();
+        ensure_git_repo(vault).unwrap();
+        let source_id = write_public_test_fragment(vault, "source note");
+        let target_id = write_public_test_fragment(vault, "target note");
+
+        let fragment =
+            link_fragments_in_vault(vault, &source_id, &target_id, "wikilink", None).unwrap();
+
+        assert_eq!(fragment.related[0].origin, "wikilink");
     }
 
     #[test]

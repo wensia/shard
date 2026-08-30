@@ -1,10 +1,12 @@
-import type { Fragment } from "@/types"
+import type { Fragment, FragmentRelation } from "@/types"
 
 const LINKED_SCORE = Number.MAX_SAFE_INTEGER
 const DEFAULT_LIMIT = 8
 
 export interface RelatedFragment {
   fragment: Fragment
+  direction?: "backlink" | "outgoing"
+  origin?: FragmentRelation["origin"]
   reason: "linked" | "tag"
   score: number
   note?: string
@@ -18,7 +20,10 @@ export interface RelationsIndex {
   /** tag -> 含该标签的片段 id 集合 */
   tagBuckets: Map<string, Set<string>>
   /** targetId -> 指向它的 source id 集合（反向边） */
-  backlinks: Map<string, Set<string>>
+  backlinks: Map<
+    string,
+    Array<{ relation: FragmentRelation; sourceId: string }>
+  >
   total: number
 }
 
@@ -44,7 +49,10 @@ export type FragmentRelationsWorkerResponse =
 export function buildRelationsIndex(fragments: Fragment[]): RelationsIndex {
   const byId = new Map<string, Fragment>()
   const tagBuckets = new Map<string, Set<string>>()
-  const backlinks = new Map<string, Set<string>>()
+  const backlinks = new Map<
+    string,
+    Array<{ relation: FragmentRelation; sourceId: string }>
+  >()
 
   for (const fragment of fragments) {
     byId.set(fragment.id, fragment)
@@ -59,12 +67,12 @@ export function buildRelationsIndex(fragments: Fragment[]): RelationsIndex {
     }
 
     for (const relation of fragment.related ?? []) {
-      let sources = backlinks.get(relation.targetId)
-      if (!sources) {
-        sources = new Set<string>()
-        backlinks.set(relation.targetId, sources)
+      let entries = backlinks.get(relation.targetId)
+      if (!entries) {
+        entries = []
+        backlinks.set(relation.targetId, entries)
       }
-      sources.add(fragment.id)
+      entries.push({ relation, sourceId: fragment.id })
     }
   }
 
@@ -84,36 +92,35 @@ export function computeRelated(
   const target = index.byId.get(targetId)
   if (!target) return []
 
-  const linked = new Map<string, RelatedFragment>()
+  const linked: RelatedFragment[] = []
+  const linkedFragmentIds = new Set<string>()
   const addLinked = (
     fragmentId: string,
     linkOwnerId: string,
-    note?: string
+    relation: FragmentRelation,
+    direction: "backlink" | "outgoing"
   ) => {
-    if (linked.has(fragmentId)) return
-
     const fragment = index.byId.get(fragmentId)
     if (!isEligibleCandidate(fragment, targetId)) return
 
-    linked.set(fragmentId, {
+    linkedFragmentIds.add(fragmentId)
+    linked.push({
+      direction,
       fragment,
+      origin: relation.origin,
       reason: "linked",
       score: LINKED_SCORE,
       linkOwnerId,
-      ...(note !== undefined ? { note } : {}),
+      ...(relation.note !== undefined ? { note: relation.note } : {}),
     })
   }
 
   for (const relation of target.related ?? []) {
-    addLinked(relation.targetId, target.id, relation.note)
+    addLinked(relation.targetId, target.id, relation, "outgoing")
   }
 
-  for (const sourceId of index.backlinks.get(targetId) ?? []) {
-    const source = index.byId.get(sourceId)
-    const note = source?.related?.find(
-      (relation) => relation.targetId === targetId
-    )?.note
-    addLinked(sourceId, sourceId, note)
+  for (const { relation, sourceId } of index.backlinks.get(targetId) ?? []) {
+    addLinked(sourceId, sourceId, relation, "backlink")
   }
 
   const tagScores = new Map<string, number>()
@@ -125,7 +132,7 @@ export function computeRelated(
 
     const idf = Math.log(index.total / bucket.size)
     for (const fragmentId of bucket) {
-      if (linked.has(fragmentId)) continue
+      if (linkedFragmentIds.has(fragmentId)) continue
 
       const fragment = index.byId.get(fragmentId)
       if (!isEligibleCandidate(fragment, targetId)) continue
@@ -135,7 +142,7 @@ export function computeRelated(
   }
 
   const related = [
-    ...linked.values(),
+    ...linked,
     ...Array.from(tagScores, ([fragmentId, score]) => ({
       fragment: index.byId.get(fragmentId)!,
       reason: "tag" as const,

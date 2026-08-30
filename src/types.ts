@@ -15,7 +15,7 @@ export type FragmentFilter =
 
 export interface FragmentRelation {
   targetId: string
-  origin: "manual" | "walk" | "insight" | "tag"
+  origin: "manual" | "walk" | "insight" | "tag" | "wikilink"
   createdAt: string
   note?: string
 }

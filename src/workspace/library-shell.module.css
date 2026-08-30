@@ -242,7 +242,9 @@
   }
 
   .inspectorSlot {
-    display: block;
+    display: flex;
+    min-height: 0;
+    flex-direction: column;
     border-left: 1px solid var(--border);
   }
 }

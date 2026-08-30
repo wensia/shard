@@ -23,6 +23,10 @@ import {
 } from "@/editor/shard-editor"
 import { createShardTagAutocomplete } from "@/editor/extensions/tag-autocomplete"
 import {
+  createShardWikilinkCompletionSource,
+  createShardWikilinkExtension,
+} from "@/editor/extensions/wikilink"
+import {
   applyInlineFormat,
   applyLineFormat,
   extractTags,
@@ -53,6 +57,7 @@ import {
   TABLE_DOCUMENT_FILTER,
   useTableDocumentDrop,
 } from "@/lib/use-table-document-drop"
+import { buildWikilinkCandidates } from "@/lib/wikilink"
 import type { Fragment } from "@/types"
 import styles from "./fragment-editor.module.css"
 
@@ -65,9 +70,11 @@ interface FragmentEditorProps {
   commitOnBlur?: boolean
   draft?: FragmentEditorDraft | null
   fragment: Fragment | null
+  fragments?: Fragment[]
   knownTags: string[]
   onClose: () => void
   onCreate?: (content: string, tags: string[]) => Promise<void>
+  onNavigateToFragment?: (fragmentId: string) => void
   onSave: (id: string, content: string, tags: string[]) => Promise<Fragment>
   variant?: "inline" | "zen"
   vaultPath?: string
@@ -86,9 +93,11 @@ export function FragmentEditor({
   commitOnBlur = false,
   draft = null,
   fragment,
+  fragments = [],
   knownTags,
   onClose,
   onCreate,
+  onNavigateToFragment,
   onSave,
   variant = "zen",
   vaultPath,
@@ -123,12 +132,39 @@ export function FragmentEditor({
   )
   const knownTagsRef = useRef(normalizedKnownTags)
   knownTagsRef.current = normalizedKnownTags
+  const wikilinkCandidates = useMemo(
+    () => buildWikilinkCandidates(fragments),
+    [fragments]
+  )
+  const wikilinkCandidatesRef = useRef(wikilinkCandidates)
+  const wikilinkNavigateRef = useRef(onNavigateToFragment)
+  wikilinkCandidatesRef.current = wikilinkCandidates
+  wikilinkNavigateRef.current = onNavigateToFragment
+  const wikilinkCompletionSource = useMemo(
+    () =>
+      createShardWikilinkCompletionSource({
+        getCandidates: () => wikilinkCandidatesRef.current,
+      }),
+    []
+  )
   const tagAutocompleteExtension = useMemo(
     () =>
       createShardTagAutocomplete({
+        additionalSources: [wikilinkCompletionSource],
         getKnownTags: () => knownTagsRef.current,
       }),
-    []
+    [wikilinkCompletionSource]
+  )
+  const wikilinkExtension = useMemo(
+    () =>
+      createShardWikilinkExtension({
+        getCandidates: () => wikilinkCandidatesRef.current,
+        onMissingTarget: (target) =>
+          toast(`待建链接「${target}」尚不存在，可在资料库新建笔记`),
+        onNavigate: (fragmentId) =>
+          wikilinkNavigateRef.current?.(fragmentId),
+      }),
+    [wikilinkCandidates]
   )
   const fragmentEditorExtensions = useMemo(
     () =>
@@ -145,8 +181,12 @@ export function FragmentEditor({
     []
   )
   const fragmentEditorExtensionSet = useMemo(
-    () => [fragmentEditorExtensions, tagAutocompleteExtension],
-    [fragmentEditorExtensions, tagAutocompleteExtension]
+    () => [
+      fragmentEditorExtensions,
+      tagAutocompleteExtension,
+      wikilinkExtension,
+    ],
+    [fragmentEditorExtensions, tagAutocompleteExtension, wikilinkExtension]
   )
 
   const draftContent = useMemo(

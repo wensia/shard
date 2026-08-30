@@ -71,7 +71,7 @@ export function FragmentTimeline({
   const programmaticScrollTimeoutRef = useRef<number | null>(null)
   const viewportRef = useRef<HTMLDivElement>(null)
   // 关系 worker 挂在时间线层级，整条时间线共用一个实例
-  const { requestRelated } = useFragmentRelations(fragments)
+  const { indexVersion, requestRelated } = useFragmentRelations(fragments)
   const [highlightedFragmentId, setHighlightedFragmentId] = useState<
     string | null
   >(null)
@@ -355,6 +355,7 @@ export function FragmentTimeline({
                       onToggleKind={onToggleKind}
                       onToggleTask={onToggleTask}
                       onUnlinkFragment={onUnlinkFragment}
+                      relationIndexVersion={indexVersion}
                       requestRelated={requestRelated}
                       vaultPath={vaultPath}
                     />

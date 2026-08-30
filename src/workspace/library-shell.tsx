@@ -9,12 +9,19 @@ import { ChevronLeftIcon } from "lucide-react"
 import { toast } from "sonner"
 
 import { TagBadge } from "@/components/shard/tag-badge"
+import { FragmentBacklinksPanel } from "@/components/shard/fragment-related"
 import { Button } from "@/components/ui/button"
 import { ShardEditor } from "@/editor/shard-editor"
 import { createShardTagAutocomplete } from "@/editor/extensions/tag-autocomplete"
+import {
+  createShardWikilinkCompletionSource,
+  createShardWikilinkExtension,
+} from "@/editor/extensions/wikilink"
 import { getApiErrorMessage } from "@/lib/api"
 import { deriveKind, deriveNoteTitle, isTypeTag } from "@/lib/content-kind"
 import { extractTags, normalizeTagList } from "@/lib/editor-format"
+import { useFragmentRelations } from "@/lib/use-fragment-relations"
+import { buildWikilinkCandidates } from "@/lib/wikilink"
 import type { Fragment } from "@/types"
 
 import styles from "./library-shell.module.css"
@@ -25,8 +32,11 @@ interface LibraryShellProps {
   fragments: Fragment[]
   isLoading: boolean
   knownTags: string[]
+  navigateToNote?: { id: string; requestId: number } | null
+  onNavigateToFragment?: (fragmentId: string) => void
   onRegisterSaveHandler: (handler: LibrarySaveHandler | null) => void
   onSave: (id: string, content: string, tags: string[]) => Promise<Fragment>
+  relationFragments?: Fragment[]
 }
 
 type SaveState = "dirty" | "error" | "saved" | "saving"
@@ -35,8 +45,11 @@ export function LibraryShell({
   fragments,
   isLoading,
   knownTags,
+  navigateToNote = null,
+  onNavigateToFragment,
   onRegisterSaveHandler,
   onSave,
+  relationFragments = fragments,
 }: LibraryShellProps) {
   const notes = useMemo(
     () =>
@@ -61,22 +74,50 @@ export function LibraryShell({
   const selectedNoteRef = useRef<Fragment | null>(selectedNote)
   const savePromiseRef = useRef<Promise<boolean> | null>(null)
   const knownTagsRef = useRef<string[]>([])
+  const wikilinkCandidates = useMemo(
+    () => buildWikilinkCandidates(relationFragments),
+    [relationFragments]
+  )
+  const { indexVersion, requestRelated } = useFragmentRelations(relationFragments)
+  const wikilinkCandidatesRef = useRef(wikilinkCandidates)
+  const wikilinkNavigateRef = useRef(onNavigateToFragment)
 
   const normalizedKnownTags = useMemo(
     () => normalizeTagList(knownTags.filter((tag) => tag !== "inbox")),
     [knownTags]
   )
   knownTagsRef.current = normalizedKnownTags
-  const tagAutocompleteExtension = useMemo(
+  wikilinkCandidatesRef.current = wikilinkCandidates
+  wikilinkNavigateRef.current = onNavigateToFragment
+  const wikilinkCompletionSource = useMemo(
     () =>
-      createShardTagAutocomplete({
-        getKnownTags: () => knownTagsRef.current,
+      createShardWikilinkCompletionSource({
+        getCandidates: () => wikilinkCandidatesRef.current,
       }),
     []
   )
+  const tagAutocompleteExtension = useMemo(
+    () =>
+      createShardTagAutocomplete({
+        additionalSources: [wikilinkCompletionSource],
+        getKnownTags: () => knownTagsRef.current,
+      }),
+    [wikilinkCompletionSource]
+  )
+  const wikilinkExtension = useMemo(
+    () =>
+      createShardWikilinkExtension({
+        getCandidates: () => wikilinkCandidatesRef.current,
+        onMissingTarget: (target) =>
+          toast(`待建链接「${target}」尚不存在，可在资料库新建笔记`),
+        onNavigate: (fragmentId) =>
+          wikilinkNavigateRef.current?.(fragmentId),
+      }),
+    [wikilinkCandidates]
+  )
   const editorExtensions = useMemo(
-    () => [tagAutocompleteExtension],
-    [tagAutocompleteExtension]
+    () => [tagAutocompleteExtension, wikilinkExtension],
+    [tagAutocompleteExtension, wikilinkExtension]
   )
 
   draftRef.current = draft
@@ -169,6 +210,14 @@ export function LibraryShell({
     }
     setMobilePane("editor")
   }
+
+  useEffect(() => {
+    if (!navigateToNote || navigateToNote.id === selectedNoteRef.current?.id) {
+      return
+    }
+    if (!notes.some((note) => note.id === navigateToNote.id)) return
+    void selectNote(navigateToNote.id)
+  }, [navigateToNote, notes])
 
   const selectedTitle = selectedNote
     ? deriveNoteTitle(selectedNote.content) || "无标题笔记"
@@ -290,10 +339,19 @@ export function LibraryShell({
         </article>
 
         <aside
-          aria-label="属性与反向链接预留区域"
+          aria-label="笔记检查器"
           className={styles.inspectorSlot}
           data-library-inspector-slot
-        />
+        >
+          {selectedNote ? (
+            <FragmentBacklinksPanel
+              fragment={selectedNote}
+              indexVersion={indexVersion}
+              onNavigate={onNavigateToFragment}
+              requestRelated={requestRelated}
+            />
+          ) : null}
+        </aside>
       </div>
     </section>
   )
