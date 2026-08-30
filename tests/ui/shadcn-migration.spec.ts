@@ -4,7 +4,9 @@ import {
   fillEditor,
   focusEditor,
   readEditor,
+  readEditorSnapshot,
   selectRange,
+  typeEditor,
 } from "./editor-helpers"
 
 async function installTauriMock(
@@ -1760,51 +1762,187 @@ test("插入标签按需补空格，汉字后不粘连", async ({ page }) => {
   await expect.poll(() => readEditor(page, "composer")).toBe("你好，#")
 })
 
-test.fixme("从建议里选中标签后自动补空格", async ({ page }) => {
-  const composer = page.getByPlaceholder("想到什么，写什么...")
-
-  await composer.fill("#wo")
-  await composer.press("End")
+test("从建议里选中标签后自动补空格", async ({ page }) => {
+  await fillEditor(page, "composer", "#w")
+  await selectRange(page, "composer", 2, 2)
+  await typeEditor(page, "composer", "o")
   const suggestion = page
     .getByRole("listbox", { name: "标签建议" })
     .getByRole("option", { name: /work/ })
   await suggestion.click()
 
   // 补全后必须留出分隔空格，否则接着写下一个标签会粘连
-  await expect(composer).toHaveValue("#work ")
-
-  // 这个空格还得在视觉上看得见：芯片外扩不能把它吃掉，光标要离芯片有可见间隔
-  await expect(page.locator(".shard-custom-caret")).toBeVisible()
-  const caretGap = await page.evaluate(() => {
-    const chip = document
-      .querySelector(".shard-editor-tag-highlight")
-      ?.getBoundingClientRect()
-    const caret = document
-      .querySelector(".shard-custom-caret")
-      ?.getBoundingClientRect()
-    return chip && caret ? caret.left - chip.right : null
-  })
-  expect(caretGap).not.toBeNull()
-  expect(caretGap ?? 0).toBeGreaterThanOrEqual(3)
+  await expect.poll(() => readEditor(page, "composer")).toBe("#work ")
+  await expect
+    .poll(async () => (await readEditorSnapshot(page, "composer")).selectionStart)
+    .toBe(6)
+  await expect(
+    page.locator('[data-shard-editor="composer"] .cm-content')
+  ).toBeFocused()
 })
 
-test.fixme("编辑模式选中标签后留出输入边距", async ({ page }) => {
+test("编辑模式选中标签后留出输入边距", async ({ page }) => {
   const card = page.locator('[data-shard-fragment-id="fragment-1"]')
   await card.getByRole("button", { name: "片段操作" }).click()
   await page.getByRole("menuitem", { name: "编辑" }).click()
 
-  const editor = page.locator("textarea").nth(1)
+  const editor = page.locator(
+    '[data-shard-editor="fragment:fragment-1"] .cm-content'
+  )
   await expect(editor).toBeFocused()
-  await editor.fill("#wo")
-  await editor.press("End")
+  await fillEditor(page, "fragment:fragment-1", "#w")
+  await selectRange(page, "fragment:fragment-1", 2, 2)
+  await typeEditor(page, "fragment:fragment-1", "o")
   await page
     .getByRole("listbox", { name: "标签建议" })
     .getByRole("option", { name: /work/ })
     .click()
 
-  await expect(editor).toHaveValue("#work ")
+  await expect.poll(() => readEditor(page, "fragment:fragment-1")).toBe("#work ")
+  await expect
+    .poll(
+      async () =>
+        (await readEditorSnapshot(page, "fragment:fragment-1")).selectionStart
+    )
+    .toBe(6)
   await expect(editor).toBeFocused()
-  expect(await editor.evaluate((element) => element.selectionStart)).toBe(6)
+  const caretGap = await page.evaluate(() => {
+    const selection = window.getSelection()
+    const caret = selection?.rangeCount
+      ? selection.getRangeAt(0).getClientRects()[0]
+      : undefined
+    const tag = document
+      .querySelector(
+        '[data-shard-editor="fragment:fragment-1"] .shard-cm-tag'
+      )
+      ?.getBoundingClientRect()
+    return caret && tag ? caret.left - tag.right : null
+  })
+  expect(caretGap).not.toBeNull()
+  expect(caretGap ?? 0).toBeGreaterThanOrEqual(3)
+})
+
+test("标签补全用 ArrowDown 与 Enter 选择第二项", async ({ page }) => {
+  await fillEditor(page, "composer", "")
+  await selectRange(page, "composer", 0, 0)
+  await typeEditor(page, "composer", "#")
+  const listbox = page.getByRole("listbox", { name: "标签建议" })
+  await expect(listbox).toBeVisible()
+  // 空 query 时候选顺序由标签索引决定，不假设第二项是谁：读出来再比对
+  const second = (
+    await listbox.getByRole("option").nth(1).locator(".cm-completionLabel").innerText()
+  ).trim()
+  expect(second.length).toBeGreaterThan(0)
+  await expect(listbox.getByRole("option").nth(0)).toHaveAttribute("aria-selected", "true")
+
+  await page.keyboard.press("ArrowDown")
+  await expect(listbox.getByRole("option").nth(1)).toHaveAttribute("aria-selected", "true")
+  await page.keyboard.press("Enter")
+
+  await expect.poll(() => readEditor(page, "composer")).toBe(`#${second} `)
+})
+
+test("Escape 关闭标签补全且不改文本", async ({ page }) => {
+  await fillEditor(page, "composer", "#w")
+  await selectRange(page, "composer", 2, 2)
+  await typeEditor(page, "composer", "o")
+  const listbox = page.getByRole("listbox", { name: "标签建议" })
+  await expect(listbox).toBeVisible()
+
+  await page.keyboard.press("Escape")
+
+  await expect(listbox).toBeHidden()
+  await expect.poll(() => readEditor(page, "composer")).toBe("#wo")
+})
+
+test("刚输入井号就展示已知标签且不展示新建项", async ({ page }) => {
+  await fillEditor(page, "composer", "")
+  await selectRange(page, "composer", 0, 0)
+  await typeEditor(page, "composer", "#")
+  const listbox = page.getByRole("listbox", { name: "标签建议" })
+
+  await expect(listbox).toBeVisible()
+  await expect(listbox.getByRole("option", { name: /work/ })).toBeVisible()
+  await expect(listbox.getByText("新建")).toHaveCount(0)
+})
+
+test("未知标签显示新建并由 Enter 应用", async ({ page }) => {
+  await fillEditor(page, "composer", "")
+  await selectRange(page, "composer", 0, 0)
+  await typeEditor(page, "composer", "#新标签")
+  const listbox = page.getByRole("listbox", { name: "标签建议" })
+
+  await expect(
+    listbox.getByRole("option", { name: /新标签.*新建/ })
+  ).toBeVisible()
+  await page.keyboard.press("Enter")
+
+  await expect.poll(() => readEditor(page, "composer")).toBe("#新标签 ")
+})
+
+test("汉字后用工具栏插入标签会补空格并立即打开补全", async ({ page }) => {
+  await fillEditor(page, "composer", "密匣")
+  await selectRange(page, "composer", 2, 2)
+
+  await page.getByRole("button", { name: "插入标签" }).click()
+
+  await expect.poll(() => readEditor(page, "composer")).toBe("密匣 #")
+  await expect(
+    page.getByRole("listbox", { name: "标签建议" })
+  ).toBeVisible()
+})
+
+test("IME 组合期间不弹补全，上屏后才出现", async ({ page }) => {
+  const session = await page.context().newCDPSession(page)
+  await fillEditor(page, "composer", "")
+  await selectRange(page, "composer", 0, 0)
+  await typeEditor(page, "composer", "#")
+  await expect(
+    page.getByRole("listbox", { name: "标签建议" })
+  ).toBeVisible()
+
+  await session.send("Input.imeSetComposition", {
+    text: "wo",
+    selectionStart: 2,
+    selectionEnd: 2,
+  })
+  await page.waitForTimeout(200)
+  await expect(
+    page.getByRole("listbox", { name: "标签建议" })
+  ).toHaveCount(0)
+  expect((await readEditorSnapshot(page, "composer")).composing).toBe(true)
+
+  await session.send("Input.insertText", { text: "wo" })
+
+  await expect.poll(() => readEditor(page, "composer")).toBe("#wo")
+  await expect(
+    page.getByRole("listbox", { name: "标签建议" })
+  ).toBeVisible()
+  expect((await readEditorSnapshot(page, "composer")).composing).toBe(false)
+  await session.detach()
+})
+
+test("补全打开时 Cmd+Enter 仍提交而不接受候选", async ({ page }) => {
+  await fillEditor(page, "composer", "#w")
+  await selectRange(page, "composer", 2, 2)
+  await typeEditor(page, "composer", "o")
+  await expect(
+    page.getByRole("listbox", { name: "标签建议" })
+  ).toBeVisible()
+
+  await page.keyboard.press("Meta+Enter")
+
+  await expect.poll(() => readEditor(page, "composer")).toBe("")
+  const createCall = await page.evaluate(() => {
+    const calls = (globalThis as typeof globalThis & {
+      __SHARD_TEST_CALLS__: Array<{
+        args: Record<string, unknown>
+        command: string
+      }>
+    }).__SHARD_TEST_CALLS__
+    return calls.find((call) => call.command === "create_fragment")
+  })
+  expect(createCall?.args.content).toBe("#wo")
 })
 
 test("连续标签高亮保留可见空格", async ({ page }) => {

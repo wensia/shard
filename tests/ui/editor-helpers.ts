@@ -11,6 +11,7 @@ interface ShardEditorTestBridge {
   get(id: string): ShardEditorTestSnapshot
   select(id: string, from: number, to: number): void
   set(id: string, value: string): void
+  type(id: string, text: string): void
 }
 
 export async function fillEditor(page: Page, id: string, text: string) {
@@ -29,6 +30,10 @@ export async function fillEditor(page: Page, id: string, text: string) {
 }
 
 export async function readEditor(page: Page, id: string) {
+  return (await readEditorSnapshot(page, id)).value
+}
+
+export async function readEditorSnapshot(page: Page, id: string) {
   return page.evaluate((editorId) => {
     const bridge = (
       window as typeof window & {
@@ -36,8 +41,23 @@ export async function readEditor(page: Page, id: string) {
       }
     ).__shardEditorTest
     if (!bridge) throw new Error("Shard 编辑器测试桥尚未挂载")
-    return bridge.get(editorId).value
+    return bridge.get(editorId)
   }, id)
+}
+
+export async function typeEditor(page: Page, id: string, text: string) {
+  await page.evaluate(
+    ({ editorId, value }) => {
+      const bridge = (
+        window as typeof window & {
+          __shardEditorTest?: ShardEditorTestBridge
+        }
+      ).__shardEditorTest
+      if (!bridge) throw new Error("Shard 编辑器测试桥尚未挂载")
+      bridge.type(editorId, value)
+    },
+    { editorId: id, value: text }
+  )
 }
 
 export async function selectRange(
