@@ -14,6 +14,7 @@ import {
   useEffect,
   useImperativeHandle,
   useRef,
+  useState,
   type MutableRefObject,
 } from "react"
 
@@ -24,6 +25,13 @@ import { createShardMarkdown } from "@/editor/extensions/markdown"
 import { createShardEditorTheme } from "@/editor/extensions/theme"
 import { createShardEditorKeymap } from "@/editor/extensions/keymap"
 import { createShardSelectionLayer } from "@/editor/extensions/selection"
+import { createTableWidgetExtension } from "@/editor/extensions/table-widget"
+import {
+  focusTableWidgetCell,
+  getTableWidgetHost,
+  TableWidgetHost,
+  unregisterTableWidgetHost,
+} from "@/editor/table-widget-host"
 import { textEditToTransaction } from "@/editor/text-edit"
 import { registerShardEditorTestView } from "@/editor/test-bridge"
 
@@ -52,6 +60,7 @@ export interface ShardEditorHandle {
   getSelection(): { start: number; end: number }
   applyTextEdit(edit: TextEdit): void
   replaceDocument(value: string): void
+  focusTableCell(from: number, cell: string): void
   view: EditorView | null
 }
 
@@ -69,6 +78,7 @@ interface CallbackRefs {
 // 默认值必须是稳定引用：写成 `extensions = []` 会让每次渲染都拿到新数组，
 // 进而每次都 dispatch 一轮 Compartment reconfigure。
 const EMPTY_EXTENSIONS: Extension[] = []
+const TABLE_WIDGET_EXTENSION = createTableWidgetExtension(getTableWidgetHost)
 
 function minimalDocumentChange(current: string, next: string): TransactionSpec["changes"] {
   let prefix = 0
@@ -128,6 +138,7 @@ export const ShardEditor = forwardRef<ShardEditorHandle, ShardEditorProps>(
   ) {
     const hostRef = useRef<HTMLDivElement>(null)
     const viewRef = useRef<EditorView | null>(null)
+    const [portalView, setPortalView] = useState<EditorView | null>(null)
     const documentKeyRef = useRef(documentKey)
     const lastReportedValueRef = useRef(value)
     const pendingCompositionValueRef = useRef<string | null>(null)
@@ -183,6 +194,10 @@ export const ShardEditor = forwardRef<ShardEditorHandle, ShardEditorProps>(
       }),
       createShardMarkdown(),
       createShardLivePreview(),
+      TABLE_WIDGET_EXTENSION,
+      // 笔记编辑器必须软换行。CM 默认 white-space: pre，.cm-content 宽度由最长行决定，
+      // 块级 widget 的 width: 100% 会和它互相撑大到 1e6px（P3 表格第二列消失的根因）。
+      EditorView.lineWrapping,
       // 方案 §7 决策 C 复评：原生 ::selection 与 CM 自带的 drawSelection 都只盖到字符高度，
       // 换成按行盒绘制的自定义 layer（见 extensions/selection.ts）。
       createShardSelectionLayer(),
@@ -235,11 +250,13 @@ export const ShardEditor = forwardRef<ShardEditorHandle, ShardEditorProps>(
         state: EditorState.create({ doc: value, extensions: createExtensions() }),
       })
       viewRef.current = view
+      setPortalView(view)
       reportHeight(view, callbacksRef.current)
       if (autoFocus) view.focus()
 
       return () => {
         view.destroy()
+        unregisterTableWidgetHost(view)
         viewRef.current = null
       }
       // EditorView 的生命周期只跟随宿主节点；其余参数通过 effect/refs 更新。
@@ -337,6 +354,11 @@ export const ShardEditor = forwardRef<ShardEditorHandle, ShardEditorProps>(
             ],
           })
         },
+        focusTableCell(from, cell) {
+          const view = viewRef.current
+          if (!view) return
+          focusTableWidgetCell(view, from, cell)
+        },
         get view() {
           return viewRef.current
         },
@@ -345,11 +367,14 @@ export const ShardEditor = forwardRef<ShardEditorHandle, ShardEditorProps>(
     )
 
     return (
-      <div
-        ref={hostRef}
-        className={`shard-editor shard-editor--${variant}`}
-        data-shard-editor-variant={variant}
-      />
+      <>
+        <div
+          ref={hostRef}
+          className={`shard-editor shard-editor--${variant}`}
+          data-shard-editor-variant={variant}
+        />
+        {portalView ? <TableWidgetHost view={portalView} /> : null}
+      </>
     )
   },
 )

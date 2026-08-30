@@ -19,9 +19,9 @@ interface CellDraft extends CellPosition {
   value: string
 }
 
-interface EditorTableProps {
+export interface EditorTableProps {
   /** 表格源文本的逐字符测量层，由渲染层提供，决定这块占多高 */
-  measure: ReactNode
+  measure?: ReactNode
   onChange: (table: MarkdownTable) => void
   onExit?: () => void
   /** textarea 的光标正落在这段源文本里：让位给源码编辑 */
@@ -178,7 +178,9 @@ export function EditorTable({
       data-source-active={sourceActive ? "" : undefined}
       data-table-start={sourceStart}
     >
-      <span className="shard-editor-table-measure">{measure}</span>
+      {measure === undefined ? null : (
+        <span className="shard-editor-table-measure">{measure}</span>
+      )}
       <span
         aria-hidden={sourceActive ? "true" : undefined}
         className="shard-editor-table-surface"

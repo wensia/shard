@@ -497,6 +497,26 @@
     vertical-align: top;
   }
 
+  /* CM6 的块级 replace 自己参与文档流，不再需要 legacy 的透明源码测量层。 */
+  .shard-cm-table-widget {
+    display: block;
+    width: 100%;
+  }
+
+  .shard-cm-table-widget .shard-editor-table-block {
+    display: block;
+  }
+
+  .shard-cm-table-widget .shard-editor-table-surface {
+    position: relative;
+    overflow-x: auto;
+    inset: auto;
+  }
+
+  .shard-cm-table-widget .shard-editor-table {
+    height: auto;
+  }
+
   .shard-editor-table-measure {
     display: block;
     color: transparent;

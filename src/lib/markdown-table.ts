@@ -208,6 +208,22 @@ export function getTableCellCount(table: MarkdownTable) {
   return (table.rows.length + 1) * table.align.length
 }
 
+/** 找到一段 Markdown 里第一张可视化编辑表格的相对字符偏移。 */
+export function getFirstEditableTableOffset(markdown: string) {
+  const lines = markdown.split("\n")
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const table = parseMarkdownTable(lines, index)
+    if (!table) continue
+    if (getTableCellCount(table) <= MAX_EDITABLE_TABLE_CELLS) {
+      return getLineStartOffset(markdown, index)
+    }
+    index += table.lineCount - 1
+  }
+
+  return null
+}
+
 /** rowIndex 为 -1 时改表头，否则改第 rowIndex 行数据。 */
 export function withTableCell(
   table: MarkdownTable,
