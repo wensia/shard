@@ -15,9 +15,7 @@
  *   and full-screen views reserve it as a data-tauri-drag-region strip
  * - heatmap width = 12 columns * 12px + 11 gaps * 5px = 199px
  * - text never scales with viewport width; layout absorbs responsive pressure
- * - editor caret is custom (glyph-height, centered on the line). Its position
- *   must be measured from the visible highlight layer with Range APIs, never
- *   estimated from an off-screen textarea mirror
+ * - 编辑器是 CodeMirror 6，光标原生、选区由 layer 按行盒绘制
  *
  * Opacity contract:
  * Shard-authored color transparency uses Fibonacci-percent stops only:
@@ -392,7 +390,6 @@
     opacity: var(--shard-alpha-55);
   }
 
-  .shard-memo-tags,
   .shard-card-tags {
     --shard-tag-height: 1.5rem;
     --shard-tag-padding-x: 10px;
@@ -406,7 +403,6 @@
     --shard-tag-muted-fg: var(--shard-tag-fg);
   }
 
-  .shard-memo-tags .shard-tag-muted,
   .shard-card-tags .shard-tag-muted {
     box-shadow: inset 0 0 0 1px var(--shard-tag-ring);
   }
@@ -486,10 +482,7 @@
     border-left: 1px solid var(--border);
   }
 
-  /* 编辑态的表格。测量层保留表格源文本（透明）撑出这一块的真实高度，
-     交互层绝对定位铺在上面——高亮层本身盖在 textarea 之上，所以这里只要
-     把 pointer-events 打开，单元格就能直接点。表格因此不参与文档流高度，
-     后面的正文和光标几何都不会被表格样式带偏。 */
+  /* CM6 widget 内的可编辑表格。 */
   .shard-editor-table-block {
     position: relative;
     display: inline-block;
@@ -507,41 +500,18 @@
     display: block;
   }
 
-  .shard-cm-table-widget .shard-editor-table-surface {
-    position: relative;
-    overflow-x: auto;
-    inset: auto;
-  }
-
   .shard-cm-table-widget .shard-editor-table {
     height: auto;
   }
 
-  .shard-editor-table-measure {
-    display: block;
-    color: transparent;
-    -webkit-text-fill-color: transparent;
-  }
-
   .shard-editor-table-surface {
-    position: absolute;
+    position: relative;
     display: block;
-    overflow: hidden;
+    overflow-x: auto;
     border-radius: var(--shard-radius-control);
     background: var(--card);
-    inset: 0;
+    inset: auto;
     pointer-events: auto;
-    transition: opacity 120ms ease;
-  }
-
-  /* 光标落回这段源文本时让位给源码编辑：表格淡成参照，原文重新可读。 */
-  .shard-editor-table-block[data-source-active] .shard-editor-table-measure {
-    color: var(--shard-memo-content-color);
-    -webkit-text-fill-color: currentColor;
-  }
-
-  .shard-editor-table-block[data-source-active] .shard-editor-table-surface {
-    opacity: 0.14;
   }
 
   .shard-editor-table {
@@ -745,34 +715,6 @@
     border-radius: 999px;
     background: var(--border-visible);
     opacity: var(--shard-alpha-55);
-  }
-
-  .shard-fragment-divider-editor {
-    display: inline-grid;
-    grid-template-areas: "divider";
-    width: 100%;
-    align-items: center;
-    vertical-align: top;
-  }
-
-  .shard-fragment-divider-editor-measure,
-  .shard-fragment-divider-editor-line {
-    grid-area: divider;
-  }
-
-  .shard-fragment-divider-editor-measure {
-    color: transparent;
-    -webkit-text-fill-color: transparent;
-  }
-
-  .shard-fragment-divider-editor-line {
-    align-self: end;
-    width: 100%;
-    height: 1px;
-    border-radius: 999px;
-    background: var(--border-visible);
-    opacity: var(--shard-alpha-55);
-    pointer-events: none;
   }
 
   .shard-fragment-card-highlight {
@@ -994,7 +936,7 @@
     box-shadow: 0 0 0 2px rgb(var(--shard-primary-rgb) / var(--shard-alpha-21));
   }
 
-  .shard-task-marker-measure {
+  .shard-task-marker-spacer {
     display: inline-block;
     visibility: hidden;
     white-space: pre;
@@ -1106,89 +1048,6 @@
     background: rgb(255 255 255 / var(--shard-alpha-13));
   }
 
-  .shard-editor-field {
-    caret-color: transparent;
-    color: var(--shard-memo-content-color);
-    font-family: var(--shard-memo-font-family);
-    font-size: var(--shard-editor-font-size) !important;
-    font-feature-settings: "tnum" 1;
-    font-variant-numeric: tabular-nums;
-    font-weight: var(--shard-editor-font-weight);
-    letter-spacing: var(--shard-editor-letter-spacing);
-    line-height: var(--shard-editor-line-height);
-    text-rendering: optimizeLegibility;
-  }
-
-  .shard-editor-highlight-layer {
-    position: absolute;
-    inset: 0;
-    z-index: 20;
-    overflow: hidden;
-    color: var(--shard-memo-content-color);
-    font-family: var(--shard-memo-font-family);
-    font-size: var(--shard-editor-font-size);
-    font-feature-settings: "tnum" 1;
-    font-variant-numeric: tabular-nums;
-    font-weight: var(--shard-editor-font-weight);
-    letter-spacing: var(--shard-editor-letter-spacing);
-    line-height: var(--shard-editor-line-height);
-    pointer-events: none;
-    white-space: pre-wrap;
-    overflow-wrap: break-word;
-    text-rendering: optimizeLegibility;
-  }
-
-  /* 编辑区行内标签：照 flomo 的做法，编辑态只着色、不画芯片。
-   * 叠加层必须和 textarea 逐字符对齐，任何 padding / 字号 / 字重的变化
-   * 都会让后面的文字错位，或者吃掉标签后面那个补出来的空格；
-   * 芯片形态只留给只读卡片（.shard-tag）。 */
-  .shard-editor-tag-highlight {
-    color: var(--shard-editor-tag-fg);
-  }
-
-  /* 荧光笔和选区这两种高亮块都要填满行盒、多行连成一片（同 flomo），
-   * 共用同一个外扩 token。行内元素的垂直 padding 只扩大背景绘制区、
-   * 不参与排版，所以叠加层仍和 textarea 逐字符对齐。 */
-  .shard-editor-markdown-highlight {
-    padding-block: var(--shard-editor-highlight-pad-y);
-    border-radius: calc(var(--shard-radius-control) / 2);
-    background: rgb(
-      var(--shard-warning-rgb) / var(--shard-alpha-21)
-    );
-    box-decoration-break: clone;
-    -webkit-box-decoration-break: clone;
-  }
-
-  .shard-editor-selection-highlight {
-    padding-block: var(--shard-editor-highlight-pad-y);
-    border-radius: calc(var(--shard-radius-control) / 3);
-    background: rgb(17 19 21 / var(--shard-alpha-13));
-    box-decoration-break: clone;
-    -webkit-box-decoration-break: clone;
-  }
-
-  .shard-editor-placeholder {
-    position: absolute;
-    z-index: 10;
-    color: var(--muted-foreground);
-    font-family: var(--shard-memo-font-family);
-    font-size: var(--shard-editor-font-size);
-    font-weight: var(--shard-editor-font-weight);
-    letter-spacing: var(--shard-editor-letter-spacing);
-    line-height: var(--shard-editor-line-height);
-    pointer-events: none;
-  }
-
-  .shard-custom-caret {
-    position: absolute;
-    z-index: 30;
-    width: var(--shard-caret-width);
-    border-radius: 999px;
-    background: var(--shard-caret-color);
-    pointer-events: none;
-    animation: shard-caret-blink 1.12s steps(1, end) infinite;
-  }
-
   .shard-edge-action-row {
     --shard-edge-action-inset: var(--shard-space-3);
     --shard-edge-action-size: var(--shard-space-8);
@@ -1214,40 +1073,6 @@
     border-radius: inherit;
     content: "";
     transform: translate(-50%, -50%);
-  }
-}
-
-/* Kiln's global form and ::selection rules are intentionally unlayered. Keep
- * these editor-overlay constraints unlayered too: WKWebView must never paint
- * the raw textarea or Markdown markers above Shard's visible highlight layer. */
-.shard-editor-overlay-field {
-  color: transparent !important;
-  -webkit-text-fill-color: transparent !important;
-}
-
-.shard-editor-markdown-marker {
-  display: inline-block;
-  width: 0;
-  color: transparent !important;
-  white-space: nowrap;
-  -webkit-text-fill-color: transparent !important;
-}
-
-.shard-editor-overlay-field::selection {
-  color: transparent;
-  background: transparent;
-  -webkit-text-fill-color: transparent;
-}
-
-@keyframes shard-caret-blink {
-  0%,
-  54% {
-    opacity: 1;
-  }
-
-  55%,
-  100% {
-    opacity: 0;
   }
 }
 
