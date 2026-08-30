@@ -60,6 +60,66 @@ export function createShardEditorTheme(variant: ShardEditorProps["variant"]) {
       ".cm-placeholder": {
         color: "var(--muted-foreground)",
       },
+      ".cm-tooltip.shard-cm-tag-tooltip": {
+        background: "var(--popover)",
+        border: "1px solid var(--border-visible)",
+        borderRadius: "var(--shard-radius-control)",
+        boxShadow: "var(--shard-shadow-popover)",
+        color: "var(--popover-foreground)",
+        fontFamily: "var(--shard-memo-font-family)",
+        fontSize: "var(--text-meta)",
+        maxWidth: "calc(100vw - var(--shard-space-6))",
+        overflow: "hidden",
+        width: "calc(var(--shard-space-5) * 10)",
+      },
+      ".cm-tooltip.shard-cm-tag-tooltip > ul": {
+        // CM baseTheme 给 .cm-tooltip-autocomplete > ul 写死了 monospace，
+        // 优先级高于 tooltip 上的字体声明，必须在 ul 上再覆盖一次
+        fontFamily: "var(--shard-memo-font-family)",
+        listStyle: "none",
+        margin: "0",
+        maxHeight: "calc(var(--shard-space-8) * 7.5)",
+        overflowY: "auto",
+        padding: "var(--shard-space-1)",
+      },
+      ".cm-tooltip.shard-cm-tag-tooltip > ul > li[role='option']": {
+        alignItems: "center",
+        borderRadius: "var(--shard-radius-control)",
+        color: "var(--popover-foreground)",
+        cursor: "pointer",
+        display: "flex",
+        gap: "var(--shard-space-2)",
+        lineHeight: "var(--shard-space-5)",
+        minHeight: "calc(var(--shard-space-5) * 2)",
+        padding: "0 var(--shard-space-2)",
+      },
+      ".cm-tooltip.shard-cm-tag-tooltip > ul > li[role='option'][aria-selected='true']": {
+        background: "var(--accent)",
+        color: "var(--accent-foreground)",
+      },
+      ".cm-tooltip.shard-cm-tag-tooltip .cm-completionLabel": {
+        flex: "1 1 0%",
+        minWidth: "0",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
+      },
+      ".cm-tooltip.shard-cm-tag-tooltip .cm-completionMatchedText": {
+        fontWeight: "inherit",
+        textDecoration: "none",
+      },
+      // detail 只保留给补全语义；可见徽标由 addToOptions 统一渲染，避免重复“新建”。
+      ".cm-tooltip.shard-cm-tag-tooltip .cm-completionDetail": {
+        display: "none",
+      },
+      ".cm-tooltip.shard-cm-tag-tooltip .shard-cm-tag-completion-badge": {
+        color: "var(--muted-foreground)",
+        flexShrink: "0",
+        fontSize: "var(--text-tiny)",
+        fontWeight: "var(--weight-regular)",
+        lineHeight: "1",
+        marginLeft: "auto",
+      },
       ".shard-cm-tag": {
         color: "var(--shard-editor-tag-fg)",
       },
