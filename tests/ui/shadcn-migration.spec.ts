@@ -2236,18 +2236,15 @@ test.describe("正文表格", () => {
     ).toHaveText("—")
   })
 
-  test.fixme("编辑态给出可编辑表格，但源文本仍逐字符保留", async ({ page }) => {
-    const composer = page.getByPlaceholder("想到什么，写什么...")
-    await composer.fill(TABLE)
+  test("编辑态给出可编辑表格，但源文本仍逐字符保留", async ({ page }) => {
+    await fillEditor(page, "composer", TABLE)
+    await page.getByRole("button", { name: "插入表格" }).focus()
 
     // 编辑态的表格是 EditorTable，不是只读的展示态表格
     await expect(page.locator("table.shard-markdown-table")).toHaveCount(0)
     await expect(page.locator("table.shard-editor-table")).toHaveCount(1)
 
-    // 可视化表格盖在测量层上，测量层必须仍是完整原文——高亮层逐字符对齐
-    // textarea 靠的就是它，原文一旦被替换掉，光标位置就全错了
-    await expect(
-      page.locator(".shard-editor-table-measure").first()
-    ).toContainText("| :---: |")
+    // widget 只替换渲染，不改 CM 文档；源文本必须逐字符保留。
+    await expect.poll(() => readEditor(page, "composer")).toBe(TABLE)
   })
 })

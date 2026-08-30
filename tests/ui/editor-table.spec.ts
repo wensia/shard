@@ -1,11 +1,16 @@
 import { expect, test, type Page } from "@playwright/test"
 
-import { focusEditor } from "./editor-helpers"
+import {
+  fillEditor,
+  focusEditor,
+  readEditor,
+  selectRange,
+} from "./editor-helpers"
 
 /**
  * 编辑态表格：工具栏插入 + 单元格直接改。
  *
- * 断言都落在 textarea 的值上——可视化表格只是外壳，正文里存的必须始终是
+ * 断言都落在 CM 测试桥读出的值上——可视化表格只是外壳，正文里存的必须始终是
  * 一张能被 GFM 解析回来的表，否则保存下去的 Markdown 就坏了。
  */
 
@@ -128,34 +133,28 @@ test.beforeEach(async ({ page }) => {
   ).toBeFocused()
 })
 
-test.fixme("工具栏网格插入表格，光标直接落进第一个表头格", async ({ page }) => {
-  const textarea = page.getByPlaceholder("想到什么，写什么...")
-
+test("工具栏网格插入表格，光标直接落进第一个表头格", async ({ page }) => {
   await insertTable(page, 3, 2)
 
-  await expect(textarea).toHaveValue(
+  await expect.poll(() => readEditor(page, "composer")).toBe(
     "|     |     |     |\n| --- | --- | --- |\n|     |     |     |\n\n"
   )
   await expect(page.locator(".shard-editor-table")).toHaveCount(1)
   await expect(page.locator('[data-cell="-1:0"]')).toBeFocused()
 })
 
-test.fixme("单元格里打字直接改写正文里的表格", async ({ page }) => {
-  const textarea = page.getByPlaceholder("想到什么，写什么...")
-
+test("单元格里打字直接改写正文里的表格", async ({ page }) => {
   await insertTable(page, 2, 2)
   await page.locator('[data-cell="-1:0"]').fill("名称")
   await page.locator('[data-cell="0:1"]').fill("完成")
 
   // 列宽跟着最宽的单元格走，第二列因为「完成」也变成 4 宽
-  await expect(textarea).toHaveValue(
+  await expect.poll(() => readEditor(page, "composer")).toBe(
     "| 名称 |      |\n| ---- | ---- |\n|      | 完成 |\n\n"
   )
 })
 
-test.fixme("Tab 在单元格间走，最后一格 Tab 补一行", async ({ page }) => {
-  const textarea = page.getByPlaceholder("想到什么，写什么...")
-
+test("Tab 在单元格间走，最后一格 Tab 补一行", async ({ page }) => {
   await insertTable(page, 2, 2)
   await page.locator('[data-cell="-1:0"]').press("Tab")
   await expect(page.locator('[data-cell="-1:1"]')).toBeFocused()
@@ -167,43 +166,43 @@ test.fixme("Tab 在单元格间走，最后一格 Tab 补一行", async ({ page 
   await page.locator('[data-cell="0:0"]').press("Tab")
   await page.locator('[data-cell="0:1"]').press("Tab")
   await expect(page.locator('[data-cell="1:0"]')).toBeFocused()
-  await expect(textarea).toHaveValue(
+  await expect.poll(() => readEditor(page, "composer")).toBe(
     "|     |     |\n| --- | --- |\n|     |     |\n|     |     |\n\n"
   )
 })
 
-test.fixme("行列操作条能加列、删行", async ({ page }) => {
-  const textarea = page.getByPlaceholder("想到什么，写什么...")
-
+test("行列操作条能加列、删行", async ({ page }) => {
   await insertTable(page, 2, 3)
   await page.locator('[data-cell="0:0"]').click()
 
   await page.locator('.shard-editor-table-action[title="在右侧插入一列"]').click()
   await expect(page.locator('[data-cell="0:2"]')).toHaveCount(1)
-  await expect(textarea).toHaveValue(
+  await expect.poll(() => readEditor(page, "composer")).toBe(
     "|     |     |     |\n| --- | --- | --- |\n|     |     |     |\n|     |     |     |\n\n"
   )
 
   await page.locator('.shard-editor-table-action[title="删除光标所在行"]').click()
-  await expect(textarea).toHaveValue(
+  await expect.poll(() => readEditor(page, "composer")).toBe(
     "|     |     |     |\n| --- | --- | --- |\n|     |     |     |\n\n"
   )
 })
 
-test.fixme("光标回到表格源文本时让位给源码编辑", async ({ page }) => {
-  const textarea = page.getByPlaceholder("想到什么，写什么...")
+test("光标回到表格源文本时让位给源码编辑", async ({ page }) => {
   const block = page.locator(".shard-editor-table-block")
 
   await insertTable(page, 2, 2)
-  await expect(block).not.toHaveAttribute("data-source-active", /.*/)
+  await expect(block).toHaveCount(1)
 
-  await textarea.focus()
-  await textarea.evaluate((element: HTMLTextAreaElement) => {
-    element.setSelectionRange(2, 2)
-    element.dispatchEvent(new Event("select", { bubbles: true }))
-  })
+  await selectRange(page, "composer", 2, 2)
+  await focusEditor(page, "composer")
+  await expect(block).toHaveCount(0)
+  await expect(
+    page.locator('[data-shard-editor="composer"] .cm-content')
+  ).toContainText("|")
 
-  await expect(block).toHaveAttribute("data-source-active", "")
+  const value = await readEditor(page, "composer")
+  await selectRange(page, "composer", value.length, value.length)
+  await expect(block).toHaveCount(1)
 })
 
 test("保存后的片段用只读表格渲染", async ({ page }) => {
@@ -214,19 +213,29 @@ test("保存后的片段用只读表格渲染", async ({ page }) => {
   await expect(page.locator(".shard-markdown-table")).toHaveCount(1)
 })
 
-test.fixme("连续输入与竖线都不会写坏这张表", async ({ page }) => {
-  const textarea = page.getByPlaceholder("想到什么，写什么...")
-
+test("连续输入与竖线都不会写坏这张表", async ({ page }) => {
   await insertTable(page, 2, 2)
-  await page.locator('[data-cell="-1:0"]').pressSequentially("市场采单", {
+  const firstCell = page.locator('[data-cell="-1:0"]')
+  await firstCell.evaluate((input) => {
+    ;(input as HTMLInputElement & { __shardIdentity?: boolean }).__shardIdentity =
+      true
+  })
+  await firstCell.pressSequentially("市场采单", {
     delay: 30,
   })
-  await expect(page.locator('[data-cell="-1:0"]')).toBeFocused()
+  await expect(firstCell).toBeFocused()
+  expect(
+    await firstCell.evaluate(
+      (input) =>
+        (input as HTMLInputElement & { __shardIdentity?: boolean })
+          .__shardIdentity === true
+    )
+  ).toBe(true)
 
   // 单元格里的裸竖线会把列切开，写回正文时必须转义
   await page.locator('[data-cell="0:0"]').fill("A|B")
 
-  await expect(textarea).toHaveValue(
+  await expect.poll(() => readEditor(page, "composer")).toBe(
     "| 市场采单 |     |\n| -------- | --- |\n| A\\|B     |     |\n\n"
   )
 
@@ -234,7 +243,7 @@ test.fixme("连续输入与竖线都不会写坏这张表", async ({ page }) => 
   await expect(page.locator('[data-cell="0:0"]')).toHaveValue("A|B")
 })
 
-test.fixme("网格面板始终留在窗口内，顶部装不下就朝下展开", async ({ page }) => {
+test("网格面板始终留在窗口内，顶部装不下就朝下展开", async ({ page }) => {
   const panel = page.getByRole("dialog", { name: "选择表格大小" })
 
   // 速记框贴着窗口顶部，工具栏上方放不下这块面板
@@ -253,16 +262,14 @@ test.fixme("网格面板始终留在窗口内，顶部装不下就朝下展开",
   expect(box.x + box.width).toBeLessThanOrEqual(viewport.width)
 })
 
-test.fixme("从 Excel 导入：转成 Markdown 表格插进正文，且立刻可编辑", async ({
+test("从 Excel 导入：转成 Markdown 表格插进正文，且立刻可编辑", async ({
   page,
 }) => {
-  const textarea = page.getByPlaceholder("想到什么，写什么...")
-
   await page.getByRole("button", { name: "插入表格" }).click()
   await page.getByRole("button", { name: "从 Excel 导入…" }).click()
 
   // 表格数据落在正文里——搜索、标签、git diff 才都还能用上
-  await expect(textarea).toHaveValue(
+  await expect.poll(() => readEditor(page, "composer")).toBe(
     "## 采单安排\n\n| 日期 | 学校 |\n| --- | --- |\n| 2026-08-24 | 行知中学 |\n\n" +
       "## 费用\n\n| 项目 | 金额 |\n| --- | --- |\n| 交通 | 1250.5 |\n\n"
   )
@@ -270,6 +277,7 @@ test.fixme("从 Excel 导入：转成 Markdown 表格插进正文，且立刻可
   // 两个 sheet → 两张表，且都是可编辑的编辑态表格
   await expect(page.locator(".shard-editor-table")).toHaveCount(2)
   await expect(page.locator('[data-cell="0:1"]').first()).toHaveValue("行知中学")
+  await expect(page.locator('[data-cell="-1:0"]').first()).toBeFocused()
 
   const importedPath = await page.evaluate(
     () => (window as unknown as Record<string, unknown>).__SHARD_IMPORT_PATH__
@@ -277,9 +285,7 @@ test.fixme("从 Excel 导入：转成 Markdown 表格插进正文，且立刻可
   expect(importedPath).toBe("/tmp/shard-test/采单安排.xlsx")
 })
 
-test.fixme("超大表格退回纯文本，不把编辑器打字拖垮", async ({ page }) => {
-  const textarea = page.getByPlaceholder("想到什么，写什么...")
-
+test("超大表格退回纯文本，不把编辑器打字拖垮", async ({ page }) => {
   // 6 列 × 1200 行 ≈ 7200 格，越过 MAX_EDITABLE_TABLE_CELLS(6000)
   const lines = [
     "| 日期 | 学校 | 事项 | 负责人 | 数量 | 备注 |",
@@ -288,29 +294,112 @@ test.fixme("超大表格退回纯文本，不把编辑器打字拖垮", async ({
   for (let index = 0; index < 1200; index += 1) {
     lines.push(`| 2026-08-01 | 第${index}中学 | 采单 | 张${index} | ${index} | — |`)
   }
-  await textarea.fill(lines.join("\n"))
+  const content = lines.join("\n")
+  await fillEditor(page, "composer", content)
 
   // 不渲染成可交互表格：一格一个受控 input，这个量级会把每次按键拖到几百毫秒
   await expect(page.locator(".shard-editor-table")).toHaveCount(0)
   await expect(page.locator(".shard-editor-table-input")).toHaveCount(0)
 
   // 但正文没丢，源码照样能编辑
-  await expect(textarea).toHaveValue(lines.join("\n"))
-  await expect(page.locator(".shard-editor-highlight-layer")).toContainText(
-    "第1199中学"
-  )
+  await expect.poll(() => readEditor(page, "composer")).toBe(content)
 })
 
-test.fixme("阈值以内的表格仍然是可视化表格", async ({ page }) => {
-  const textarea = page.getByPlaceholder("想到什么，写什么...")
-
+test("阈值以内的表格仍然是可视化表格", async ({ page }) => {
   // 2 列 × 100 行 ≈ 202 格，远在阈值内
   const lines = ["| 学校 | 事项 |", "| --- | --- |"]
   for (let index = 0; index < 100; index += 1) {
     lines.push(`| 第${index}中学 | 采单 |`)
   }
-  await textarea.fill(lines.join("\n"))
+  await fillEditor(page, "composer", `${lines.join("\n")}\n\n`)
 
   await expect(page.locator(".shard-editor-table")).toHaveCount(1)
   await expect(page.locator('[data-cell="99:0"]')).toHaveValue("第99中学")
+})
+
+test("单元格改动在 CM 内 Cmd+Z 一步撤回且 widget 保留", async ({ page }) => {
+  const initial = "|     |     |\n| --- | --- |\n|     |     |\n\n"
+  await insertTable(page, 2, 2)
+  await page.locator('[data-cell="-1:0"]').fill("名称")
+  await expect.poll(() => readEditor(page, "composer")).toBe(
+    "| 名称 |     |\n| ---- | --- |\n|      |     |\n\n"
+  )
+
+  const edited = await readEditor(page, "composer")
+  await selectRange(page, "composer", edited.length, edited.length)
+  await page.keyboard.press("Meta+z")
+
+  await expect.poll(() => readEditor(page, "composer")).toBe(initial)
+  await expect(page.locator(".shard-editor-table")).toHaveCount(1)
+})
+
+test("同一文档中的两张表可独立编辑", async ({ page }) => {
+  const first = "| A | B |\n| --- | --- |\n| 1 | 2 |"
+  const second = "| C | D |\n| --- | --- |\n| 3 | 4 |"
+  await fillEditor(page, "composer", `${first}\n\n${second}\n\n`)
+
+  const tables = page.locator(".shard-editor-table")
+  await expect(tables).toHaveCount(2)
+  await tables.nth(0).locator('[data-cell="-1:0"]').fill("第一")
+  await expect(tables.nth(1).locator('[data-cell="-1:0"]')).toHaveValue("C")
+
+  await tables.nth(1).locator('[data-cell="-1:0"]').fill("第二")
+  await expect(tables.nth(0).locator('[data-cell="-1:0"]')).toHaveValue("第一")
+  await expect.poll(() => readEditor(page, "composer")).toBe(
+    "| 第一 | B   |\n| ---- | --- |\n| 1    | 2   |\n\n" +
+      "| 第二 | D   |\n| ---- | --- |\n| 3    | 4   |\n\n"
+  )
+})
+
+test("CDP IME 在单元格内上屏中文时不重建 input", async ({ page }) => {
+  await insertTable(page, 2, 2)
+  const cell = page.locator('[data-cell="-1:0"]')
+  await cell.evaluate((input) => {
+    ;(input as HTMLInputElement & { __shardImeIdentity?: boolean }).__shardImeIdentity =
+      true
+  })
+
+  const session = await page.context().newCDPSession(page)
+  try {
+    await session.send("Input.imeSetComposition", {
+      text: "zhongwen",
+      selectionStart: 8,
+      selectionEnd: 8,
+    })
+    await expect(cell).toBeFocused()
+    expect(
+      await cell.evaluate(
+        (input) =>
+          (input as HTMLInputElement & { __shardImeIdentity?: boolean })
+            .__shardImeIdentity === true
+      )
+    ).toBe(true)
+    await expect(page.locator(".shard-editor-table")).toHaveCount(1)
+
+    await session.send("Input.insertText", { text: "中文" })
+    await expect(cell).toHaveValue("中文")
+    await expect.poll(() => readEditor(page, "composer")).toBe(
+      "| 中文 |     |\n| ---- | --- |\n|      |     |\n\n"
+    )
+    await expect(page.locator(".shard-editor-table")).toHaveCount(1)
+    expect(
+      await cell.evaluate(
+        (input) =>
+          (input as HTMLInputElement & { __shardImeIdentity?: boolean })
+            .__shardImeIdentity === true
+      )
+    ).toBe(true)
+  } finally {
+    await session.detach()
+  }
+})
+
+test("文档超过 50000 字符时整篇不创建表格 widget", async ({ page }) => {
+  const table = "| A | B |\n| --- | --- |\n| 1 | 2 |"
+  const content = `${table}\n\n${"x".repeat(50_001)}`
+  await fillEditor(page, "composer", content)
+
+  await expect.poll(() => readEditor(page, "composer")).toBe(content)
+  await expect(page.locator(".shard-editor-table")).toHaveCount(0)
+  await expect(page.locator(".shard-editor-table-input")).toHaveCount(0)
 })
