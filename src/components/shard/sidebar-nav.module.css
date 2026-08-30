@@ -120,6 +120,12 @@
   gap: var(--space-1);
 }
 
+.navSubGroup {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
 .navSubItem {
   position: relative;
   display: flex;
@@ -196,6 +202,28 @@
   justify-content: center;
   gap: 0;
   padding-inline: 0;
+}
+
+.sidebar[data-collapsed="true"] .navSubGroup {
+  box-sizing: border-box;
+  width: var(--space-8);
+  border-left: var(--space-0\.5) solid var(--sidebar-border);
+}
+
+.sidebar[data-collapsed="true"] .navSubItem {
+  width: 100%;
+  height: calc(var(--space-8) - var(--space-0\.5));
+}
+
+.sidebar[data-collapsed="true"]
+  .navSubItem[data-sidebar-level="secondary"]
+  > svg {
+  width: var(--space-4);
+  height: var(--space-4);
+}
+
+.sidebar[data-collapsed="true"] .navSubItemInactive {
+  color: var(--muted-foreground);
 }
 
 .sidebar[data-collapsed="true"] .navActionBoundary {

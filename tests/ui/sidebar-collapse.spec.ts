@@ -115,6 +115,52 @@ test("ControlOrMeta+B 切换侧边栏", async ({ page }) => {
   ).toBeVisible()
 })
 
+test("折叠 rail 区分一级空间项与二级功能项", async ({ page }) => {
+  const navigation = page.getByRole("navigation", {
+    name: "工作台导航",
+    exact: true,
+  })
+  const secondaryItem = navigation.getByRole("button", {
+    name: /^收件箱/u,
+  })
+  const fragmentSubgroup = navigation.locator(
+    '[data-sidebar-subgroup="fragments"]'
+  )
+
+  await expect(secondaryItem).toHaveCSS("height", "36px")
+  await expect(secondaryItem.locator("svg")).toBeVisible()
+  await expect(secondaryItem.locator("svg")).toHaveCSS("width", "18px")
+  await expect(fragmentSubgroup).toHaveCSS("border-left-width", "0px")
+
+  await page
+    .getByRole("button", { name: "折叠侧边栏", exact: true })
+    .click()
+
+  const collapsedPrimaryItem = navigation.getByRole("button", {
+    name: "工作台：碎片",
+    exact: true,
+  })
+  const collapsedSecondaryItem = navigation.getByRole("button", {
+    name: "碎片：收件箱",
+    exact: true,
+  })
+  await expect(collapsedPrimaryItem).toHaveCSS("height", "36px")
+  await expect(collapsedPrimaryItem.locator("svg")).toBeVisible()
+  await expect(collapsedPrimaryItem.locator("svg")).toHaveCSS("width", "18px")
+  await expect(collapsedSecondaryItem).toHaveCSS("height", "30px")
+  await expect(collapsedSecondaryItem.locator("svg")).toBeVisible()
+  await expect(collapsedSecondaryItem.locator("svg")).toHaveCSS("width", "16px")
+  await expect(fragmentSubgroup).toHaveCSS("border-left-width", "2px")
+  await expect(fragmentSubgroup).toHaveCSS("border-left-style", "solid")
+
+  await page
+    .getByRole("button", { name: "展开侧边栏", exact: true })
+    .click()
+  await expect(secondaryItem).toHaveCSS("height", "36px")
+  await expect(secondaryItem.locator("svg")).toHaveCSS("width", "18px")
+  await expect(fragmentSubgroup).toHaveCSS("border-left-width", "0px")
+})
+
 test("折叠 rail 保持 route 并在 hover 与 focus 显示两行 tooltip", async ({
   page,
 }) => {

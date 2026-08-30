@@ -582,77 +582,89 @@ export function SidebarNav({
 
               {item.id === "fragments" && route.space === "fragments" ? (
                 <>
-                    {isCollapsed ? (
-                      <CollapsedGroupMarker label={copy.groups.fragments} />
-                    ) : null}
-                  {FRAGMENT_ITEMS.map((subItem) => {
-                    const SubIcon = subItem.icon
-                    const isSubItemActive = route.params.filter === subItem.id
-                    return (
-                      <SidebarNavigationButton
-                        className={`${styles.navSubItem} ${
-                          isSubItemActive
-                            ? styles.navSubItemActive
-                            : styles.navSubItemInactive
-                        }`}
-                        group={copy.groups.fragments}
-                        icon={SubIcon}
-                        isActive={isSubItemActive}
-                        isCollapsed={isCollapsed}
-                        key={subItem.id}
-                        label={copy.nav[subItem.id]}
-                        onClick={() =>
-                          onRouteChange({
-                            space: "fragments",
-                            params: { filter: subItem.id },
-                          })
-                        }
-                        trailing={
-                          <span style={NAV_COUNT_BADGE_STYLE}>
-                            {counts[subItem.id]}
-                          </span>
-                        }
-                      />
-                    )
-                  })}
+                  {isCollapsed ? (
+                    <CollapsedGroupMarker label={copy.groups.fragments} />
+                  ) : null}
+                  <div
+                    className={styles.navSubGroup}
+                    data-sidebar-subgroup="fragments"
+                  >
+                    {FRAGMENT_ITEMS.map((subItem) => {
+                      const SubIcon = subItem.icon
+                      const isSubItemActive = route.params.filter === subItem.id
+                      return (
+                        <SidebarNavigationButton
+                          className={`${styles.navSubItem} ${
+                            isSubItemActive
+                              ? styles.navSubItemActive
+                              : styles.navSubItemInactive
+                          }`}
+                          group={copy.groups.fragments}
+                          icon={SubIcon}
+                          isActive={isSubItemActive}
+                          isCollapsed={isCollapsed}
+                          key={subItem.id}
+                          label={copy.nav[subItem.id]}
+                          level="secondary"
+                          onClick={() =>
+                            onRouteChange({
+                              space: "fragments",
+                              params: { filter: subItem.id },
+                            })
+                          }
+                          trailing={
+                            <span style={NAV_COUNT_BADGE_STYLE}>
+                              {counts[subItem.id]}
+                            </span>
+                          }
+                        />
+                      )
+                    })}
+                  </div>
                 </>
               ) : null}
 
               {item.id === "review" && route.space === "review" ? (
                 <>
-                    {isCollapsed ? (
-                      <CollapsedGroupMarker label={copy.groups.review} />
-                    ) : null}
-                  {REVIEW_ITEMS.map((subItem) => {
-                    const SubIcon = subItem.icon
-                    const isSubItemActive = route.params.mode === subItem.id
-                    return (
-                      <SidebarNavigationButton
-                        className={`${styles.navSubItem} ${
-                          isSubItemActive
-                            ? styles.navSubItemActive
-                            : styles.navSubItemInactive
-                        }`}
-                        group={copy.groups.review}
-                        icon={SubIcon}
-                        isActive={isSubItemActive}
-                        isCollapsed={isCollapsed}
-                        key={subItem.id}
-                        label={copy.nav[subItem.id]}
-                        onClick={() =>
-                          onRouteChange({
-                            space: "review",
-                            params: { mode: subItem.id },
-                          })
-                        }
-                        trailing={
-                          <span style={NAV_COUNT_BADGE_STYLE}>
-                            {counts[subItem.id]}
-                          </span>
-                        }
-                      />
-                    )
-                  })}
+                  {isCollapsed ? (
+                    <CollapsedGroupMarker label={copy.groups.review} />
+                  ) : null}
+                  <div
+                    className={styles.navSubGroup}
+                    data-sidebar-subgroup="review"
+                  >
+                    {REVIEW_ITEMS.map((subItem) => {
+                      const SubIcon = subItem.icon
+                      const isSubItemActive = route.params.mode === subItem.id
+                      return (
+                        <SidebarNavigationButton
+                          className={`${styles.navSubItem} ${
+                            isSubItemActive
+                              ? styles.navSubItemActive
+                              : styles.navSubItemInactive
+                          }`}
+                          group={copy.groups.review}
+                          icon={SubIcon}
+                          isActive={isSubItemActive}
+                          isCollapsed={isCollapsed}
+                          key={subItem.id}
+                          label={copy.nav[subItem.id]}
+                          level="secondary"
+                          onClick={() =>
+                            onRouteChange({
+                              space: "review",
+                              params: { mode: subItem.id },
+                            })
+                          }
+                          trailing={
+                            <span style={NAV_COUNT_BADGE_STYLE}>
+                              {counts[subItem.id]}
+                            </span>
+                          }
+                        />
+                      )
+                    })}
+                  </div>
                 </>
               ) : null}
             </div>
@@ -819,6 +831,7 @@ function SidebarNavigationButton({
   isActive,
   isCollapsed,
   label,
+  level = "primary",
   onClick,
   trailing,
 }: {
@@ -829,6 +842,7 @@ function SidebarNavigationButton({
   isActive: boolean
   isCollapsed: boolean
   label: string
+  level?: "primary" | "secondary"
   onClick: () => void
   trailing?: ReactNode
 }) {
@@ -856,6 +870,7 @@ function SidebarNavigationButton({
       }
       aria-pressed={ariaPressed}
       className={className}
+      data-sidebar-level={level}
       onClick={onClick}
       type="button"
     >
