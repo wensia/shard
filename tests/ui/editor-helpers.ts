@@ -1,6 +1,7 @@
 import type { Page } from "@playwright/test"
 
 interface ShardEditorTestSnapshot {
+  composing: boolean
   value: string
   selectionStart: number
   selectionEnd: number
