@@ -37,6 +37,7 @@ import {
   isMarkdownHorizontalRuleLine,
   parseMarkdownImageLine,
 } from "@/lib/editor-format"
+import { findInlineHighlights } from "@/lib/markdown-highlight"
 import {
   attachmentHash,
   downloadFragmentImageAttachment,
@@ -84,7 +85,8 @@ interface FragmentContentProps {
 
 const TASK_MARKER_PATTERN =
   /^(\s*)((?:[-*+]|\d+[.)])\s+)(\[([ xX])\]\s*)(.*)$/
-const INLINE_HIGHLIGHT_PATTERN = /==(.+?)==/g
+const INLINE_HIGHLIGHT_FALLBACK_PATTERN = /==(.+?)==/g
+const INLINE_HIGHLIGHT_PARSE_LIMIT = 20_000
 
 export function FragmentContent({
   caretAligned = false,
@@ -905,10 +907,23 @@ function renderInlineContent(
   const nodes: ReactNode[] = []
   let cursor = 0
 
-  for (const match of text.matchAll(INLINE_HIGHLIGHT_PATTERN)) {
-    const token = match[0]
-    const highlightedText = match[1]
-    const start = match.index ?? 0
+  // 单条极端长正文避免同步 Lezer 解析阻塞只读卡片；普通片段统一消费共享 parser。
+  const highlights =
+    text.length > INLINE_HIGHLIGHT_PARSE_LIMIT
+      ? Array.from(text.matchAll(INLINE_HIGHLIGHT_FALLBACK_PATTERN), (match) => {
+          const start = match.index ?? 0
+          return {
+            contentEnd: start + match[0].length - 2,
+            contentStart: start + 2,
+            end: start + match[0].length,
+            start,
+          }
+        })
+      : findInlineHighlights(text)
+
+  for (const highlight of highlights) {
+    const { contentEnd, contentStart, end, start } = highlight
+    const highlightedText = text.slice(contentStart, contentEnd)
 
     if (start > cursor) {
       nodes.push(
@@ -922,8 +937,8 @@ function renderInlineContent(
     }
 
     const openMarkerStart = textStart + start
-    const highlightedTextStart = openMarkerStart + 2
-    const closeMarkerStart = highlightedTextStart + highlightedText.length
+    const highlightedTextStart = textStart + contentStart
+    const closeMarkerStart = textStart + contentEnd
     nodes.push(
       <span
         className="shard-editor-markdown-highlight"
@@ -953,7 +968,7 @@ function renderInlineContent(
         </span>
       </span>
     )
-    cursor = start + token.length
+    cursor = end
   }
 
   if (cursor < text.length) {
