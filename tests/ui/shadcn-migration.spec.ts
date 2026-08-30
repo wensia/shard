@@ -305,6 +305,8 @@ async function installTauriMock(
                     ? injected.walkResult
                     : "测试洞察结果",
               }
+            case "list_csv_files":
+              return []
             case "plugin:app|version":
               return "0.1.3"
             case "save_fragment_image":

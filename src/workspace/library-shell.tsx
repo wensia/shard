@@ -21,14 +21,15 @@ import { getApiErrorMessage } from "@/lib/api"
 import { deriveKind, deriveNoteTitle, isTypeTag } from "@/lib/content-kind"
 import { extractTags, normalizeTagList } from "@/lib/editor-format"
 import { useFragmentRelations } from "@/lib/use-fragment-relations"
-import { buildWikilinkCandidates } from "@/lib/wikilink"
-import type { Fragment } from "@/types"
+import { buildCsvWikilinkCandidates, buildWikilinkCandidates } from "@/lib/wikilink"
+import type { CsvFileSummary, Fragment } from "@/types"
 
 import styles from "./library-shell.module.css"
 
 export type LibrarySaveHandler = () => Promise<boolean>
 
 interface LibraryShellProps {
+  csvFiles?: CsvFileSummary[]
   fragments: Fragment[]
   isLoading: boolean
   knownTags: string[]
@@ -42,6 +43,7 @@ interface LibraryShellProps {
 type SaveState = "dirty" | "error" | "saved" | "saving"
 
 export function LibraryShell({
+  csvFiles = [],
   fragments,
   isLoading,
   knownTags,
@@ -75,8 +77,11 @@ export function LibraryShell({
   const savePromiseRef = useRef<Promise<boolean> | null>(null)
   const knownTagsRef = useRef<string[]>([])
   const wikilinkCandidates = useMemo(
-    () => buildWikilinkCandidates(relationFragments),
-    [relationFragments]
+    () => [
+      ...buildWikilinkCandidates(relationFragments),
+      ...buildCsvWikilinkCandidates(csvFiles),
+    ],
+    [csvFiles, relationFragments]
   )
   const { indexVersion, requestRelated } = useFragmentRelations(relationFragments)
   const wikilinkCandidatesRef = useRef(wikilinkCandidates)
@@ -108,6 +113,7 @@ export function LibraryShell({
     () =>
       createShardWikilinkExtension({
         getCandidates: () => wikilinkCandidatesRef.current,
+        maxCsvRows: 50,
         onMissingTarget: (target) =>
           toast(`待建链接「${target}」尚不存在，可在资料库新建笔记`),
         onNavigate: (fragmentId) =>

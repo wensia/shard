@@ -7,11 +7,12 @@ import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { getApiErrorMessage, type OrganizeTemplate } from "@/lib/api"
 import { useFragmentRelations } from "@/lib/use-fragment-relations"
-import type { Fragment } from "@/types"
+import type { CsvFileSummary, Fragment } from "@/types"
 
 const WIDE_TIMELINE_QUERY = "(min-width: 96rem)"
 
 interface FragmentTimelineProps {
+  csvFiles?: CsvFileSummary[]
   editingFragmentId?: string | null
   emptyMessage?: string
   fragments: Fragment[]
@@ -48,6 +49,7 @@ interface FragmentTimelineProps {
 }
 
 export function FragmentTimeline({
+  csvFiles = [],
   editingFragmentId = null,
   emptyMessage = "还没有片段。写下第一条，按 Cmd/Ctrl+Enter 保存。",
   fragments,
@@ -491,6 +493,7 @@ export function FragmentTimeline({
                 >
                   {column.map((item) => (
                     <FragmentCard
+                      csvFiles={csvFiles}
                       fragment={item.fragment}
                       fragments={fragments}
                       isHighlighted={highlightedFragmentId === item.fragment.id}

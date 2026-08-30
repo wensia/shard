@@ -34,9 +34,10 @@ import { getApiErrorMessage } from "@/lib/api"
 import { isTypeTag } from "@/lib/content-kind"
 import type { RelatedFragment } from "@/lib/relations"
 import { cn } from "@/lib/utils"
-import type { Fragment } from "@/types"
+import type { CsvFileSummary, Fragment } from "@/types"
 
 interface FragmentCardProps {
+  csvFiles?: CsvFileSummary[]
   fragment: Fragment
   relationIndexVersion?: number
   fragments?: Fragment[]
@@ -74,6 +75,7 @@ interface FragmentCardProps {
 }
 
 export function FragmentCard({
+  csvFiles = [],
   fragment,
   relationIndexVersion = 0,
   fragments = [],
@@ -138,6 +140,7 @@ export function FragmentCard({
       >
         <FragmentEditor
           commitOnBlur
+          csvFiles={csvFiles}
           fragment={fragment}
           fragments={fragments}
           knownTags={knownTags}

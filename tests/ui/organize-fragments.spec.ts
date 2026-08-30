@@ -151,6 +151,7 @@ async function installOrganizeMock(page: Page, mode: OrganizeMockMode) {
             return generatedNote()
           }
 
+          if (command === "list_csv_files") return []
           throw new Error(`Unhandled Tauri test command: ${command}`)
         },
       },

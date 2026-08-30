@@ -8,6 +8,7 @@ import type {
   CodexReviewFragment,
   CodexReviewTask,
   CodexReviewTaskResult,
+  CsvFileSummary,
   Fragment,
   FragmentRelation,
   GithubCliInfo,
@@ -80,6 +81,18 @@ export function listFragments() {
 
 export function listMindMaps() {
   return desktopInvoke<MindMapSummary[]>("list_mind_maps")
+}
+
+export function listCsvFiles() {
+  return desktopInvoke<CsvFileSummary[]>("list_csv_files")
+}
+
+export function readCsvFile(path: string) {
+  return desktopInvoke<number[]>("read_csv_file", { path })
+}
+
+export function openCsvFile(path: string) {
+  return desktopInvoke<void>("open_csv_file", { path })
 }
 
 export function createMindMap(title: string, sourceFragmentId?: string) {

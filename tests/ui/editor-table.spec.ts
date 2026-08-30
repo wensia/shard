@@ -62,6 +62,8 @@ async function installTauriMock(page: Page) {
           switch (command) {
             case "list_mind_maps":
               return []
+            case "list_csv_files":
+              return []
             case "plugin:app|version":
               return "0.1.3"
             case "github_cli_status":

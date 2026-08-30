@@ -121,6 +121,7 @@ async function installLibraryMock(page: Page, includeNotes = true) {
             return clone(created)
           }
 
+          if (command === "list_csv_files") return []
           throw new Error(`Unhandled Tauri test command: ${command}`)
         },
       },

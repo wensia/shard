@@ -54,6 +54,11 @@ export interface GitInfo {
   behind: number
 }
 
+export interface CsvFileSummary {
+  name: string
+  path: string
+}
+
 export interface GithubCliInfo {
   installed: boolean
   authenticated: boolean

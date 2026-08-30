@@ -94,6 +94,7 @@ async function installWikilinkMock(page: Page) {
             })
           }
           if (command === "plugin:app|version") return "0.0.0"
+          if (command === "list_csv_files") return []
           if (command === "list_mind_maps") return []
           if (command === "restore_window_frame") return null
           if (command === "update_fragment") {

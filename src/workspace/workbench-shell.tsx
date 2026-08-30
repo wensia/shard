@@ -40,6 +40,7 @@ import {
   DESKTOP_RUNTIME_MESSAGE,
   getApiErrorMessage,
   linkFragments,
+  listCsvFiles,
   listFragments,
   listMindMaps,
   lockLockbox,
@@ -72,6 +73,7 @@ import {
 } from "@/lib/lockbox"
 import type {
   Fragment,
+  CsvFileSummary,
   FragmentFilter,
   LockboxState,
   MindMapSummary,
@@ -176,6 +178,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
   const [isMindMapViewActive, setIsMindMapViewActive] = useState(false)
   const [activeMindMapId, setActiveMindMapId] = useState<string | null>(null)
   const [mindMaps, setMindMaps] = useState<MindMapSummary[]>([])
+  const [csvFiles, setCsvFiles] = useState<CsvFileSummary[]>([])
   const [selectedTag, setSelectedTag] = useState<string | null>(null)
   const [selectedInboxTag, setSelectedInboxTag] = useState<string | null>(null)
   const searchReturnFocusRef = useRef<HTMLElement | null>(null)
@@ -253,6 +256,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
         setGit(null)
         setLockbox(null)
         setVaultPath("")
+        setCsvFiles([])
         setNeedsVaultSetup(false)
         return
       }
@@ -262,6 +266,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
         setGit(null)
         setLockbox(null)
         setVaultPath("")
+        setCsvFiles([])
         setNeedsVaultSetup(true)
         setIsVaultGuideOpen(true)
         return
@@ -286,6 +291,20 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     }
   }
 
+  async function refreshCsvFiles() {
+    try {
+      const files = await listCsvFiles()
+      setCsvFiles(Array.isArray(files) ? files : [])
+    } catch (error) {
+      const message = getApiErrorMessage(error)
+      if (message === DESKTOP_RUNTIME_MESSAGE || isVaultNotConfigured(error)) {
+        setCsvFiles([])
+        return
+      }
+      toast.error(`读取 CSV 文件列表失败：${message}`, { duration: Infinity })
+    }
+  }
+
   function applyVaultState(state: VaultState) {
     const visibleFragments = state.lockbox.unlocked
       ? state.fragments
@@ -297,6 +316,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     setLockbox(state.lockbox)
     setVaultPath(state.vaultPath)
     setNeedsVaultSetup(false)
+    void refreshCsvFiles()
   }
 
   function handleVaultState(
@@ -1481,6 +1501,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
           <FragmentsWorkspace
             capture={{
               collapseSignal: composerCollapseSignal,
+              csvFiles,
               fragments: publicOnlyFragments,
               isCreating,
               knownTags,
@@ -1543,6 +1564,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
               onSelectTag: setSelectedTag,
             }}
             timeline={{
+              csvFiles,
               editingFragmentId:
                 editingVariant === "inline" ? editingFragmentId : null,
               emptyMessage:
@@ -1589,6 +1611,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
           />
         ) : route.space === "review" ? (
           <ReviewWorkspaceShell
+            csvFiles={csvFiles}
             editingFragmentId={
               editingVariant === "inline" ? editingFragmentId : null
             }
@@ -1625,6 +1648,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
           />
         ) : (
           <LibraryShell
+            csvFiles={csvFiles}
             fragments={publicActiveFragments}
             isLoading={isLoading}
             knownTags={knownTags}
@@ -1653,6 +1677,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
         </div>
       </main>
       <FragmentEditor
+        csvFiles={csvFiles}
         draft={editingVariant === "zen" ? zenDraft : null}
         fragment={editingVariant === "zen" ? editingFragment : null}
         fragments={publicOnlyFragments}

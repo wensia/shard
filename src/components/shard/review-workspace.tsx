@@ -36,6 +36,7 @@ import type {
   AiAgentStatus,
   CodexInsightLens,
   CodexReviewTask,
+  CsvFileSummary,
   Fragment,
   FragmentFilter,
 } from "@/types"
@@ -45,6 +46,7 @@ import styles from "./review-workspace.module.css"
 type ReviewMode = Extract<FragmentFilter, "dailyReview" | "insight" | "walk">
 
 interface ReviewWorkspaceProps {
+  csvFiles?: CsvFileSummary[]
   editingFragmentId?: string | null
   fragments: Fragment[]
   insightIncludeLockbox: boolean
@@ -161,6 +163,7 @@ const insightLensGroups: Array<{
 ]
 
 export function ReviewWorkspace({
+  csvFiles = [],
   editingFragmentId = null,
   fragments,
   insightIncludeLockbox,
@@ -672,6 +675,7 @@ export function ReviewWorkspace({
                         <span aria-hidden="true" />
                       )}
                       <FragmentCard
+                        csvFiles={csvFiles}
                         fragment={fragment}
                         isEditing={editingFragmentId === fragment.id}
                         knownTags={knownTags}

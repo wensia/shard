@@ -57,8 +57,8 @@ import {
   TABLE_DOCUMENT_FILTER,
   useTableDocumentDrop,
 } from "@/lib/use-table-document-drop"
-import { buildWikilinkCandidates } from "@/lib/wikilink"
-import type { Fragment } from "@/types"
+import { buildCsvWikilinkCandidates, buildWikilinkCandidates } from "@/lib/wikilink"
+import type { CsvFileSummary, Fragment } from "@/types"
 import styles from "./fragment-editor.module.css"
 
 export interface FragmentEditorDraft {
@@ -68,6 +68,7 @@ export interface FragmentEditorDraft {
 
 interface FragmentEditorProps {
   commitOnBlur?: boolean
+  csvFiles?: CsvFileSummary[]
   draft?: FragmentEditorDraft | null
   fragment: Fragment | null
   fragments?: Fragment[]
@@ -91,6 +92,7 @@ interface EditorImageAttachment {
 
 export function FragmentEditor({
   commitOnBlur = false,
+  csvFiles = [],
   draft = null,
   fragment,
   fragments = [],
@@ -133,8 +135,11 @@ export function FragmentEditor({
   const knownTagsRef = useRef(normalizedKnownTags)
   knownTagsRef.current = normalizedKnownTags
   const wikilinkCandidates = useMemo(
-    () => buildWikilinkCandidates(fragments),
-    [fragments]
+    () => [
+      ...buildWikilinkCandidates(fragments),
+      ...buildCsvWikilinkCandidates(csvFiles),
+    ],
+    [csvFiles, fragments]
   )
   const wikilinkCandidatesRef = useRef(wikilinkCandidates)
   const wikilinkNavigateRef = useRef(onNavigateToFragment)
@@ -159,12 +164,13 @@ export function FragmentEditor({
     () =>
       createShardWikilinkExtension({
         getCandidates: () => wikilinkCandidatesRef.current,
+        maxCsvRows: isZen ? 50 : 10,
         onMissingTarget: (target) =>
           toast(`待建链接「${target}」尚不存在，可在资料库新建笔记`),
         onNavigate: (fragmentId) =>
           wikilinkNavigateRef.current?.(fragmentId),
       }),
-    [wikilinkCandidates]
+    [isZen, wikilinkCandidates]
   )
   const fragmentEditorExtensions = useMemo(
     () =>

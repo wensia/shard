@@ -12,10 +12,18 @@ import {
   Decoration,
   EditorView,
   ViewPlugin,
+  WidgetType,
   type DecorationSet,
 } from "@codemirror/view"
+import { createElement } from "react"
+import { createRoot, type Root } from "react-dom/client"
+import { toast } from "sonner"
+
+import { CsvPreview } from "@/components/shard/csv-preview"
+import { getApiErrorMessage, openCsvFile } from "@/lib/api"
 
 import {
+  isCsvWikilinkTarget,
   normalizeWikilinkTarget,
   resolveWikilinkTarget,
   type WikilinkCandidate,
@@ -25,12 +33,50 @@ import { parseWikilinksInWorker } from "@/lib/wikilink-worker"
 
 interface ShardWikilinkOptions {
   getCandidates: () => readonly WikilinkCandidate[]
+  maxCsvRows: number
   onMissingTarget: (target: string) => void
   onNavigate: (fragmentId: string) => void
 }
 
 interface DecoratedWikilink extends WikilinkMatch {
+  csvExists?: boolean
+  csvPath?: string
   fragmentId?: string
+  maxCsvRows?: number
+}
+
+const csvPreviewRoots = new WeakMap<HTMLElement, Root>()
+
+class CsvPreviewWidget extends WidgetType {
+  constructor(readonly path: string, readonly maxRows: number) {
+    super()
+  }
+
+  eq(other: CsvPreviewWidget) {
+    return this.path === other.path && this.maxRows === other.maxRows
+  }
+
+  get estimatedHeight() {
+    return 320
+  }
+
+  toDOM() {
+    const container = document.createElement("div")
+    container.className = "shard-cm-csv-widget"
+    const root = createRoot(container)
+    csvPreviewRoots.set(container, root)
+    root.render(createElement(CsvPreview, { maxRows: this.maxRows, path: this.path }))
+    return container
+  }
+
+  destroy(dom: HTMLElement) {
+    csvPreviewRoots.get(dom)?.unmount()
+    csvPreviewRoots.delete(dom)
+  }
+
+  ignoreEvent() {
+    return true
+  }
 }
 
 const setWikilinkDecorations = StateEffect.define<readonly DecoratedWikilink[]>()
@@ -41,19 +87,33 @@ const wikilinkDecorationField = StateField.define<DecorationSet>({
     let next = decorations.map(transaction.changes)
     for (const effect of transaction.effects) {
       if (!effect.is(setWikilinkDecorations)) continue
-      next = Decoration.set(
-        effect.value.map((link) =>
-          Decoration.mark({
+      const ranges = effect.value.map((link) => {
+        const line = transaction.state.doc.lineAt(link.from)
+        const source = transaction.state.doc.sliceString(link.from, link.to)
+        const isStandaloneEmbed =
+          link.embed && line.text.trim() === source && Boolean(link.csvPath)
+
+        if (isStandaloneEmbed && link.csvPath) {
+          return Decoration.replace({
+            block: true,
+            widget: new CsvPreviewWidget(link.csvPath, link.maxCsvRows ?? 10),
+          }).range(line.from, line.to)
+        }
+
+        return Decoration.mark({
             attributes: {
+              "data-wikilink-csv-path": link.csvPath ?? "",
               "data-wikilink-id": link.fragmentId ?? "",
               "data-wikilink-target": link.target,
               role: "link",
             },
-            class: link.fragmentId
+            class: link.fragmentId || link.csvExists
               ? "shard-cm-wikilink"
               : "shard-cm-wikilink shard-cm-wikilink--missing",
           }).range(link.from, link.to)
-        ),
+      })
+      next = Decoration.set(
+        ranges,
         true
       )
     }
@@ -82,7 +142,12 @@ export function createShardWikilinkCompletionSource({
       .slice(0, 12)
       .map((candidate) => ({
         apply: `[[${candidate.target}]]`,
-        detail: candidate.kind === "note" ? "笔记" : "碎片",
+        detail:
+          candidate.kind === "csv"
+            ? "CSV"
+            : candidate.kind === "note"
+              ? "笔记"
+              : "碎片",
         label: candidate.label,
         type: "shard-wikilink",
       }))
@@ -98,6 +163,7 @@ export function createShardWikilinkCompletionSource({
 
 export function createShardWikilinkExtension({
   getCandidates,
+  maxCsvRows,
   onMissingTarget,
   onNavigate,
 }: ShardWikilinkOptions): Extension {
@@ -139,11 +205,22 @@ export function createShardWikilinkExtension({
             const candidates = getCandidates()
             this.view.dispatch({
               effects: setWikilinkDecorations.of(
-                links.map((link) => ({
-                  ...link,
-                  fragmentId:
-                    resolveWikilinkTarget(link.target, candidates)?.fragmentId,
-                }))
+                links.map((link) => {
+                  const candidate = resolveWikilinkTarget(link.target, candidates)
+                  return {
+                    ...link,
+                    csvPath:
+                      candidate?.kind === "csv"
+                        ? candidate.path
+                        : isCsvWikilinkTarget(link.target)
+                          ? link.target
+                          : undefined,
+                    csvExists: candidate?.kind === "csv",
+                    fragmentId:
+                      candidate?.kind === "csv" ? undefined : candidate?.fragmentId,
+                    maxCsvRows,
+                  }
+                })
               ),
             })
           })
@@ -167,8 +244,16 @@ export function createShardWikilinkExtension({
 
         event.preventDefault()
         const fragmentId = element.dataset.wikilinkId
+        const csvPath = element.dataset.wikilinkCsvPath
         const target = element.dataset.wikilinkTarget ?? ""
         if (fragmentId) onNavigate(fragmentId)
+        else if (csvPath) {
+          void openCsvFile(csvPath).catch((error) => {
+            toast.error(`打开 CSV 失败：${getApiErrorMessage(error)}`, {
+              duration: Infinity,
+            })
+          })
+        }
         else onMissingTarget(target)
         return true
       },

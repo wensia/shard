@@ -1,0 +1,126 @@
+.preview {
+  display: block;
+  min-width: 0;
+  max-width: 100%;
+  margin-block: var(--space-3);
+  overflow: hidden;
+  border-radius: var(--radius-card);
+  background: var(--card);
+  box-shadow: var(--shadow-xs);
+  color: var(--card-foreground);
+  font-size: var(--text-body);
+  line-height: var(--leading-normal);
+  white-space: normal;
+}
+
+.scroll {
+  display: block;
+  max-width: 100%;
+  max-height: calc(var(--table-row-height) * 10);
+  overflow: auto;
+  overscroll-behavior: none;
+}
+
+.table {
+  width: max-content;
+  min-width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+.table th,
+.table td {
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.table th + th,
+.table td + td {
+  border-left: 1px solid var(--border);
+}
+
+.table th {
+  position: sticky;
+  z-index: 1;
+  top: 0;
+  background: var(--table-header);
+  color: var(--foreground);
+  font-weight: var(--weight-semibold);
+  white-space: nowrap;
+}
+
+.status {
+  min-height: var(--control-height);
+  padding: var(--space-3) var(--space-4);
+  color: var(--muted-foreground);
+  font-size: var(--text-meta);
+}
+
+.footer {
+  display: flex;
+  min-height: var(--control-height-sm);
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  background: var(--muted);
+  color: var(--muted-foreground);
+  font-size: var(--text-meta);
+}
+
+.encoding {
+  margin-left: auto;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-control);
+  background: var(--warning-bg);
+  color: var(--warning);
+  font-size: var(--text-tiny);
+  font-weight: var(--weight-medium);
+}
+
+.openButton {
+  appearance: none;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--foreground);
+  cursor: pointer;
+  font: inherit;
+  font-weight: var(--weight-medium);
+}
+
+.openButton:hover {
+  color: var(--primary);
+}
+
+.openButton:focus-visible {
+  border-radius: var(--radius-control);
+  outline: none;
+  box-shadow: var(--ring-focus);
+}
+
+.openButton:disabled {
+  cursor: default;
+  color: var(--muted-foreground);
+}
+
+.inlineLink {
+  appearance: none;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--primary);
+  cursor: pointer;
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: var(--space-1);
+}
+
+.inlineLink:focus-visible {
+  border-radius: var(--radius-control);
+  outline: none;
+  box-shadow: var(--ring-focus);
+}

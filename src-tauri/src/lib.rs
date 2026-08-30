@@ -40,6 +40,7 @@ const SHARD_MAP_KIND: &str = "shard.map";
 const SHARD_MAP_SCHEMA_VERSION: u32 = 1;
 const SHARD_MAP_MAX_NODES: usize = 400;
 const SHARD_MAP_MAX_NODE_TEXT_CHARS: usize = 2_000;
+const CSV_GIT_PATHSPEC: &str = ":(glob,icase)**/*.csv";
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -69,6 +70,13 @@ struct VaultState {
     fragments: Vec<Fragment>,
     git: GitInfo,
     lockbox: LockboxState,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct CsvFileSummary {
+    name: String,
+    path: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
@@ -421,6 +429,35 @@ async fn list_mind_maps(app: tauri::AppHandle) -> Result<Vec<MindMapSummary>, St
     run_blocking(move || {
         let vault = ensure_vault_dirs(&app)?;
         list_mind_maps_in_vault(&vault)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn list_csv_files(app: tauri::AppHandle) -> Result<Vec<CsvFileSummary>, String> {
+    run_blocking(move || {
+        let vault = ensure_vault_dirs(&app)?;
+        list_csv_files_in_vault(&vault)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn read_csv_file(app: tauri::AppHandle, path: String) -> Result<Vec<u8>, String> {
+    run_blocking(move || {
+        let vault = ensure_vault_dirs(&app)?;
+        let csv_path = ensure_public_csv_path(&vault, &path)?;
+        fs::read(csv_path).map_err(|error| error.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
+async fn open_csv_file(app: tauri::AppHandle, path: String) -> Result<(), String> {
+    run_blocking(move || {
+        let vault = ensure_vault_dirs(&app)?;
+        let csv_path = ensure_public_csv_path(&vault, &path)?;
+        tauri_plugin_opener::open_path(csv_path, None::<&str>).map_err(|error| error.to_string())
     })
     .await
 }
@@ -2475,6 +2512,103 @@ fn ensure_public_markdown_path(vault: &Path, rel_path: &str) -> Result<PathBuf, 
     Ok(full_path)
 }
 
+fn ensure_public_csv_path(vault: &Path, rel_path: &str) -> Result<PathBuf, String> {
+    let trimmed = rel_path.trim();
+    if trimmed.is_empty() {
+        return Err("CSV 路径不能为空。".to_string());
+    }
+    if trimmed.contains('\\') {
+        return Err("CSV 路径必须使用 / 分隔。".to_string());
+    }
+
+    let path = Path::new(trimmed);
+    if path.is_absolute() {
+        return Err("CSV 路径必须是 vault 内相对路径。".to_string());
+    }
+    for component in path.components() {
+        match component {
+            Component::Normal(value) => {
+                let value = value.to_string_lossy();
+                if value.eq_ignore_ascii_case("lockbox") {
+                    return Err("当前版本不允许读取密匣路径。".to_string());
+                }
+                if value == ".git" || value == ".shard" {
+                    return Err("当前版本不允许读取 Shard 内部路径。".to_string());
+                }
+            }
+            _ => return Err("CSV 路径不能包含 . 或 ..。".to_string()),
+        }
+    }
+    if !path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(|extension| extension.eq_ignore_ascii_case("csv"))
+        .unwrap_or(false)
+    {
+        return Err("只能读取 CSV 文件。".to_string());
+    }
+
+    let full_path = vault.join(path);
+    if !full_path.is_file() {
+        return Err(format!("找不到 CSV 文件 {trimmed}"));
+    }
+    let canonical_vault = vault.canonicalize().map_err(|error| error.to_string())?;
+    let canonical_path = full_path.canonicalize().map_err(|error| error.to_string())?;
+    if !canonical_path.starts_with(&canonical_vault) {
+        return Err("CSV 路径不能越出 vault。".to_string());
+    }
+    Ok(canonical_path)
+}
+
+fn list_csv_files_in_vault(vault: &Path) -> Result<Vec<CsvFileSummary>, String> {
+    let mut paths = Vec::new();
+    collect_csv_files(vault, vault, &mut paths)?;
+    let mut files = paths
+        .into_iter()
+        .filter_map(|path| {
+            let relative = relative_path(vault, &path).ok()?;
+            let name = path.file_name()?.to_str()?.to_string();
+            Some(CsvFileSummary { name, path: relative })
+        })
+        .collect::<Vec<_>>();
+    files.sort_by(|left, right| left.path.cmp(&right.path));
+    Ok(files)
+}
+
+fn collect_csv_files(vault: &Path, directory: &Path, files: &mut Vec<PathBuf>) -> Result<(), String> {
+    if !directory.exists() {
+        return Ok(());
+    }
+    for entry in fs::read_dir(directory).map_err(|error| error.to_string())? {
+        let entry = entry.map_err(|error| error.to_string())?;
+        let file_type = entry.file_type().map_err(|error| error.to_string())?;
+        if file_type.is_symlink() {
+            continue;
+        }
+        let path = entry.path();
+        if file_type.is_dir() {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if name == ".git"
+                || name == ".shard"
+                || name.eq_ignore_ascii_case("lockbox")
+            {
+                continue;
+            }
+            collect_csv_files(vault, &path, files)?;
+        } else if file_type.is_file()
+            && path
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .map(|extension| extension.eq_ignore_ascii_case("csv"))
+                .unwrap_or(false)
+        {
+            files.push(path);
+        }
+    }
+    Ok(())
+}
+
 fn find_mind_map_path(vault: &Path, id: &str) -> Result<Option<PathBuf>, String> {
     let mut files = Vec::new();
     collect_mind_map_files(&vault.join("maps"), &mut files)?;
@@ -3962,6 +4096,7 @@ fn commit_all_if_dirty(vault: &Path, message: &str) -> Result<(), String> {
             "maps".to_string(),
             "lockbox".to_string(),
             ".shard".to_string(),
+            CSV_GIT_PATHSPEC.to_string(),
         ],
         message,
     )
@@ -4005,6 +4140,7 @@ fn dirty_paths(vault: &Path) -> HashSet<String> {
             "maps",
             "lockbox",
             ".shard",
+            CSV_GIT_PATHSPEC,
         ],
     ) else {
         return paths;
@@ -4054,6 +4190,7 @@ fn git_info(vault: &Path) -> GitInfo {
             "maps",
             "lockbox",
             ".shard",
+            CSV_GIT_PATHSPEC,
         ],
     ) {
         Ok(status)
@@ -4859,6 +4996,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             list_fragments,
             list_mind_maps,
+            list_csv_files,
+            read_csv_file,
+            open_csv_file,
             create_mind_map,
             read_mind_map,
             write_mind_map,
@@ -4992,6 +5132,67 @@ mod tests {
     }
 
     #[test]
+    fn lists_only_public_csv_files() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let vault = tempdir.path();
+        ensure_vault_layout(vault).unwrap();
+        fs::create_dir_all(vault.join("data")).unwrap();
+        fs::create_dir_all(vault.join("lockbox").join("data")).unwrap();
+        fs::write(vault.join("root.CSV"), "a,b\n1,2\n").unwrap();
+        fs::write(vault.join("data").join("nested.csv"), "a\n1\n").unwrap();
+        fs::write(vault.join("data").join("ignored.txt"), "not csv\n").unwrap();
+        fs::write(vault.join("lockbox").join("data").join("secret.csv"), "secret\n").unwrap();
+        fs::write(vault.join(".shard").join("internal.csv"), "internal\n").unwrap();
+
+        let files = list_csv_files_in_vault(vault).unwrap();
+        assert_eq!(
+            files.iter().map(|file| file.path.as_str()).collect::<Vec<_>>(),
+            vec!["data/nested.csv", "root.CSV"]
+        );
+    }
+
+    #[test]
+    fn validates_public_csv_paths() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let vault = tempdir.path();
+        ensure_vault_layout(vault).unwrap();
+        fs::create_dir_all(vault.join("data")).unwrap();
+        fs::write(vault.join("data").join("ok.csv"), "a\n1\n").unwrap();
+
+        assert!(ensure_public_csv_path(vault, "data/ok.csv").is_ok());
+        for invalid in [
+            "",
+            "/tmp/outside.csv",
+            "../outside.csv",
+            "./data/ok.csv",
+            "data\\ok.csv",
+            "data/ok.txt",
+            "lockbox/secret.csv",
+            ".shard/internal.csv",
+            "data/missing.csv",
+        ] {
+            assert!(ensure_public_csv_path(vault, invalid).is_err(), "{invalid}");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_csv_symlink_that_leaves_vault() {
+        use std::os::unix::fs::symlink;
+
+        let tempdir = tempfile::tempdir().unwrap();
+        let vault = tempdir.path().join("vault");
+        fs::create_dir_all(&vault).unwrap();
+        ensure_vault_layout(&vault).unwrap();
+        let outside = tempdir.path().join("outside.csv");
+        fs::write(&outside, "secret\n").unwrap();
+        symlink(&outside, vault.join("outside.csv")).unwrap();
+
+        assert!(ensure_public_csv_path(&vault, "outside.csv").is_err());
+        assert!(list_csv_files_in_vault(&vault).unwrap().is_empty());
+    }
+
+    #[test]
     fn automatic_commit_does_not_include_unrelated_staged_files() {
         let tempdir = tempfile::tempdir().unwrap();
         let vault = tempdir.path();
@@ -5046,6 +5247,9 @@ mod tests {
         run_git(&second, &["push"]).unwrap();
 
         fs::write(first.join("fragments").join("local.md"), "local\n").unwrap();
+        fs::create_dir_all(first.join("data")).unwrap();
+        fs::write(first.join("external.csv"), "name,value\nroot,1\n").unwrap();
+        fs::write(first.join("data").join("nested.CSV"), "name,value\nnested,2\n").unwrap();
         fs::write(first.join("personal.txt"), "unmanaged user file\n").unwrap();
         push_vault(&first).unwrap();
 
@@ -5065,6 +5269,8 @@ mod tests {
         assert!(remote_tree
             .lines()
             .any(|path| path == "fragments/remote.md"));
+        assert!(remote_tree.lines().any(|path| path == "external.csv"));
+        assert!(remote_tree.lines().any(|path| path == "data/nested.CSV"));
         assert!(!remote_tree.lines().any(|path| path == "personal.txt"));
     }
 

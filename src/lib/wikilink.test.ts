@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 
-import { parseWikilinks } from "@/lib/wikilink"
+import { buildCsvWikilinkCandidates, parseWikilinks } from "@/lib/wikilink"
 
 describe("parseWikilinks", () => {
   it("解析目标与别名", () => {
@@ -39,5 +39,29 @@ describe("parseWikilinks", () => {
     "[单括号]",
   ])("忽略无效语法：%s", (content) => {
     expect(parseWikilinks(content)).toEqual([])
+  })
+
+  it("只把带 ! 前缀的 CSV wikilink 识别为嵌入", () => {
+    expect(parseWikilinks("![[data/report.csv]] 和 [[data/report.csv]] 与 ![[note.md]]"))
+      .toEqual([
+        { embed: true, from: 0, target: "data/report.csv", to: 20 },
+        { from: 23, target: "data/report.csv", to: 42 },
+        { from: 46, target: "note.md", to: 57 },
+      ])
+  })
+})
+
+describe("buildCsvWikilinkCandidates", () => {
+  it("用相对路径消歧，同时允许文件名匹配", () => {
+    expect(buildCsvWikilinkCandidates([{ name: "report.csv", path: "data/report.csv" }]))
+      .toEqual([
+        {
+          kind: "csv",
+          label: "report.csv",
+          matchKeys: ["data/report.csv", "report.csv"],
+          path: "data/report.csv",
+          target: "data/report.csv",
+        },
+      ])
   })
 })

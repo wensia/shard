@@ -3,6 +3,7 @@ import type { CSSProperties } from "react"
 import { FragmentContent } from "@/components/shard/fragment-content"
 import { parseMarkdownTable } from "@/lib/markdown-table"
 import { cn } from "@/lib/utils"
+import { parseWikilinks } from "@/lib/wikilink"
 
 interface FragmentBodyProps {
   as?: "div" | "p"
@@ -48,8 +49,13 @@ export function FragmentBody({
   // <table> 不能合法嵌在 <p> 里，含表格时容器降级为 div；
   // 其余情况保持原有的段落语义。
   const hasTable = containsMarkdownTable(content)
+  const hasCsvEmbed = content.split("\n").some((line) => {
+    const trimmed = line.trim()
+    const links = parseWikilinks(trimmed)
+    return links.length === 1 && links[0].embed && links[0].to === trimmed.length
+  })
 
-  if (as === "div" || hasTable) {
+  if (as === "div" || hasTable || hasCsvEmbed) {
     return (
       <div className={bodyClassName} style={bodyStyle}>
         {body}

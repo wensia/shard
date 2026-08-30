@@ -1,19 +1,21 @@
 import { deriveNoteTitle } from "@/lib/content-kind"
 import { markdownToSearchText } from "@/lib/fragment-search"
-import type { Fragment } from "@/types"
+import type { CsvFileSummary, Fragment } from "@/types"
 
 export interface WikilinkMatch {
   alias?: string
+  embed?: true
   from: number
   target: string
   to: number
 }
 
 export interface WikilinkCandidate {
-  fragmentId: string
-  kind: Fragment["kind"]
+  fragmentId?: string
+  kind: Fragment["kind"] | "csv"
   label: string
   matchKeys: string[]
+  path?: string
   target: string
 }
 
@@ -48,9 +50,11 @@ export function parseWikilinks(content: string): WikilinkMatch[] {
     const alias = separator < 0 ? undefined : raw.slice(separator + 1).trim()
 
     if (target && (separator < 0 || alias)) {
+      const embed = from > 0 && content[from - 1] === "!" && isCsvWikilinkTarget(target)
       links.push({
         ...(alias ? { alias } : {}),
-        from,
+        ...(embed ? { embed: true as const } : {}),
+        from: embed ? from - 1 : from,
         target,
         to: toStart + 2,
       })
@@ -60,6 +64,20 @@ export function parseWikilinks(content: string): WikilinkMatch[] {
   }
 
   return links
+}
+
+export function buildCsvWikilinkCandidates(
+  files: readonly CsvFileSummary[]
+): WikilinkCandidate[] {
+  return files.map((file) => ({
+    kind: "csv",
+    label: file.name,
+    matchKeys: Array.from(
+      new Set([file.path, file.name].map(normalizeWikilinkTarget).filter(Boolean))
+    ),
+    path: file.path,
+    target: file.path,
+  }))
 }
 
 export function buildWikilinkCandidates(
@@ -131,6 +149,10 @@ export function resolveWikilinkTarget(
 
 export function normalizeWikilinkTarget(value: string) {
   return value.trim().normalize("NFKC").toLocaleLowerCase("zh-CN")
+}
+
+export function isCsvWikilinkTarget(value: string) {
+  return normalizeWikilinkTarget(value).endsWith(".csv")
 }
 
 function getFileName(path: string) {

@@ -45,6 +45,8 @@ import {
   revealFragmentImageInDir,
 } from "@/lib/api"
 import { cn } from "@/lib/utils"
+import { CsvInlineLink, CsvPreview } from "@/components/shard/csv-preview"
+import { isCsvWikilinkTarget, parseWikilinks } from "@/lib/wikilink"
 
 import styles from "./fragment-content.module.css"
 
@@ -79,6 +81,11 @@ export function FragmentContent({
   vaultPath,
 }: FragmentContentProps) {
   const lines = content.split("\n")
+  const hasBlockContent = lines.some(
+    (line, lineIndex) =>
+      parseStandaloneCsvEmbed(line) !== null ||
+      parseMarkdownTable(lines, lineIndex) !== null
+  )
   const displayLines = lines.map((line) => {
     const isImageLine = renderImages && parseMarkdownImageLine(line) !== null
     if (!hideTags || isImageLine) {
@@ -105,7 +112,19 @@ export function FragmentContent({
     if (line === undefined) break
 
     const entry = displayLines[index]
+    const csvEmbed = parseStandaloneCsvEmbed(line)
     const table = parseMarkdownTable(lines, index)
+
+    if (csvEmbed) {
+      nodes.push(
+        <Fragment key={`csv-${index}-${csvEmbed.target}`}>
+          <CsvPreview maxRows={10} path={csvEmbed.target} />
+          {index < lastVisibleIndex ? "\n" : null}
+        </Fragment>
+      )
+      index += 1
+      continue
+    }
 
     if (table) {
       const consumed = table.lineCount
@@ -141,9 +160,8 @@ export function FragmentContent({
     )
   }
 
-  return (
-    <span className={cn("shard-fragment-content", className)}>{nodes}</span>
-  )
+  const Root = hasBlockContent ? "div" : "span"
+  return <Root className={cn("shard-fragment-content", className)}>{nodes}</Root>
 }
 
 function MarkdownTableBlock({ table }: { table: MarkdownTable }) {
@@ -728,5 +746,31 @@ function renderInlineContent(text: string): ReactNode {
   if (text.length === 0) {
     return <span>{"\u200b"}</span>
   }
-  return text
+  const csvLinks = parseWikilinks(text).filter(
+    (link) => !link.embed && isCsvWikilinkTarget(link.target)
+  )
+  if (csvLinks.length === 0) return text
+
+  const nodes: ReactNode[] = []
+  let cursor = 0
+  for (const link of csvLinks) {
+    if (link.from > cursor) nodes.push(text.slice(cursor, link.from))
+    nodes.push(
+      <CsvInlineLink
+        key={`${link.from}-${link.target}`}
+        label={link.alias || link.target}
+        path={link.target}
+      />
+    )
+    cursor = link.to
+  }
+  if (cursor < text.length) nodes.push(text.slice(cursor))
+  return nodes
+}
+
+function parseStandaloneCsvEmbed(line: string) {
+  const trimmed = line.trim()
+  const links = parseWikilinks(trimmed)
+  const link = links.length === 1 ? links[0] : null
+  return link?.embed && link.from === 0 && link.to === trimmed.length ? link : null
 }

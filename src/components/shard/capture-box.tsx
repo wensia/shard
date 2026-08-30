@@ -53,13 +53,14 @@ import {
   TABLE_DOCUMENT_FILTER,
   useTableDocumentDrop,
 } from "@/lib/use-table-document-drop"
-import { buildWikilinkCandidates } from "@/lib/wikilink"
-import type { Fragment } from "@/types"
+import { buildCsvWikilinkCandidates, buildWikilinkCandidates } from "@/lib/wikilink"
+import type { CsvFileSummary, Fragment } from "@/types"
 
 import styles from "./capture-box.module.css"
 
 interface CaptureBoxProps {
   collapseSignal: number
+  csvFiles?: CsvFileSummary[]
   fragments: Fragment[]
   isCreating: boolean
   knownTags: string[]
@@ -78,6 +79,7 @@ interface PendingImage {
 
 export function CaptureBox({
   collapseSignal,
+  csvFiles = [],
   fragments,
   isCreating,
   knownTags,
@@ -106,8 +108,11 @@ export function CaptureBox({
   const knownTagsRef = useRef(normalizedKnownTags)
   knownTagsRef.current = normalizedKnownTags
   const wikilinkCandidates = useMemo(
-    () => buildWikilinkCandidates(fragments),
-    [fragments]
+    () => [
+      ...buildWikilinkCandidates(fragments),
+      ...buildCsvWikilinkCandidates(csvFiles),
+    ],
+    [csvFiles, fragments]
   )
   const wikilinkCandidatesRef = useRef(wikilinkCandidates)
   const wikilinkNavigateRef = useRef(onNavigateToFragment)
@@ -132,6 +137,7 @@ export function CaptureBox({
     () =>
       createShardWikilinkExtension({
         getCandidates: () => wikilinkCandidatesRef.current,
+        maxCsvRows: 10,
         onMissingTarget: (target) =>
           toast(`待建链接「${target}」尚不存在，可在资料库新建笔记`),
         onNavigate: (fragmentId) =>
