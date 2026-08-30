@@ -139,6 +139,7 @@ test("折叠 rail 保持 route 并在 hover 与 focus 显示两行 tooltip", asy
   })
   await expect(libraryItem).toHaveAttribute("aria-current", "page")
   await expect.poll(() => sidebarWidth(page)).toBe(49)
+  await expect(libraryItem.locator("svg")).toBeVisible()
   const initialHeight = await libraryItem.evaluate(
     (element) => element.getBoundingClientRect().height
   )

@@ -869,7 +869,7 @@ function SidebarNavigationButton({
 
   return (
     <Tooltip>
-      <TooltipTrigger render={renderButton()}>{content}</TooltipTrigger>
+      <TooltipTrigger render={renderButton(content)} />
       <TooltipContent
         align="start"
         className={styles.navTooltip}
