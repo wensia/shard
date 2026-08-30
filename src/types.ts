@@ -23,6 +23,7 @@ export interface FragmentRelation {
 export interface Fragment {
   id: string
   content: string
+  kind: "fragment" | "note"
   createdAt: string
   updatedAt: string
   tags: string[]

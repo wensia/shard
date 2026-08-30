@@ -11,6 +11,7 @@ import {
   TagFilterButton,
   type TaggedSummary,
 } from "@/components/shard/tagged-panel"
+import { isTypeTag } from "@/lib/content-kind"
 import styles from "./inbox-tag-bar.module.css"
 
 interface InboxTagBarProps {
@@ -31,6 +32,9 @@ export function InboxTagBar({
   const [isCreating, setIsCreating] = useState(false)
   const [draft, setDraft] = useState("")
   const inputRef = useRef<HTMLInputElement>(null)
+  const visibleSummaries = summaries.filter(
+    (summary) => !isTypeTag(summary.tag)
+  )
 
   useEffect(() => {
     if (!isCreating) return
@@ -77,7 +81,7 @@ export function InboxTagBar({
             label="全部"
             onClick={() => onSelectTag(null)}
           />
-          {summaries.map((summary) => (
+          {visibleSummaries.map((summary) => (
             <TagFilterButton
               active={selectedTag === summary.tag}
               count={summary.count}

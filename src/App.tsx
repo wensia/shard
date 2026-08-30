@@ -60,7 +60,9 @@ import {
   unlockLockbox,
   unlinkFragments,
   updateFragment,
+  updateFragmentTags,
 } from "@/lib/api"
+import { deriveKind, isTypeTag } from "@/lib/content-kind"
 import { toggleTaskLine } from "@/lib/editor-format"
 import {
   hasMarkdownImage,
@@ -320,6 +322,7 @@ function App() {
     const pendingFragment: Fragment = {
       id: optimisticId,
       content,
+      kind: deriveKind(tags),
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       tags,
@@ -551,6 +554,27 @@ function App() {
       )
       toast.error(
         `${nextPinned ? "置顶失败" : "取消置顶失败"}：${getApiErrorMessage(error)}`,
+        { duration: Infinity }
+      )
+    }
+  }
+
+  async function handleToggleFragmentKind(fragment: Fragment) {
+    const nextKind = fragment.kind === "note" ? "fragment" : "note"
+    const themeTags = fragment.tags.filter((tag) => !isTypeTag(tag))
+    const nextTags = nextKind === "note" ? [...themeTags, "note"] : themeTags
+
+    try {
+      const updated = await updateFragmentTags(fragment.id, nextTags)
+      setFragments((current) =>
+        current.map((currentFragment) =>
+          currentFragment.id === fragment.id ? updated : currentFragment
+        )
+      )
+      toast(nextKind === "note" ? "已转为笔记" : "已转回碎片")
+    } catch (error) {
+      toast.error(
+        `${nextKind === "note" ? "转为笔记失败" : "转回碎片失败"}：${getApiErrorMessage(error)}`,
         { duration: Infinity }
       )
     }
@@ -914,7 +938,14 @@ function App() {
       return false
     }
 
-    if (tag === "inbox" || tag === LOCKBOX_TAG) {
+    if (tag === "inbox" || tag === LOCKBOX_TAG || isTypeTag(tag)) {
+      if (isTypeTag(tag)) {
+        toast.error(
+          `#${tag} 是内容类型保留标签，请使用卡片菜单“转为笔记”`,
+          { duration: Infinity }
+        )
+        return false
+      }
       toast.error(`#${tag} 是保留标签，不能新建`, { duration: Infinity })
       return false
     }
@@ -1088,7 +1119,7 @@ function App() {
             appSettings.customTags,
             publicActiveFragments
               .flatMap((fragment) => fragment.tags)
-              .filter((tag) => tag !== "inbox")
+              .filter((tag) => tag !== "inbox" && !isTypeTag(tag))
           )
         )
       ).sort((a, b) => a.localeCompare(b)),
@@ -1347,6 +1378,7 @@ function App() {
                   onOpenZen={openZenEditor}
                   onPin={handlePinFragment}
                   onSave={handleUpdateFragment}
+                  onToggleKind={handleToggleFragmentKind}
                   onToggleTask={(fragment, lineIndex) => {
                     void handleToggleFragmentTask(fragment, lineIndex)
                   }}
@@ -1387,6 +1419,7 @@ function App() {
                   onNavigateToFragment={setPendingScrollFragmentId}
                   onScrollToFragmentComplete={handleTimelineScrollComplete}
                   onSave={handleUpdateFragment}
+                  onToggleKind={handleToggleFragmentKind}
                   onToggleTask={(fragment, lineIndex) => {
                     void handleToggleFragmentTask(fragment, lineIndex)
                   }}
@@ -1763,12 +1796,16 @@ function isGitSetupError(error: unknown) {
 }
 
 function hasVisibleTag(fragment: Fragment) {
-  return fragment.tags.some((tag) => tag !== "inbox" && tag !== LOCKBOX_TAG)
+  return fragment.tags.some(
+    (tag) => tag !== "inbox" && tag !== LOCKBOX_TAG && !isTypeTag(tag)
+  )
 }
 
 function getFirstVisibleTag(fragment: Fragment) {
   return (
-    fragment.tags.find((tag) => tag !== "inbox" && tag !== LOCKBOX_TAG) ?? null
+    fragment.tags.find(
+      (tag) => tag !== "inbox" && tag !== LOCKBOX_TAG && !isTypeTag(tag)
+    ) ?? null
   )
 }
 
@@ -1802,7 +1839,9 @@ function buildTagSummaries(
 
   for (const fragment of fragments) {
     const tags = new Set(
-      fragment.tags.filter((tag) => tag !== "inbox" && tag !== LOCKBOX_TAG)
+      fragment.tags.filter(
+        (tag) => tag !== "inbox" && tag !== LOCKBOX_TAG && !isTypeTag(tag)
+      )
     )
 
     for (const tag of tags) {

@@ -1,6 +1,7 @@
 import { XIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
+import { isTypeTag } from "@/lib/content-kind"
 
 interface TagBadgeProps {
   removable?: boolean
@@ -17,6 +18,8 @@ interface TagBadgeProps {
  * frontend-rules.css 规则。
  */
 export function TagBadge({ removable = false, tag, onRemove }: TagBadgeProps) {
+  if (isTypeTag(tag)) return null
+
   const toneClass = tag === "inbox" ? "shard-tag-muted" : ""
 
   return (

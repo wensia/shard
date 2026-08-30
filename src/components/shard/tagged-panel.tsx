@@ -1,6 +1,7 @@
 import { LockKeyholeIcon, TagIcon } from "lucide-react"
 
 import type { LockboxState } from "@/types"
+import { isTypeTag } from "@/lib/content-kind"
 
 export interface TaggedSummary {
   count: number
@@ -27,6 +28,10 @@ export function TaggedPanel({
   onOpenLockbox,
   onSelectTag,
 }: TaggedPanelProps) {
+  const visibleSummaries = summaries.filter(
+    (summary) => !isTypeTag(summary.tag)
+  )
+
   return (
     <div
       className="shard-content-inset"
@@ -57,7 +62,7 @@ export function TaggedPanel({
         >
           <TagIcon size={14} strokeWidth={1.75} style={{ flexShrink: 0 }} />
           <span style={{ fontVariantNumeric: "tabular-nums" }}>
-            {summaries.length} 标签
+            {visibleSummaries.length} 标签
           </span>
           <span aria-hidden="true">·</span>
           <span style={{ fontVariantNumeric: "tabular-nums" }}>
@@ -108,7 +113,7 @@ export function TaggedPanel({
             label="全部"
             onClick={() => onSelectTag(null)}
           />
-          {summaries.map((summary) => (
+          {visibleSummaries.map((summary) => (
             <TagFilterButton
               active={selectedTag === summary.tag}
               count={summary.count}

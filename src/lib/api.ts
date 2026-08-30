@@ -1,5 +1,6 @@
 import { invoke, isTauri } from "@tauri-apps/api/core"
 
+import { deriveKind } from "@/lib/content-kind"
 import type {
   AiAgentKind,
   AiAgentStatus,
@@ -17,6 +18,14 @@ import type {
   ShardMapFile,
   VaultState,
 } from "@/types"
+
+type StoredFragment = Omit<Fragment, "kind">
+type StoredVaultState = Omit<VaultState, "fragments"> & {
+  fragments: StoredFragment[]
+}
+type StoredLockboxSetupResult = Omit<LockboxSetupResult, "vault"> & {
+  vault: StoredVaultState
+}
 
 export const DESKTOP_RUNTIME_MESSAGE =
   "此操作需要在 Shard 桌面应用中运行。浏览器预览仅用于界面检查。"
@@ -46,8 +55,27 @@ function desktopInvoke<T>(command: string, args?: Record<string, unknown>) {
   )
 }
 
+function hydrateFragment(fragment: StoredFragment): Fragment {
+  return { ...fragment, kind: deriveKind(fragment.tags) }
+}
+
+function hydrateVaultState(state: StoredVaultState): VaultState {
+  return {
+    ...state,
+    fragments: state.fragments.map(hydrateFragment),
+  }
+}
+
+function invokeFragment(command: string, args?: Record<string, unknown>) {
+  return desktopInvoke<StoredFragment>(command, args).then(hydrateFragment)
+}
+
+function invokeVaultState(command: string, args?: Record<string, unknown>) {
+  return desktopInvoke<StoredVaultState>(command, args).then(hydrateVaultState)
+}
+
 export function listFragments() {
-  return desktopInvoke<VaultState>("list_fragments")
+  return invokeVaultState("list_fragments")
 }
 
 export function listMindMaps() {
@@ -87,15 +115,15 @@ export function deleteMindMap(id: string, expectedRevision: number) {
 }
 
 export function createFragment(content: string, tags: string[]) {
-  return desktopInvoke<Fragment>("create_fragment", { content, tags })
+  return invokeFragment("create_fragment", { content, tags })
 }
 
 export function updateFragment(id: string, content: string, tags: string[]) {
-  return desktopInvoke<Fragment>("update_fragment", { id, content, tags })
+  return invokeFragment("update_fragment", { id, content, tags })
 }
 
 export function updateFragmentTags(id: string, tags: string[]) {
-  return desktopInvoke<Fragment>("update_fragment_tags", { id, tags })
+  return invokeFragment("update_fragment_tags", { id, tags })
 }
 
 export function linkFragments(
@@ -104,7 +132,7 @@ export function linkFragments(
   origin: FragmentRelation["origin"],
   note?: string
 ): Promise<Fragment> {
-  return desktopInvoke<Fragment>("link_fragments", {
+  return invokeFragment("link_fragments", {
     sourceId,
     targetId,
     origin,
@@ -116,7 +144,7 @@ export function unlinkFragments(
   sourceId: string,
   targetId: string
 ): Promise<Fragment> {
-  return desktopInvoke<Fragment>("unlink_fragments", { sourceId, targetId })
+  return invokeFragment("unlink_fragments", { sourceId, targetId })
 }
 
 /**
@@ -125,15 +153,15 @@ export function unlinkFragments(
  * 已处于目标状态时是空操作。
  */
 export function setFragmentArchived(id: string, archived: boolean) {
-  return desktopInvoke<Fragment>("set_fragment_archived", { id, archived })
+  return invokeFragment("set_fragment_archived", { id, archived })
 }
 
 export function pinFragment(id: string, pinned: boolean) {
-  return desktopInvoke<Fragment>("set_fragment_pinned", { id, pinned })
+  return invokeFragment("set_fragment_pinned", { id, pinned })
 }
 
 export function moveFragmentToLockbox(id: string) {
-  return desktopInvoke<VaultState>("move_fragment_to_lockbox", { id })
+  return invokeVaultState("move_fragment_to_lockbox", { id })
 }
 
 // Excel / CSV 转成 Markdown 表格文本。只转换、不落盘，结果由调用方插进正文。
@@ -189,44 +217,52 @@ export function restoreWindowFrame() {
 }
 
 export function setVaultPath(path: string, initializeGit: boolean) {
-  return desktopInvoke<VaultState>("set_vault_path", { path, initializeGit })
+  return invokeVaultState("set_vault_path", { path, initializeGit })
 }
 
 export function initializeVaultGit() {
-  return desktopInvoke<VaultState>("initialize_vault_git")
+  return invokeVaultState("initialize_vault_git")
 }
 
 export function setupLockbox(password: string) {
-  return desktopInvoke<LockboxSetupResult>("setup_lockbox", { password })
+  return desktopInvoke<StoredLockboxSetupResult>("setup_lockbox", {
+    password,
+  }).then((result): LockboxSetupResult => ({
+    ...result,
+    vault: hydrateVaultState(result.vault),
+  }))
 }
 
 export function unlockLockbox(password: string) {
-  return desktopInvoke<VaultState>("unlock_lockbox", { password })
+  return invokeVaultState("unlock_lockbox", { password })
 }
 
 export function lockLockbox() {
-  return desktopInvoke<VaultState>("lock_lockbox")
+  return invokeVaultState("lock_lockbox")
 }
 
 export function changeLockboxPassword(
   currentPassword: string,
   newPassword: string
 ) {
-  return desktopInvoke<VaultState>("change_lockbox_password", {
+  return invokeVaultState("change_lockbox_password", {
     currentPassword,
     newPassword,
   })
 }
 
 export function resetLockboxPassword(recoveryKey: string, newPassword: string) {
-  return desktopInvoke<LockboxSetupResult>("reset_lockbox_password", {
+  return desktopInvoke<StoredLockboxSetupResult>("reset_lockbox_password", {
     recoveryKey,
     newPassword,
-  })
+  }).then((result): LockboxSetupResult => ({
+    ...result,
+    vault: hydrateVaultState(result.vault),
+  }))
 }
 
 export function setVaultRemote(remoteUrl: string) {
-  return desktopInvoke<VaultState>("set_vault_remote", { remoteUrl })
+  return invokeVaultState("set_vault_remote", { remoteUrl })
 }
 
 export function getGithubCliStatus() {
@@ -258,7 +294,7 @@ export function runAiReviewTask(
 }
 
 export function createGithubVaultRepo(repoName: string) {
-  return desktopInvoke<VaultState>("create_github_vault_repo", { repoName })
+  return invokeVaultState("create_github_vault_repo", { repoName })
 }
 
 export function syncVault() {

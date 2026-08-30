@@ -62,6 +62,7 @@ interface ReviewWorkspaceProps {
   onOpenZen?: (fragment: Fragment) => void
   onPin?: (fragment: Fragment) => void
   onSave?: (id: string, content: string, tags: string[]) => Promise<Fragment>
+  onToggleKind?: (fragment: Fragment) => void
   onToggleTask?: (fragment: Fragment, lineIndex: number) => void
   vaultPath: string
 }
@@ -177,6 +178,7 @@ export function ReviewWorkspace({
   onOpenZen,
   onPin,
   onSave,
+  onToggleKind,
   onToggleTask,
   vaultPath,
 }: ReviewWorkspaceProps) {
@@ -681,6 +683,7 @@ export function ReviewWorkspace({
                         onOpenZen={onOpenZen}
                         onPin={onPin}
                         onSave={onSave}
+                        onToggleKind={onToggleKind}
                         onToggleTask={onToggleTask}
                         vaultPath={vaultPath}
                       />

@@ -1,3 +1,5 @@
+import { isTypeTag } from "@/lib/content-kind"
+
 const STORAGE_KEY = "shard.app-settings.v1"
 
 export const AUTO_SYNC_INTERVAL_OPTIONS = [5, 10, 30] as const
@@ -48,7 +50,7 @@ function sanitizeCustomTags(value: unknown): string[] {
   for (const item of value) {
     if (typeof item !== "string") continue
     const tag = item.trim().replace(/^#+/, "")
-    if (tag) tags.add(tag)
+    if (tag && !isTypeTag(tag)) tags.add(tag)
   }
 
   return Array.from(tags)

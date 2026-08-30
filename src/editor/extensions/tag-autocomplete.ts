@@ -16,6 +16,7 @@ import {
   normalizeTag,
   normalizeTagList,
 } from "@/lib/editor-format"
+import { isTypeTag } from "@/lib/content-kind"
 import {
   buildTagSearchIndex,
   getMatchingTagsBySearchQuery,
@@ -145,7 +146,11 @@ export function createShardTagAutocomplete({
       type: TAG_COMPLETION_TYPE,
     }))
 
-    if (query.length > 0 && !normalizedKnownTags.includes(query)) {
+    if (
+      query.length > 0 &&
+      !isTypeTag(query) &&
+      !normalizedKnownTags.includes(query)
+    ) {
       options.push({
         apply: applyCompletion,
         detail: "新建",

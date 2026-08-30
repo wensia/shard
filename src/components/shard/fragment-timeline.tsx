@@ -29,6 +29,7 @@ interface FragmentTimelineProps {
   onScrollDown?: () => void
   onScrollToFragmentComplete?: (fragmentId: string) => void
   onSave?: (id: string, content: string, tags: string[]) => Promise<Fragment>
+  onToggleKind?: (fragment: Fragment) => void
   onToggleTask?: (fragment: Fragment, lineIndex: number) => void
   onUnlinkFragment?: (
     sourceId: string,
@@ -56,6 +57,7 @@ export function FragmentTimeline({
   onScrollDown,
   onScrollToFragmentComplete,
   onSave,
+  onToggleKind,
   onToggleTask,
   onUnlinkFragment,
   scrollToFragmentId = null,
@@ -350,6 +352,7 @@ export function FragmentTimeline({
                       onOpenZen={onOpenZen}
                       onPin={onPin}
                       onSave={onSave}
+                      onToggleKind={onToggleKind}
                       onToggleTask={onToggleTask}
                       onUnlinkFragment={onUnlinkFragment}
                       requestRelated={requestRelated}

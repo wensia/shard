@@ -2,6 +2,7 @@ import {
   ArchiveIcon,
   ArchiveRestoreIcon,
   CopyIcon,
+  FileTextIcon,
   GitBranchIcon,
   Link2Icon,
   LinkIcon,
@@ -29,6 +30,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { getApiErrorMessage } from "@/lib/api"
+import { isTypeTag } from "@/lib/content-kind"
 import type { RelatedFragment } from "@/lib/relations"
 import { cn } from "@/lib/utils"
 import type { Fragment } from "@/types"
@@ -52,6 +54,7 @@ interface FragmentCardProps {
   onOpenZen?: (fragment: Fragment) => void
   onPin?: (fragment: Fragment) => void
   onSave?: (id: string, content: string, tags: string[]) => Promise<Fragment>
+  onToggleKind?: (fragment: Fragment) => void
   onToggleTask?: (fragment: Fragment, lineIndex: number) => void
   onUnlinkFragment?: (
     sourceId: string,
@@ -80,6 +83,7 @@ export function FragmentCard({
   onPin,
   onNavigateToFragment,
   onSave,
+  onToggleKind,
   onToggleTask,
   onUnlinkFragment,
   requestRelated,
@@ -90,7 +94,9 @@ export function FragmentCard({
   const [isRelatedOpen, setIsRelatedOpen] = useState(false)
   const createdTime = formatCreatedTime(fragment.createdAt)
   const displayContent = fragment.content.trimEnd()
-  const displayTags = fragment.tags.filter((tag) => tag !== "inbox")
+  const displayTags = fragment.tags.filter(
+    (tag) => tag !== "inbox" && !isTypeTag(tag)
+  )
 
   function openNextSurface(action: () => void) {
     setIsMenuOpen(false)
@@ -162,6 +168,7 @@ export function FragmentCard({
           {fragment.pinned ||
           fragment.lockbox ||
           fragment.conflictOf ||
+          fragment.kind === "note" ||
           displayTags.length > 0 ? (
             <div
               className="shard-card-tags"
@@ -200,6 +207,15 @@ export function FragmentCard({
                 >
                   <GitBranchIcon strokeWidth={1.75} />
                   冲突副本
+                </span>
+              ) : null}
+              {fragment.kind === "note" ? (
+                <span
+                  className="shard-tag shard-tag-muted"
+                  style={{ fontWeight: 500 }}
+                >
+                  <FileTextIcon strokeWidth={1.75} />
+                  笔记
                 </span>
               ) : null}
               {displayTags.map((tag) => (
@@ -243,6 +259,13 @@ export function FragmentCard({
                   openNextSurface(() => onEdit?.(fragment))
                 }
               />
+              {onToggleKind ? (
+                <CardMenuItem
+                  icon={<FileTextIcon aria-hidden="true" />}
+                  label={fragment.kind === "note" ? "转回碎片" : "转为笔记"}
+                  onSelect={() => onToggleKind(fragment)}
+                />
+              ) : null}
               <CardMenuItem
                 icon={<CopyIcon aria-hidden="true" />}
                 label="复制"
