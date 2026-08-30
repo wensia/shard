@@ -12,6 +12,7 @@ import {
   type RefObject,
 } from "react"
 import { Loader2Icon, SendHorizontalIcon } from "lucide-react"
+import { startCompletion } from "@codemirror/autocomplete"
 import { isTauri } from "@tauri-apps/api/core"
 import { open } from "@tauri-apps/plugin-dialog"
 import { toast } from "sonner"
@@ -34,6 +35,7 @@ import {
   ShardEditor,
   type ShardEditorHandle,
 } from "@/editor/shard-editor"
+import { createShardTagAutocomplete } from "@/editor/extensions/tag-autocomplete"
 import { isLegacyEditorEnabled } from "@/editor/kill-switch"
 import { getClipboardImageFiles } from "@/lib/clipboard-images"
 import {
@@ -135,21 +137,37 @@ export function CaptureBox({
   const pendingImagesRef = useRef<PendingImage[]>([])
   const stopPointerSelectionRef = useRef<(() => void) | null>(null)
 
-  const activeTag = useMemo(
-    () => getActiveTag(content, selectionStart),
-    [content, selectionStart]
-  )
   const normalizedKnownTags = useMemo(
     () => normalizeTagList(knownTags.filter((tag) => tag !== "inbox")),
     [knownTags]
   )
+  const knownTagsRef = useRef(normalizedKnownTags)
+  knownTagsRef.current = normalizedKnownTags
+  const tagAutocompleteExtension = useMemo(
+    () =>
+      createShardTagAutocomplete({
+        getKnownTags: () => knownTagsRef.current,
+        maxSuggestions: MAX_TAG_SUGGESTIONS,
+      }),
+    []
+  )
+  const codeMirrorExtensionSet = useMemo(
+    () => [tagAutocompleteExtension],
+    [tagAutocompleteExtension]
+  )
+  const activeTag = useMemo(
+    () =>
+      legacyEditorEnabled ? getActiveTag(content, selectionStart) : null,
+    [content, legacyEditorEnabled, selectionStart]
+  )
   const tagSearchIndex = useMemo(
-    () => buildTagSearchIndex(normalizedKnownTags),
-    [normalizedKnownTags]
+    () =>
+      legacyEditorEnabled ? buildTagSearchIndex(normalizedKnownTags) : [],
+    [legacyEditorEnabled, normalizedKnownTags]
   )
   const activeNewTag = activeTag ? normalizeTag(activeTag.query) : ""
   const tagSuggestions = useMemo<TagSuggestion[]>(() => {
-    if (!activeTag) return []
+    if (!legacyEditorEnabled || !activeTag) return []
 
     const query = activeNewTag
     const matches = getMatchingTagsBySearchQuery(
@@ -168,7 +186,13 @@ export function CaptureBox({
     }
 
     return items
-  }, [activeTag, activeNewTag, normalizedKnownTags, tagSearchIndex])
+  }, [
+    activeTag,
+    activeNewTag,
+    legacyEditorEnabled,
+    normalizedKnownTags,
+    tagSearchIndex,
+  ])
   const [activeSuggestionIndex, setActiveSuggestionIndex] = useState(0)
   const boundedActiveSuggestionIndex = getBoundedTagSuggestionIndex(
     activeSuggestionIndex,
@@ -427,9 +451,13 @@ export function CaptureBox({
 
   function insertTag() {
     const cursor = getCurrentSelection().start
-    const nextEdit = insertTagMarker(content, cursor)
+    const nextEdit = insertTagMarker(getCurrentEditorValue(), cursor)
     setIsEditorExpanded(true)
     applyTextEdit(nextEdit)
+    if (!legacyEditorEnabled) {
+      const view = shardEditorRef.current?.view
+      if (view) startCompletion(view)
+    }
   }
 
   function formatLines(format: LineFormat) {
@@ -974,6 +1002,7 @@ export function CaptureBox({
               autoFocus
               documentKey="composer"
               editorId="composer"
+              extensions={codeMirrorExtensionSet}
               onChange={(nextContent) => {
                 setIsEditorExpanded(true)
                 setContent(nextContent)

@@ -14,6 +14,7 @@ import {
 } from "react"
 import { isTauri } from "@tauri-apps/api/core"
 import { open } from "@tauri-apps/plugin-dialog"
+import { startCompletion } from "@codemirror/autocomplete"
 import { keymap } from "@codemirror/view"
 import { Loader2Icon, SendHorizontalIcon, XIcon } from "lucide-react"
 import { toast } from "sonner"
@@ -37,6 +38,7 @@ import {
   ShardEditor,
   type ShardEditorHandle,
 } from "@/editor/shard-editor"
+import { createShardTagAutocomplete } from "@/editor/extensions/tag-autocomplete"
 import { isLegacyEditorEnabled } from "@/editor/kill-switch"
 import {
   applyActiveTagCompletion,
@@ -170,6 +172,20 @@ export function FragmentEditor({
   const editorId = isZen
     ? `zen:${fragment?.id ?? `draft:${draft?.id ?? "closed"}`}`
     : `fragment:${fragment?.id ?? "closed"}`
+  const normalizedKnownTags = useMemo(
+    () => normalizeTagList(knownTags.filter((tag) => tag !== "inbox")),
+    [knownTags]
+  )
+  const knownTagsRef = useRef(normalizedKnownTags)
+  knownTagsRef.current = normalizedKnownTags
+  const tagAutocompleteExtension = useMemo(
+    () =>
+      createShardTagAutocomplete({
+        getKnownTags: () => knownTagsRef.current,
+        maxSuggestions: MAX_TAG_SUGGESTIONS,
+      }),
+    []
+  )
   const fragmentEditorExtensions = useMemo(
     () =>
       keymap.of([
@@ -185,8 +201,8 @@ export function FragmentEditor({
     []
   )
   const fragmentEditorExtensionSet = useMemo(
-    () => [fragmentEditorExtensions],
-    [fragmentEditorExtensions]
+    () => [fragmentEditorExtensions, tagAutocompleteExtension],
+    [fragmentEditorExtensions, tagAutocompleteExtension]
   )
 
   const syncInlineEditorHeight = useCallback(() => {
@@ -200,21 +216,19 @@ export function FragmentEditor({
   }, [isZen])
 
   const rawActiveTag = useMemo(
-    () => getActiveTag(content, selectionStart),
-    [content, selectionStart]
+    () =>
+      useLegacyEditor ? getActiveTag(content, selectionStart) : null,
+    [content, selectionStart, useLegacyEditor]
   )
   const activeTag =
     rawActiveTag &&
     !isSuppressedActiveTag(suppressedActiveTag, content, selectionStart)
       ? rawActiveTag
       : null
-  const normalizedKnownTags = useMemo(
-    () => normalizeTagList(knownTags.filter((tag) => tag !== "inbox")),
-    [knownTags]
-  )
   const tagSearchIndex = useMemo(
-    () => buildTagSearchIndex(normalizedKnownTags),
-    [normalizedKnownTags]
+    () =>
+      useLegacyEditor ? buildTagSearchIndex(normalizedKnownTags) : [],
+    [normalizedKnownTags, useLegacyEditor]
   )
   const activeNewTag = activeTag ? normalizeTag(activeTag.query) : ""
   const draftContent = useMemo(
@@ -222,7 +236,7 @@ export function FragmentEditor({
     [content, imageAttachments]
   )
   const tagSuggestions = useMemo<TagSuggestion[]>(() => {
-    if (!activeTag) return []
+    if (!useLegacyEditor || !activeTag) return []
 
     const query = activeNewTag
     const matches = getMatchingTagsBySearchQuery(
@@ -241,7 +255,13 @@ export function FragmentEditor({
     }
 
     return items
-  }, [activeTag, activeNewTag, normalizedKnownTags, tagSearchIndex])
+  }, [
+    activeTag,
+    activeNewTag,
+    normalizedKnownTags,
+    tagSearchIndex,
+    useLegacyEditor,
+  ])
   const [activeSuggestionIndex, setActiveSuggestionIndex] = useState(0)
   const boundedActiveSuggestionIndex = getBoundedTagSuggestionIndex(
     activeSuggestionIndex,
@@ -318,7 +338,9 @@ export function FragmentEditor({
     setImageAttachments(nextDraft.images)
     setSelectionEnd(cursor)
     setSelectionStart(cursor)
-    setSuppressedActiveTag({ content: nextDraft.content, cursor })
+    setSuppressedActiveTag(
+      useLegacyEditor ? { content: nextDraft.content, cursor } : null
+    )
     const initialContent = buildContentWithImageAttachments(
       nextDraft.content,
       nextDraft.images
@@ -727,8 +749,12 @@ export function FragmentEditor({
 
   function insertTag() {
     const { start: cursor } = getEditorSelection()
-    setSuppressedActiveTag(null)
+    if (useLegacyEditor) setSuppressedActiveTag(null)
     applyTextEdit(insertTagMarker(getEditorValue(), cursor))
+    if (!useLegacyEditor) {
+      const view = shardEditorRef.current?.view
+      if (view) startCompletion(view)
+    }
   }
 
   function applyTag(tag: string) {
@@ -1292,7 +1318,6 @@ export function FragmentEditor({
             editorId={editorId}
             extensions={fragmentEditorExtensionSet}
             onChange={(nextContent) => {
-              setSuppressedActiveTag(null)
               setContent(nextContent)
             }}
             onDropFiles={(files) => {
