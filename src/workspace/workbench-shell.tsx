@@ -71,7 +71,10 @@ import type {
   VaultState,
 } from "@/types"
 import { FragmentsWorkspace } from "@/workspace/fragments-workspace"
-import { LibraryShell } from "@/workspace/library-shell"
+import {
+  LibraryShell,
+  type LibrarySaveHandler,
+} from "@/workspace/library-shell"
 import {
   writeWorkspaceRoute,
   type WorkspaceRoute,
@@ -88,6 +91,7 @@ import {
 } from "@/workspace/use-vault-sync"
 
 const AUTO_SYNC_FAILURE_TOAST_ID = "auto-sync-failure"
+const GLOBAL_CAPTURE_EVENT = "shard:capture"
 const DEFAULT_PROJECT_TAGS: readonly string[] = ["日程"]
 type EditingVariant = "inline" | "zen"
 interface ZenDraft {
@@ -168,6 +172,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
   const [selectedTag, setSelectedTag] = useState<string | null>(null)
   const [selectedInboxTag, setSelectedInboxTag] = useState<string | null>(null)
   const searchReturnFocusRef = useRef<HTMLElement | null>(null)
+  const librarySaveHandlerRef = useRef<LibrarySaveHandler | null>(null)
   const routeRef = useRef(route)
   const filter: FragmentFilter =
     route.space === "fragments"
@@ -185,6 +190,18 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     routeRef.current = route
     writeWorkspaceRoute(route)
   }, [route])
+
+  const registerLibrarySaveHandler = useCallback(
+    (handler: LibrarySaveHandler | null) => {
+      librarySaveHandlerRef.current = handler
+    },
+    []
+  )
+
+  const saveLibraryDraftBeforeNavigation = useCallback(async () => {
+    if (routeRef.current.space !== "library") return true
+    return (await librarySaveHandlerRef.current?.()) ?? true
+  }, [])
 
   useEffect(() => {
     if (
@@ -896,7 +913,9 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     setPendingScrollFragmentId(fragment.id)
   }
 
-  function openSearch() {
+  async function openSearch() {
+    if (!(await saveLibraryDraftBeforeNavigation())) return
+
     if (!isSearchModeActive && document.activeElement instanceof HTMLElement) {
       searchReturnFocusRef.current = document.activeElement
     }
@@ -970,7 +989,9 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     return true
   }
 
-  function openMindMap(map?: MindMapSummary) {
+  async function openMindMap(map?: MindMapSummary) {
+    if (!(await saveLibraryDraftBeforeNavigation())) return
+
     setIsSearchModeActive(false)
     setSearchSession(null)
     searchReturnFocusRef.current = null
@@ -998,7 +1019,9 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     setRoute({ space: "fragments", params: { filter: nextFilter } })
   }
 
-  function handleRouteChange(nextRoute: WorkspaceRoute) {
+  async function handleRouteChange(nextRoute: WorkspaceRoute) {
+    if (!(await saveLibraryDraftBeforeNavigation())) return
+
     setIsSearchModeActive(false)
     setSearchSession(null)
     searchReturnFocusRef.current = null
@@ -1166,7 +1189,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
       event.preventDefault()
       if (isModalBusy) return
 
-      openSearch()
+      void openSearch()
     }
 
     window.addEventListener("keydown", handleGlobalSearchShortcut)
@@ -1175,6 +1198,59 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
       window.removeEventListener("keydown", handleGlobalSearchShortcut)
     }
   }, [isModalBusy, isSearchModeActive, route])
+
+  useEffect(() => {
+    function handleGlobalCaptureShortcut(event: KeyboardEvent) {
+      const isCaptureShortcut =
+        (event.metaKey || event.ctrlKey) &&
+        !event.altKey &&
+        !event.shiftKey &&
+        event.key.toLowerCase() === "n"
+
+      if (!isCaptureShortcut) return
+
+      event.preventDefault()
+      if (isModalBusy) return
+
+      window.dispatchEvent(new Event(GLOBAL_CAPTURE_EVENT))
+    }
+
+    window.addEventListener("keydown", handleGlobalCaptureShortcut)
+
+    return () => {
+      window.removeEventListener("keydown", handleGlobalCaptureShortcut)
+    }
+  }, [isModalBusy])
+
+  useEffect(() => {
+    function focusComposer() {
+      window.requestAnimationFrame(() => {
+        window.requestAnimationFrame(() => {
+          document
+            .querySelector<HTMLElement>(
+              '[data-shard-editor="composer"] .cm-content'
+            )
+            ?.focus()
+        })
+      })
+    }
+
+    async function handleGlobalCapture() {
+      if (isModalBusy || !(await saveLibraryDraftBeforeNavigation())) return
+
+      setIsSearchModeActive(false)
+      setSearchSession(null)
+      searchReturnFocusRef.current = null
+      setIsMindMapViewActive(false)
+      setRoute({ space: "fragments", params: { filter: "inbox" } })
+      focusComposer()
+    }
+
+    window.addEventListener(GLOBAL_CAPTURE_EVENT, handleGlobalCapture)
+    return () => {
+      window.removeEventListener(GLOBAL_CAPTURE_EVENT, handleGlobalCapture)
+    }
+  }, [isModalBusy, saveLibraryDraftBeforeNavigation, setRoute])
 
   autoSyncTickRef.current = () => {
     if (
@@ -1395,7 +1471,13 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
             vaultPath={vaultPath}
           />
         ) : (
-          <LibraryShell />
+          <LibraryShell
+            fragments={publicActiveFragments}
+            isLoading={isLoading}
+            knownTags={knownTags}
+            onRegisterSaveHandler={registerLibrarySaveHandler}
+            onSave={handleUpdateFragment}
+          />
         )}
         <div className={styles.bottomTabsSlot}>
           <BottomTabs

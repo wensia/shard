@@ -1,0 +1,248 @@
+.shell {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--background);
+}
+
+.topbar {
+  flex: none;
+  border-bottom: 1px solid var(--border);
+  background: var(--topbar);
+  padding: var(--space-4) var(--shard-content-inset);
+  box-shadow: var(--shadow-topbar);
+  backdrop-filter: blur(var(--space-2));
+}
+
+.pageTitle {
+  font-size: var(--text-page-title);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-tight);
+}
+
+.workspace {
+  display: grid;
+  min-height: 0;
+  min-width: 0;
+  flex: 1;
+  grid-template-columns: minmax(0, 1fr);
+  overflow: hidden;
+}
+
+.noteListPane,
+.editorPane,
+.inspectorSlot {
+  min-height: 0;
+  min-width: 0;
+  background: var(--card);
+}
+
+.noteListPane,
+.editorPane {
+  display: flex;
+  flex-direction: column;
+}
+
+.noteListPane[data-mobile-hidden="true"],
+.editorPane[data-mobile-hidden="true"] {
+  display: none;
+}
+
+.paneHeader,
+.editorHeader {
+  display: flex;
+  min-height: var(--control-height);
+  flex: none;
+  align-items: center;
+  gap: var(--space-2);
+  border-bottom: 1px solid var(--border);
+  padding: var(--space-2) var(--space-4);
+}
+
+.paneTitle,
+.editorTitle {
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--text-section-title);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-tight);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.noteCount,
+.updatedAt,
+.saveState {
+  color: var(--muted-foreground);
+  font-size: var(--text-meta);
+  font-variant-numeric: tabular-nums;
+}
+
+.noteCount {
+  margin-left: auto;
+}
+
+.noteListViewport,
+.editorViewport {
+  min-height: 0;
+  min-width: 0;
+  flex: 1;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.noteList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-2);
+}
+
+.noteButton {
+  display: grid;
+  width: 100%;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: var(--space-2);
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  background: transparent;
+  padding: var(--space-3);
+  color: var(--foreground);
+  text-align: left;
+}
+
+.noteButton:hover {
+  background: var(--muted);
+}
+
+.noteButton:focus-visible {
+  border-color: var(--primary);
+  outline: none;
+  box-shadow: var(--ring-focus);
+}
+
+.noteButton[data-selected="true"] {
+  border-color: color-mix(
+    in srgb,
+    var(--primary) var(--shard-alpha-21),
+    transparent
+  );
+  background: var(--primary-subtle);
+}
+
+.noteTitle {
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--text-body);
+  font-weight: var(--weight-medium);
+  line-height: var(--leading-normal);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.updatedAt {
+  white-space: nowrap;
+}
+
+.tagRow {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  grid-column: 1 / -1;
+  gap: var(--space-1);
+}
+
+.editorHeader {
+  min-height: calc(var(--control-height) + var(--space-4));
+}
+
+.editorTitle {
+  flex: 1;
+}
+
+.saveState[data-state="dirty"],
+.saveState[data-state="saving"] {
+  color: var(--warning);
+}
+
+.saveState[data-state="error"] {
+  color: var(--destructive);
+}
+
+.editorViewport {
+  padding: var(--space-6);
+}
+
+.editorViewport :global(.shard-editor),
+.editorViewport :global(.cm-editor),
+.editorViewport :global(.cm-scroller) {
+  min-height: 100%;
+}
+
+.editorViewport :global(.cm-scroller) {
+  overflow: visible;
+}
+
+.emptyState {
+  display: grid;
+  min-height: 0;
+  flex: 1;
+  place-items: center;
+  padding: var(--space-8);
+  color: var(--muted-foreground);
+  font-size: var(--text-body);
+  line-height: var(--leading-relaxed);
+  text-align: center;
+}
+
+.mobileBackButton {
+  flex: none;
+}
+
+.inspectorSlot {
+  display: none;
+}
+
+@media (width >= 64rem) {
+  .topbar {
+    padding-inline: var(--shard-content-inset-lg);
+  }
+
+  .workspace {
+    grid-template-columns: var(--shard-sidebar-width) minmax(0, 1fr);
+  }
+
+  .noteListPane[data-mobile-hidden="true"],
+  .editorPane[data-mobile-hidden="true"] {
+    display: flex;
+  }
+
+  .noteListPane {
+    border-right: 1px solid var(--border);
+  }
+
+  .mobileBackButton {
+    display: none;
+  }
+}
+
+@media (width >= 80rem) {
+  .workspace {
+    grid-template-columns:
+      var(--shard-sidebar-width)
+      minmax(0, 1fr)
+      minmax(
+        var(--shard-sidebar-width),
+        calc(var(--shard-sidebar-width) + var(--space-8) * 2)
+      );
+  }
+
+  .inspectorSlot {
+    display: block;
+    border-left: 1px solid var(--border);
+  }
+}

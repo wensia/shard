@@ -368,6 +368,7 @@ const shortcutRows: Record<
   en: [
     { keys: ["⌘", "Enter"], label: "Save fragment" },
     { keys: ["⌘", "K"], label: "Search" },
+    { keys: ["⌘", "N"], label: "Quick capture" },
     { keys: ["⌘", "⇧", "F"], label: "Zen mode (in composer)" },
     { keys: ["Enter"], label: "New line" },
     { keys: ["Esc"], label: "Exit editing" },
@@ -375,6 +376,7 @@ const shortcutRows: Record<
   zh: [
     { keys: ["⌘", "Enter"], label: "保存片段" },
     { keys: ["⌘", "K"], label: "搜索" },
+    { keys: ["⌘", "N"], label: "快速捕捉" },
     { keys: ["⌘", "⇧", "F"], label: "禅模式（输入框内）" },
     { keys: ["Enter"], label: "换行" },
     { keys: ["Esc"], label: "退出编辑" },
