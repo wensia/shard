@@ -67,6 +67,10 @@
     grid-template-rows: 1fr;
   }
 
+  .appShell[data-sidebar-collapsed="true"] {
+    grid-template-columns: calc(var(--space-12) + 1px) minmax(0, 1fr);
+  }
+
   .sidebarSlot {
     display: block;
   }

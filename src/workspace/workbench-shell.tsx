@@ -106,6 +106,7 @@ import {
 
 const AUTO_SYNC_FAILURE_TOAST_ID = "auto-sync-failure"
 const GLOBAL_CAPTURE_EVENT = "shard:capture"
+const SIDEBAR_COLLAPSED_STORAGE_KEY = "shard.sidebar-collapsed"
 const DEFAULT_PROJECT_TAGS: readonly string[] = ["日程"]
 type EditingVariant = "inline" | "zen"
 interface ZenDraft {
@@ -116,6 +117,16 @@ interface ZenDraft {
 interface WorkbenchShellProps {
   route: WorkspaceRoute
   setRoute: (route: WorkspaceRoute) => void
+}
+
+function readSidebarCollapsed(): boolean {
+  try {
+    return (
+      window.localStorage.getItem(SIDEBAR_COLLAPSED_STORAGE_KEY) === "true"
+    )
+  } catch {
+    return false
+  }
 }
 
 export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
@@ -162,6 +173,9 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     setIsSyncing,
   } = useVaultSync()
   const [vaultPath, setVaultPath] = useState("")
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(
+    readSidebarCollapsed
+  )
   const [composerCollapseSignal, setComposerCollapseSignal] = useState(0)
   const [editingFragmentId, setEditingFragmentId] = useState<string | null>(null)
   const [editingVariant, setEditingVariant] =
@@ -212,6 +226,17 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     routeRef.current = route
     writeWorkspaceRoute(route)
   }, [route])
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(
+        SIDEBAR_COLLAPSED_STORAGE_KEY,
+        JSON.stringify(isSidebarCollapsed)
+      )
+    } catch {
+      // Storage can be unavailable (for example in a restricted webview).
+    }
+  }, [isSidebarCollapsed])
 
   useEffect(() => {
     if (route.space !== "library" || !vaultPath) return
@@ -1466,6 +1491,29 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
   }, [isModalBusy])
 
   useEffect(() => {
+    function handleGlobalSidebarShortcut(event: KeyboardEvent) {
+      const isSidebarShortcut =
+        (event.metaKey || event.ctrlKey) &&
+        !event.altKey &&
+        !event.shiftKey &&
+        event.key.toLowerCase() === "b"
+
+      if (!isSidebarShortcut) return
+
+      event.preventDefault()
+      if (isModalBusy) return
+
+      setIsSidebarCollapsed((current) => !current)
+    }
+
+    window.addEventListener("keydown", handleGlobalSidebarShortcut)
+
+    return () => {
+      window.removeEventListener("keydown", handleGlobalSidebarShortcut)
+    }
+  }, [isModalBusy])
+
+  useEffect(() => {
     function focusComposer() {
       window.requestAnimationFrame(() => {
         window.requestAnimationFrame(() => {
@@ -1556,12 +1604,14 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
       <main
         aria-hidden={isBlockingDialogOpen ? true : undefined}
         className={styles.appShell}
+        data-sidebar-collapsed={isSidebarCollapsed}
       >
         <div className={styles.sidebarSlot}>
           <SidebarNav
             fragments={publicOnlyFragments}
             git={git}
             isSyncing={isSyncing}
+            isCollapsed={isSidebarCollapsed}
             mindMapCount={mindMaps.length}
             mindMapViewActive={isMindMapViewActive}
             onHelp={showHelp}
@@ -1572,6 +1622,9 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
             onRouteChange={handleRouteChange}
             onShortcuts={showShortcuts}
             onSync={handleSync}
+            onToggleCollapsed={() => {
+              setIsSidebarCollapsed((current) => !current)
+            }}
             route={route}
           />
         </div>

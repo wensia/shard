@@ -10,14 +10,20 @@ import {
   LockKeyholeIcon,
   Maximize2Icon,
   MoreHorizontalIcon,
+  PanelLeftIcon,
   RefreshCwIcon,
   SearchIcon,
   SettingsIcon,
   RouteIcon,
   SparklesIcon,
   TagIcon,
+  type LucideIcon,
 } from "lucide-react"
-import { useState, type CSSProperties } from "react"
+import {
+  useState,
+  type CSSProperties,
+  type ReactNode,
+} from "react"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -45,6 +51,7 @@ import styles from "./sidebar-nav.module.css"
 interface SidebarNavProps {
   fragments: Fragment[]
   git: GitInfo | null
+  isCollapsed: boolean
   isSyncing: boolean
   mindMapCount: number
   mindMapViewActive: boolean
@@ -56,6 +63,7 @@ interface SidebarNavProps {
   onRouteChange: (route: WorkspaceRoute) => void
   onShortcuts: () => void
   onSync: () => void
+  onToggleCollapsed: () => void
   route: WorkspaceRoute
 }
 
@@ -102,6 +110,8 @@ const SIDEBAR_COPY: Record<
   SidebarLanguage,
   {
     aria: {
+      collapse: string
+      expand: string
       navigation: string
       heatmap: string
       utilityMenu: string
@@ -116,6 +126,12 @@ const SIDEBAR_COPY: Record<
       synced: string
     }
     help: string
+    groups: {
+      fragments: string
+      review: string
+      tools: string
+      workbench: string
+    }
     mindMaps: string
     noCommit: string
     nav: Record<FragmentFilter, string>
@@ -138,6 +154,8 @@ const SIDEBAR_COPY: Record<
 > = {
   zh: {
     aria: {
+      collapse: "折叠侧边栏",
+      expand: "展开侧边栏",
       navigation: "工作台导航",
       heatmap: "片段热力图",
       stats: "资料库统计",
@@ -152,6 +170,12 @@ const SIDEBAR_COPY: Record<
       synced: "已同步",
     },
     help: "帮助",
+    groups: {
+      fragments: "碎片",
+      review: "回顾",
+      tools: "工具",
+      workbench: "工作台",
+    },
     mindMaps: "思维导图",
     noCommit: "无提交",
     nav: {
@@ -185,6 +209,8 @@ const SIDEBAR_COPY: Record<
   },
   en: {
     aria: {
+      collapse: "Collapse sidebar",
+      expand: "Expand sidebar",
       navigation: "Workspace navigation",
       heatmap: "Fragment heatmap",
       stats: "Vault stats",
@@ -199,6 +225,12 @@ const SIDEBAR_COPY: Record<
       synced: "Synced",
     },
     help: "Help",
+    groups: {
+      fragments: "Items",
+      review: "Review",
+      tools: "Tools",
+      workbench: "Main",
+    },
     mindMaps: "Mind maps",
     noCommit: "no commit",
     nav: {
@@ -290,6 +322,7 @@ const NAV_LABEL_STYLE: CSSProperties = {
 export function SidebarNav({
   fragments,
   git,
+  isCollapsed,
   isSyncing,
   mindMapCount,
   mindMapViewActive,
@@ -301,6 +334,7 @@ export function SidebarNav({
   onRouteChange,
   onShortcuts,
   onSync,
+  onToggleCollapsed,
   route,
 }: SidebarNavProps) {
   const [isUtilityMenuOpen, setIsUtilityMenuOpen] = useState(false)
@@ -334,6 +368,9 @@ export function SidebarNav({
 
   return (
     <aside
+      aria-label={language === "zh" ? "Shard 侧边栏" : "Shard sidebar"}
+      data-collapsed={isCollapsed}
+      className={styles.sidebar}
       style={{
         display: "flex",
         height: "100%",
@@ -344,293 +381,316 @@ export function SidebarNav({
     >
       <div
         data-tauri-drag-region="true"
-        className="flex items-center gap-3"
+        className={styles.brandRow}
         style={{
-          paddingInline: "var(--space-3)",
+          paddingInline: isCollapsed ? "var(--space-2)" : "var(--space-3)",
           paddingTop: "var(--shard-top-inset)",
           paddingBottom: "var(--space-3)",
         }}
       >
-        <span
-          aria-hidden="true"
-          style={{
-            display: "flex",
-            width: 32,
-            height: 32,
-            flexShrink: 0,
-            alignItems: "center",
-            justifyContent: "center",
-            borderRadius: "var(--radius-panel)",
-            background: "var(--primary)",
-            color: "var(--primary-foreground)",
-          }}
-        >
-          <ClipboardListIcon size={18} strokeWidth={1.75} />
-        </span>
-        <div style={{ minWidth: 0 }}>
-          <div
-            style={{
-              fontSize: "var(--text-body)",
-              lineHeight: "var(--leading-tight)",
-              fontWeight: 600,
-            }}
-          >
-            Shard
+        {isCollapsed ? null : (
+          <div className={styles.brandIdentity}>
+            <span
+              aria-hidden="true"
+              className={styles.brandMark}
+            >
+              <ClipboardListIcon size={18} strokeWidth={1.75} />
+            </span>
+            <div style={{ minWidth: 0 }}>
+              <div
+                style={{
+                  fontSize: "var(--text-body)",
+                  lineHeight: "var(--leading-tight)",
+                  fontWeight: 600,
+                }}
+              >
+                Shard
+              </div>
+              <div
+                style={{
+                  fontSize: "var(--text-tiny)",
+                  fontWeight: 400,
+                  color: "var(--muted-foreground)",
+                }}
+              >
+                {appVersion ? `v${appVersion}` : "\u00A0"}
+              </div>
+            </div>
           </div>
-          <div
-            style={{
-              fontSize: "var(--text-tiny)",
-              fontWeight: 400,
-              color: "var(--muted-foreground)",
-            }}
+        )}
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                aria-label={isCollapsed ? copy.aria.expand : copy.aria.collapse}
+                onClick={onToggleCollapsed}
+                size="icon-sm"
+                variant="ghost"
+              />
+            }
           >
-            {appVersion ? `v${appVersion}` : "\u00A0"}
-          </div>
-        </div>
+            <PanelLeftIcon aria-hidden="true" className="size-4" />
+          </TooltipTrigger>
+          <TooltipContent side={isCollapsed ? "right" : "bottom"}>
+            {isCollapsed ? copy.aria.expand : copy.aria.collapse}
+          </TooltipContent>
+        </Tooltip>
       </div>
 
       <div
+        className={styles.searchSection}
         style={{
-          paddingInline: "var(--shard-sidebar-inset)",
+          paddingInline: isCollapsed
+            ? "var(--space-2)"
+            : "var(--shard-sidebar-inset)",
           paddingBottom: "var(--shard-space-4)",
         }}
       >
-        <button
-          aria-label={copy.search}
-          className={styles.searchButton}
-          onClick={onOpenSearch}
-          type="button"
-        >
-          <SearchIcon
-            aria-hidden="true"
-            size={16}
-            strokeWidth={1.75}
-            style={{ flexShrink: 0 }}
-          />
-          <span style={NAV_LABEL_STYLE}>{copy.searchPlaceholder}</span>
-          <kbd
-            style={{
-              borderRadius: 4,
-              border: "1px solid var(--border)",
-              background: "var(--muted)",
-              paddingInline: 6,
-              fontSize: 10,
-              lineHeight: "16px",
-              fontWeight: 600,
-              color: "var(--muted-foreground)",
-            }}
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <button
+                aria-label={copy.search}
+                className={styles.searchButton}
+                onClick={onOpenSearch}
+                type="button"
+              />
+            }
           >
-            {copy.searchShortcut}
-          </kbd>
-        </button>
+            <SearchIcon
+              aria-hidden="true"
+              size={16}
+              strokeWidth={1.75}
+              style={{ flexShrink: 0 }}
+            />
+            {isCollapsed ? null : (
+              <>
+                <span style={NAV_LABEL_STYLE}>{copy.searchPlaceholder}</span>
+                <kbd className={styles.searchShortcut}>
+                  {copy.searchShortcut}
+                </kbd>
+              </>
+            )}
+          </TooltipTrigger>
+          {isCollapsed ? (
+            <TooltipContent side="right">{copy.search}</TooltipContent>
+          ) : null}
+        </Tooltip>
       </div>
 
-      <div
-        style={{
-          paddingInline: "var(--shard-sidebar-inset)",
-          paddingBottom: "var(--shard-space-5)",
-        }}
-      >
+      {isCollapsed ? null : (
         <div
-          aria-label={copy.aria.stats}
-          className="grid grid-cols-3 gap-2"
+          style={{
+            paddingInline: "var(--shard-sidebar-inset)",
+            paddingBottom: "var(--shard-space-5)",
+          }}
         >
-          <SidebarStat
-            label={copy.stats.fragments}
-            value={activeFragments.length}
-          />
-          <SidebarStat label={copy.stats.tags} value={heatmap.tagCount} />
-          <SidebarStat label={copy.stats.days} value={heatmap.daySpan} />
-        </div>
-
-        <div
-          aria-label={copy.aria.heatmap}
-          role="img"
-          style={{ marginTop: "var(--shard-space-4)" }}
-        >
-          <div className="shard-heatmap-grid">
-            {heatmap.cells.map((cell) => (
-              <span
-                aria-label={formatHeatmapCellLabel(cell, language)}
-                key={cell.key}
-                style={{
-                  width: "var(--shard-heatmap-cell)",
-                  height: "var(--shard-heatmap-cell)",
-                  borderRadius: "calc(var(--shard-radius-control) / 2)",
-                  background: HEATMAP_LEVEL_BACKGROUNDS[cell.level],
-                  boxShadow: cell.isToday
-                    ? "0 0 0 1px rgb(0 0 0 / var(--shard-alpha-21))"
-                    : undefined,
-                }}
-                title={formatHeatmapCellLabel(cell, language)}
-              />
-            ))}
+          <div
+            aria-label={copy.aria.stats}
+            className="grid grid-cols-3 gap-2"
+          >
+            <SidebarStat
+              label={copy.stats.fragments}
+              value={activeFragments.length}
+            />
+            <SidebarStat label={copy.stats.tags} value={heatmap.tagCount} />
+            <SidebarStat label={copy.stats.days} value={heatmap.daySpan} />
           </div>
 
           <div
-            style={{
-              position: "relative",
-              marginTop: "var(--shard-space-2)",
-              height: 12,
-              fontSize: 10,
-              lineHeight: "12px",
-              fontWeight: 500,
-              color: "var(--muted-foreground)",
-            }}
+            aria-label={copy.aria.heatmap}
+            role="img"
+            style={{ marginTop: "var(--shard-space-4)" }}
           >
-            {heatmap.monthLabels.map((month) => (
-              <span
-                key={`${month.column}-${month.label}`}
-                style={{
-                  position: "absolute",
-                  whiteSpace: "nowrap",
-                  left: `calc(${month.column} * (var(--shard-heatmap-cell) + var(--shard-heatmap-column-gap)))`,
-                }}
-              >
-                {month.label}
-              </span>
-            ))}
+            <div className="shard-heatmap-grid">
+              {heatmap.cells.map((cell) => (
+                <span
+                  aria-label={formatHeatmapCellLabel(cell, language)}
+                  key={cell.key}
+                  style={{
+                    width: "var(--shard-heatmap-cell)",
+                    height: "var(--shard-heatmap-cell)",
+                    borderRadius: "calc(var(--shard-radius-control) / 2)",
+                    background: HEATMAP_LEVEL_BACKGROUNDS[cell.level],
+                    boxShadow: cell.isToday
+                      ? "0 0 0 1px rgb(0 0 0 / var(--shard-alpha-21))"
+                      : undefined,
+                  }}
+                  title={formatHeatmapCellLabel(cell, language)}
+                />
+              ))}
+            </div>
+
+            <div
+              style={{
+                position: "relative",
+                marginTop: "var(--shard-space-2)",
+                height: 12,
+                fontSize: 10,
+                lineHeight: "12px",
+                fontWeight: 500,
+                color: "var(--muted-foreground)",
+              }}
+            >
+              {heatmap.monthLabels.map((month) => (
+                <span
+                  key={`${month.column}-${month.label}`}
+                  style={{
+                    position: "absolute",
+                    whiteSpace: "nowrap",
+                    left: `calc(${month.column} * (var(--shard-heatmap-cell) + var(--shard-heatmap-column-gap)))`,
+                  }}
+                >
+                  {month.label}
+                </span>
+              ))}
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
       <nav
         aria-label={copy.aria.navigation}
+        className={styles.navigation}
         style={{
           display: "flex",
           flexDirection: "column",
           gap: "var(--space-1)",
-          paddingInline: "var(--space-3)",
+          paddingInline: isCollapsed ? "var(--space-2)" : "var(--space-3)",
         }}
       >
+        {isCollapsed ? (
+          <CollapsedGroupMarker label={copy.groups.workbench} />
+        ) : null}
         {SPACE_ITEMS.map((item) => {
           const Icon = item.icon
           const isActive = item.id === route.space && !mindMapViewActive
 
           return (
             <div className={styles.navGroup} key={item.id}>
-              <button
-                aria-current={isActive ? "page" : undefined}
+              <SidebarNavigationButton
                 className={`${styles.navItem} ${
                   isActive ? styles.navItemActive : styles.navItemInactive
                 }`}
+                group={copy.groups.workbench}
+                icon={Icon}
+                isActive={isActive}
+                isCollapsed={isCollapsed}
+                label={copy.spaces[item.id]}
                 onClick={() => onRouteChange(item.route)}
-                type="button"
-              >
-                <Icon
-                  aria-hidden="true"
-                  size={18}
-                  strokeWidth={1.75}
-                  style={{ flexShrink: 0 }}
-                />
-                <span style={NAV_LABEL_STYLE}>{copy.spaces[item.id]}</span>
-              </button>
+              />
 
-              {item.id === "fragments" && route.space === "fragments"
-                ? FRAGMENT_ITEMS.map((subItem) => {
+              {item.id === "fragments" && route.space === "fragments" ? (
+                <>
+                    {isCollapsed ? (
+                      <CollapsedGroupMarker label={copy.groups.fragments} />
+                    ) : null}
+                  {FRAGMENT_ITEMS.map((subItem) => {
                     const SubIcon = subItem.icon
                     const isSubItemActive = route.params.filter === subItem.id
                     return (
-                      <button
-                        aria-current={isSubItemActive ? "page" : undefined}
+                      <SidebarNavigationButton
                         className={`${styles.navSubItem} ${
                           isSubItemActive
                             ? styles.navSubItemActive
                             : styles.navSubItemInactive
                         }`}
+                        group={copy.groups.fragments}
+                        icon={SubIcon}
+                        isActive={isSubItemActive}
+                        isCollapsed={isCollapsed}
                         key={subItem.id}
+                        label={copy.nav[subItem.id]}
                         onClick={() =>
                           onRouteChange({
                             space: "fragments",
                             params: { filter: subItem.id },
                           })
                         }
-                        type="button"
-                      >
-                        <SubIcon
-                          aria-hidden="true"
-                          size={18}
-                          strokeWidth={1.75}
-                          style={{ flexShrink: 0 }}
-                        />
-                        <span style={NAV_LABEL_STYLE}>{copy.nav[subItem.id]}</span>
-                        <span style={NAV_COUNT_BADGE_STYLE}>
-                          {counts[subItem.id]}
-                        </span>
-                      </button>
+                        trailing={
+                          <span style={NAV_COUNT_BADGE_STYLE}>
+                            {counts[subItem.id]}
+                          </span>
+                        }
+                      />
                     )
-                  })
-                : null}
+                  })}
+                </>
+              ) : null}
 
-              {item.id === "review" && route.space === "review"
-                ? REVIEW_ITEMS.map((subItem) => {
+              {item.id === "review" && route.space === "review" ? (
+                <>
+                    {isCollapsed ? (
+                      <CollapsedGroupMarker label={copy.groups.review} />
+                    ) : null}
+                  {REVIEW_ITEMS.map((subItem) => {
                     const SubIcon = subItem.icon
                     const isSubItemActive = route.params.mode === subItem.id
                     return (
-                      <button
-                        aria-current={isSubItemActive ? "page" : undefined}
+                      <SidebarNavigationButton
                         className={`${styles.navSubItem} ${
                           isSubItemActive
                             ? styles.navSubItemActive
                             : styles.navSubItemInactive
                         }`}
+                        group={copy.groups.review}
+                        icon={SubIcon}
+                        isActive={isSubItemActive}
+                        isCollapsed={isCollapsed}
                         key={subItem.id}
+                        label={copy.nav[subItem.id]}
                         onClick={() =>
                           onRouteChange({
                             space: "review",
                             params: { mode: subItem.id },
                           })
                         }
-                        type="button"
-                      >
-                        <SubIcon
-                          aria-hidden="true"
-                          size={18}
-                          strokeWidth={1.75}
-                          style={{ flexShrink: 0 }}
-                        />
-                        <span style={NAV_LABEL_STYLE}>{copy.nav[subItem.id]}</span>
-                        <span style={NAV_COUNT_BADGE_STYLE}>
-                          {counts[subItem.id]}
-                        </span>
-                      </button>
+                        trailing={
+                          <span style={NAV_COUNT_BADGE_STYLE}>
+                            {counts[subItem.id]}
+                          </span>
+                        }
+                      />
                     )
-                  })
-                : null}
+                  })}
+                </>
+              ) : null}
             </div>
           )
         })}
 
         <div className={styles.navActionBoundary}>
-          <button
-            aria-pressed={mindMapViewActive}
+          {isCollapsed ? (
+            <CollapsedGroupMarker label={copy.groups.tools} />
+          ) : null}
+          <SidebarNavigationButton
+            ariaPressed={mindMapViewActive}
             className={`${styles.navItem} ${
               mindMapViewActive ? styles.navItemActive : styles.navItemInactive
             }`}
+            group={copy.groups.tools}
+            icon={GitBranchIcon}
+            isActive={mindMapViewActive}
+            isCollapsed={isCollapsed}
+            label={copy.mindMaps}
             onClick={onOpenMindMaps}
-            type="button"
-          >
-            <GitBranchIcon
-              aria-hidden="true"
-              size={18}
-              strokeWidth={1.75}
-              style={{ flexShrink: 0 }}
-            />
-            <span style={NAV_LABEL_STYLE}>{copy.mindMaps}</span>
-            <span style={NAV_COUNT_BADGE_STYLE}>{mindMapCount}</span>
-          </button>
+            trailing={<span style={NAV_COUNT_BADGE_STYLE}>{mindMapCount}</span>}
+          />
         </div>
       </nav>
 
       <div
+        className={styles.utilitySection}
         style={{
           marginTop: "auto",
-          paddingInline: "var(--shard-sidebar-inset)",
+          paddingInline: isCollapsed
+            ? "var(--space-2)"
+            : "var(--shard-sidebar-inset)",
           paddingTop: "var(--shard-space-6)",
           paddingBottom: "var(--shard-space-5)",
         }}
       >
-        <div className="flex items-center justify-between">
+        <div className={styles.utilityActions}>
           <Tooltip>
             <TooltipTrigger
               render={<div style={{ position: "relative" }} />}
@@ -749,6 +809,89 @@ export function SidebarNav({
       </div>
     </aside>
   )
+}
+
+function SidebarNavigationButton({
+  ariaPressed,
+  className,
+  group,
+  icon: Icon,
+  isActive,
+  isCollapsed,
+  label,
+  onClick,
+  trailing,
+}: {
+  ariaPressed?: boolean
+  className: string
+  group?: string
+  icon: LucideIcon
+  isActive: boolean
+  isCollapsed: boolean
+  label: string
+  onClick: () => void
+  trailing?: ReactNode
+}) {
+  const content = (
+    <>
+      <Icon
+        aria-hidden="true"
+        size={18}
+        strokeWidth={1.75}
+        style={{ flexShrink: 0 }}
+      />
+      {isCollapsed ? null : (
+        <>
+          <span style={NAV_LABEL_STYLE}>{label}</span>
+          {trailing}
+        </>
+      )}
+    </>
+  )
+  const renderButton = (children?: ReactNode) => (
+    <button
+      aria-current={isActive ? "page" : undefined}
+      aria-label={
+        isCollapsed ? formatNavAccessibleName(group, label) : undefined
+      }
+      aria-pressed={ariaPressed}
+      className={className}
+      onClick={onClick}
+      type="button"
+    >
+      {children}
+    </button>
+  )
+
+  if (!isCollapsed) {
+    return renderButton(content)
+  }
+
+  return (
+    <Tooltip>
+      <TooltipTrigger render={renderButton()}>{content}</TooltipTrigger>
+      <TooltipContent
+        align="start"
+        className={styles.navTooltip}
+        side="right"
+      >
+        <span>{label}</span>
+        <span className={styles.navTooltipGroup}>{group ?? "\u00A0"}</span>
+      </TooltipContent>
+    </Tooltip>
+  )
+}
+
+function CollapsedGroupMarker({ label }: { label: string }) {
+  return (
+    <div aria-hidden="true" className={styles.collapsedGroupMarker}>
+      <span>{label}</span>
+    </div>
+  )
+}
+
+function formatNavAccessibleName(group: string | undefined, label: string) {
+  return group ? `${group}：${label}` : label
 }
 
 function SidebarMenuItem({
