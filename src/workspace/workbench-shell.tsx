@@ -44,6 +44,7 @@ import {
   listMindMaps,
   lockLockbox,
   moveFragmentToLockbox,
+  organizeFragments,
   pinFragment,
   restoreWindowFrame,
   resetLockboxPassword,
@@ -53,6 +54,7 @@ import {
   unlinkFragments,
   updateFragment,
   updateFragmentTags,
+  type OrganizeTemplate,
 } from "@/lib/api"
 import { deriveKind, isTypeTag } from "@/lib/content-kind"
 import { toggleTaskLine } from "@/lib/editor-format"
@@ -1030,6 +1032,32 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     handleOpenSearchResult(target)
   }
 
+  async function handleOrganizeFragments(
+    selectedFragments: Fragment[],
+    target: string,
+    template: OrganizeTemplate
+  ) {
+    const created = await organizeFragments(
+      selectedFragments.map((fragment) => fragment.path),
+      target,
+      template
+    )
+    setFragments((current) =>
+      sortFragmentsForDisplay([
+        created,
+        ...current.filter((fragment) => fragment.id !== created.id),
+      ])
+    )
+    nextLibraryNavigationIdRef.current += 1
+    setPendingLibraryNavigation({
+      id: created.id,
+      requestId: nextLibraryNavigationIdRef.current,
+    })
+    setRoute({ space: "library", params: {} })
+    toast("笔记已生成")
+    void refreshFragments()
+  }
+
   async function openSearch() {
     if (!(await saveLibraryDraftBeforeNavigation())) return
 
@@ -1539,6 +1567,8 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
               onLinkFragment: handleLinkFragment,
               onMoveToLockbox: handleMoveFragmentToLockbox,
               onOpenZen: openZenEditor,
+              onOrganize:
+                filter === "lockbox" ? undefined : handleOrganizeFragments,
               onPin: handlePinFragment,
               onScrollDown: () => {
                 setComposerCollapseSignal((current) => current + 1)

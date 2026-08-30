@@ -1,8 +1,11 @@
 import { useEffect, useMemo, useRef, useState, type UIEvent } from "react"
-import { InboxIcon } from "lucide-react"
+import { InboxIcon, SparklesIcon, XIcon } from "lucide-react"
 
 import { FragmentCard } from "@/components/shard/fragment-card"
+import { OrganizeFragmentsDialog } from "@/components/shard/organize-fragments-dialog"
+import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
+import { getApiErrorMessage, type OrganizeTemplate } from "@/lib/api"
 import { useFragmentRelations } from "@/lib/use-fragment-relations"
 import type { Fragment } from "@/types"
 
@@ -24,6 +27,11 @@ interface FragmentTimelineProps {
   ) => Promise<void> | void
   onMoveToLockbox?: (fragment: Fragment) => void
   onOpenZen?: (fragment: Fragment) => void
+  onOrganize?: (
+    fragments: Fragment[],
+    target: string,
+    template: OrganizeTemplate
+  ) => Promise<void>
   onPin?: (fragment: Fragment) => void
   onNavigateToFragment?: (fragmentId: string) => void
   onScrollDown?: () => void
@@ -53,6 +61,7 @@ export function FragmentTimeline({
   onMoveToLockbox,
   onNavigateToFragment,
   onOpenZen,
+  onOrganize,
   onPin,
   onScrollDown,
   onScrollToFragmentComplete,
@@ -75,6 +84,16 @@ export function FragmentTimeline({
   const [highlightedFragmentId, setHighlightedFragmentId] = useState<
     string | null
   >(null)
+  const [isSelectionMode, setIsSelectionMode] = useState(false)
+  const [selectedFragmentIds, setSelectedFragmentIds] = useState<Set<string>>(
+    () => new Set()
+  )
+  const [isOrganizeDialogOpen, setIsOrganizeDialogOpen] = useState(false)
+  const [organizeTarget, setOrganizeTarget] = useState("")
+  const [organizeTemplate, setOrganizeTemplate] =
+    useState<OrganizeTemplate>("summary")
+  const [isOrganizing, setIsOrganizing] = useState(false)
+  const [organizeError, setOrganizeError] = useState<string | null>(null)
   const [usesWaterfallColumns, setUsesWaterfallColumns] = useState(() =>
     typeof window === "undefined"
       ? false
@@ -85,6 +104,40 @@ export function FragmentTimeline({
     () => splitIntoColumns(timelineItems, usesWaterfallColumns ? 2 : 1),
     [timelineItems, usesWaterfallColumns]
   )
+  const selectableFragments = useMemo(
+    () =>
+      fragments.filter(
+        (fragment) => !fragment.lockbox && fragment.kind === "fragment"
+      ),
+    [fragments]
+  )
+  const selectedFragments = useMemo(
+    () =>
+      selectableFragments.filter((fragment) =>
+        selectedFragmentIds.has(fragment.id)
+      ),
+    [selectableFragments, selectedFragmentIds]
+  )
+
+  useEffect(() => {
+    const selectableIds = new Set(
+      selectableFragments.map((fragment) => fragment.id)
+    )
+    setSelectedFragmentIds((current) => {
+      const next = new Set(
+        Array.from(current).filter((fragmentId) => selectableIds.has(fragmentId))
+      )
+      return next.size === current.size ? current : next
+    })
+  }, [selectableFragments])
+
+  useEffect(() => {
+    if (onOrganize) return
+    setIsSelectionMode(false)
+    setSelectedFragmentIds(new Set())
+    setIsOrganizeDialogOpen(false)
+    setOrganizeError(null)
+  }, [onOrganize])
 
   useEffect(() => {
     const mediaQuery = window.matchMedia(WIDE_TIMELINE_QUERY)
@@ -269,8 +322,110 @@ export function FragmentTimeline({
     }, 1400)
   }
 
+  function enterSelectionMode() {
+    onCancelEdit?.()
+    setSelectedFragmentIds(new Set())
+    setOrganizeError(null)
+    setIsSelectionMode(true)
+  }
+
+  function exitSelectionMode() {
+    if (isOrganizing) return
+    setIsOrganizeDialogOpen(false)
+    setSelectedFragmentIds(new Set())
+    setOrganizeError(null)
+    setIsSelectionMode(false)
+  }
+
+  function handleSelectChange(fragmentId: string, selected: boolean) {
+    setSelectedFragmentIds((current) => {
+      const next = new Set(current)
+      if (selected) next.add(fragmentId)
+      else next.delete(fragmentId)
+      return next
+    })
+  }
+
+  async function submitOrganization() {
+    if (
+      !onOrganize ||
+      selectedFragments.length === 0 ||
+      !organizeTarget.trim()
+    ) {
+      return
+    }
+
+    setIsOrganizing(true)
+    setOrganizeError(null)
+    try {
+      await onOrganize(
+        selectedFragments,
+        organizeTarget.trim(),
+        organizeTemplate
+      )
+      setIsOrganizeDialogOpen(false)
+      setSelectedFragmentIds(new Set())
+      setIsSelectionMode(false)
+      setOrganizeTarget("")
+      setOrganizeTemplate("summary")
+    } catch (error) {
+      setOrganizeError(getApiErrorMessage(error))
+    } finally {
+      setIsOrganizing(false)
+    }
+  }
+
   return (
-    <div style={{ display: "flex", minHeight: 0, flex: 1, flexDirection: "column" }}>
+    <div
+      style={{ display: "flex", minHeight: 0, flex: 1, flexDirection: "column" }}
+    >
+      {onOrganize && selectableFragments.length > 0 ? (
+        <div className="shard-content-inset shrink-0 py-2">
+          <div className="shard-content-measure flex min-h-8 items-center justify-end gap-2">
+            {isSelectionMode ? (
+              <>
+                <span
+                  aria-live="polite"
+                  className="mr-auto text-[var(--text-meta)] font-medium tabular-nums text-muted-foreground"
+                >
+                  已选 {selectedFragments.length} 条
+                </span>
+                <Button
+                  aria-label="退出整理模式"
+                  disabled={isOrganizing}
+                  onClick={exitSelectionMode}
+                  size="icon-sm"
+                  type="button"
+                  variant="outline"
+                >
+                  <XIcon aria-hidden="true" />
+                </Button>
+                <Button
+                  disabled={selectedFragments.length === 0 || isOrganizing}
+                  onClick={() => {
+                    setOrganizeError(null)
+                    setIsOrganizeDialogOpen(true)
+                  }}
+                  size="sm"
+                  type="button"
+                >
+                  整理为笔记
+                </Button>
+              </>
+            ) : (
+              <Button
+                onClick={enterSelectionMode}
+                size="sm"
+                type="button"
+                variant="outline"
+              >
+                <SparklesIcon aria-hidden="true" />
+                整理
+              </Button>
+            )}
+          </div>
+        </div>
+      ) : null}
       <ScrollArea
         className="min-h-0 flex-1"
         onViewportScroll={handleViewportScroll}
@@ -340,6 +495,11 @@ export function FragmentTimeline({
                       fragments={fragments}
                       isHighlighted={highlightedFragmentId === item.fragment.id}
                       isEditing={editingFragmentId === item.fragment.id}
+                      isSelectable={
+                        !item.fragment.lockbox && item.fragment.kind === "fragment"
+                      }
+                      isSelected={selectedFragmentIds.has(item.fragment.id)}
+                      isSelectionMode={isSelectionMode}
                       key={item.id}
                       knownTags={knownTags}
                       onArchive={onArchive}
@@ -352,6 +512,7 @@ export function FragmentTimeline({
                       onOpenZen={onOpenZen}
                       onPin={onPin}
                       onSave={onSave}
+                      onSelectChange={handleSelectChange}
                       onToggleKind={onToggleKind}
                       onToggleTask={onToggleTask}
                       onUnlinkFragment={onUnlinkFragment}
@@ -366,6 +527,21 @@ export function FragmentTimeline({
           </div>
         )}
       </ScrollArea>
+      <OrganizeFragmentsDialog
+        error={organizeError}
+        isOpen={isOrganizeDialogOpen}
+        isRunning={isOrganizing}
+        onOpenChange={(open) => {
+          setIsOrganizeDialogOpen(open)
+          if (!open) setOrganizeError(null)
+        }}
+        onSubmit={() => void submitOrganization()}
+        onTargetChange={setOrganizeTarget}
+        onTemplateChange={setOrganizeTemplate}
+        selectedCount={selectedFragments.length}
+        target={organizeTarget}
+        template={organizeTemplate}
+      />
     </div>
   )
 }

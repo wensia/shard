@@ -126,6 +126,18 @@ export function updateFragmentTags(id: string, tags: string[]) {
   return invokeFragment("update_fragment_tags", { id, tags })
 }
 
+export type OrganizeTemplate = "summary" | "article" | "weekly"
+
+export function organizeFragments(
+  fragmentPaths: string[],
+  target: string,
+  template: OrganizeTemplate
+) {
+  return invokeFragment("organize_fragments", {
+    request: { fragmentPaths, target, template },
+  })
+}
+
 export function linkFragments(
   sourceId: string,
   targetId: string,

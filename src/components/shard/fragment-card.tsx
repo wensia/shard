@@ -23,6 +23,7 @@ import { FragmentRelated } from "@/components/shard/fragment-related"
 import { ShardZenIcon } from "@/components/shard/shard-zen-icon"
 import { TagBadge } from "@/components/shard/tag-badge"
 import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -41,6 +42,9 @@ interface FragmentCardProps {
   fragments?: Fragment[]
   isHighlighted?: boolean
   isEditing?: boolean
+  isSelectable?: boolean
+  isSelected?: boolean
+  isSelectionMode?: boolean
   knownTags?: string[]
   onArchive?: (fragment: Fragment) => void
   onCancelEdit?: () => void
@@ -55,6 +59,7 @@ interface FragmentCardProps {
   onOpenZen?: (fragment: Fragment) => void
   onPin?: (fragment: Fragment) => void
   onSave?: (id: string, content: string, tags: string[]) => Promise<Fragment>
+  onSelectChange?: (fragmentId: string, selected: boolean) => void
   onToggleKind?: (fragment: Fragment) => void
   onToggleTask?: (fragment: Fragment, lineIndex: number) => void
   onUnlinkFragment?: (
@@ -74,6 +79,9 @@ export function FragmentCard({
   fragments = [],
   isHighlighted = false,
   isEditing = false,
+  isSelectable = true,
+  isSelected = false,
+  isSelectionMode = false,
   knownTags = [],
   onArchive,
   onCancelEdit,
@@ -85,6 +93,7 @@ export function FragmentCard({
   onPin,
   onNavigateToFragment,
   onSave,
+  onSelectChange,
   onToggleKind,
   onToggleTask,
   onUnlinkFragment,
@@ -144,19 +153,36 @@ export function FragmentCard({
 
   return (
     <article
+      aria-selected={isSelectionMode ? isSelected : undefined}
       className={cn(isHighlighted && "shard-fragment-card-highlight")}
       data-shard-fragment-id={fragment.id}
       style={{
         display: "flex",
         flexDirection: "column",
         borderRadius: "var(--shard-surface-radius)",
-        background: "var(--card)",
+        background: isSelected ? "var(--primary-subtle)" : "var(--card)",
+        boxShadow: isSelected ? "var(--ring-focus)" : undefined,
         paddingInline: "var(--shard-card-padding-x)",
         paddingTop: "var(--shard-card-padding-y)",
         paddingBottom: "var(--shard-card-padding-bottom)",
       }}
     >
       <div className="flex items-start gap-4">
+        {isSelectionMode ? (
+          <Checkbox
+            aria-label={
+              isSelectable
+                ? `选择片段：${displayContent.slice(0, 40) || "空片段"}`
+                : "笔记不参与碎片整理"
+            }
+            checked={isSelected}
+            className="mt-0.5"
+            disabled={!isSelectable}
+            onCheckedChange={(checked) =>
+              onSelectChange?.(fragment.id, checked === true)
+            }
+          />
+        ) : null}
         <div style={{ minWidth: 0, flex: "1 1 0%" }}>
           <time
             className="shard-memo-meta"
@@ -238,24 +264,27 @@ export function FragmentCard({
           />
         </div>
 
-        <div style={{ display: "flex", flexShrink: 0, alignItems: "center" }}>
-          <DropdownMenu open={isMenuOpen} onOpenChange={setIsMenuOpen}>
-            <DropdownMenuTrigger
-              render={
-                <Button
-                  aria-label="片段操作"
-                  size="icon-sm"
-                  variant="ghost"
-                />
-              }
-            >
-              <MoreHorizontalIcon aria-hidden="true" />
-              <span className="sr-only">片段操作</span>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent
-              align="end"
-              className="w-fit min-w-0 p-1"
-            >
+        {!isSelectionMode ? (
+          <div
+            style={{ display: "flex", flexShrink: 0, alignItems: "center" }}
+          >
+            <DropdownMenu open={isMenuOpen} onOpenChange={setIsMenuOpen}>
+              <DropdownMenuTrigger
+                render={
+                  <Button
+                    aria-label="片段操作"
+                    size="icon-sm"
+                    variant="ghost"
+                  />
+                }
+              >
+                <MoreHorizontalIcon aria-hidden="true" />
+                <span className="sr-only">片段操作</span>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent
+                align="end"
+                className="w-fit min-w-0 p-1"
+              >
               <CardMenuItem
                 icon={<PencilLineIcon aria-hidden="true" />}
                 label="编辑"
@@ -344,9 +373,10 @@ export function FragmentCard({
                 label={fragment.archived ? "移回收件箱" : "归档"}
                 onSelect={() => onArchive?.(fragment)}
               />
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        ) : null}
       </div>
 
       <FragmentRelated
