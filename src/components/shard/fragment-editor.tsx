@@ -77,6 +77,7 @@ import {
 } from "@/lib/editor-caret"
 import { hasMarkdownImage, wantsLockbox } from "@/lib/lockbox"
 import {
+  getFirstEditableTableOffset,
   hasOversizedTable,
   MAX_EDITABLE_TABLE_CELLS,
   replaceTableLines,
@@ -826,9 +827,7 @@ export function FragmentEditor({
       rows
     )
     applyTextEdit(nextEdit)
-    if (useLegacyEditor) {
-      focusInsertedTable(nextEdit.content, nextEdit.selectionStart)
-    }
+    focusInsertedTable(nextEdit.content, nextEdit.selectionStart)
   }
 
   /** 插完表格直接进第一个表头格，省得用户再点一下。 */
@@ -836,6 +835,11 @@ export function FragmentEditor({
     const tableStart = nextContent.lastIndexOf("\n", cursor - 1) + 1
 
     requestAnimationFrame(() => {
+      if (!useLegacyEditor) {
+        shardEditorRef.current?.focusTableCell(tableStart, "-1:0")
+        return
+      }
+
       editorFrameRef.current
         ?.querySelector<HTMLInputElement>(
           `[data-table-start="${tableStart}"] [data-cell="-1:0"]`
@@ -853,15 +857,11 @@ export function FragmentEditor({
     lineCount: number,
     table: MarkdownTable
   ) {
+    if (!useLegacyEditor) return
     const nextContent = replaceTableLines(content, startLine, lineCount, table)
     if (nextContent === content) return
 
-    if (useLegacyEditor) {
-      setContent(nextContent)
-      return
-    }
-
-    shardEditorRef.current?.replaceDocument(nextContent)
+    setContent(nextContent)
   }
 
   async function insertTableDocuments(paths: string[]) {
@@ -881,16 +881,27 @@ export function FragmentEditor({
         )
       }
 
+      const body = markdown.trim()
       const currentContent = getEditorValue()
       const selection = getEditorSelection()
-      applyTextEdit(
-        insertMarkdownBlock(
-          currentContent,
-          selection.start,
-          selection.end,
-          markdown
-        )
+      const nextEdit = insertMarkdownBlock(
+        currentContent,
+        selection.start,
+        selection.end,
+        markdown
       )
+      applyTextEdit(nextEdit)
+
+      if (!useLegacyEditor) {
+        const relativeTableStart = getFirstEditableTableOffset(body)
+        if (relativeTableStart !== null) {
+          const bodyStart = nextEdit.selectionStart - body.length
+          shardEditorRef.current?.focusTableCell(
+            bodyStart + relativeTableStart,
+            "-1:0",
+          )
+        }
+      }
     } catch (error) {
       toast.error(`导入表格失败：${getApiErrorMessage(error)}`, {
         duration: Infinity,

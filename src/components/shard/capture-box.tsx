@@ -71,6 +71,7 @@ import {
 } from "@/lib/editor-caret"
 import { wantsLockbox } from "@/lib/lockbox"
 import {
+  getFirstEditableTableOffset,
   hasOversizedTable,
   MAX_EDITABLE_TABLE_CELLS,
   replaceTableLines,
@@ -522,15 +523,7 @@ export function CaptureBox({
 
     requestAnimationFrame(() => {
       if (!legacyEditorEnabled) {
-        const handle = shardEditorRef.current
-        const selection = handle?.getSelection()
-        if (handle?.view && selection?.start !== cursor) {
-          handle.view.dispatch({
-            selection: { anchor: cursor },
-            scrollIntoView: true,
-          })
-        }
-        handle?.focus()
+        shardEditorRef.current?.focusTableCell(tableStart, "-1:0")
         return
       }
 
@@ -551,6 +544,7 @@ export function CaptureBox({
     lineCount: number,
     table: MarkdownTable
   ) {
+    if (!legacyEditorEnabled) return
     const nextContent = replaceTableLines(content, startLine, lineCount, table)
     if (nextContent === content) return
 
@@ -585,14 +579,26 @@ export function CaptureBox({
         )
       }
 
-      applyTextEdit(
-        insertMarkdownBlock(
-          getCurrentEditorValue(),
-          getCurrentSelection().start,
-          getCurrentSelection().end,
-          markdown
-        )
+      const body = markdown.trim()
+      const selection = getCurrentSelection()
+      const nextEdit = insertMarkdownBlock(
+        getCurrentEditorValue(),
+        selection.start,
+        selection.end,
+        markdown
       )
+      applyTextEdit(nextEdit)
+
+      if (!legacyEditorEnabled) {
+        const relativeTableStart = getFirstEditableTableOffset(body)
+        if (relativeTableStart !== null) {
+          const bodyStart = nextEdit.selectionStart - body.length
+          shardEditorRef.current?.focusTableCell(
+            bodyStart + relativeTableStart,
+            "-1:0",
+          )
+        }
+      }
     } catch (error) {
       toast.error(`导入表格失败：${getApiErrorMessage(error)}`, {
         duration: Infinity,
