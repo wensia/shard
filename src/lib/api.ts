@@ -192,8 +192,13 @@ export function createFragment(content: string, tags: string[]) {
   return invokeFragment("create_fragment", { content, tags })
 }
 
-export function updateFragment(id: string, content: string, tags: string[]) {
-  return invokeFragment("update_fragment", { id, content, tags })
+export function updateFragment(
+  id: string,
+  content: string,
+  tags: string[],
+  expectedSha?: string
+) {
+  return invokeFragment("update_fragment", { id, content, tags, expectedSha })
 }
 
 export function updateFragmentTags(id: string, tags: string[]) {

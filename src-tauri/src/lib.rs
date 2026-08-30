@@ -48,6 +48,30 @@ const MANAGED_VAULT_ROOTS: &[&str] = &[
     "fragments", "notes", "archive", "assets", "maps", "lockbox", ".shard",
 ];
 
+/// 保存基线过期（磁盘内容已被同步或外部编辑改写）的错误标记；
+/// 前端识别该前缀进入冲突流程（覆盖 / 载入磁盘版）。
+const STALE_BASE_ERROR: &str =
+    "STALE_BASE:磁盘上的笔记内容已变化（可能来自同步或外部编辑），保存已中止";
+
+fn content_sha256_hex(content: &str) -> String {
+    let digest = Sha256::digest(content.as_bytes());
+    digest.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+/// expected_sha 为调用方上次读到/存下的正文哈希；不带则跳过校验（兼容旧调用与显式覆盖）。
+fn ensure_expected_content_sha(
+    current_content: &str,
+    expected_sha: Option<&str>,
+) -> Result<(), String> {
+    let Some(expected) = expected_sha else {
+        return Ok(());
+    };
+    if content_sha256_hex(current_content) != expected {
+        return Err(STALE_BASE_ERROR.to_string());
+    }
+    Ok(())
+}
+
 fn managed_pathspecs() -> Vec<String> {
     let mut specs: Vec<String> = MANAGED_VAULT_ROOTS
         .iter()
@@ -1572,6 +1596,7 @@ async fn update_fragment(
     id: String,
     content: String,
     tags: Option<Vec<String>>,
+    expected_sha: Option<String>,
 ) -> Result<Fragment, String> {
     let lockbox_runtime = lockbox_runtime.inner().clone();
     run_blocking(move || {
@@ -1591,12 +1616,18 @@ async fn update_fragment(
                 &read_keys,
                 content.trim(),
                 normalized_tags,
+                expected_sha.as_deref(),
             );
         }
 
         let path = find_fragment_path(&vault, &id)?.ok_or_else(|| format!("找不到片段 {}", id))?;
         let text = fs::read_to_string(&path).map_err(|error| error.to_string())?;
-        let (mut frontmatter, _) = parse_fragment_text(&text)?;
+        let (mut frontmatter, current_body) = parse_fragment_text(&text)?;
+        // 与 read_fragment 的 content 归一化保持一致，否则哈希永不相等
+        ensure_expected_content_sha(
+            current_body.trim_start_matches('\n'),
+            expected_sha.as_deref(),
+        )?;
 
         if contains_lockbox_tag(&normalized_tags) {
             return move_public_fragment_content_to_lockbox_in_vault(
@@ -3824,9 +3855,11 @@ fn update_lockbox_fragment_in_vault(
     read_keys: &LockboxReadKeys,
     content: &str,
     tags: Vec<String>,
+    expected_sha: Option<&str>,
 ) -> Result<Fragment, String> {
     reject_lockbox_images(content)?;
     let mut payload = read_lockbox_payload(path, read_keys)?;
+    ensure_expected_content_sha(&payload.body, expected_sha)?;
     payload.frontmatter.tags = normalize_lockbox_tags(tags);
     payload.frontmatter.updated_at = Local::now().to_rfc3339();
     payload.body = content.to_string();
@@ -6266,6 +6299,18 @@ mod tests {
 
         let status = run_git(vault, &["status", "--porcelain"]).unwrap();
         assert!(status.lines().any(|line| line == "A  personal.txt"));
+    }
+
+    #[test]
+    fn expected_sha_guard_detects_stale_base() {
+        let body = "第一版正文";
+        let sha = content_sha256_hex(body);
+
+        assert!(ensure_expected_content_sha(body, None).is_ok());
+        assert!(ensure_expected_content_sha(body, Some(&sha)).is_ok());
+
+        let error = ensure_expected_content_sha("已被同步改写的正文", Some(&sha)).unwrap_err();
+        assert!(error.starts_with("STALE_BASE:"), "实际：{error}");
     }
 
     #[test]

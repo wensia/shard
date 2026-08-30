@@ -554,7 +554,12 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     }
   }
 
-  async function handleUpdateFragment(id: string, content: string, tags: string[]) {
+  async function handleUpdateFragment(
+    id: string,
+    content: string,
+    tags: string[],
+    expectedSha?: string
+  ) {
     recordContentActivity()
     const currentFragment =
       fragments.find((fragment) => fragment.id === id) ?? null
@@ -573,7 +578,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
       }
     }
 
-    let updated = await updateFragment(id, content, tags)
+    let updated = await updateFragment(id, content, tags, expectedSha)
     setFragments((current) =>
       current.map((fragment) => (fragment.id === id ? updated : fragment))
     )
@@ -1895,6 +1900,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
               void handleNavigateToFragment(fragmentId)
             }}
             onLibraryMutation={handleLibraryMutation}
+            onRefreshFragments={refreshFragments}
             onRegisterSaveHandler={registerLibrarySaveHandler}
             onSave={handleUpdateFragment}
             onSelectFragmentMonth={(month) => {

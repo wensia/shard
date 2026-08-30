@@ -95,6 +95,15 @@ async function installLibraryMock(page: Page, includeNotes = true) {
           if (command === "update_fragment") {
             const fragment = fragments.find((item) => item.id === args.id)
             if (!fragment) throw new Error("Fragment not found")
+            const staleWindow = window as { __SHARD_STALE_ONCE__?: boolean }
+            if (staleWindow.__SHARD_STALE_ONCE__) {
+              delete staleWindow.__SHARD_STALE_ONCE__
+              fragment.content = "# 远端更新版本"
+              fragment.updatedAt = "2026-08-31T09:00:00.000Z"
+              throw new Error(
+                "STALE_BASE:磁盘上的笔记内容已变化（可能来自同步或外部编辑），保存已中止"
+              )
+            }
             fragment.content = String(args.content ?? fragment.content)
             fragment.tags = Array.isArray(args.tags)
               ? (args.tags as string[])
@@ -303,6 +312,55 @@ test("编辑停顿后自动保存，Cmd+S 立即保存", async ({ page }) => {
   await fillEditor(page, "library:note-new", "# 停顿自动保存\n第二段 #work")
   await page.keyboard.press("ControlOrMeta+s")
   await expect.poll(() => getUpdateCalls(page)).toHaveLength(2)
+  await expect(page.getByText("已保存", { exact: true })).toBeVisible()
+})
+
+test("保存基线过期：取消对话框后载入磁盘最新版本", async ({ page }) => {
+  await installLibraryMock(page)
+  await page.goto("/")
+  await page.getByRole("button", { name: "资料库", exact: true }).click()
+  const list = page.getByRole("complementary", { name: "资料库目录" })
+  await list
+    .getByRole("button", { name: "最近更新的笔记.md", exact: true })
+    .click()
+
+  // 模拟远端已改写磁盘：下一次保存抛 STALE_BASE，mock 磁盘内容换成远端版
+  await page.evaluate(() => {
+    ;(window as { __SHARD_STALE_ONCE__?: boolean }).__SHARD_STALE_ONCE__ = true
+  })
+  page.once("dialog", (dialog) => void dialog.dismiss())
+
+  await fillEditor(page, "library:note-new", "# 本地草稿版本")
+  // 放弃草稿 → 刷新后编辑器换入远端版本
+  await expect
+    .poll(() => readEditor(page, "library:note-new"))
+    .toBe("# 远端更新版本")
+  await expect(page.getByText("已保存", { exact: true })).toBeVisible()
+})
+
+test("保存基线过期：确认对话框后强制覆盖磁盘版本", async ({ page }) => {
+  await installLibraryMock(page)
+  await page.goto("/")
+  await page.getByRole("button", { name: "资料库", exact: true }).click()
+  const list = page.getByRole("complementary", { name: "资料库目录" })
+  await list
+    .getByRole("button", { name: "最近更新的笔记.md", exact: true })
+    .click()
+
+  await page.evaluate(() => {
+    ;(window as { __SHARD_STALE_ONCE__?: boolean }).__SHARD_STALE_ONCE__ = true
+  })
+  page.once("dialog", (dialog) => void dialog.accept())
+
+  await fillEditor(page, "library:note-new", "# 本地草稿版本")
+  // 覆盖：冲突后立即重存（不带基线哈希），草稿保留
+  await expect.poll(() => getUpdateCalls(page).then((calls) => calls.length)).toBe(2)
+  const calls = await getUpdateCalls(page)
+  expect(calls[1].args).toMatchObject({ id: "note-new" })
+  expect((calls[1].args as { expectedSha?: string }).expectedSha).toBeUndefined()
+  await expect
+    .poll(() => readEditor(page, "library:note-new"))
+    .toBe("# 本地草稿版本")
   await expect(page.getByText("已保存", { exact: true })).toBeVisible()
 })
 

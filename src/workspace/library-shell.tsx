@@ -91,7 +91,14 @@ interface LibraryShellProps {
   onLibraryMutation: (result: LibraryMutationResult) => void
   onSelectFragmentMonth: (month: string) => void
   onRegisterSaveHandler: (handle: LibraryDraftHandle | null) => void
-  onSave: (id: string, content: string, tags: string[]) => Promise<Fragment>
+  onSave: (
+    id: string,
+    content: string,
+    tags: string[],
+    expectedSha?: string
+  ) => Promise<Fragment>
+  /** 冲突后「载入磁盘版本」需要父级重新拉取 fragments 才能拿到最新内容。 */
+  onRefreshFragments?: () => Promise<unknown> | void
   relationFragments?: Fragment[]
 }
 
@@ -115,6 +122,7 @@ export function LibraryShell({
   onLibraryMutation,
   onSelectFragmentMonth,
   onRegisterSaveHandler,
+  onRefreshFragments,
   onSave,
   relationFragments = fragments,
 }: LibraryShellProps) {
@@ -146,6 +154,10 @@ export function LibraryShell({
   )
   const draftRef = useRef(draft)
   const lastSavedContentRef = useRef("")
+  /** 上次读到/存下正文的 SHA-256，保存时作为基线校验；null=暂缺（放行保存）。 */
+  const baseShaRef = useRef<string | null>(null)
+  /** 用户在冲突提示里选择「放弃草稿」后，等待父级刷新换入磁盘版本。 */
+  const pendingDiskReloadRef = useRef(false)
   const selectedNoteRef = useRef<Fragment | null>(selectedNote)
   const savePromiseRef = useRef<Promise<boolean> | null>(null)
   const knownTagsRef = useRef<string[]>([])
@@ -226,7 +238,44 @@ export function LibraryShell({
     draftRef.current = selectedNote.content
     lastSavedContentRef.current = selectedNote.content
     setSaveState("saved")
+    baseShaRef.current = null
+    const content = selectedNote.content
+    void sha256Hex(content).then((sha) => {
+      if (lastSavedContentRef.current === content) baseShaRef.current = sha
+    })
   }, [selectedNote?.id])
+
+  // 磁盘版本变化（同步 pull / 外部编辑 / 冲突后放弃草稿）时换入新内容：
+  // 编辑器干净或已明确放弃草稿才换；有未保存修改时交给保存时的冲突流程。
+  useEffect(() => {
+    const note = selectedNote
+    if (!note) return
+    if (
+      note.content === lastSavedContentRef.current ||
+      note.content === draftRef.current
+    ) {
+      pendingDiskReloadRef.current = false
+      return
+    }
+    const clean =
+      draftRef.current === lastSavedContentRef.current &&
+      savePromiseRef.current === null
+    if (!clean && !pendingDiskReloadRef.current) return
+    pendingDiskReloadRef.current = false
+    setDraft(note.content)
+    draftRef.current = note.content
+    lastSavedContentRef.current = note.content
+    setSaveState("saved")
+    baseShaRef.current = null
+    void sha256Hex(note.content).then((sha) => {
+      if (
+        selectedNoteRef.current?.id === note.id &&
+        lastSavedContentRef.current === note.content
+      ) {
+        baseShaRef.current = sha
+      }
+    })
+  }, [selectedNote])
 
   useEffect(() => {
     if (selectedNote) setSelectedTreePath(selectedNote.path)
@@ -269,8 +318,19 @@ export function LibraryShell({
           "note",
           ...extractTags(content),
         ])
-        const updated = await onSave(note.id, content, tags)
+        const updated = await onSave(
+          note.id,
+          content,
+          tags,
+          baseShaRef.current ?? undefined
+        )
         lastSavedContentRef.current = updated.content
+        baseShaRef.current = null
+        void sha256Hex(updated.content).then((sha) => {
+          if (lastSavedContentRef.current === updated.content) {
+            baseShaRef.current = sha
+          }
+        })
         // 自动保存可能在用户继续输入时完成：只有草稿仍等于送出的内容才回写，
         // 否则会覆盖保存期间的新键入
         if (
@@ -286,8 +346,27 @@ export function LibraryShell({
         )
         return true
       } catch (error) {
+        const message = getApiErrorMessage(error)
+        if (message.includes("STALE_BASE")) {
+          const keepMine = window.confirm(
+            "这篇笔记的磁盘内容已被修改（可能来自同步或外部编辑）。\n\n「确定」：用当前草稿覆盖磁盘版本\n「取消」：放弃当前草稿，载入磁盘最新版本"
+          )
+          if (keepMine) {
+            // 清掉基线哈希放行一次强制保存；外层排空循环会立即重存
+            baseShaRef.current = null
+            setSaveState("dirty")
+            return true
+          }
+          // 放弃草稿：把草稿视作已处理让排空循环退出，等父级刷新后
+          // 由磁盘重载 effect 换入最新版本（pendingDiskReloadRef 兜住中间态）
+          pendingDiskReloadRef.current = true
+          lastSavedContentRef.current = draftRef.current
+          setSaveState("saved")
+          void onRefreshFragments?.()
+          return true
+        }
         setSaveState("error")
-        toast.error(`自动保存失败：${getApiErrorMessage(error)}`, {
+        toast.error(`自动保存失败：${message}`, {
           duration: Infinity,
         })
         return false
@@ -1133,6 +1212,16 @@ function LibraryEmptyState({ message }: { message: string }) {
       <p>{message}</p>
     </div>
   )
+}
+
+async function sha256Hex(text: string): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(text)
+  )
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("")
 }
 
 function formatSaveState(state: SaveState) {
