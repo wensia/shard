@@ -70,13 +70,17 @@ export function createShardEditorTheme(variant: ShardEditorProps["variant"]) {
         fontSize: "var(--text-meta)",
         maxWidth: "calc(100vw - var(--shard-space-6))",
         overflow: "hidden",
-        width: "calc(var(--shard-space-5) * 10)",
+        width: "calc(var(--shard-space-6) * 10)",
       },
       ".cm-tooltip.shard-cm-tag-tooltip > ul": {
-        // CM baseTheme 给 .cm-tooltip-autocomplete > ul 写死了 monospace，
-        // 优先级高于 tooltip 上的字体声明，必须在 ul 上再覆盖一次
+        // CM baseTheme 给 .cm-tooltip-autocomplete > ul 写死了 monospace 和
+        // min-width: 250px，优先级高于 tooltip 上的声明：字体要在 ul 上再覆盖，
+        // 最小宽度要归零，否则 ul 比 tooltip 宽、右侧的「使用 / 新建」徽标被裁掉
+        boxSizing: "border-box",
         fontFamily: "var(--shard-memo-font-family)",
         listStyle: "none",
+        minWidth: "0",
+        width: "100%",
         margin: "0",
         maxHeight: "calc(var(--shard-space-8) * 7.5)",
         overflowY: "auto",
