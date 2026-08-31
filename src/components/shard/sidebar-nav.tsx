@@ -1,7 +1,6 @@
 import {
   ArchiveIcon,
   BookOpenIcon,
-  ClipboardListIcon,
   GitBranchIcon,
   HelpCircleIcon,
   HistoryIcon,
@@ -38,7 +37,6 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip"
 import { dailyReviewCount, insightReviewCount } from "@/lib/review-workflows"
-import { useAppVersion } from "@/lib/use-app-version"
 import type { Fragment, FragmentFilter, GitInfo } from "@/types"
 import type {
   FragmentWorkspaceFilter,
@@ -298,19 +296,6 @@ const MONTH_LABELS: Record<SidebarLanguage, readonly string[]> = {
 const TOOLTIP_DIM_COLOR =
   "color-mix(in oklab, var(--background) calc(var(--shard-alpha-55) * 100%), transparent)"
 
-const NAV_COUNT_BADGE_STYLE: CSSProperties = {
-  minWidth: 28,
-  borderRadius: "var(--radius-control)",
-  background: "var(--muted)",
-  paddingInline: "var(--space-2)",
-  paddingBlock: "var(--space-1)",
-  textAlign: "center",
-  fontSize: "var(--text-meta)",
-  fontWeight: 500,
-  color: "var(--muted-foreground)",
-  fontVariantNumeric: "tabular-nums",
-}
-
 const NAV_LABEL_STYLE: CSSProperties = {
   minWidth: 0,
   flex: "1 1 auto",
@@ -338,7 +323,6 @@ export function SidebarNav({
   route,
 }: SidebarNavProps) {
   const [isUtilityMenuOpen, setIsUtilityMenuOpen] = useState(false)
-  const appVersion = useAppVersion()
   const language = getSidebarLanguage()
   const copy = SIDEBAR_COPY[language]
   const activeFragments = fragments.filter((fragment) => !fragment.archived)
@@ -380,61 +364,14 @@ export function SidebarNav({
       }}
     >
       <div
+        data-sidebar-titlebar
         data-tauri-drag-region="true"
         className={styles.brandRow}
-        style={{
-          paddingInline: isCollapsed ? "var(--space-2)" : "var(--space-3)",
-          paddingTop: "var(--shard-top-inset)",
-          paddingBottom: "var(--space-3)",
-        }}
       >
-        {isCollapsed ? null : (
-          <div className={styles.brandIdentity}>
-            <span
-              aria-hidden="true"
-              className={styles.brandMark}
-            >
-              <ClipboardListIcon size={18} strokeWidth={1.75} />
-            </span>
-            <div style={{ minWidth: 0 }}>
-              <div
-                style={{
-                  fontSize: "var(--text-body)",
-                  lineHeight: "var(--leading-tight)",
-                  fontWeight: 600,
-                }}
-              >
-                Shard
-              </div>
-              <div
-                style={{
-                  fontSize: "var(--text-tiny)",
-                  fontWeight: 400,
-                  color: "var(--muted-foreground)",
-                }}
-              >
-                {appVersion ? `v${appVersion}` : "\u00A0"}
-              </div>
-            </div>
-          </div>
-        )}
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                aria-label={isCollapsed ? copy.aria.expand : copy.aria.collapse}
-                onClick={onToggleCollapsed}
-                size="icon-sm"
-                variant="ghost"
-              />
-            }
-          >
-            <PanelLeftIcon aria-hidden="true" className="size-4" />
-          </TooltipTrigger>
-          <TooltipContent side={isCollapsed ? "right" : "bottom"}>
-            {isCollapsed ? copy.aria.expand : copy.aria.collapse}
-          </TooltipContent>
-        </Tooltip>
+        <SidebarToggleButton
+          isCollapsed={isCollapsed}
+          onToggleCollapsed={onToggleCollapsed}
+        />
       </div>
 
       <div
@@ -613,7 +550,7 @@ export function SidebarNav({
                             })
                           }
                           trailing={
-                            <span style={NAV_COUNT_BADGE_STYLE}>
+                            <span className={styles.navCount}>
                               {counts[subItem.id]}
                             </span>
                           }
@@ -657,7 +594,7 @@ export function SidebarNav({
                             })
                           }
                           trailing={
-                            <span style={NAV_COUNT_BADGE_STYLE}>
+                            <span className={styles.navCount}>
                               {counts[subItem.id]}
                             </span>
                           }
@@ -686,7 +623,7 @@ export function SidebarNav({
             isCollapsed={isCollapsed}
             label={copy.mindMaps}
             onClick={onOpenMindMaps}
-            trailing={<span style={NAV_COUNT_BADGE_STYLE}>{mindMapCount}</span>}
+            trailing={<span className={styles.navCount}>{mindMapCount}</span>}
           />
         </div>
       </nav>
@@ -820,6 +757,33 @@ export function SidebarNav({
         </div>
       </div>
     </aside>
+  )
+}
+
+export function SidebarToggleButton({
+  isCollapsed,
+  onToggleCollapsed,
+}: Pick<SidebarNavProps, "isCollapsed" | "onToggleCollapsed">) {
+  const copy = SIDEBAR_COPY[getSidebarLanguage()]
+
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            aria-label={isCollapsed ? copy.aria.expand : copy.aria.collapse}
+            onClick={onToggleCollapsed}
+            size="icon-sm"
+            variant="ghost"
+          />
+        }
+      >
+        <PanelLeftIcon aria-hidden="true" className="size-4" />
+      </TooltipTrigger>
+      <TooltipContent side="bottom">
+        {isCollapsed ? copy.aria.expand : copy.aria.collapse}
+      </TooltipContent>
+    </Tooltip>
   )
 }
 

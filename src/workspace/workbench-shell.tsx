@@ -13,7 +13,10 @@ import {
   LockboxDialog,
 } from "@/components/shard/lockbox-dialog"
 import { MindMapWorkspace } from "@/components/shard/mind-map-workspace"
-import { SidebarNav } from "@/components/shard/sidebar-nav"
+import {
+  SidebarNav,
+  SidebarToggleButton,
+} from "@/components/shard/sidebar-nav"
 import type { TaggedSummary } from "@/components/shard/tagged-panel"
 import {
   VaultGuide,
@@ -876,6 +879,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     try {
       const state = await moveFragmentToLockbox(fragmentId)
       applyVaultState(state)
+      await refreshLibraryTree()
       closeEditor()
       toast(successMessage)
       return true
@@ -1720,29 +1724,47 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
         data-sidebar-collapsed={isSidebarCollapsed}
       >
         <div className={styles.sidebarSlot}>
-          <SidebarNav
-            fragments={publicOnlyFragments}
-            git={git}
-            isSyncing={isSyncing}
-            isCollapsed={isSidebarCollapsed}
-            mindMapCount={mindMaps.length}
-            mindMapViewActive={isMindMapViewActive}
-            onHelp={showHelp}
-            onOpenMindMaps={() => openMindMap()}
-            onOpenSearch={openSearch}
-            onOpenSettings={() => openSettings("vault")}
-            onRestoreWindow={handleRestoreWindow}
-            onRouteChange={handleRouteChange}
-            onShortcuts={showShortcuts}
-            onSync={handleSync}
-            onToggleCollapsed={() => {
-              setIsSidebarCollapsed((current) => !current)
-            }}
-            route={route}
-          />
+          {isSidebarCollapsed ? null : (
+            <SidebarNav
+              fragments={publicOnlyFragments}
+              git={git}
+              isSyncing={isSyncing}
+              isCollapsed={false}
+              mindMapCount={mindMaps.length}
+              mindMapViewActive={isMindMapViewActive}
+              onHelp={showHelp}
+              onOpenMindMaps={() => openMindMap()}
+              onOpenSearch={openSearch}
+              onOpenSettings={() => openSettings("vault")}
+              onRestoreWindow={handleRestoreWindow}
+              onRouteChange={handleRouteChange}
+              onShortcuts={showShortcuts}
+              onSync={handleSync}
+              onToggleCollapsed={() => {
+                setIsSidebarCollapsed(true)
+              }}
+              route={route}
+            />
+          )}
         </div>
-        {route.space === "fragments" ? (
-          <FragmentsWorkspace
+        <div className={styles.workspaceSlot} data-workspace-slot>
+          {isSidebarCollapsed ? (
+            <div
+              className={styles.collapsedTitlebar}
+              data-sidebar-collapsed-titlebar
+              data-tauri-drag-region="true"
+            >
+              <SidebarToggleButton
+                isCollapsed
+                onToggleCollapsed={() => {
+                  setIsSidebarCollapsed(false)
+                }}
+              />
+            </div>
+          ) : null}
+          <div className={styles.workspaceContent}>
+            {route.space === "fragments" ? (
+              <FragmentsWorkspace
             capture={{
               collapseSignal: composerCollapseSignal,
               csvFiles,
@@ -1850,9 +1872,9 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
               scrollToFragmentId: timelineScrollTargetId,
               vaultPath,
             }}
-          />
-        ) : route.space === "review" ? (
-          <ReviewWorkspaceShell
+              />
+            ) : route.space === "review" ? (
+              <ReviewWorkspaceShell
             csvFiles={csvFiles}
             editingFragmentId={
               editingVariant === "inline" ? editingFragmentId : null
@@ -1887,9 +1909,9 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
               void handleToggleFragmentTask(fragment, lineIndex)
             }}
             vaultPath={vaultPath}
-          />
-        ) : (
-          <LibraryShell
+              />
+            ) : (
+              <LibraryShell
             csvFiles={csvFiles}
             fragments={publicActiveFragments}
             isLoading={isLoading}
@@ -1900,6 +1922,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
               void handleNavigateToFragment(fragmentId)
             }}
             onLibraryMutation={handleLibraryMutation}
+            onMoveToLockbox={handleMoveFragmentToLockbox}
             onRefreshFragments={refreshFragments}
             onRegisterSaveHandler={registerLibrarySaveHandler}
             onSave={handleUpdateFragment}
@@ -1907,8 +1930,10 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
               void handleSelectFragmentMonth(month)
             }}
             relationFragments={publicOnlyFragments}
-          />
-        )}
+              />
+            )}
+          </div>
+        </div>
         <div className={styles.bottomTabsSlot}>
           <BottomTabs
             fragments={publicOnlyFragments}

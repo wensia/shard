@@ -16,7 +16,9 @@
  * - titlebar toolbar = 52px = 36px control + 8px * 2 (--shard-titlebar-height):
  *   the library's three column headers sit inside the Overlay title bar
  *   instead of below an empty page-title band; when no expanded sidebar covers
- *   the traffic lights, headers pad left by --shard-traffic-light-clearance
+ *   the traffic lights, headers pad left by --shard-traffic-light-clearance.
+ *   The traffic lights are centred on that 52px band by trafficLightPosition
+ *   in src-tauri/tauri.conf.json (y = 28), not by CSS
  * - heatmap width = 12 columns * 12px + 11 gaps * 5px = 199px
  * - text never scales with viewport width; layout absorbs responsive pressure
  * - 编辑器是 CodeMirror 6，光标原生、选区由 layer 按行盒绘制

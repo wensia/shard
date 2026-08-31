@@ -12,6 +12,35 @@
   min-height: 0;
 }
 
+.workspaceSlot,
+.workspaceContent {
+  min-width: 0;
+  min-height: 0;
+}
+
+.workspaceSlot {
+  display: flex;
+  height: 100%;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.workspaceContent {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+.workspaceContent > * {
+  width: 100%;
+  min-width: 0;
+  flex: 1;
+}
+
+.collapsedTitlebar {
+  display: none;
+}
+
 .bottomTabsSlot {
   display: block;
 }
@@ -68,11 +97,31 @@
   }
 
   .appShell[data-sidebar-collapsed="true"] {
-    grid-template-columns: calc(var(--space-12) + 1px) minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .sidebarSlot {
     display: block;
+  }
+
+  .appShell[data-sidebar-collapsed="true"] .sidebarSlot {
+    display: none;
+  }
+
+  .collapsedTitlebar {
+    display: flex;
+    height: var(--shard-titlebar-height);
+    flex: none;
+    align-items: center;
+    padding-right: var(--space-2);
+    padding-left: var(--shard-traffic-light-clearance);
+    border-bottom: 1px solid var(--border);
+    background: var(--topbar);
+    box-shadow: var(--shadow-topbar);
+  }
+
+  .appShell[data-sidebar-collapsed="true"] .workspaceContent {
+    --shard-top-inset: 0px;
   }
 
   .bottomTabsSlot {

@@ -419,14 +419,6 @@
     padding-left: var(--space-4);
   }
 
-  /* 侧栏折叠到 48px + 1px 时红绿灯仍会探入内容列，只让出剩余宽度 */
-  :global([data-sidebar-collapsed="true"]) .paneHeader,
-  :global([data-sidebar-collapsed="true"]) .editorHeader {
-    padding-left: calc(
-      var(--shard-traffic-light-clearance) - var(--space-12) - 1px
-    );
-  }
-
   .noteListPane[data-mobile-hidden="true"],
   .editorPane[data-mobile-hidden="true"] {
     display: flex;

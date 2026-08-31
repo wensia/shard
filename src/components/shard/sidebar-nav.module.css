@@ -10,32 +10,23 @@
 }
 
 .brandRow,
-.brandIdentity,
 .utilityActions {
   display: flex;
   align-items: center;
 }
 
-.brandRow,
 .utilityActions {
   justify-content: space-between;
 }
 
-.brandIdentity {
-  min-width: 0;
-  gap: var(--space-3);
-}
-
-.brandMark {
-  display: flex;
-  width: var(--space-8);
-  height: var(--space-8);
-  flex-shrink: 0;
-  align-items: center;
-  justify-content: center;
-  border-radius: var(--radius-panel);
-  background: var(--primary);
-  color: var(--primary-foreground);
+.brandRow {
+  height: var(--shard-titlebar-height);
+  flex: none;
+  padding-right: var(--space-2);
+  padding-left: var(--shard-traffic-light-clearance);
+  border-bottom: 1px solid var(--sidebar-border);
+  background: var(--topbar);
+  box-shadow: var(--shadow-topbar);
 }
 
 .searchButton {
@@ -144,15 +135,62 @@
     color 0.15s ease;
 }
 
+/* Secondary rows are a Shard extension on top of kiln's single-level nav.
+   The solid clay plate stays with the primary item; the active sub-item uses a
+   subtle clay tint plus a rail marker so a space and its current view never
+   read as two stacked selections. Mirrors bottom-tabs' secondaryTabActive. */
 .navSubItemActive {
-  background: var(--sidebar-primary);
-  color: var(--sidebar-primary-foreground);
-  font-weight: 600;
+  background: var(--primary-subtle);
+  color: var(--primary);
+  font-weight: 500;
+}
+
+.navSubItemActive::before {
+  content: "";
+  position: absolute;
+  left: var(--space-4);
+  top: 50%;
+  width: var(--space-0\.5);
+  height: var(--space-4);
+  transform: translateY(-50%);
+  border-radius: var(--radius-pill);
+  background: var(--primary);
+}
+
+.navSubItemActive:hover {
+  background: color-mix(in oklab, var(--primary) 16%, var(--sidebar));
 }
 
 .navSubItemInactive:hover {
   background: var(--sidebar-accent);
   color: var(--sidebar-accent-foreground);
+}
+
+.navCount {
+  min-width: var(--space-8);
+  border-radius: var(--radius-control);
+  background: var(--muted);
+  padding-inline: var(--space-2);
+  padding-block: var(--space-1);
+  text-align: center;
+  font-size: var(--text-meta);
+  font-weight: 500;
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+}
+
+.navItemActive .navCount {
+  background: color-mix(
+    in oklab,
+    var(--sidebar-primary-foreground) 22%,
+    transparent
+  );
+  color: var(--sidebar-primary-foreground);
+}
+
+.navSubItemActive .navCount {
+  background: color-mix(in oklab, var(--primary) 20%, var(--sidebar));
+  color: var(--primary);
 }
 
 .navActionBoundary {
@@ -224,6 +262,12 @@
 
 .sidebar[data-collapsed="true"] .navSubItemInactive {
   color: var(--muted-foreground);
+}
+
+/* The rail has no indent column, so the marker has nowhere to sit; the tint
+   plus the clay icon carry the active sub-item there. */
+.sidebar[data-collapsed="true"] .navSubItemActive::before {
+  display: none;
 }
 
 .sidebar[data-collapsed="true"] .navActionBoundary {

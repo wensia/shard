@@ -77,28 +77,40 @@ async function sidebarWidth(page: Page) {
   return sidebar(page).evaluate((element) => element.getBoundingClientRect().width)
 }
 
+async function leftEdge(page: Page, selector: string) {
+  return page.locator(selector).evaluate((element) => element.getBoundingClientRect().left)
+}
+
 test.beforeEach(async ({ page }) => {
   await installSidebarMock(page)
   await page.goto("/")
 })
 
-test("点击触发器折叠并展开侧边栏", async ({ page }) => {
+test("触发器避开红绿灯且折叠后侧边栏完全退出布局", async ({ page }) => {
   await expect.poll(() => sidebarWidth(page)).toBe(248)
+  const expandedTitlebar = page.locator("[data-sidebar-titlebar]")
+  const collapseButton = page.getByRole("button", {
+    name: "折叠侧边栏",
+    exact: true,
+  })
+  await expect(expandedTitlebar).toHaveCSS("height", "52px")
+  await expect(expandedTitlebar.locator(":scope > *")).toHaveCount(1)
+  await expect.poll(async () => (await collapseButton.boundingBox())?.x).toBeGreaterThanOrEqual(80)
 
-  await page
-    .getByRole("button", { name: "折叠侧边栏", exact: true })
-    .click()
-  await expect(
-    page.getByRole("button", { name: "展开侧边栏", exact: true })
-  ).toBeVisible()
-  await expect.poll(() => sidebarWidth(page)).toBe(49)
+  await collapseButton.click()
+  await expect(sidebar(page)).toHaveCount(0)
+  const collapsedTitlebar = page.locator("[data-sidebar-collapsed-titlebar]")
+  const expandButton = page.getByRole("button", {
+    name: "展开侧边栏",
+    exact: true,
+  })
+  await expect(collapsedTitlebar).toBeVisible()
+  await expect(collapsedTitlebar).toHaveCSS("height", "52px")
+  await expect.poll(async () => (await expandButton.boundingBox())?.x).toBeGreaterThanOrEqual(80)
+  await expect.poll(() => leftEdge(page, "[data-workspace-slot]")).toBe(0)
 
-  await page
-    .getByRole("button", { name: "展开侧边栏", exact: true })
-    .click()
-  await expect(
-    page.getByRole("button", { name: "折叠侧边栏", exact: true })
-  ).toBeVisible()
+  await expandButton.click()
+  await expect(collapseButton).toBeVisible()
   await expect.poll(() => sidebarWidth(page)).toBe(248)
 })
 
@@ -107,7 +119,7 @@ test("ControlOrMeta+B 切换侧边栏", async ({ page }) => {
   await expect(
     page.getByRole("button", { name: "展开侧边栏", exact: true })
   ).toBeVisible()
-  await expect.poll(() => sidebarWidth(page)).toBe(49)
+  await expect(sidebar(page)).toHaveCount(0)
 
   await page.keyboard.press("ControlOrMeta+b")
   await expect(
@@ -115,62 +127,12 @@ test("ControlOrMeta+B 切换侧边栏", async ({ page }) => {
   ).toBeVisible()
 })
 
-test("折叠 rail 区分一级空间项与二级功能项", async ({ page }) => {
+test("折叠不改变当前 route", async ({ page }) => {
   const navigation = page.getByRole("navigation", {
     name: "工作台导航",
     exact: true,
   })
-  const secondaryItem = navigation.getByRole("button", {
-    name: /^收件箱/u,
-  })
-  const fragmentSubgroup = navigation.locator(
-    '[data-sidebar-subgroup="fragments"]'
-  )
-
-  await expect(secondaryItem).toHaveCSS("height", "36px")
-  await expect(secondaryItem.locator("svg")).toBeVisible()
-  await expect(secondaryItem.locator("svg")).toHaveCSS("width", "18px")
-  await expect(fragmentSubgroup).toHaveCSS("border-left-width", "0px")
-
-  await page
-    .getByRole("button", { name: "折叠侧边栏", exact: true })
-    .click()
-
-  const collapsedPrimaryItem = navigation.getByRole("button", {
-    name: "工作台：碎片",
-    exact: true,
-  })
-  const collapsedSecondaryItem = navigation.getByRole("button", {
-    name: "碎片：收件箱",
-    exact: true,
-  })
-  await expect(collapsedPrimaryItem).toHaveCSS("height", "36px")
-  await expect(collapsedPrimaryItem.locator("svg")).toBeVisible()
-  await expect(collapsedPrimaryItem.locator("svg")).toHaveCSS("width", "18px")
-  await expect(collapsedSecondaryItem).toHaveCSS("height", "30px")
-  await expect(collapsedSecondaryItem.locator("svg")).toBeVisible()
-  await expect(collapsedSecondaryItem.locator("svg")).toHaveCSS("width", "16px")
-  await expect(fragmentSubgroup).toHaveCSS("border-left-width", "2px")
-  await expect(fragmentSubgroup).toHaveCSS("border-left-style", "solid")
-
-  await page
-    .getByRole("button", { name: "展开侧边栏", exact: true })
-    .click()
-  await expect(secondaryItem).toHaveCSS("height", "36px")
-  await expect(secondaryItem.locator("svg")).toHaveCSS("width", "18px")
-  await expect(fragmentSubgroup).toHaveCSS("border-left-width", "0px")
-})
-
-test("折叠 rail 保持 route 并在 hover 与 focus 显示两行 tooltip", async ({
-  page,
-}) => {
-  const navigation = page.getByRole("navigation", {
-    name: "工作台导航",
-    exact: true,
-  })
-  await navigation
-    .getByRole("button", { name: "资料库", exact: true })
-    .click()
+  await navigation.getByRole("button", { name: "资料库", exact: true }).click()
   const expectedRoute = JSON.stringify({ space: "library", params: {} })
   await expect
     .poll(() => page.evaluate(() => localStorage.getItem("shard.workspace-route")))
@@ -179,46 +141,17 @@ test("折叠 rail 保持 route 并在 hover 与 focus 显示两行 tooltip", asy
   await page
     .getByRole("button", { name: "折叠侧边栏", exact: true })
     .click()
-  const libraryItem = navigation.getByRole("button", {
-    name: "工作台：资料库",
-    exact: true,
-  })
-  await expect(libraryItem).toHaveAttribute("aria-current", "page")
-  await expect.poll(() => sidebarWidth(page)).toBe(49)
-  await expect(libraryItem.locator("svg")).toBeVisible()
-  const initialHeight = await libraryItem.evaluate(
-    (element) => element.getBoundingClientRect().height
-  )
-
-  await libraryItem.hover()
-  let tooltip = page.getByRole("tooltip")
-  await expect(tooltip.getByText("资料库", { exact: true })).toBeVisible()
-  await expect(tooltip.getByText("工作台", { exact: true })).toBeVisible()
-  await expect.poll(() => sidebarWidth(page)).toBe(49)
+  await expect(sidebar(page)).toHaveCount(0)
   await expect
-    .poll(() =>
-      libraryItem.evaluate((element) => element.getBoundingClientRect().height)
-    )
-    .toBe(initialHeight)
+    .poll(() => page.evaluate(() => localStorage.getItem("shard.workspace-route")))
+    .toBe(expectedRoute)
 
-  await page.mouse.move(800, 400)
+  await page
+    .getByRole("button", { name: "展开侧边栏", exact: true })
+    .click()
   await expect(
-    page.getByRole("tooltip", { name: "资料库 工作台" })
-  ).toBeHidden()
-  // base-ui Tooltip 只在 focus-visible 打开，必须用真实键盘 Tab 聚焦
-  await page.keyboard.press("Tab")
-  await expect
-    .poll(async () => {
-      const focused = await libraryItem.evaluate(
-        (element) => element === document.activeElement
-      )
-      if (!focused) await page.keyboard.press("Tab")
-      return focused
-    }, { timeout: 10000 })
-    .toBe(true)
-  tooltip = page.getByRole("tooltip")
-  await expect(tooltip.getByText("资料库", { exact: true })).toBeVisible()
-  await expect(tooltip.getByText("工作台", { exact: true })).toBeVisible()
+    navigation.getByRole("button", { name: "资料库", exact: true })
+  ).toHaveAttribute("aria-current", "page")
   await expect
     .poll(() => page.evaluate(() => localStorage.getItem("shard.workspace-route")))
     .toBe(expectedRoute)
@@ -228,7 +161,7 @@ test("折叠状态 reload 后保持", async ({ page }) => {
   await page
     .getByRole("button", { name: "折叠侧边栏", exact: true })
     .click()
-  await expect.poll(() => sidebarWidth(page)).toBe(49)
+  await expect(sidebar(page)).toHaveCount(0)
   await expect
     .poll(() => page.evaluate(() => localStorage.getItem("shard.sidebar-collapsed")))
     .toBe("true")
@@ -238,5 +171,6 @@ test("折叠状态 reload 后保持", async ({ page }) => {
   await expect(
     page.getByRole("button", { name: "展开侧边栏", exact: true })
   ).toBeVisible()
-  await expect.poll(() => sidebarWidth(page)).toBe(49)
+  await expect(sidebar(page)).toHaveCount(0)
+  await expect.poll(() => leftEdge(page, "[data-workspace-slot]")).toBe(0)
 })
