@@ -327,6 +327,9 @@
   min-width: 0;
   flex: 1;
   flex-direction: column;
+  /* 顶部避让由 editorHeader 承担；这里只补内容与标题栏之间的常规呼吸距。
+     InboxTagBar 在碎片空间靠上方 composer 撑开间距，本容器必须自己给。 */
+  padding-top: var(--space-4);
 }
 
 .noteList {
