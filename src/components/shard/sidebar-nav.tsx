@@ -6,7 +6,6 @@ import {
   HistoryIcon,
   InboxIcon,
   KeyboardIcon,
-  LockKeyholeIcon,
   Maximize2Icon,
   MoreHorizontalIcon,
   PanelLeftIcon,
@@ -83,13 +82,13 @@ const SPACE_ITEMS: Array<{
   },
 ]
 
+// 密匣不在侧栏：它的唯一入口是资料库树上的上锁挂载点（传送门模型）
 const FRAGMENT_ITEMS: Array<{
   id: FragmentWorkspaceFilter
   icon: typeof InboxIcon
 }> = [
   { id: "inbox", icon: InboxIcon },
   { id: "tagged", icon: TagIcon },
-  { id: "lockbox", icon: LockKeyholeIcon },
   { id: "archive", icon: ArchiveIcon },
 ]
 
@@ -188,6 +187,7 @@ const SIDEBAR_COPY: Record<
     spaces: {
       fragments: "碎片",
       library: "资料库",
+      lockbox: "密匣",
       review: "回顾",
     },
     restoreWindow: "还原窗口尺寸",
@@ -243,6 +243,7 @@ const SIDEBAR_COPY: Record<
     spaces: {
       fragments: "Fragments",
       library: "Library",
+      lockbox: "Lockbox",
       review: "Review",
     },
     restoreWindow: "Restore Window Size",

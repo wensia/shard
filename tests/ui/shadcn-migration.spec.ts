@@ -1112,7 +1112,17 @@ test("lockbox and mind map editing preserve adaptive node geometry", async ({
   page,
 }) => {
   await page.getByRole("button", { name: /^标签 \d+$/ }).click()
-  await page.getByRole("button", { name: /^密匣 \d+$/ }).click()
+  // 密匣入口已移到资料库树的上锁挂载点（传送门模型），侧栏不再有密匣项
+  await expect(
+    page
+      .getByRole("navigation", { name: "工作台导航" })
+      .getByRole("button", { name: /^密匣/ })
+  ).toHaveCount(0)
+  await page.getByRole("button", { name: "资料库", exact: true }).click()
+  await page
+    .getByRole("complementary", { name: "资料库目录" })
+    .getByRole("button", { name: "密匣（上锁空间）", exact: true })
+    .click()
   await expect(
     page.getByRole("heading", { name: "解锁密匣" })
   ).toBeVisible()

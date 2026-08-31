@@ -17,6 +17,7 @@ import {
   FileTextIcon,
   FolderIcon,
   FolderPlusIcon,
+  LockKeyholeIcon,
   MoreHorizontalIcon,
 } from "lucide-react"
 import { toast } from "sonner"
@@ -90,6 +91,8 @@ interface LibraryShellProps {
   onNavigateToFragment?: (fragmentId: string) => void
   onLibraryMutation: (result: LibraryMutationResult) => void
   onMoveToLockbox: (fragment: Fragment) => Promise<void>
+  /** 点击树上的密匣挂载点：解锁并进入密匣一级空间（传送门）。 */
+  onOpenLockbox: () => void
   onSelectFragmentMonth: (month: string) => void
   onRegisterSaveHandler: (handle: LibraryDraftHandle | null) => void
   onSave: (
@@ -122,6 +125,7 @@ export function LibraryShell({
   onNavigateToFragment,
   onLibraryMutation,
   onMoveToLockbox,
+  onOpenLockbox,
   onSelectFragmentMonth,
   onRegisterSaveHandler,
   onRefreshFragments,
@@ -778,6 +782,25 @@ export function LibraryShell({
                       })}
                     </ul>
                   ) : null}
+                </div>
+
+                {/* 密匣挂载点：地图上可见、不可展开，推门进入加密一级空间 */}
+                <div className={styles.lockboxMount}>
+                  <button
+                    aria-label="密匣（上锁空间）"
+                    className={styles.treeButton}
+                    onClick={() => {
+                      void (async () => {
+                        // 离开资料库前必须排空草稿，与其他导航同一门禁
+                        if (!(await saveCurrentNote())) return
+                        onOpenLockbox()
+                      })()
+                    }}
+                    type="button"
+                  >
+                    <LockKeyholeIcon aria-hidden="true" />
+                    <span>密匣</span>
+                  </button>
                 </div>
 
                 {libraryTree.entries.length === 0 && !creatingDirectory ? (

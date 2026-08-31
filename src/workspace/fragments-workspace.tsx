@@ -1,4 +1,4 @@
-import type { ComponentProps, ReactNode } from "react"
+import type { ComponentProps } from "react"
 
 import appStyles from "@/App.module.css"
 import { CaptureBox } from "@/components/shard/capture-box"
@@ -14,7 +14,7 @@ import type { FragmentFilter } from "@/types"
 
 type FragmentWorkspaceFilter = Extract<
   FragmentFilter,
-  "archive" | "inbox" | "lockbox" | "tagged"
+  "archive" | "inbox" | "tagged"
 >
 
 interface FragmentsWorkspaceProps {
@@ -23,7 +23,6 @@ interface FragmentsWorkspaceProps {
   inboxTagBar: ComponentProps<typeof InboxTagBar>
   isMindMapViewActive: boolean
   isSearchModeActive: boolean
-  lockboxHeader: ReactNode
   mindMapPanel: ComponentProps<typeof MindMapPanel>
   search: ComponentProps<typeof FragmentSearchWorkspace>
   searchContextBar: ComponentProps<typeof SearchContextBar> | null
@@ -37,7 +36,6 @@ export function FragmentsWorkspace({
   inboxTagBar,
   isMindMapViewActive,
   isSearchModeActive,
-  lockboxHeader,
   mindMapPanel,
   search,
   searchContextBar,
@@ -64,9 +62,6 @@ export function FragmentsWorkspace({
           {filter === "tagged" && !isMindMapViewActive ? (
             <TaggedPanel {...taggedPanel} />
           ) : null}
-          {filter === "lockbox" && !isMindMapViewActive
-            ? lockboxHeader
-            : null}
           {searchContextBar && !isMindMapViewActive ? (
             <SearchContextBar {...searchContextBar} />
           ) : null}

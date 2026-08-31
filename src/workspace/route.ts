@@ -3,7 +3,6 @@ export const WORKSPACE_ROUTE_STORAGE_KEY = "shard.workspace-route"
 export type FragmentWorkspaceFilter =
   | "inbox"
   | "tagged"
-  | "lockbox"
   | "archive"
 
 export type ReviewWorkspaceMode = "dailyReview" | "insight" | "walk"
@@ -18,12 +17,22 @@ export type LibraryRoute = {
   params: Record<string, never>
 }
 
+/** 密匣一级空间：入口是资料库树上的上锁挂载点，安全区跟这个空间走。 */
+export type LockboxRoute = {
+  space: "lockbox"
+  params: Record<string, never>
+}
+
 export type ReviewRoute = {
   space: "review"
   params: { mode: ReviewWorkspaceMode }
 }
 
-export type WorkspaceRoute = FragmentsRoute | LibraryRoute | ReviewRoute
+export type WorkspaceRoute =
+  | FragmentsRoute
+  | LibraryRoute
+  | LockboxRoute
+  | ReviewRoute
 
 export const DEFAULT_WORKSPACE_ROUTE: WorkspaceRoute = {
   space: "fragments",
@@ -33,7 +42,6 @@ export const DEFAULT_WORKSPACE_ROUTE: WorkspaceRoute = {
 const FRAGMENT_FILTERS: readonly FragmentWorkspaceFilter[] = [
   "inbox",
   "tagged",
-  "lockbox",
   "archive",
 ]
 
@@ -80,7 +88,12 @@ export function isWorkspaceRoute(value: unknown): value is WorkspaceRoute {
     )
   }
 
-  return value.space === "library" && hasOnlyKeys(value.params, [])
+  // 旧版本把密匣持久化成 fragments 的 filter（{filter:"lockbox"}），上面的
+  // FRAGMENT_FILTERS 校验会拒绝它，readWorkspaceRoute 自然回退收件箱。
+  return (
+    (value.space === "library" || value.space === "lockbox") &&
+    hasOnlyKeys(value.params, [])
+  )
 }
 
 export function readWorkspaceRoute(): WorkspaceRoute {

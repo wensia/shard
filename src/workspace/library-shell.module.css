@@ -176,6 +176,12 @@
   padding-bottom: var(--space-2);
 }
 
+/* 密匣挂载点：与碎片流同级的分区，视觉上是一扇门而不是一个文件夹 */
+.lockboxMount {
+  border-bottom: 1px solid var(--border);
+  padding-bottom: var(--space-2);
+}
+
 .tree,
 .tree ul {
   display: flex;

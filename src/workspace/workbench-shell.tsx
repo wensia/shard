@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { LockKeyholeIcon, TagIcon } from "lucide-react"
 import { toast } from "sonner"
 
 import styles from "../App.module.css"
@@ -82,13 +81,13 @@ import type {
   Fragment,
   CsvFileSummary,
   FragmentFilter,
-  LockboxState,
   MindMapSummary,
   LibraryMutationResult,
   LibraryTreeSnapshot,
   VaultState,
 } from "@/types"
 import { FragmentsWorkspace } from "@/workspace/fragments-workspace"
+import { LockboxShell } from "@/workspace/lockbox-shell"
 import {
   LibraryShell,
   type LibraryDraftHandle,
@@ -220,7 +219,9 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
       ? route.params.filter
       : route.space === "review"
         ? route.params.mode
-        : "inbox"
+        : route.space === "lockbox"
+          ? "lockbox"
+          : "inbox"
 
   useEffect(() => {
     void refreshFragments()
@@ -261,12 +262,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
   }, [])
 
   useEffect(() => {
-    if (
-      route.space !== "fragments" ||
-      route.params.filter !== "lockbox" ||
-      lockbox === null ||
-      lockbox.unlocked
-    ) {
+    if (route.space !== "lockbox" || lockbox === null || lockbox.unlocked) {
       return
     }
 
@@ -914,7 +910,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     }
     setSelectedTag(null)
     setSelectedLockboxTag(null)
-    setFragmentFilter("lockbox")
+    setRoute({ space: "lockbox", params: {} })
   }
 
   function updateAppSettings(patch: Partial<AppSettings>) {
@@ -989,7 +985,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
 
     setSelectedTag(null)
     setSelectedLockboxTag(null)
-    setFragmentFilter("lockbox")
+    setRoute({ space: "lockbox", params: {} })
     toast("密匣已解锁")
   }
 
@@ -1023,11 +1019,9 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
       applyVaultState(state)
       closeEditor()
       setSelectedLockboxTag(null)
-      if (
-        route.space === "fragments" &&
-        route.params.filter === "lockbox"
-      ) {
-        setFragmentFilter("tagged")
+      if (route.space === "lockbox") {
+        // 上锁即离开保险柜，回到传送门所在的资料库
+        setRoute({ space: "library", params: {} })
       }
       toast("密匣已上锁")
     } catch (error) {
@@ -1038,19 +1032,15 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
   }
 
   async function autoLockLockbox(
-    options: { returnToTagged?: boolean } = {}
+    options: { returnToLibrary?: boolean } = {}
   ) {
     try {
       const state = await lockLockbox()
       applyVaultState(state)
-      if (
-        options.returnToTagged &&
-        routeRef.current.space === "fragments" &&
-        routeRef.current.params.filter === "lockbox"
-      ) {
+      if (options.returnToLibrary && routeRef.current.space === "lockbox") {
         closeEditor()
         setSelectedLockboxTag(null)
-        setFragmentFilter("tagged")
+        setRoute({ space: "library", params: {} })
       }
     } catch {
       // 静默失败：下次进入密匣仍需密码，必要时可手动上锁
@@ -1118,7 +1108,11 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
       }
 
       setSelectedTag(null)
-      setFragmentFilter("lockbox")
+      setRoute({ space: "lockbox", params: {} })
+      if (deriveKind(fragment.tags) === "note") {
+        // 密匣笔记住在空间的笔记树里而非碎片流，直接进禅编辑器
+        openZenEditor(fragment)
+      }
     } else if (fragment.tags.includes("inbox")) {
       setSelectedTag(null)
       setSelectedInboxTag(null)
@@ -1197,7 +1191,8 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     if (!isSearchModeActive && document.activeElement instanceof HTMLElement) {
       searchReturnFocusRef.current = document.activeElement
     }
-    if (route.space !== "fragments") {
+    // 密匣空间自带搜索覆盖层：留在空间内搜索，避免离开安全区触发上锁
+    if (route.space !== "fragments" && route.space !== "lockbox") {
       setRoute({ space: "fragments", params: { filter: "inbox" } })
     }
     setIsSearchModeActive(true)
@@ -1294,6 +1289,11 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
       return
     }
 
+    if (nextFilter === "lockbox") {
+      setRoute({ space: "lockbox", params: {} })
+      return
+    }
+
     setRoute({ space: "fragments", params: { filter: nextFilter } })
   }
 
@@ -1305,10 +1305,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     searchReturnFocusRef.current = null
     setIsMindMapViewActive(false)
 
-    if (
-      nextRoute.space === "fragments" &&
-      nextRoute.params.filter === "lockbox"
-    ) {
+    if (nextRoute.space === "lockbox" && !lockbox?.unlocked) {
       openLockboxGate()
       return
     }
@@ -1326,6 +1323,15 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
 
   const lockboxTagSummaries = useMemo(
     () => buildTagSummaries(lockboxFragments, []),
+    [lockboxFragments]
+  )
+
+  // 密匣空间里笔记住在笔记树、碎片住在碎片流，两边互斥
+  const lockboxNotes = useMemo(
+    () =>
+      lockboxFragments.filter(
+        (fragment) => deriveKind(fragment.tags) === "note"
+      ),
     [lockboxFragments]
   )
 
@@ -1380,14 +1386,18 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
             )
           : taggedFragments
         break
-      case "lockbox":
+      case "lockbox": {
         if (!lockbox?.unlocked) return []
+        const lockboxStream = lockboxFragments.filter(
+          (fragment) => deriveKind(fragment.tags) !== "note"
+        )
         result = selectedLockboxTag
-          ? lockboxFragments.filter((fragment) =>
+          ? lockboxStream.filter((fragment) =>
               fragment.tags.includes(selectedLockboxTag)
             )
-          : lockboxFragments
+          : lockboxStream
         break
+      }
       case "archive":
         result = archivedFragments
         break
@@ -1706,6 +1716,69 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // 碎片空间与密匣空间共用同一套时间线 / 搜索接线，只在空表文案与整理入口上分叉
+  const fragmentsEmptyMessage =
+    filter === "tagged"
+      ? "还没有带标签的内容。到 Inbox 输入 #标签 即可归类。"
+      : filter === "archive"
+        ? "还没有归档内容。"
+        : isInboxView && selectedInboxTag
+          ? `#${selectedInboxTag} 下还没有片段。写片段时输入 #${selectedInboxTag} 即可归入。`
+          : undefined
+
+  const lockboxEmptyMessage = lockbox?.unlocked
+    ? "密匣里还没有碎片。到 Inbox 输入 #密匣 即可保存到这里。"
+    : "密匣已上锁。"
+
+  const timelineProps = {
+    csvFiles,
+    editingFragmentId: editingVariant === "inline" ? editingFragmentId : null,
+    fragments: filteredFragments,
+    isLoading,
+    knownTags,
+    onArchive: handleArchiveFragment,
+    onCancelEdit: closeEditor,
+    onEdit: openInlineEditor,
+    onExportImage: setExportingFragment,
+    onLinkFragment: handleLinkFragment,
+    onMoveToLockbox: handleMoveFragmentToLockbox,
+    onOpenZen: openZenEditor,
+    onPin: handlePinFragment,
+    onScrollDown: () => {
+      setComposerCollapseSignal((current) => current + 1)
+    },
+    onNavigateToFragment: (fragmentId: string) => {
+      void handleNavigateToFragment(fragmentId)
+    },
+    onScrollToFragmentComplete: handleTimelineScrollComplete,
+    onSave: handleUpdateFragment,
+    onToggleKind: handleToggleFragmentKind,
+    onToggleTask: (fragment: Fragment, lineIndex: number) => {
+      void handleToggleFragmentTask(fragment, lineIndex)
+    },
+    onUnlinkFragment: handleUnlinkFragment,
+    scrollToFragmentId: timelineScrollTargetId,
+    vaultPath,
+  }
+
+  const searchProps = {
+    focusSignal: searchFocusSignal,
+    fragments,
+    initialSession: searchSession,
+    lockboxSearchAvailable: Boolean(lockbox?.unlocked),
+    onExit: exitSearchMode,
+    onOpenFragment: handleOpenSearchResult,
+  }
+
+  const searchContextBarProps = searchSession
+    ? {
+        onBack: openSearch,
+        onClose: endSearchSession,
+        onNavigate: navigateSearchResult,
+        session: searchSession,
+      }
+    : null
+
   if (activeMindMapId) {
     return (
       <MindMapWorkspace
@@ -1787,40 +1860,12 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
             }}
             isMindMapViewActive={isMindMapViewActive}
             isSearchModeActive={isSearchModeActive}
-            lockboxHeader={
-              <LockboxHeader
-                lockbox={lockbox}
-                selectedTag={selectedLockboxTag}
-                summaries={lockboxTagSummaries}
-                totalCount={lockboxFragments.length}
-                onChangePassword={() => setLockboxDialogMode("change")}
-                onLock={() => void handleLockLockbox()}
-                onSelectTag={setSelectedLockboxTag}
-                onUnlock={openLockboxGate}
-              />
-            }
             mindMapPanel={{
               onMapsChange: setMindMaps,
               onOpenMap: setActiveMindMapId,
             }}
-            search={{
-              focusSignal: searchFocusSignal,
-              fragments,
-              initialSession: searchSession,
-              lockboxSearchAvailable: Boolean(lockbox?.unlocked),
-              onExit: exitSearchMode,
-              onOpenFragment: handleOpenSearchResult,
-            }}
-            searchContextBar={
-              searchSession
-                ? {
-                    onBack: openSearch,
-                    onClose: endSearchSession,
-                    onNavigate: navigateSearchResult,
-                    session: searchSession,
-                  }
-                : null
-            }
+            search={searchProps}
+            searchContextBar={searchContextBarProps}
             taggedPanel={{
               selectedTag,
               summaries: tagSummaries,
@@ -1828,50 +1873,30 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
               onSelectTag: setSelectedTag,
             }}
             timeline={{
-              csvFiles,
-              editingFragmentId:
-                editingVariant === "inline" ? editingFragmentId : null,
-              emptyMessage:
-                filter === "tagged"
-                  ? "还没有带标签的内容。到 Inbox 输入 #标签 即可归类。"
-                  : filter === "lockbox"
-                    ? lockbox?.unlocked
-                      ? "密匣里还没有笔记。到 Inbox 输入 #密匣 即可保存到这里。"
-                      : "密匣已上锁。"
-                    : filter === "archive"
-                      ? "还没有归档内容。"
-                      : isInboxView && selectedInboxTag
-                        ? `#${selectedInboxTag} 下还没有片段。写片段时输入 #${selectedInboxTag} 即可归入。`
-                        : undefined,
-              fragments: filteredFragments,
-              isLoading,
-              knownTags,
-              onArchive: handleArchiveFragment,
-              onCancelEdit: closeEditor,
-              onEdit: openInlineEditor,
-              onExportImage: setExportingFragment,
-              onLinkFragment: handleLinkFragment,
-              onMoveToLockbox: handleMoveFragmentToLockbox,
-              onOpenZen: openZenEditor,
-              onOrganize:
-                filter === "lockbox" ? undefined : handleOrganizeFragments,
-              onPin: handlePinFragment,
-              onScrollDown: () => {
-                setComposerCollapseSignal((current) => current + 1)
-              },
-              onNavigateToFragment: (fragmentId) => {
-                void handleNavigateToFragment(fragmentId)
-              },
-              onScrollToFragmentComplete: handleTimelineScrollComplete,
-              onSave: handleUpdateFragment,
-              onToggleKind: handleToggleFragmentKind,
-              onToggleTask: (fragment, lineIndex) => {
-                void handleToggleFragmentTask(fragment, lineIndex)
-              },
-              onUnlinkFragment: handleUnlinkFragment,
-              scrollToFragmentId: timelineScrollTargetId,
-              vaultPath,
+              ...timelineProps,
+              emptyMessage: fragmentsEmptyMessage,
+              onOrganize: handleOrganizeFragments,
             }}
+              />
+            ) : route.space === "lockbox" ? (
+              <LockboxShell
+            isSearchModeActive={isSearchModeActive}
+            lockbox={lockbox}
+            notes={lockboxNotes}
+            onChangePassword={() => setLockboxDialogMode("change")}
+            onLock={() => void handleLockLockbox()}
+            onOpenNote={openZenEditor}
+            onSelectTag={setSelectedLockboxTag}
+            onUnlock={openLockboxGate}
+            search={searchProps}
+            searchContextBar={searchContextBarProps}
+            selectedTag={selectedLockboxTag}
+            summaries={lockboxTagSummaries}
+            timeline={{
+              ...timelineProps,
+              emptyMessage: lockboxEmptyMessage,
+            }}
+            totalCount={lockboxFragments.length}
               />
             ) : route.space === "review" ? (
               <ReviewWorkspaceShell
@@ -1923,6 +1948,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
             }}
             onLibraryMutation={handleLibraryMutation}
             onMoveToLockbox={handleMoveFragmentToLockbox}
+            onOpenLockbox={openLockboxGate}
             onRefreshFragments={refreshFragments}
             onRegisterSaveHandler={registerLibrarySaveHandler}
             onSave={handleUpdateFragment}
@@ -2066,219 +2092,6 @@ function LockboxArchiveConfirmDialog({
   )
 }
 
-function LockboxHeader({
-  lockbox,
-  selectedTag,
-  summaries,
-  totalCount,
-  onChangePassword,
-  onLock,
-  onSelectTag,
-  onUnlock,
-}: {
-  lockbox: LockboxState | null
-  selectedTag: string | null
-  summaries: TaggedSummary[]
-  totalCount: number
-  onChangePassword: () => void
-  onLock: () => void
-  onSelectTag: (tag: string | null) => void
-  onUnlock: () => void
-}) {
-  return (
-    <div
-      className="shard-content-inset"
-      data-tauri-drag-region
-      style={{
-        paddingBottom: "var(--shard-space-4)",
-        paddingTop: "var(--shard-top-inset)",
-      }}
-    >
-      <div
-        className="shard-content-measure"
-        style={{
-          borderBottom: "1px solid var(--border)",
-          paddingBottom: "var(--shard-space-4)",
-        }}
-      >
-        <div
-          style={{
-            display: "flex",
-            minWidth: 0,
-            alignItems: "center",
-            justifyContent: "space-between",
-            flexWrap: "wrap",
-            gap: "var(--shard-space-3)",
-          }}
-        >
-          <div
-            style={{
-              display: "flex",
-              minWidth: 0,
-              alignItems: "center",
-              gap: "var(--shard-space-3)",
-            }}
-          >
-            <span
-              style={{
-                display: "flex",
-                flexShrink: 0,
-                width: 32,
-                height: 32,
-                alignItems: "center",
-                justifyContent: "center",
-                borderRadius: "var(--shard-radius-control)",
-                border: "1px solid var(--border)",
-                background: "var(--card)",
-                color: "var(--shard-sapphire)",
-              }}
-            >
-              <LockKeyholeIcon size={16} strokeWidth={1.75} />
-            </span>
-            <div style={{ minWidth: 0 }}>
-              <h1
-                style={{
-                  fontSize: 18,
-                  lineHeight: "24px",
-                  fontWeight: 700,
-                  textWrap: "balance",
-                }}
-              >
-                密匣
-              </h1>
-              <p
-                style={{
-                  marginTop: 4,
-                  fontSize: 14,
-                  lineHeight: "20px",
-                  textWrap: "pretty",
-                  color: "var(--muted-foreground)",
-                }}
-              >
-                {lockbox?.unlocked
-                  ? `已解锁${lockbox.expiresAt ? `至 ${formatLockboxExpiry(lockbox.expiresAt)}` : ""}`
-                  : "需要密码访问。私密笔记不会出现在主页、回顾或普通统计中。"}
-              </p>
-            </div>
-          </div>
-
-          <div
-            style={{
-              display: "flex",
-              flexShrink: 0,
-              alignItems: "center",
-              gap: "var(--shard-space-2)",
-            }}
-          >
-            {lockbox?.unlocked ? (
-              <>
-                <Button onClick={onChangePassword} size="sm" variant="secondary">
-                  修改密码
-                </Button>
-                <Button onClick={onLock} size="sm" variant="secondary">
-                  上锁
-                </Button>
-              </>
-            ) : (
-              <Button onClick={onUnlock} size="sm" variant="primary">
-                解锁
-              </Button>
-            )}
-          </div>
-        </div>
-
-        {lockbox?.unlocked ? (
-          <div
-            style={{
-              display: "flex",
-              flexDirection: "column",
-              gap: "var(--shard-space-2)",
-              marginTop: "var(--shard-space-3)",
-            }}
-          >
-            <div
-              style={{
-                display: "flex",
-                height: "var(--shard-chip-height)",
-                alignItems: "center",
-                gap: "var(--shard-space-2)",
-                fontSize: 12,
-                fontWeight: 500,
-                color: "var(--muted-foreground)",
-              }}
-            >
-              <TagIcon size={14} strokeWidth={1.75} />
-              <span className="tabular-nums">{summaries.length} 子标签</span>
-              <span aria-hidden="true">·</span>
-              <span className="tabular-nums">{totalCount} 条</span>
-            </div>
-
-            <div
-              className="shard-tag-filters"
-              style={{
-                display: "flex",
-                maxHeight: 72,
-                flexWrap: "wrap",
-                alignContent: "flex-start",
-                gap: "var(--shard-space-2)",
-                overflowY: "auto",
-                paddingRight: "var(--shard-space-1)",
-              }}
-            >
-              <LockboxTagFilterButton
-                active={selectedTag === null}
-                count={totalCount}
-                label="全部"
-                onClick={() => onSelectTag(null)}
-              />
-              {summaries.map((summary) => (
-                <LockboxTagFilterButton
-                  active={selectedTag === summary.tag}
-                  count={summary.count}
-                  key={summary.tag}
-                  label={`#${summary.tag}`}
-                  onClick={() => onSelectTag(summary.tag)}
-                />
-              ))}
-            </div>
-          </div>
-        ) : null}
-      </div>
-    </div>
-  )
-}
-
-function LockboxTagFilterButton({
-  active,
-  count,
-  label,
-  onClick,
-}: {
-  active: boolean
-  count: number
-  label: string
-  onClick: () => void
-}) {
-  return (
-    <button
-      aria-pressed={active}
-      className={["shard-tag", active ? "shard-tag-active" : ""].join(" ")}
-      onClick={onClick}
-      style={{ maxWidth: "100%", gap: "var(--shard-space-micro)", fontWeight: 500 }}
-      title={label}
-      type="button"
-    >
-      <span
-        className="shard-chip-text"
-        style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
-      >
-        {label}
-      </span>
-      <span className="shard-chip-text shard-tag-count">{count}</span>
-    </button>
-  )
-}
-
 function isVaultNotConfigured(error: unknown) {
   return String(error).includes("vault_not_configured")
 }
@@ -2294,13 +2107,6 @@ function getFirstVisibleTag(fragment: Fragment) {
       (tag) => tag !== "inbox" && tag !== LOCKBOX_TAG && !isTypeTag(tag)
     ) ?? null
   )
-}
-
-function formatLockboxExpiry(expiresAt: string) {
-  return new Date(expiresAt).toLocaleTimeString("zh-CN", {
-    hour: "2-digit",
-    minute: "2-digit",
-  })
 }
 
 function sortFragmentsForDisplay(fragments: Fragment[]) {

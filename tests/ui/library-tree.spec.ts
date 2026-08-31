@@ -7,8 +7,27 @@ interface LibraryCall {
   command: string
 }
 
-async function installLibraryTreeMock(page: Page) {
-  await page.addInitScript(() => {
+interface LockboxMockState {
+  configured: boolean
+  unlocked: boolean
+  expiresAt: string | null
+  ttlSeconds: number
+}
+
+// 全局默认是「密匣未配置」的初始态；需要解锁态的用例自行传入覆盖，
+// 不要改这里的默认值（否则未配置引导流程的用例会拿到错误前提）。
+const DEFAULT_LOCKBOX_STATE: LockboxMockState = {
+  configured: false,
+  unlocked: false,
+  expiresAt: null,
+  ttlSeconds: 900,
+}
+
+async function installLibraryTreeMock(
+  page: Page,
+  lockboxState: LockboxMockState = DEFAULT_LOCKBOX_STATE
+) {
+  await page.addInitScript((lockbox: LockboxMockState) => {
     const now = "2026-08-30T10:00:00.000Z"
     const fragments = [
       {
@@ -157,12 +176,7 @@ async function installLibraryTreeMock(page: Page) {
               vaultPath: "/tmp/shard-library-tree-test",
               fragments,
               git,
-              lockbox: {
-                configured: true,
-                unlocked: true,
-                expiresAt: null,
-                ttlSeconds: 900,
-              },
+              lockbox,
             })
           }
           if (command === "list_library_tree") return snapshot()
@@ -273,19 +287,14 @@ async function installLibraryTreeMock(page: Page) {
               vaultPath: "/tmp/shard-library-tree-test",
               fragments,
               git,
-              lockbox: {
-                configured: true,
-                unlocked: true,
-                expiresAt: null,
-                ttlSeconds: 900,
-              },
+              lockbox,
             })
           }
           throw new Error(`Unhandled Tauri test command: ${command}`)
         },
       },
     })
-  })
+  }, lockboxState)
 }
 
 async function commandCalls(page: Page, command: string) {
@@ -351,7 +360,30 @@ test("碎片与笔记通过菜单双向搬移并刷新资料库树", async ({ pa
   await expect(treePane.getByRole("button", { name: "八月灵感.md", exact: true })).toHaveCount(0)
 })
 
+test("未配置密匣时点击树上挂载点直接进入设置流程", async ({ page }) => {
+  await page.getByRole("button", { name: "资料库", exact: true }).click()
+  const treePane = page.getByRole("complementary", { name: "资料库目录" })
+
+  const mount = treePane.getByRole("button", {
+    name: "密匣（上锁空间）",
+    exact: true,
+  })
+  await expect(mount).toBeVisible()
+  // 挂载点是一扇门不是文件夹：无展开箭头、不列子文件
+  await expect(mount.locator("svg")).toHaveCount(1)
+  await mount.click()
+  await expect(page.getByRole("heading", { name: "设置密匣" })).toBeVisible()
+})
+
 test("解锁密匣后从资料库菜单移入笔记并刷新资料库树", async ({ page }) => {
+  // 本用例需要已配置且解锁的密匣：局部覆盖全局的「未配置」默认 mock
+  await installLibraryTreeMock(page, {
+    configured: true,
+    unlocked: true,
+    expiresAt: null,
+    ttlSeconds: 900,
+  })
+  await page.goto("/")
   await page.getByRole("button", { name: "资料库", exact: true }).click()
   const treePane = page.getByRole("complementary", { name: "资料库目录" })
   const note = treePane.getByRole("button", { name: "旧笔记.md", exact: true })

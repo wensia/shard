@@ -50,7 +50,7 @@ export function useLockbox() {
 }
 
 interface LockboxSecurityEffectsOptions {
-  autoLock: (options?: { returnToTagged?: boolean }) => void
+  autoLock: (options?: { returnToLibrary?: boolean }) => void
   insightIncludeLockbox: boolean
   insightUnlockIntentRef: MutableRefObject<boolean>
   lockbox: LockboxState | null
@@ -71,9 +71,9 @@ export function useLockboxSecurityEffects({
   const autoLockRef = useRef(autoLock)
   autoLockRef.current = autoLock
 
-  // 密匣视图是唯一安全区，离开即自动上锁；洞察仅在本次已勾选或正在重新校验时豁免。
+  // 密匣空间是唯一安全区，离开即自动上锁；洞察仅在本次已勾选或正在重新校验时豁免。
   useEffect(() => {
-    if (route.space === "fragments" && route.params.filter === "lockbox") {
+    if (route.space === "lockbox") {
       return
     }
     if (
@@ -87,12 +87,9 @@ export function useLockboxSecurityEffects({
     autoLockRef.current()
   }, [route, lockbox?.unlocked, insightIncludeLockbox, insightUnlockIntentRef])
 
-  // 密匣页与含密匣洞察共享既有的 3 分钟活动计时语义。
+  // 密匣空间与含密匣洞察共享既有的 3 分钟活动计时语义。
   useEffect(() => {
-    const isLockboxIdleScope =
-      route.space === "fragments" &&
-      route.params.filter === "lockbox" &&
-      lockbox?.unlocked
+    const isLockboxIdleScope = route.space === "lockbox" && lockbox?.unlocked
     const isInsightIdleScope =
       route.space === "review" &&
       route.params.mode === "insight" &&
@@ -102,7 +99,7 @@ export function useLockboxSecurityEffects({
 
     const onIdleTimeout = () => {
       autoLockRef.current(
-        isLockboxIdleScope ? { returnToTagged: true } : undefined
+        isLockboxIdleScope ? { returnToLibrary: true } : undefined
       )
     }
 

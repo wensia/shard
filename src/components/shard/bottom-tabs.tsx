@@ -6,7 +6,6 @@ import {
   HistoryIcon,
   InboxIcon,
   KeyboardIcon,
-  LockKeyholeIcon,
   Maximize2Icon,
   MoreHorizontalIcon,
   SearchIcon,
@@ -80,6 +79,7 @@ const SPACE_TABS: Array<{
   },
 ]
 
+// 密匣不在底部标签栏：入口是资料库树上的上锁挂载点（传送门模型）
 const FRAGMENT_TABS: Array<{
   id: FragmentWorkspaceFilter
   label: string
@@ -87,7 +87,6 @@ const FRAGMENT_TABS: Array<{
 }> = [
   { id: "inbox", label: "收件箱", icon: InboxIcon },
   { id: "tagged", label: "标签", icon: TagIcon },
-  { id: "lockbox", label: "密匣", icon: LockKeyholeIcon },
   { id: "archive", label: "归档", icon: ArchiveIcon },
 ]
 

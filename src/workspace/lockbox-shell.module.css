@@ -1,0 +1,81 @@
+/* 密匣空间的笔记树：几何对齐资料库树（treeButton 规格），全部消费 Kiln token */
+
+.notesTree {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  border-bottom: 1px solid var(--border);
+  padding-bottom: var(--space-3);
+}
+
+.notesTreeHeader {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  color: var(--muted-foreground);
+  font-size: var(--text-small);
+  font-weight: 500;
+}
+
+.notesTreeHeader svg {
+  flex: none;
+}
+
+.notesTreeCount {
+  margin-left: auto;
+}
+
+.tree,
+.tree ul {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-0\.5);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.tree ul {
+  padding-left: var(--space-3);
+}
+
+.treeButton {
+  display: flex;
+  min-width: 0;
+  min-height: var(--control-height-sm);
+  width: 100%;
+  align-items: center;
+  gap: var(--space-2);
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  padding: var(--space-1) var(--space-2);
+  color: var(--foreground);
+  font-size: var(--text-body);
+  text-align: left;
+  cursor: pointer;
+}
+
+.treeButton:hover {
+  background: var(--muted);
+}
+
+.treeButton:focus-visible {
+  outline: none;
+  box-shadow: var(--ring-focus);
+}
+
+.treeButton svg,
+.treeIndentIcon {
+  width: var(--space-4);
+  height: var(--space-4);
+  flex: none;
+}
+
+.treeLabel {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
