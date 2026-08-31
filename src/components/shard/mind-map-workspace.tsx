@@ -1,4 +1,13 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react"
 import { isTauri } from "@tauri-apps/api/core"
 import {
   AlertTriangleIcon,
@@ -14,6 +23,7 @@ import { toast } from "sonner"
 
 import { MindMapCanvasEditor } from "@/components/shard/mind-map-canvas-editor"
 import { MindMapOutlineEditor } from "@/components/shard/mind-map-outline-editor"
+import { ZenSurface } from "@/components/shard/zen-surface"
 import {
   getApiErrorMessage,
   listMindMaps,
@@ -29,10 +39,22 @@ import type { MindMapReadResult, MindMapSummary, ShardMapFile } from "@/types"
 
 import styles from "./mind-map-workspace.module.css"
 
-interface MindMapWorkspaceProps {
+export interface MindMapWorkspaceProps {
   mapId: string
   onClose: () => void
   onMapsChange?: (maps: MindMapSummary[]) => void
+}
+
+export interface MindMapCanvasProps {
+  mapId: string
+  onMapsChange?: (maps: MindMapSummary[]) => void
+  surface?: (canvas: ReactNode) => ReactNode
+  toolbarLeading?: ReactNode
+}
+
+export interface MindMapCanvasHandle {
+  requestClose: () => boolean
+  save: () => Promise<boolean>
 }
 
 type MindMapWorkspaceView = "map" | "outline"
@@ -46,11 +68,15 @@ type ConflictState = {
 const AUTO_SAVE_DELAY_MS = 1200
 const UNDO_STACK_LIMIT = 100
 
-export function MindMapWorkspace({
+export const MindMapCanvas = forwardRef<
+  MindMapCanvasHandle,
+  MindMapCanvasProps
+>(function MindMapCanvas({
   mapId,
-  onClose,
   onMapsChange,
-}: MindMapWorkspaceProps) {
+  surface,
+  toolbarLeading,
+}, ref) {
   const [readResult, setReadResult] = useState<MindMapReadResult | null>(null)
   const [draftFile, setDraftFile] = useState<ShardMapFile | null>(null)
   const [view, setView] = useState<MindMapWorkspaceView>("map")
@@ -67,6 +93,7 @@ export function MindMapWorkspace({
   const undoStackRef = useRef<ShardMapFile[]>([])
   const redoStackRef = useRef<ShardMapFile[]>([])
   const lastMergeKeyRef = useRef<string | null>(null)
+  const rootRef = useRef<HTMLElement | null>(null)
   draftFileRef.current = draftFile
   const isSaving = saveMode !== null
   // 时间戳归一化比较：撤销回到已保存内容时不算 dirty、不触发写盘。
@@ -178,18 +205,21 @@ export function MindMapWorkspace({
     [draftFile, isSaving, readResult, refreshSummaries]
   )
 
-  const saveAndCloseWorkspace = useCallback(async () => {
-    if (await save("manual")) {
-      onClose()
-    }
-  }, [onClose, save])
-
-  const closeWorkspace = useCallback(() => {
+  const requestClose = useCallback(() => {
     if (isDirty && !window.confirm("思维导图有未保存修改，确定返回吗？")) {
-      return
+      return false
     }
-    onClose()
-  }, [isDirty, onClose])
+    return true
+  }, [isDirty])
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      requestClose,
+      save: () => save("manual"),
+    }),
+    [requestClose, save]
+  )
 
   const updateDraft = useCallback(
     (file: ShardMapFile, meta?: MindMapChangeMeta) => {
@@ -302,37 +332,19 @@ export function MindMapWorkspace({
   }, [draftFile])
 
   useEffect(() => {
-    if (!isTauri()) return
-
-    void setWindowControlsHidden(true).catch((error) => {
-      console.warn("Unable to hide window controls for mind map editor", error)
-    })
-
-    return () => {
-      void setWindowControlsHidden(false).catch((error) => {
-        console.warn("Unable to restore window controls", error)
-      })
-    }
-  }, [])
-
-  useEffect(() => {
     function handleShortcut(event: KeyboardEvent) {
       const isComposing =
         event.isComposing || event.key === "Process" || event.keyCode === 229
       if (isComposing) return
 
-      if (
-        (event.metaKey || event.ctrlKey) &&
-        event.key === "Enter"
-      ) {
-        event.preventDefault()
-        void saveAndCloseWorkspace()
-        return
-      }
+      const target = event.target
+      if (!(target instanceof Node) || !rootRef.current?.contains(target)) return
 
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
-        event.preventDefault()
-        void save()
+        if (!event.defaultPrevented) {
+          event.preventDefault()
+          void save()
+        }
         return
       }
 
@@ -358,7 +370,7 @@ export function MindMapWorkspace({
 
     window.addEventListener("keydown", handleShortcut)
     return () => window.removeEventListener("keydown", handleShortcut)
-  }, [redoDraft, save, saveAndCloseWorkspace, undoDraft])
+  }, [redoDraft, save, undoDraft])
 
   useEffect(() => {
     if (!isDirty || !draftFile || !readResult || isSaving || conflict || autoSaveError) return
@@ -370,19 +382,31 @@ export function MindMapWorkspace({
     return () => window.clearTimeout(timeoutId)
   }, [autoSaveError, conflict, draftFile, isDirty, isSaving, readResult, save])
 
-  return (
-    <div
-      className="fixed inset-0 z-50 flex min-h-0 flex-col overflow-hidden"
+  // 导图就绪后把焦点收进画布根节点：快捷键 handler 以 rootRef.contains(target)
+  // 限定作用域（避免嵌在第三栏时全局劫持 Tab），焦点若留在外部按钮或 body 上，
+  // Tab 拦截不会触发，默认焦点迁移就会把焦点甩到底部全局操作区。
+  useEffect(() => {
+    if (!draftFile) return
+    if (rootRef.current?.contains(document.activeElement)) return
+    rootRef.current?.focus({ preventScroll: true })
+  }, [draftFile])
+
+  const canvas = (
+    <section
+      aria-label="思维导图画布"
+      className={styles.canvas}
+      onPointerDownCapture={() => {
+        if (!rootRef.current?.contains(document.activeElement)) {
+          rootRef.current?.focus({ preventScroll: true })
+        }
+      }}
+      ref={rootRef}
       style={{
         background: "var(--background)",
         color: "var(--foreground)",
       }}
+      tabIndex={-1}
     >
-      <div
-        aria-hidden="true"
-        data-tauri-drag-region
-        style={{ flexShrink: 0, height: "var(--shard-top-inset)" }}
-      />
       <main
         style={{
           background: "var(--background)",
@@ -512,16 +536,7 @@ export function MindMapWorkspace({
             boxShadow: "var(--shard-composer-shadow)",
           }}
         >
-          <Button
-            aria-label="退出思维导图"
-            onClick={closeWorkspace}
-            size="icon-sm"
-            title="退出思维导图（Cmd/Ctrl+Enter 保存并关闭）"
-            variant="ghost"
-          >
-            <XIcon aria-hidden="true" />
-            <span className="sr-only">退出思维导图</span>
-          </Button>
+          {toolbarLeading}
 
           {draftFile ? (
             <Button
@@ -575,6 +590,87 @@ export function MindMapWorkspace({
           </Button>
         </div>
       </footer>
-    </div>
+    </section>
+  )
+
+  return surface ? surface(canvas) : canvas
+})
+
+export function MindMapWorkspace({
+  mapId,
+  onClose,
+  onMapsChange,
+}: MindMapWorkspaceProps) {
+  const canvasRef = useRef<MindMapCanvasHandle>(null)
+
+  const closeWorkspace = useCallback(() => {
+    if (canvasRef.current?.requestClose() ?? true) {
+      onClose()
+    }
+  }, [onClose])
+
+  const saveAndCloseWorkspace = useCallback(async () => {
+    if (await canvasRef.current?.save()) {
+      onClose()
+    }
+  }, [onClose])
+
+  useEffect(() => {
+    if (!isTauri()) return
+
+    void setWindowControlsHidden(true).catch((error) => {
+      console.warn("Unable to hide window controls for mind map editor", error)
+    })
+
+    return () => {
+      void setWindowControlsHidden(false).catch((error) => {
+        console.warn("Unable to restore window controls", error)
+      })
+    }
+  }, [])
+
+  useEffect(() => {
+    function handleShortcut(event: KeyboardEvent) {
+      const isComposing =
+        event.isComposing || event.key === "Process" || event.keyCode === 229
+      if (
+        isComposing ||
+        !(event.metaKey || event.ctrlKey) ||
+        event.key !== "Enter"
+      ) {
+        return
+      }
+
+      event.preventDefault()
+      void saveAndCloseWorkspace()
+    }
+
+    window.addEventListener("keydown", handleShortcut)
+    return () => window.removeEventListener("keydown", handleShortcut)
+  }, [saveAndCloseWorkspace])
+
+  return (
+    <ZenSurface
+      ariaLabel="思维导图工作区"
+      onRequestClose={closeWorkspace}
+    >
+      <MindMapCanvas
+        mapId={mapId}
+        onMapsChange={onMapsChange}
+        ref={canvasRef}
+        toolbarLeading={
+          <Button
+            aria-label="退出思维导图"
+            onClick={closeWorkspace}
+            size="icon-sm"
+            title="退出思维导图（Cmd/Ctrl+Enter 保存并关闭）"
+            variant="ghost"
+          >
+            <XIcon aria-hidden="true" />
+            <span className="sr-only">退出思维导图</span>
+          </Button>
+        }
+      />
+    </ZenSurface>
   )
 }

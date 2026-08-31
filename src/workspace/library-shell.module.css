@@ -218,6 +218,16 @@
   background: var(--primary-subtle);
 }
 
+.treeButton[data-selected="true"] {
+  border: 1px solid
+    color-mix(
+      in srgb,
+      var(--primary) var(--shard-alpha-21),
+      transparent
+    );
+  background: var(--primary-subtle);
+}
+
 .treeButton {
   display: flex;
   min-width: 0;
@@ -294,12 +304,21 @@
 }
 
 .noteListViewport,
-.editorViewport {
+.editorViewport,
+.mindMapViewport {
   min-height: 0;
   min-width: 0;
   flex: 1;
-  overflow: auto;
   overscroll-behavior: contain;
+}
+
+.noteListViewport,
+.editorViewport {
+  overflow: auto;
+}
+
+.mindMapViewport {
+  overflow: hidden;
 }
 
 .noteList {
@@ -388,6 +407,33 @@
 }
 
 .editorViewport :global(.cm-scroller) {
+  overflow: visible;
+}
+
+.zenNoteViewport,
+.zenMindMapViewport {
+  min-height: 0;
+  min-width: 0;
+  height: 100%;
+}
+
+.zenNoteViewport {
+  overflow: auto;
+  padding: var(--space-6);
+  overscroll-behavior: contain;
+}
+
+.zenMindMapViewport {
+  overflow: hidden;
+}
+
+.zenNoteViewport :global(.shard-editor),
+.zenNoteViewport :global(.cm-editor),
+.zenNoteViewport :global(.cm-scroller) {
+  min-height: 100%;
+}
+
+.zenNoteViewport :global(.cm-scroller) {
   overflow: visible;
 }
 

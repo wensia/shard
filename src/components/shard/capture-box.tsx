@@ -53,8 +53,12 @@ import {
   TABLE_DOCUMENT_FILTER,
   useTableDocumentDrop,
 } from "@/lib/use-table-document-drop"
-import { buildCsvWikilinkCandidates, buildWikilinkCandidates } from "@/lib/wikilink"
-import type { CsvFileSummary, Fragment } from "@/types"
+import {
+  buildCsvWikilinkCandidates,
+  buildMindMapWikilinkCandidates,
+  buildWikilinkCandidates,
+} from "@/lib/wikilink"
+import type { CsvFileSummary, Fragment, MindMapSummary } from "@/types"
 
 import styles from "./capture-box.module.css"
 
@@ -64,8 +68,10 @@ interface CaptureBoxProps {
   fragments: Fragment[]
   isCreating: boolean
   knownTags: string[]
+  mindMaps?: MindMapSummary[]
   onCreate: (content: string, tags: string[]) => void | Promise<void>
   onNavigateToFragment?: (fragmentId: string) => void
+  onOpenMindMap?: (map: MindMapSummary) => void
   onOpenZen?: (content: string) => void
 }
 
@@ -83,8 +89,10 @@ export function CaptureBox({
   fragments,
   isCreating,
   knownTags,
+  mindMaps = [],
   onCreate,
   onNavigateToFragment,
+  onOpenMindMap,
   onOpenZen,
 }: CaptureBoxProps) {
   const [content, setContent] = useState("")
@@ -112,8 +120,9 @@ export function CaptureBox({
     () => [
       ...buildWikilinkCandidates(fragments),
       ...buildCsvWikilinkCandidates(csvFiles),
+      ...buildMindMapWikilinkCandidates(mindMaps),
     ],
-    [csvFiles, fragments]
+    [csvFiles, fragments, mindMaps]
   )
   const wikilinkCandidatesRef = useRef(wikilinkCandidates)
   const wikilinkNavigateRef = useRef(onNavigateToFragment)
@@ -143,8 +152,12 @@ export function CaptureBox({
           toast(`待建链接「${target}」尚不存在，可在资料库新建笔记`),
         onNavigate: (fragmentId) =>
           wikilinkNavigateRef.current?.(fragmentId),
+        onNavigateToMindMap: (path) => {
+          const map = mindMaps.find((candidate) => candidate.path === path)
+          if (map) onOpenMindMap?.(map)
+        },
       }),
-    [wikilinkCandidates]
+    [mindMaps, onOpenMindMap, wikilinkCandidates]
   )
   const codeMirrorExtensionSet = useMemo(
     () => [tagAutocompleteExtension, wikilinkExtension],

@@ -147,6 +147,7 @@ async function installLibraryMock(page: Page, includeNotes = true) {
                     },
                   ]
                 : [],
+              mindMaps: [],
               fragmentStream: { totalCount: 0, years: [] },
             }
           }
@@ -167,6 +168,7 @@ async function installLibraryMock(page: Page, includeNotes = true) {
                       },
                     ]
                   : [],
+                mindMaps: [],
                 fragmentStream: { totalCount: 0, years: [] },
               },
               migratedCount: 0,
@@ -184,6 +186,7 @@ async function installLibraryMock(page: Page, includeNotes = true) {
             return {
               tree: {
                 entries: [],
+                mindMaps: [],
                 fragmentStream: { totalCount: 0, years: [] },
               },
               fragment: null,
@@ -381,7 +384,7 @@ test("窄屏资料库使用列表与编辑器两级导航", async ({ page }) => 
   await page.getByRole("button", { name: "资料库", exact: true }).click()
 
   const list = page.getByRole("complementary", { name: "资料库目录" })
-  const editor = page.getByRole("article", { name: "笔记编辑器" })
+  const editor = page.getByRole("article", { name: "资料库查看器" })
   await expect(list).toBeVisible()
   await expect(editor).toBeHidden()
 

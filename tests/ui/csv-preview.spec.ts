@@ -125,6 +125,7 @@ async function installCsvPreviewMock(page: Page) {
                   kind: "markdown",
                 },
               ],
+              mindMaps: [],
               fragmentStream: { totalCount: 0, years: [] },
             }
           }
@@ -138,6 +139,7 @@ async function installCsvPreviewMock(page: Page) {
                     kind: "markdown",
                   },
                 ],
+                mindMaps: [],
                 fragmentStream: { totalCount: 0, years: [] },
               },
               migratedCount: 0,
@@ -155,6 +157,7 @@ async function installCsvPreviewMock(page: Page) {
             return {
               tree: {
                 entries: [],
+                mindMaps: [],
                 fragmentStream: { totalCount: 0, years: [] },
               },
               fragment: null,

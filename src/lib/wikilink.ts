@@ -1,6 +1,6 @@
 import { deriveNoteTitle } from "@/lib/content-kind"
 import { markdownToSearchText } from "@/lib/fragment-search"
-import type { CsvFileSummary, Fragment } from "@/types"
+import type { CsvFileSummary, Fragment, MindMapSummary } from "@/types"
 
 export interface WikilinkMatch {
   alias?: string
@@ -12,7 +12,7 @@ export interface WikilinkMatch {
 
 export interface WikilinkCandidate {
   fragmentId?: string
-  kind: Fragment["kind"] | "csv"
+  kind: Fragment["kind"] | "csv" | "mindmap"
   label: string
   matchKeys: string[]
   path?: string
@@ -77,6 +77,20 @@ export function buildCsvWikilinkCandidates(
     ),
     path: file.path,
     target: file.path,
+  }))
+}
+
+export function buildMindMapWikilinkCandidates(
+  maps: readonly MindMapSummary[]
+): WikilinkCandidate[] {
+  return maps.map((map) => ({
+    kind: "mindmap",
+    label: map.title,
+    matchKeys: Array.from(
+      new Set([map.path, map.title].map(normalizeWikilinkTarget).filter(Boolean))
+    ),
+    path: map.path,
+    target: map.title,
   }))
 }
 

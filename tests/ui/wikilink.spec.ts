@@ -139,6 +139,7 @@ async function installWikilinkMock(page: Page) {
                   kind: "markdown",
                 },
               ],
+              mindMaps: [],
               fragmentStream: { totalCount: 0, years: [] },
             }
           }
@@ -157,6 +158,7 @@ async function installWikilinkMock(page: Page) {
                     kind: "markdown",
                   },
                 ],
+                mindMaps: [],
                 fragmentStream: { totalCount: 0, years: [] },
               },
               migratedCount: 0,
@@ -174,6 +176,7 @@ async function installWikilinkMock(page: Page) {
             return {
               tree: {
                 entries: [],
+                mindMaps: [],
                 fragmentStream: { totalCount: 0, years: [] },
               },
               fragment: null,

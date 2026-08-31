@@ -47,6 +47,8 @@
     --shard-alpha-34: 34%;
     --shard-alpha-55: 55%;
     --shard-alpha-89: 89%;
+    /* Full-screen editor surface; dialogs and menus retain Kiln's z-50 layer. */
+    --shard-z-zen: 40;
   }
 
   textarea,

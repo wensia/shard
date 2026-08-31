@@ -1844,10 +1844,12 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
               fragments: publicOnlyFragments,
               isCreating,
               knownTags,
+              mindMaps,
               onCreate: handleCreate,
               onNavigateToFragment: (fragmentId) => {
                 void handleNavigateToFragment(fragmentId)
               },
+              onOpenMindMap: (map) => void openMindMap(map),
               onOpenZen: openZenDraft,
             }}
             filter={route.params.filter}
@@ -1941,14 +1943,17 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
             fragments={publicActiveFragments}
             isLoading={isLoading}
             libraryTree={libraryTree}
+            mindMaps={mindMaps}
             knownTags={knownTags}
             navigateToNote={pendingLibraryNavigation}
             onNavigateToFragment={(fragmentId) => {
               void handleNavigateToFragment(fragmentId)
             }}
             onLibraryMutation={handleLibraryMutation}
+            onMindMapsChange={setMindMaps}
             onMoveToLockbox={handleMoveFragmentToLockbox}
             onOpenLockbox={openLockboxGate}
+            onOpenMindMap={(map) => void openMindMap(map)}
             onRefreshFragments={refreshFragments}
             onRegisterSaveHandler={registerLibrarySaveHandler}
             onSave={handleUpdateFragment}

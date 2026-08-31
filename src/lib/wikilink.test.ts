@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest"
 
-import { buildCsvWikilinkCandidates, parseWikilinks } from "@/lib/wikilink"
+import {
+  buildCsvWikilinkCandidates,
+  buildMindMapWikilinkCandidates,
+  parseWikilinks,
+  resolveWikilinkTarget,
+} from "@/lib/wikilink"
 
 describe("parseWikilinks", () => {
   it("解析目标与别名", () => {
@@ -63,5 +68,36 @@ describe("buildCsvWikilinkCandidates", () => {
           target: "data/report.csv",
         },
       ])
+  })
+})
+
+describe("buildMindMapWikilinkCandidates", () => {
+  const maps = [{
+    id: "map-1",
+    title: "项目导图",
+    createdAt: "2026-08-31T00:00:00.000Z",
+    updatedAt: "2026-08-31T00:00:00.000Z",
+    nodeCount: 1,
+    path: "maps/project.shardmap.json",
+  }]
+
+  it("同时用相对路径与标题匹配，并以标题写回", () => {
+    expect(buildMindMapWikilinkCandidates(maps)).toEqual([
+      {
+        kind: "mindmap",
+        label: "项目导图",
+        matchKeys: ["maps/project.shardmap.json", "项目导图"],
+        path: "maps/project.shardmap.json",
+        target: "项目导图",
+      },
+    ])
+  })
+
+  it("按导图标题解析 mindmap 候选", () => {
+    const [link] = parseWikilinks("查看 [[项目导图]]")
+    expect(resolveWikilinkTarget(
+      link.target,
+      buildMindMapWikilinkCandidates(maps)
+    )).toMatchObject({ kind: "mindmap", path: "maps/project.shardmap.json" })
   })
 })

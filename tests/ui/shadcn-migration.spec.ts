@@ -310,12 +310,14 @@ async function installTauriMock(
             case "list_library_tree":
               return {
                 entries: [],
+                mindMaps: [],
                 fragmentStream: { totalCount: 0, years: [] },
               }
             case "migrate_legacy_notes":
               return {
                 tree: {
                   entries: [],
+                  mindMaps: [],
                   fragmentStream: { totalCount: 0, years: [] },
                 },
                 migratedCount: 0,
@@ -330,6 +332,7 @@ async function installTauriMock(
               return {
                 tree: {
                   entries: [],
+                  mindMaps: [],
                   fragmentStream: { totalCount: 0, years: [] },
                 },
                 fragment: null,

@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test"
 
-import { readEditor } from "./editor-helpers"
+import { fillEditor, readEditor } from "./editor-helpers"
 
 interface LibraryCall {
   args: Record<string, unknown>
@@ -107,6 +107,36 @@ async function installLibraryTreeMock(
       { name: "旧笔记.md", path: "notes/旧笔记.md", kind: "markdown" },
       { name: "清单.csv", path: "notes/清单.csv", kind: "csv" },
     ] as Array<Record<string, unknown>>
+    const mindMapSummary = {
+      id: "map-project",
+      title: "项目导图",
+      createdAt: now,
+      updatedAt: now,
+      nodeCount: 1,
+      path: "maps/project.shardmap.json",
+    }
+    const mindMapFile = {
+      kind: "shard.map",
+      schemaVersion: 1,
+      id: mindMapSummary.id,
+      title: mindMapSummary.title,
+      createdAt: now,
+      updatedAt: now,
+      savedWithAppVersion: "0.1.3-test",
+      revision: 1,
+      rootId: "root",
+      hasProtectedLinks: false,
+      nodes: {
+        root: {
+          id: "root",
+          parentId: null,
+          sortKey: "a",
+          text: mindMapSummary.title,
+          createdAt: now,
+          updatedAt: now,
+        },
+      },
+    }
     const calls: LibraryCall[] = []
     const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T
     const git = {
@@ -120,6 +150,11 @@ async function installLibraryTreeMock(
     }
     const snapshot = () => ({
       entries: clone(entries),
+      mindMaps: [{
+        name: mindMapSummary.title,
+        path: mindMapSummary.path,
+        kind: "mindmap",
+      }],
       fragmentStream: {
         totalCount: fragments.filter((item) => !item.tags.includes("note")).length,
         years: [
@@ -183,7 +218,18 @@ async function installLibraryTreeMock(
           if (command === "migrate_legacy_notes") {
             return { tree: snapshot(), migratedCount: 0 }
           }
-          if (command === "list_mind_maps" || command === "list_csv_files") return []
+          if (command === "list_mind_maps") return clone([mindMapSummary])
+          if (command === "read_mind_map") {
+            return {
+              file: clone(mindMapFile),
+              path: mindMapSummary.path,
+              lastSavedHash: "map-hash",
+            }
+          }
+          if (command === "save_fragment_image") {
+            return `assets/${String(args.fileName)}`
+          }
+          if (command === "list_csv_files") return []
           if (command === "restore_window_frame" || command === "open_csv_file") return null
           if (command === "plugin:app|version") return "0.1.3-test"
           if (command === "sync_vault") return clone(git)
@@ -335,6 +381,134 @@ test("资料库文件树只展示 notes 内容，碎片流止于年月并写入�
   await expect.poll(() => page.evaluate(() => localStorage.getItem("shard.workspace-route"))).toBe(
     JSON.stringify({ space: "fragments", params: { filter: "inbox", month: "2026-08" } })
   )
+})
+
+test("资料库思维导图在第三栏打开并保留侧栏与目录树", async ({ page }) => {
+  await page.getByRole("button", { name: "资料库", exact: true }).click()
+  const treePane = page.getByRole("complementary", { name: "资料库目录" })
+  const sidebar = page.getByRole("navigation", { name: "工作台导航" })
+
+  await treePane.getByRole("button", { name: "思维导图（1）", exact: true }).click()
+  const mapEntry = treePane.getByRole("button", { name: "项目导图", exact: true })
+  await expect(mapEntry).toBeVisible()
+  await expect(
+    treePane.getByRole("button", { name: "项目导图 操作", exact: true })
+  ).toHaveCount(0)
+
+  await mapEntry.click()
+  await expect(page.getByLabel("思维导图编辑器", { exact: true })).toBeVisible()
+  await expect(sidebar).toBeVisible()
+  await expect(treePane).toBeVisible()
+  await expect(mapEntry).toBeVisible()
+  await expect(
+    page.getByRole("button", { name: "退出思维导图", exact: true })
+  ).toHaveCount(0)
+})
+
+test("资料库笔记禅模式进出后保留同一份草稿", async ({ page }) => {
+  await page.getByRole("button", { name: "资料库", exact: true }).click()
+  const treePane = page.getByRole("complementary", { name: "资料库目录" })
+  await treePane.getByRole("button", { name: "项目", exact: true }).click()
+  await treePane.getByRole("button", { name: "项目计划.md", exact: true }).click()
+
+  const editorId = "library:note-plan"
+  const zenDraft = "# 项目计划\n禅模式共用草稿"
+  await fillEditor(page, editorId, zenDraft)
+  await page.getByRole("button", { name: "进入禅模式", exact: true }).click()
+
+  const zenSurface = page.getByLabel("资料库笔记禅模式", { exact: true })
+  await expect(zenSurface).toBeVisible()
+  await expect.poll(() => readEditor(page, editorId)).toBe(zenDraft)
+
+  const editedInZen = `${zenDraft}\n退出后仍然存在`
+  await fillEditor(page, editorId, editedInZen)
+  await page.keyboard.press("Escape")
+
+  await expect(zenSurface).toHaveCount(0)
+  await expect(treePane).toBeVisible()
+  await expect(page.locator(`[data-shard-editor="${editorId}"]`)).toBeVisible()
+  await expect.poll(() => readEditor(page, editorId)).toBe(editedInZen)
+})
+
+test("资料库思维导图可进入并退出禅模式", async ({ page }) => {
+  await page.getByRole("button", { name: "资料库", exact: true }).click()
+  const treePane = page.getByRole("complementary", { name: "资料库目录" })
+  await treePane.getByRole("button", { name: "思维导图（1）", exact: true }).click()
+  await treePane.getByRole("button", { name: "项目导图", exact: true }).click()
+  await expect(page.getByLabel("思维导图编辑器", { exact: true })).toBeVisible()
+
+  await page.getByRole("button", { name: "进入禅模式", exact: true }).click()
+  const zenSurface = page.getByLabel("资料库思维导图禅模式", { exact: true })
+  await expect(zenSurface).toBeVisible()
+  await expect(
+    zenSurface.getByLabel("思维导图编辑器", { exact: true })
+  ).toBeVisible()
+
+  await page.keyboard.press("Escape")
+  await expect(zenSurface).toHaveCount(0)
+  await expect(treePane).toBeVisible()
+  await expect(page.getByLabel("思维导图编辑器", { exact: true })).toBeVisible()
+})
+
+test("碎片禅编辑器仍可打开并通过 Escape 关闭", async ({ page }) => {
+  const fragmentCard = page.locator('[data-shard-fragment-id="fragment-august"]')
+  await fragmentCard.getByRole("button", { name: "片段操作", exact: true }).click()
+  await page.getByRole("menuitem", { name: "禅模式", exact: true }).click()
+
+  const zenEditor = page.getByLabel("禅模式片段编辑器", { exact: true })
+  await expect(zenEditor).toBeVisible()
+  await page.keyboard.press("Escape")
+
+  await expect(zenEditor).toHaveCount(0)
+  await expect(fragmentCard).toBeVisible()
+})
+
+test("侧栏思维导图入口仍打开原有全屏工作区", async ({ page }) => {
+  const sidebar = page.getByRole("navigation", { name: "工作台导航" })
+  await sidebar.getByRole("button", { name: "思维导图 1", exact: true }).click()
+  await page.getByLabel("打开思维导图：项目导图", { exact: true }).click()
+
+  const exitButton = page.getByRole("button", {
+    name: "退出思维导图",
+    exact: true,
+  })
+  await expect(exitButton).toBeVisible()
+  await expect(page.getByLabel("思维导图编辑器", { exact: true })).toBeVisible()
+  await expect(sidebar).toHaveCount(0)
+
+  await exitButton.click()
+  await expect(exitButton).toHaveCount(0)
+  await expect(sidebar).toBeVisible()
+})
+
+test("资料库笔记粘贴图片会调用共享上传命令", async ({ page }) => {
+  await page.getByRole("button", { name: "资料库", exact: true }).click()
+  const treePane = page.getByRole("complementary", { name: "资料库目录" })
+  await treePane.getByRole("button", { name: "项目", exact: true }).click()
+  await treePane.getByRole("button", { name: "项目计划.md", exact: true }).click()
+
+  const editor = page.locator('[data-shard-editor="library:note-plan"]')
+  await editor.locator(".cm-content").evaluate((element) => {
+    const clipboardData = new DataTransfer()
+    clipboardData.items.add(
+      new File([new Uint8Array([137, 80, 78, 71])], "library-paste.png", {
+        type: "image/png",
+      })
+    )
+    element.dispatchEvent(
+      new ClipboardEvent("paste", {
+        bubbles: true,
+        cancelable: true,
+        clipboardData,
+      })
+    )
+  })
+
+  await expect.poll(() => commandCalls(page, "save_fragment_image")).toHaveLength(1)
+  expect((await commandCalls(page, "save_fragment_image"))[0].args).toEqual({
+    bytes: [137, 80, 78, 71],
+    fileName: "library-paste.png",
+  })
 })
 
 test("碎片与笔记通过菜单双向搬移并刷新资料库树", async ({ page }) => {

@@ -17,12 +17,16 @@ import {
   FileTextIcon,
   FolderIcon,
   FolderPlusIcon,
+  GitBranchIcon,
   LockKeyholeIcon,
+  Maximize2Icon,
   MoreHorizontalIcon,
 } from "lucide-react"
 import { toast } from "sonner"
 
 import { FragmentBacklinksPanel } from "@/components/shard/fragment-related"
+import { MindMapCanvas } from "@/components/shard/mind-map-workspace"
+import { ZenSurface } from "@/components/shard/zen-surface"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -61,14 +65,20 @@ import {
 } from "@/lib/api"
 import { deriveKind } from "@/lib/content-kind"
 import { extractTags, normalizeTagList } from "@/lib/editor-format"
+import { useImageUpload } from "@/hooks/use-image-upload"
 import { useFragmentRelations } from "@/lib/use-fragment-relations"
-import { buildCsvWikilinkCandidates, buildWikilinkCandidates } from "@/lib/wikilink"
+import {
+  buildCsvWikilinkCandidates,
+  buildMindMapWikilinkCandidates,
+  buildWikilinkCandidates,
+} from "@/lib/wikilink"
 import type {
   CsvFileSummary,
   Fragment,
   LibraryMutationResult,
   LibraryTreeEntry,
   LibraryTreeSnapshot,
+  MindMapSummary,
 } from "@/types"
 
 import styles from "./library-shell.module.css"
@@ -86,9 +96,12 @@ interface LibraryShellProps {
   fragments: Fragment[]
   isLoading: boolean
   libraryTree: LibraryTreeSnapshot | null
+  mindMaps?: MindMapSummary[]
   knownTags: string[]
   navigateToNote?: { id: string; requestId: number } | null
   onNavigateToFragment?: (fragmentId: string) => void
+  onMindMapsChange?: (maps: MindMapSummary[]) => void
+  onOpenMindMap: (map: MindMapSummary) => void
   onLibraryMutation: (result: LibraryMutationResult) => void
   onMoveToLockbox: (fragment: Fragment) => Promise<void>
   /** 点击树上的密匣挂载点：解锁并进入密匣一级空间（传送门）。 */
@@ -108,6 +121,10 @@ interface LibraryShellProps {
 
 type SaveState = "dirty" | "error" | "saved" | "saving"
 type TreeDialogState = { kind: "delete"; entry: LibraryTreeEntry }
+type LibrarySelection =
+  | { kind: "note"; id: string }
+  | { kind: "mindmap"; path: string }
+  | null
 
 interface RenameState {
   path: string
@@ -120,9 +137,12 @@ export function LibraryShell({
   fragments,
   isLoading,
   libraryTree,
+  mindMaps = [],
   knownTags,
   navigateToNote = null,
   onNavigateToFragment,
+  onMindMapsChange,
+  onOpenMindMap,
   onLibraryMutation,
   onMoveToLockbox,
   onOpenLockbox,
@@ -136,13 +156,14 @@ export function LibraryShell({
     () => fragments.filter((fragment) => deriveKind(fragment.tags) === "note"),
     [fragments]
   )
-  const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null)
+  const [selection, setSelection] = useState<LibrarySelection>(null)
   const [selectedTreePath, setSelectedTreePath] = useState("notes")
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(
     () => new Set(["notes"])
   )
   const [isFragmentStreamExpanded, setIsFragmentStreamExpanded] =
     useState(false)
+  const [isMindMapsExpanded, setIsMindMapsExpanded] = useState(false)
   const [expandedYears, setExpandedYears] = useState<Set<string>>(new Set())
   const [busyAction, setBusyAction] = useState<string | null>(null)
   const [treeDialog, setTreeDialog] = useState<TreeDialogState | null>(null)
@@ -154,9 +175,18 @@ export function LibraryShell({
   const [draft, setDraft] = useState("")
   const [mobilePane, setMobilePane] = useState<"editor" | "list">("list")
   const [saveState, setSaveState] = useState<SaveState>("saved")
+  const [isZen, setIsZen] = useState(false)
+  const selectedNoteId = selection?.kind === "note" ? selection.id : null
   const selectedNote = useMemo(
     () => notes.find((note) => note.id === selectedNoteId) ?? null,
     [notes, selectedNoteId]
+  )
+  const selectedMindMap = useMemo(
+    () =>
+      selection?.kind === "mindmap"
+        ? mindMaps.find((map) => map.path === selection.path) ?? null
+        : null,
+    [mindMaps, selection]
   )
   const draftRef = useRef(draft)
   const lastSavedContentRef = useRef("")
@@ -171,8 +201,9 @@ export function LibraryShell({
     () => [
       ...buildWikilinkCandidates(relationFragments),
       ...buildCsvWikilinkCandidates(csvFiles),
+      ...buildMindMapWikilinkCandidates(mindMaps),
     ],
-    [csvFiles, relationFragments]
+    [csvFiles, mindMaps, relationFragments]
   )
   const { indexVersion, requestRelated } = useFragmentRelations(relationFragments)
   const wikilinkCandidatesRef = useRef(wikilinkCandidates)
@@ -209,8 +240,12 @@ export function LibraryShell({
           toast(`待建链接「${target}」尚不存在，可在资料库新建笔记`),
         onNavigate: (fragmentId) =>
           wikilinkNavigateRef.current?.(fragmentId),
+        onNavigateToMindMap: (path) => {
+          const map = mindMaps.find((candidate) => candidate.path === path)
+          if (map) onOpenMindMap(map)
+        },
       }),
-    [wikilinkCandidates]
+    [mindMaps, onOpenMindMap, wikilinkCandidates]
   )
   const editorExtensions = useMemo(
     () => [tagAutocompleteExtension, wikilinkExtension],
@@ -220,22 +255,55 @@ export function LibraryShell({
   draftRef.current = draft
   selectedNoteRef.current = selectedNote
 
+  const { uploadPastedImages } = useImageUpload({
+    getContent: () => draftRef.current,
+    isLockbox: selectedNote?.lockbox,
+    onUploaded: ({ alt, path, previewUrl }) => {
+      const imageMarkdown = `![${escapeMarkdownImageAlt(alt)}](${path})`
+      const nextDraft = [draftRef.current.trimEnd(), imageMarkdown]
+        .filter(Boolean)
+        .join("\n")
+      draftRef.current = nextDraft
+      setDraft(nextDraft)
+      setSaveState(
+        nextDraft === lastSavedContentRef.current ? "saved" : "dirty"
+      )
+      URL.revokeObjectURL(previewUrl)
+    },
+  })
+
   useEffect(() => {
     if (notes.length === 0) {
-      setSelectedNoteId(null)
-      setDraft("")
-      draftRef.current = ""
-      lastSavedContentRef.current = ""
-      setSaveState("saved")
-      setMobilePane("list")
+      if (selection?.kind === "note") {
+        setSelection(null)
+        setDraft("")
+        draftRef.current = ""
+        lastSavedContentRef.current = ""
+        setSaveState("saved")
+        setIsZen(false)
+        setMobilePane("list")
+      }
       return
     }
 
     if (selectedNoteId && !notes.some((note) => note.id === selectedNoteId)) {
-      setSelectedNoteId(null)
+      setSelection(null)
       setSelectedTreePath("notes")
+      setIsZen(false)
     }
-  }, [notes, selectedNoteId])
+  }, [notes, selectedNoteId, selection?.kind])
+
+  useEffect(() => {
+    if (
+      selection?.kind === "mindmap" &&
+      !mindMaps.some((map) => map.path === selection.path)
+    ) {
+      setSelection(null)
+      setSelectedTreePath("notes")
+      setIsZen(false)
+      setMobilePane("list")
+    }
+  }, [mindMaps, selection])
 
   useEffect(() => {
     if (!selectedNote) return
@@ -429,10 +497,21 @@ export function LibraryShell({
     if (noteId !== selectedNoteRef.current?.id) {
       const saved = await saveCurrentNote()
       if (!saved) return
-      setSelectedNoteId(noteId)
+      setSelection({ kind: "note", id: noteId })
       const note = notes.find((candidate) => candidate.id === noteId)
       if (note) setSelectedTreePath(note.path)
     }
+    setIsZen(false)
+    setMobilePane("editor")
+  }
+
+  async function selectMindMap(path: string) {
+    if (selection?.kind !== "mindmap" || selection.path !== path) {
+      if (!(await saveCurrentNote())) return
+      setSelection({ kind: "mindmap", path })
+      setSelectedTreePath(path)
+    }
+    setIsZen(false)
     setMobilePane("editor")
   }
 
@@ -446,7 +525,7 @@ export function LibraryShell({
 
   const selectedTitle = selectedNote
     ? selectedNote.path.split("/").pop()?.replace(/\.md$/iu, "") || "无标题笔记"
-    : "选择笔记"
+    : selectedMindMap?.title ?? "选择内容"
 
   const directories = useMemo(
     () => ["notes", ...collectDirectoryPaths(libraryTree?.entries ?? [])],
@@ -472,7 +551,7 @@ export function LibraryShell({
       onLibraryMutation(result)
       if (result.fragment) {
         if (revealNote) {
-          setSelectedNoteId(result.fragment.id)
+          setSelection({ kind: "note", id: result.fragment.id })
           setMobilePane("editor")
         }
         setSelectedTreePath(result.fragment.path)
@@ -575,8 +654,9 @@ export function LibraryShell({
     )
     if (!result) return
     if (selectedTreePath === deletedPath) {
-      setSelectedNoteId(null)
+      setSelection(null)
       setSelectedTreePath("notes")
+      setIsZen(false)
       setMobilePane("list")
     }
     setTreeDialog(null)
@@ -640,6 +720,65 @@ export function LibraryShell({
     )
   }
 
+  const renderMindMapZenSurface = useCallback(
+    (canvas: ReactNode) => (
+      <ZenSurface
+        ariaLabel="资料库思维导图禅模式"
+        onRequestClose={() => setIsZen(false)}
+      >
+        {canvas}
+      </ZenSurface>
+    ),
+    []
+  )
+
+  function renderSelectedViewer(zen: boolean) {
+    if (selectedNote) {
+      return (
+        <div className={zen ? styles.zenNoteViewport : styles.editorViewport}>
+          <ShardEditor
+            ariaLabel="资料库笔记编辑器"
+            autoFocus={zen || mobilePane === "editor"}
+            documentKey={selectedNote.id}
+            editorId={`library:${selectedNote.id}`}
+            extensions={editorExtensions}
+            onChange={(content) => {
+              setDraft(content)
+              draftRef.current = content
+              setSaveState(
+                content === lastSavedContentRef.current ? "saved" : "dirty"
+              )
+            }}
+            onDropFiles={(files) => void uploadPastedImages(files)}
+            onPasteFiles={(files) => void uploadPastedImages(files)}
+            onSubmit={() => void saveCurrentNote()}
+            placeholder="开始写笔记…"
+            value={draft}
+            variant={zen ? "zen" : "inline"}
+          />
+        </div>
+      )
+    }
+
+    if (selectedMindMap) {
+      return (
+        <div
+          className={
+            zen ? styles.zenMindMapViewport : styles.mindMapViewport
+          }
+        >
+          <MindMapCanvas
+            mapId={selectedMindMap.id}
+            onMapsChange={onMindMapsChange}
+            surface={zen ? renderMindMapZenSurface : undefined}
+          />
+        </div>
+      )
+    }
+
+    return <LibraryEmptyState message="从资料库目录选择一篇笔记或思维导图" />
+  }
+
   return (
     <section aria-label="资料库" className={styles.shell}>
       <div className={styles.workspace}>
@@ -659,8 +798,9 @@ export function LibraryShell({
                 void (async () => {
                   // 清掉选中会让 saveCurrentNote 失去保存对象，必须先 flush 草稿
                   if (!(await saveCurrentNote())) return
-                  setSelectedNoteId(null)
+                  setSelection(null)
                   setSelectedTreePath("notes")
+                  setIsZen(false)
                   setMobilePane("list")
                 })()
               }}
@@ -803,6 +943,50 @@ export function LibraryShell({
                   </button>
                 </div>
 
+                <div className={styles.fragmentStream}>
+                  <button
+                    aria-label={`思维导图（${libraryTree.mindMaps.length}）`}
+                    aria-expanded={isMindMapsExpanded}
+                    className={styles.treeButton}
+                    onClick={() => setIsMindMapsExpanded((current) => !current)}
+                    type="button"
+                  >
+                    {isMindMapsExpanded ? (
+                      <ChevronDownIcon aria-hidden="true" />
+                    ) : (
+                      <ChevronRightIcon aria-hidden="true" />
+                    )}
+                    <span>思维导图</span>
+                    <span className={styles.treeCount}>
+                      {libraryTree.mindMaps.length}
+                    </span>
+                  </button>
+                  {isMindMapsExpanded ? (
+                    <ul aria-label="思维导图文件" className={styles.tree} role="tree">
+                      {libraryTree.mindMaps.map((entry) => (
+                        <li key={entry.path} role="treeitem">
+                          <button
+                            aria-label={entry.name}
+                            className={styles.treeButton}
+                            data-depth="1"
+                            data-selected={
+                              selection?.kind === "mindmap" &&
+                              selection.path === entry.path
+                                ? "true"
+                                : undefined
+                            }
+                            onClick={() => void selectMindMap(entry.path)}
+                            type="button"
+                          >
+                            <GitBranchIcon aria-hidden="true" />
+                            <span className={styles.treeLabel}>{entry.name}</span>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+                </div>
+
                 {libraryTree.entries.length === 0 && !creatingDirectory ? (
                   <LibraryEmptyState message="到碎片流把一条内容转为笔记" />
                 ) : (
@@ -823,8 +1007,9 @@ export function LibraryShell({
                           convertNoteToFragment(note.id)
                         ).then((result) => {
                           if (!result) return
-                          setSelectedNoteId(null)
+                          setSelection(null)
                           setSelectedTreePath("notes")
+                          setIsZen(false)
                           setMobilePane("list")
                         })
                       }}
@@ -869,7 +1054,7 @@ export function LibraryShell({
         </aside>
 
         <article
-          aria-label="笔记编辑器"
+          aria-label="资料库查看器"
           aria-busy={saveState === "saving" ? true : undefined}
           className={styles.editorPane}
           data-mobile-hidden={mobilePane === "list" ? "true" : undefined}
@@ -925,8 +1110,10 @@ export function LibraryShell({
                   >
                     {selectedTitle}
                   </button>
-                ) : (
+                ) : selectedMindMap ? (
                   selectedTitle
+                ) : (
+                  "选择内容"
                 )}
               </h2>
             )}
@@ -939,32 +1126,25 @@ export function LibraryShell({
                 {formatSaveState(saveState)}
               </span>
             ) : null}
+            {selection ? (
+              <Button
+                aria-label="进入禅模式"
+                onClick={() => setIsZen(true)}
+                size="icon-sm"
+                title="进入禅模式"
+                type="button"
+                variant="outline"
+              >
+                <Maximize2Icon aria-hidden="true" />
+              </Button>
+            ) : null}
           </div>
 
-          {selectedNote ? (
-            <div className={styles.editorViewport}>
-              <ShardEditor
-                ariaLabel="资料库笔记编辑器"
-                autoFocus={mobilePane === "editor"}
-                documentKey={selectedNote.id}
-                editorId={`library:${selectedNote.id}`}
-                extensions={editorExtensions}
-                onChange={(content) => {
-                  setDraft(content)
-                  draftRef.current = content
-                  setSaveState(
-                    content === lastSavedContentRef.current ? "saved" : "dirty"
-                  )
-                }}
-                onSubmit={() => void saveCurrentNote()}
-                placeholder="开始写笔记…"
-                value={draft}
-                variant="inline"
-              />
-            </div>
-          ) : (
-            <LibraryEmptyState message="从资料库目录选择一篇笔记开始编辑" />
-          )}
+          {selectedMindMap
+            ? renderSelectedViewer(isZen)
+            : !isZen
+              ? renderSelectedViewer(false)
+              : null}
         </article>
 
         <aside
@@ -987,6 +1167,15 @@ export function LibraryShell({
           ) : null}
         </aside>
       </div>
+
+      {isZen && selection?.kind === "note" ? (
+        <ZenSurface
+          ariaLabel="资料库笔记禅模式"
+          onRequestClose={() => setIsZen(false)}
+        >
+          {renderSelectedViewer(true)}
+        </ZenSurface>
+      ) : null}
 
       <Dialog
         open={treeDialog !== null}
@@ -1260,6 +1449,10 @@ function LibraryEmptyState({ message }: { message: string }) {
       <p>{message}</p>
     </div>
   )
+}
+
+function escapeMarkdownImageAlt(alt: string) {
+  return alt.replace(/\\/g, "\\\\").replace(/]/g, "\\]")
 }
 
 async function sha256Hex(text: string): Promise<string> {

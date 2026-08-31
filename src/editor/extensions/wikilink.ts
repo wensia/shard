@@ -35,6 +35,7 @@ interface ShardWikilinkOptions {
   getCandidates: () => readonly WikilinkCandidate[]
   maxCsvRows: number
   onMissingTarget: (target: string) => void
+  onNavigateToMindMap?: (path: string) => void
   onNavigate: (fragmentId: string) => void
 }
 
@@ -43,6 +44,7 @@ interface DecoratedWikilink extends WikilinkMatch {
   csvPath?: string
   fragmentId?: string
   maxCsvRows?: number
+  mindMapPath?: string
 }
 
 const csvPreviewRoots = new WeakMap<HTMLElement, Root>()
@@ -104,10 +106,11 @@ const wikilinkDecorationField = StateField.define<DecorationSet>({
             attributes: {
               "data-wikilink-csv-path": link.csvPath ?? "",
               "data-wikilink-id": link.fragmentId ?? "",
+              "data-wikilink-mind-map-path": link.mindMapPath ?? "",
               "data-wikilink-target": link.target,
               role: "link",
             },
-            class: link.fragmentId || link.csvExists
+            class: link.fragmentId || link.csvExists || link.mindMapPath
               ? "shard-cm-wikilink"
               : "shard-cm-wikilink shard-cm-wikilink--missing",
           }).range(link.from, link.to)
@@ -145,6 +148,8 @@ export function createShardWikilinkCompletionSource({
         detail:
           candidate.kind === "csv"
             ? "CSV"
+            : candidate.kind === "mindmap"
+              ? "思维导图"
             : candidate.kind === "note"
               ? "笔记"
               : "碎片",
@@ -166,6 +171,7 @@ export function createShardWikilinkExtension({
   maxCsvRows,
   onMissingTarget,
   onNavigate,
+  onNavigateToMindMap,
 }: ShardWikilinkOptions): Extension {
   const parserPlugin = ViewPlugin.fromClass(
     class {
@@ -217,8 +223,12 @@ export function createShardWikilinkExtension({
                           : undefined,
                     csvExists: candidate?.kind === "csv",
                     fragmentId:
-                      candidate?.kind === "csv" ? undefined : candidate?.fragmentId,
+                      candidate?.kind === "csv" || candidate?.kind === "mindmap"
+                        ? undefined
+                        : candidate?.fragmentId,
                     maxCsvRows,
+                    mindMapPath:
+                      candidate?.kind === "mindmap" ? candidate.path : undefined,
                   }
                 })
               ),
@@ -244,9 +254,11 @@ export function createShardWikilinkExtension({
 
         event.preventDefault()
         const fragmentId = element.dataset.wikilinkId
+        const mindMapPath = element.dataset.wikilinkMindMapPath
         const csvPath = element.dataset.wikilinkCsvPath
         const target = element.dataset.wikilinkTarget ?? ""
         if (fragmentId) onNavigate(fragmentId)
+        else if (mindMapPath && onNavigateToMindMap) onNavigateToMindMap(mindMapPath)
         else if (csvPath) {
           void openCsvFile(csvPath).catch((error) => {
             toast.error(`打开 CSV 失败：${getApiErrorMessage(error)}`, {

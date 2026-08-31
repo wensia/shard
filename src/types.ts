@@ -66,7 +66,7 @@ export interface CsvFileSummary {
   path: string
 }
 
-export type LibraryTreeEntryKind = "directory" | "markdown" | "csv"
+export type LibraryTreeEntryKind = "directory" | "markdown" | "csv" | "mindmap"
 
 export interface LibraryTreeEntry {
   name: string
@@ -94,6 +94,7 @@ export interface LibraryFragmentStream {
 export interface LibraryTreeSnapshot {
   entries: LibraryTreeEntry[]
   fragmentStream: LibraryFragmentStream
+  mindMaps: LibraryTreeEntry[]
 }
 
 export interface LibraryMutationResult {

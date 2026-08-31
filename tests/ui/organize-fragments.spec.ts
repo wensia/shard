@@ -161,6 +161,7 @@ async function installOrganizeMock(page: Page, mode: OrganizeMockMode) {
                   path: fragment.path,
                   kind: "markdown",
                 })),
+              mindMaps: [],
               fragmentStream: { totalCount: 0, years: [] },
             }
           }
@@ -174,6 +175,7 @@ async function installOrganizeMock(page: Page, mode: OrganizeMockMode) {
                     path: fragment.path,
                     kind: "markdown",
                   })),
+                mindMaps: [],
                 fragmentStream: { totalCount: 0, years: [] },
               },
               migratedCount: 0,
@@ -191,6 +193,7 @@ async function installOrganizeMock(page: Page, mode: OrganizeMockMode) {
             return {
               tree: {
                 entries: [],
+                mindMaps: [],
                 fragmentStream: { totalCount: 0, years: [] },
               },
               fragment: null,

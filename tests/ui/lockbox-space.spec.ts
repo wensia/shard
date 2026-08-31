@@ -90,6 +90,7 @@ async function installLockboxSpaceMock(page: Page) {
       })
     const librarySnapshot = () => ({
       entries: [],
+      mindMaps: [],
       fragmentStream: {
         totalCount: 1,
         years: [

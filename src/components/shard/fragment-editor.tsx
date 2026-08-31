@@ -9,12 +9,12 @@ import {
 import { isTauri } from "@tauri-apps/api/core"
 import { open } from "@tauri-apps/plugin-dialog"
 import { startCompletion } from "@codemirror/autocomplete"
-import { keymap } from "@codemirror/view"
 import { Loader2Icon, LockKeyholeIcon, SendHorizontalIcon, XIcon } from "lucide-react"
 import { toast } from "sonner"
 
 import { EditorToolbar } from "@/components/shard/editor-toolbar"
 import { FragmentImageAttachment } from "@/components/shard/fragment-content"
+import { ZenSurface } from "@/components/shard/zen-surface"
 import { Button } from "@/components/ui/button"
 import { ToolbarIconButton } from "@/components/ui/toolbar-icon-button"
 import {
@@ -26,11 +26,11 @@ import {
   createShardWikilinkCompletionSource,
   createShardWikilinkExtension,
 } from "@/editor/extensions/wikilink"
+import { useImageUpload } from "@/hooks/use-image-upload"
 import {
   applyInlineFormat,
   applyLineFormat,
   extractTags,
-  getMarkdownImageAlt,
   insertHorizontalRule,
   insertMarkdownBlock,
   insertMarkdownTable,
@@ -44,7 +44,6 @@ import {
 import {
   convertTableDocumentToMarkdown,
   getApiErrorMessage,
-  saveFragmentImage,
   setWindowControlsHidden,
 } from "@/lib/api"
 import { hasMarkdownImage, wantsLockbox } from "@/lib/lockbox"
@@ -172,27 +171,9 @@ export function FragmentEditor({
       }),
     [isZen, wikilinkCandidates]
   )
-  const fragmentEditorExtensions = useMemo(
-    () =>
-      keymap.of([
-        {
-          key: "Escape",
-          run: (view) => {
-            if (view.composing) return false
-            closeEditorRef.current()
-            return true
-          },
-        },
-      ]),
-    []
-  )
   const fragmentEditorExtensionSet = useMemo(
-    () => [
-      fragmentEditorExtensions,
-      tagAutocompleteExtension,
-      wikilinkExtension,
-    ],
-    [fragmentEditorExtensions, tagAutocompleteExtension, wikilinkExtension]
+    () => [tagAutocompleteExtension, wikilinkExtension],
+    [tagAutocompleteExtension, wikilinkExtension]
   )
 
   const draftContent = useMemo(
@@ -306,6 +287,25 @@ export function FragmentEditor({
   const { isDropTarget: isTableDropTarget } = useTableDocumentDrop({
     frameRef: editorFrameRef,
     onDrop: (paths) => insertTableDocuments(paths),
+  })
+  const { uploadImage, uploadPastedImages } = useImageUpload({
+    canUpload: () => Boolean(shardEditorRef.current?.view),
+    getContent: getCurrentDraftContent,
+    isLockbox: Boolean(fragment?.lockbox),
+    onUploaded: ({ alt, fileName, path, previewUrl }) => {
+      setImageAttachments((current) => [
+        ...current,
+        {
+          alt,
+          id: `${Date.now()}-${fileName}`,
+          path,
+          previewUrl,
+        },
+      ])
+      requestAnimationFrame(() => {
+        focusEditor()
+      })
+    },
   })
 
   if (!isOpen) return null
@@ -534,46 +534,6 @@ export function FragmentEditor({
       toast.error(`选择文件失败：${getApiErrorMessage(error)}`, {
         duration: Infinity,
       })
-    }
-  }
-
-  async function uploadImage(file: File) {
-    if (!shardEditorRef.current?.view) return
-    const currentDraftContent = getCurrentDraftContent()
-    const tags = normalizeTagList([
-      "inbox",
-      ...extractTags(currentDraftContent),
-    ])
-    if (fragment?.lockbox || wantsLockbox(currentDraftContent, tags)) {
-      toast.error("密匣暂不支持图片附件：请先移除 #密匣，或在公开笔记中上传图片。", { duration: Infinity })
-      return
-    }
-
-    const previewUrl = URL.createObjectURL(file)
-    try {
-      const bytes = Array.from(new Uint8Array(await file.arrayBuffer()))
-      const path = await saveFragmentImage(file.name, bytes)
-      setImageAttachments((current) => [
-        ...current,
-        {
-          alt: getMarkdownImageAlt(file.name),
-          id: `${Date.now()}-${file.name}`,
-          path,
-          previewUrl,
-        },
-      ])
-      requestAnimationFrame(() => {
-        focusEditor()
-      })
-    } catch (error) {
-      URL.revokeObjectURL(previewUrl)
-      toast.error(`图片上传失败：${getApiErrorMessage(error)}`, { duration: Infinity })
-    }
-  }
-
-  async function uploadPastedImages(files: File[]) {
-    for (const file of files) {
-      await uploadImage(file)
     }
   }
 
@@ -836,109 +796,95 @@ export function FragmentEditor({
   }
 
   return (
-    <div
-      className={styles.zenEditorShell}
-      style={{
-        position: "fixed",
-        inset: 0,
-        zIndex: 50,
-        display: "grid",
-        gridTemplateRows: "minmax(0, 1fr) auto",
-        background: "var(--background)",
-        color: "var(--foreground)",
-      }}
+    <ZenSurface
+      ariaLabel="禅模式"
+      footer={
+        <div className={`shard-content-inset ${styles.zenFooter}`}>
+          <div
+            className={styles.zenToolbar}
+            style={{
+              width: "fit-content",
+              maxWidth: "100%",
+              borderRadius: "var(--shard-surface-radius)",
+              background: "var(--card)",
+              padding: "var(--shard-space-3)",
+              boxShadow: "var(--shard-composer-shadow)",
+            }}
+          >
+            <EditorToolbar
+              disabled={saveState === "saving"}
+              onImageUpload={uploadImage}
+              onImportTable={isTauri() ? pickTableDocument : undefined}
+              onInlineFormat={formatInline}
+              onInsertHorizontalRule={insertDivider}
+              onInsertTable={insertTable}
+              onInsertTag={insertTag}
+              onLineFormat={formatLines}
+              trailing={
+                <>
+                  {willRouteToLockbox ? (
+                    <span
+                      className="shard-tag shard-tag-lockbox"
+                      style={{ flexShrink: 0, fontWeight: 500 }}
+                    >
+                      <LockKeyholeIcon strokeWidth={1.75} />
+                      {fragment ? "将移入密匣" : "将保存到密匣"}
+                    </span>
+                  ) : null}
+                  <span
+                    aria-hidden="true"
+                    style={{
+                      marginInline: "var(--shard-space-1)",
+                      height: 20,
+                      width: 1,
+                      background: "var(--border)",
+                      opacity: "var(--shard-alpha-55)",
+                    }}
+                  />
+                  <ToolbarIconButton
+                    className="shard-edge-action"
+                    label="退出编辑"
+                    onMouseDown={(event) => {
+                      event.preventDefault()
+                      void handleClose()
+                    }}
+                    style={{
+                      borderRadius: "var(--shard-radius-control)",
+                      color: "var(--muted-foreground)",
+                    }}
+                    type="button"
+                    variant="ghost"
+                  >
+                    <XIcon />
+                  </ToolbarIconButton>
+                </>
+              }
+            />
+          </div>
+          <span
+            aria-label={`${characterCount} 字，${lineCount} 行`}
+            className={styles.zenStats}
+            title="字数不计空格与换行"
+          >
+            {characterCount.toLocaleString("zh-CN")} 字 ·{" "}
+            {lineCount.toLocaleString("zh-CN")} 行
+          </span>
+        </div>
+      }
+      onRequestClose={() => closeEditorRef.current()}
     >
       <div
-        data-tauri-drag-region
-        style={{ minHeight: 0, paddingTop: "var(--shard-top-inset)" }}
+        style={{
+          display: "flex",
+          height: "100%",
+          minHeight: 0,
+          flexDirection: "column",
+        }}
       >
-        <div
-          style={{
-            display: "flex",
-            height: "100%",
-            minHeight: 0,
-            flexDirection: "column",
-          }}
-        >
-          {editorFrame}
-          {imageAttachmentRow}
-        </div>
+        {editorFrame}
+        {imageAttachmentRow}
       </div>
-
-      <footer
-        className={`shard-content-inset ${styles.zenFooter}`}
-      >
-        <div
-          className={styles.zenToolbar}
-          style={{
-            width: "fit-content",
-            maxWidth: "100%",
-            borderRadius: "var(--shard-surface-radius)",
-            background: "var(--card)",
-            padding: "var(--shard-space-3)",
-            boxShadow: "var(--shard-composer-shadow)",
-          }}
-        >
-          <EditorToolbar
-            disabled={saveState === "saving"}
-            onImageUpload={uploadImage}
-            onImportTable={isTauri() ? pickTableDocument : undefined}
-            onInlineFormat={formatInline}
-            onInsertHorizontalRule={insertDivider}
-            onInsertTable={insertTable}
-            onInsertTag={insertTag}
-            onLineFormat={formatLines}
-            trailing={
-              <>
-                {willRouteToLockbox ? (
-                  <span
-                    className="shard-tag shard-tag-lockbox"
-                    style={{ flexShrink: 0, fontWeight: 500 }}
-                  >
-                    <LockKeyholeIcon strokeWidth={1.75} />
-                    {fragment ? "将移入密匣" : "将保存到密匣"}
-                  </span>
-                ) : null}
-                <span
-                  aria-hidden="true"
-                  style={{
-                    marginInline: "var(--shard-space-1)",
-                    height: 20,
-                    width: 1,
-                    background: "var(--border)",
-                    opacity: "var(--shard-alpha-55)",
-                  }}
-                />
-                <ToolbarIconButton
-                  className="shard-edge-action"
-                  label="退出编辑"
-                  onMouseDown={(event) => {
-                    event.preventDefault()
-                    void handleClose()
-                  }}
-                  style={{
-                    borderRadius: "var(--shard-radius-control)",
-                    color: "var(--muted-foreground)",
-                  }}
-                  type="button"
-                  variant="ghost"
-                >
-                  <XIcon />
-                </ToolbarIconButton>
-              </>
-            }
-          />
-        </div>
-        <span
-          aria-label={`${characterCount} 字，${lineCount} 行`}
-          className={styles.zenStats}
-          title="字数不计空格与换行"
-        >
-          {characterCount.toLocaleString("zh-CN")} 字 ·{" "}
-          {lineCount.toLocaleString("zh-CN")} 行
-        </span>
-      </footer>
-    </div>
+    </ZenSurface>
   )
 }
 

@@ -155,6 +155,7 @@ struct FragmentStreamSummary {
 struct LibraryTreeSnapshot {
     entries: Vec<LibraryTreeEntry>,
     fragment_stream: FragmentStreamSummary,
+    mind_maps: Vec<LibraryTreeEntry>,
 }
 
 #[derive(Debug, Serialize)]
@@ -2447,9 +2448,23 @@ fn collect_markdown_files(dir: &Path, files: &mut Vec<PathBuf>) -> Result<(), St
 }
 
 fn build_library_tree(vault: &Path) -> Result<LibraryTreeSnapshot, String> {
+    let mut mind_map_files = Vec::new();
+    collect_mind_map_files(&vault.join("maps"), &mut mind_map_files)?;
+    let mind_maps = mind_map_files
+        .iter()
+        .filter_map(|path| read_mind_map_summary(path, vault).ok())
+        .map(|summary| LibraryTreeEntry {
+            name: summary.title,
+            path: summary.path,
+            kind: "mindmap".to_string(),
+            children: None,
+        })
+        .collect();
+
     Ok(LibraryTreeSnapshot {
         entries: collect_library_entries(vault, &vault.join("notes"))?,
         fragment_stream: summarize_fragment_stream(vault)?,
+        mind_maps,
     })
 }
 
@@ -7087,6 +7102,33 @@ mod tests {
         assert_eq!(tree.fragment_stream.years[0].year, "2026");
         assert_eq!(tree.fragment_stream.years[0].months[0].month, "08");
         assert_eq!(tree.fragment_stream.years[0].months[0].count, 2);
+    }
+
+    #[test]
+    fn library_tree_lists_valid_mind_maps_and_skips_invalid_ones() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let vault = tempdir.path();
+        ensure_vault_layout(vault).unwrap();
+        fs::write(vault.join("notes/说明.md"), "note").unwrap();
+
+        let valid = create_mind_map_in_vault(vault, "项目导图".to_string(), None).unwrap();
+        let mut invalid = valid.file.clone();
+        invalid.id = "invalid-map".to_string();
+        invalid.title = "   ".to_string();
+        fs::write(
+            vault.join("maps/invalid-map.shardmap.json"),
+            canonical_mind_map_text(&invalid).unwrap(),
+        )
+        .unwrap();
+
+        let tree = build_library_tree(vault).unwrap();
+
+        assert_eq!(tree.mind_maps.len(), 1);
+        assert_eq!(tree.mind_maps[0].name, "项目导图");
+        assert_eq!(tree.mind_maps[0].kind, "mindmap");
+        assert_eq!(tree.entries.len(), 1);
+        assert_eq!(tree.entries[0].name, "说明.md");
+        assert_eq!(tree.entries[0].kind, "markdown");
     }
 
     #[test]
