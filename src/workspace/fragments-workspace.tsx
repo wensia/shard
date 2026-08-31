@@ -7,42 +7,28 @@ import {
   SearchContextBar,
 } from "@/components/shard/fragment-search-workspace"
 import { FragmentTimeline } from "@/components/shard/fragment-timeline"
-import { InboxTagBar } from "@/components/shard/inbox-tag-bar"
 import { MindMapPanel } from "@/components/shard/mind-map-panel"
-import { TaggedPanel } from "@/components/shard/tagged-panel"
-import type { FragmentFilter } from "@/types"
-
-type FragmentWorkspaceFilter = Extract<
-  FragmentFilter,
-  "archive" | "inbox" | "tagged"
->
 
 interface FragmentsWorkspaceProps {
   capture: ComponentProps<typeof CaptureBox>
-  filter: FragmentWorkspaceFilter
-  inboxTagBar: ComponentProps<typeof InboxTagBar>
   isMindMapViewActive: boolean
   isSearchModeActive: boolean
   mindMapPanel: ComponentProps<typeof MindMapPanel>
   search: ComponentProps<typeof FragmentSearchWorkspace>
   searchContextBar: ComponentProps<typeof SearchContextBar> | null
-  taggedPanel: ComponentProps<typeof TaggedPanel>
   timeline: ComponentProps<typeof FragmentTimeline>
 }
 
 export function FragmentsWorkspace({
   capture,
-  filter,
-  inboxTagBar,
   isMindMapViewActive,
   isSearchModeActive,
   mindMapPanel,
   search,
   searchContextBar,
-  taggedPanel,
   timeline,
 }: FragmentsWorkspaceProps) {
-  const isInboxView = filter === "inbox" && !isMindMapViewActive
+  const isInboxView = !isMindMapViewActive
 
   return (
     <section className={appStyles.workspaceColumn}>
@@ -58,10 +44,6 @@ export function FragmentsWorkspace({
           className={appStyles.normalWorkArea}
           data-search-hidden={isSearchModeActive ? "true" : undefined}
         >
-          {isInboxView ? <InboxTagBar {...inboxTagBar} /> : null}
-          {filter === "tagged" && !isMindMapViewActive ? (
-            <TaggedPanel {...taggedPanel} />
-          ) : null}
           {searchContextBar && !isMindMapViewActive ? (
             <SearchContextBar {...searchContextBar} />
           ) : null}

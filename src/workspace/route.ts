@@ -1,15 +1,10 @@
 export const WORKSPACE_ROUTE_STORAGE_KEY = "shard.workspace-route"
 
-export type FragmentWorkspaceFilter =
-  | "inbox"
-  | "tagged"
-  | "archive"
-
 export type ReviewWorkspaceMode = "dailyReview" | "insight" | "walk"
 
 export type FragmentsRoute = {
   space: "fragments"
-  params: { filter: FragmentWorkspaceFilter; month?: string }
+  params: Record<string, never>
 }
 
 export type LibraryRoute = {
@@ -36,14 +31,8 @@ export type WorkspaceRoute =
 
 export const DEFAULT_WORKSPACE_ROUTE: WorkspaceRoute = {
   space: "fragments",
-  params: { filter: "inbox" },
+  params: {},
 }
-
-const FRAGMENT_FILTERS: readonly FragmentWorkspaceFilter[] = [
-  "inbox",
-  "tagged",
-  "archive",
-]
 
 const REVIEW_MODES: readonly ReviewWorkspaceMode[] = [
   "dailyReview",
@@ -60,26 +49,6 @@ export function isWorkspaceRoute(value: unknown): value is WorkspaceRoute {
     return false
   }
 
-  if (value.space === "fragments") {
-    const hasMonth = Object.prototype.hasOwnProperty.call(value.params, "month")
-    if (!hasOnlyKeys(value.params, hasMonth ? ["filter", "month"] : ["filter"])) {
-      return false
-    }
-
-    if (
-      typeof value.params.filter !== "string" ||
-      !FRAGMENT_FILTERS.includes(value.params.filter as FragmentWorkspaceFilter)
-    ) {
-      return false
-    }
-
-    return !hasMonth || (
-      value.params.filter === "inbox" &&
-      typeof value.params.month === "string" &&
-      /^\d{4}-(0[1-9]|1[0-2])$/u.test(value.params.month)
-    )
-  }
-
   if (value.space === "review") {
     return (
       hasOnlyKeys(value.params, ["mode"]) &&
@@ -88,10 +57,10 @@ export function isWorkspaceRoute(value: unknown): value is WorkspaceRoute {
     )
   }
 
-  // 旧版本把密匣持久化成 fragments 的 filter（{filter:"lockbox"}），上面的
-  // FRAGMENT_FILTERS 校验会拒绝它，readWorkspaceRoute 自然回退收件箱。
   return (
-    (value.space === "library" || value.space === "lockbox") &&
+    (value.space === "fragments" ||
+      value.space === "library" ||
+      value.space === "lockbox") &&
     hasOnlyKeys(value.params, [])
   )
 }

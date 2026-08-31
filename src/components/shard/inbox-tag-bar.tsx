@@ -18,7 +18,7 @@ interface InboxTagBarProps {
   selectedTag: string | null
   summaries: TaggedSummary[]
   totalCount: number
-  onCreateTag: (tag: string) => boolean
+  onCreateTag: (tag: string) => string | null
   onSelectTag: (tag: string | null) => void
 }
 
@@ -48,7 +48,9 @@ export function InboxTagBar({
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    if (onCreateTag(draft)) {
+    const createdTag = onCreateTag(draft)
+    if (createdTag) {
+      onSelectTag(createdTag)
       closeCreator()
     }
   }

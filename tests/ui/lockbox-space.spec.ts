@@ -163,7 +163,7 @@ test.beforeEach(async ({ page }) => {
   await installLockboxSpaceMock(page)
 })
 
-test("旧的密匣 filter 路由值回退到收件箱", async ({ page }) => {
+test("旧的密匣 filter 路由值回退到纯捕捉页", async ({ page }) => {
   await page.addInitScript(() => {
     window.localStorage.setItem(
       "shard.workspace-route",
@@ -173,9 +173,8 @@ test("旧的密匣 filter 路由值回退到收件箱", async ({ page }) => {
   await page.goto("/")
 
   const sidebarNav = page.getByRole("navigation", { name: "工作台导航" })
-  await expect(
-    sidebarNav.getByRole("button", { name: /^收件箱 \d+$/ })
-  ).toBeVisible()
+  await expect(page.locator('[data-shard-editor="composer"]')).toBeVisible()
+  await expect(sidebarNav.getByRole("button", { name: /^收件箱/ })).toHaveCount(0)
   // 侧栏碎片组不再有密匣项
   await expect(
     sidebarNav.getByRole("button", { name: /^密匣/ })
@@ -184,7 +183,7 @@ test("旧的密匣 filter 路由值回退到收件箱", async ({ page }) => {
     .poll(() =>
       page.evaluate(() => localStorage.getItem("shard.workspace-route"))
     )
-    .toBe(JSON.stringify({ space: "fragments", params: { filter: "inbox" } }))
+    .toBe(JSON.stringify({ space: "fragments", params: {} }))
 })
 
 test("传送门：从资料库挂载点解锁进入密匣一级空间", async ({ page }) => {

@@ -384,7 +384,7 @@ test.beforeEach(async ({ page }) => {
   await expect(
     page.locator('[data-shard-editor="composer"] .cm-content')
   ).toBeFocused()
-  await expect(page.locator("[data-shard-fragment-id]")).toHaveCount(24)
+  await expect(page.locator("[data-shard-fragment-id]")).toHaveCount(5)
 })
 
 test("editor toolbars expose visible labels through the shared icon button", async ({
@@ -555,7 +555,7 @@ test("图片行使用 read_fragment_image 结果渲染并在进光标时揭示",
     "data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs="
   await installTauriMock(page, { imageSrc })
   await page.reload()
-  await expect(page.locator("[data-shard-fragment-id]")).toHaveCount(24)
+  await expect(page.locator("[data-shard-fragment-id]")).toHaveCount(5)
 
   const content = "![测试图](assets/test.png)\n正文"
   const editor = page.locator('[data-shard-editor="composer"]')
@@ -788,7 +788,7 @@ test("capture, card menu, and share dialog remain functional", async ({
   await focusEditor(page, "composer")
   await page.keyboard.press("Control+Enter")
 
-  await expect(page.locator("[data-shard-fragment-id]")).toHaveCount(25)
+  await expect(page.locator("[data-shard-fragment-id]")).toHaveCount(5)
   await expect(page.getByText("迁移后的新片段")).toBeVisible()
   await expect(page.getByText("#work").first()).toBeVisible()
   await expect(page.getByText("片段已保存")).toBeVisible()
@@ -949,7 +949,6 @@ test("search recall mode preserves context, focus, and timeline scrolling", asyn
 }) => {
   const composer = page.locator('[data-shard-editor="composer"]')
   const composerContent = composer.locator(".cm-content")
-  const composerBefore = await composer.boundingBox()
   const documentScrollBefore = await page.evaluate(
     () => document.scrollingElement?.scrollTop ?? -1
   )
@@ -1021,6 +1020,9 @@ test("search recall mode preserves context, focus, and timeline scrolling", asyn
   await search.press("Enter")
 
   await expect(
+    page.getByRole("complementary", { name: "资料库目录" })
+  ).toBeVisible()
+  await expect(
     page.getByRole("button", { name: "返回搜索结果" })
   ).toBeVisible()
   const locatedFragment = page.locator(
@@ -1030,9 +1032,6 @@ test("search recall mode preserves context, focus, and timeline scrolling", asyn
   await expect(locatedFragment).toBeInViewport()
 
   const scrollContract = await page.evaluate(() => {
-    const composer = document.querySelector<HTMLElement>(
-      '[data-shard-editor="composer"]'
-    )
     const target = document.querySelector<HTMLElement>(
       '[data-shard-fragment-id="fragment-19"]'
     )
@@ -1040,7 +1039,6 @@ test("search recall mode preserves context, focus, and timeline scrolling", asyn
       '[data-slot="scroll-area-viewport"]'
     )
     return {
-      composerTop: composer?.getBoundingClientRect().top,
       documentScroll: document.scrollingElement?.scrollTop ?? -1,
       targetBottom: target?.getBoundingClientRect().bottom,
       targetTop: target?.getBoundingClientRect().top,
@@ -1050,7 +1048,6 @@ test("search recall mode preserves context, focus, and timeline scrolling", asyn
     }
   })
   expect(scrollContract.documentScroll).toBe(documentScrollBefore)
-  expect(scrollContract.composerTop).toBe(composerBefore?.y)
   expect(scrollContract.viewportScroll).toBeGreaterThan(0)
   expect(scrollContract.targetTop).toBeGreaterThanOrEqual(
     scrollContract.viewportTop ?? 0
@@ -1060,6 +1057,7 @@ test("search recall mode preserves context, focus, and timeline scrolling", asyn
   )
 
   await page.getByRole("button", { name: "返回搜索结果" }).click()
+  await expect(composer).toBeVisible()
   await expect(search).toBeFocused()
   await expect(search).toHaveValue("work")
   await page.getByRole("button", { name: "退出搜索" }).click()
@@ -1114,7 +1112,6 @@ test("search recall mode preserves context, focus, and timeline scrolling", asyn
 test("lockbox and mind map editing preserve adaptive node geometry", async ({
   page,
 }) => {
-  await page.getByRole("button", { name: /^标签 \d+$/ }).click()
   // 密匣入口已移到资料库树的上锁挂载点（传送门模型），侧栏不再有密匣项
   await expect(
     page
@@ -1628,8 +1625,9 @@ test("small windows use bottom tabs without document scrolling", async ({
 
   await expect(page.getByRole("navigation", { name: "工作台" }))
     .toBeVisible()
+  // 碎片空间已无二级 filter，底栏不再渲染碎片二级导航
   await expect(page.getByRole("navigation", { name: "碎片空间" }))
-    .toBeVisible()
+    .toHaveCount(0)
   await expect(page.locator("aside").first()).toBeHidden()
 
   const overflow = await page.evaluate(() => ({
@@ -1660,7 +1658,7 @@ test.describe("片段关系层", () => {
       ].join("\n"),
     })
     await page.goto("/")
-    await expect(page.locator("[data-shard-fragment-id]")).toHaveCount(24)
+    await expect(page.locator("[data-shard-fragment-id]")).toHaveCount(5)
   })
 
   test("有关联的卡片显示折叠入口，展开后可跳转到目标片段", async ({
@@ -1684,7 +1682,12 @@ test.describe("片段关系层", () => {
     // 点击跳转后目标卡片进入高亮
     await linkedRow.click()
     await expect(
-      page.locator('[data-shard-fragment-id="fragment-3"]')
+      page.getByRole("complementary", { name: "资料库目录" })
+    ).toBeVisible()
+    await expect(
+      page
+        .getByRole("article", { name: "资料库查看器" })
+        .locator('[data-shard-fragment-id="fragment-3"]')
     ).toHaveClass(/shard-fragment-card-highlight/)
   })
 

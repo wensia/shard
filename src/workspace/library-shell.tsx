@@ -1,5 +1,6 @@
 import {
   type Dispatch,
+  type ComponentProps,
   type ReactNode,
   type SetStateAction,
   useCallback,
@@ -9,6 +10,7 @@ import {
   useState,
 } from "react"
 import {
+  ArchiveIcon,
   ChevronDownIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
@@ -25,6 +27,9 @@ import {
 import { toast } from "sonner"
 
 import { FragmentBacklinksPanel } from "@/components/shard/fragment-related"
+import { FragmentTimeline } from "@/components/shard/fragment-timeline"
+import { InboxTagBar } from "@/components/shard/inbox-tag-bar"
+import { SearchContextBar } from "@/components/shard/fragment-search-workspace"
 import { MindMapCanvas } from "@/components/shard/mind-map-workspace"
 import { ZenSurface } from "@/components/shard/zen-surface"
 import { Button } from "@/components/ui/button"
@@ -65,6 +70,7 @@ import {
 } from "@/lib/api"
 import { deriveKind } from "@/lib/content-kind"
 import { extractTags, normalizeTagList } from "@/lib/editor-format"
+import { isFragmentInMonth } from "@/lib/fragment-month"
 import { useImageUpload } from "@/hooks/use-image-upload"
 import { useFragmentRelations } from "@/lib/use-fragment-relations"
 import {
@@ -91,14 +97,27 @@ export interface LibraryDraftHandle {
   isDirty: () => boolean
 }
 
+export type LibraryNavigationTarget =
+  | { kind: "note"; id: string; requestId: number }
+  | { kind: "fragments"; archived?: boolean; requestId: number }
+
 interface LibraryShellProps {
   csvFiles?: CsvFileSummary[]
+  archivedFragments: Fragment[]
   fragments: Fragment[]
+  fragmentsTimeline: Omit<
+    ComponentProps<typeof FragmentTimeline>,
+    "fragments" | "scrollToFragmentId"
+  >
+  fragmentsTagBar: Omit<
+    ComponentProps<typeof InboxTagBar>,
+    "selectedTag" | "onSelectTag" | "totalCount"
+  >
   isLoading: boolean
   libraryTree: LibraryTreeSnapshot | null
   mindMaps?: MindMapSummary[]
   knownTags: string[]
-  navigateToNote?: { id: string; requestId: number } | null
+  navigateTo?: LibraryNavigationTarget | null
   onNavigateToFragment?: (fragmentId: string) => void
   onMindMapsChange?: (maps: MindMapSummary[]) => void
   onOpenMindMap: (map: MindMapSummary) => void
@@ -106,7 +125,8 @@ interface LibraryShellProps {
   onMoveToLockbox: (fragment: Fragment) => Promise<void>
   /** 点击树上的密匣挂载点：解锁并进入密匣一级空间（传送门）。 */
   onOpenLockbox: () => void
-  onSelectFragmentMonth: (month: string) => void
+  pendingScrollFragmentId?: string | null
+  searchContextBar?: ComponentProps<typeof SearchContextBar> | null
   onRegisterSaveHandler: (handle: LibraryDraftHandle | null) => void
   onSave: (
     id: string,
@@ -124,6 +144,7 @@ type TreeDialogState = { kind: "delete"; entry: LibraryTreeEntry }
 type LibrarySelection =
   | { kind: "note"; id: string }
   | { kind: "mindmap"; path: string }
+  | { kind: "fragments"; month?: string; archived?: boolean }
   | null
 
 interface RenameState {
@@ -133,30 +154,44 @@ interface RenameState {
 }
 
 export function LibraryShell({
+  archivedFragments,
   csvFiles = [],
   fragments,
+  fragmentsTimeline,
+  fragmentsTagBar,
   isLoading,
   libraryTree,
   mindMaps = [],
   knownTags,
-  navigateToNote = null,
+  navigateTo = null,
   onNavigateToFragment,
   onMindMapsChange,
   onOpenMindMap,
   onLibraryMutation,
   onMoveToLockbox,
   onOpenLockbox,
-  onSelectFragmentMonth,
+  pendingScrollFragmentId = null,
   onRegisterSaveHandler,
   onRefreshFragments,
   onSave,
   relationFragments = fragments,
+  searchContextBar = null,
 }: LibraryShellProps) {
   const notes = useMemo(
     () => fragments.filter((fragment) => deriveKind(fragment.tags) === "note"),
     [fragments]
   )
+  const inboxTimelineFragments = useMemo(
+    () =>
+      fragments.filter(
+        (fragment) =>
+          deriveKind(fragment.tags) === "fragment" &&
+          fragment.tags.includes("inbox")
+      ),
+    [fragments]
+  )
   const [selection, setSelection] = useState<LibrarySelection>(null)
+  const [fragmentsTag, setFragmentsTag] = useState<string | null>(null)
   const [selectedTreePath, setSelectedTreePath] = useState("notes")
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(
     () => new Set(["notes"])
@@ -196,6 +231,7 @@ export function LibraryShell({
   const pendingDiskReloadRef = useRef(false)
   const selectedNoteRef = useRef<Fragment | null>(selectedNote)
   const savePromiseRef = useRef<Promise<boolean> | null>(null)
+  const consumedNavigationRef = useRef(0)
   const knownTagsRef = useRef<string[]>([])
   const wikilinkCandidates = useMemo(
     () => [
@@ -515,17 +551,69 @@ export function LibraryShell({
     setMobilePane("editor")
   }
 
+  async function selectFragmentsView({
+    archived,
+    month,
+  }: {
+    archived?: boolean
+    month?: string
+  }) {
+    if (!(await saveCurrentNote())) return
+    setSelection({ kind: "fragments", archived, month })
+    setFragmentsTag(null)
+    setSelectedTreePath("::fragments")
+    setIsZen(false)
+    setMobilePane("editor")
+  }
+
   useEffect(() => {
-    if (!navigateToNote || navigateToNote.id === selectedNoteRef.current?.id) {
+    if (!navigateTo || navigateTo.requestId === consumedNavigationRef.current) {
       return
     }
-    if (!notes.some((note) => note.id === navigateToNote.id)) return
-    void selectNote(navigateToNote.id)
-  }, [navigateToNote, notes])
+    if (navigateTo.kind === "note") {
+      if (navigateTo.id === selectedNoteRef.current?.id) {
+        consumedNavigationRef.current = navigateTo.requestId
+        return
+      }
+      // 目标笔记可能还没进列表（刚整理生成、刷新在途）：不消费，等 notes 更新重试
+      if (!notes.some((note) => note.id === navigateTo.id)) return
+      consumedNavigationRef.current = navigateTo.requestId
+      void selectNote(navigateTo.id)
+      return
+    }
+    consumedNavigationRef.current = navigateTo.requestId
+    void selectFragmentsView({ archived: navigateTo.archived })
+  }, [navigateTo, notes])
 
-  const selectedTitle = selectedNote
-    ? selectedNote.path.split("/").pop()?.replace(/\.md$/iu, "") || "无标题笔记"
-    : selectedMindMap?.title ?? "选择内容"
+  const visibleTimelineFragments = useMemo(() => {
+    if (selection?.kind !== "fragments") return []
+    if (selection.archived) return archivedFragments
+    return inboxTimelineFragments.filter(
+      (fragment) =>
+        (!selection.month || isFragmentInMonth(fragment, selection.month)) &&
+        (!fragmentsTag || fragment.tags.includes(fragmentsTag))
+    )
+  }, [
+    archivedFragments,
+    fragmentsTag,
+    inboxTimelineFragments,
+    selection,
+  ])
+  const fragmentsScrollTargetId = pendingScrollFragmentId &&
+    visibleTimelineFragments.some((fragment) => fragment.id === pendingScrollFragmentId)
+    ? pendingScrollFragmentId
+    : null
+
+  const selectedTitle =
+    selection?.kind === "fragments"
+      ? selection.archived
+        ? "归档"
+        : selection.month
+          ? `${selection.month.slice(0, 4)}年${selection.month.slice(5)}月`
+          : "碎片流"
+      : selectedNote
+        ? selectedNote.path.split("/").pop()?.replace(/\.md$/iu, "") || "无标题笔记"
+        : selectedMindMap?.title ?? "选择内容"
 
   const directories = useMemo(
     () => ["notes", ...collectDirectoryPaths(libraryTree?.entries ?? [])],
@@ -733,6 +821,41 @@ export function LibraryShell({
   )
 
   function renderSelectedViewer(zen: boolean) {
+    if (selection?.kind === "fragments") {
+      const emptyMessage = selection.archived
+        ? "还没有归档内容。"
+        : selection.month
+          ? "这个月还没有碎片。"
+          : fragmentsTag
+            ? `#${fragmentsTag} 下还没有片段。写片段时输入 #${fragmentsTag} 即可归入。`
+            : undefined
+      return (
+        <div className={styles.fragmentsViewport}>
+          {selection.archived ? null : (
+            <InboxTagBar
+              {...fragmentsTagBar}
+              onSelectTag={setFragmentsTag}
+              selectedTag={fragmentsTag}
+              totalCount={
+                selection.month
+                  ? inboxTimelineFragments.filter((fragment) =>
+                      isFragmentInMonth(fragment, selection.month!)
+                    ).length
+                  : inboxTimelineFragments.length
+              }
+            />
+          )}
+          {searchContextBar ? <SearchContextBar {...searchContextBar} /> : null}
+          <FragmentTimeline
+            {...fragmentsTimeline}
+            emptyMessage={emptyMessage}
+            fragments={visibleTimelineFragments}
+            scrollToFragmentId={fragmentsScrollTargetId}
+          />
+        </div>
+      )
+    }
+
     if (selectedNote) {
       return (
         <div className={zen ? styles.zenNoteViewport : styles.editorViewport}>
@@ -776,7 +899,7 @@ export function LibraryShell({
       )
     }
 
-    return <LibraryEmptyState message="从资料库目录选择一篇笔记或思维导图" />
+    return <LibraryEmptyState message="从资料库目录选择碎片流、笔记或思维导图" />
   }
 
   return (
@@ -847,9 +970,17 @@ export function LibraryShell({
                     aria-label={`碎片流（${libraryTree.fragmentStream.totalCount}）`}
                     aria-expanded={isFragmentStreamExpanded}
                     className={styles.treeButton}
-                    onClick={() =>
-                      setIsFragmentStreamExpanded((current) => !current)
+                    data-selected={
+                      selection?.kind === "fragments" &&
+                      !selection.month &&
+                      !selection.archived
+                        ? "true"
+                        : undefined
                     }
+                    onClick={() => {
+                      setIsFragmentStreamExpanded(true)
+                      void selectFragmentsView({})
+                    }}
                     type="button"
                   >
                     {isFragmentStreamExpanded ? (
@@ -901,8 +1032,15 @@ export function LibraryShell({
                                         aria-label={`${month.month}（${month.count}）`}
                                         className={styles.treeButton}
                                         data-depth="2"
+                                        data-selected={
+                                          selection?.kind === "fragments" &&
+                                          selection.month === routeMonth &&
+                                          !selection.archived
+                                            ? "true"
+                                            : undefined
+                                        }
                                         onClick={() =>
-                                          onSelectFragmentMonth(routeMonth)
+                                          void selectFragmentsView({ month: routeMonth })
                                         }
                                         type="button"
                                       >
@@ -920,27 +1058,30 @@ export function LibraryShell({
                           </li>
                         )
                       })}
+                      <li role="treeitem">
+                        <button
+                          aria-label={`归档（${archivedFragments.length}）`}
+                          className={styles.treeButton}
+                          data-depth="1"
+                          data-selected={
+                            selection?.kind === "fragments" && selection.archived
+                              ? "true"
+                              : undefined
+                          }
+                          onClick={() =>
+                            void selectFragmentsView({ archived: true })
+                          }
+                          type="button"
+                        >
+                          <ArchiveIcon aria-hidden="true" />
+                          <span>归档</span>
+                          <span className={styles.treeCount}>
+                            {archivedFragments.length}
+                          </span>
+                        </button>
+                      </li>
                     </ul>
                   ) : null}
-                </div>
-
-                {/* 密匣挂载点：地图上可见、不可展开，推门进入加密一级空间 */}
-                <div className={styles.lockboxMount}>
-                  <button
-                    aria-label="密匣（上锁空间）"
-                    className={styles.treeButton}
-                    onClick={() => {
-                      void (async () => {
-                        // 离开资料库前必须排空草稿，与其他导航同一门禁
-                        if (!(await saveCurrentNote())) return
-                        onOpenLockbox()
-                      })()
-                    }}
-                    type="button"
-                  >
-                    <LockKeyholeIcon aria-hidden="true" />
-                    <span>密匣</span>
-                  </button>
                 </div>
 
                 <div className={styles.fragmentStream}>
@@ -1048,6 +1189,24 @@ export function LibraryShell({
                     />
                   </ul>
                 )}
+
+                {/* 密匣挂载点：地图上可见、不可展开，推门进入加密一级空间 */}
+                <div className={styles.lockboxMount}>
+                  <button
+                    aria-label="密匣（上锁空间）"
+                    className={styles.treeButton}
+                    onClick={() => {
+                      void (async () => {
+                        if (!(await saveCurrentNote())) return
+                        onOpenLockbox()
+                      })()
+                    }}
+                    type="button"
+                  >
+                    <LockKeyholeIcon aria-hidden="true" />
+                    <span>密匣</span>
+                  </button>
+                </div>
               </div>
             )}
           </div>
@@ -1110,7 +1269,7 @@ export function LibraryShell({
                   >
                     {selectedTitle}
                   </button>
-                ) : selectedMindMap ? (
+                ) : selection ? (
                   selectedTitle
                 ) : (
                   "选择内容"
@@ -1126,7 +1285,7 @@ export function LibraryShell({
                 {formatSaveState(saveState)}
               </span>
             ) : null}
-            {selection ? (
+            {selection && selection.kind !== "fragments" ? (
               <Button
                 aria-label="进入禅模式"
                 onClick={() => setIsZen(true)}

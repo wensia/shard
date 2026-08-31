@@ -1,5 +1,4 @@
 import {
-  ArchiveIcon,
   BookOpenIcon,
   GitBranchIcon,
   HelpCircleIcon,
@@ -14,7 +13,6 @@ import {
   SettingsIcon,
   RouteIcon,
   SparklesIcon,
-  TagIcon,
   type LucideIcon,
 } from "lucide-react"
 import {
@@ -38,7 +36,6 @@ import {
 import { dailyReviewCount, insightReviewCount } from "@/lib/review-workflows"
 import type { Fragment, FragmentFilter, GitInfo } from "@/types"
 import type {
-  FragmentWorkspaceFilter,
   ReviewWorkspaceMode,
   WorkspaceRoute,
 } from "@/workspace/route"
@@ -72,7 +69,7 @@ const SPACE_ITEMS: Array<{
   {
     id: "fragments",
     icon: InboxIcon,
-    route: { space: "fragments", params: { filter: "inbox" } },
+    route: { space: "fragments", params: {} },
   },
   { id: "library", icon: BookOpenIcon, route: { space: "library", params: {} } },
   {
@@ -80,16 +77,6 @@ const SPACE_ITEMS: Array<{
     icon: HistoryIcon,
     route: { space: "review", params: { mode: "dailyReview" } },
   },
-]
-
-// 密匣不在侧栏：它的唯一入口是资料库树上的上锁挂载点（传送门模型）
-const FRAGMENT_ITEMS: Array<{
-  id: FragmentWorkspaceFilter
-  icon: typeof InboxIcon
-}> = [
-  { id: "inbox", icon: InboxIcon },
-  { id: "tagged", icon: TagIcon },
-  { id: "archive", icon: ArchiveIcon },
 ]
 
 const REVIEW_ITEMS: Array<{
@@ -327,17 +314,10 @@ export function SidebarNav({
   const language = getSidebarLanguage()
   const copy = SIDEBAR_COPY[language]
   const activeFragments = fragments.filter((fragment) => !fragment.archived)
-  const archivedFragments = fragments.filter((fragment) => fragment.archived)
-  const counts: Record<FragmentFilter, number> = {
-    inbox: activeFragments.filter((fragment) => fragment.tags.includes("inbox")).length,
-    tagged: activeFragments.filter((fragment) =>
-      fragment.tags.some((tag) => tag !== "inbox")
-    ).length,
+  const counts: Record<ReviewWorkspaceMode, number> = {
     dailyReview: dailyReviewCount(fragments),
     insight: insightReviewCount(fragments),
-    lockbox: 0,
     walk: activeFragments.length,
-    archive: archivedFragments.length,
   }
   const gitStateLabel = getGitStateLabel(git, copy)
   const gitSummary = `${git?.branch || "main"} · ${
@@ -517,50 +497,6 @@ export function SidebarNav({
                 label={copy.spaces[item.id]}
                 onClick={() => onRouteChange(item.route)}
               />
-
-              {item.id === "fragments" && route.space === "fragments" ? (
-                <>
-                  {isCollapsed ? (
-                    <CollapsedGroupMarker label={copy.groups.fragments} />
-                  ) : null}
-                  <div
-                    className={styles.navSubGroup}
-                    data-sidebar-subgroup="fragments"
-                  >
-                    {FRAGMENT_ITEMS.map((subItem) => {
-                      const SubIcon = subItem.icon
-                      const isSubItemActive = route.params.filter === subItem.id
-                      return (
-                        <SidebarNavigationButton
-                          className={`${styles.navSubItem} ${
-                            isSubItemActive
-                              ? styles.navSubItemActive
-                              : styles.navSubItemInactive
-                          }`}
-                          group={copy.groups.fragments}
-                          icon={SubIcon}
-                          isActive={isSubItemActive}
-                          isCollapsed={isCollapsed}
-                          key={subItem.id}
-                          label={copy.nav[subItem.id]}
-                          level="secondary"
-                          onClick={() =>
-                            onRouteChange({
-                              space: "fragments",
-                              params: { filter: subItem.id },
-                            })
-                          }
-                          trailing={
-                            <span className={styles.navCount}>
-                              {counts[subItem.id]}
-                            </span>
-                          }
-                        />
-                      )
-                    })}
-                  </div>
-                </>
-              ) : null}
 
               {item.id === "review" && route.space === "review" ? (
                 <>

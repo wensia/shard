@@ -321,6 +321,14 @@
   overflow: hidden;
 }
 
+.fragmentsViewport {
+  display: flex;
+  min-height: 0;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+}
+
 .noteList {
   display: flex;
   flex-direction: column;

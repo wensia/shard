@@ -1,5 +1,4 @@
 import {
-  ArchiveIcon,
   BookOpenIcon,
   GitBranchIcon,
   HelpCircleIcon,
@@ -11,7 +10,6 @@ import {
   SearchIcon,
   SettingsIcon,
   SparklesIcon,
-  TagIcon,
 } from "lucide-react"
 import { useState } from "react"
 
@@ -31,9 +29,8 @@ import {
 } from "@/components/ui/tooltip"
 import { dailyReviewCount, insightReviewCount } from "@/lib/review-workflows"
 import { useAppVersion } from "@/lib/use-app-version"
-import type { Fragment, FragmentFilter } from "@/types"
+import type { Fragment } from "@/types"
 import type {
-  FragmentWorkspaceFilter,
   ReviewWorkspaceMode,
   WorkspaceRoute,
 } from "@/workspace/route"
@@ -63,7 +60,7 @@ const SPACE_TABS: Array<{
     id: "fragments",
     label: "碎片",
     icon: InboxIcon,
-    route: { space: "fragments", params: { filter: "inbox" } },
+    route: { space: "fragments", params: {} },
   },
   {
     id: "library",
@@ -77,17 +74,6 @@ const SPACE_TABS: Array<{
     icon: HistoryIcon,
     route: { space: "review", params: { mode: "dailyReview" } },
   },
-]
-
-// 密匣不在底部标签栏：入口是资料库树上的上锁挂载点（传送门模型）
-const FRAGMENT_TABS: Array<{
-  id: FragmentWorkspaceFilter
-  label: string
-  icon: typeof InboxIcon
-}> = [
-  { id: "inbox", label: "收件箱", icon: InboxIcon },
-  { id: "tagged", label: "标签", icon: TagIcon },
-  { id: "archive", label: "归档", icon: ArchiveIcon },
 ]
 
 const REVIEW_TABS: Array<{
@@ -115,17 +101,10 @@ export function BottomTabs({
   const [isMenuOpen, setIsMenuOpen] = useState(false)
   const appVersion = useAppVersion()
   const activeFragments = fragments.filter((fragment) => !fragment.archived)
-  const archivedFragments = fragments.filter((fragment) => fragment.archived)
-  const counts: Record<FragmentFilter, number> = {
-    inbox: activeFragments.filter((fragment) => fragment.tags.includes("inbox")).length,
-    tagged: activeFragments.filter((fragment) =>
-      fragment.tags.some((tag) => tag !== "inbox")
-    ).length,
+  const counts: Record<ReviewWorkspaceMode, number> = {
     dailyReview: dailyReviewCount(fragments),
     insight: insightReviewCount(fragments),
-    lockbox: 0,
     walk: activeFragments.length,
-    archive: archivedFragments.length,
   }
 
   return (
@@ -220,37 +199,6 @@ export function BottomTabs({
                 )
               })}
             </nav>
-
-            {route.space === "fragments" ? (
-              <nav aria-label="碎片空间" className={styles.secondaryTabs}>
-                {FRAGMENT_TABS.map((item) => {
-                  const Icon = item.icon
-                  const isActive = route.params.filter === item.id
-                  return (
-                    <button
-                      aria-current={isActive ? "page" : undefined}
-                      className={`${styles.secondaryTab} ${
-                        isActive
-                          ? styles.secondaryTabActive
-                          : styles.secondaryTabInactive
-                      }`}
-                      key={item.id}
-                      onClick={() =>
-                        onRouteChange({
-                          space: "fragments",
-                          params: { filter: item.id },
-                        })
-                      }
-                      type="button"
-                    >
-                      <Icon aria-hidden="true" size={14} strokeWidth={1.75} />
-                      <span className={styles.truncate}>{item.label}</span>
-                      <span className={styles.count}>{counts[item.id]}</span>
-                    </button>
-                  )
-                })}
-              </nav>
-            ) : null}
 
             {route.space === "review" ? (
               <nav aria-label="回顾空间" className={styles.secondaryTabs}>

@@ -80,7 +80,6 @@ import {
 import type {
   Fragment,
   CsvFileSummary,
-  FragmentFilter,
   MindMapSummary,
   LibraryMutationResult,
   LibraryTreeSnapshot,
@@ -91,6 +90,7 @@ import { LockboxShell } from "@/workspace/lockbox-shell"
 import {
   LibraryShell,
   type LibraryDraftHandle,
+  type LibraryNavigationTarget,
 } from "@/workspace/library-shell"
 import {
   writeWorkspaceRoute,
@@ -146,7 +146,6 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     setFragments,
     setIsCreating,
     setIsLoading,
-    taggedFragments,
   } = useFragments()
   const {
     insightIncludeLockbox,
@@ -203,25 +202,13 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
   const [mindMaps, setMindMaps] = useState<MindMapSummary[]>([])
   const [csvFiles, setCsvFiles] = useState<CsvFileSummary[]>([])
   const [libraryTree, setLibraryTree] = useState<LibraryTreeSnapshot | null>(null)
-  const [selectedTag, setSelectedTag] = useState<string | null>(null)
-  const [selectedInboxTag, setSelectedInboxTag] = useState<string | null>(null)
   const searchReturnFocusRef = useRef<HTMLElement | null>(null)
   const librarySaveHandlerRef = useRef<LibraryDraftHandle | null>(null)
-  const [pendingLibraryNavigation, setPendingLibraryNavigation] = useState<{
-    id: string
-    requestId: number
-  } | null>(null)
+  const [pendingLibraryTarget, setPendingLibraryTarget] =
+    useState<LibraryNavigationTarget | null>(null)
   const nextLibraryNavigationIdRef = useRef(0)
   const migratedLibraryVaultRef = useRef<string | null>(null)
   const routeRef = useRef(route)
-  const filter: FragmentFilter =
-    route.space === "fragments"
-      ? route.params.filter
-      : route.space === "review"
-        ? route.params.mode
-        : route.space === "lockbox"
-          ? "lockbox"
-          : "inbox"
 
   useEffect(() => {
     void refreshFragments()
@@ -401,10 +388,8 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     applyVaultState(state)
     if (options.resetView) {
       closeEditor()
-      setSelectedTag(null)
-      setSelectedInboxTag(null)
       setIsMindMapViewActive(false)
-      setFragmentFilter("inbox")
+      setRoute({ space: "fragments", params: {} })
     }
     setIsVaultGuideOpen(true)
   }
@@ -908,7 +893,6 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
       setLockboxDialogMode("unlock")
       return
     }
-    setSelectedTag(null)
     setSelectedLockboxTag(null)
     setRoute({ space: "lockbox", params: {} })
   }
@@ -983,7 +967,6 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
       return
     }
 
-    setSelectedTag(null)
     setSelectedLockboxTag(null)
     setRoute({ space: "lockbox", params: {} })
     toast("密匣已解锁")
@@ -1087,17 +1070,12 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     fragment: Fragment,
     session?: FragmentSearchSession
   ) {
-    const visibleTag = getFirstVisibleTag(fragment)
-
     setEditingVariant("inline")
     setEditingFragmentId(null)
     setSelectedLockboxTag(null)
     setIsMindMapViewActive(false)
 
-    if (fragment.archived) {
-      setSelectedTag(null)
-      setFragmentFilter("archive")
-    } else if (fragment.lockbox) {
+    if (fragment.lockbox) {
       if (!lockbox?.unlocked) {
         setIsSearchModeActive(false)
         setSearchSession(null)
@@ -1107,19 +1085,23 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
         return
       }
 
-      setSelectedTag(null)
       setRoute({ space: "lockbox", params: {} })
       if (deriveKind(fragment.tags) === "note") {
         // 密匣笔记住在空间的笔记树里而非碎片流，直接进禅编辑器
         openZenEditor(fragment)
       }
-    } else if (fragment.tags.includes("inbox")) {
-      setSelectedTag(null)
-      setSelectedInboxTag(null)
-      setFragmentFilter("inbox")
-    } else if (visibleTag) {
-      setSelectedTag(visibleTag)
-      setFragmentFilter("tagged")
+    } else if (deriveKind(fragment.tags) === "note" && !fragment.archived) {
+      // 公开笔记进资料库编辑器；笔记不在碎片流里，不设滚动目标
+      requestLibraryTarget({ kind: "note", id: fragment.id })
+      setIsSearchModeActive(false)
+      if (session) setSearchSession(session)
+      searchReturnFocusRef.current = null
+      return
+    } else if (fragment.archived || fragment.tags.includes("inbox")) {
+      requestLibraryTarget({
+        kind: "fragments",
+        archived: fragment.archived || undefined,
+      })
     } else {
       toast("这条笔记当前不在时间线列表中")
       return
@@ -1131,6 +1113,21 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     setPendingScrollFragmentId(fragment.id)
   }
 
+  function requestLibraryTarget(
+    target:
+      | { kind: "note"; id: string }
+      | { kind: "fragments"; archived?: boolean }
+  ) {
+    nextLibraryNavigationIdRef.current += 1
+    setPendingLibraryTarget({
+      ...target,
+      requestId: nextLibraryNavigationIdRef.current,
+    })
+    if (routeRef.current.space !== "library") {
+      setRoute({ space: "library", params: {} })
+    }
+  }
+
   async function handleNavigateToFragment(fragmentId: string) {
     const target = publicOnlyFragments.find(
       (fragment) => fragment.id === fragmentId
@@ -1140,16 +1137,9 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
       return
     }
 
-    if (target.kind === "note" && !target.archived) {
+    if (deriveKind(target.tags) === "note" && !target.archived) {
       if (!(await saveLibraryDraftBeforeNavigation())) return
-      nextLibraryNavigationIdRef.current += 1
-      setPendingLibraryNavigation({
-        id: target.id,
-        requestId: nextLibraryNavigationIdRef.current,
-      })
-      if (routeRef.current.space !== "library") {
-        setRoute({ space: "library", params: {} })
-      }
+      requestLibraryTarget({ kind: "note", id: target.id })
       return
     }
 
@@ -1174,12 +1164,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
         ...current.filter((fragment) => fragment.id !== created.id),
       ])
     )
-    nextLibraryNavigationIdRef.current += 1
-    setPendingLibraryNavigation({
-      id: created.id,
-      requestId: nextLibraryNavigationIdRef.current,
-    })
-    setRoute({ space: "library", params: {} })
+    requestLibraryTarget({ kind: "note", id: created.id })
     toast("笔记已生成")
     void refreshFragments()
     void refreshLibraryTree()
@@ -1193,7 +1178,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     }
     // 密匣空间自带搜索覆盖层：留在空间内搜索，避免离开安全区触发上锁
     if (route.space !== "fragments" && route.space !== "lockbox") {
-      setRoute({ space: "fragments", params: { filter: "inbox" } })
+      setRoute({ space: "fragments", params: {} })
     }
     setIsSearchModeActive(true)
     setSearchFocusSignal((current) => current + 1)
@@ -1229,11 +1214,11 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
 
   function handleCreateInboxTag(rawTag: string) {
     const tag = rawTag.trim().replace(/^#+/, "")
-    if (!tag) return false
+    if (!tag) return null
 
     if (/\s/.test(tag)) {
       toast.error("标签不能包含空格", { duration: Infinity })
-      return false
+      return null
     }
 
     if (tag === "inbox" || tag === LOCKBOX_TAG || isTypeTag(tag)) {
@@ -1242,24 +1227,22 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
           `#${tag} 是内容类型保留标签，请使用卡片菜单“转为笔记”`,
           { duration: Infinity }
         )
-        return false
+        return null
       }
       toast.error(`#${tag} 是保留标签，不能新建`, { duration: Infinity })
-      return false
+      return null
     }
 
     if (inboxTagSummaries.some((summary) => summary.tag === tag)) {
-      setSelectedInboxTag(tag)
       toast(`标签 #${tag} 已存在`)
-      return true
+      return tag
     }
 
     updateAppSettings({
       customTags: [...appSettings.customTags, tag],
     })
-    setSelectedInboxTag(tag)
     toast(`${`标签 #${tag} 已创建`}：${`写片段时输入 #${tag} 即可归入这个标签。`}`)
-    return true
+    return tag
   }
 
   async function openMindMap(map?: MindMapSummary) {
@@ -1270,31 +1253,13 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     searchReturnFocusRef.current = null
     if (!map) {
       if (route.space !== "fragments") {
-        setRoute({ space: "fragments", params: { filter: "inbox" } })
+        setRoute({ space: "fragments", params: {} })
       }
       setIsMindMapViewActive(true)
       return
     }
 
     setActiveMindMapId(map.id)
-  }
-
-  function setFragmentFilter(nextFilter: FragmentFilter) {
-    if (
-      nextFilter === "dailyReview" ||
-      nextFilter === "insight" ||
-      nextFilter === "walk"
-    ) {
-      setRoute({ space: "review", params: { mode: nextFilter } })
-      return
-    }
-
-    if (nextFilter === "lockbox") {
-      setRoute({ space: "lockbox", params: {} })
-      return
-    }
-
-    setRoute({ space: "fragments", params: { filter: nextFilter } })
   }
 
   async function handleRouteChange(nextRoute: WorkspaceRoute) {
@@ -1313,14 +1278,6 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     setRoute(nextRoute)
   }
 
-  async function handleSelectFragmentMonth(month: string) {
-    setSelectedInboxTag(null)
-    await handleRouteChange({
-      space: "fragments",
-      params: { filter: "inbox", month },
-    })
-  }
-
   const lockboxTagSummaries = useMemo(
     () => buildTagSummaries(lockboxFragments, []),
     [lockboxFragments]
@@ -1335,33 +1292,10 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     [lockboxFragments]
   )
 
-  const tagSummaries = useMemo(
-    () => buildTagSummaries(publicActiveFragments, DEFAULT_PROJECT_TAGS),
-    [publicActiveFragments]
-  )
-
   const inboxTagSummaries = useMemo(
     () => buildTagSummaries(inboxFragments, appSettings.customTags),
     [appSettings.customTags, inboxFragments]
   )
-
-  useEffect(() => {
-    if (
-      selectedInboxTag &&
-      !inboxTagSummaries.some((summary) => summary.tag === selectedInboxTag)
-    ) {
-      setSelectedInboxTag(null)
-    }
-  }, [inboxTagSummaries, selectedInboxTag])
-
-  useEffect(() => {
-    if (
-      selectedTag &&
-      !tagSummaries.some((summary) => summary.tag === selectedTag)
-    ) {
-      setSelectedTag(null)
-    }
-  }, [selectedTag, tagSummaries])
 
   useEffect(() => {
     if (!selectedLockboxTag) return
@@ -1376,60 +1310,25 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     }
   }, [lockbox?.unlocked, lockboxTagSummaries, selectedLockboxTag])
 
-  const filteredFragments = useMemo(() => {
-    let result: Fragment[]
-    switch (filter) {
-      case "tagged":
-        result = selectedTag
-          ? publicActiveFragments.filter((fragment) =>
-              fragment.tags.includes(selectedTag)
-            )
-          : taggedFragments
-        break
-      case "lockbox": {
-        if (!lockbox?.unlocked) return []
-        const lockboxStream = lockboxFragments.filter(
-          (fragment) => deriveKind(fragment.tags) !== "note"
+  const lockboxTimelineFragments = useMemo(() => {
+    if (!lockbox?.unlocked) return []
+    const lockboxStream = lockboxFragments.filter(
+      (fragment) => deriveKind(fragment.tags) !== "note"
+    )
+    return selectedLockboxTag
+      ? lockboxStream.filter((fragment) =>
+          fragment.tags.includes(selectedLockboxTag)
         )
-        result = selectedLockboxTag
-          ? lockboxStream.filter((fragment) =>
-              fragment.tags.includes(selectedLockboxTag)
-            )
-          : lockboxStream
-        break
-      }
-      case "archive":
-        result = archivedFragments
-        break
-      case "dailyReview":
-      case "insight":
-      case "walk":
-        return []
-      case "inbox":
-      default:
-        result = selectedInboxTag
-          ? inboxFragments.filter((fragment) =>
-              fragment.tags.includes(selectedInboxTag)
-            )
-          : inboxFragments
-        break
-    }
+      : lockboxStream
+  }, [lockbox?.unlocked, lockboxFragments, selectedLockboxTag])
 
-    const month = route.space === "fragments" ? route.params.month : undefined
-    return month ? result.filter((fragment) => isFragmentInMonth(fragment, month)) : result
-  }, [
-    archivedFragments,
-    filter,
-    inboxFragments,
-    lockbox?.unlocked,
-    lockboxFragments,
-    publicActiveFragments,
-    route,
-    selectedInboxTag,
-    selectedLockboxTag,
-    selectedTag,
-    taggedFragments,
-  ])
+  const recentCaptureFragments = useMemo(
+    () =>
+      [...inboxFragments]
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+        .slice(0, 5),
+    [inboxFragments]
+  )
 
   const knownTags = useMemo(
     () =>
@@ -1454,10 +1353,6 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
         : null,
     [editingFragmentId, fragments]
   )
-  const isInboxView = filter === "inbox" && !isMindMapViewActive
-  const isReviewView =
-    !isMindMapViewActive &&
-    (filter === "dailyReview" || filter === "insight" || filter === "walk")
   const isVaultDialogOpen = isVaultGuideOpen || needsVaultSetup
   const isExportSheetOpen = exportingFragment !== null
   const isLockboxArchiveConfirmOpen = pendingLockboxArchiveFragment !== null
@@ -1468,11 +1363,12 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     isLockboxArchiveConfirmOpen
   const isBlockingDialogOpen = isModalBusy
 
-  const timelineScrollTargetId =
+  const lockboxScrollTargetId =
     pendingScrollFragmentId &&
     !isSearchModeActive &&
-    !isReviewView &&
-    filteredFragments.some((fragment) => fragment.id === pendingScrollFragmentId)
+    lockboxTimelineFragments.some(
+      (fragment) => fragment.id === pendingScrollFragmentId
+    )
       ? pendingScrollFragmentId
       : null
 
@@ -1570,7 +1466,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
       setSearchSession(null)
       searchReturnFocusRef.current = null
       setIsMindMapViewActive(false)
-      setRoute({ space: "fragments", params: { filter: "inbox" } })
+      setRoute({ space: "fragments", params: {} })
       focusComposer()
     }
 
@@ -1716,24 +1612,13 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // 碎片空间与密匣空间共用同一套时间线 / 搜索接线，只在空表文案与整理入口上分叉
-  const fragmentsEmptyMessage =
-    filter === "tagged"
-      ? "还没有带标签的内容。到 Inbox 输入 #标签 即可归类。"
-      : filter === "archive"
-        ? "还没有归档内容。"
-        : isInboxView && selectedInboxTag
-          ? `#${selectedInboxTag} 下还没有片段。写片段时输入 #${selectedInboxTag} 即可归入。`
-          : undefined
-
   const lockboxEmptyMessage = lockbox?.unlocked
     ? "密匣里还没有碎片。到 Inbox 输入 #密匣 即可保存到这里。"
     : "密匣已上锁。"
 
-  const timelineProps = {
+  const timelineHandlers = {
     csvFiles,
     editingFragmentId: editingVariant === "inline" ? editingFragmentId : null,
-    fragments: filteredFragments,
     isLoading,
     knownTags,
     onArchive: handleArchiveFragment,
@@ -1744,9 +1629,6 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     onMoveToLockbox: handleMoveFragmentToLockbox,
     onOpenZen: openZenEditor,
     onPin: handlePinFragment,
-    onScrollDown: () => {
-      setComposerCollapseSignal((current) => current + 1)
-    },
     onNavigateToFragment: (fragmentId: string) => {
       void handleNavigateToFragment(fragmentId)
     },
@@ -1757,7 +1639,9 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
       void handleToggleFragmentTask(fragment, lineIndex)
     },
     onUnlinkFragment: handleUnlinkFragment,
-    scrollToFragmentId: timelineScrollTargetId,
+    // 展示列表可以是切片（捕捉页最近 5 条、资料库月份 scope），
+    // 但关联候选与反链索引必须覆盖全量公开内容
+    relationFragments: publicOnlyFragments,
     vaultPath,
   }
 
@@ -1852,14 +1736,6 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
               onOpenMindMap: (map) => void openMindMap(map),
               onOpenZen: openZenDraft,
             }}
-            filter={route.params.filter}
-            inboxTagBar={{
-              selectedTag: selectedInboxTag,
-              summaries: inboxTagSummaries,
-              totalCount: inboxFragments.length,
-              onCreateTag: handleCreateInboxTag,
-              onSelectTag: setSelectedInboxTag,
-            }}
             isMindMapViewActive={isMindMapViewActive}
             isSearchModeActive={isSearchModeActive}
             mindMapPanel={{
@@ -1868,16 +1744,12 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
             }}
             search={searchProps}
             searchContextBar={searchContextBarProps}
-            taggedPanel={{
-              selectedTag,
-              summaries: tagSummaries,
-              totalCount: taggedFragments.length,
-              onSelectTag: setSelectedTag,
-            }}
             timeline={{
-              ...timelineProps,
-              emptyMessage: fragmentsEmptyMessage,
-              onOrganize: handleOrganizeFragments,
+              ...timelineHandlers,
+              fragments: recentCaptureFragments,
+              onScrollDown: () => {
+                setComposerCollapseSignal((current) => current + 1)
+              },
             }}
               />
             ) : route.space === "lockbox" ? (
@@ -1895,8 +1767,12 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
             selectedTag={selectedLockboxTag}
             summaries={lockboxTagSummaries}
             timeline={{
-              ...timelineProps,
+              ...timelineHandlers,
               emptyMessage: lockboxEmptyMessage,
+              fragments: lockboxTimelineFragments,
+              // 密匣内的关联候选保持密匣隔离，不混入公开内容
+              relationFragments: lockboxTimelineFragments,
+              scrollToFragmentId: lockboxScrollTargetId,
             }}
             totalCount={lockboxFragments.length}
               />
@@ -1945,7 +1821,16 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
             libraryTree={libraryTree}
             mindMaps={mindMaps}
             knownTags={knownTags}
-            navigateToNote={pendingLibraryNavigation}
+            archivedFragments={archivedFragments}
+            fragmentsTimeline={{
+              ...timelineHandlers,
+              onOrganize: handleOrganizeFragments,
+            }}
+            fragmentsTagBar={{
+              onCreateTag: handleCreateInboxTag,
+              summaries: inboxTagSummaries,
+            }}
+            navigateTo={pendingLibraryTarget}
             onNavigateToFragment={(fragmentId) => {
               void handleNavigateToFragment(fragmentId)
             }}
@@ -1957,10 +1842,9 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
             onRefreshFragments={refreshFragments}
             onRegisterSaveHandler={registerLibrarySaveHandler}
             onSave={handleUpdateFragment}
-            onSelectFragmentMonth={(month) => {
-              void handleSelectFragmentMonth(month)
-            }}
+            pendingScrollFragmentId={pendingScrollFragmentId}
             relationFragments={publicOnlyFragments}
+            searchContextBar={searchContextBarProps}
               />
             )}
           </div>
@@ -2106,29 +1990,11 @@ function isGitSetupError(error: unknown) {
   return message.includes("Git 未初始化") || message.includes("Git remote 未配置")
 }
 
-function getFirstVisibleTag(fragment: Fragment) {
-  return (
-    fragment.tags.find(
-      (tag) => tag !== "inbox" && tag !== LOCKBOX_TAG && !isTypeTag(tag)
-    ) ?? null
-  )
-}
-
 function sortFragmentsForDisplay(fragments: Fragment[]) {
   return [...fragments].sort((a, b) => {
     if (a.pinned !== b.pinned) return a.pinned ? -1 : 1
     return b.createdAt.localeCompare(a.createdAt)
   })
-}
-
-function isFragmentInMonth(fragment: Fragment, month: string) {
-  if (fragment.kind !== "fragment" || fragment.archived || fragment.lockbox) {
-    return false
-  }
-  const pathMonth = fragment.path.match(/^fragments\/(\d{4})\/(\d{2})\//u)
-  if (pathMonth) return `${pathMonth[1]}-${pathMonth[2]}` === month
-  if (!fragment.path.startsWith("fragments/")) return false
-  return fragment.createdAt.slice(0, 7) === month
 }
 
 function buildTagSummaries(

@@ -61,6 +61,21 @@ async function installLibraryTreeMock(
         related: [],
       },
       {
+        id: "fragment-archived",
+        content: "归档碎片正文",
+        createdAt: "2026-06-12T08:00:00.000Z",
+        updatedAt: now,
+        tags: ["inbox"],
+        category: null,
+        path: "fragments/2026/06/20260612-080000.md",
+        gitStatus: "committed",
+        error: null,
+        archived: true,
+        lockbox: false,
+        pinned: false,
+        related: [],
+      },
+      {
         id: "note-plan",
         content: "# 项目计划\n从 [[旧笔记|打开笔记]] 继续",
         createdAt: "2026-08-28T08:00:00.000Z",
@@ -156,11 +171,11 @@ async function installLibraryTreeMock(
         kind: "mindmap",
       }],
       fragmentStream: {
-        totalCount: fragments.filter((item) => !item.tags.includes("note")).length,
+        totalCount: fragments.filter((item) => !item.tags.includes("note") && !item.archived).length,
         years: [
           {
             year: "2026",
-            totalCount: fragments.filter((item) => !item.tags.includes("note")).length,
+            totalCount: fragments.filter((item) => !item.tags.includes("note") && !item.archived).length,
             months: [
               { month: "08", count: fragments.some((item) => item.id === "fragment-august") ? 1 : 0 },
               { month: "07", count: 1 },
@@ -358,7 +373,7 @@ test.beforeEach(async ({ page }) => {
   await page.goto("/")
 })
 
-test("资料库文件树只展示 notes 内容，碎片流止于年月并写入月份路由", async ({ page }) => {
+test("资料库文件树只展示 notes 内容，碎片流年月在资料库就地浏览", async ({ page }) => {
   await page.getByRole("button", { name: "资料库", exact: true }).click()
   const treePane = page.getByRole("complementary", { name: "资料库目录" })
 
@@ -379,8 +394,50 @@ test("资料库文件树只展示 notes 内容，碎片流止于年月并写入�
   await expect(page.locator('[data-shard-fragment-id="fragment-august"]')).toBeVisible()
   await expect(page.locator('[data-shard-fragment-id="fragment-july"]')).toHaveCount(0)
   await expect.poll(() => page.evaluate(() => localStorage.getItem("shard.workspace-route"))).toBe(
-    JSON.stringify({ space: "fragments", params: { filter: "inbox", month: "2026-08" } })
+    JSON.stringify({ space: "library", params: {} })
   )
+  await expect(page.getByRole("button", { name: "进入禅模式", exact: true })).toHaveCount(0)
+})
+
+test("碎片流分组、标签与归档都在资料库查看器内工作", async ({ page }) => {
+  await page.getByRole("button", { name: "资料库", exact: true }).click()
+  const treePane = page.getByRole("complementary", { name: "资料库目录" })
+  const viewer = page.getByRole("article", { name: "资料库查看器" })
+
+  await treePane.getByRole("button", { name: "碎片流（2）", exact: true }).click()
+  await expect(viewer.locator('[data-shard-fragment-id="fragment-august"]')).toBeVisible()
+  await expect(viewer.locator('[data-shard-fragment-id="fragment-july"]')).toBeVisible()
+
+  await viewer.getByRole("button", { name: "#灵感 1", exact: true }).click()
+  await expect(viewer.locator('[data-shard-fragment-id="fragment-august"]')).toBeVisible()
+  await expect(viewer.locator('[data-shard-fragment-id="fragment-july"]')).toHaveCount(0)
+
+  await viewer.getByRole("button", { name: "新建标签", exact: true }).click()
+  await viewer.getByRole("textbox", { name: "新标签名", exact: true }).fill("稍后")
+  await viewer.getByRole("textbox", { name: "新标签名", exact: true }).press("Enter")
+  await expect(viewer.getByRole("button", { name: "#稍后 0", exact: true })).toHaveAttribute(
+    "aria-pressed",
+    "true"
+  )
+
+  await treePane.getByRole("button", { name: "归档（1）", exact: true }).click()
+  await expect(viewer.locator('[data-shard-fragment-id="fragment-archived"]')).toBeVisible()
+  await expect(viewer.getByRole("button", { name: "全部 2", exact: true })).toHaveCount(0)
+  await expect(viewer.getByRole("button", { name: "新建标签", exact: true })).toHaveCount(0)
+})
+
+test("脏笔记进入碎片流前先保存草稿", async ({ page }) => {
+  await page.getByRole("button", { name: "资料库", exact: true }).click()
+  const treePane = page.getByRole("complementary", { name: "资料库目录" })
+  await treePane.getByRole("button", { name: "旧笔记.md", exact: true }).click()
+  await fillEditor(page, "library:note-old", "# 旧笔记\n先保存再看碎片")
+  await treePane.getByRole("button", { name: "碎片流（2）", exact: true }).click()
+
+  await expect.poll(() => commandCalls(page, "update_fragment")).toHaveLength(1)
+  await expect(
+    page.getByRole("article", { name: "资料库查看器" })
+      .locator('[data-shard-fragment-id="fragment-august"]')
+  ).toBeVisible()
 })
 
 test("资料库思维导图在第三栏打开并保留侧栏与目录树", async ({ page }) => {
@@ -610,7 +667,7 @@ test("目录树 MVP 支持新建、重命名、菜单移动和非空目录删除
   await expect(page.getByRole("button", { name: "重命名文件", exact: true })).toHaveText(
     "已改名"
   )
-  await expect.poll(() => readEditor(page, "library:note-created-4")).toBe("# 未命名")
+  await expect.poll(() => readEditor(page, "library:note-created-5")).toBe("# 未命名")
 
   await treePane.getByRole("button", { name: "已改名.md 操作", exact: true }).click()
   await page.getByRole("menuitem", { name: "移动到…", exact: true }).hover()

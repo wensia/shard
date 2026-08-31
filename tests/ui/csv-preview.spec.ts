@@ -198,6 +198,15 @@ test.beforeEach(async ({ page }) => {
   await page.goto("/")
 })
 
+/** 捕捉页只显示最近 5 条；排在后面的时间线卡片要到资料库碎片流里找。 */
+async function openLibraryFragmentStream(page: Page) {
+  await page.getByRole("button", { name: "资料库", exact: true }).click()
+  await page
+    .getByRole("complementary", { name: "资料库目录" })
+    .getByRole("button", { name: /^碎片流/ })
+    .click()
+}
+
 test("资料库与 Zen 的 CSV 嵌入预览最多展示 50 行", async ({ page }) => {
   await page.getByRole("button", { name: "资料库", exact: true }).click()
   const noteList = page.getByRole("complementary", { name: "资料库目录" })
@@ -288,6 +297,7 @@ test("GBK CSV 正确转码中文并显示建议另存为 UTF-8 角标", async ({
 })
 
 test("普通 CSV wikilink 不嵌入表格且点击调用默认程序打开", async ({ page }) => {
+  await openLibraryFragmentStream(page)
   const card = fragmentCard(page, "timeline-link")
   await expect(card.locator('section[data-csv-path="data/large.csv"]')).toHaveCount(0)
   await card
@@ -301,6 +311,7 @@ test("普通 CSV wikilink 不嵌入表格且点击调用默认程序打开", asy
 })
 
 test("CSV 异步读取期间暴露 aria-busy 并在完成后恢复", async ({ page }) => {
+  await openLibraryFragmentStream(page)
   const preview = csvPreview(fragmentCard(page, "timeline-slow"), "data/slow.csv")
   await expect(preview).toHaveAttribute("aria-busy", "true")
   await expect(preview).toHaveAttribute("aria-busy", "false")

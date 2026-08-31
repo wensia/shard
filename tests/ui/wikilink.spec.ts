@@ -220,7 +220,12 @@ test("链接点击复用资料库与时间线导航且不滚动 document", async
   const documentScrollBefore = await page.evaluate(() => window.scrollY)
   await page.locator('[data-shard-editor="composer"] .shard-cm-wikilink').click()
   await expect(
-    page.locator('[data-shard-fragment-id="fragment-target"]')
+    page.getByRole("complementary", { name: "资料库目录" })
+  ).toBeVisible()
+  await expect(
+    page
+      .getByRole("article", { name: "资料库查看器" })
+      .locator('[data-shard-fragment-id="fragment-target"]')
   ).toHaveClass(/shard-fragment-card-highlight/u)
   expect(await page.evaluate(() => window.scrollY)).toBe(documentScrollBefore)
 })

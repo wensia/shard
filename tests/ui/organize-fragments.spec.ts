@@ -208,6 +208,11 @@ async function installOrganizeMock(page: Page, mode: OrganizeMockMode) {
 }
 
 async function enterOrganizeModeAndSelectTwo(page: Page) {
+  await page.getByRole("button", { name: "资料库", exact: true }).click()
+  await page
+    .getByRole("complementary", { name: "资料库目录" })
+    .getByRole("button", { name: /^碎片流（/ })
+    .click()
   await page.getByRole("button", { name: "整理", exact: true }).click()
 
   await page

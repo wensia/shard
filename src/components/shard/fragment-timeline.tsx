@@ -44,6 +44,11 @@ interface FragmentTimelineProps {
     sourceId: string,
     targetId: string
   ) => Promise<void> | void
+  /**
+   * 关联候选与反链索引的数据域。展示列表可以是切片（如捕捉页最近 5 条），
+   * 但关联目标必须能指向全量，不传时退回展示列表。
+   */
+  relationFragments?: Fragment[]
   scrollToFragmentId?: string | null
   vaultPath?: string
 }
@@ -71,6 +76,7 @@ export function FragmentTimeline({
   onToggleKind,
   onToggleTask,
   onUnlinkFragment,
+  relationFragments = fragments,
   scrollToFragmentId = null,
   vaultPath,
 }: FragmentTimelineProps) {
@@ -82,7 +88,7 @@ export function FragmentTimeline({
   const programmaticScrollTimeoutRef = useRef<number | null>(null)
   const viewportRef = useRef<HTMLDivElement>(null)
   // 关系 worker 挂在时间线层级，整条时间线共用一个实例
-  const { indexVersion, requestRelated } = useFragmentRelations(fragments)
+  const { indexVersion, requestRelated } = useFragmentRelations(relationFragments)
   const [highlightedFragmentId, setHighlightedFragmentId] = useState<
     string | null
   >(null)
@@ -495,7 +501,7 @@ export function FragmentTimeline({
                     <FragmentCard
                       csvFiles={csvFiles}
                       fragment={item.fragment}
-                      fragments={fragments}
+                      fragments={relationFragments}
                       isHighlighted={highlightedFragmentId === item.fragment.id}
                       isEditing={editingFragmentId === item.fragment.id}
                       isSelectable={
