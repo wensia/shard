@@ -1297,6 +1297,7 @@ fn list_fragments_in_vault(
         let mut lockbox_files = Vec::new();
         collect_lockbox_files(&vault.join("lockbox").join("fragments"), &mut lockbox_files)?;
         collect_lockbox_files(&vault.join("lockbox").join("archive"), &mut lockbox_files)?;
+        collect_lockbox_files(&vault.join("lockbox").join("notes"), &mut lockbox_files)?;
 
         fragments.extend(lockbox_files.iter().filter_map(|path| {
             read_lockbox_fragment(path, vault, &dirty_paths, &read_keys, None).ok()
@@ -3967,15 +3968,20 @@ fn move_public_fragment_payload_to_lockbox_in_vault(
     frontmatter.updated_at = Local::now().to_rfc3339();
     frontmatter.source = "desktop-lockbox".to_string();
 
-    let public_rel = public_path
-        .strip_prefix(vault.join("fragments"))
-        .or_else(|_| public_path.strip_prefix(vault.join("archive")))
-        .map_err(|error| error.to_string())?;
-    let target_root = if relative_path(vault, public_path)?.starts_with("archive/") {
-        vault.join("lockbox").join("archive")
-    } else {
-        vault.join("lockbox").join("fragments")
-    };
+    let public_path_mapping = [
+        ("notes", vault.join("lockbox").join("notes")),
+        ("archive", vault.join("lockbox").join("archive")),
+        ("fragments", vault.join("lockbox").join("fragments")),
+    ]
+    .into_iter()
+    .find_map(|(source, target_root)| {
+        public_path
+            .strip_prefix(vault.join(source))
+            .ok()
+            .map(|public_rel| (public_rel, target_root))
+    })
+    .ok_or_else(|| "只有 fragments/、notes/、archive/ 中的文档可以移入密匣。".to_string())?;
+    let (public_rel, target_root) = public_path_mapping;
     let mut lockbox_path = target_root.join(public_rel);
     lockbox_path.set_extension("shard");
 
@@ -4218,6 +4224,7 @@ fn find_lockbox_fragment_path(vault: &Path, id: &str) -> Result<Option<PathBuf>,
     let mut files = Vec::new();
     collect_lockbox_files(&vault.join("lockbox").join("fragments"), &mut files)?;
     collect_lockbox_files(&vault.join("lockbox").join("archive"), &mut files)?;
+    collect_lockbox_files(&vault.join("lockbox").join("notes"), &mut files)?;
 
     for path in files {
         let text = fs::read_to_string(&path).map_err(|error| error.to_string())?;
@@ -6972,6 +6979,85 @@ mod tests {
             related: Vec::new(),
         };
         write_fragment_file(path, &frontmatter, body).unwrap();
+    }
+
+    #[test]
+    fn moves_note_to_lockbox_notes_and_lists_it_when_unlocked() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let vault = tempdir.path();
+        let runtime = Arc::new(Mutex::new(LockboxSession::default()));
+        ensure_vault_layout(vault).unwrap();
+        setup_lockbox_in_vault(vault, &runtime, "correct horse").unwrap();
+        let source = vault.join("notes/笔记.md");
+        write_t6_fragment(&source, "note-root", vec!["note", "inbox"], "笔记正文");
+
+        let moved = move_public_fragment_to_lockbox_in_vault(vault, &runtime, &source).unwrap();
+
+        let target = vault.join("lockbox/notes/笔记.shard");
+        assert!(!source.exists());
+        assert!(target.is_file());
+        assert_eq!(moved.path, "lockbox/notes/笔记.shard");
+        assert_eq!(find_lockbox_fragment_path(vault, "note-root").unwrap(), Some(target));
+        let state = list_fragments_in_vault(vault, &runtime).unwrap();
+        assert!(state.fragments.iter().any(|fragment| fragment.id == "note-root"));
+    }
+
+    #[test]
+    fn preserves_note_subdirectories_when_moving_to_lockbox() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let vault = tempdir.path();
+        let runtime = Arc::new(Mutex::new(LockboxSession::default()));
+        ensure_vault_layout(vault).unwrap();
+        setup_lockbox_in_vault(vault, &runtime, "correct horse").unwrap();
+        let source = vault.join("notes/子目录/x.md");
+        fs::create_dir_all(source.parent().unwrap()).unwrap();
+        write_t6_fragment(&source, "note-nested", vec!["note"], "子目录笔记");
+
+        move_public_fragment_to_lockbox_in_vault(vault, &runtime, &source).unwrap();
+
+        assert!(!source.exists());
+        assert!(vault.join("lockbox/notes/子目录/x.shard").is_file());
+    }
+
+    #[test]
+    fn preserves_fragment_and_archive_lockbox_destinations() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let vault = tempdir.path();
+        let runtime = Arc::new(Mutex::new(LockboxSession::default()));
+        ensure_vault_layout(vault).unwrap();
+        setup_lockbox_in_vault(vault, &runtime, "correct horse").unwrap();
+        let fragment_source = vault.join("fragments/2026/08/fragment.md");
+        let archive_source = vault.join("archive/2026/08/archive.md");
+        fs::create_dir_all(fragment_source.parent().unwrap()).unwrap();
+        fs::create_dir_all(archive_source.parent().unwrap()).unwrap();
+        write_t6_fragment(&fragment_source, "fragment-source", vec!["inbox"], "碎片");
+        write_t6_fragment(&archive_source, "archive-source", vec!["inbox"], "归档碎片");
+
+        move_public_fragment_to_lockbox_in_vault(vault, &runtime, &fragment_source).unwrap();
+        move_public_fragment_to_lockbox_in_vault(vault, &runtime, &archive_source).unwrap();
+
+        assert!(vault.join("lockbox/fragments/2026/08/fragment.shard").is_file());
+        assert!(vault.join("lockbox/archive/2026/08/archive.shard").is_file());
+    }
+
+    #[test]
+    fn rejects_moving_public_document_outside_supported_roots_to_lockbox() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let vault = tempdir.path();
+        let runtime = Arc::new(Mutex::new(LockboxSession::default()));
+        ensure_vault_layout(vault).unwrap();
+        setup_lockbox_in_vault(vault, &runtime, "correct horse").unwrap();
+        let source = vault.join("maps/outside.md");
+        write_t6_fragment(&source, "outside-root", vec!["inbox"], "其他文档");
+
+        let error = move_public_fragment_to_lockbox_in_vault(vault, &runtime, &source)
+            .unwrap_err();
+
+        assert_eq!(
+            error,
+            "只有 fragments/、notes/、archive/ 中的文档可以移入密匣。"
+        );
+        assert!(source.is_file());
     }
 
     #[test]

@@ -58,7 +58,7 @@ import {
   openCsvFile,
   renameLibraryEntry,
 } from "@/lib/api"
-import { deriveKind, deriveNoteTitle } from "@/lib/content-kind"
+import { deriveKind } from "@/lib/content-kind"
 import { extractTags, normalizeTagList } from "@/lib/editor-format"
 import { useFragmentRelations } from "@/lib/use-fragment-relations"
 import { buildCsvWikilinkCandidates, buildWikilinkCandidates } from "@/lib/wikilink"
@@ -89,6 +89,7 @@ interface LibraryShellProps {
   navigateToNote?: { id: string; requestId: number } | null
   onNavigateToFragment?: (fragmentId: string) => void
   onLibraryMutation: (result: LibraryMutationResult) => void
+  onMoveToLockbox: (fragment: Fragment) => Promise<void>
   onSelectFragmentMonth: (month: string) => void
   onRegisterSaveHandler: (handle: LibraryDraftHandle | null) => void
   onSave: (
@@ -120,6 +121,7 @@ export function LibraryShell({
   navigateToNote = null,
   onNavigateToFragment,
   onLibraryMutation,
+  onMoveToLockbox,
   onSelectFragmentMonth,
   onRegisterSaveHandler,
   onRefreshFragments,
@@ -439,7 +441,7 @@ export function LibraryShell({
   }, [navigateToNote, notes])
 
   const selectedTitle = selectedNote
-    ? deriveNoteTitle(selectedNote.content) || "无标题笔记"
+    ? selectedNote.path.split("/").pop()?.replace(/\.md$/iu, "") || "无标题笔记"
     : "选择笔记"
 
   const directories = useMemo(
@@ -809,6 +811,21 @@ export function LibraryShell({
                           moveLibraryEntry(entry.path, destinationDirectory)
                         )
                       }}
+                      onMoveToLockbox={(entry) => {
+                        const note = notes.find(
+                          (candidate) => candidate.path === entry.path
+                        )
+                        if (!note || busyAction) return
+                        void (async () => {
+                          if (!(await saveCurrentNote())) return
+                          setBusyAction("移入密匣")
+                          try {
+                            await onMoveToLockbox(note)
+                          } finally {
+                            setBusyAction(null)
+                          }
+                        })()
+                      }}
                       onRename={(entry) => startRename(entry.path, "tree")}
                       onRenameCancel={() => setRenaming(null)}
                       onRenameChange={(value) =>
@@ -998,6 +1015,7 @@ interface TreeEntriesProps {
   onDelete: (entry: LibraryTreeEntry) => void
   onEntryClick: (entry: LibraryTreeEntry) => void
   onMove: (entry: LibraryTreeEntry, destinationDirectory: string) => void
+  onMoveToLockbox: (entry: LibraryTreeEntry) => void
   onRename: (entry: LibraryTreeEntry) => void
   onRenameCancel: () => void
   onRenameChange: (value: string) => void
@@ -1016,6 +1034,7 @@ function TreeEntries({
   onDelete,
   onEntryClick,
   onMove,
+  onMoveToLockbox,
   onRename,
   onRenameCancel,
   onRenameChange,
@@ -1130,9 +1149,14 @@ function TreeEntries({
                   </DropdownMenuSubContent>
                 </DropdownMenuSub>
                 {entry.kind === "markdown" ? (
-                  <DropdownMenuItem onClick={() => onConvertToFragment(entry)}>
-                    转为碎片
-                  </DropdownMenuItem>
+                  <>
+                    <DropdownMenuItem onClick={() => onConvertToFragment(entry)}>
+                      转为碎片
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => onMoveToLockbox(entry)}>
+                      移入密匣
+                    </DropdownMenuItem>
+                  </>
                 ) : null}
                 <DropdownMenuSeparator />
                 <DropdownMenuItem
@@ -1159,6 +1183,7 @@ function TreeEntries({
               onDelete={onDelete}
               onEntryClick={onEntryClick}
               onMove={onMove}
+              onMoveToLockbox={onMoveToLockbox}
               onRename={onRename}
               onRenameCancel={onRenameCancel}
               onRenameChange={onRenameChange}

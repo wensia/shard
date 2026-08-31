@@ -158,8 +158,8 @@ async function installLibraryTreeMock(page: Page) {
               fragments,
               git,
               lockbox: {
-                configured: false,
-                unlocked: false,
+                configured: true,
+                unlocked: true,
                 expiresAt: null,
                 ttlSeconds: 900,
               },
@@ -261,6 +261,26 @@ async function installLibraryTreeMock(page: Page) {
             fragment.path = "fragments/2026/08/20260830-100000.md"
             return result(fragment)
           }
+          if (command === "move_fragment_to_lockbox") {
+            const fragment = fragments.find((item) => item.id === args.id)
+            if (!fragment) throw new Error("Fragment not found")
+            removeEntry(fragment.path)
+            fragment.path = fragment.path
+              .replace(/^notes\//u, "lockbox/notes/")
+              .replace(/\.md$/iu, ".shard")
+            fragment.lockbox = true
+            return clone({
+              vaultPath: "/tmp/shard-library-tree-test",
+              fragments,
+              git,
+              lockbox: {
+                configured: true,
+                unlocked: true,
+                expiresAt: null,
+                ttlSeconds: 900,
+              },
+            })
+          }
           throw new Error(`Unhandled Tauri test command: ${command}`)
         },
       },
@@ -331,6 +351,25 @@ test("碎片与笔记通过菜单双向搬移并刷新资料库树", async ({ pa
   await expect(treePane.getByRole("button", { name: "八月灵感.md", exact: true })).toHaveCount(0)
 })
 
+test("解锁密匣后从资料库菜单移入笔记并刷新资料库树", async ({ page }) => {
+  await page.getByRole("button", { name: "资料库", exact: true }).click()
+  const treePane = page.getByRole("complementary", { name: "资料库目录" })
+  const note = treePane.getByRole("button", { name: "旧笔记.md", exact: true })
+  await expect(note).toBeVisible()
+
+  page.once("dialog", (dialog) => dialog.accept())
+  await treePane
+    .getByRole("button", { name: "旧笔记.md 操作", exact: true })
+    .click()
+  await page.getByRole("menuitem", { name: "移入密匣", exact: true }).click()
+
+  await expect.poll(() => commandCalls(page, "move_fragment_to_lockbox")).toHaveLength(1)
+  expect((await commandCalls(page, "move_fragment_to_lockbox"))[0].args).toEqual({
+    id: "note-old",
+  })
+  await expect(note).toHaveCount(0)
+})
+
 test("目录树 MVP 支持新建、重命名、菜单移动和非空目录删除阻止", async ({ page }) => {
   await page.getByRole("button", { name: "资料库", exact: true }).click()
   const treePane = page.getByRole("complementary", { name: "资料库目录" })
@@ -362,6 +401,10 @@ test("目录树 MVP 支持新建、重命名、菜单移动和非空目录删除
   await editorRenameInput.fill("已改名")
   await editorRenameInput.press("Enter")
   await expect(treePane.getByRole("button", { name: "已改名.md", exact: true })).toBeVisible()
+  await expect(page.getByRole("button", { name: "重命名文件", exact: true })).toHaveText(
+    "已改名"
+  )
+  await expect.poll(() => readEditor(page, "library:note-created-4")).toBe("# 未命名")
 
   await treePane.getByRole("button", { name: "已改名.md 操作", exact: true }).click()
   await page.getByRole("menuitem", { name: "移动到…", exact: true }).hover()
