@@ -134,6 +134,18 @@ export function deleteLibraryEntry(path: string) {
   return invokeLibraryMutation("delete_library_entry", { path })
 }
 
+export function restoreFromTrash(path: string) {
+  return invokeLibraryMutation("restore_from_trash", { path })
+}
+
+export function purgeFromTrash(path: string) {
+  return invokeLibraryMutation("purge_from_trash", { path })
+}
+
+export function emptyTrash() {
+  return invokeLibraryMutation("empty_trash")
+}
+
 export function convertFragmentToNote(
   id: string,
   destinationDirectory?: string
@@ -239,8 +251,8 @@ export function unlinkFragments(
 }
 
 /**
- * 归档与取消归档是同一个操作的两个方向。传 `archived: false` 可以把片段
- * 从归档区移回收件箱——旧版只能单向归档，移进去就取不回来了。
+ * 兼容既有命令名：公开片段传 `true` 会移入回收站；恢复由回收站命令完成。
+ * 密匣仍沿用其内部删除/恢复路径，不会写入明文 `.trash/`。
  * 已处于目标状态时是空操作。
  */
 export function setFragmentArchived(id: string, archived: boolean) {

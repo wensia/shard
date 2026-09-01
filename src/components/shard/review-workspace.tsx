@@ -79,13 +79,13 @@ const modeMeta: Record<
 > = {
   dailyReview: {
     title: "每日回顾",
-    description: "从近 6 个月的非归档片段里抽取 8 条，先回看，不打断捕捉。",
+    description: "从近 6 个月未删除的片段里抽取 8 条，先回看，不打断捕捉。",
     icon: CalendarDaysIcon,
   },
   insight: {
     title: "洞察视角",
     description:
-      "选择任意视角与本机 AI 运行器，只读分析全部未归档笔记（不含密匣与 AI 洞察）。",
+      "选择任意视角与本机 AI 运行器，只读分析全部未删除笔记（不含密匣与 AI 洞察）。",
     icon: SparklesIcon,
   },
   walk: {
@@ -249,7 +249,7 @@ export function ReviewWorkspace({
     LOCKBOX_BLOCKED_AGENTS.includes(selectedAgent)
   const canRunInsight = canRunAgent && !insightAgentBlocked
   const insightDescription = insightIncludeLockbox
-    ? "选择任意视角与本机 AI 运行器，只读分析全部未归档笔记（含密匣，不含既往 AI 洞察）。"
+    ? "选择任意视角与本机 AI 运行器，只读分析全部未删除笔记（含密匣，不含既往 AI 洞察）。"
     : modeMeta.insight.description
   const selectedInsightLensMeta = insightLensById[selectedInsightLens]
 

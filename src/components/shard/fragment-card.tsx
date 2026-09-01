@@ -1,5 +1,4 @@
 import {
-  ArchiveIcon,
   ArchiveRestoreIcon,
   CopyIcon,
   FileTextIcon,
@@ -13,6 +12,7 @@ import {
   PinOffIcon,
   Share2Icon,
   ShardZenIcon,
+  Trash2Icon,
 } from "@/components/icons"
 import { useState, type ReactNode } from "react"
 import { toast } from "sonner"
@@ -381,10 +381,10 @@ export function FragmentCard({
                   fragment.archived ? (
                     <ArchiveRestoreIcon aria-hidden="true" />
                   ) : (
-                    <ArchiveIcon aria-hidden="true" />
+                    <Trash2Icon aria-hidden="true" />
                   )
                 }
-                label={fragment.archived ? "移回收件箱" : "归档"}
+                label={fragment.archived ? "恢复" : "删除"}
                 onSelect={() => onArchive?.(fragment)}
               />
               </DropdownMenuContent>

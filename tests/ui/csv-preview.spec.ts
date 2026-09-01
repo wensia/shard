@@ -128,6 +128,7 @@ async function installCsvPreviewMock(page: Page) {
                 },
               ],
               assets: [],
+              trashEntries: [],
               fragmentStream: { totalCount: 0, years: [] },
             }
           }
@@ -144,6 +145,7 @@ async function installCsvPreviewMock(page: Page) {
                   },
                 ],
                 assets: [],
+                trashEntries: [],
                 fragmentStream: { totalCount: 0, years: [] },
               },
               migratedCount: 0,
@@ -162,6 +164,7 @@ async function installCsvPreviewMock(page: Page) {
               tree: {
                 entries: [],
                 assets: [],
+                trashEntries: [],
                 fragmentStream: { totalCount: 0, years: [] },
               },
               fragment: null,

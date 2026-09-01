@@ -53,7 +53,7 @@ async function installTauriMock(
 
     fragments.push({
       id: "archived-1",
-      content: "已归档的回归片段",
+      content: "已删除的回归片段",
       createdAt: "2026-07-31T10:00:00.000Z",
       updatedAt: "2026-07-31T10:00:00.000Z",
       tags: ["inbox", "archive"],
@@ -311,6 +311,7 @@ async function installTauriMock(
               return {
                 entries: [],
                 assets: [],
+                trashEntries: [],
                 fragmentStream: { totalCount: 0, years: [] },
               }
             case "migrate_legacy_notes":
@@ -318,6 +319,7 @@ async function installTauriMock(
                 tree: {
                   entries: [],
                   assets: [],
+                  trashEntries: [],
                   fragmentStream: { totalCount: 0, years: [] },
                 },
                 migratedCount: 0,
@@ -333,6 +335,7 @@ async function installTauriMock(
                 tree: {
                   entries: [],
                   assets: [],
+                  trashEntries: [],
                   fragmentStream: { totalCount: 0, years: [] },
                 },
                 fragment: null,
@@ -1084,10 +1087,10 @@ test("search recall mode preserves context, focus, and timeline scrolling", asyn
   await page.getByRole("button", { name: "结束搜索" }).click()
 
   await page.keyboard.press("Control+k")
-  await search.fill("已归档")
+  await search.fill("已删除")
   await expect(page.getByRole("option")).toHaveCount(1)
-  await page.getByRole("button", { name: "未归档" }).click()
-  await expect(page.getByText("没有找到“已归档”")).toBeVisible()
+  await page.getByRole("button", { name: "未删除" }).click()
+  await expect(page.getByText("没有找到“已删除”")).toBeVisible()
   await page.getByRole("button", { name: "退出搜索" }).click()
 
   await page.setViewportSize({ height: 640, width: 720 })

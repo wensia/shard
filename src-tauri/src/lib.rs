@@ -45,7 +45,7 @@ const CSV_GIT_PATHSPEC: &str = ":(glob,icase)**/*.csv";
 /// Shard 托管的 vault 根目录。提交、脏检测、检查点、计数必须共用这一份清单——
 /// 目录在多处手写曾造成 notes 完全不入 git 状态的盲区。
 const MANAGED_VAULT_ROOTS: &[&str] = &[
-    "fragments", "notes", "archive", "assets", "maps", "lockbox", ".shard",
+    "fragments", "notes", ".trash", "assets", "maps", "lockbox", ".shard",
 ];
 
 /// 保存基线过期（磁盘内容已被同步或外部编辑改写）的错误标记；
@@ -167,6 +167,7 @@ struct LibraryAssetEntry {
 #[serde(rename_all = "camelCase")]
 struct LibraryTreeSnapshot {
     entries: Vec<LibraryTreeEntry>,
+    trash_entries: Vec<LibraryTreeEntry>,
     fragment_stream: FragmentStreamSummary,
     assets: Vec<LibraryAssetEntry>,
 }
@@ -589,6 +590,7 @@ async fn migrate_legacy_notes(app: tauri::AppHandle) -> Result<LegacyNoteMigrati
         let vault = ensure_vault_dirs(&app)?;
         let _gate = lock_vault_gate(&vault);
         checkpoint_before_structural_locked(&vault);
+        migrate_archive_to_trash_in_vault(&vault);
         let migrated_count = migrate_legacy_notes_in_vault(&vault)?;
         migrate_legacy_mind_maps_in_vault(&vault)?;
         Ok(LegacyNoteMigrationResult {
@@ -670,7 +672,49 @@ async fn delete_library_entry(
         let vault = ensure_vault_dirs(&app)?;
         let _gate = lock_vault_gate(&vault);
         checkpoint_before_structural_locked(&vault);
-        delete_library_entry_in_vault(&vault, &path)?;
+        move_to_trash_in_vault(&vault, &path)?;
+        library_mutation_result(&vault, None, 0)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn restore_from_trash(
+    app: tauri::AppHandle,
+    path: String,
+) -> Result<LibraryMutationResult, String> {
+    run_blocking(move || {
+        let vault = ensure_vault_dirs(&app)?;
+        let _gate = lock_vault_gate(&vault);
+        checkpoint_before_structural_locked(&vault);
+        restore_from_trash_in_vault(&vault, &path)?;
+        library_mutation_result(&vault, None, 0)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn purge_from_trash(
+    app: tauri::AppHandle,
+    path: String,
+) -> Result<LibraryMutationResult, String> {
+    run_blocking(move || {
+        let vault = ensure_vault_dirs(&app)?;
+        let _gate = lock_vault_gate(&vault);
+        checkpoint_before_structural_locked(&vault);
+        purge_from_trash_in_vault(&vault, &path)?;
+        library_mutation_result(&vault, None, 0)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn empty_trash(app: tauri::AppHandle) -> Result<LibraryMutationResult, String> {
+    run_blocking(move || {
+        let vault = ensure_vault_dirs(&app)?;
+        let _gate = lock_vault_gate(&vault);
+        checkpoint_before_structural_locked(&vault);
+        empty_trash_in_vault(&vault)?;
         library_mutation_result(&vault, None, 0)
     })
     .await
@@ -1085,7 +1129,6 @@ fn read_organize_sources(
 
         let public_directory = match Path::new(rel_path).components().next() {
             Some(Component::Normal(component)) if component == "fragments" => "fragments",
-            Some(Component::Normal(component)) if component == "archive" => "archive",
             _ => return Err(format!("只能整理公开碎片：{rel_path}")),
         };
 
@@ -1299,7 +1342,7 @@ fn list_fragments_in_vault(
 ) -> Result<VaultState, String> {
     let mut files = Vec::new();
     collect_markdown_files(&vault.join("fragments"), &mut files)?;
-    collect_markdown_files(&vault.join("archive"), &mut files)?;
+    collect_markdown_files(&vault.join(".trash").join("fragments"), &mut files)?;
     collect_markdown_files(&vault.join("notes"), &mut files)?;
 
     let dirty_paths = dirty_paths(&vault);
@@ -1689,39 +1732,18 @@ async fn set_fragment_archived(
 
         let path = find_fragment_path(&vault, &id)?.ok_or_else(|| format!("找不到片段 {}", id))?;
         let rel_path = relative_path(&vault, &path)?;
-        let is_archived = rel_path.starts_with("archive/");
+        let is_archived = rel_path.starts_with(".trash/fragments/");
         if is_archived == archived {
             let dirty = dirty_paths(&vault);
             return read_fragment(&path, &vault, &dirty, None);
         }
 
-        let source_root = if is_archived {
-            vault.join("archive")
+        checkpoint_before_structural_locked(&vault);
+        let target_path = if archived {
+            move_to_trash_in_vault(&vault, &rel_path)?
         } else {
-            vault.join("fragments")
+            restore_from_trash_in_vault(&vault, &rel_path)?
         };
-        let target_root = if archived {
-            vault.join("archive")
-        } else {
-            vault.join("fragments")
-        };
-        let source_rel = path
-            .strip_prefix(&source_root)
-            .map_err(|error| error.to_string())?;
-        let target_path = target_root.join(source_rel);
-
-        if let Some(parent) = target_path.parent() {
-            fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-        }
-
-        fs::rename(&path, &target_path)
-            .or_else(|_| {
-                fs::copy(&path, &target_path)
-                    .map(|_| ())
-                    .and_then(|_| fs::remove_file(&path))
-            })
-            .map_err(|error| error.to_string())?;
-
 
         let dirty = dirty_paths(&vault);
         // 内容保存只落盘，提交由聚合检查点接管（docs/design/commit-coalescing-plan.md §7 A2）
@@ -2352,7 +2374,6 @@ fn ensure_vault_dirs(app: &tauri::AppHandle) -> Result<PathBuf, String> {
 fn ensure_vault_layout(vault: &Path) -> Result<(), String> {
     fs::create_dir_all(vault.join("fragments")).map_err(|error| error.to_string())?;
     fs::create_dir_all(vault.join("notes")).map_err(|error| error.to_string())?;
-    fs::create_dir_all(vault.join("archive")).map_err(|error| error.to_string())?;
     fs::create_dir_all(vault.join("assets")).map_err(|error| error.to_string())?;
     fs::create_dir_all(vault.join("maps")).map_err(|error| error.to_string())?;
     fs::create_dir_all(vault.join(".shard")).map_err(|error| error.to_string())?;
@@ -2455,8 +2476,14 @@ fn collect_markdown_files(dir: &Path, files: &mut Vec<PathBuf>) -> Result<(), St
 }
 
 fn build_library_tree(vault: &Path) -> Result<LibraryTreeSnapshot, String> {
+    let trash_root = vault.join(".trash");
     Ok(LibraryTreeSnapshot {
         entries: collect_library_entries(vault, &vault.join("notes"))?,
+        trash_entries: if trash_root.exists() {
+            collect_library_entries(vault, &trash_root)?
+        } else {
+            Vec::new()
+        },
         fragment_stream: summarize_fragment_stream(vault)?,
         assets: collect_library_assets(vault),
     })
@@ -2589,6 +2616,12 @@ where
                 {
                     Some("md") => "markdown",
                     Some("csv") => "csv",
+                    Some("gif" | "jpg" | "jpeg" | "png" | "svg" | "webp")
+                        if directory.starts_with(vault.join(".trash")) =>
+                    {
+                        "image"
+                    }
+                    _ if directory.starts_with(vault.join(".trash")) => "file",
                     _ => continue,
                 }
             };
@@ -3020,21 +3053,214 @@ fn move_library_entry_in_vault(
     Ok(())
 }
 
-fn delete_library_entry_in_vault(vault: &Path, rel_path: &str) -> Result<(), String> {
-    let path = existing_library_path(vault, rel_path)?;
-    if path.is_dir() {
-        if fs::read_dir(&path)
-            .map_err(|error| error.to_string())?
-            .next()
-            .is_some()
-        {
-            return Err("非空目录不能删除。".to_string());
-        }
-        fs::remove_dir(&path).map_err(|error| error.to_string())?;
-    } else {
-        fs::remove_file(&path).map_err(|error| error.to_string())?;
+fn safe_vault_relative_path(rel_path: &str) -> Result<&Path, String> {
+    let rel_path = rel_path.trim();
+    let path = Path::new(rel_path);
+    if rel_path.is_empty() || rel_path.contains('\\') || path.is_absolute() {
+        return Err("Vault 路径必须是相对路径。".to_string());
     }
-    commit_paths_best_effort(vault, &[rel_path.to_string()], "delete library entry");
+    if path
+        .components()
+        .any(|component| !matches!(component, Component::Normal(_)))
+    {
+        return Err("Vault 路径不能包含 . 或 ..。".to_string());
+    }
+    Ok(path)
+}
+
+fn trashable_vault_path(vault: &Path, rel_path: &str) -> Result<PathBuf, String> {
+    let rel_path = safe_vault_relative_path(rel_path)?;
+    let first = rel_path.components().next();
+    if !matches!(first, Some(Component::Normal(root)) if matches!(root.to_str(), Some("fragments" | "notes" | "assets" | "maps")))
+    {
+        return Err("只能把公开内容移入回收站。".to_string());
+    }
+    let candidate = vault.join(rel_path);
+    let canonical_vault = vault.canonicalize().map_err(|error| error.to_string())?;
+    let canonical_candidate = candidate.canonicalize().map_err(|error| error.to_string())?;
+    if !canonical_candidate.starts_with(&canonical_vault) || canonical_candidate == canonical_vault {
+        return Err("目标不在 Vault 内。".to_string());
+    }
+    Ok(candidate)
+}
+
+fn timestamped_collision_path(path: &Path) -> Result<PathBuf, String> {
+    if !path.exists() {
+        return Ok(path.to_path_buf());
+    }
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| "条目名称无效。".to_string())?;
+    let timestamp = Local::now().format("%Y%m%d-%H%M%S-%3f");
+    for counter in 0..=u16::MAX {
+        let suffix = if counter == 0 {
+            timestamp.to_string()
+        } else {
+            format!("{timestamp}-{counter}")
+        };
+        let suffixed = if let Some(stem) = file_name.strip_suffix(".shardmap.json") {
+            format!("{stem}-{suffix}.shardmap.json")
+        } else if let Some((stem, extension)) = file_name.rsplit_once('.') {
+            if stem.is_empty() {
+                format!("{file_name}-{suffix}")
+            } else {
+                format!("{stem}-{suffix}.{extension}")
+            }
+        } else {
+            format!("{file_name}-{suffix}")
+        };
+        let candidate = path.with_file_name(suffixed);
+        if !candidate.exists() {
+            return Ok(candidate);
+        }
+    }
+    Err("无法生成不冲突的条目名称。".to_string())
+}
+
+fn ensure_canonical_trash_root(vault: &Path) -> Result<PathBuf, String> {
+    let trash = vault.join(".trash");
+    if !trash.exists() {
+        fs::create_dir_all(&trash).map_err(|error| error.to_string())?;
+    }
+    if fs::symlink_metadata(&trash)
+        .map_err(|error| error.to_string())?
+        .file_type()
+        .is_symlink()
+    {
+        return Err("回收站目录不能是符号链接。".to_string());
+    }
+    let canonical_vault = vault.canonicalize().map_err(|error| error.to_string())?;
+    let canonical_trash = trash.canonicalize().map_err(|error| error.to_string())?;
+    if canonical_trash.parent() != Some(canonical_vault.as_path()) {
+        return Err("回收站目录不在 Vault 内。".to_string());
+    }
+    Ok(canonical_trash)
+}
+
+fn move_to_trash_in_vault(vault: &Path, rel_path: &str) -> Result<PathBuf, String> {
+    let source = trashable_vault_path(vault, rel_path)?;
+    let trash_root = ensure_canonical_trash_root(vault)?;
+    let destination = timestamped_collision_path(&vault.join(".trash").join(rel_path))?;
+    if let Some(parent) = destination.parent() {
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        let canonical_parent = parent.canonicalize().map_err(|error| error.to_string())?;
+        if !canonical_parent.starts_with(&trash_root) {
+            return Err("回收站目标不在 .trash 内。".to_string());
+        }
+    }
+    fs::rename(&source, &destination).map_err(|error| error.to_string())?;
+    let destination_rel = relative_path(vault, &destination)?;
+    commit_paths_best_effort(
+        vault,
+        &[rel_path.to_string(), destination_rel],
+        "move entry to trash",
+    );
+    Ok(destination)
+}
+
+fn canonical_trash_path(vault: &Path, trash_rel_path: &str) -> Result<PathBuf, String> {
+    let rel_path = safe_vault_relative_path(trash_rel_path)?;
+    if !matches!(rel_path.components().next(), Some(Component::Normal(root)) if root == ".trash") {
+        return Err("只能操作回收站内的条目。".to_string());
+    }
+    let trash_root = ensure_canonical_trash_root(vault)?;
+    let candidate = vault.join(rel_path);
+    if fs::symlink_metadata(&candidate)
+        .map_err(|error| error.to_string())?
+        .file_type()
+        .is_symlink()
+    {
+        return Err("回收站条目不能是符号链接。".to_string());
+    }
+    let target = candidate
+        .canonicalize()
+        .map_err(|error| error.to_string())?;
+    if target == trash_root || !target.starts_with(&trash_root) {
+        return Err("只能操作回收站内的条目。".to_string());
+    }
+    Ok(candidate)
+}
+
+fn restore_from_trash_in_vault(vault: &Path, trash_rel_path: &str) -> Result<PathBuf, String> {
+    let source = canonical_trash_path(vault, trash_rel_path)?;
+    let source_rel = relative_path(vault, &source)?;
+    let original_rel = source_rel
+        .strip_prefix(".trash/")
+        .ok_or_else(|| "只能恢复回收站内的条目。".to_string())?;
+    let original_path = safe_vault_relative_path(original_rel)?;
+    if !matches!(original_path.components().next(), Some(Component::Normal(root)) if matches!(root.to_str(), Some("fragments" | "notes" | "assets" | "maps")))
+    {
+        return Err("回收站条目没有可恢复的公开原位置。".to_string());
+    }
+    let destination = timestamped_collision_path(&vault.join(original_rel))?;
+    if let Some(parent) = destination.parent() {
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        let canonical_vault = vault.canonicalize().map_err(|error| error.to_string())?;
+        let canonical_parent = parent.canonicalize().map_err(|error| error.to_string())?;
+        if !canonical_parent.starts_with(&canonical_vault) {
+            return Err("恢复目标不在 Vault 内。".to_string());
+        }
+    }
+    fs::rename(&source, &destination).map_err(|error| error.to_string())?;
+    let destination_rel = relative_path(vault, &destination)?;
+    commit_paths_best_effort(
+        vault,
+        &[source_rel, destination_rel],
+        "restore entry from trash",
+    );
+    Ok(destination)
+}
+
+fn purge_from_trash_in_vault(vault: &Path, trash_rel_path: &str) -> Result<(), String> {
+    let target = canonical_trash_path(vault, trash_rel_path)?;
+    let target_rel = relative_path(vault, &target)?;
+    if target.is_dir() {
+        fs::remove_dir_all(&target).map_err(|error| error.to_string())?;
+    } else {
+        fs::remove_file(&target).map_err(|error| error.to_string())?;
+    }
+    commit_paths_best_effort(vault, &[target_rel], "purge entry from trash");
+    Ok(())
+}
+
+fn empty_trash_in_vault(vault: &Path) -> Result<(), String> {
+    let trash = vault.join(".trash");
+    if !trash.exists() {
+        return Ok(());
+    }
+    let trash_root = ensure_canonical_trash_root(vault)?;
+    let mut targets = Vec::new();
+    for entry in fs::read_dir(&trash).map_err(|error| error.to_string())? {
+        let entry = entry.map_err(|error| error.to_string())?;
+        let candidate = entry.path();
+        if entry
+            .file_type()
+            .map_err(|error| error.to_string())?
+            .is_symlink()
+        {
+            return Err("回收站包含符号链接，已拒绝清空。".to_string());
+        }
+        let canonical_target = candidate
+            .canonicalize()
+            .map_err(|error| error.to_string())?;
+        if canonical_target == trash_root || !canonical_target.starts_with(&trash_root) {
+            return Err("回收站包含越界路径，已拒绝清空。".to_string());
+        }
+        targets.push(candidate);
+    }
+    let mut removed_paths = Vec::new();
+    for target in targets {
+        removed_paths.push(relative_path(vault, &target)?);
+        if target.is_dir() {
+            fs::remove_dir_all(&target).map_err(|error| error.to_string())?;
+        } else {
+            fs::remove_file(&target).map_err(|error| error.to_string())?;
+        }
+    }
+    if !removed_paths.is_empty() {
+        commit_paths_best_effort(vault, &removed_paths, "empty trash");
+    }
     Ok(())
 }
 
@@ -3175,6 +3401,93 @@ fn migrate_legacy_notes_in_vault(vault: &Path) -> Result<usize, String> {
         migrated += 1;
     }
     Ok(migrated)
+}
+
+fn migrate_archive_to_trash_in_vault(vault: &Path) -> usize {
+    fn collect_files(directory: &Path, files: &mut Vec<PathBuf>) {
+        let Ok(entries) = fs::read_dir(directory) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
+            if file_type.is_symlink() {
+                continue;
+            }
+            if file_type.is_dir() {
+                collect_files(&entry.path(), files);
+            } else if file_type.is_file() {
+                files.push(entry.path());
+            }
+        }
+    }
+
+    fn cleanup_empty_tree(directory: &Path) {
+        let Ok(entries) = fs::read_dir(directory) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            if entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false) {
+                cleanup_empty_tree(&entry.path());
+            }
+        }
+        if fs::read_dir(directory)
+            .map(|mut entries| entries.next().is_none())
+            .unwrap_or(false)
+        {
+            let _ = fs::remove_dir(directory);
+        }
+    }
+
+    let archive = vault.join("archive");
+    if !archive.is_dir() {
+        return 0;
+    }
+    let Ok(trash_root) = ensure_canonical_trash_root(vault) else {
+        return 0;
+    };
+    let mut files = Vec::new();
+    collect_files(&archive, &mut files);
+    let mut migrated = 0;
+    for source in files {
+        let Ok(source_rel) = source.strip_prefix(&archive) else {
+            continue;
+        };
+        let requested_destination = vault
+            .join(".trash")
+            .join("fragments")
+            .join(source_rel);
+        let Ok(destination) = timestamped_collision_path(&requested_destination) else {
+            continue;
+        };
+        let Some(parent) = destination.parent() else {
+            continue;
+        };
+        if fs::create_dir_all(parent).is_err()
+            || parent
+                .canonicalize()
+                .map(|path| !path.starts_with(&trash_root))
+                .unwrap_or(true)
+            || fs::rename(&source, &destination).is_err()
+        {
+            continue;
+        }
+        let (Ok(source_path), Ok(destination_path)) = (
+            relative_path(vault, &source),
+            relative_path(vault, &destination),
+        ) else {
+            continue;
+        };
+        commit_paths_best_effort(
+            vault,
+            &[source_path, destination_path],
+            "migrate archive entry to trash",
+        );
+        migrated += 1;
+    }
+    cleanup_empty_tree(&archive);
+    migrated
 }
 
 fn migrate_legacy_mind_maps_in_vault(vault: &Path) -> Result<usize, String> {
@@ -3865,7 +4178,7 @@ fn read_fragment(
             ("committed".to_string(), None)
         }
     });
-    let archived = rel_path.starts_with("archive/");
+    let archived = rel_path.starts_with(".trash/fragments/");
 
     Ok(Fragment {
         id: frontmatter.id,
@@ -3997,8 +4310,8 @@ fn set_public_fragment_pinned_in_vault(
     pinned: bool,
 ) -> Result<Fragment, String> {
     let rel_path = relative_path(vault, path)?;
-    if rel_path.starts_with("archive/") && pinned {
-        return Err("归档片段不能置顶。".to_string());
+    if rel_path.starts_with(".trash/fragments/") && pinned {
+        return Err("回收站中的片段不能置顶。".to_string());
     }
 
     let text = fs::read_to_string(path).map_err(|error| error.to_string())?;
@@ -4117,7 +4430,7 @@ fn set_lockbox_fragment_pinned_in_vault(
 ) -> Result<Fragment, String> {
     let rel_path = relative_path(vault, path)?;
     if rel_path.starts_with("lockbox/archive/") && pinned {
-        return Err("归档片段不能置顶。".to_string());
+        return Err("密匣中已删除的片段不能置顶。".to_string());
     }
 
     let mut payload = read_lockbox_payload(path, read_keys)?;
@@ -4186,7 +4499,6 @@ fn move_public_fragment_payload_to_lockbox_in_vault(
 
     let public_path_mapping = [
         ("notes", vault.join("lockbox").join("notes")),
-        ("archive", vault.join("lockbox").join("archive")),
         ("fragments", vault.join("lockbox").join("fragments")),
     ]
     .into_iter()
@@ -4196,7 +4508,7 @@ fn move_public_fragment_payload_to_lockbox_in_vault(
             .ok()
             .map(|public_rel| (public_rel, target_root))
     })
-    .ok_or_else(|| "只有 fragments/、notes/、archive/ 中的文档可以移入密匣。".to_string())?;
+    .ok_or_else(|| "只有 fragments/、notes/ 中的文档可以移入密匣。".to_string())?;
     let (public_rel, target_root) = public_path_mapping;
     let mut lockbox_path = target_root.join(public_rel);
     lockbox_path.set_extension("shard");
@@ -4457,7 +4769,7 @@ fn find_lockbox_fragment_path(vault: &Path, id: &str) -> Result<Option<PathBuf>,
 fn find_fragment_path(vault: &Path, id: &str) -> Result<Option<PathBuf>, String> {
     let mut files = Vec::new();
     collect_markdown_files(&vault.join("fragments"), &mut files)?;
-    collect_markdown_files(&vault.join("archive"), &mut files)?;
+    collect_markdown_files(&vault.join(".trash").join("fragments"), &mut files)?;
     collect_markdown_files(&vault.join("notes"), &mut files)?;
     for path in files {
         let text = fs::read_to_string(&path).map_err(|error| error.to_string())?;
@@ -5061,8 +5373,22 @@ fn resolve_vault_asset_path(vault: &Path, raw_path: &str) -> Result<PathBuf, Str
         .canonicalize()
         .map_err(|error| error.to_string())?;
 
-    if !image_path.starts_with(&asset_root) {
-        return Err("只能读取 vault assets 目录中的图片".to_string());
+    let in_trash = (|| {
+        let trash = vault.join(".trash");
+        if !trash.is_dir()
+            || fs::symlink_metadata(&trash).ok()?.file_type().is_symlink()
+        {
+            return None;
+        }
+        let canonical_vault = vault.canonicalize().ok()?;
+        let trash_root = trash.canonicalize().ok()?;
+        (trash_root.parent() == Some(canonical_vault.as_path())
+            && image_path.starts_with(&trash_root))
+        .then_some(())
+    })()
+    .is_some();
+    if !image_path.starts_with(&asset_root) && !in_trash {
+        return Err("只能读取 vault assets 或回收站中的图片".to_string());
     }
     if !image_path.is_file() {
         return Err("图片文件不存在".to_string());
@@ -5462,22 +5788,11 @@ fn git_info(vault: &Path) -> GitInfo {
     let (ahead, behind, has_upstream) = upstream_counts(vault);
     let needs_first_push =
         has_remote && !has_upstream && run_git(vault, &["rev-parse", "--verify", "HEAD"]).is_ok();
+    let mut status_args = vec!["status".to_string(), "--porcelain".to_string(), "--".to_string()];
+    status_args.extend(managed_pathspecs());
+    let status_arg_refs = status_args.iter().map(String::as_str).collect::<Vec<_>>();
 
-    match run_git(
-        vault,
-        &[
-            "status",
-            "--porcelain",
-            "--",
-            "fragments",
-            "archive",
-            "assets",
-            "maps",
-            "lockbox",
-            ".shard",
-            CSV_GIT_PATHSPEC,
-        ],
-    ) {
+    match run_git(vault, &status_arg_refs) {
         Ok(status)
             if status.trim().is_empty() && ahead == 0 && behind == 0 && !needs_first_push =>
         {
@@ -5712,9 +6027,9 @@ fn codex_review_prompt(request: &CodexReviewTaskRequest) -> String {
         CodexReviewTask::Insight => {
             // 来源说明按是否包含密匣动态生成；含密匣时追加转述约束，避免逐字复述敏感原文
             let source_note = if request.include_lockbox {
-                "来源说明：下方“来源笔记”覆盖用户全部未归档笔记（含密匣私密笔记，不含既往 AI 洞察），按时间从早到晚排列；超长笔记已截断，截断处以 ... 标注。分析时可以利用这种时间顺序观察主题的演变。来源中含用户加密私密笔记，分析引用时以转述为主，避免逐字复述敏感原文。"
+                "来源说明：下方“来源笔记”覆盖用户全部未删除笔记（含密匣私密笔记，不含既往 AI 洞察），按时间从早到晚排列；超长笔记已截断，截断处以 ... 标注。分析时可以利用这种时间顺序观察主题的演变。来源中含用户加密私密笔记，分析引用时以转述为主，避免逐字复述敏感原文。"
             } else {
-                "来源说明：下方“来源笔记”覆盖用户全部未归档笔记（不含密匣与既往 AI 洞察），按时间从早到晚排列；超长笔记已截断，截断处以 ... 标注。分析时可以利用这种时间顺序观察主题的演变。"
+                "来源说明：下方“来源笔记”覆盖用户全部未删除笔记（不含密匣与既往 AI 洞察），按时间从早到晚排列；超长笔记已截断，截断处以 ... 标注。分析时可以利用这种时间顺序观察主题的演变。"
             };
             format!(
                 "{}\n\n{source_note}",
@@ -6302,6 +6617,9 @@ pub fn run() {
             rename_library_entry,
             move_library_entry,
             delete_library_entry,
+            restore_from_trash,
+            purge_from_trash,
+            empty_trash,
             convert_fragment_to_note,
             convert_note_to_fragment,
             read_csv_file,
@@ -7241,24 +7559,42 @@ mod tests {
     }
 
     #[test]
-    fn preserves_fragment_and_archive_lockbox_destinations() {
+    fn preserves_fragment_lockbox_destination() {
         let tempdir = tempfile::tempdir().unwrap();
         let vault = tempdir.path();
         let runtime = Arc::new(Mutex::new(LockboxSession::default()));
         ensure_vault_layout(vault).unwrap();
         setup_lockbox_in_vault(vault, &runtime, "correct horse").unwrap();
         let fragment_source = vault.join("fragments/2026/08/fragment.md");
-        let archive_source = vault.join("archive/2026/08/archive.md");
         fs::create_dir_all(fragment_source.parent().unwrap()).unwrap();
-        fs::create_dir_all(archive_source.parent().unwrap()).unwrap();
         write_t6_fragment(&fragment_source, "fragment-source", vec!["inbox"], "碎片");
-        write_t6_fragment(&archive_source, "archive-source", vec!["inbox"], "归档碎片");
 
         move_public_fragment_to_lockbox_in_vault(vault, &runtime, &fragment_source).unwrap();
-        move_public_fragment_to_lockbox_in_vault(vault, &runtime, &archive_source).unwrap();
 
         assert!(vault.join("lockbox/fragments/2026/08/fragment.shard").is_file());
-        assert!(vault.join("lockbox/archive/2026/08/archive.shard").is_file());
+    }
+
+    #[test]
+    fn lockbox_delete_stays_encrypted_inside_lockbox() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let vault = tempdir.path();
+        let runtime = Arc::new(Mutex::new(LockboxSession::default()));
+        ensure_vault_layout(vault).unwrap();
+        setup_lockbox_in_vault(vault, &runtime, "correct horse").unwrap();
+        let fragment =
+            create_lockbox_fragment_in_vault(vault, &runtime, "私密内容", vec![]).unwrap();
+        let source = find_lockbox_fragment_path(vault, &fragment.id)
+            .unwrap()
+            .unwrap();
+        let read_keys = require_unlocked_lockbox_read_keys(vault, &runtime).unwrap();
+
+        let deleted =
+            set_lockbox_fragment_archived_in_vault(vault, &source, &read_keys, true).unwrap();
+
+        assert!(deleted.path.starts_with("lockbox/archive/"));
+        assert!(!source.exists());
+        assert!(vault.join(&deleted.path).is_file());
+        assert!(!vault.join(".trash").exists());
     }
 
     #[test]
@@ -7276,7 +7612,7 @@ mod tests {
 
         assert_eq!(
             error,
-            "只有 fragments/、notes/、archive/ 中的文档可以移入密匣。"
+            "只有 fragments/、notes/ 中的文档可以移入密匣。"
         );
         assert!(source.is_file());
     }
@@ -7565,7 +7901,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_library_path_escape_and_non_empty_directory_delete() {
+    fn rejects_library_path_escape_and_moves_non_empty_directory_to_trash() {
         let tempdir = tempfile::tempdir().unwrap();
         let vault = tempdir.path();
         ensure_vault_layout(vault).unwrap();
@@ -7581,12 +7917,13 @@ mod tests {
         ] {
             assert!(existing_library_path(vault, invalid).is_err(), "{invalid}");
         }
-        let error = delete_library_entry_in_vault(vault, "notes/目录").unwrap_err();
-        assert!(error.contains("非空目录"), "{error}");
+        move_to_trash_in_vault(vault, "notes/目录").unwrap();
+        assert!(!vault.join("notes/目录").exists());
+        assert!(vault.join(".trash/notes/目录/note.md").is_file());
     }
 
     #[test]
-    fn supports_library_create_move_and_empty_directory_delete() {
+    fn supports_library_create_move_and_empty_directory_soft_delete() {
         let tempdir = tempfile::tempdir().unwrap();
         let vault = tempdir.path();
         ensure_vault_layout(vault).unwrap();
@@ -7602,8 +7939,126 @@ mod tests {
         )
         .unwrap();
         assert!(vault.join("notes/目标/移动测试.md").is_file());
-        delete_library_entry_in_vault(vault, "notes/来源").unwrap();
+        move_to_trash_in_vault(vault, "notes/来源").unwrap();
         assert!(!vault.join("notes/来源").exists());
+        assert!(vault.join(".trash/notes/来源").is_dir());
+    }
+
+    #[test]
+    fn moves_all_supported_content_types_and_directories_to_trash() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let vault = tempdir.path();
+        ensure_vault_layout(vault).unwrap();
+        let files = [
+            ("notes/note.md", b"md".as_slice()),
+            ("notes/table.csv", b"csv".as_slice()),
+            ("maps/map.shardmap.json", b"map".as_slice()),
+            ("assets/image.png", b"png".as_slice()),
+        ];
+        for (rel_path, content) in files {
+            let path = vault.join(rel_path);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(&path, content).unwrap();
+            move_to_trash_in_vault(vault, rel_path).unwrap();
+            assert!(!path.exists(), "{rel_path}");
+            assert!(vault.join(".trash").join(rel_path).is_file(), "{rel_path}");
+        }
+        fs::create_dir_all(vault.join("notes/folder/nested")).unwrap();
+        fs::write(vault.join("notes/folder/nested/unknown.bin"), b"dir").unwrap();
+
+        move_to_trash_in_vault(vault, "notes/folder").unwrap();
+
+        assert!(!vault.join("notes/folder").exists());
+        assert!(vault
+            .join(".trash/notes/folder/nested/unknown.bin")
+            .is_file());
+    }
+
+    #[test]
+    fn restores_from_trash_without_overwriting_existing_target() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let vault = tempdir.path();
+        ensure_vault_layout(vault).unwrap();
+        fs::write(vault.join("notes/collision.md"), "deleted version").unwrap();
+        move_to_trash_in_vault(vault, "notes/collision.md").unwrap();
+        fs::write(vault.join("notes/collision.md"), "new version").unwrap();
+
+        let restored =
+            restore_from_trash_in_vault(vault, ".trash/notes/collision.md").unwrap();
+
+        assert_eq!(
+            fs::read_to_string(vault.join("notes/collision.md")).unwrap(),
+            "new version"
+        );
+        assert_ne!(restored, vault.join("notes/collision.md"));
+        assert_eq!(fs::read_to_string(restored).unwrap(), "deleted version");
+    }
+
+    #[test]
+    fn purge_and_empty_trash_reject_paths_outside_canonical_trash_root() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let vault = tempdir.path();
+        ensure_vault_layout(vault).unwrap();
+        fs::create_dir_all(vault.join(".trash/notes/directory")).unwrap();
+        fs::write(vault.join(".trash/notes/deleted.md"), "deleted").unwrap();
+        fs::write(vault.join(".trash/notes/directory/nested.md"), "nested").unwrap();
+        fs::write(vault.join("notes/outside.md"), "outside").unwrap();
+
+        for invalid in [
+            "notes/outside.md",
+            ".trash/../notes/outside.md",
+            "../outside.md",
+            "/tmp/outside.md",
+        ] {
+            assert!(purge_from_trash_in_vault(vault, invalid).is_err(), "{invalid}");
+        }
+        assert!(vault.join("notes/outside.md").is_file());
+
+        purge_from_trash_in_vault(vault, ".trash/notes/directory").unwrap();
+        assert!(!vault.join(".trash/notes/directory").exists());
+        empty_trash_in_vault(vault).unwrap();
+        assert!(vault.join(".trash").is_dir());
+        assert!(fs::read_dir(vault.join(".trash")).unwrap().next().is_none());
+        assert!(vault.join("notes/outside.md").is_file());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn empty_trash_rejects_external_symlink_without_deleting_any_entry() {
+        use std::os::unix::fs::symlink;
+
+        let tempdir = tempfile::tempdir().unwrap();
+        let vault = tempdir.path();
+        ensure_vault_layout(vault).unwrap();
+        fs::create_dir_all(vault.join(".trash/notes")).unwrap();
+        fs::write(vault.join(".trash/notes/keep.md"), "keep").unwrap();
+        fs::write(vault.join("notes/outside.md"), "outside").unwrap();
+        symlink(
+            vault.join("notes/outside.md"),
+            vault.join(".trash/external-link"),
+        )
+        .unwrap();
+
+        assert!(empty_trash_in_vault(vault).is_err());
+        assert!(vault.join(".trash/notes/keep.md").is_file());
+        assert!(vault.join("notes/outside.md").is_file());
+    }
+
+    #[test]
+    fn migrates_archive_to_trash_idempotently_and_keeps_relative_structure() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let vault = tempdir.path();
+        ensure_vault_layout(vault).unwrap();
+        fs::create_dir_all(vault.join("archive/2026/08")).unwrap();
+        fs::write(vault.join("archive/2026/08/x.md"), "unchanged").unwrap();
+
+        assert_eq!(migrate_archive_to_trash_in_vault(vault), 1);
+        assert_eq!(migrate_archive_to_trash_in_vault(vault), 0);
+        assert_eq!(
+            fs::read_to_string(vault.join(".trash/fragments/2026/08/x.md")).unwrap(),
+            "unchanged"
+        );
+        assert!(!vault.join("archive").exists());
     }
 
     #[test]

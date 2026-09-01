@@ -30,7 +30,7 @@ interface AssetGridProps {
 
 export interface LibraryGridItem {
   content?: string
-  kind: "csv" | "directory" | "image" | "markdown" | "mindmap"
+  kind: "csv" | "directory" | "file" | "image" | "markdown" | "mindmap"
   mindMapId?: string
   modifiedAt: string
   name: string
@@ -44,6 +44,7 @@ interface LibraryItemGridProps {
   emptyMessage: string
   items: LibraryGridItem[]
   onSelectItem: (item: LibraryGridItem) => void
+  isItemOpenable?: (item: LibraryGridItem) => boolean
   renderItemActions?: (item: LibraryGridItem) => ReactNode
   renderItemRename?: (item: LibraryGridItem) => ReactNode
 }
@@ -255,6 +256,7 @@ export function LibraryItemGrid({
   ariaLabel,
   emptyMessage,
   items,
+  isItemOpenable = () => true,
   onSelectItem,
   renderItemActions,
   renderItemRename,
@@ -290,7 +292,7 @@ export function LibraryItemGrid({
                   ) : null}
                 </span>
               </div>
-            ) : (
+            ) : isItemOpenable(item) ? (
               <button
                 aria-label={`打开${item.kind === "directory" ? "目录" : "文件"} ${item.name}`}
                 className={styles.card}
@@ -307,6 +309,18 @@ export function LibraryItemGrid({
                   ) : null}
                 </span>
               </button>
+            ) : (
+              <div className={styles.card}>
+                <span className={styles.thumbnail}>
+                  <LibraryItemThumbnail item={item} />
+                </span>
+                <span className={styles.meta}>
+                  <span className={styles.metaPrimary}>{item.name}</span>
+                  {secondary ? (
+                    <span className={styles.metaSecondary}>{secondary}</span>
+                  ) : null}
+                </span>
+              </div>
             )}
             {renderItemActions && !renameInput ? (
               <span className={styles.cardActions}>

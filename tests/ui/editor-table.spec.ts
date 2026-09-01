@@ -68,6 +68,7 @@ async function installTauriMock(page: Page) {
               return {
                 entries: [],
                 assets: [],
+                trashEntries: [],
                 fragmentStream: { totalCount: 0, years: [] },
               }
             case "migrate_legacy_notes":
@@ -75,6 +76,7 @@ async function installTauriMock(page: Page) {
                 tree: {
                   entries: [],
                   assets: [],
+                  trashEntries: [],
                   fragmentStream: { totalCount: 0, years: [] },
                 },
                 migratedCount: 0,
@@ -90,6 +92,7 @@ async function installTauriMock(page: Page) {
                 tree: {
                   entries: [],
                   assets: [],
+                  trashEntries: [],
                   fragmentStream: { totalCount: 0, years: [] },
                 },
                 fragment: null,

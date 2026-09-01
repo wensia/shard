@@ -66,12 +66,12 @@ async function installLibraryTreeMock(
       },
       {
         id: "fragment-archived",
-        content: "归档碎片正文",
+        content: "回收站碎片正文",
         createdAt: "2026-06-12T08:00:00.000Z",
         updatedAt: now,
         tags: ["inbox"],
         category: null,
-        path: "fragments/2026/06/20260612-080000.md",
+        path: ".trash/fragments/2026/06/20260612-080000.md",
         gitStatus: "committed",
         error: null,
         archived: true,
@@ -150,6 +150,24 @@ async function installLibraryTreeMock(
         modifiedAt: now,
       },
     ] as Array<Record<string, unknown>>
+    const trashEntries = [
+      {
+        name: "fragments",
+        path: ".trash/fragments",
+        kind: "directory",
+        size: 0,
+        modifiedAt: now,
+        children: [
+          {
+            name: "20260612-080000.md",
+            path: ".trash/fragments/2026/06/20260612-080000.md",
+            kind: "markdown",
+            size: 128,
+            modifiedAt: now,
+          },
+        ],
+      },
+    ] as Array<Record<string, unknown>>
     const mindMapSummary = {
       id: "map-project",
       title: "项目导图",
@@ -201,6 +219,7 @@ async function installLibraryTreeMock(
             mimeType: "image/png",
           }]
         : [],
+      trashEntries: clone(trashEntries),
       fragmentStream: {
         totalCount: fragments.filter((item) => !item.tags.includes("note") && !item.archived).length,
         years: [
@@ -231,6 +250,38 @@ async function installLibraryTreeMock(
         if (found) return found
       }
       return null
+    }
+    const rebaseEntryPaths = (
+      entry: Record<string, unknown>,
+      oldPrefix: string,
+      nextPrefix: string
+    ) => {
+      entry.path = String(entry.path).replace(oldPrefix, nextPrefix)
+      for (const child of (entry.children as typeof entries | undefined) ?? []) {
+        rebaseEntryPaths(child, oldPrefix, nextPrefix)
+      }
+    }
+    const trashDirectoryChildren = (originalDirectory: string) => {
+      let children = trashEntries
+      let path = ".trash"
+      for (const part of originalDirectory.split("/").filter(Boolean)) {
+        path = `${path}/${part}`
+        let directory = children.find((entry) => entry.path === path)
+        if (!directory) {
+          directory = {
+            name: part,
+            path,
+            kind: "directory",
+            size: 0,
+            modifiedAt: now,
+            children: [],
+          }
+          children.push(directory)
+        }
+        children = (directory.children as typeof entries | undefined) ?? []
+        directory.children = children
+      }
+      return children
     }
     const directoryChildren = (path: string) => {
       if (path === "notes") return entries
@@ -378,7 +429,40 @@ async function installLibraryTreeMock(
             return result(fragment)
           }
           if (command === "delete_library_entry") {
-            removeEntry(String(args.path))
+            const oldPath = String(args.path)
+            const entry = removeEntry(oldPath)
+            if (!entry) throw new Error("Entry not found")
+            rebaseEntryPaths(entry, oldPath, `.trash/${oldPath}`)
+            const parentPath = oldPath.slice(0, oldPath.lastIndexOf("/"))
+            trashDirectoryChildren(parentPath).push(entry)
+            const fragment = fragments.find((item) => item.path === oldPath)
+            if (fragment) {
+              fragment.path = `.trash/${oldPath}`
+              fragment.archived = true
+            }
+            return result()
+          }
+          if (command === "restore_from_trash") {
+            const trashPath = String(args.path)
+            const entry = removeEntry(trashPath, trashEntries)
+            if (!entry) throw new Error("Trash entry not found")
+            const originalPath = trashPath.replace(/^\.trash\//u, "")
+            rebaseEntryPaths(entry, trashPath, originalPath)
+            const parentPath = originalPath.slice(0, originalPath.lastIndexOf("/"))
+            directoryChildren(parentPath).push(entry)
+            const fragment = fragments.find((item) => item.path === trashPath)
+            if (fragment) {
+              fragment.path = originalPath
+              fragment.archived = false
+            }
+            return result()
+          }
+          if (command === "purge_from_trash") {
+            removeEntry(String(args.path), trashEntries)
+            return result()
+          }
+          if (command === "empty_trash") {
+            trashEntries.splice(0)
             return result()
           }
           if (command === "convert_fragment_to_note") {
@@ -674,8 +758,10 @@ test("资料库树只展示目录与特殊入口，碎片流无下级菜单", as
   await expect(treePane.getByRole("tree", { name: "碎片流年月" })).toHaveCount(0)
   await expect(treePane.getByRole("button", { name: /^2026（/ })).toHaveCount(0)
 
-  // 归档与碎片流平级，各自是一个 scope 入口。
-  await expect(treePane.getByRole("button", { name: /^归档（/ })).toBeVisible()
+  await expect(
+    treePane.getByRole("button", { name: "回收站（2）", exact: true })
+  ).toBeVisible()
+  await expect(treePane.getByRole("button", { name: /^归档（/ })).toHaveCount(0)
 
   await expect(page.locator('[data-shard-fragment-id="fragment-august"]')).toBeVisible()
   await expect(page.locator('[data-shard-fragment-id="fragment-july"]')).toBeVisible()
@@ -685,7 +771,7 @@ test("资料库树只展示目录与特殊入口，碎片流无下级菜单", as
   await expect(page.getByRole("button", { name: "进入禅模式", exact: true })).toHaveCount(0)
 })
 
-test("碎片流分组、标签与归档都在资料库查看器内工作", async ({ page }) => {
+test("碎片流标签与回收站 DirectoryView 列表宫格都在资料库查看器内工作", async ({ page }) => {
   await page.getByRole("button", { name: "资料库", exact: true }).click()
   const treePane = page.getByRole("complementary", { name: "资料库目录" })
   const viewer = page.getByRole("article", { name: "资料库查看器" })
@@ -706,10 +792,77 @@ test("碎片流分组、标签与归档都在资料库查看器内工作", async
     "true"
   )
 
-  await treePane.getByRole("button", { name: "归档（1）", exact: true }).click()
-  await expect(viewer.locator('[data-shard-fragment-id="fragment-archived"]')).toBeVisible()
-  await expect(viewer.getByRole("button", { name: "全部 2", exact: true })).toHaveCount(0)
-  await expect(viewer.getByRole("button", { name: "新建标签", exact: true })).toHaveCount(0)
+  await treePane.getByRole("button", { name: "回收站（2）", exact: true }).click()
+  const trashList = viewer.getByRole("region", {
+    name: ".trash 目录列表",
+    exact: true,
+  })
+  await expect(trashList).toBeVisible()
+  await trashList.getByRole("button", { name: "fragments 操作", exact: true }).click()
+  await expect(page.getByRole("menuitem", { name: "恢复", exact: true })).toBeVisible()
+  await expect(page.getByRole("menuitem", { name: "彻底删除", exact: true })).toBeVisible()
+  for (const forbidden of ["重命名", "移动到…", "转为碎片", "移入密匣"]) {
+    await expect(page.getByRole("menuitem", { name: forbidden, exact: true })).toHaveCount(0)
+  }
+  await page.keyboard.press("Escape")
+
+  await viewer.getByRole("button", { name: "宫格视图", exact: true }).click()
+  await expect(viewer.getByRole("list", { name: ".trash 目录宫格", exact: true })).toBeVisible()
+  await viewer.getByRole("button", { name: "列表视图", exact: true }).click()
+  await expect(trashList).toBeVisible()
+  await expect(viewer.getByRole("button", { name: "进入禅模式", exact: true })).toHaveCount(0)
+})
+
+test("删除笔记移入回收站并可从原位置恢复", async ({ page }) => {
+  await page.getByRole("button", { name: "资料库", exact: true }).click()
+  const treePane = page.getByRole("complementary", { name: "资料库目录" })
+  const viewer = page.getByRole("article", { name: "资料库查看器" })
+  await treePane.getByRole("button", {
+    name: "资料库根目录（2）",
+    exact: true,
+  }).click()
+  const rootList = viewer.getByRole("region", { name: "notes 目录列表", exact: true })
+  await rootList.getByRole("button", { name: "旧笔记.md 操作", exact: true }).click()
+  await page.getByRole("menuitem", { name: "删除", exact: true }).click()
+  const deleteDialog = page.getByRole("dialog", { name: "确认删除", exact: true })
+  await expect(deleteDialog).toContainText("将移入回收站，之后仍可恢复")
+  await deleteDialog.getByRole("button", { name: "删除", exact: true }).click()
+  await expect(rootList.getByRole("button", { name: "打开文件 旧笔记.md", exact: true })).toHaveCount(0)
+
+  await treePane.getByRole("button", { name: "回收站（4）", exact: true }).click()
+  await viewer.getByRole("button", { name: "打开目录 notes", exact: true }).click()
+  const trashNotes = viewer.getByRole("region", {
+    name: ".trash/notes 目录列表",
+    exact: true,
+  })
+  await expect(trashNotes.getByText("旧笔记.md", { exact: true })).toBeVisible()
+  await trashNotes.getByRole("button", { name: "旧笔记.md 操作", exact: true }).click()
+  await page.getByRole("menuitem", { name: "恢复", exact: true }).click()
+
+  await expect.poll(() => commandCalls(page, "restore_from_trash")).toHaveLength(1)
+  await treePane.getByRole("button", {
+    name: "资料库根目录（2）",
+    exact: true,
+  }).click()
+  await expect(
+    viewer.getByRole("region", { name: "notes 目录列表", exact: true })
+      .getByRole("button", { name: "打开文件 旧笔记.md", exact: true })
+  ).toBeVisible()
+})
+
+test("清空回收站必须二次确认且确认后才调用命令", async ({ page }) => {
+  await page.getByRole("button", { name: "资料库", exact: true }).click()
+  const treePane = page.getByRole("complementary", { name: "资料库目录" })
+  await treePane.getByRole("button", { name: "回收站（2）", exact: true }).click()
+  await page.getByRole("button", { name: "清空回收站", exact: true }).click()
+
+  const dialog = page.getByRole("dialog", { name: "确认清空回收站", exact: true })
+  await expect(dialog).toContainText("永久删除，此操作不可恢复")
+  await expect.poll(() => commandCalls(page, "empty_trash")).toHaveLength(0)
+  await dialog.getByRole("button", { name: "清空回收站", exact: true }).click()
+  await expect.poll(() => commandCalls(page, "empty_trash")).toHaveLength(1)
+  await expect(treePane.getByRole("button", { name: "回收站（0）", exact: true })).toBeVisible()
+  await expect(page.getByText("回收站是空的", { exact: true })).toBeVisible()
 })
 
 test("脏笔记进入碎片流前先保存草稿", async ({ page }) => {
@@ -1143,7 +1296,7 @@ test("第三栏菜单只给 Markdown 提供转碎片和移入密匣", async ({ p
   }
 })
 
-test("目录树 MVP 支持新建、重命名、菜单移动和非空目录删除阻止", async ({ page }) => {
+test("目录树 MVP 支持新建、重命名、菜单移动和非空目录整棵移入回收站", async ({ page }) => {
   await page.getByRole("button", { name: "资料库", exact: true }).click()
   const treePane = page.getByRole("complementary", { name: "资料库目录" })
 
@@ -1201,14 +1354,16 @@ test("目录树 MVP 支持新建、重命名、菜单移动和非空目录删除
     .getByRole("button", { name: "项目 操作", exact: true })
     .click()
   await page.getByRole("menuitem", { name: "删除", exact: true }).click()
-  await expect(page.getByText("目录非空，不能删除", { exact: true })).toBeVisible()
-  await expect.poll(() => commandCalls(page, "delete_library_entry")).toHaveLength(0)
+  const projectDialog = page.getByRole("dialog", { name: "确认删除", exact: true })
+  await projectDialog.getByRole("button", { name: "删除", exact: true }).click()
+  await expect.poll(() => commandCalls(page, "delete_library_entry")).toHaveLength(1)
+  await expect(treePane.getByRole("button", { name: "项目", exact: true })).toHaveCount(0)
 
   await treePane.getByRole("button", { name: "空目录 操作", exact: true }).click()
   await page.getByRole("menuitem", { name: "删除", exact: true }).last().click()
   const dialog = page.getByRole("dialog", { name: "确认删除" })
   await dialog.getByRole("button", { name: "删除", exact: true }).click()
-  await expect.poll(() => commandCalls(page, "delete_library_entry")).toHaveLength(1)
+  await expect.poll(() => commandCalls(page, "delete_library_entry")).toHaveLength(2)
   await expect(treePane.getByRole("button", { name: "空目录", exact: true })).toHaveCount(0)
   expect((await commandCalls(page, "create_library_directory"))[0].args).toEqual({
     name: "空目录",

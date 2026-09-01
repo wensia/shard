@@ -69,6 +69,13 @@
   gap: var(--space-1);
 }
 
+.toolbarActions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-2);
+}
+
 .list {
   display: flex;
   min-height: 0;

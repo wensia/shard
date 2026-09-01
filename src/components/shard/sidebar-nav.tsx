@@ -163,7 +163,7 @@ const SIDEBAR_COPY: Record<
     mindMaps: "思维导图",
     noCommit: "无提交",
     nav: {
-      archive: "归档",
+      archive: "回收站",
       dailyReview: "每日回顾",
       inbox: "收件箱",
       insight: "洞察视角",
@@ -219,7 +219,7 @@ const SIDEBAR_COPY: Record<
     mindMaps: "Mind maps",
     noCommit: "no commit",
     nav: {
-      archive: "Archive",
+      archive: "Trash",
       dailyReview: "Daily Review",
       inbox: "Inbox",
       insight: "Insight Lenses",

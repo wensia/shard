@@ -2,12 +2,12 @@ import {
   ArrowDownIcon,
   ArrowLeftIcon,
   ArrowUpIcon,
-  ArchiveIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
   LockKeyholeIcon,
   SearchIcon,
   XIcon,
+  Trash2Icon,
 } from "@/components/icons"
 import {
   useDeferredValue,
@@ -362,8 +362,8 @@ export function FragmentSearchWorkspace({
               {(
                 [
                   ["all", "全部"],
-                  ["active", "未归档"],
-                  ["archive", "归档"],
+                  ["active", "未删除"],
+                  ["archive", "回收站"],
                 ] as const
               ).map(([value, label]) => (
                 <button
@@ -567,7 +567,7 @@ function SearchResultRow({
         </p>
         <div className={styles.metadata}>
           {fragment.archived ? (
-            <span className={styles.stateBadge}><ArchiveIcon aria-hidden="true" />归档</span>
+            <span className={styles.stateBadge}><Trash2Icon aria-hidden="true" />回收站</span>
           ) : fragment.lockbox ? (
             <span className={styles.stateBadge}><LockKeyholeIcon aria-hidden="true" />密匣</span>
           ) : null}
@@ -668,7 +668,7 @@ function SearchEmpty({
       <p>
         {scope === "all"
           ? "试试缩短关键词，或换用片段里出现过的标签。"
-          : `当前只搜索${scope === "active" ? "未归档" : "归档"}片段，可切换到“全部”再试。`}
+          : `当前只搜索${scope === "active" ? "未删除" : "回收站中"}的片段，可切换到“全部”再试。`}
       </p>
     </div>
   )
@@ -714,9 +714,9 @@ function formatResultCount(total: number, limit: number) {
 }
 
 function formatScopeDescription(scope: FragmentSearchScope) {
-  if (scope === "active") return "只看未归档"
-  if (scope === "archive") return "只看归档"
-  return "包含归档"
+  if (scope === "active") return "只看未删除"
+  if (scope === "archive") return "只看回收站"
+  return "包含回收站"
 }
 
 function getOptionId(fragmentId: string) {

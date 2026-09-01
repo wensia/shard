@@ -164,6 +164,7 @@ async function installOrganizeMock(page: Page, mode: OrganizeMockMode) {
                   modifiedAt: "",
                 })),
               assets: [],
+              trashEntries: [],
               fragmentStream: { totalCount: 0, years: [] },
             }
           }
@@ -180,6 +181,7 @@ async function installOrganizeMock(page: Page, mode: OrganizeMockMode) {
                     modifiedAt: "",
                   })),
                 assets: [],
+                trashEntries: [],
                 fragmentStream: { totalCount: 0, years: [] },
               },
               migratedCount: 0,
@@ -198,6 +200,7 @@ async function installOrganizeMock(page: Page, mode: OrganizeMockMode) {
               tree: {
                 entries: [],
                 assets: [],
+                trashEntries: [],
                 fragmentStream: { totalCount: 0, years: [] },
               },
               fragment: null,

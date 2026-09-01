@@ -45,6 +45,7 @@ async function installIconMock(page: Page) {
     const tree = {
       entries: [],
       assets: [],
+      trashEntries: [],
       fragmentStream: {
         totalCount: 1,
         years: [{ year: "2026", totalCount: 1, months: [{ month: "08", count: 1 }] }],

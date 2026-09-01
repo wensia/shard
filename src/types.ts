@@ -32,6 +32,7 @@ export interface Fragment {
   gitStatus: FragmentStatus
   error: string | null
   aiStatus?: "none" | "pending" | "suggested" | "accepted" | "skipped"
+  /** 兼容字段名；现在表示该公开片段位于回收站中。 */
   archived: boolean
   lockbox: boolean
   pinned: boolean
@@ -66,7 +67,13 @@ export interface CsvFileSummary {
   path: string
 }
 
-export type LibraryTreeEntryKind = "directory" | "markdown" | "csv" | "mindmap"
+export type LibraryTreeEntryKind =
+  | "directory"
+  | "markdown"
+  | "csv"
+  | "mindmap"
+  | "image"
+  | "file"
 
 export interface LibraryTreeEntry {
   name: string
@@ -105,6 +112,7 @@ export interface LibraryTreeSnapshot {
   assets: LibraryAssetEntry[]
   entries: LibraryTreeEntry[]
   fragmentStream: LibraryFragmentStream
+  trashEntries: LibraryTreeEntry[]
 }
 
 export interface LibraryMutationResult {

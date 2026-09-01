@@ -135,7 +135,6 @@ function readSidebarCollapsed(): boolean {
 
 export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
   const {
-    archivedFragments,
     fragments,
     inboxFragments,
     isCreating,
@@ -681,7 +680,6 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
 
   async function handleArchiveFragment(fragment: Fragment) {
     recordContentActivity()
-    // 取消归档不需要确认：它是个可撤销的、低风险的还原动作。
     if (fragment.archived) {
       await archiveFragmentWithFeedback(fragment, false)
       return
@@ -691,9 +689,6 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
       setPendingLockboxArchiveFragment(fragment)
       return
     }
-
-    const confirmed = window.confirm("确认归档这条片段？归档后可在 Archive 中查看。")
-    if (!confirmed) return
 
     await archiveFragmentWithFeedback(fragment, true)
   }
@@ -712,10 +707,11 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
       if (editingFragmentId === fragment.id) {
         closeEditor()
       }
-      toast(archived ? "已归档" : "已移回收件箱")
+      if (!fragment.lockbox) await refreshLibraryTree()
+      toast(archived ? "已移入回收站" : "已恢复")
       return true
     } catch (error) {
-      toast.error(`${"归档失败"}：${getApiErrorMessage(error)}`, {
+      toast.error(`${archived ? "删除失败" : "恢复失败"}：${getApiErrorMessage(error)}`, {
         duration: Infinity,
       })
       return false
@@ -1099,11 +1095,10 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
       if (session) setSearchSession(session)
       searchReturnFocusRef.current = null
       return
-    } else if (fragment.archived || fragment.tags.includes("inbox")) {
-      requestLibraryTarget({
-        kind: "fragments",
-        archived: fragment.archived || undefined,
-      })
+    } else if (fragment.archived) {
+      requestLibraryTarget({ kind: "trash" })
+    } else if (fragment.tags.includes("inbox")) {
+      requestLibraryTarget({ kind: "fragments" })
     } else {
       toast("这条笔记当前不在时间线列表中")
       return
@@ -1112,13 +1107,14 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     setIsSearchModeActive(false)
     if (session) setSearchSession(session)
     searchReturnFocusRef.current = null
-    setPendingScrollFragmentId(fragment.id)
+    setPendingScrollFragmentId(fragment.archived ? null : fragment.id)
   }
 
   function requestLibraryTarget(
     target:
       | { kind: "note"; id: string }
-      | { kind: "fragments"; archived?: boolean }
+      | { kind: "fragments" }
+      | { kind: "trash" }
   ) {
     nextLibraryNavigationIdRef.current += 1
     setPendingLibraryTarget({
@@ -1822,7 +1818,6 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
             isLoading={isLoading}
             libraryTree={libraryTree}
             knownTags={knownTags}
-            archivedFragments={archivedFragments}
             fragmentsTimeline={{
               ...timelineHandlers,
               onOrganize: handleOrganizeFragments,
@@ -1958,9 +1953,9 @@ function LockboxArchiveConfirmDialog({
         style={{ maxWidth: 420 }}
       >
         <DialogHeader>
-          <DialogTitle>确认归档密匣笔记</DialogTitle>
+          <DialogTitle>确认删除密匣笔记</DialogTitle>
           <DialogDescription>
-            这条笔记属于密匣。归档后会从密匣列表移除，并且不会出现在「归档/回收站」列表中。
+            这条笔记属于密匣。删除后会保留在密匣内部，不会写入明文回收站。
           </DialogDescription>
         </DialogHeader>
         <DialogFooter className="flex-row justify-end">
@@ -1972,7 +1967,7 @@ function LockboxArchiveConfirmDialog({
             onClick={onConfirm}
             variant="destructive"
           >
-            {isArchiving ? "归档中" : "仍然归档"}
+            {isArchiving ? "删除中" : "仍然删除"}
           </Button>
         </DialogFooter>
       </DialogContent>

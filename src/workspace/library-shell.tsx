@@ -10,7 +10,6 @@ import {
   useState,
 } from "react"
 import {
-  ArchiveIcon,
   InboxIcon,
   ChevronDownIcon,
   ChevronLeftIcon,
@@ -21,6 +20,7 @@ import {
   ImageIcon,
   LockKeyholeIcon,
   Maximize2Icon,
+  Trash2Icon,
 } from "@/components/icons"
 import { toast } from "sonner"
 
@@ -30,6 +30,7 @@ import {
   DirectoryView,
   DirectoryViewToolbar,
   LibraryEntryMenu,
+  TrashEntryMenu,
   type DirectoryViewMode,
   libraryEntryDestinations,
   readDirectoryViewPreference,
@@ -61,10 +62,13 @@ import {
   createLibraryNote,
   convertNoteToFragment,
   deleteLibraryEntry,
+  emptyTrash,
   getApiErrorMessage,
   moveLibraryEntry,
   openCsvFile,
+  purgeFromTrash,
   renameLibraryEntry,
+  restoreFromTrash,
 } from "@/lib/api"
 import { deriveKind } from "@/lib/content-kind"
 import { extractTags, normalizeTagList } from "@/lib/editor-format"
@@ -97,11 +101,11 @@ export interface LibraryDraftHandle {
 
 export type LibraryNavigationTarget =
   | { kind: "note"; id: string; requestId: number }
-  | { kind: "fragments"; archived?: boolean; requestId: number }
+  | { kind: "fragments"; requestId: number }
+  | { kind: "trash"; requestId: number }
 
 interface LibraryShellProps {
   csvFiles?: CsvFileSummary[]
-  archivedFragments: Fragment[]
   fragments: Fragment[]
   fragmentsTimeline: Omit<
     ComponentProps<typeof FragmentTimeline>,
@@ -135,11 +139,15 @@ interface LibraryShellProps {
 }
 
 type SaveState = "dirty" | "error" | "saved" | "saving"
-type TreeDialogState = { kind: "delete"; entry: LibraryTreeEntry }
+type TreeDialogState =
+  | { kind: "delete"; entry: LibraryTreeEntry }
+  | { kind: "purge"; entry: LibraryTreeEntry }
+  | { kind: "emptyTrash" }
 type LibrarySelection =
   | { kind: "note"; id: string }
   | { kind: "mindmap"; path: string }
-  | { kind: "fragments"; month?: string; archived?: boolean }
+  | { kind: "fragments"; month?: string }
+  | { kind: "trash" }
   | { kind: "assets"; path?: string }
   | { kind: "directory"; path: string }
   | null
@@ -150,8 +158,14 @@ interface RenameState {
   value: string
 }
 
+function countTreeEntries(entries: LibraryTreeEntry[]): number {
+  return entries.reduce(
+    (total, entry) => total + 1 + countTreeEntries(entry.children ?? []),
+    0
+  )
+}
+
 export function LibraryShell({
-  archivedFragments,
   csvFiles = [],
   fragments,
   fragmentsTimeline,
@@ -191,6 +205,7 @@ export function LibraryShell({
   const [selection, setSelection] = useState<LibrarySelection>(null)
   const [directoryViewMode, setDirectoryViewMode] =
     useState<DirectoryViewMode>(readDirectoryViewPreference)
+  const [trashDirectoryPath, setTrashDirectoryPath] = useState(".trash")
   const [fragmentsTag, setFragmentsTag] = useState<string | null>(null)
   const [selectedTreePath, setSelectedTreePath] = useState("notes")
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(
@@ -244,6 +259,14 @@ export function LibraryShell({
       ),
     [markdownContentByPath, selectedDirectoryEntries]
   )
+  const selectedTrashEntries = useMemo(() => {
+    if (selection?.kind !== "trash") return []
+    if (trashDirectoryPath === ".trash") return libraryTree?.trashEntries ?? []
+    return (
+      findTreeEntry(libraryTree?.trashEntries ?? [], trashDirectoryPath)
+        ?.children ?? []
+    )
+  }, [libraryTree, selection, trashDirectoryPath])
   const draftRef = useRef(draft)
   const lastSavedContentRef = useRef("")
   /** 上次读到/存下正文的 SHA-256，保存时作为基线校验；null=暂缺（放行保存）。 */
@@ -579,15 +602,9 @@ export function LibraryShell({
     setMobilePane("editor")
   }
 
-  async function selectFragmentsView({
-    archived,
-    month,
-  }: {
-    archived?: boolean
-    month?: string
-  }) {
+  async function selectFragmentsView({ month }: { month?: string }) {
     if (!(await saveCurrentNote())) return
-    setSelection({ kind: "fragments", archived, month })
+    setSelection({ kind: "fragments", month })
     setFragmentsTag(null)
     setSelectedTreePath("::fragments")
     setIsZen(false)
@@ -610,6 +627,15 @@ export function LibraryShell({
     setMobilePane("editor")
   }
 
+  async function selectTrashView(path = ".trash") {
+    if (!(await saveCurrentNote())) return
+    setSelection({ kind: "trash" })
+    setTrashDirectoryPath(path)
+    setSelectedTreePath("::trash")
+    setIsZen(false)
+    setMobilePane("editor")
+  }
+
   useEffect(() => {
     if (!navigateTo || navigateTo.requestId === consumedNavigationRef.current) {
       return
@@ -626,19 +652,21 @@ export function LibraryShell({
       return
     }
     consumedNavigationRef.current = navigateTo.requestId
-    void selectFragmentsView({ archived: navigateTo.archived })
+    if (navigateTo.kind === "trash") {
+      void selectTrashView()
+    } else {
+      void selectFragmentsView({})
+    }
   }, [navigateTo, notes])
 
   const visibleTimelineFragments = useMemo(() => {
     if (selection?.kind !== "fragments") return []
-    if (selection.archived) return archivedFragments
     return inboxTimelineFragments.filter(
       (fragment) =>
         (!selection.month || isFragmentInMonth(fragment, selection.month)) &&
         (!fragmentsTag || fragment.tags.includes(fragmentsTag))
     )
   }, [
-    archivedFragments,
     fragmentsTag,
     inboxTimelineFragments,
     selection,
@@ -659,11 +687,11 @@ export function LibraryShell({
 
   const selectedTitle =
     selection?.kind === "fragments"
-      ? selection.archived
-        ? "归档"
-        : selection.month
+      ? selection.month
           ? `${selection.month.slice(0, 4)}年${selection.month.slice(5)}月`
           : "碎片流"
+      : selection?.kind === "trash"
+        ? "回收站"
       : selection?.kind === "assets"
         ? "图片"
       : selection?.kind === "directory"
@@ -729,11 +757,11 @@ export function LibraryShell({
   }
 
   function requestDelete(entry: LibraryTreeEntry) {
-    if (entry.kind === "directory" && (entry.children?.length ?? 0) > 0) {
-      toast.error("目录非空，不能删除", { duration: Infinity })
-      return
-    }
     setTreeDialog({ kind: "delete", entry })
+  }
+
+  function requestPurge(entry: LibraryTreeEntry) {
+    setTreeDialog({ kind: "purge", entry })
   }
 
   function moveEntry(entry: LibraryTreeEntry, destinationDirectory: string) {
@@ -837,18 +865,36 @@ export function LibraryShell({
 
   async function submitTreeDialog() {
     if (!treeDialog || busyAction) return
+    if (treeDialog.kind === "emptyTrash") {
+      const result = await runMutation("清空回收站", emptyTrash)
+      if (!result) return
+      setTrashDirectoryPath(".trash")
+      setTreeDialog(null)
+      return
+    }
     const deletedPath = treeDialog.entry.path
-    const result = await runSavedMutation("删除", () =>
-      deleteLibraryEntry(deletedPath)
-    )
+    const result =
+      treeDialog.kind === "purge"
+        ? await runMutation("彻底删除", () => purgeFromTrash(deletedPath))
+        : await runSavedMutation("删除", () =>
+            deleteLibraryEntry(deletedPath)
+          )
     if (!result) return
-    if (selectedTreePath === deletedPath) {
+    if (
+      treeDialog.kind === "delete" &&
+      (selectedTreePath === deletedPath ||
+        selectedTreePath.startsWith(`${deletedPath}/`))
+    ) {
       setSelection(null)
       setSelectedTreePath("notes")
       setIsZen(false)
       setMobilePane("list")
     }
     setTreeDialog(null)
+  }
+
+  function restoreTrashEntry(entry: LibraryTreeEntry) {
+    void runMutation("恢复", () => restoreFromTrash(entry.path))
   }
 
   function handleTreeEntryClick(entry: LibraryTreeEntry) {
@@ -967,30 +1013,61 @@ export function LibraryShell({
       )
     }
 
+
+    if (selection?.kind === "trash") {
+      return (
+        <DirectoryView
+          busy={busyAction !== null}
+          destinations={[]}
+          emptyMessage="回收站是空的"
+          entries={selectedTrashEntries}
+          isEntryOpenable={(entry) => entry.kind === "directory"}
+          onConvertToFragment={() => undefined}
+          onDelete={() => undefined}
+          onMove={() => undefined}
+          onMoveToLockbox={() => undefined}
+          onOpenEntry={(entry) => {
+            if (entry.kind === "directory") void selectTrashView(entry.path)
+          }}
+          onRename={() => undefined}
+          onRenameCancel={() => undefined}
+          onRenameChange={() => undefined}
+          onRenameSubmit={() => undefined}
+          path={trashDirectoryPath}
+          renaming={null}
+          renderEntryActions={(entry) => (
+            <TrashEntryMenu
+              busy={busyAction !== null}
+              entry={entry}
+              onPurge={requestPurge}
+              onRestore={restoreTrashEntry}
+            />
+          )}
+          viewMode={directoryViewMode}
+        />
+      )
+    }
+
     if (selection?.kind === "fragments") {
-      const emptyMessage = selection.archived
-        ? "还没有归档内容。"
-        : selection.month
+      const emptyMessage = selection.month
           ? "这个月还没有碎片。"
           : fragmentsTag
             ? `#${fragmentsTag} 下还没有片段。写片段时输入 #${fragmentsTag} 即可归入。`
             : undefined
       return (
         <div className={styles.fragmentsViewport}>
-          {selection.archived ? null : (
-            <InboxTagBar
-              {...fragmentsTagBar}
-              onSelectTag={setFragmentsTag}
-              selectedTag={fragmentsTag}
-              totalCount={
-                selection.month
-                  ? inboxTimelineFragments.filter((fragment) =>
-                      isFragmentInMonth(fragment, selection.month!)
-                    ).length
-                  : inboxTimelineFragments.length
-              }
-            />
-          )}
+          <InboxTagBar
+            {...fragmentsTagBar}
+            onSelectTag={setFragmentsTag}
+            selectedTag={fragmentsTag}
+            totalCount={
+              selection.month
+                ? inboxTimelineFragments.filter((fragment) =>
+                    isFragmentInMonth(fragment, selection.month!)
+                  ).length
+                : inboxTimelineFragments.length
+            }
+          />
           {searchContextBar ? <SearchContextBar {...searchContextBar} /> : null}
           <FragmentTimeline
             {...fragmentsTimeline}
@@ -1064,6 +1141,27 @@ export function LibraryShell({
     return <LibraryEmptyState message="从资料库目录选择碎片流、图片、目录、笔记或思维导图" />
   }
 
+  const dialogTitle =
+    treeDialog?.kind === "emptyTrash"
+      ? "确认清空回收站"
+      : treeDialog?.kind === "purge"
+        ? "确认彻底删除"
+        : "确认删除"
+  const dialogDescription =
+    treeDialog?.kind === "emptyTrash"
+      ? "回收站中的全部内容将被永久删除，此操作不可恢复。"
+      : treeDialog?.kind === "purge"
+        ? `「${treeDialog.entry.name}」将被永久删除，此操作不可恢复。`
+        : treeDialog?.kind === "delete"
+          ? `「${treeDialog.entry.name}」将移入回收站，之后仍可恢复。`
+          : ""
+  const dialogConfirmLabel =
+    treeDialog?.kind === "emptyTrash"
+      ? "清空回收站"
+      : treeDialog?.kind === "purge"
+        ? "彻底删除"
+        : "删除"
+
   return (
     <section aria-label="资料库" className={styles.shell}>
       <div className={styles.workspace}>
@@ -1124,8 +1222,7 @@ export function LibraryShell({
                     className={styles.treeButton}
                     data-selected={
                       selection?.kind === "fragments" &&
-                      !selection.month &&
-                      !selection.archived
+                      !selection.month
                         ? "true"
                         : undefined
                     }
@@ -1138,22 +1235,21 @@ export function LibraryShell({
                       {libraryTree.fragmentStream.totalCount}
                     </span>
                   </button>
-                  {/* 归档与碎片流平级：两者都是碎片的入口，只是 scope 不同。 */}
                   <button
-                    aria-label={`归档（${archivedFragments.length}）`}
+                    aria-label={`回收站（${countTreeEntries(libraryTree.trashEntries)}）`}
                     className={styles.treeButton}
                     data-selected={
-                      selection?.kind === "fragments" && selection.archived
+                      selection?.kind === "trash"
                         ? "true"
                         : undefined
                     }
-                    onClick={() => void selectFragmentsView({ archived: true })}
+                    onClick={() => void selectTrashView()}
                     type="button"
                   >
-                    <ArchiveIcon aria-hidden="true" />
-                    <span>归档</span>
+                    <Trash2Icon aria-hidden="true" />
+                    <span>回收站</span>
                     <span className={styles.treeCount}>
-                      {archivedFragments.length}
+                      {countTreeEntries(libraryTree.trashEntries)}
                     </span>
                   </button>
                 </div>
@@ -1257,6 +1353,32 @@ export function LibraryShell({
                 path={selection.path}
                 viewMode={directoryViewMode}
               />
+            ) : selection?.kind === "trash" ? (
+              <DirectoryViewToolbar
+                action={
+                  <Button
+                    disabled={
+                      busyAction !== null ||
+                      countTreeEntries(libraryTree?.trashEntries ?? []) === 0
+                    }
+                    onClick={() => setTreeDialog({ kind: "emptyTrash" })}
+                    size="sm"
+                    type="button"
+                    variant="destructive"
+                  >
+                    <Trash2Icon aria-hidden="true" />
+                    清空回收站
+                  </Button>
+                }
+                onSelectDirectory={(path) => void selectTrashView(path)}
+                onViewModeChange={(mode) => {
+                  setDirectoryViewMode(mode)
+                  writeDirectoryViewPreference(mode)
+                }}
+                path={trashDirectoryPath}
+                rootLabel="回收站"
+                viewMode={directoryViewMode}
+              />
             ) : selectedNote &&
             renaming?.source === "editor" &&
             renaming.path === selectedNote.path ? (
@@ -1331,6 +1453,7 @@ export function LibraryShell({
             {selection &&
             selection.kind !== "fragments" &&
             selection.kind !== "directory" &&
+            selection.kind !== "trash" &&
             (selection.kind !== "assets" || selection.path) ? (
               <Button
                 aria-label="进入禅模式"
@@ -1402,10 +1525,8 @@ export function LibraryShell({
           showCloseButton={busyAction === null}
         >
           <DialogHeader>
-            <DialogTitle>确认删除</DialogTitle>
-            <DialogDescription>
-              将永久删除「{treeDialog?.entry.name}」，此操作不可撤销。
-            </DialogDescription>
+            <DialogTitle>{dialogTitle}</DialogTitle>
+            <DialogDescription>{dialogDescription}</DialogDescription>
           </DialogHeader>
 
           <DialogFooter className={styles.dialogFooter}>
@@ -1423,7 +1544,7 @@ export function LibraryShell({
               type="button"
               variant="destructive"
             >
-              {busyAction ?? "删除"}
+              {busyAction ?? dialogConfirmLabel}
             </Button>
           </DialogFooter>
         </DialogContent>

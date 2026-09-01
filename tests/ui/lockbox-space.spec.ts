@@ -91,6 +91,7 @@ async function installLockboxSpaceMock(page: Page) {
     const librarySnapshot = () => ({
       entries: [],
       assets: [],
+      trashEntries: [],
       fragmentStream: {
         totalCount: 1,
         years: [

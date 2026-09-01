@@ -19,9 +19,9 @@
 |---|---|---|---|
 | 第一批 | B-lite 笔记进密匣 | T1.1 – T1.4 | **已完成**（Codex gpt-5.6-sol/low 实现；Claude 验收：cargo 52 / unit 63 / ui 98 全绿；已提交 d2adbbc；mock 技术债已在第二批清理） |
 | 第二批 | C 密匣传送门 + 一级空间 | T2.1 – T2.5 | **已完成**（Claude 直接实现，2026-08-31；详见下方实施记录） |
-| 第三批 | A1 双读 | T3.1 – T3.3 | 未派发 |
-| 第四批 | A2 幂等迁移 | T4.1 – T4.3 | 未派发 |
-| 第五批 | A3 单读 + 计数修正 | T5.1 – T5.3 | 未派发 |
+| 第三批 | A1 双读 | T3.1 – T3.3 | **已废弃**（归档概念消失；回收站采用 `.trash/` 目录） |
+| 第四批 | A2 幂等迁移 | T4.1 – T4.3 | **已废弃**（原 frontmatter 迁移方案由第十六批目录迁移取代） |
+| 第五批 | A3 单读 + 计数修正 | T5.1 – T5.3 | **已废弃**（回收站是删除终态，不是正交 frontmatter 状态） |
 | 第六批 | D 标签全局化 | T6.1 – T6.2 | 未派发 |
 | 第七批 | E 资料库容纳导图 | T7.1 – T7.4 | **已完成**（Codex 实现；Claude 验收：cargo 53 / unit 68 / ui 103 全绿） |
 | 第八批 | F 查看器统一 + 禅模式通用化 | T8.1 – T8.7 | **已完成**（Codex high 实现；Claude 验收修正 2 处 UI 回归；cargo 53 / unit 68 / ui 108 全绿；与第七批合并提交 22a5a8f） |
@@ -172,7 +172,9 @@ pnpm test:ui
 
 ---
 
-# 第三批：A1 —— 双读（未派发）
+# 第三批：A1 —— 双读（已废弃）
+
+归档概念已消失。回收站需要容纳任意文件类型，采用 vault 顶层 `.trash/` 目录；本批的 `archived_at` 双读方案不再执行。
 
 - **T3.1** `FragmentFrontmatter`（`:478-492`）加 `archived_at: Option<String>`，须 `#[serde(default, skip_serializing_if = "Option::is_none")]`
 - **T3.2** `write_lockbox_fragment_file`（`:4123-4135`）白名单**补 `archived_at`**（漏了会静默丢归档态）
@@ -180,7 +182,9 @@ pnpm test:ui
 
 ---
 
-# 第四批：A2 —— 幂等迁移（未派发，最高风险）
+# 第四批：A2 —— 幂等迁移（已废弃）
+
+原 frontmatter 迁移方案不再执行；旧 `archive/` 由第十六批直接幂等迁入 `.trash/fragments/`。
 
 - **T4.1** `archive/**` 回迁 `fragments/`、`lockbox/archive/**` 回迁 `lockbox/fragments/`，写 `archived_at`，走 `checkpoint_before_structural_locked`，清理空目录
 - **T4.2** **必须先于 T6 遗留笔记迁移执行**；`migrate_legacy_notes_in_vault`（`:3016`）加排除条件，避免把带 `note` 标签的归档碎片当遗留笔记搬走
@@ -188,7 +192,9 @@ pnpm test:ui
 
 ---
 
-# 第五批：A3 —— 单读 + 计数修正（未派发）
+# 第五批：A3 —— 单读 + 计数修正（已废弃）
+
+回收站是删除终态而非与位置正交的状态，因此继续使用目录派生；本批单读方案不再执行。
 
 - **T5.1** 移除路径派生，`archived` 只读 `archived_at`
 - **T5.2** `MANAGED_VAULT_ROOTS`（`:48`）摘掉 `archive`（确认不丢 Git 追踪）；`organize_fragments` 的 `archive/` 前缀兼容一并清理

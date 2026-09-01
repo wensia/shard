@@ -8,7 +8,7 @@ export type LibraryPreview =
   | { kind: "table"; rows: string[][] }
 
 export interface LibraryPreviewEntry {
-  kind: "csv" | "directory" | "image" | "markdown" | "mindmap"
+  kind: "csv" | "directory" | "file" | "image" | "markdown" | "mindmap"
   mindMapId?: string
   modifiedAt: string
   path: string

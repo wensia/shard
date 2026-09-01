@@ -14,7 +14,7 @@
 - Git / GitHub CLI / 文件系统扫描或读写 / 网络请求 / 外部进程 / 大量 Markdown 解析必须异步执行，并在 Tauri 侧使用 `async` command、`tauri::async_runtime::spawn_blocking` 或等价后台任务。
 - 前端只能等待异步 Promise，并给受影响的局部组件展示 loading / disabled / `aria-busy` 状态；不得用同步循环、阻塞等待或成功后强制关闭配置界面来掩盖耗时。
 - 新增或修改这类能力时，必须全局检查同类阻塞点，并用 `pnpm build`、`cargo check`、`git diff --check` 或等价验证确认不会引入 UI 线程阻塞。
-- 提交策略（合并保存）：内容型写入（片段/资料库/密匣正文、标签、置顶、归档、关系、思维导图、附件）只落盘**不得内嵌 git 提交**，提交由 `checkpoint_vault` 聚合；结构型操作（rename/move/delete/convert/移入密匣）保留路径级语义提交并先调 `checkpoint_before_structural_locked`；仅 `.shard/lockbox.json` 密钥元数据即时提交。所有写 vault 的命令必须在拿到 vault 后立刻 `lock_vault_gate`（纯读命令与网络阶段不持门），托管目录清单只能来自 `MANAGED_VAULT_ROOTS`/`managed_pathspecs()`。
+- 提交策略（合并保存）：内容型写入（片段/资料库/密匣正文、标签、置顶、关系、思维导图、附件）只落盘**不得内嵌 git 提交**，提交由 `checkpoint_vault` 聚合；结构型操作（rename/move/delete/restore/purge/convert/移入密匣）保留路径级语义提交并先调 `checkpoint_before_structural_locked`；仅 `.shard/lockbox.json` 密钥元数据即时提交。所有写 vault 的命令必须在拿到 vault 后立刻 `lock_vault_gate`（纯读命令与网络阶段不持门），托管目录清单只能来自 `MANAGED_VAULT_ROOTS`/`managed_pathspecs()`。
 
 ## Design System
 
