@@ -71,6 +71,12 @@ interface FragmentCardProps {
     targetId: string,
     limit?: number
   ) => Promise<RelatedFragment[]>
+  /**
+   * card：卡片底色，靠与页面 --background 的色差呈现（捕捉页、密匣）。
+   * flat：透明底，用于本身就是 --card 底色的容器（资料库中列），
+   *       条目分割由列容器的细实线承担。
+   */
+  variant?: "card" | "flat"
   vaultPath?: string
 }
 
@@ -100,6 +106,7 @@ export function FragmentCard({
   onToggleTask,
   onUnlinkFragment,
   requestRelated,
+  variant = "card",
   vaultPath,
 }: FragmentCardProps) {
   const [isMenuOpen, setIsMenuOpen] = useState(false)
@@ -163,7 +170,11 @@ export function FragmentCard({
         display: "flex",
         flexDirection: "column",
         borderRadius: "var(--shard-surface-radius)",
-        background: isSelected ? "var(--primary-subtle)" : "var(--card)",
+        background: isSelected
+          ? "var(--primary-subtle)"
+          : variant === "flat"
+            ? "transparent"
+            : "var(--card)",
         boxShadow: isSelected ? "var(--ring-focus)" : undefined,
         paddingInline: "var(--shard-card-padding-x)",
         paddingTop: "var(--shard-card-padding-y)",

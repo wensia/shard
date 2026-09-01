@@ -519,6 +519,12 @@
     );
   }
 
+  /* 时间线 flat 变体（资料库中列）：容器背景即 --card，卡片透明底靠不出
+     色差，条目分割改由细实线承担；线落在上下卡片各自的内边距之间。 */
+  .shard-timeline-flat-column > [data-shard-fragment-id]:not(:last-child) {
+    border-bottom: 1px solid var(--border);
+  }
+
   /* 正文里的 GFM 表格。内容是内联文本流（white-space: pre-wrap），
      表格必须自己关掉换行保留，否则单元格里会多出源文本的缩进空白。
      过宽时在自己的容器里横向滚动，不撑破卡片。 */

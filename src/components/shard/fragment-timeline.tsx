@@ -50,6 +50,11 @@ interface FragmentTimelineProps {
    */
   relationFragments?: Fragment[]
   scrollToFragmentId?: string | null
+  /**
+   * card：卡片流（默认，容器背景为 --background 时用）。
+   * flat：扁平列表，条目透明底、细实线分割（容器背景本身是 --card 时用，如资料库中列）。
+   */
+  variant?: "card" | "flat"
   vaultPath?: string
 }
 
@@ -78,6 +83,7 @@ export function FragmentTimeline({
   onUnlinkFragment,
   relationFragments = fragments,
   scrollToFragmentId = null,
+  variant = "card",
   vaultPath,
 }: FragmentTimelineProps) {
   const lastScrollTopRef = useRef(0)
@@ -489,12 +495,16 @@ export function FragmentTimeline({
             >
               {timelineColumns.map((column, columnIndex) => (
                 <div
+                  className={
+                    variant === "flat" ? "shard-timeline-flat-column" : undefined
+                  }
                   key={columnIndex}
                   style={{
                     display: "flex",
                     minWidth: 0,
                     flexDirection: "column",
-                    gap: "var(--shard-space-4)",
+                    // flat 变体条目间距由卡片自身 padding 承担，细实线落在其间
+                    gap: variant === "flat" ? 0 : "var(--shard-space-4)",
                   }}
                 >
                   {column.map((item) => (
@@ -502,6 +512,7 @@ export function FragmentTimeline({
                       csvFiles={csvFiles}
                       fragment={item.fragment}
                       fragments={relationFragments}
+                      variant={variant}
                       isHighlighted={highlightedFragmentId === item.fragment.id}
                       isEditing={editingFragmentId === item.fragment.id}
                       isSelectable={
