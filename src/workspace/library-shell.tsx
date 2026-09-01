@@ -11,6 +11,7 @@ import {
 } from "react"
 import {
   ArchiveIcon,
+  InboxIcon,
   ChevronDownIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
@@ -195,9 +196,6 @@ export function LibraryShell({
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(
     () => new Set(["notes"])
   )
-  const [isFragmentStreamExpanded, setIsFragmentStreamExpanded] =
-    useState(false)
-  const [expandedYears, setExpandedYears] = useState<Set<string>>(new Set())
   const [busyAction, setBusyAction] = useState<string | null>(null)
   const [treeDialog, setTreeDialog] = useState<TreeDialogState | null>(null)
   const [renaming, setRenaming] = useState<RenameState | null>(null)
@@ -1123,7 +1121,6 @@ export function LibraryShell({
                 <div className={styles.fragmentStream}>
                   <button
                     aria-label={`碎片流（${libraryTree.fragmentStream.totalCount}）`}
-                    aria-expanded={isFragmentStreamExpanded}
                     className={styles.treeButton}
                     data-selected={
                       selection?.kind === "fragments" &&
@@ -1132,111 +1129,33 @@ export function LibraryShell({
                         ? "true"
                         : undefined
                     }
-                    onClick={() => {
-                      setIsFragmentStreamExpanded(true)
-                      void selectFragmentsView({})
-                    }}
+                    onClick={() => void selectFragmentsView({})}
                     type="button"
                   >
-                    {isFragmentStreamExpanded ? (
-                      <ChevronDownIcon aria-hidden="true" />
-                    ) : (
-                      <ChevronRightIcon aria-hidden="true" />
-                    )}
+                    <InboxIcon aria-hidden="true" />
                     <span>碎片流</span>
                     <span className={styles.treeCount}>
                       {libraryTree.fragmentStream.totalCount}
                     </span>
                   </button>
-                  {isFragmentStreamExpanded ? (
-                    <ul aria-label="碎片流年月" className={styles.tree} role="tree">
-                      {libraryTree.fragmentStream.years.map((year) => {
-                        const expanded = expandedYears.has(year.year)
-                        return (
-                          <li
-                            aria-expanded={expanded}
-                            key={year.year}
-                            role="treeitem"
-                          >
-                            <button
-                              aria-label={`${year.year}（${year.totalCount}）`}
-                              className={styles.treeButton}
-                              data-depth="1"
-                              onClick={() =>
-                                toggleSetValue(setExpandedYears, year.year)
-                              }
-                              type="button"
-                            >
-                              {expanded ? (
-                                <ChevronDownIcon aria-hidden="true" />
-                              ) : (
-                                <ChevronRightIcon aria-hidden="true" />
-                              )}
-                              <span>{year.year}年</span>
-                              <span className={styles.treeCount}>
-                                {year.totalCount}
-                              </span>
-                            </button>
-                            {expanded ? (
-                              <ul role="group">
-                                {year.months.map((month) => {
-                                  const routeMonth = `${year.year}-${month.month}`
-                                  return (
-                                    <li key={routeMonth} role="treeitem">
-                                      <button
-                                        aria-label={`${month.month}（${month.count}）`}
-                                        className={styles.treeButton}
-                                        data-depth="2"
-                                        data-selected={
-                                          selection?.kind === "fragments" &&
-                                          selection.month === routeMonth &&
-                                          !selection.archived
-                                            ? "true"
-                                            : undefined
-                                        }
-                                        onClick={() =>
-                                          void selectFragmentsView({ month: routeMonth })
-                                        }
-                                        type="button"
-                                      >
-                                        <span className={styles.treeIndentIcon} />
-                                        <span>{month.month}月</span>
-                                        <span className={styles.treeCount}>
-                                          {month.count}
-                                        </span>
-                                      </button>
-                                    </li>
-                                  )
-                                })}
-                              </ul>
-                            ) : null}
-                          </li>
-                        )
-                      })}
-                      <li role="treeitem">
-                        <button
-                          aria-label={`归档（${archivedFragments.length}）`}
-                          className={styles.treeButton}
-                          data-depth="1"
-                          data-selected={
-                            selection?.kind === "fragments" && selection.archived
-                              ? "true"
-                              : undefined
-                          }
-                          onClick={() =>
-                            void selectFragmentsView({ archived: true })
-                          }
-                          type="button"
-                        >
-                          <ArchiveIcon aria-hidden="true" />
-                          <span>归档</span>
-                          <span className={styles.treeCount}>
-                            {archivedFragments.length}
-                          </span>
-                        </button>
-                      </li>
-                    </ul>
-                  ) : null}
+                  {/* 归档与碎片流平级：两者都是碎片的入口，只是 scope 不同。 */}
+                  <button
+                    aria-label={`归档（${archivedFragments.length}）`}
+                    className={styles.treeButton}
+                    data-selected={
+                      selection?.kind === "fragments" && selection.archived
+                        ? "true"
+                        : undefined
+                    }
+                    onClick={() => void selectFragmentsView({ archived: true })}
+                    type="button"
+                  >
+                    <ArchiveIcon aria-hidden="true" />
+                    <span>归档</span>
+                    <span className={styles.treeCount}>
+                      {archivedFragments.length}
+                    </span>
+                  </button>
                 </div>
 
                 {libraryTree.assets.length > 0 ? (

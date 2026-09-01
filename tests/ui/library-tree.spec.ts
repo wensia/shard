@@ -647,7 +647,7 @@ test("脏笔记进入目录前先保存草稿", async ({ page }) => {
   ).toBeVisible()
 })
 
-test("资料库树只展示目录并保留特殊入口，碎片流年月就地浏览", async ({ page }) => {
+test("资料库树只展示目录与特殊入口，碎片流无下级菜单", async ({ page }) => {
   await page.getByRole("button", { name: "资料库", exact: true }).click()
   const treePane = page.getByRole("complementary", { name: "资料库目录" })
 
@@ -669,16 +669,16 @@ test("资料库树只展示目录并保留特殊入口，碎片流年月就地�
   await expect(treePane.getByText("assets", { exact: true })).toHaveCount(0)
   await expect(treePane.getByText("八月灵感", { exact: true })).toHaveCount(0)
 
+  // 碎片流是一个入口，不再展开年月子树。
   await treePane.getByRole("button", { name: "碎片流（2）", exact: true }).click()
-  await treePane.getByRole("button", { name: "2026（2）", exact: true }).click()
-  const monthTree = treePane.getByRole("tree", { name: "碎片流年月" })
-  await expect(monthTree.getByRole("button", { name: "08（1）", exact: true })).toBeVisible()
-  await expect(monthTree.getByRole("button", { name: "07（1）", exact: true })).toBeVisible()
-  await expect(monthTree.getByText("20260830-080102.md", { exact: true })).toHaveCount(0)
+  await expect(treePane.getByRole("tree", { name: "碎片流年月" })).toHaveCount(0)
+  await expect(treePane.getByRole("button", { name: /^2026（/ })).toHaveCount(0)
 
-  await monthTree.getByRole("button", { name: "08（1）", exact: true }).click()
+  // 归档与碎片流平级，各自是一个 scope 入口。
+  await expect(treePane.getByRole("button", { name: /^归档（/ })).toBeVisible()
+
   await expect(page.locator('[data-shard-fragment-id="fragment-august"]')).toBeVisible()
-  await expect(page.locator('[data-shard-fragment-id="fragment-july"]')).toHaveCount(0)
+  await expect(page.locator('[data-shard-fragment-id="fragment-july"]')).toBeVisible()
   await expect.poll(() => page.evaluate(() => localStorage.getItem("shard.workspace-route"))).toBe(
     JSON.stringify({ space: "library", params: {} })
   )
