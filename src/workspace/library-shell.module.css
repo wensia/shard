@@ -230,6 +230,10 @@
 
 .treeButton {
   display: flex;
+  /* 按钮在 block 流里 width:auto 会按内容收缩（UA 表单控件特性），
+   * 选中/悬停背景就只包住文字。显式满宽让整行成为命中区，
+   * treeCount 的 margin-left:auto 也才能真正靠右。 */
+  width: 100%;
   min-width: 0;
   min-height: var(--control-height-sm);
   flex: 1;
