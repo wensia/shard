@@ -580,9 +580,10 @@ export interface ShardMapNode {
 
 **做什么**
 
-1. `inspectorSlot`（`:1152`）的内容按 `selection.kind` 分派，与第三栏 `renderSelectedViewer` 同构：
+1. `inspectorSlot`（第十批后约在 `:1312`，以实际为准）的内容按 `selection.kind` 分派，与第三栏 `renderSelectedViewer` 同构。**注意 `LibrarySelection` 在第十批后已是三支**（`library-shell.tsx:144-148`）：
    - `note` → 现有 `FragmentBacklinksPanel`，**行为完全不变**
    - `mindmap` → 新的 `MindMapInspector`（T9.3/T9.4 实现）
+   - `fragments` → **保持空态**。碎片流是列表视图，没有单一「当前文档」可检查；不要在此显示某条碎片的反链，也不要为它造新面板。
    - 无选中 → 保持现有空态
 2. 栏位**始终存在**，不按内容类型显隐——否则切换笔记↔导图时编辑区宽度会跳变。
 3. `inspectorHeader` 的 `data-tauri-drag-region` 保持不动。
