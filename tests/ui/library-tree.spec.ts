@@ -135,6 +135,14 @@ async function installLibraryTreeMock(
         modifiedAt: now,
       },
       {
+        name: "项目导图.shardmap.json",
+        path: "notes/项目导图.shardmap.json",
+        kind: "mindmap",
+        mindMapId: "map-project",
+        size: 768,
+        modifiedAt: now,
+      },
+      {
         name: "清单.csv",
         path: "notes/清单.csv",
         kind: "csv",
@@ -148,7 +156,7 @@ async function installLibraryTreeMock(
       createdAt: now,
       updatedAt: now,
       nodeCount: 1,
-      path: "maps/project.shardmap.json",
+      path: "notes/项目导图.shardmap.json",
     }
     const mindMapFile = {
       kind: "shard.map",
@@ -193,13 +201,6 @@ async function installLibraryTreeMock(
             mimeType: "image/png",
           }]
         : [],
-      mindMaps: [{
-        name: mindMapSummary.title,
-        path: mindMapSummary.path,
-        kind: "mindmap",
-        size: 768,
-        modifiedAt: now,
-      }],
       fragmentStream: {
         totalCount: fragments.filter((item) => !item.tags.includes("note") && !item.archived).length,
         years: [
@@ -326,11 +327,18 @@ async function installLibraryTreeMock(
             const newName = String(args.newName)
             const entry = findEntry(oldPath)
             if (!entry) throw new Error("Entry not found")
-            const extension = String(entry.kind) === "markdown" ? ".md" : String(entry.kind) === "csv" ? ".csv" : ""
+            const extension = String(entry.kind) === "markdown"
+              ? ".md"
+              : String(entry.kind) === "csv"
+                ? ".csv"
+                : String(entry.kind) === "mindmap"
+                  ? ".shardmap.json"
+                  : ""
             const parentPath = oldPath.slice(0, oldPath.lastIndexOf("/"))
             const nextPath = `${parentPath}/${newName}${extension}`
             entry.name = `${newName}${extension}`
             entry.path = nextPath
+            if (String(entry.kind) === "mindmap") mindMapSummary.path = nextPath
             const fragment = fragments.find((item) => item.path === oldPath)
             if (fragment) {
               fragment.path = nextPath
@@ -348,6 +356,7 @@ async function installLibraryTreeMock(
             if (!entry) throw new Error("Entry not found")
             const nextPath = `${destination}/${String(entry.name)}`
             entry.path = nextPath
+            if (String(entry.kind) === "mindmap") mindMapSummary.path = nextPath
             directoryChildren(destination).push(entry)
             const fragment = fragments.find((item) => item.path === oldPath)
             if (fragment) fragment.path = nextPath
@@ -457,8 +466,34 @@ test("目录列表与宫格切换会持久化，宫格可进入子目录并打�
   await expect(
     viewer.getByRole("button", { name: "列表视图", exact: true })
   ).toHaveAttribute("aria-pressed", "true")
+  const rootList = viewer.getByRole("region", {
+    name: "notes 目录列表",
+    exact: true,
+  })
+  await expect(
+    rootList.getByRole("button", { name: "打开文件 旧笔记.md", exact: true })
+  ).toBeVisible()
+  await expect(
+    rootList.getByRole("button", {
+      name: "打开文件 项目导图.shardmap.json",
+      exact: true,
+    })
+  ).toBeVisible()
   await gridButton.click()
   await expect(gridButton).toHaveAttribute("aria-pressed", "true")
+  const rootGrid = viewer.getByRole("list", {
+    name: "notes 目录宫格",
+    exact: true,
+  })
+  await expect(
+    rootGrid.getByRole("button", { name: "打开文件 旧笔记.md", exact: true })
+  ).toBeVisible()
+  await expect(
+    rootGrid.getByRole("button", {
+      name: "打开文件 项目导图.shardmap.json",
+      exact: true,
+    })
+  ).toBeVisible()
   await expect.poll(() => page.evaluate(() =>
     localStorage.getItem("shard.library-directory-view")
   )).toBe("grid")
@@ -510,13 +545,22 @@ test("脏笔记进入目录前先保存草稿", async ({ page }) => {
   ).toBeVisible()
 })
 
-test("资料库文件树只展示 notes 内容，碎片流年月在资料库就地浏览", async ({ page }) => {
+test("资料库文件树平级展示 notes 文档与导图，碎片流年月就地浏览", async ({ page }) => {
   await page.getByRole("button", { name: "资料库", exact: true }).click()
   const treePane = page.getByRole("complementary", { name: "资料库目录" })
 
   await expect(treePane.getByRole("button", { name: "项目", exact: true })).toBeVisible()
   await expect(treePane.getByRole("button", { name: "旧笔记.md", exact: true })).toBeVisible()
+  await expect(
+    treePane.getByRole("button", {
+      name: "项目导图.shardmap.json",
+      exact: true,
+    })
+  ).toBeVisible()
   await expect(treePane.getByRole("button", { name: "清单.csv", exact: true })).toBeVisible()
+  await expect(
+    treePane.getByRole("button", { name: /^思维导图（/ })
+  ).toHaveCount(0)
   await expect(treePane.getByText("assets", { exact: true })).toHaveCount(0)
   await expect(treePane.getByText("八月灵感", { exact: true })).toHaveCount(0)
 
@@ -577,17 +621,25 @@ test("脏笔记进入碎片流前先保存草稿", async ({ page }) => {
   ).toBeVisible()
 })
 
-test("资料库思维导图在第三栏打开并保留侧栏与目录树", async ({ page }) => {
+test("资料库普通导图条目在第三栏打开并保留侧栏与目录树", async ({ page }) => {
   await page.getByRole("button", { name: "资料库", exact: true }).click()
   const treePane = page.getByRole("complementary", { name: "资料库目录" })
   const sidebar = page.getByRole("navigation", { name: "工作台导航" })
 
-  await treePane.getByRole("button", { name: "思维导图（1）", exact: true }).click()
-  const mapEntry = treePane.getByRole("button", { name: "项目导图", exact: true })
+  await expect(
+    treePane.getByRole("button", { name: /^思维导图（/ })
+  ).toHaveCount(0)
+  const mapEntry = treePane.getByRole("button", {
+    name: "项目导图.shardmap.json",
+    exact: true,
+  })
   await expect(mapEntry).toBeVisible()
   await expect(
-    treePane.getByRole("button", { name: "项目导图 操作", exact: true })
-  ).toHaveCount(0)
+    treePane.getByRole("button", {
+      name: "项目导图.shardmap.json 操作",
+      exact: true,
+    })
+  ).toBeVisible()
 
   await mapEntry.click()
   await expect(page.getByLabel("思维导图编辑器", { exact: true })).toBeVisible()
@@ -627,8 +679,10 @@ test("资料库笔记禅模式进出后保留同一份草稿", async ({ page }) 
 test("资料库思维导图可进入并退出禅模式", async ({ page }) => {
   await page.getByRole("button", { name: "资料库", exact: true }).click()
   const treePane = page.getByRole("complementary", { name: "资料库目录" })
-  await treePane.getByRole("button", { name: "思维导图（1）", exact: true }).click()
-  await treePane.getByRole("button", { name: "项目导图", exact: true }).click()
+  await treePane.getByRole("button", {
+    name: "项目导图.shardmap.json",
+    exact: true,
+  }).click()
   await expect(page.getByLabel("思维导图编辑器", { exact: true })).toBeVisible()
 
   await page.getByRole("button", { name: "进入禅模式", exact: true }).click()
@@ -768,6 +822,74 @@ test("解锁密匣后从资料库菜单移入笔记并刷新资料库树", async
     id: "note-old",
   })
   await expect(note).toHaveCount(0)
+})
+
+test("导图与 Markdown 共用重命名、移动和删除菜单", async ({ page }) => {
+  await page.getByRole("button", { name: "资料库", exact: true }).click()
+  const treePane = page.getByRole("complementary", { name: "资料库目录" })
+
+  await treePane.getByRole("button", {
+    name: "项目导图.shardmap.json 操作",
+    exact: true,
+  }).click()
+  await page.getByRole("menuitem", { name: "重命名", exact: true }).click()
+  const renameInput = treePane.getByRole("textbox", {
+    name: "重命名名称",
+    exact: true,
+  })
+  await expect(renameInput).toHaveValue("项目导图")
+  await renameInput.fill("架构总览")
+  await renameInput.press("Enter")
+  await expect(
+    treePane.getByRole("button", {
+      name: "架构总览.shardmap.json",
+      exact: true,
+    })
+  ).toBeVisible()
+
+  await treePane.getByRole("button", {
+    name: "架构总览.shardmap.json 操作",
+    exact: true,
+  }).click()
+  await page.getByRole("menuitem", { name: "移动到…", exact: true }).hover()
+  await page.getByRole("menuitem", { name: "项目", exact: true }).click()
+  await treePane.getByRole("button", { name: "项目", exact: true }).click()
+  await expect(
+    treePane.getByRole("button", {
+      name: "架构总览.shardmap.json",
+      exact: true,
+    })
+  ).toBeVisible()
+
+  await treePane.getByRole("button", {
+    name: "架构总览.shardmap.json 操作",
+    exact: true,
+  }).click()
+  await page.getByRole("menuitem", { name: "删除", exact: true }).click()
+  await page.getByRole("dialog", { name: "确认删除" })
+    .getByRole("button", { name: "删除", exact: true })
+    .click()
+
+  await expect.poll(() => commandCalls(page, "rename_library_entry")).toHaveLength(1)
+  await expect.poll(() => commandCalls(page, "move_library_entry")).toHaveLength(1)
+  await expect.poll(() => commandCalls(page, "delete_library_entry")).toHaveLength(1)
+  expect((await commandCalls(page, "rename_library_entry"))[0].args).toEqual({
+    newName: "架构总览",
+    path: "notes/项目导图.shardmap.json",
+  })
+  expect((await commandCalls(page, "move_library_entry"))[0].args).toEqual({
+    destinationDirectory: "notes/项目",
+    path: "notes/架构总览.shardmap.json",
+  })
+  expect((await commandCalls(page, "delete_library_entry"))[0].args).toEqual({
+    path: "notes/项目/架构总览.shardmap.json",
+  })
+  await expect(
+    treePane.getByRole("button", {
+      name: "架构总览.shardmap.json",
+      exact: true,
+    })
+  ).toHaveCount(0)
 })
 
 test("目录树 MVP 支持新建、重命名、菜单移动和非空目录删除阻止", async ({ page }) => {
@@ -920,6 +1042,12 @@ test("没有图片时不渲染图片分组", async ({ page }) => {
   await expect(treePane.getByRole("button", { name: /^图片（/ })).toHaveCount(0)
   // 其余分组不受影响。
   await expect(
-    treePane.getByRole("button", { name: "思维导图（1）", exact: true })
+    treePane.getByRole("button", {
+      name: "项目导图.shardmap.json",
+      exact: true,
+    })
   ).toBeVisible()
+  await expect(
+    treePane.getByRole("button", { name: /^思维导图（/ })
+  ).toHaveCount(0)
 })

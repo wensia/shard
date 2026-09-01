@@ -81,7 +81,7 @@ export function buildCsvWikilinkCandidates(
 }
 
 export function buildMindMapWikilinkCandidates(
-  maps: readonly MindMapSummary[]
+  maps: readonly Pick<MindMapSummary, "path" | "title">[]
 ): WikilinkCandidate[] {
   return maps.map((map) => ({
     kind: "mindmap",

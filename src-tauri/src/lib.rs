@@ -127,6 +127,8 @@ struct LibraryTreeEntry {
     size: u64,
     modified_at: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    mind_map_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     children: Option<Vec<LibraryTreeEntry>>,
 }
 
@@ -167,7 +169,6 @@ struct LibraryTreeSnapshot {
     entries: Vec<LibraryTreeEntry>,
     fragment_stream: FragmentStreamSummary,
     assets: Vec<LibraryAssetEntry>,
-    mind_maps: Vec<LibraryTreeEntry>,
 }
 
 #[derive(Debug, Serialize)]
@@ -589,6 +590,7 @@ async fn migrate_legacy_notes(app: tauri::AppHandle) -> Result<LegacyNoteMigrati
         let _gate = lock_vault_gate(&vault);
         checkpoint_before_structural_locked(&vault);
         let migrated_count = migrate_legacy_notes_in_vault(&vault)?;
+        migrate_legacy_mind_maps_in_vault(&vault)?;
         Ok(LegacyNoteMigrationResult {
             tree: build_library_tree(&vault)?,
             migrated_count,
@@ -1333,7 +1335,7 @@ fn list_fragments_in_vault(
 
 fn list_mind_maps_in_vault(vault: &Path) -> Result<Vec<MindMapSummary>, String> {
     let mut files = Vec::new();
-    collect_mind_map_files(&vault.join("maps"), &mut files)?;
+    collect_mind_map_files(&vault.join("notes"), &mut files)?;
 
     let mut summaries = files
         .iter()
@@ -1417,16 +1419,9 @@ fn create_mind_map_in_vault(
         viewport: None,
     };
 
-    let dir = vault
-        .join("maps")
-        .join(now.format("%Y").to_string())
-        .join(now.format("%m").to_string());
+    let dir = vault.join("notes");
     fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
-    let path = dir.join(format!(
-        "{}-{}.shardmap.json",
-        now.format("%Y-%m-%d-%H%M%S"),
-        suffix
-    ));
+    let path = unique_mind_map_path(&dir, title);
 
     validate_mind_map_file(vault, &file)?;
     let text = canonical_mind_map_text(&file)?;
@@ -2460,30 +2455,10 @@ fn collect_markdown_files(dir: &Path, files: &mut Vec<PathBuf>) -> Result<(), St
 }
 
 fn build_library_tree(vault: &Path) -> Result<LibraryTreeSnapshot, String> {
-    let mut mind_map_files = Vec::new();
-    collect_mind_map_files(&vault.join("maps"), &mut mind_map_files)?;
-    let mind_maps = mind_map_files
-        .iter()
-        .filter_map(|path| {
-            let summary = read_mind_map_summary(path, vault).ok()?;
-            let (size, modified_at) =
-                library_entry_metadata(path, false, &|entry_path| fs::metadata(entry_path));
-            Some(LibraryTreeEntry {
-                name: summary.title,
-                path: summary.path,
-                kind: "mindmap".to_string(),
-                size,
-                modified_at,
-                children: None,
-            })
-        })
-        .collect();
-
     Ok(LibraryTreeSnapshot {
         entries: collect_library_entries(vault, &vault.join("notes"))?,
         fragment_stream: summarize_fragment_stream(vault)?,
         assets: collect_library_assets(vault),
-        mind_maps,
     })
 }
 
@@ -2594,6 +2569,7 @@ where
                 kind: "directory".to_string(),
                 size,
                 modified_at,
+                mind_map_id: None,
                 children: Some(collect_library_entries_with_metadata(
                     vault,
                     &path,
@@ -2601,15 +2577,20 @@ where
                 )?),
             });
         } else if file_type.is_file() {
-            let kind = match path
-                .extension()
-                .and_then(|extension| extension.to_str())
-                .map(|extension| extension.to_ascii_lowercase())
-                .as_deref()
-            {
-                Some("md") => "markdown",
-                Some("csv") => "csv",
-                _ => continue,
+            let is_mind_map = is_mind_map_file(&path);
+            let kind = if is_mind_map {
+                "mindmap"
+            } else {
+                match path
+                    .extension()
+                    .and_then(|extension| extension.to_str())
+                    .map(|extension| extension.to_ascii_lowercase())
+                    .as_deref()
+                {
+                    Some("md") => "markdown",
+                    Some("csv") => "csv",
+                    _ => continue,
+                }
             };
             let (size, modified_at) = library_entry_metadata(&path, false, read_metadata);
             entries.push(LibraryTreeEntry {
@@ -2618,6 +2599,9 @@ where
                 kind: kind.to_string(),
                 size,
                 modified_at,
+                mind_map_id: is_mind_map
+                    .then(|| read_mind_map_summary(&path, vault).ok().map(|summary| summary.id))
+                    .flatten(),
                 children: None,
             });
         }
@@ -2821,20 +2805,28 @@ fn sanitized_note_stem(title: &str) -> String {
     }
 }
 
-fn unique_note_path(directory: &Path, title: &str) -> PathBuf {
+fn unique_titled_path(directory: &Path, title: &str, extension: &str) -> PathBuf {
     let stem = sanitized_note_stem(title);
-    let first = directory.join(format!("{stem}.md"));
+    let first = directory.join(format!("{stem}{extension}"));
     if !first.exists() {
         return first;
     }
-    let mut suffix = 2;
+    let mut collision_index = 2;
     loop {
-        let candidate = directory.join(format!("{stem}-{suffix}.md"));
+        let candidate = directory.join(format!("{stem}-{collision_index}{extension}"));
         if !candidate.exists() {
             return candidate;
         }
-        suffix += 1;
+        collision_index += 1;
     }
+}
+
+fn unique_note_path(directory: &Path, title: &str) -> PathBuf {
+    unique_titled_path(directory, title, ".md")
+}
+
+fn unique_mind_map_path(directory: &Path, title: &str) -> PathBuf {
+    unique_titled_path(directory, title, ".shardmap.json")
 }
 
 fn note_title(body: &str) -> String {
@@ -2912,20 +2904,30 @@ fn rename_library_entry_in_vault(
         .unwrap_or_default()
         .to_string();
     let final_name = if file_type.is_file() {
-        let extension = source
-            .extension()
-            .and_then(|extension| extension.to_str())
-            .ok_or_else(|| "只允许重命名 Markdown 或 CSV 文件。".to_string())?;
-        if !matches!(extension.to_ascii_lowercase().as_str(), "md" | "csv") {
-            return Err("只允许重命名 Markdown 或 CSV 文件。".to_string());
-        }
-        let requested = Path::new(new_name);
-        match requested.extension().and_then(|value| value.to_str()) {
-            Some(requested_extension) if requested_extension.eq_ignore_ascii_case(extension) => {
+        if is_mind_map_file(&source) {
+            if new_name.ends_with(".shardmap.json") {
                 new_name.to_string()
+            } else if Path::new(new_name).extension().is_some() {
+                return Err("重命名不能改变文件类型。".to_string());
+            } else {
+                format!("{new_name}.shardmap.json")
             }
-            Some(_) => return Err("重命名不能改变文件类型。".to_string()),
-            None => format!("{new_name}.{extension}"),
+        } else {
+            let extension = source
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .ok_or_else(|| "只允许重命名 Markdown、CSV 或思维导图文件。".to_string())?;
+            if !matches!(extension.to_ascii_lowercase().as_str(), "md" | "csv") {
+                return Err("只允许重命名 Markdown、CSV 或思维导图文件。".to_string());
+            }
+            let requested = Path::new(new_name);
+            match requested.extension().and_then(|value| value.to_str()) {
+                Some(requested_extension) if requested_extension.eq_ignore_ascii_case(extension) => {
+                    new_name.to_string()
+                }
+                Some(_) => return Err("重命名不能改变文件类型。".to_string()),
+                None => format!("{new_name}.{extension}"),
+            }
         }
     } else {
         new_name.to_string()
@@ -3173,6 +3175,88 @@ fn migrate_legacy_notes_in_vault(vault: &Path) -> Result<usize, String> {
         migrated += 1;
     }
     Ok(migrated)
+}
+
+fn migrate_legacy_mind_maps_in_vault(vault: &Path) -> Result<usize, String> {
+    let maps_root = vault.join("maps");
+    let mut files = Vec::new();
+    collect_mind_map_files(&maps_root, &mut files)?;
+    let mut migrated = 0;
+
+    for source in files {
+        let summary = match read_mind_map_summary(&source, vault) {
+            Ok(summary) => summary,
+            Err(_) => continue,
+        };
+        let destination = unique_mind_map_path(&vault.join("notes"), &summary.title);
+        let source_rel = match relative_path(vault, &source) {
+            Ok(path) => path,
+            Err(_) => continue,
+        };
+        let destination_rel = match relative_path(vault, &destination) {
+            Ok(path) => path,
+            Err(_) => continue,
+        };
+        if fs::rename(&source, &destination).is_err() {
+            continue;
+        }
+        commit_paths_best_effort(
+            vault,
+            &[source_rel, destination_rel],
+            "migrate legacy mind map",
+        );
+        migrated += 1;
+    }
+
+    cleanup_empty_legacy_mind_map_directories(&maps_root);
+    Ok(migrated)
+}
+
+fn cleanup_empty_legacy_mind_map_directories(maps_root: &Path) {
+    let Ok(year_entries) = fs::read_dir(maps_root) else {
+        return;
+    };
+    for year_entry in year_entries.flatten() {
+        let Ok(year_type) = year_entry.file_type() else {
+            continue;
+        };
+        let year_path = year_entry.path();
+        let year_name = year_entry.file_name();
+        let year_name = year_name.to_string_lossy();
+        if year_type.is_symlink()
+            || !year_type.is_dir()
+            || year_name.len() != 4
+            || !year_name.bytes().all(|byte| byte.is_ascii_digit())
+        {
+            continue;
+        }
+        if let Ok(month_entries) = fs::read_dir(&year_path) {
+            for month_entry in month_entries.flatten() {
+                let Ok(month_type) = month_entry.file_type() else {
+                    continue;
+                };
+                let month_path = month_entry.path();
+                let month_name = month_entry.file_name();
+                let month_name = month_name.to_string_lossy();
+                if !month_type.is_symlink()
+                    && month_type.is_dir()
+                    && month_name.len() == 2
+                    && month_name.bytes().all(|byte| byte.is_ascii_digit())
+                    && fs::read_dir(&month_path)
+                        .map(|mut entries| entries.next().is_none())
+                        .unwrap_or(false)
+                {
+                    let _ = fs::remove_dir(&month_path);
+                }
+            }
+        }
+        if fs::read_dir(&year_path)
+            .map(|mut entries| entries.next().is_none())
+            .unwrap_or(false)
+        {
+            let _ = fs::remove_dir(&year_path);
+        }
+    }
 }
 
 fn plan_vault_wikilink_updates(
@@ -3681,6 +3765,8 @@ fn collect_csv_files(vault: &Path, directory: &Path, files: &mut Vec<PathBuf>) -
 
 fn find_mind_map_path(vault: &Path, id: &str) -> Result<Option<PathBuf>, String> {
     let mut files = Vec::new();
+    collect_mind_map_files(&vault.join("notes"), &mut files)?;
+    // 迁移期间兼容仍位于 maps/ 的旧文件；新建与正常枚举只走 notes/。
     collect_mind_map_files(&vault.join("maps"), &mut files)?;
 
     for path in files {
@@ -6603,6 +6689,7 @@ mod tests {
         assert_eq!(created.file.kind, SHARD_MAP_KIND);
         assert_eq!(created.file.schema_version, SHARD_MAP_SCHEMA_VERSION);
         assert_eq!(created.file.revision, 1);
+        assert_eq!(created.path, "notes/Launch Plan.shardmap.json");
         assert!(!created.last_saved_hash.is_empty());
 
         let root = created.file.nodes.get(&created.file.root_id).unwrap();
@@ -6626,6 +6713,10 @@ mod tests {
         assert_eq!(summaries.len(), 1);
         assert_eq!(summaries[0].id, created.file.id);
         assert_eq!(summaries[0].node_count, 2);
+
+        let duplicate =
+            create_mind_map_in_vault(vault, "Launch Plan".to_string(), None).unwrap();
+        assert_eq!(duplicate.path, "notes/Launch Plan-2.shardmap.json");
     }
 
     #[test]
@@ -7312,10 +7403,12 @@ mod tests {
         assert_eq!(asset.size, bytes.len() as u64);
         assert_eq!(asset.mime_type, "image/png");
         assert!(DateTime::parse_from_rfc3339(&asset.modified_at).is_ok());
-        assert_eq!(tree.entries.len(), 1);
-        assert_eq!(tree.entries[0].name, "说明.md");
-        assert_eq!(tree.mind_maps.len(), 1);
-        assert_eq!(tree.mind_maps[0].name, "项目导图");
+        assert_eq!(tree.entries.len(), 2);
+        assert!(tree.entries.iter().any(|entry| entry.name == "说明.md"));
+        assert!(tree
+            .entries
+            .iter()
+            .any(|entry| entry.name == "项目导图.shardmap.json"));
 
         let serialized = serde_json::to_value(&tree).unwrap();
         assert_eq!(serialized["assets"][0]["modifiedAt"], asset.modified_at);
@@ -7347,30 +7440,31 @@ mod tests {
     }
 
     #[test]
-    fn library_tree_lists_valid_mind_maps_and_skips_invalid_ones() {
+    fn library_tree_lists_mind_maps_in_notes_with_metadata() {
         let tempdir = tempfile::tempdir().unwrap();
         let vault = tempdir.path();
         ensure_vault_layout(vault).unwrap();
         fs::write(vault.join("notes/说明.md"), "note").unwrap();
 
         let valid = create_mind_map_in_vault(vault, "项目导图".to_string(), None).unwrap();
-        let mut invalid = valid.file.clone();
-        invalid.id = "invalid-map".to_string();
-        invalid.title = "   ".to_string();
-        fs::write(
-            vault.join("maps/invalid-map.shardmap.json"),
-            canonical_mind_map_text(&invalid).unwrap(),
-        )
-        .unwrap();
 
         let tree = build_library_tree(vault).unwrap();
 
-        assert_eq!(tree.mind_maps.len(), 1);
-        assert_eq!(tree.mind_maps[0].name, "项目导图");
-        assert_eq!(tree.mind_maps[0].kind, "mindmap");
-        assert_eq!(tree.entries.len(), 1);
-        assert_eq!(tree.entries[0].name, "说明.md");
-        assert_eq!(tree.entries[0].kind, "markdown");
+        assert_eq!(tree.entries.len(), 2);
+        let map = tree
+            .entries
+            .iter()
+            .find(|entry| entry.kind == "mindmap")
+            .unwrap();
+        assert_eq!(map.name, "项目导图.shardmap.json");
+        assert_eq!(map.path, valid.path);
+        assert_eq!(map.mind_map_id.as_deref(), Some(valid.file.id.as_str()));
+        assert!(map.size > 0);
+        assert!(DateTime::parse_from_rfc3339(&map.modified_at).is_ok());
+        assert!(tree
+            .entries
+            .iter()
+            .any(|entry| entry.name == "说明.md" && entry.kind == "markdown"));
     }
 
     #[test]
@@ -7390,6 +7484,49 @@ mod tests {
         assert_eq!(migrate_legacy_notes_in_vault(vault).unwrap(), 1);
         assert!(vault.join("notes/中文标题-2.md").is_file());
         assert_eq!(migrate_legacy_notes_in_vault(vault).unwrap(), 0);
+    }
+
+    #[test]
+    fn migrates_legacy_mind_maps_idempotently_with_title_and_keeps_content() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let vault = tempdir.path();
+        ensure_vault_layout(vault).unwrap();
+        create_mind_map_in_vault(vault, "项目导图".to_string(), None).unwrap();
+
+        let legacy = create_mind_map_in_vault(vault, "待迁移".to_string(), None).unwrap();
+        let mut legacy_file = legacy.file;
+        legacy_file.title = "项目导图".to_string();
+        let legacy_text = canonical_mind_map_text(&legacy_file).unwrap();
+        fs::remove_file(vault.join(legacy.path)).unwrap();
+        let legacy_dir = vault.join("maps/2026/08");
+        fs::create_dir_all(&legacy_dir).unwrap();
+        let legacy_path = legacy_dir.join("legacy.shardmap.json");
+        fs::write(&legacy_path, &legacy_text).unwrap();
+
+        assert_eq!(migrate_legacy_mind_maps_in_vault(vault).unwrap(), 1);
+        let destination = vault.join("notes/项目导图-2.shardmap.json");
+        assert_eq!(fs::read_to_string(&destination).unwrap(), legacy_text);
+        assert!(!legacy_path.exists());
+        assert!(!vault.join("maps/2026/08").exists());
+        assert!(!vault.join("maps/2026").exists());
+
+        assert_eq!(migrate_legacy_mind_maps_in_vault(vault).unwrap(), 0);
+        assert_eq!(fs::read_to_string(&destination).unwrap(), legacy_text);
+    }
+
+    #[test]
+    fn legacy_mind_map_migration_skips_damaged_file_and_keeps_source() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let vault = tempdir.path();
+        ensure_vault_layout(vault).unwrap();
+        let legacy_dir = vault.join("maps/2026/08");
+        fs::create_dir_all(&legacy_dir).unwrap();
+        let damaged = legacy_dir.join("damaged.shardmap.json");
+        fs::write(&damaged, "not json").unwrap();
+
+        assert_eq!(migrate_legacy_mind_maps_in_vault(vault).unwrap(), 0);
+        assert_eq!(fs::read_to_string(&damaged).unwrap(), "not json");
+        assert!(damaged.is_file());
     }
 
     #[test]

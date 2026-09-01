@@ -74,6 +74,7 @@ export interface LibraryTreeEntry {
   kind: LibraryTreeEntryKind
   size: number
   modifiedAt: string
+  mindMapId?: string
   children?: LibraryTreeEntry[]
 }
 
@@ -104,7 +105,6 @@ export interface LibraryTreeSnapshot {
   assets: LibraryAssetEntry[]
   entries: LibraryTreeEntry[]
   fragmentStream: LibraryFragmentStream
-  mindMaps: LibraryTreeEntry[]
 }
 
 export interface LibraryMutationResult {

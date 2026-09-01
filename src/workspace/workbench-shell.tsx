@@ -353,6 +353,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
           await refreshFragments()
           await refreshCsvFiles()
         }
+        await refreshMindMaps()
       } catch (error) {
         toast.error(`迁移旧笔记失败：${getApiErrorMessage(error)}`, {
           duration: Infinity,
@@ -793,6 +794,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     }
     void refreshFragments()
     void refreshCsvFiles()
+    void refreshMindMaps()
   }
 
   async function handleLinkFragment(sourceId: string, targetId: string) {
@@ -1819,7 +1821,6 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
             fragments={publicActiveFragments}
             isLoading={isLoading}
             libraryTree={libraryTree}
-            mindMaps={mindMaps}
             knownTags={knownTags}
             archivedFragments={archivedFragments}
             fragmentsTimeline={{
@@ -1835,10 +1836,8 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
               void handleNavigateToFragment(fragmentId)
             }}
             onLibraryMutation={handleLibraryMutation}
-            onMindMapsChange={setMindMaps}
             onMoveToLockbox={handleMoveFragmentToLockbox}
             onOpenLockbox={openLockboxGate}
-            onOpenMindMap={(map) => void openMindMap(map)}
             onRefreshFragments={refreshFragments}
             onRegisterSaveHandler={registerLibrarySaveHandler}
             onSave={handleUpdateFragment}

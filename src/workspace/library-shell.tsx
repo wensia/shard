@@ -94,7 +94,6 @@ import type {
   LibraryMutationResult,
   LibraryTreeEntry,
   LibraryTreeSnapshot,
-  MindMapSummary,
 } from "@/types"
 
 import styles from "./library-shell.module.css"
@@ -125,12 +124,9 @@ interface LibraryShellProps {
   >
   isLoading: boolean
   libraryTree: LibraryTreeSnapshot | null
-  mindMaps?: MindMapSummary[]
   knownTags: string[]
   navigateTo?: LibraryNavigationTarget | null
   onNavigateToFragment?: (fragmentId: string) => void
-  onMindMapsChange?: (maps: MindMapSummary[]) => void
-  onOpenMindMap: (map: MindMapSummary) => void
   onLibraryMutation: (result: LibraryMutationResult) => void
   onMoveToLockbox: (fragment: Fragment) => Promise<void>
   /** 点击树上的密匣挂载点：解锁并进入密匣一级空间（传送门）。 */
@@ -173,12 +169,9 @@ export function LibraryShell({
   fragmentsTagBar,
   isLoading,
   libraryTree,
-  mindMaps = [],
   knownTags,
   navigateTo = null,
   onNavigateToFragment,
-  onMindMapsChange,
-  onOpenMindMap,
   onLibraryMutation,
   onMoveToLockbox,
   onOpenLockbox,
@@ -212,7 +205,6 @@ export function LibraryShell({
   )
   const [isFragmentStreamExpanded, setIsFragmentStreamExpanded] =
     useState(false)
-  const [isMindMapsExpanded, setIsMindMapsExpanded] = useState(false)
   const [expandedYears, setExpandedYears] = useState<Set<string>>(new Set())
   const [busyAction, setBusyAction] = useState<string | null>(null)
   const [treeDialog, setTreeDialog] = useState<TreeDialogState | null>(null)
@@ -230,12 +222,16 @@ export function LibraryShell({
     () => notes.find((note) => note.id === selectedNoteId) ?? null,
     [notes, selectedNoteId]
   )
+  const libraryMindMaps = useMemo(
+    () => collectMindMapEntries(libraryTree?.entries ?? []),
+    [libraryTree]
+  )
   const selectedMindMap = useMemo(
     () =>
       selection?.kind === "mindmap"
-        ? mindMaps.find((map) => map.path === selection.path) ?? null
+        ? libraryMindMaps.find((map) => map.path === selection.path) ?? null
         : null,
-    [mindMaps, selection]
+    [libraryMindMaps, selection]
   )
   const selectedAsset = useMemo<LibraryAssetEntry | null>(
     () =>
@@ -263,9 +259,14 @@ export function LibraryShell({
     () => [
       ...buildWikilinkCandidates(relationFragments),
       ...buildCsvWikilinkCandidates(csvFiles),
-      ...buildMindMapWikilinkCandidates(mindMaps),
+      ...buildMindMapWikilinkCandidates(
+        libraryMindMaps.map((entry) => ({
+          path: entry.path,
+          title: stripMindMapExtension(entry.name),
+        }))
+      ),
     ],
-    [csvFiles, mindMaps, relationFragments]
+    [csvFiles, libraryMindMaps, relationFragments]
   )
   const { indexVersion, requestRelated } = useFragmentRelations(relationFragments)
   const wikilinkCandidatesRef = useRef(wikilinkCandidates)
@@ -302,12 +303,9 @@ export function LibraryShell({
           toast(`待建链接「${target}」尚不存在，可在资料库新建笔记`),
         onNavigate: (fragmentId) =>
           wikilinkNavigateRef.current?.(fragmentId),
-        onNavigateToMindMap: (path) => {
-          const map = mindMaps.find((candidate) => candidate.path === path)
-          if (map) onOpenMindMap(map)
-        },
+        onNavigateToMindMap: (path) => void selectMindMap(path),
       }),
-    [mindMaps, onOpenMindMap, wikilinkCandidates]
+    [wikilinkCandidates]
   )
   const editorExtensions = useMemo(
     () => [tagAutocompleteExtension, wikilinkExtension],
@@ -358,14 +356,14 @@ export function LibraryShell({
   useEffect(() => {
     if (
       selection?.kind === "mindmap" &&
-      !mindMaps.some((map) => map.path === selection.path)
+      !libraryMindMaps.some((map) => map.path === selection.path)
     ) {
       setSelection(null)
       setSelectedTreePath("notes")
       setIsZen(false)
       setMobilePane("list")
     }
-  }, [mindMaps, selection])
+  }, [libraryMindMaps, selection])
 
   useEffect(() => {
     if (!selectedNote) return
@@ -568,6 +566,11 @@ export function LibraryShell({
   }
 
   async function selectMindMap(path: string) {
+    const map = libraryMindMaps.find((candidate) => candidate.path === path)
+    if (!map?.mindMapId) {
+      toast.error("思维导图文件无法读取", { duration: Infinity })
+      return
+    }
     if (selection?.kind !== "mindmap" || selection.path !== path) {
       if (!(await saveCurrentNote())) return
       setSelection({ kind: "mindmap", path })
@@ -661,7 +664,9 @@ export function LibraryShell({
           : selection.path.split("/").pop() || "资料库"
       : selectedNote
         ? selectedNote.path.split("/").pop()?.replace(/\.md$/iu, "") || "无标题笔记"
-        : selectedMindMap?.title ?? "选择内容"
+      : selectedMindMap
+        ? stripMindMapExtension(selectedMindMap.name)
+        : "选择内容"
 
   const directories = useMemo(
     () => ["notes", ...collectDirectoryPaths(libraryTree?.entries ?? [])],
@@ -725,14 +730,18 @@ export function LibraryShell({
 
   function startRename(path: string, source: RenameState["source"]) {
     const fileName = path.split("/").pop() ?? ""
-    setRenaming({ path, source, value: fileName.replace(/\.(md|csv)$/iu, "") })
+    setRenaming({
+      path,
+      source,
+      value: fileName.replace(/\.(?:shardmap\.json|md|csv)$/iu, ""),
+    })
   }
 
   async function submitRename() {
     if (!renaming || busyAction) return
     const value = renaming.value.trim()
     const currentName = (renaming.path.split("/").pop() ?? "").replace(
-      /\.(md|csv)$/iu,
+      /\.(?:shardmap\.json|md|csv)$/iu,
       ""
     )
     if (!value || value === currentName) {
@@ -987,8 +996,7 @@ export function LibraryShell({
           }
         >
           <MindMapCanvas
-            mapId={selectedMindMap.id}
-            onMapsChange={onMindMapsChange}
+            mapId={selectedMindMap.mindMapId!}
             surface={zen ? renderMindMapZenSurface : undefined}
           />
         </div>
@@ -1190,50 +1198,6 @@ export function LibraryShell({
                     </button>
                   </div>
                 ) : null}
-
-                <div className={styles.fragmentStream}>
-                  <button
-                    aria-label={`思维导图（${libraryTree.mindMaps.length}）`}
-                    aria-expanded={isMindMapsExpanded}
-                    className={styles.treeButton}
-                    onClick={() => setIsMindMapsExpanded((current) => !current)}
-                    type="button"
-                  >
-                    {isMindMapsExpanded ? (
-                      <ChevronDownIcon aria-hidden="true" />
-                    ) : (
-                      <ChevronRightIcon aria-hidden="true" />
-                    )}
-                    <span>思维导图</span>
-                    <span className={styles.treeCount}>
-                      {libraryTree.mindMaps.length}
-                    </span>
-                  </button>
-                  {isMindMapsExpanded ? (
-                    <ul aria-label="思维导图文件" className={styles.tree} role="tree">
-                      {libraryTree.mindMaps.map((entry) => (
-                        <li key={entry.path} role="treeitem">
-                          <button
-                            aria-label={entry.name}
-                            className={styles.treeButton}
-                            data-depth="1"
-                            data-selected={
-                              selection?.kind === "mindmap" &&
-                              selection.path === entry.path
-                                ? "true"
-                                : undefined
-                            }
-                            onClick={() => void selectMindMap(entry.path)}
-                            type="button"
-                          >
-                            <GitBranchIcon aria-hidden="true" />
-                            <span className={styles.treeLabel}>{entry.name}</span>
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
-                  ) : null}
-                </div>
 
                 {libraryTree.entries.length === 0 && !creatingDirectory ? (
                   <LibraryEmptyState message="到碎片流把一条内容转为笔记" />
@@ -1557,7 +1521,9 @@ function TreeEntries({
         ? FolderIcon
         : entry.kind === "csv"
           ? DatabaseIcon
-          : FileTextIcon
+          : entry.kind === "mindmap"
+            ? GitBranchIcon
+            : FileTextIcon
 
     return (
       <li
@@ -1705,6 +1671,17 @@ function collectDirectoryPaths(entries: LibraryTreeEntry[]): string[] {
       ? [entry.path, ...collectDirectoryPaths(entry.children ?? [])]
       : []
   )
+}
+
+function collectMindMapEntries(entries: LibraryTreeEntry[]): LibraryTreeEntry[] {
+  return entries.flatMap((entry) => [
+    ...(entry.kind === "mindmap" ? [entry] : []),
+    ...collectMindMapEntries(entry.children ?? []),
+  ])
+}
+
+function stripMindMapExtension(name: string) {
+  return name.replace(/\.shardmap\.json$/iu, "")
 }
 
 function findTreeEntry(
