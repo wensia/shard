@@ -15,10 +15,13 @@ import { getApiErrorMessage, revealFragmentImageInDir } from "@/lib/api"
 import { formatBytes, formatModifiedAt } from "@/lib/file-metadata"
 import { loadFragmentImageSrc } from "@/lib/fragment-images"
 import {
-  extractTextPreview,
   loadLibraryPreview,
   type LibraryPreview,
 } from "@/lib/library-preview"
+import {
+  parseMarkdownPreview,
+  type MarkdownPreviewBlock,
+} from "@/lib/markdown-preview"
 import type { LibraryAssetEntry } from "@/types"
 
 import styles from "./asset-grid.module.css"
@@ -220,6 +223,70 @@ function AsyncLibraryItemThumbnail({ item }: { item: LibraryGridItem }) {
   )
 }
 
+function PreviewBlockLine({ block }: { block: MarkdownPreviewBlock }) {
+  if (block.kind === "divider") {
+    return <span className={styles.previewDivider} />
+  }
+
+  if (block.kind === "table") {
+    return (
+      <span className={styles.previewGlyphLine}>
+        <span className={styles.previewTableGlyph} />
+      </span>
+    )
+  }
+
+  if (block.kind === "code") {
+    return (
+      <span className={styles.previewCode}>{block.label || "code"}</span>
+    )
+  }
+
+  if (block.kind === "image") {
+    return (
+      <span className={styles.previewGlyphLine}>
+        <ImageIcon className="size-(--shard-icon-size-xs)" />
+        {block.alt ? <span>{block.alt}</span> : null}
+      </span>
+    )
+  }
+
+  if (block.kind === "heading") {
+    return (
+      <span
+        className={styles.previewHeading}
+        data-level={block.level > 2 ? 3 : block.level}
+      >
+        {block.text}
+      </span>
+    )
+  }
+
+  if (block.kind === "task") {
+    return (
+      <span className={styles.previewTask} data-checked={block.checked}>
+        <span className={styles.previewCheckbox} />
+        <span>{block.text}</span>
+      </span>
+    )
+  }
+
+  if (block.kind === "bullet") {
+    return (
+      <span className={styles.previewBullet}>
+        <span className={styles.previewDot} />
+        <span>{block.text}</span>
+      </span>
+    )
+  }
+
+  if (block.kind === "quote") {
+    return <span className={styles.previewQuote}>{block.text}</span>
+  }
+
+  return <span className={styles.previewText}>{block.text}</span>
+}
+
 function LibraryItemThumbnail({ item }: { item: LibraryGridItem }) {
   if (item.kind === "image") {
     return (
@@ -228,17 +295,12 @@ function LibraryItemThumbnail({ item }: { item: LibraryGridItem }) {
   }
 
   if (item.kind === "markdown") {
-    const lines = extractTextPreview(item.content ?? "")
-    if (lines.length > 0) {
+    const blocks = parseMarkdownPreview(item.content ?? "", 7)
+    if (blocks.length > 0) {
       return (
-        <span
-          className={styles.textPreview}
-          data-library-preview="text"
-        >
-          {lines.map((line, index) => (
-            <span className={styles.textPreviewLine} key={index}>
-              {line}
-            </span>
+        <span className={styles.textPreview} data-library-preview="text">
+          {blocks.map((block, index) => (
+            <PreviewBlockLine block={block} key={index} />
           ))}
         </span>
       )

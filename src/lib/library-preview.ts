@@ -57,23 +57,3 @@ export async function loadLibraryPreview(
   pendingPreviews.set(cacheKey, request)
   return request
 }
-
-export function extractTextPreview(content: string): string[] {
-  const lines = content.replace(/\r\n?/gu, "\n").split("\n")
-  const bodyLines = stripFrontmatter(lines)
-
-  return bodyLines
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .slice(0, 6)
-    .map((line) => Array.from(line).slice(0, 40).join(""))
-}
-
-function stripFrontmatter(lines: string[]) {
-  if (lines[0]?.trim() !== "---") return lines
-
-  const closingIndex = lines.findIndex(
-    (line, index) => index > 0 && line.trim() === "---"
-  )
-  return closingIndex < 0 ? lines : lines.slice(closingIndex + 1)
-}

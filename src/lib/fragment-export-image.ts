@@ -1,4 +1,5 @@
-import { getTagRanges, parseMarkdownImageLine } from "@/lib/editor-format"
+import { parseMarkdownImageLine } from "@/lib/editor-format"
+import { stripInlineMarkdown } from "@/lib/markdown-preview"
 import {
   loadFragmentImageSrc,
   toDrawableImageSource,
@@ -885,7 +886,7 @@ function fragmentToBlocks(fragment: Fragment): ExportBlock[] {
     const task = line.match(/^(\s*)((?:[-*+]|\d+[.)])\s+)(\[([ xX])\]\s*)(.*)$/u)
     if (task) {
       blocks.push({
-        body: stripTagsFromLine(task[5] ?? ""),
+        body: stripInlineMarkdown(task[5] ?? ""),
         checked: task[4].toLowerCase() === "x",
         kind: "task",
       })
@@ -893,7 +894,8 @@ function fragmentToBlocks(fragment: Fragment): ExportBlock[] {
       continue
     }
 
-    const text = stripTagsFromLine(line)
+    const heading = line.match(/^(#{1,6})\s+(.*)$/u)
+    const text = stripInlineMarkdown(heading ? (heading[2] ?? "") : line)
     blocks.push(
       text.length === 0 ? { kind: "blank" } : { kind: "text", text }
     )
@@ -939,21 +941,6 @@ function loadImageElement(source: string) {
     image.onerror = () => reject(new Error("图片附件无法载入。"))
     image.src = source
   })
-}
-
-function stripTagsFromLine(line: string): string {
-  const ranges = getTagRanges(line)
-  if (ranges.length === 0) return line
-
-  let result = ""
-  let cursor = 0
-  for (const range of ranges) {
-    result += line.slice(cursor, range.start)
-    cursor = range.end
-  }
-  result += line.slice(cursor)
-
-  return result.replace(/[ \t]{2,}/gu, " ").replace(/^[ \t]+|[ \t]+$/gu, "")
 }
 
 function wrapText(

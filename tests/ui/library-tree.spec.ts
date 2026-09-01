@@ -644,6 +644,11 @@ test("目录宫格按文件类型显示内容缩略图，列表视图保持密�
   await expect(markdownCard.getByText("待重命名", { exact: true })).toBeVisible()
   await expect(markdownCard.locator('[data-kind="markdown"]')).toHaveCount(0)
 
+  // 缩略图吃的是解析后的语义块，不是 Markdown 源码：标题成标题，# 不露出来
+  const markdownThumb = markdownCard.locator('[data-library-preview="text"]')
+  await expect(markdownThumb.getByText("旧笔记", { exact: true })).toBeVisible()
+  expect(await markdownThumb.innerText()).not.toContain("#")
+
   const mindMapCard = rootGrid.getByRole("button", {
     name: "打开文件 项目导图.shardmap.json",
     exact: true,

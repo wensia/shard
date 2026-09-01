@@ -72,6 +72,12 @@
   background: var(--muted);
 }
 
+/* 缩略图是一张纸，不是灰色占位块——与分享图的素白模板同一个思路 */
+.thumbnail:has([data-library-preview]) {
+  border: 1px solid var(--border);
+  background: var(--card);
+}
+
 .fileIcon {
   display: flex;
   width: 100%;
@@ -99,22 +105,125 @@
 }
 
 .textPreview {
-  display: -webkit-box;
+  display: flex;
   width: 100%;
-  max-height: 100%;
+  height: 100%;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+  gap: 3px;
   overflow: hidden;
   padding: var(--space-3);
   color: var(--muted-foreground);
   font-size: var(--text-tiny);
-  line-height: var(--leading-relaxed);
+  line-height: var(--leading-normal);
   text-align: left;
   overflow-wrap: anywhere;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 6;
 }
 
-.textPreviewLine {
+/* 每一块都只占一行：缩略图讲的是「这篇长什么样」，不是把正文读完 */
+.textPreview > * {
   display: block;
+  overflow: hidden;
+  flex: none;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.previewHeading {
+  color: var(--foreground);
+  font-weight: 600;
+}
+
+.previewHeading[data-level="1"] {
+  font-size: calc(var(--text-tiny) + 2px);
+}
+
+.previewHeading[data-level="2"] {
+  font-size: calc(var(--text-tiny) + 1px);
+}
+
+.previewText {
+  color: var(--muted-foreground);
+}
+
+.previewQuote {
+  border-left: 2px solid var(--border-visible);
+  padding-left: var(--space-1);
+  color: var(--muted-foreground);
+}
+
+.previewBullet,
+.previewTask,
+.previewGlyphLine {
+  display: flex !important;
+  align-items: center;
+  gap: var(--space-1);
+  white-space: nowrap;
+}
+
+.previewBullet > span:last-child,
+.previewTask > span:last-child,
+.previewGlyphLine > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.previewDot {
+  width: 3px;
+  height: 3px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--muted-foreground);
+}
+
+.previewCheckbox {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border: 1px solid var(--border-visible);
+  border-radius: 2px;
+}
+
+.previewTask[data-checked="true"] .previewCheckbox {
+  border-color: var(--primary);
+  background: var(--primary);
+}
+
+.previewTask[data-checked="true"] > span:last-child {
+  color: color-mix(in srgb, var(--muted-foreground) 70%, transparent);
+  text-decoration: line-through;
+}
+
+.previewDivider {
+  height: 1px;
+  margin: 2px 0;
+  background: var(--border);
+}
+
+.previewCode {
+  overflow: hidden;
+  border-radius: 3px;
+  background: var(--muted);
+  padding: 1px var(--space-1);
+  color: var(--muted-foreground);
+  font-family: var(--font-family-code, ui-monospace, monospace);
+  font-size: calc(var(--text-tiny) - 1px);
+  text-align: center;
+}
+
+.previewTableGlyph {
+  width: 100%;
+  height: 9px;
+  border: 1px solid var(--border-visible);
+  border-radius: 2px;
+  background:
+    linear-gradient(var(--border-visible), var(--border-visible)) center / 100% 1px
+      no-repeat,
+    linear-gradient(var(--border-visible), var(--border-visible)) 33% 0 / 1px 100%
+      no-repeat,
+    linear-gradient(var(--border-visible), var(--border-visible)) 66% 0 / 1px 100%
+      no-repeat;
 }
 
 .mindMapPreview {
@@ -132,13 +241,21 @@
   opacity: var(--shard-alpha-34);
 }
 
+/* design-exempt: 导图节点是数据图形，描边随节点尺寸走，不吃图标描边 token。 */
 .mindMapNodes {
-  fill: var(--muted-foreground);
-  opacity: var(--shard-alpha-55);
+  fill: var(--muted);
+  stroke: var(--border-visible);
+  stroke-width: 1;
 }
 
 .mindMapNodes rect {
   rx: var(--radius-control);
+}
+
+/* 根节点（布局给出的第一个）用主色点题，一眼看出导图的起点 */
+.mindMapNodes rect:first-child {
+  fill: var(--primary-subtle);
+  stroke: color-mix(in srgb, var(--primary) var(--shard-alpha-34), transparent);
 }
 
 .tablePreview {
