@@ -1,0 +1,102 @@
+/*
+ * 底部状态栏。几何沿用 kiln 三级条带（DataTable Pagination）的契约：
+ * 条带自身零垂直 padding，内含 --control-height-sm 控件居中，上下各余 4px。
+ * 不设 z-index——它是网格里的一行，不与任何东西重叠；禅模式与对话框本就该盖住它。
+ */
+.statusBar {
+  /* 状态栏归 design.md 的小尺寸档：只覆盖变量，不写 stroke-width 规则 */
+  --shard-icon-stroke: var(--shard-icon-stroke-sm);
+  display: flex;
+  min-height: var(--shard-status-bar-height);
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  border-top: 1px solid var(--border);
+  background: var(--sidebar);
+  padding-inline: var(--space-2);
+  color: var(--muted-foreground);
+  font-size: var(--text-meta);
+}
+
+.group {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+/* Button 的 sm 档给的是 px-2.5 / 13px；状态栏要更紧、更小一号 */
+.action {
+  padding-inline: var(--space-1);
+  color: var(--muted-foreground);
+  font-size: var(--text-meta);
+  gap: var(--space-1);
+}
+
+.action:hover:not(:disabled) {
+  color: var(--foreground);
+}
+
+.branch,
+.divergence {
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+.separator {
+  color: var(--border-visible);
+  user-select: none;
+}
+
+.badge {
+  border-radius: var(--radius-pill);
+  padding: 2px var(--space-1);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+.badge[data-tone="warning"] {
+  background: var(--warning-bg);
+  color: var(--warning);
+}
+
+.badge[data-tone="danger"] {
+  background: var(--destructive-bg);
+  color: var(--destructive);
+}
+
+.saveState {
+  padding-inline: var(--space-1);
+}
+
+.saveState[data-state="dirty"],
+.saveState[data-state="saving"] {
+  color: var(--warning);
+}
+
+.saveState[data-state="error"] {
+  color: var(--destructive);
+}
+
+.tooltipStack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--shard-space-1);
+}
+
+.errorDetail {
+  display: block;
+  max-width: 256px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.spin {
+  animation: spin 1s linear infinite;
+}

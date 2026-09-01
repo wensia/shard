@@ -136,9 +136,11 @@ interface LibraryShellProps {
   /** 冲突后「载入磁盘版本」需要父级重新拉取 fragments 才能拿到最新内容。 */
   onRefreshFragments?: () => Promise<unknown> | void
   relationFragments?: Fragment[]
+  /** 向工作台状态栏上报保存态；没有打开笔记时报 null。 */
+  onSaveStateChange: (state: SaveState | null) => void
 }
 
-type SaveState = "dirty" | "error" | "saved" | "saving"
+export type SaveState = "dirty" | "error" | "saved" | "saving"
 type TreeDialogState =
   | { kind: "delete"; entry: LibraryTreeEntry }
   | { kind: "purge"; entry: LibraryTreeEntry }
@@ -180,6 +182,7 @@ export function LibraryShell({
   onOpenLockbox,
   pendingScrollFragmentId = null,
   onRegisterSaveHandler,
+  onSaveStateChange,
   onRefreshFragments,
   onSave,
   relationFragments = fragments,
@@ -540,6 +543,12 @@ export function LibraryShell({
 
   const saveStateRef = useRef<SaveState>("saved")
   saveStateRef.current = saveState
+
+  // 状态栏要的是能触发重渲染的值，saveHandlerRef 那条通道是 ref，拿不到
+  useEffect(() => {
+    onSaveStateChange(selectedNote ? saveState : null)
+    return () => onSaveStateChange(null)
+  }, [onSaveStateChange, saveState, selectedNote])
 
   useEffect(() => {
     onRegisterSaveHandler({
@@ -1763,7 +1772,7 @@ async function sha256Hex(text: string): Promise<string> {
     .join("")
 }
 
-function formatSaveState(state: SaveState) {
+export function formatSaveState(state: SaveState) {
   switch (state) {
     case "dirty":
       return "待保存"

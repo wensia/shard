@@ -127,3 +127,65 @@ test("全页 lucide 图标描边只有 token 两档", async ({ page }) => {
     expect(["1.5px", "1.75px"]).toContain(s)
   }
 })
+
+// 密度档回归网（vendor/kiln/SKILL.md → Density Ladder）。Shard 走 compact 档，
+// 控件几何整体降一档；字号、圆角、图标尺寸不随档变。
+
+test("产品声明 compact 密度档，控件高度 token 取 compact 值", async ({ page }) => {
+  const tier = await page.evaluate(() => {
+    const cs = getComputedStyle(document.documentElement)
+    return {
+      density: document.documentElement.dataset.density,
+      control: cs.getPropertyValue("--control-height").trim(),
+      controlSm: cs.getPropertyValue("--control-height-sm").trim(),
+      controlLg: cs.getPropertyValue("--control-height-lg").trim(),
+      navItem: cs.getPropertyValue("--nav-item-height").trim(),
+      toolbar: cs.getPropertyValue("--toolbar-control").trim(),
+    }
+  })
+  expect(tier.density).toBe("compact")
+  expect(tier.control).toBe("32px")
+  expect(tier.controlSm).toBe("28px")
+  expect(tier.controlLg).toBe("36px")
+  expect(tier.navItem).toBe("32px")
+  expect(tier.toolbar).toBe("28px")
+})
+
+test("按钮高度绑 token 而非写死，切档即跟随", async ({ page }) => {
+  // 写死 h-9 会让控件静默退出密度档；这里断言渲染高度落在档位值上，
+  // 而不是 Tailwind 默认阶梯的 36/32px。
+  const heights = await page.evaluate(() => {
+    const allowed = new Set(
+      ["--control-height", "--control-height-sm", "--control-height-lg"].map((t) =>
+        getComputedStyle(document.documentElement).getPropertyValue(t).trim()
+      )
+    )
+    return Array.from(document.querySelectorAll('[data-slot="button"]'))
+      .map((el) => getComputedStyle(el).height)
+      // 标签移除键等极小控件由内联 style 显式覆盖几何，不参与档位
+      .filter((h) => h !== "18px")
+      .map((h) => ({ h, ok: allowed.has(h) }))
+  })
+  expect(heights.length).toBeGreaterThan(0)
+  for (const { h, ok } of heights) {
+    expect(ok, `按钮高度 ${h} 不在密度档内，可能写死了 h-9/h-8`).toBe(true)
+  }
+})
+
+test("密度档只改几何，不改字号与圆角", async ({ page }) => {
+  const anchored = await page.evaluate(() => {
+    const cs = getComputedStyle(document.documentElement)
+    return {
+      body: cs.getPropertyValue("--text-body").trim(),
+      meta: cs.getPropertyValue("--text-meta").trim(),
+      tiny: cs.getPropertyValue("--text-tiny").trim(),
+      radiusControl: cs.getPropertyValue("--radius-control").trim(),
+      iconMd: cs.getPropertyValue("--shard-icon-size-md").trim(),
+    }
+  })
+  expect(anchored.body).toBe("13px")
+  expect(anchored.meta).toBe("12px")
+  expect(anchored.tiny).toBe("11px") // kiln 明文字号下限，中文界面守不得
+  expect(anchored.radiusControl).toBe("4px")
+  expect(anchored.iconMd).toBe("16px")
+})

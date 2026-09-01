@@ -999,7 +999,10 @@ test("search recall mode preserves context, focus, and timeline scrolling", asyn
       height: style.height,
     }
   })
-  expect(searchStyles.height).toBe("36px")
+  // 32px = compact 档的 --control-height（kiln standard 档是 36px）。
+  // 密度档由 index.html 的 data-density 决定，见 vendor/kiln/SKILL.md → Density Ladder。
+  // 圆角不随密度档变，仍是 4px。
+  expect(searchStyles.height).toBe("32px")
   expect(searchStyles.borderRadius).toBe("4px")
   expect(searchStyles.borderColor).toBe(searchStyles.expectedBorderColor)
   expect(searchStyles.boxShadow.endsWith(searchStyles.expectedBoxShadow)).toBe(

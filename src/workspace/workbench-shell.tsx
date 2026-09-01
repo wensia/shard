@@ -4,6 +4,7 @@ import { toast } from "sonner"
 import styles from "../App.module.css"
 import { LockKeyholeIcon } from "@/components/icons"
 import { BottomTabs } from "@/components/shard/bottom-tabs"
+import { StatusBar } from "@/components/shard/status-bar"
 import { FragmentEditor } from "@/components/shard/fragment-editor"
 import { FragmentImageExporter } from "@/components/shard/fragment-image-exporter"
 import {
@@ -92,6 +93,7 @@ import {
   LibraryShell,
   type LibraryDraftHandle,
   type LibraryNavigationTarget,
+  type SaveState,
 } from "@/workspace/library-shell"
 import {
   writeWorkspaceRoute,
@@ -172,9 +174,13 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     autoSyncTickRef,
     git,
     isSyncing,
+    lastSyncAt,
+    markSynced,
     setGit,
     setIsSyncing,
   } = useVaultSync()
+  const [librarySaveState, setLibrarySaveState] =
+    useState<SaveState | null>(null)
   const [vaultPath, setVaultPath] = useState("")
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(
     readSidebarCollapsed
@@ -509,6 +515,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     try {
       const synced = await syncVault()
       setGit(synced)
+      markSynced()
       toast.dismiss(AUTO_SYNC_FAILURE_TOAST_ID)
       autoSyncFailureNotifiedRef.current = false
       toast("同步完成")
@@ -528,6 +535,42 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
       })
     } finally {
       setIsSyncing(false)
+    }
+  }
+
+  // 状态栏的「未提交更改」入口。语义是「立即做一次检查点」而不是传统 commit：
+  // 走的正是自动检查点那条路（AGENTS.md 的合并保存策略），只把 90s idle 等待提前，
+  // 不新开一条绕过策略的提交路径。
+  async function handleCheckpoint() {
+    // 同 handleSync：不 flush 会把旧磁盘内容提交进去
+    if (!(await saveLibraryDraftBeforeNavigation())) {
+      toast.error("草稿保存失败，已取消提交", { duration: Infinity })
+      return
+    }
+    try {
+      const result = await checkpointVault("手动")
+      setGit(result.git)
+      switch (result.status) {
+        case "committed":
+          toast(`已提交 ${result.changes} 项变更`)
+          // 逐文件 gitStatus 来自读取时的脏检测，要整体刷新才会退回 clean
+          void refreshFragments()
+          void refreshMindMaps()
+          break
+        case "no_changes":
+          toast("没有需要提交的变更")
+          break
+        case "blocked":
+          toast(`提交已跳过：${result.reason ?? "有未完成的 Git 操作"}`)
+          break
+        case "not_git":
+          toast("当前资料库未启用 Git")
+          break
+      }
+    } catch (error) {
+      toast.error(`${"提交失败"}：${getApiErrorMessage(error)}`, {
+        duration: Infinity,
+      })
     }
   }
 
@@ -1500,6 +1543,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     void syncVault()
       .then((synced) => {
         setGit(synced)
+        markSynced()
         toast.dismiss(AUTO_SYNC_FAILURE_TOAST_ID)
         autoSyncFailureNotifiedRef.current = false
         void refreshFragments()
@@ -1690,19 +1734,12 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
           {isSidebarCollapsed ? null : (
             <SidebarNav
               fragments={publicOnlyFragments}
-              git={git}
-              isSyncing={isSyncing}
               isCollapsed={false}
               mindMapCount={mindMaps.length}
               mindMapViewActive={isMindMapViewActive}
-              onHelp={showHelp}
               onOpenMindMaps={() => openMindMap()}
               onOpenSearch={openSearch}
-              onOpenSettings={() => openSettings("vault")}
-              onRestoreWindow={handleRestoreWindow}
               onRouteChange={handleRouteChange}
-              onShortcuts={showShortcuts}
-              onSync={handleSync}
               onToggleCollapsed={() => {
                 setIsSidebarCollapsed(true)
               }}
@@ -1846,6 +1883,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
             onOpenLockbox={enterLockboxSpace}
             onRefreshFragments={refreshFragments}
             onRegisterSaveHandler={registerLibrarySaveHandler}
+            onSaveStateChange={setLibrarySaveState}
             onSave={handleUpdateFragment}
             pendingScrollFragmentId={pendingScrollFragmentId}
             relationFragments={publicOnlyFragments}
@@ -1866,6 +1904,23 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
             onShortcuts={showShortcuts}
             route={route}
             vaultPath={vaultPath}
+          />
+        </div>
+
+        <div className={styles.statusBarSlot}>
+          <StatusBar
+            git={git}
+            isCreating={isCreating}
+            isSyncing={isSyncing}
+            lastSyncAt={lastSyncAt}
+            onCheckpoint={() => void handleCheckpoint()}
+            onHelp={showHelp}
+            onOpenGitSettings={() => openSettings("git")}
+            onOpenSettings={() => openSettings("vault")}
+            onRestoreWindow={handleRestoreWindow}
+            onShortcuts={showShortcuts}
+            onSync={() => void handleSync()}
+            saveState={librarySaveState}
           />
         </div>
       </main>

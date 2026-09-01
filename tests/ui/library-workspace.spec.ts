@@ -333,13 +333,17 @@ test("编辑停顿后自动保存，Cmd+S 立即保存", async ({ page }) => {
     id: "note-new",
     tags: ["inbox", "note", "work"],
   })
-  await expect(page.getByText("已保存", { exact: true })).toBeVisible()
+  await expect(
+    page.getByRole("contentinfo", { name: "状态栏" }).getByText("已保存")
+  ).toBeVisible()
 
   // Cmd/Ctrl+S 显式保存，不等待防抖
   await fillEditor(page, "library:note-new", "# 停顿自动保存\n第二段 #work")
   await page.keyboard.press("ControlOrMeta+s")
   await expect.poll(() => getUpdateCalls(page)).toHaveLength(2)
-  await expect(page.getByText("已保存", { exact: true })).toBeVisible()
+  await expect(
+    page.getByRole("contentinfo", { name: "状态栏" }).getByText("已保存")
+  ).toBeVisible()
 })
 
 test("保存基线过期：取消对话框后载入磁盘最新版本", async ({ page }) => {
@@ -361,7 +365,9 @@ test("保存基线过期：取消对话框后载入磁盘最新版本", async ({
   await expect
     .poll(() => readEditor(page, "library:note-new"))
     .toBe("# 远端更新版本")
-  await expect(page.getByText("已保存", { exact: true })).toBeVisible()
+  await expect(
+    page.getByRole("contentinfo", { name: "状态栏" }).getByText("已保存")
+  ).toBeVisible()
 })
 
 test("保存基线过期：确认对话框后强制覆盖磁盘版本", async ({ page }) => {
@@ -386,7 +392,9 @@ test("保存基线过期：确认对话框后强制覆盖磁盘版本", async ({
   await expect
     .poll(() => readEditor(page, "library:note-new"))
     .toBe("# 本地草稿版本")
-  await expect(page.getByText("已保存", { exact: true })).toBeVisible()
+  await expect(
+    page.getByRole("contentinfo", { name: "状态栏" }).getByText("已保存")
+  ).toBeVisible()
 })
 
 test("空资料库保留入口并展示引导空状态", async ({ page }) => {

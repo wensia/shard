@@ -15,6 +15,12 @@
     --text-meta: var(--text-meta);
     --text-tiny: var(--text-tiny);
     --text-data: var(--text-data);
+    /* Tailwind 自带的 text-sm / text-xs 指回 kiln，消除「Tailwind 14/12px
+       与 kiln 13/12px」两套字号并存。.text-sm 遍布 shadcn 基座，改这里比
+       逐个改组件可靠，且组件代码保持与上游一致。
+       字号不随密度档变：11px 是 kiln 明文下限，中文界面尤其守不得。 */
+    --text-sm: var(--text-body);
+    --text-xs: var(--text-meta);
     --color-sidebar-ring: var(--sidebar-ring);
     --color-sidebar-border: var(--sidebar-border);
     --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -168,6 +174,9 @@
        红绿灯靠 src-tauri/tauri.conf.json 的 trafficLightPosition 居中于这条
        高度，y ≈ 高度 / 2 + 2（52 → 28），改这里必须同步改那里。 */
     --shard-titlebar-height: 52px;
+    /* 底部状态栏条带高度。沿用 kiln 三级条带（DataTable Pagination）的契约：
+       条带自身零垂直 padding，内含 --control-height-sm 控件居中，上下各余 4px。 */
+    --shard-status-bar-height: var(--table-pagination-height);
     /* macOS 红绿灯从窗口左缘算起的避让宽度（三颗灯止于约 68px） */
     --shard-traffic-light-clearance: 80px;
     --shard-composer-top-gap: var(--shard-top-inset);

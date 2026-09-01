@@ -22,17 +22,19 @@ const buttonVariants = cva(
           "bg-destructive/[var(--shard-alpha-8)] text-destructive hover:bg-destructive/[var(--shard-alpha-21)] focus-visible:ring-destructive/[var(--shard-alpha-21)]",
         link: "bg-transparent text-primary underline-offset-4 hover:underline",
       },
+      // 高度一律绑 kiln 的控件高度 token，不写死 h-9 —— 写死等于让该控件
+      // 静默退出密度档（见 vendor/kiln/references/components.md 的按钮尺寸表）。
+      // 档位由根元素的 data-density 决定，compact 档下整体降一档。
+      // 无 xs 档：太小的动作用行内文字链接，不发明更小的按钮。
       size: {
         default:
-          "h-9 gap-1.5 px-3 has-data-[icon=inline-end]:pr-2.5 has-data-[icon=inline-start]:pl-2.5",
-        xs: "h-6 gap-1 px-2 text-xs [--shard-icon-stroke:var(--shard-icon-stroke-sm)] [&_svg:not([class*='size-'])]:size-(--shard-icon-size-xs)",
-        sm: "h-8 gap-1.5 px-2.5 text-[13px] [--shard-icon-stroke:var(--shard-icon-stroke-sm)] [&_svg:not([class*='size-'])]:size-(--shard-icon-size-sm)",
-        md: "h-9 gap-1.5 px-3",
-        lg: "h-10 gap-2 px-3.5",
-        icon: "size-9",
-        "icon-xs": "size-6 [--shard-icon-stroke:var(--shard-icon-stroke-sm)] [&_svg:not([class*='size-'])]:size-(--shard-icon-size-xs)",
-        "icon-sm": "size-8",
-        "icon-lg": "size-10",
+          "h-(--control-height) gap-1.5 px-3 has-data-[icon=inline-end]:pr-2.5 has-data-[icon=inline-start]:pl-2.5",
+        sm: "h-(--control-height-sm) gap-1.5 px-2.5 text-[13px] [--shard-icon-stroke:var(--shard-icon-stroke-sm)] [&_svg:not([class*='size-'])]:size-(--shard-icon-size-sm)",
+        md: "h-(--control-height) gap-1.5 px-3",
+        lg: "h-(--control-height-lg) gap-2 px-3.5",
+        icon: "size-(--control-height)",
+        "icon-sm": "size-(--control-height-sm)",
+        "icon-lg": "size-(--control-height-lg)",
       },
     },
     defaultVariants: {

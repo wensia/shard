@@ -1,7 +1,7 @@
 .appShell {
   display: grid;
   height: 100dvh;
-  grid-template-rows: 1fr auto;
+  grid-template-rows: minmax(0, 1fr) auto;
   overflow: hidden;
   background: var(--background);
   color: var(--foreground);
@@ -43,6 +43,11 @@
 
 .bottomTabsSlot {
   display: block;
+}
+
+/* 状态栏是桌面形态：移动端底部那一行归 bottom-tabs，两者不叠加 */
+.statusBarSlot {
+  display: none;
 }
 
 .workspaceColumn {
@@ -93,7 +98,7 @@
 @media (min-width: 1024px) {
   .appShell {
     grid-template-columns: var(--shard-sidebar-width) minmax(0, 1fr);
-    grid-template-rows: 1fr;
+    grid-template-rows: minmax(0, 1fr) auto;
   }
 
   .appShell[data-sidebar-collapsed="true"] {
@@ -126,6 +131,12 @@
 
   .bottomTabsSlot {
     display: none;
+  }
+
+  /* 1 / -1 在侧栏折叠的单列布局下同样等价于整行，不必为折叠态另写规则 */
+  .statusBarSlot {
+    display: block;
+    grid-column: 1 / -1;
   }
 
   .composerPadding {

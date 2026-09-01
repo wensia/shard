@@ -1,40 +1,27 @@
 import {
   BookOpenIcon,
   GitBranchIcon,
-  HelpCircleIcon,
   HistoryIcon,
   InboxIcon,
-  KeyboardIcon,
-  Maximize2Icon,
-  MoreHorizontalIcon,
   PanelLeftIcon,
-  RefreshCwIcon,
   SearchIcon,
-  SettingsIcon,
   RouteIcon,
   SparklesIcon,
   type LucideIcon,
 } from "@/components/icons"
 import {
-  useState,
   type CSSProperties,
   type ReactNode,
 } from "react"
 
 import { Button } from "@/components/ui/button"
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
-import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
 import { dailyReviewCount, insightReviewCount } from "@/lib/review-workflows"
-import type { Fragment, FragmentFilter, GitInfo } from "@/types"
+import type { Fragment, FragmentFilter } from "@/types"
 import type {
   ReviewWorkspaceMode,
   WorkspaceRoute,
@@ -44,19 +31,12 @@ import styles from "./sidebar-nav.module.css"
 
 interface SidebarNavProps {
   fragments: Fragment[]
-  git: GitInfo | null
   isCollapsed: boolean
-  isSyncing: boolean
   mindMapCount: number
   mindMapViewActive: boolean
-  onHelp: () => void
   onOpenMindMaps: () => void
   onOpenSearch: () => void
-  onOpenSettings: () => void
-  onRestoreWindow: () => void
   onRouteChange: (route: WorkspaceRoute) => void
-  onShortcuts: () => void
-  onSync: () => void
   onToggleCollapsed: () => void
   route: WorkspaceRoute
 }
@@ -98,18 +78,8 @@ const SIDEBAR_COPY: Record<
       expand: string
       navigation: string
       heatmap: string
-      utilityMenu: string
       stats: string
     }
-    gitState: {
-      error: string
-      noGit: string
-      noRemote: string
-      noVault: string
-      pending: string
-      synced: string
-    }
-    help: string
     groups: {
       fragments: string
       review: string
@@ -117,22 +87,16 @@ const SIDEBAR_COPY: Record<
       workbench: string
     }
     mindMaps: string
-    noCommit: string
     nav: Record<FragmentFilter, string>
     spaces: Record<WorkspaceRoute["space"], string>
-    restoreWindow: string
     search: string
     searchPlaceholder: string
     searchShortcut: string
-    settings: string
-    shortcuts: string
     stats: {
       days: string
       fragments: string
       tags: string
     }
-    syncGitVault: string
-    syncing: string
     vaultNotLoaded: string
   }
 > = {
@@ -143,17 +107,7 @@ const SIDEBAR_COPY: Record<
       navigation: "工作台导航",
       heatmap: "片段热力图",
       stats: "资料库统计",
-      utilityMenu: "打开帮助与设置菜单",
     },
-    gitState: {
-      error: "错误",
-      noGit: "未初始化 Git",
-      noRemote: "未配置远端",
-      noVault: "无资料库",
-      pending: "待同步",
-      synced: "已同步",
-    },
-    help: "帮助",
     groups: {
       fragments: "碎片",
       review: "回顾",
@@ -161,7 +115,6 @@ const SIDEBAR_COPY: Record<
       workbench: "工作台",
     },
     mindMaps: "思维导图",
-    noCommit: "无提交",
     nav: {
       archive: "回收站",
       dailyReview: "每日回顾",
@@ -177,19 +130,14 @@ const SIDEBAR_COPY: Record<
       lockbox: "密匣",
       review: "回顾",
     },
-    restoreWindow: "还原窗口尺寸",
     search: "搜索笔记",
     searchPlaceholder: "搜索正文或标签",
     searchShortcut: "⌘K",
-    settings: "设置",
-    shortcuts: "快捷键",
     stats: {
       days: "天",
       fragments: "片段",
       tags: "标签",
     },
-    syncGitVault: "同步 Git 资料库",
-    syncing: "同步中",
     vaultNotLoaded: "资料库未加载",
   },
   en: {
@@ -199,17 +147,7 @@ const SIDEBAR_COPY: Record<
       navigation: "Workspace navigation",
       heatmap: "Fragment heatmap",
       stats: "Vault stats",
-      utilityMenu: "Open help and settings menu",
     },
-    gitState: {
-      error: "Error",
-      noGit: "No Git",
-      noRemote: "No Remote",
-      noVault: "No Vault",
-      pending: "Pending",
-      synced: "Synced",
-    },
-    help: "Help",
     groups: {
       fragments: "Items",
       review: "Review",
@@ -217,7 +155,6 @@ const SIDEBAR_COPY: Record<
       workbench: "Main",
     },
     mindMaps: "Mind maps",
-    noCommit: "no commit",
     nav: {
       archive: "Trash",
       dailyReview: "Daily Review",
@@ -233,19 +170,14 @@ const SIDEBAR_COPY: Record<
       lockbox: "Lockbox",
       review: "Review",
     },
-    restoreWindow: "Restore Window Size",
     search: "Search notes",
     searchPlaceholder: "Search body or tags",
     searchShortcut: "⌘K",
-    settings: "Settings",
-    shortcuts: "Shortcuts",
     stats: {
       days: "Days",
       fragments: "Fragments",
       tags: "Tags",
     },
-    syncGitVault: "Sync Git vault",
-    syncing: "Syncing",
     vaultNotLoaded: "Vault not loaded",
   },
 }
@@ -281,9 +213,6 @@ const MONTH_LABELS: Record<SidebarLanguage, readonly string[]> = {
   ],
 }
 
-const TOOLTIP_DIM_COLOR =
-  "color-mix(in oklab, var(--background) calc(var(--shard-alpha-55) * 100%), transparent)"
-
 const NAV_LABEL_STYLE: CSSProperties = {
   minWidth: 0,
   flex: "1 1 auto",
@@ -294,23 +223,15 @@ const NAV_LABEL_STYLE: CSSProperties = {
 
 export function SidebarNav({
   fragments,
-  git,
   isCollapsed,
-  isSyncing,
   mindMapCount,
   mindMapViewActive,
-  onHelp,
   onOpenMindMaps,
   onOpenSearch,
-  onOpenSettings,
-  onRestoreWindow,
   onRouteChange,
-  onShortcuts,
-  onSync,
   onToggleCollapsed,
   route,
 }: SidebarNavProps) {
-  const [isUtilityMenuOpen, setIsUtilityMenuOpen] = useState(false)
   const language = getSidebarLanguage()
   const copy = SIDEBAR_COPY[language]
   const activeFragments = fragments.filter((fragment) => !fragment.archived)
@@ -319,16 +240,6 @@ export function SidebarNav({
     insight: insightReviewCount(fragments),
     walk: activeFragments.length,
   }
-  const gitStateLabel = getGitStateLabel(git, copy)
-  const gitSummary = `${git?.branch || "main"} · ${
-    git?.shortCommit || copy.noCommit
-  }`
-  const gitDivergence =
-    git && (git.ahead > 0 || git.behind > 0)
-      ? `↑${git.ahead} ↓${git.behind}`
-      : null
-  const isSyncDisabled =
-    isSyncing || !git || git.status === "no_git" || !git.hasRemote
   const heatmap = buildSidebarHeatmap(activeFragments, language)
 
   return (
@@ -563,135 +474,6 @@ export function SidebarNav({
           />
         </div>
       </nav>
-
-      <div
-        className={styles.utilitySection}
-        style={{
-          marginTop: "auto",
-          paddingInline: isCollapsed
-            ? "var(--space-2)"
-            : "var(--shard-sidebar-inset)",
-          paddingTop: "var(--shard-space-6)",
-          paddingBottom: "var(--shard-space-5)",
-        }}
-      >
-        <div className={styles.utilityActions}>
-          <Tooltip>
-            <TooltipTrigger
-              render={<div style={{ position: "relative" }} />}
-            >
-              <Button
-                aria-label={copy.syncGitVault}
-                disabled={isSyncDisabled}
-                onClick={onSync}
-                size="icon-sm"
-                variant="ghost"
-              >
-                <RefreshCwIcon
-                  aria-hidden="true"
-                  className={isSyncing ? styles.spin : undefined}
-                />
-                <span className="sr-only">{copy.syncGitVault}</span>
-              </Button>
-              <span
-                aria-hidden="true"
-                style={{
-                  position: "absolute",
-                  top: 8,
-                  right: 8,
-                  width: 6,
-                  height: 6,
-                  borderRadius: 9999,
-                  background: getGitStatusDotColor(git),
-                  boxShadow: "0 0 0 1px var(--sidebar)",
-                  pointerEvents: "none",
-                }}
-              />
-            </TooltipTrigger>
-            <TooltipContent side="top">
-              <div
-                style={{
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: "var(--shard-space-1)",
-                }}
-              >
-                <span>
-                  {isSyncing ? copy.syncing : `Git ${gitStateLabel}`}
-                </span>
-                <span style={{ color: TOOLTIP_DIM_COLOR }}>
-                  {gitSummary}
-                  {gitDivergence ? ` · ${gitDivergence}` : ""}
-                </span>
-                {git?.error ? (
-                  <span
-                    style={{
-                      maxWidth: 256,
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                      color: TOOLTIP_DIM_COLOR,
-                    }}
-                  >
-                    {git.error}
-                  </span>
-                ) : null}
-              </div>
-            </TooltipContent>
-          </Tooltip>
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  aria-label={copy.restoreWindow}
-                  onClick={onRestoreWindow}
-                  size="icon-sm"
-                  variant="ghost"
-                />
-              }
-            >
-              <Maximize2Icon aria-hidden="true" />
-              <span className="sr-only">{copy.restoreWindow}</span>
-            </TooltipTrigger>
-            <TooltipContent side="top">{copy.restoreWindow}</TooltipContent>
-          </Tooltip>
-          <DropdownMenu
-            open={isUtilityMenuOpen}
-            onOpenChange={setIsUtilityMenuOpen}
-          >
-            <DropdownMenuTrigger
-              render={
-                <Button
-                  aria-label={copy.aria.utilityMenu}
-                  data-shard-utility-menu-trigger
-                  size="icon-sm"
-                  variant="ghost"
-                />
-              }
-            >
-              <MoreHorizontalIcon aria-hidden="true" />
-              <span className="sr-only">{copy.aria.utilityMenu}</span>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" side="top" style={{ width: 160 }}>
-              <SidebarMenuItem
-                icon={SettingsIcon}
-                label={copy.settings}
-                onSelect={onOpenSettings}
-              />
-              <SidebarMenuItem
-                icon={KeyboardIcon}
-                label={copy.shortcuts}
-                onSelect={onShortcuts}
-              />
-              <SidebarMenuItem
-                icon={HelpCircleIcon}
-                label={copy.help}
-                onSelect={onHelp}
-              />
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
-      </div>
     </aside>
   )
 }
@@ -808,22 +590,6 @@ function formatNavAccessibleName(group: string | undefined, label: string) {
   return group ? `${group}：${label}` : label
 }
 
-function SidebarMenuItem({
-  icon: Icon,
-  label,
-  onSelect,
-}: {
-  icon: typeof SettingsIcon
-  label: string
-  onSelect: () => void
-}) {
-  return (
-    <DropdownMenuItem onClick={() => window.setTimeout(onSelect, 0)}>
-      <Icon aria-hidden="true" />
-      <span>{label}</span>
-    </DropdownMenuItem>
-  )
-}
 
 function getSidebarLanguage(): SidebarLanguage {
   if (typeof navigator === "undefined") return "zh"
@@ -834,42 +600,7 @@ function getSidebarLanguage(): SidebarLanguage {
   return preferredLanguage.toLowerCase().startsWith("zh") ? "zh" : "en"
 }
 
-function getGitStateLabel(
-  git: GitInfo | null,
-  copy: (typeof SIDEBAR_COPY)[SidebarLanguage]
-) {
-  if (!git) return copy.gitState.noVault
-  if (git.status === "no_git") return copy.gitState.noGit
-  if (git.status === "error") return copy.gitState.error
-  if (!git.hasRemote) return copy.gitState.noRemote
-  if (
-    git.status === "dirty" ||
-    git.status === "syncing" ||
-    git.ahead > 0 ||
-    git.behind > 0
-  ) {
-    return copy.gitState.pending
-  }
-  return copy.gitState.synced
-}
 
-function getGitStatusDotColor(git: GitInfo | null) {
-  if (git?.status === "error") return "var(--shard-danger)"
-  if (
-    git &&
-    (git.status === "dirty" ||
-      git.status === "syncing" ||
-      git.ahead > 0 ||
-      git.behind > 0 ||
-      !git.hasRemote)
-  ) {
-    return "var(--shard-warning)"
-  }
-  if (git?.status === "ready" && git.hasRemote) {
-    return "var(--shard-success)"
-  }
-  return "color-mix(in oklab, var(--muted-foreground) calc(var(--shard-alpha-55) * 100%), transparent)"
-}
 
 interface SidebarStatProps {
   label: string

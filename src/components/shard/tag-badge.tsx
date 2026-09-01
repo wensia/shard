@@ -28,9 +28,9 @@ export function TagBadge({ removable = false, tag, onRemove }: TagBadgeProps) {
       {removable ? (
         <Button
           aria-label={`移除 ${tag}`}
-          className="shard-tag-remove"
+          className="shard-tag-remove [--shard-icon-stroke:var(--shard-icon-stroke-sm)]"
           onClick={() => onRemove?.(tag)}
-          size="icon-xs"
+          size="icon-sm"
           style={{
             borderRadius: "9999px",
             color: "currentColor",
@@ -42,7 +42,9 @@ export function TagBadge({ removable = false, tag, onRemove }: TagBadgeProps) {
           }}
           variant="ghost"
         >
-          <XIcon aria-hidden="true" />
+          {/* 标签内的极小控件：显式取 xs 图标档，触发基类的
+              :not([class*='size-']) 守卫，不吃按钮的默认 md 图标尺寸。 */}
+          <XIcon aria-hidden="true" className="size-(--shard-icon-size-xs)" />
           <span className="sr-only">移除 {tag}</span>
         </Button>
       ) : null}

@@ -9,14 +9,9 @@
   color: var(--sidebar-foreground);
 }
 
-.brandRow,
-.utilityActions {
+.brandRow {
   display: flex;
   align-items: center;
-}
-
-.utilityActions {
-  justify-content: space-between;
 }
 
 .brandRow {
@@ -274,19 +269,4 @@
   margin-top: 0;
   border-top: 0;
   padding-top: 0;
-}
-
-.sidebar[data-collapsed="true"] .utilityActions {
-  flex-direction: column;
-  gap: var(--space-1);
-}
-
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-.spin {
-  animation: spin 1s linear infinite;
 }

@@ -422,6 +422,13 @@
   color: var(--destructive);
 }
 
+/* 桌面端保存态归底部状态栏，标题栏这份只留给没有状态栏的窄窗 */
+@media (min-width: 1024px) {
+  .saveState {
+    display: none;
+  }
+}
+
 .editorViewport {
   padding: var(--space-6);
 }
