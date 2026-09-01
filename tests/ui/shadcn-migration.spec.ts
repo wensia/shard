@@ -1146,11 +1146,11 @@ test("lockbox and mind map editing preserve adaptive node geometry", async ({
     .getByRole("complementary", { name: "资料库目录" })
     .getByRole("button", { name: "密匣（上锁空间）", exact: true })
     .click()
-  // 推门先落进上锁的一级空间，解锁弹窗只由页内按钮触发
+  // 推门先落进上锁的一级空间：整页只有主体解锁面板，不弹窗、无标题条
   await expect(
-    page.getByRole("heading", { name: "密匣", exact: true })
+    page.getByRole("heading", { name: "密匣已上锁", exact: true })
   ).toBeVisible()
-  await expect(page.getByRole("heading", { name: "解锁密匣" })).toHaveCount(0)
+  await expect(page.getByRole("dialog")).toHaveCount(0)
 
   await page.getByRole("button", { name: /思维导图 1/ }).click()
   await page.getByLabel("打开思维导图：测试导图").click()

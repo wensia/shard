@@ -152,19 +152,23 @@ async function unlockThroughPortal(page: Page) {
     .getByRole("complementary", { name: "资料库目录" })
     .getByRole("button", { name: "密匣（上锁空间）", exact: true })
     .click()
-  // 推门先落进上锁的一级空间，解锁就在主体区完成，全程无弹窗
-  await expect(
-    page.getByRole("heading", { name: "密匣", exact: true })
-  ).toBeVisible()
-  await expect(page.getByRole("dialog")).toHaveCount(0)
-  const gate = page.getByRole("form", { name: "解锁密匣" })
+  // 推门先落进上锁的一级空间，解锁就在主体区完成，全程无弹窗；
+  // 上锁态整页只有解锁面板，头部标题条要等解锁后才出现
   await expect(
     page.getByRole("heading", { name: "密匣已上锁", exact: true })
   ).toBeVisible()
+  await expect(
+    page.getByRole("heading", { name: "密匣", exact: true })
+  ).toHaveCount(0)
+  await expect(page.getByRole("dialog")).toHaveCount(0)
+  const gate = page.getByRole("form", { name: "解锁密匣" })
   await gate.getByPlaceholder("密匣密码").fill("correct-password")
   await gate.getByRole("button", { name: "解锁", exact: true }).click()
   await expect(gate).toHaveCount(0)
   await expect(page.getByRole("dialog")).toHaveCount(0)
+  await expect(
+    page.getByRole("heading", { name: "密匣", exact: true })
+  ).toBeVisible()
 }
 
 test.beforeEach(async ({ page }) => {

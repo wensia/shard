@@ -82,15 +82,18 @@ export function LockboxShell({
           className={appStyles.normalWorkArea}
           data-search-hidden={isSearchModeActive ? "true" : undefined}
         >
-          <LockboxHeader
-            lockbox={lockbox}
-            selectedTag={selectedTag}
-            summaries={summaries}
-            totalCount={totalCount}
-            onChangePassword={onChangePassword}
-            onLock={onLock}
-            onSelectTag={onSelectTag}
-          />
+          {/* 上锁态整页就是主体的解锁面板，不再顶一条重复的标题说明条 */}
+          {unlocked ? (
+            <LockboxHeader
+              lockbox={lockbox}
+              selectedTag={selectedTag}
+              summaries={summaries}
+              totalCount={totalCount}
+              onChangePassword={onChangePassword}
+              onLock={onLock}
+              onSelectTag={onSelectTag}
+            />
+          ) : null}
           {searchContextBar ? (
             <SearchContextBar {...searchContextBar} />
           ) : null}
@@ -176,7 +179,7 @@ function LockboxGate({
         </h2>
         <p className={styles.gateHint}>
           {mode === "unlock"
-            ? "输入密码解锁，解锁后闲置数分钟自动上锁。"
+            ? "解锁后闲置数分钟自动上锁。"
             : "用恢复密钥设置新密码，密匣内容保持不变。"}
         </p>
 
@@ -551,9 +554,7 @@ export function LockboxHeader({
                   color: "var(--muted-foreground)",
                 }}
               >
-                {lockbox?.unlocked
-                  ? `已解锁${lockbox.expiresAt ? `至 ${formatLockboxExpiry(lockbox.expiresAt)}` : ""}`
-                  : "需要密码访问。私密笔记不会出现在主页、回顾或普通统计中。"}
+                {`已解锁${lockbox?.expiresAt ? `至 ${formatLockboxExpiry(lockbox.expiresAt)}` : ""}`}
               </p>
             </div>
           </div>
@@ -566,17 +567,12 @@ export function LockboxHeader({
               gap: "var(--shard-space-2)",
             }}
           >
-            {/* 上锁态的解锁动作只在主体面板里，头部不再放第二个入口 */}
-            {lockbox?.unlocked ? (
-              <>
-                <Button onClick={onChangePassword} size="sm" variant="secondary">
-                  修改密码
-                </Button>
-                <Button onClick={onLock} size="sm" variant="secondary">
-                  上锁
-                </Button>
-              </>
-            ) : null}
+            <Button onClick={onChangePassword} size="sm" variant="secondary">
+              修改密码
+            </Button>
+            <Button onClick={onLock} size="sm" variant="secondary">
+              上锁
+            </Button>
           </div>
         </div>
 
