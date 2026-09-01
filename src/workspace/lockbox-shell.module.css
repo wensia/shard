@@ -1,6 +1,14 @@
 /* 密匣空间的样式：几何对齐资料库树与时间线空态，全部消费 Kiln token */
 
 /* 上锁态主体区：解锁表单占据时间线空态的位置，视觉沿用空态的居中列 */
+/* 上锁态的返回条：与解锁面板同列，靠左，不参与居中 */
+.gateTopBar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  padding: var(--space-2) var(--space-2) 0;
+}
+
 .gate {
   display: flex;
   flex: 1;

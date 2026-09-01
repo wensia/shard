@@ -1235,23 +1235,6 @@ export function LibraryShell({
                       {libraryTree.fragmentStream.totalCount}
                     </span>
                   </button>
-                  <button
-                    aria-label={`回收站（${countTreeEntries(libraryTree.trashEntries)}）`}
-                    className={styles.treeButton}
-                    data-selected={
-                      selection?.kind === "trash"
-                        ? "true"
-                        : undefined
-                    }
-                    onClick={() => void selectTrashView()}
-                    type="button"
-                  >
-                    <Trash2Icon aria-hidden="true" />
-                    <span>回收站</span>
-                    <span className={styles.treeCount}>
-                      {countTreeEntries(libraryTree.trashEntries)}
-                    </span>
-                  </button>
                 </div>
 
                 {libraryTree.assets.length > 0 ? (
@@ -1304,26 +1287,46 @@ export function LibraryShell({
                   </ul>
                 )}
 
-                {/* 密匣挂载点：地图上可见、不可展开，推门进入加密一级空间 */}
-                <div className={styles.lockboxMount}>
-                  <button
-                    aria-label="密匣（上锁空间）"
-                    className={styles.treeButton}
-                    onClick={() => {
-                      void (async () => {
-                        if (!(await saveCurrentNote())) return
-                        onOpenLockbox()
-                      })()
-                    }}
-                    type="button"
-                  >
-                    <LockKeyholeIcon aria-hidden="true" />
-                    <span>密匣</span>
-                  </button>
-                </div>
               </div>
             )}
           </div>
+
+          {/*
+           * 回收站与密匣不是内容目录，是这一列的两个常驻出口：钉在底部不随
+           * 笔记树滚动，否则树一长就被推出视野。密匣刻意不显示条目数——上锁
+           * 时连数量都不该泄露。
+           */}
+          {libraryTree ? (
+            <div className={styles.paneFooter} data-library-footer="true">
+              <button
+                aria-label={`回收站（${countTreeEntries(libraryTree.trashEntries)}）`}
+                className={styles.treeButton}
+                data-selected={selection?.kind === "trash" ? "true" : undefined}
+                onClick={() => void selectTrashView()}
+                type="button"
+              >
+                <Trash2Icon aria-hidden="true" />
+                <span>回收站</span>
+                <span className={styles.treeCount}>
+                  {countTreeEntries(libraryTree.trashEntries)}
+                </span>
+              </button>
+              <button
+                aria-label="密匣（上锁空间）"
+                className={styles.treeButton}
+                onClick={() => {
+                  void (async () => {
+                    if (!(await saveCurrentNote())) return
+                    onOpenLockbox()
+                  })()
+                }}
+                type="button"
+              >
+                <LockKeyholeIcon aria-hidden="true" />
+                <span>密匣</span>
+              </button>
+            </div>
+          ) : null}
         </aside>
 
         <article

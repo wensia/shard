@@ -6,6 +6,7 @@ import {
   type ComponentProps,
 } from "react"
 import {
+  ArrowLeftIcon,
   ChevronDownIcon,
   ChevronRightIcon,
   FileTextIcon,
@@ -39,6 +40,7 @@ interface LockboxShellProps {
   notes: Fragment[]
   onChangePassword: () => void
   onLock: () => void
+  onBack: () => void
   onOpenNote: (fragment: Fragment) => void
   onResetPassword: (recoveryKey: string, newPassword: string) => Promise<void>
   onSelectTag: (tag: string | null) => void
@@ -59,6 +61,7 @@ export function LockboxShell({
   isSearchModeActive,
   lockbox,
   notes,
+  onBack,
   onChangePassword,
   onLock,
   onOpenNote,
@@ -82,18 +85,26 @@ export function LockboxShell({
           className={appStyles.normalWorkArea}
           data-search-hidden={isSearchModeActive ? "true" : undefined}
         >
-          {/* 上锁态整页就是主体的解锁面板，不再顶一条重复的标题说明条 */}
+          {/*
+           * 上锁态整页就是主体的解锁面板，不顶重复的标题说明条；但密匣是从
+           * 资料库推门进来的一级空间，得留一条原路返回的出口。
+           */}
           {unlocked ? (
             <LockboxHeader
               lockbox={lockbox}
               selectedTag={selectedTag}
               summaries={summaries}
               totalCount={totalCount}
+              onBack={onBack}
               onChangePassword={onChangePassword}
               onLock={onLock}
               onSelectTag={onSelectTag}
             />
-          ) : null}
+          ) : (
+            <div className={styles.gateTopBar}>
+              <LockboxBackButton onBack={onBack} />
+            </div>
+          )}
           {searchContextBar ? (
             <SearchContextBar {...searchContextBar} />
           ) : null}
@@ -116,6 +127,16 @@ export function LockboxShell({
         ) : null}
       </div>
     </section>
+  )
+}
+
+/** 原路返回资料库——密匣是从资料库挂载点推门进来的一级空间。 */
+function LockboxBackButton({ onBack }: { onBack: () => void }) {
+  return (
+    <Button aria-label="返回资料库" onClick={onBack} size="sm" variant="ghost">
+      <ArrowLeftIcon aria-hidden="true" />
+      资料库
+    </Button>
   )
 }
 
@@ -472,6 +493,7 @@ export function LockboxHeader({
   selectedTag,
   summaries,
   totalCount,
+  onBack,
   onChangePassword,
   onLock,
   onSelectTag,
@@ -480,6 +502,7 @@ export function LockboxHeader({
   selectedTag: string | null
   summaries: TaggedSummary[]
   totalCount: number
+  onBack: () => void
   onChangePassword: () => void
   onLock: () => void
   onSelectTag: (tag: string | null) => void
@@ -567,6 +590,7 @@ export function LockboxHeader({
               gap: "var(--shard-space-2)",
             }}
           >
+            <LockboxBackButton onBack={onBack} />
             <Button onClick={onChangePassword} size="sm" variant="secondary">
               修改密码
             </Button>

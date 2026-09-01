@@ -1763,6 +1763,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
             isSearchModeActive={isSearchModeActive}
             lockbox={lockbox}
             notes={lockboxNotes}
+            onBack={() => void handleRouteChange({ space: "library", params: {} })}
             onChangePassword={() => setLockboxDialogMode("change")}
             onLock={() => void handleLockLockbox()}
             onOpenNote={openZenEditor}

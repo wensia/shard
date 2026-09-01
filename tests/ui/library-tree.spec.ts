@@ -1421,6 +1421,30 @@ test("重命名批量更新旧 wikilink 后仍可从别名链接导航", async (
   await expect(page.locator('[data-shard-editor="library:note-old"]')).toBeVisible()
 })
 
+test("回收站与密匣钉在列底常驻条，不随笔记树滚动", async ({ page }) => {
+  await page.goto("/")
+  await page.getByRole("button", { name: "资料库", exact: true }).click()
+
+  // 两个出口都住在底部常驻条里；只要它们在这条里，就必然不在可滚动的树中
+  const footer = page.locator("[data-library-footer]")
+  await expect(footer).toBeVisible()
+  await expect(footer.getByRole("button", { name: /^回收站/ })).toBeVisible()
+  await expect(
+    footer.getByRole("button", { name: "密匣（上锁空间）", exact: true })
+  ).toBeVisible()
+
+  // 常驻条贴在这一列底边，且排在可滚动区之后
+  const geometry = await page.evaluate(() => {
+    const footerEl = document.querySelector("[data-library-footer]")
+    const pane = footerEl?.parentElement
+    if (!footerEl || !pane) return null
+    const f = footerEl.getBoundingClientRect()
+    const p = pane.getBoundingClientRect()
+    return { gapToBottom: Math.round(p.bottom - f.bottom) }
+  })
+  expect(geometry?.gapToBottom).toBe(0)
+})
+
 test("资料库图片分组在第三栏打开网格并保留侧栏与目录树", async ({ page }) => {
   await page.getByRole("button", { name: "资料库", exact: true }).click()
   const treePane = page.getByRole("complementary", { name: "资料库目录" })

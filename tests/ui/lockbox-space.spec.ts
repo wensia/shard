@@ -243,6 +243,32 @@ test("解锁密码框：text-security 遮蔽生效，大写提示走图标规范
   expect(["1.5px", "1.75px"]).toContain(metrics.stroke)
 })
 
+test("密匣页内可原路返回资料库，上锁与解锁态都有出口", async ({ page }) => {
+  await page.goto("/")
+  await page.getByRole("button", { name: "资料库", exact: true }).click()
+  await page
+    .getByRole("complementary", { name: "资料库目录" })
+    .getByRole("button", { name: "密匣（上锁空间）", exact: true })
+    .click()
+  await expect(
+    page.getByRole("heading", { name: "密匣已上锁", exact: true })
+  ).toBeVisible()
+
+  // 上锁态：面板上方的返回按钮直接回资料库，不必绕去侧栏
+  const back = page.getByRole("button", { name: "返回资料库", exact: true })
+  await back.click()
+  await expect(
+    page.getByRole("complementary", { name: "资料库目录" })
+  ).toBeVisible()
+
+  // 解锁后头部同样留着出口
+  await unlockThroughPortal(page)
+  await back.click()
+  await expect(
+    page.getByRole("complementary", { name: "资料库目录" })
+  ).toBeVisible()
+})
+
 test("传送门：从资料库挂载点解锁进入密匣一级空间", async ({ page }) => {
   await page.goto("/")
   await unlockThroughPortal(page)
