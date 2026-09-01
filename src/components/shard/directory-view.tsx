@@ -3,7 +3,7 @@ import {
   Grid2X2Icon,
   ListIcon,
   MoreHorizontalIcon,
-} from "lucide-react"
+} from "@/components/icons"
 
 import {
   LibraryItemGrid,

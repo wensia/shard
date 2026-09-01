@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react"
 import { save } from "@tauri-apps/plugin-dialog"
-import { XIcon } from "lucide-react"
+import { XIcon } from "@/components/icons"
 import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"

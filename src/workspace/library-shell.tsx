@@ -21,7 +21,7 @@ import {
   ImageIcon,
   LockKeyholeIcon,
   Maximize2Icon,
-} from "lucide-react"
+} from "@/components/icons"
 import { toast } from "sonner"
 
 import { FragmentBacklinksPanel } from "@/components/shard/fragment-related"

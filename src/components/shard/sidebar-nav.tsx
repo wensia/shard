@@ -14,7 +14,7 @@ import {
   RouteIcon,
   SparklesIcon,
   type LucideIcon,
-} from "lucide-react"
+} from "@/components/icons"
 import {
   useState,
   type CSSProperties,
@@ -377,8 +377,7 @@ export function SidebarNav({
           >
             <SearchIcon
               aria-hidden="true"
-              size={16}
-              strokeWidth={1.75}
+              className="size-(--shard-icon-size-md)"
               style={{ flexShrink: 0 }}
             />
             {isCollapsed ? null : (
@@ -751,8 +750,7 @@ function SidebarNavigationButton({
     <>
       <Icon
         aria-hidden="true"
-        size={18}
-        strokeWidth={1.75}
+        className="size-(--shard-icon-size-nav)"
         style={{ flexShrink: 0 }}
       />
       {isCollapsed ? null : (

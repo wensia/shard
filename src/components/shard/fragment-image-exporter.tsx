@@ -6,7 +6,7 @@ import {
   ImageIcon,
   Loader2Icon,
   XIcon,
-} from "lucide-react"
+} from "@/components/icons"
 import { useEffect, useMemo, useState } from "react"
 import { toast } from "sonner"
 
@@ -223,7 +223,7 @@ export function FragmentImageExporter({
         <DialogHeader className="shrink-0 gap-0 border-b border-border p-4">
           <div className={styles.header}>
             <span className={styles.headerIcon} aria-hidden="true">
-              <ImageIcon size={15} strokeWidth={1.75} />
+              <ImageIcon className="size-(--shard-icon-size-md)" />
             </span>
             <div className={styles.headerText}>
               <DialogTitle className={styles.headerTitle}>
@@ -335,8 +335,7 @@ export function FragmentImageExporter({
                 {isPreviewing ? (
                   <div className={styles.previewOverlay}>
                     <Loader2Icon
-                      className={styles.spin}
-                      size={20}
+                      className={`${styles.spin} size-(--shard-icon-size-lg)`}
                       style={{ color: "var(--muted-foreground)" }}
                     />
                   </div>

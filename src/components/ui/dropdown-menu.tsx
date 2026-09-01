@@ -1,7 +1,7 @@
 "use client"
 
 import { Menu as MenuPrimitive } from "@base-ui/react/menu"
-import { CheckIcon, ChevronRightIcon } from "lucide-react"
+import { CheckIcon, ChevronRightIcon } from "@/components/icons"
 import * as React from "react"
 
 import { cn } from "@/lib/utils"
@@ -92,7 +92,7 @@ function DropdownMenuItem({
       data-inset={inset}
       data-variant={variant}
       className={cn(
-        "group/dropdown-menu-item relative flex h-8 cursor-default items-center gap-[var(--shard-space-2)] rounded-[var(--shard-radius-control)] px-[var(--shard-space-2)] text-[13px] font-medium whitespace-nowrap outline-hidden select-none focus:bg-accent focus:text-accent-foreground data-inset:pl-7 data-[variant=destructive]:text-destructive data-[variant=destructive]:focus:bg-destructive/[var(--shard-alpha-21)] data-[variant=destructive]:focus:text-destructive data-disabled:pointer-events-none data-disabled:opacity-[var(--shard-alpha-55)] [&_svg]:pointer-events-none [&_svg]:size-3.5 [&_svg]:shrink-0",
+        "group/dropdown-menu-item relative flex h-8 cursor-default items-center gap-[var(--shard-space-2)] rounded-[var(--shard-radius-control)] px-[var(--shard-space-2)] text-[13px] font-medium whitespace-nowrap outline-hidden select-none focus:bg-accent focus:text-accent-foreground data-inset:pl-7 data-[variant=destructive]:text-destructive data-[variant=destructive]:focus:bg-destructive/[var(--shard-alpha-21)] data-[variant=destructive]:focus:text-destructive data-disabled:pointer-events-none data-disabled:opacity-[var(--shard-alpha-55)] [&_svg]:pointer-events-none [&_svg:not([class*='size-'])]:size-(--shard-icon-size-sm) [&_svg]:shrink-0",
         className
       )}
       {...props}
@@ -117,7 +117,7 @@ function DropdownMenuSubTrigger({
       data-slot="dropdown-menu-sub-trigger"
       data-inset={inset}
       className={cn(
-        "flex h-8 cursor-default items-center gap-[var(--shard-space-2)] rounded-[var(--shard-radius-control)] px-[var(--shard-space-2)] text-[13px] font-medium outline-hidden select-none focus:bg-accent focus:text-accent-foreground data-inset:pl-7 data-popup-open:bg-accent data-popup-open:text-accent-foreground [&_svg]:pointer-events-none [&_svg]:size-3.5 [&_svg]:shrink-0",
+        "flex h-8 cursor-default items-center gap-[var(--shard-space-2)] rounded-[var(--shard-radius-control)] px-[var(--shard-space-2)] text-[13px] font-medium outline-hidden select-none focus:bg-accent focus:text-accent-foreground data-inset:pl-7 data-popup-open:bg-accent data-popup-open:text-accent-foreground [&_svg]:pointer-events-none [&_svg:not([class*='size-'])]:size-(--shard-icon-size-sm) [&_svg]:shrink-0",
         className
       )}
       {...props}
@@ -164,7 +164,7 @@ function DropdownMenuCheckboxItem({
       data-inset={inset}
       checked={checked}
       className={cn(
-        "relative flex h-8 cursor-default items-center gap-[var(--shard-space-2)] rounded-[var(--shard-radius-control)] py-1 pr-8 pl-[var(--shard-space-2)] text-[13px] font-medium outline-hidden select-none focus:bg-accent focus:text-accent-foreground data-inset:pl-7 data-disabled:pointer-events-none data-disabled:opacity-[var(--shard-alpha-55)] [&_svg]:pointer-events-none [&_svg]:size-3.5 [&_svg]:shrink-0",
+        "relative flex h-8 cursor-default items-center gap-[var(--shard-space-2)] rounded-[var(--shard-radius-control)] py-1 pr-8 pl-[var(--shard-space-2)] text-[13px] font-medium outline-hidden select-none focus:bg-accent focus:text-accent-foreground data-inset:pl-7 data-disabled:pointer-events-none data-disabled:opacity-[var(--shard-alpha-55)] [&_svg]:pointer-events-none [&_svg:not([class*='size-'])]:size-(--shard-icon-size-sm) [&_svg]:shrink-0",
         className
       )}
       {...props}
@@ -204,7 +204,7 @@ function DropdownMenuRadioItem({
       data-slot="dropdown-menu-radio-item"
       data-inset={inset}
       className={cn(
-        "relative flex h-8 cursor-default items-center gap-[var(--shard-space-2)] rounded-[var(--shard-radius-control)] py-1 pr-8 pl-[var(--shard-space-2)] text-[13px] font-medium outline-hidden select-none focus:bg-accent focus:text-accent-foreground data-inset:pl-7 data-disabled:pointer-events-none data-disabled:opacity-[var(--shard-alpha-55)] [&_svg]:pointer-events-none [&_svg]:size-3.5 [&_svg]:shrink-0",
+        "relative flex h-8 cursor-default items-center gap-[var(--shard-space-2)] rounded-[var(--shard-radius-control)] py-1 pr-8 pl-[var(--shard-space-2)] text-[13px] font-medium outline-hidden select-none focus:bg-accent focus:text-accent-foreground data-inset:pl-7 data-disabled:pointer-events-none data-disabled:opacity-[var(--shard-alpha-55)] [&_svg]:pointer-events-none [&_svg:not([class*='size-'])]:size-(--shard-icon-size-sm) [&_svg]:shrink-0",
         className
       )}
       {...props}

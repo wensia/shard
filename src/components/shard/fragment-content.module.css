@@ -46,9 +46,9 @@
 }
 
 .menuItem svg {
-  width: 14px;
-  height: 14px;
-  stroke-width: 1.65;
+  --shard-icon-stroke: var(--shard-icon-stroke-sm);
+  width: var(--shard-icon-size-sm);
+  height: var(--shard-icon-size-sm);
 }
 
 @keyframes spin {

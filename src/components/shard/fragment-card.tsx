@@ -4,7 +4,7 @@ import {
   CopyIcon,
   FileTextIcon,
   GitBranchIcon,
-  Link2Icon,
+  PaperclipIcon,
   LinkIcon,
   LockKeyholeIcon,
   MoreHorizontalIcon,
@@ -12,7 +12,8 @@ import {
   PinIcon,
   PinOffIcon,
   Share2Icon,
-} from "lucide-react"
+  ShardZenIcon,
+} from "@/components/icons"
 import { useState, type ReactNode } from "react"
 import { toast } from "sonner"
 
@@ -20,7 +21,6 @@ import { FragmentEditor } from "@/components/shard/fragment-editor"
 import { FragmentBody } from "@/components/shard/fragment-body"
 import { FragmentLinkDialog } from "@/components/shard/fragment-link-dialog"
 import { FragmentRelated } from "@/components/shard/fragment-related"
-import { ShardZenIcon } from "@/components/shard/shard-zen-icon"
 import { TagBadge } from "@/components/shard/tag-badge"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -228,7 +228,7 @@ export function FragmentCard({
                   className="shard-tag shard-tag-muted"
                   style={{ fontWeight: 500 }}
                 >
-                  <PinIcon strokeWidth={1.75} />
+                  <PinIcon />
                   置顶
                 </span>
               ) : null}
@@ -237,7 +237,7 @@ export function FragmentCard({
                   className="shard-tag shard-tag-lockbox"
                   style={{ fontWeight: 500 }}
                 >
-                  <LockKeyholeIcon strokeWidth={1.75} />
+                  <LockKeyholeIcon />
                   密匣
                 </span>
               ) : null}
@@ -249,7 +249,7 @@ export function FragmentCard({
                   style={{ fontWeight: 500 }}
                   title={`这是同步冲突时保留的本地版本，原件 ${fragment.conflictOf}`}
                 >
-                  <GitBranchIcon strokeWidth={1.75} />
+                  <GitBranchIcon />
                   冲突副本
                 </span>
               ) : null}
@@ -258,7 +258,7 @@ export function FragmentCard({
                   className="shard-tag shard-tag-muted"
                   style={{ fontWeight: 500 }}
                 >
-                  <FileTextIcon strokeWidth={1.75} />
+                  <FileTextIcon />
                   笔记
                 </span>
               ) : null}
@@ -329,7 +329,7 @@ export function FragmentCard({
               ) : null}
               {onLinkFragment ? (
                 <CardMenuItem
-                  icon={<Link2Icon aria-hidden="true" />}
+                  icon={<PaperclipIcon aria-hidden="true" />}
                   label="关联到片段…"
                   onSelect={() =>
                     openNextSurface(() => setIsLinkDialogOpen(true))
@@ -433,7 +433,7 @@ function CardMenuItem({
       onClick={onSelect}
       style={{ display: "grid", gridTemplateColumns: "14px max-content" }}
     >
-      <span className="[&>svg]:size-3.5 [&>svg]:stroke-[1.65]">{icon}</span>
+      <span className="[&>svg]:size-(--shard-icon-size-sm)">{icon}</span>
       <span>{label}</span>
     </DropdownMenuItem>
   )

@@ -1,6 +1,7 @@
 import {
   BookOpenIcon,
   GitBranchIcon,
+  RouteIcon,
   HelpCircleIcon,
   HistoryIcon,
   InboxIcon,
@@ -10,7 +11,7 @@ import {
   SearchIcon,
   SettingsIcon,
   SparklesIcon,
-} from "lucide-react"
+} from "@/components/icons"
 import { useState } from "react"
 
 import shardAppIconUrl from "@/assets/shard-app-icon.png"
@@ -83,7 +84,7 @@ const REVIEW_TABS: Array<{
 }> = [
   { id: "dailyReview", label: "每日回顾", icon: HistoryIcon },
   { id: "insight", label: "洞察", icon: SparklesIcon },
-  { id: "walk", label: "漫步", icon: GitBranchIcon },
+  { id: "walk", label: "漫步", icon: RouteIcon },
 ]
 
 export function BottomTabs({
@@ -193,7 +194,7 @@ export function BottomTabs({
                     onClick={() => onRouteChange(item.route)}
                     type="button"
                   >
-                    <Icon aria-hidden="true" size={18} strokeWidth={1.75} />
+                    <Icon aria-hidden="true" className="size-(--shard-icon-size-nav)" />
                     <span className={styles.truncate}>{item.label}</span>
                   </button>
                 )
@@ -222,7 +223,7 @@ export function BottomTabs({
                       }
                       type="button"
                     >
-                      <Icon aria-hidden="true" size={14} strokeWidth={1.75} />
+                      <Icon aria-hidden="true" className="size-(--shard-icon-size-sm)" />
                       <span className={styles.truncate}>{item.label}</span>
                       <span className={styles.count}>{counts[item.id]}</span>
                     </button>

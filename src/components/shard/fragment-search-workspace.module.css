@@ -133,8 +133,9 @@
 }
 
 .lockboxState svg {
-  width: 13px;
-  height: 13px;
+  --shard-icon-stroke: var(--shard-icon-stroke-sm);
+  width: var(--shard-icon-size-sm);
+  height: var(--shard-icon-size-sm);
 }
 
 .resultCount {
@@ -274,8 +275,9 @@
 }
 
 .stateBadge svg {
-  width: 12px;
-  height: 12px;
+  --shard-icon-stroke: var(--shard-icon-stroke-sm);
+  width: var(--shard-icon-size-xs);
+  height: var(--shard-icon-size-xs);
 }
 
 .tag {
@@ -388,11 +390,10 @@
 }
 
 .empty > svg {
-  width: 24px;
-  height: 24px;
+  width: var(--shard-icon-size-xl);
+  height: var(--shard-icon-size-xl);
   margin-bottom: var(--shard-space-3);
   color: var(--muted-foreground);
-  stroke-width: 1.6;
 }
 
 .skeletonList {
@@ -453,8 +454,9 @@
 }
 
 .footer svg {
-  width: 12px;
-  height: 12px;
+  --shard-icon-stroke: var(--shard-icon-stroke-sm);
+  width: var(--shard-icon-size-xs);
+  height: var(--shard-icon-size-xs);
 }
 
 .contextBar {

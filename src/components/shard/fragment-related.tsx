@@ -6,7 +6,7 @@ import {
   Loader2Icon,
   TagIcon,
   XIcon,
-} from "lucide-react"
+} from "@/components/icons"
 
 import { Button } from "@/components/ui/button"
 import { markdownToSearchText } from "@/lib/fragment-search"
@@ -130,8 +130,7 @@ export function FragmentRelated({
       >
         <ChevronDownIcon
           aria-hidden="true"
-          size={13}
-          strokeWidth={1.75}
+          className="size-(--shard-icon-size-sm)"
           style={{
             transform: isOpen ? "rotate(0deg)" : "rotate(-90deg)",
             transition: "transform 120ms ease",
@@ -162,9 +161,7 @@ export function FragmentRelated({
             >
               <Loader2Icon
                 aria-hidden="true"
-                className="animate-spin"
-                size={13}
-                strokeWidth={1.75}
+                className="animate-spin size-(--shard-icon-size-sm)"
               />
               正在查找
             </span>
@@ -344,11 +341,11 @@ function RelatedRow({
           }}
         >
           {item.direction === "backlink" ? (
-            <CornerUpLeftIcon aria-hidden="true" size={12} strokeWidth={1.75} />
+            <CornerUpLeftIcon aria-hidden="true" className="size-(--shard-icon-size-xs)" />
           ) : isLinked ? (
-            <LinkIcon aria-hidden="true" size={12} strokeWidth={1.75} />
+            <LinkIcon aria-hidden="true" className="size-(--shard-icon-size-xs)" />
           ) : (
-            <TagIcon aria-hidden="true" size={12} strokeWidth={1.75} />
+            <TagIcon aria-hidden="true" className="size-(--shard-icon-size-xs)" />
           )}
         </span>
         <span

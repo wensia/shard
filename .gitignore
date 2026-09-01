@@ -38,6 +38,7 @@ GEMINI.md
 *.md
 !README.md
 !AGENTS.md
+!design.md
 docs/*
 !docs/design/
 docs/design/*

@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react"
-import { FileSpreadsheetIcon, TableIcon } from "lucide-react"
+import { FileSpreadsheetIcon, TableIcon } from "@/components/icons"
 
 import { ToolbarIconButton } from "@/components/ui/toolbar-icon-button"
 

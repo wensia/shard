@@ -6,7 +6,7 @@ import {
   FolderIcon,
   LockKeyholeIcon,
   TagIcon,
-} from "lucide-react"
+} from "@/components/icons"
 
 import appStyles from "@/App.module.css"
 import {
@@ -124,7 +124,7 @@ function LockboxNotesTree({
         className={`shard-content-measure ${styles.notesTree}`}
       >
         <div className={styles.notesTreeHeader}>
-          <FileTextIcon aria-hidden="true" size={14} strokeWidth={1.75} />
+          <FileTextIcon aria-hidden="true" className="size-(--shard-icon-size-sm)" />
           <span>密匣笔记</span>
           <span className={`tabular-nums ${styles.notesTreeCount}`}>
             {notes.length}
@@ -327,7 +327,7 @@ export function LockboxHeader({
                 color: "var(--shard-sapphire)",
               }}
             >
-              <LockKeyholeIcon size={16} strokeWidth={1.75} />
+              <LockKeyholeIcon className="size-(--shard-icon-size-md)" />
             </span>
             <div style={{ minWidth: 0 }}>
               <h1
@@ -401,7 +401,7 @@ export function LockboxHeader({
                 color: "var(--muted-foreground)",
               }}
             >
-              <TagIcon size={14} strokeWidth={1.75} />
+              <TagIcon className="size-(--shard-icon-size-sm)" />
               <span className="tabular-nums">{summaries.length} 子标签</span>
               <span aria-hidden="true">·</span>
               <span className="tabular-nums">{totalCount} 条</span>

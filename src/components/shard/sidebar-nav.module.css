@@ -256,8 +256,8 @@
 .sidebar[data-collapsed="true"]
   .navSubItem[data-sidebar-level="secondary"]
   > svg {
-  width: var(--space-4);
-  height: var(--space-4);
+  width: var(--shard-icon-size-md);
+  height: var(--shard-icon-size-md);
 }
 
 .sidebar[data-collapsed="true"] .navSubItemInactive {

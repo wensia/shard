@@ -82,9 +82,8 @@
 }
 
 .fileIcon svg {
-  width: var(--space-8);
-  height: var(--space-8);
-  stroke-width: 1.8;
+  width: var(--shard-icon-size-xl);
+  height: var(--shard-icon-size-xl);
 }
 
 .fileIcon[data-kind="directory"] {
@@ -125,6 +124,7 @@
   padding: var(--space-2);
 }
 
+/* design-exempt: 导图预览连线是数据图形，不吃图标描边 token。 */
 .mindMapEdges {
   fill: none;
   stroke: var(--muted-foreground);

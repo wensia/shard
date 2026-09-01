@@ -10,13 +10,13 @@ import {
 } from "react"
 import { isTauri } from "@tauri-apps/api/core"
 import {
-  AlertTriangleIcon,
+  TriangleAlertIcon,
   GitBranchIcon,
   ListTreeIcon,
   Loader2Icon,
   SaveIcon,
   XIcon,
-} from "lucide-react"
+} from "@/components/icons"
 
 import { Button } from "@/components/ui/button"
 import { toast } from "sonner"
@@ -427,8 +427,7 @@ export const MindMapCanvas = forwardRef<
             }}
           >
             <Loader2Icon
-              className={styles.spinner}
-              size={16}
+              className={`${styles.spinner} size-(--shard-icon-size-md)`}
               style={{ marginRight: "var(--shard-space-2)" }}
             />
             正在打开思维导图
@@ -486,8 +485,8 @@ export const MindMapCanvas = forwardRef<
               maxWidth: 896,
             }}
           >
-            <AlertTriangleIcon
-              size={16}
+            <TriangleAlertIcon
+              className="size-(--shard-icon-size-md)"
               style={{ color: "var(--destructive)", flexShrink: 0, marginTop: 2 }}
             />
             <div style={{ flex: "1 1 0%", minWidth: 0 }}>

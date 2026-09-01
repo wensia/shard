@@ -6,7 +6,7 @@ import {
   useRef,
   useState,
 } from "react"
-import { Loader2Icon, LockKeyholeIcon, SendHorizontalIcon } from "lucide-react"
+import { Loader2Icon, LockKeyholeIcon, SendHorizontalIcon } from "@/components/icons"
 import { startCompletion } from "@codemirror/autocomplete"
 import { isTauri } from "@tauri-apps/api/core"
 import { open } from "@tauri-apps/plugin-dialog"
@@ -610,7 +610,7 @@ export function CaptureBox({
                     className="shard-tag shard-tag-lockbox"
                     style={{ flexShrink: 0, fontWeight: 500 }}
                   >
-                    <LockKeyholeIcon strokeWidth={1.75} />
+                    <LockKeyholeIcon />
                     将保存到密匣
                   </span>
                 ) : null}
@@ -648,7 +648,7 @@ export function CaptureBox({
             color: "var(--muted-foreground)",
           }}
         >
-          <Loader2Icon className={styles.spin} size={14} />
+          <Loader2Icon className={`${styles.spin} size-(--shard-icon-size-sm)`} />
           <span>保存中</span>
         </div>
       ) : null}

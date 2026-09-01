@@ -9,7 +9,7 @@ import {
 import { isTauri } from "@tauri-apps/api/core"
 import { open } from "@tauri-apps/plugin-dialog"
 import { startCompletion } from "@codemirror/autocomplete"
-import { Loader2Icon, LockKeyholeIcon, SendHorizontalIcon, XIcon } from "lucide-react"
+import { Loader2Icon, LockKeyholeIcon, SendHorizontalIcon, XIcon } from "@/components/icons"
 import { toast } from "sonner"
 
 import { EditorToolbar } from "@/components/shard/editor-toolbar"
@@ -727,7 +727,7 @@ export function FragmentEditor({
                     className="shard-tag shard-tag-lockbox"
                     style={{ flexShrink: 0, fontWeight: 500 }}
                   >
-                    <LockKeyholeIcon strokeWidth={1.75} />
+                    <LockKeyholeIcon />
                     {fragment ? "将移入密匣" : "将保存到密匣"}
                   </span>
                 ) : null}
@@ -827,7 +827,7 @@ export function FragmentEditor({
                       className="shard-tag shard-tag-lockbox"
                       style={{ flexShrink: 0, fontWeight: 500 }}
                     >
-                      <LockKeyholeIcon strokeWidth={1.75} />
+                      <LockKeyholeIcon />
                       {fragment ? "将移入密匣" : "将保存到密匣"}
                     </span>
                   ) : null}

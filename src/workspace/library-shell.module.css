@@ -151,8 +151,8 @@
 }
 
 .rootButton svg {
-  width: var(--space-4);
-  height: var(--space-4);
+  width: var(--shard-icon-size-md);
+  height: var(--shard-icon-size-md);
   flex: none;
 }
 
@@ -288,8 +288,8 @@
 }
 
 .renameRow svg {
-  width: var(--space-4);
-  height: var(--space-4);
+  width: var(--shard-icon-size-md);
+  height: var(--shard-icon-size-md);
   flex: none;
 }
 

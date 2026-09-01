@@ -4,9 +4,9 @@ import {
   CircleCheckIcon,
   InfoIcon,
   Loader2Icon,
-  OctagonXIcon,
+  CircleAlertIcon,
   TriangleAlertIcon,
-} from "lucide-react"
+} from "@/components/icons"
 import type { CSSProperties } from "react"
 import { Toaster as Sonner, type ToasterProps } from "sonner"
 
@@ -45,7 +45,7 @@ function Toaster({
         success: <CircleCheckIcon className="size-4" />,
         info: <InfoIcon className="size-4" />,
         warning: <TriangleAlertIcon className="size-4" />,
-        error: <OctagonXIcon className="size-4" />,
+        error: <CircleAlertIcon className="size-4" />,
         loading: <Loader2Icon className="size-4 animate-spin" />,
       }}
       style={

@@ -3,7 +3,7 @@ import {
   CircleAlertIcon,
   RouteIcon,
   SparklesIcon,
-} from "lucide-react"
+} from "@/components/icons"
 import { useEffect, useMemo, useState, type ReactNode } from "react"
 import { toast } from "sonner"
 
@@ -945,7 +945,7 @@ function TaskPanel({
       {error ? (
         <div className={styles.taskCardError}>
           <CircleAlertIcon
-            size={14}
+            className="size-(--shard-icon-size-sm)"
             style={{ marginTop: 2, flexShrink: 0 }}
           />
           <span style={{ textWrap: "pretty" }}>{error}</span>
@@ -1122,7 +1122,7 @@ function ReviewEmpty({
         color: "var(--muted-foreground)",
       }}
     >
-      <Icon size={32} />
+      <Icon className="size-(--shard-icon-size-xl)" />
       <div
         style={{
           fontSize: "var(--font-size-sm)",

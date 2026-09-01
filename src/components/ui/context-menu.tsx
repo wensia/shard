@@ -78,7 +78,7 @@ function ContextMenuItem({
       data-inset={inset}
       data-variant={variant}
       className={cn(
-        "group/context-menu-item relative flex h-8 cursor-default items-center gap-[var(--shard-space-2)] rounded-[var(--shard-radius-control)] px-[var(--shard-space-2)] text-[13px] font-medium whitespace-nowrap outline-hidden select-none focus:bg-accent focus:text-accent-foreground data-inset:pl-7 data-[variant=destructive]:text-destructive data-[variant=destructive]:focus:bg-destructive/[var(--shard-alpha-21)] data-[variant=destructive]:focus:text-destructive data-disabled:pointer-events-none data-disabled:opacity-[var(--shard-alpha-55)] [&_svg]:pointer-events-none [&_svg]:size-3.5 [&_svg]:shrink-0",
+        "group/context-menu-item relative flex h-8 cursor-default items-center gap-[var(--shard-space-2)] rounded-[var(--shard-radius-control)] px-[var(--shard-space-2)] text-[13px] font-medium whitespace-nowrap outline-hidden select-none focus:bg-accent focus:text-accent-foreground data-inset:pl-7 data-[variant=destructive]:text-destructive data-[variant=destructive]:focus:bg-destructive/[var(--shard-alpha-21)] data-[variant=destructive]:focus:text-destructive data-disabled:pointer-events-none data-disabled:opacity-[var(--shard-alpha-55)] [&_svg]:pointer-events-none [&_svg:not([class*='size-'])]:size-(--shard-icon-size-sm) [&_svg]:shrink-0",
         className
       )}
       {...props}

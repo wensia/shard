@@ -72,6 +72,7 @@ export function MindMapPreview({
         style={{ display: "block", height: "100%", width: "100%" }}
         viewBox={fit.viewBox}
       >
+        {/* design-exempt: 导图预览连线是数据图形。 */}
         <g fill="none" stroke="var(--border)" strokeWidth="1.4">
           {layout.edges.map((edge) => {
             const midX = (edge.x1 + edge.x2) / 2
@@ -101,6 +102,7 @@ export function MindMapPreview({
                   height={layoutNode.height}
                   rx="8"
                   stroke="rgb(var(--shard-primary-rgb) / var(--shard-alpha-8))"
+                  /* design-exempt: 导图预览数据图形。 */
                   strokeWidth="5"
                   width={layoutNode.width}
                   x={layoutNode.x}
@@ -124,6 +126,7 @@ export function MindMapPreview({
                       ? "rgb(var(--shard-primary-rgb) / var(--shard-alpha-34))"
                       : "var(--border)"
                 }
+                /* design-exempt: 导图预览数据图形。 */
                 strokeWidth="1.2"
                 width={layoutNode.width}
                 x={layoutNode.x}

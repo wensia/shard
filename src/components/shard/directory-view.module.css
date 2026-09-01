@@ -28,8 +28,9 @@
 }
 
 .breadcrumbPart svg {
-  width: var(--space-3);
-  height: var(--space-3);
+  --shard-icon-stroke: var(--shard-icon-stroke-sm);
+  width: var(--shard-icon-size-xs);
+  height: var(--shard-icon-size-xs);
   color: var(--muted-foreground);
 }
 

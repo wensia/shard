@@ -216,6 +216,17 @@
     --shard-chip-bg: var(--muted);
     --shard-chip-fg: var(--foreground);
     --shard-chip-hover: color-mix(in srgb, var(--muted), black 6%);
+    /* 图标系统（design.md）：尺寸六档 + 描边两档。尺寸只从这里取；
+     * 描边由 frontend-rules.css 的 svg.lucide 全局规则消费，小尺寸
+     * 容器只覆盖 --shard-icon-stroke 变量，不得新写 stroke-width。 */
+    --shard-icon-size-xs: 12px;
+    --shard-icon-size-sm: 14px;
+    --shard-icon-size-md: 16px;
+    --shard-icon-size-nav: 18px;
+    --shard-icon-size-lg: 20px;
+    --shard-icon-size-xl: 32px;
+    --shard-icon-stroke: 1.5;
+    --shard-icon-stroke-sm: 1.75;
 }
 
 :root[data-shard-theme="clay"] {

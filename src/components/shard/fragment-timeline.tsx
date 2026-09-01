@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type UIEvent } from "react"
-import { InboxIcon, SparklesIcon, XIcon } from "lucide-react"
+import { InboxIcon, SparklesIcon, XIcon } from "@/components/icons"
 
 import { FragmentCard } from "@/components/shard/fragment-card"
 import { OrganizeFragmentsDialog } from "@/components/shard/organize-fragments-dialog"
@@ -468,7 +468,7 @@ export function FragmentTimeline({
               color: "var(--muted-foreground)",
             }}
           >
-            <InboxIcon size={32} />
+            <InboxIcon className="size-(--shard-icon-size-xl)" />
             <div
               style={{
                 fontSize: "var(--font-size-sm)",

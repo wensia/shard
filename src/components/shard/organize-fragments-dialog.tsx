@@ -1,4 +1,4 @@
-import { CircleAlertIcon } from "lucide-react"
+import { CircleAlertIcon } from "@/components/icons"
 
 import { Button } from "@/components/ui/button"
 import {

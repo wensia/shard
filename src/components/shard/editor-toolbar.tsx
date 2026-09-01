@@ -9,9 +9,9 @@ import {
   ListTodoIcon,
   SeparatorHorizontalIcon,
   UnderlineIcon,
-} from "lucide-react"
+  ShardZenIcon,
+} from "@/components/icons"
 
-import { ShardZenIcon } from "@/components/shard/shard-zen-icon"
 import { TableSizePicker } from "@/components/shard/table-size-picker"
 import { ToolbarIconButton } from "@/components/ui/toolbar-icon-button"
 import type { InlineFormat, LineFormat } from "@/lib/editor-format"
@@ -144,7 +144,7 @@ export function EditorToolbar({
             <ToolbarDivider />
             <EditorToolbarButton
               disabled={disabled}
-              icon={<ShardZenIcon height={18} width={18} />}
+              icon={<ShardZenIcon />}
               label="禅模式"
               onClick={onOpenZen}
             />

@@ -9,7 +9,7 @@ import {
   PaletteIcon,
   RefreshCwIcon,
   XIcon,
-} from "lucide-react"
+} from "@/components/icons"
 import { useEffect, useRef, useState, type CSSProperties } from "react"
 import { toast } from "sonner"
 
@@ -685,8 +685,7 @@ export function VaultGuide({
               }}
             >
               <Loader2Icon
-                className={styles.spin}
-                size={16}
+                className={`${styles.spin} size-(--shard-icon-size-md)`}
                 style={{ flexShrink: 0 }}
               />
               <span>
@@ -700,7 +699,7 @@ export function VaultGuide({
               className="flex items-center gap-2"
               style={{ fontSize: 14, lineHeight: "20px", fontWeight: 600 }}
             >
-              <GitBranchIcon size={16} style={{ flexShrink: 0 }} />
+              <GitBranchIcon className="size-(--shard-icon-size-md)" style={{ flexShrink: 0 }} />
               GitHub
             </div>
             <p
@@ -828,9 +827,7 @@ export function VaultGuide({
               {isActive ? (
                 <CheckIcon
                   aria-hidden="true"
-                  className={styles.themeCheck}
-                  size={16}
-                  strokeWidth={2}
+                  className={`${styles.themeCheck} size-(--shard-icon-size-md)`}
                 />
               ) : null}
             </button>
@@ -996,7 +993,7 @@ export function VaultGuide({
                 }
                 type="button"
               >
-                <Icon size={16} strokeWidth={1.75} style={{ flexShrink: 0 }} />
+                <Icon className="size-(--shard-icon-size-md)" style={{ flexShrink: 0 }} />
                 <span
                   style={{
                     overflow: "hidden",
@@ -1405,9 +1402,9 @@ function VaultActionButton({
         }}
       >
         {active ? (
-          <Loader2Icon className={styles.spin} size={16} />
+          <Loader2Icon className={`${styles.spin} size-(--shard-icon-size-md)`} />
         ) : (
-          <Icon size={16} />
+          <Icon className="size-(--shard-icon-size-md)" />
         )}
       </span>
       <span style={{ minWidth: 0 }}>

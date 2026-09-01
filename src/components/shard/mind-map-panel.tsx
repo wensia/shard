@@ -13,7 +13,7 @@ import {
   RefreshCwIcon,
   Share2Icon,
   TextCursorInputIcon,
-} from "lucide-react"
+} from "@/components/icons"
 import { toast } from "sonner"
 
 import { Badge } from "@/components/ui/badge"
@@ -256,8 +256,7 @@ export function MindMapPanel({ onMapsChange, onOpenMap }: MindMapPanelProps) {
               }}
             >
               <GitBranchIcon
-                size={28}
-                strokeWidth={1.5}
+                className="size-(--shard-icon-size-xl)"
                 style={{ color: "var(--muted-foreground)" }}
               />
               <div style={{ color: "var(--foreground)", fontSize: 14, fontWeight: 600 }}>
@@ -399,7 +398,7 @@ function MindMapGridCard({
                 gap: "var(--shard-space-2)",
               }}
             >
-              <Loader2Icon className={styles.spinner} size={14} />
+              <Loader2Icon className={`${styles.spinner} size-(--shard-icon-size-sm)`} />
               正在渲染导图
             </span>
           ) : error ? (

@@ -118,8 +118,8 @@
 }
 
 .dragPreview svg {
-  width: var(--shard-space-4);
-  height: var(--shard-space-4);
+  width: var(--shard-icon-size-md);
+  height: var(--shard-icon-size-md);
   flex: 0 0 auto;
 }
 
@@ -156,12 +156,14 @@
   cursor: pointer;
 }
 
+/* design-exempt: 画布折叠钮是自绘画布控件，不吃图标描边 token。 */
 .collapseToggleCircle {
   fill: var(--card);
   stroke: var(--border);
   stroke-width: 1.2;
 }
 
+/* design-exempt: 同上，画布控件。 */
 .collapseToggleMinus {
   stroke: var(--muted-foreground);
   stroke-width: 1.4;

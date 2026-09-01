@@ -119,6 +119,24 @@
       "Segoe UI", sans-serif;
     letter-spacing: 0;
   }
+
+  /*
+   * 图标描边由 token 集中控制（design.md）：这是全应用唯一一条图标
+   * stroke-width 规则，CSS property 覆盖 lucide 输出的 SVG 属性。组件
+   * 禁止传 strokeWidth；≤14px 的小图标容器只覆盖 --shard-icon-stroke
+   * 变量切到补偿档，不得新写 stroke-width 规则。签名图标带
+   * data-shard-icon，与 lucide 吃同一管道。
+   */
+  svg.lucide,
+  svg[data-shard-icon] {
+    stroke-width: var(--shard-icon-stroke);
+  }
+
+  /* 菜单图标 14px（design.md 决策），整容器切光学补偿档。 */
+  [data-slot="dropdown-menu-content"],
+  [data-slot="context-menu-content"] {
+    --shard-icon-stroke: var(--shard-icon-stroke-sm);
+  }
 }
 
 @layer components {
@@ -798,8 +816,9 @@
   }
 
   .shard-table-size-import svg {
-    width: 13px;
-    height: 13px;
+    --shard-icon-stroke: var(--shard-icon-stroke-sm);
+    width: var(--shard-icon-size-sm);
+    height: var(--shard-icon-size-sm);
   }
 
   .shard-table-size-label {
@@ -954,10 +973,10 @@
   }
 
   .shard-image-attachment-remove svg {
+    --shard-icon-stroke: var(--shard-icon-stroke-sm);
     display: block;
-    width: 11px;
-    height: 11px;
-    stroke-width: 2;
+    width: var(--shard-icon-size-xs);
+    height: var(--shard-icon-size-xs);
   }
 
   .shard-image-preview-dialog {

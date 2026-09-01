@@ -156,17 +156,33 @@ const TW_SHADOW = /\bshadow-(?:sm|md|lg|xl|2xl)\b/;
 // 规范禁止的是「用页面专属固定高度替代 shell 的高度契约」。
 const HARDCODED_HEIGHT = /(?<![a-z-])h-\[\d+px\]/;
 
+// ── 图标系统契约（design.md）────────────────────────────────────
+// 注册表（src/components/icons/）是唯一的图标导入面与 strokeWidth 兜底属性所在地，
+// 这些规则对它自身豁免。
+const ICON_REGISTRY_DIR = /(^|\/)src\/components\/icons\//;
+const ICON_IMPORT = /from\s+["']lucide-react["']/;
+// 同时拦 prop 形式（strokeWidth={1.75}）与 Tailwind 任意值类形式（stroke-[1.65]）。
+const ICON_STROKE_PROP = /\bstrokeWidth=|\bstroke-\[/;
+const ICON_SIZE_PROP = /\bsize=\{\d/;
+// CSS 里唯一合法的图标描边写法是消费 --shard-icon-stroke token 的那条全局规则；
+// 其余 stroke-width（数据图形、画布控件）必须挂 design-exempt。
+// 注意 (?!…) 前不能留可回溯的 \s*，否则引擎回退一格就绕过负向断言。
+const ICON_STROKE_CSS = /stroke-width\s*:(?!\s*var\(--shard-icon-stroke)/;
+
+const KINDS = ["hex", "palette", "shadow", "height", "iconImport", "iconStroke", "iconSize", "iconStrokeCss"];
+
 // 存量违规按「文件 → 各类计数」记账。新增会让计数超过基线 → 失败。
 // 用计数而不是行号：行号会随无关编辑漂移，计数不会。
 const BASELINE = join(ROOT, "design-debt.json");
 const counts = {};
 const bump = (rel, kind) => {
-  counts[rel] ??= { hex: 0, palette: 0, shadow: 0, height: 0 };
+  counts[rel] ??= Object.fromEntries(KINDS.map((k) => [k, 0]));
   counts[rel][kind]++;
 };
 
 for (const file of walk(SRC)) {
   const rel = relative(REPO, file);
+  const inRegistry = ICON_REGISTRY_DIR.test(rel);
   const lines = readFileSync(file, "utf8").split("\n");
   lines.forEach((line, i) => {
     // 显式豁免：在元素上方写 `design-exempt: <理由>`。
@@ -179,6 +195,31 @@ for (const file of walk(SRC)) {
     if (TW_PALETTE.test(line)) bump(rel, "palette");
     if (TW_SHADOW.test(line)) bump(rel, "shadow");
     if (HARDCODED_HEIGHT.test(line)) bump(rel, "height");
+    if (!inRegistry) {
+      if (ICON_IMPORT.test(line)) bump(rel, "iconImport");
+      if (ICON_STROKE_PROP.test(line)) bump(rel, "iconStroke");
+      if (ICON_SIZE_PROP.test(line)) bump(rel, "iconSize");
+    }
+  });
+}
+
+// CSS 侧的图标描边扫描独立于 ts/tsx 主循环 —— 不把主循环扩到 .css，
+// 是为了避免 hex 检查突然吞下整个样式层、基线爆炸。
+const walkCss = (dir) => {
+  const out = [];
+  for (const name of readdirSync(dir)) {
+    const p = join(dir, name);
+    if (statSync(p).isDirectory()) out.push(...walkCss(p));
+    else if (/\.css$/.test(p)) out.push(p);
+  }
+  return out;
+};
+for (const file of walkCss(SRC)) {
+  const rel = relative(REPO, file);
+  const lines = readFileSync(file, "utf8").split("\n");
+  lines.forEach((line, i) => {
+    if (lines.slice(Math.max(0, i - 6), i + 1).some((l) => /design-exempt/.test(l))) return;
+    if (ICON_STROKE_CSS.test(line)) bump(rel, "iconStrokeCss");
   });
 }
 
@@ -198,7 +239,7 @@ if (updating) {
       2
     ) + "\n"
   );
-  const total = Object.values(counts).reduce((s, c) => s + c.hex + c.palette + c.shadow + c.height, 0);
+  const total = Object.values(counts).reduce((s, c) => s + KINDS.reduce((a, k) => a + (c[k] ?? 0), 0), 0);
   console.log(`✓ 已更新设计债基线：${Object.keys(counts).length} 个文件，共 ${total} 项。`);
   process.exit(0);
 }
@@ -223,12 +264,30 @@ const KIND_HINT = {
     "success=teal、info=peacock、warning=amber、destructive=clay。",
   height:
     "规范禁止「页面专属的固定高度」，高度应由 shell 通过 flex-1 + min-h-0 提供（见 DataTableDock）。",
+  iconImport:
+    "图标只能从 @/components/icons 注册表导入，禁止直连 lucide-react（design.md）。",
+  iconStroke:
+    "图标描边由 --shard-icon-stroke token 经 CSS 集中控制，禁止组件传 strokeWidth（design.md）。",
+  iconSize:
+    "图标尺寸走 --shard-icon-size-* token（size-(--shard-icon-size-*) 类或容器规则），禁止数字 size prop（design.md）。",
+  iconStrokeCss:
+    "CSS 禁止新写 stroke-width —— 描边只有 frontend-rules.css 消费 --shard-icon-stroke 的那一条；" +
+    "数据图形/画布控件挂 design-exempt。",
 };
-const KIND_NAME = { hex: "裸 hex 颜色", palette: "Tailwind 裸色", shadow: "Tailwind 出厂阴影", height: "写死像素高度" };
+const KIND_NAME = {
+  hex: "裸 hex 颜色",
+  palette: "Tailwind 裸色",
+  shadow: "Tailwind 出厂阴影",
+  height: "写死像素高度",
+  iconImport: "直连 lucide-react",
+  iconStroke: "散装 strokeWidth",
+  iconSize: "数字 size prop",
+  iconStrokeCss: "CSS 裸 stroke-width",
+};
 
 for (const [rel, c] of Object.entries(counts)) {
-  const base = baseline[rel] ?? { hex: 0, palette: 0, shadow: 0, height: 0 };
-  for (const kind of ["hex", "palette", "shadow", "height"]) {
+  const base = baseline[rel] ?? {};
+  for (const kind of KINDS) {
     const was = base[kind] ?? 0;
     if (c[kind] > was) {
       fail(
@@ -249,7 +308,7 @@ if (failures.length) {
   process.exit(1);
 }
 
-const debtTotal = Object.values(counts).reduce((s, c) => s + c.hex + c.palette + c.shadow + c.height, 0);
+const debtTotal = Object.values(counts).reduce((s, c) => s + KINDS.reduce((a, k) => a + (c[k] ?? 0), 0), 0);
 console.log(
   `✓ 设计契约通过：${allowed.size} 个 token 全部定义且无自造值。` +
     (debtTotal

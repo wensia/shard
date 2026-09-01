@@ -1,4 +1,4 @@
-import { XIcon } from "lucide-react"
+import { XIcon } from "@/components/icons"
 
 import { Button } from "@/components/ui/button"
 import { isTypeTag } from "@/lib/content-kind"

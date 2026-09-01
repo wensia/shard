@@ -7,7 +7,7 @@ import {
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react"
-import { MaximizeIcon, MoveIcon } from "lucide-react"
+import { Maximize2Icon, MoveIcon } from "@/components/icons"
 
 import { setCanvasGrabCursor } from "@/lib/api"
 import { Button } from "@/components/ui/button"
@@ -1254,6 +1254,7 @@ export function MindMapCanvasEditor({
         role="application"
         viewBox={effectiveFit.viewBox}
       >
+        {/* design-exempt: 导图画布连线是数据图形，不吃图标描边 token。 */}
         <g fill="none" stroke="var(--border-visible)" strokeWidth="1.6">
           {layout.edges.map((edge) => {
             const midX = (edge.x1 + edge.x2) / 2
@@ -1300,6 +1301,7 @@ export function MindMapCanvasEditor({
               {editing ? null : (
                 <>
                   {selected ? (
+                    /* design-exempt: 导图画布数据图形，不吃图标描边 token。 */
                     <rect
                       fill="none"
                       height={layoutNode.height}
@@ -1328,6 +1330,7 @@ export function MindMapCanvasEditor({
                           ? "rgb(var(--shard-primary-rgb) / var(--shard-alpha-34))"
                           : "var(--border)"
                     }
+                    /* design-exempt: 导图节点框是数据图形。 */
                     strokeWidth="1.2"
                     width={layoutNode.width}
                     x={layoutNode.x}
@@ -1499,7 +1502,7 @@ export function MindMapCanvasEditor({
           type="button"
           variant="ghost"
         >
-          <MaximizeIcon aria-hidden="true" />
+          <Maximize2Icon aria-hidden="true" />
         </Button>
       ) : null}
 
@@ -1674,6 +1677,7 @@ function CanvasDropIndicator({
   if (mode === "inside") {
     return (
       <g pointerEvents="none">
+        {/* design-exempt: 导图画布数据图形，不吃图标描边 token。 */}
         <rect
           fill="rgb(var(--shard-primary-rgb) / var(--shard-alpha-8))"
           height={layoutNode.height + 8}
@@ -1699,6 +1703,7 @@ function CanvasDropIndicator({
 
   return (
     <g pointerEvents="none">
+      {/* design-exempt: 导图画布数据图形，不吃图标描边 token。 */}
       <line
         stroke={DROP_INDICATOR_COLOR}
         strokeLinecap="round"

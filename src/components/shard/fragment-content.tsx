@@ -13,7 +13,7 @@ import {
   FolderOpenIcon,
   Loader2Icon,
   XIcon,
-} from "lucide-react"
+} from "@/components/icons"
 import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"

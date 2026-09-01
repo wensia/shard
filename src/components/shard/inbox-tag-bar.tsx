@@ -5,7 +5,7 @@ import {
   type FormEvent,
   type KeyboardEvent,
 } from "react"
-import { PlusIcon } from "lucide-react"
+import { PlusIcon } from "@/components/icons"
 
 import {
   TagFilterButton,
@@ -149,7 +149,7 @@ export function InboxTagBar({
               title="新建标签"
               type="button"
             >
-              <PlusIcon size={14} strokeWidth={1.75} style={{ flexShrink: 0 }} />
+              <PlusIcon className="size-(--shard-icon-size-sm)" style={{ flexShrink: 0 }} />
               <span
                 className="shard-chip-text"
                 style={{
