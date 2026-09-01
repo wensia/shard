@@ -152,12 +152,21 @@ async function unlockThroughPortal(page: Page) {
     .getByRole("complementary", { name: "资料库目录" })
     .getByRole("button", { name: "密匣（上锁空间）", exact: true })
     .click()
-  await expect(page.getByRole("heading", { name: "解锁密匣" })).toBeVisible()
-  await page.getByPlaceholder("密匣密码").fill("correct-password")
-  await page.getByRole("button", { name: "解锁", exact: true }).click()
+  // 推门先落进上锁的一级空间，不直接弹解锁窗
   await expect(
     page.getByRole("heading", { name: "密匣", exact: true })
   ).toBeVisible()
+  await expect(page.getByRole("heading", { name: "解锁密匣" })).toHaveCount(0)
+  await expect(page.getByText("密匣已上锁。")).toBeVisible()
+  // 解锁弹窗由页内按钮触发
+  await page.getByRole("button", { name: "解锁", exact: true }).click()
+  await expect(page.getByRole("heading", { name: "解锁密匣" })).toBeVisible()
+  await page.getByPlaceholder("密匣密码").fill("correct-password")
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "解锁", exact: true })
+    .click()
+  await expect(page.getByRole("heading", { name: "解锁密匣" })).toHaveCount(0)
 }
 
 test.beforeEach(async ({ page }) => {
@@ -194,6 +203,8 @@ test("解锁密码框：原生大写指示器隐藏，细线提示走图标规�
     .getByRole("complementary", { name: "资料库目录" })
     .getByRole("button", { name: "密匣（上锁空间）", exact: true })
     .click()
+  // 推门先落上锁页，解锁弹窗由页内按钮触发
+  await page.getByRole("button", { name: "解锁", exact: true }).click()
   await expect(page.getByRole("heading", { name: "解锁密匣" })).toBeVisible()
 
   const input = page.getByPlaceholder("密匣密码")

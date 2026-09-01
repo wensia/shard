@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { toast } from "sonner"
 
 import styles from "../App.module.css"
+import { LockKeyholeIcon } from "@/components/icons"
 import { BottomTabs } from "@/components/shard/bottom-tabs"
 import { FragmentEditor } from "@/components/shard/fragment-editor"
 import { FragmentImageExporter } from "@/components/shard/fragment-image-exporter"
@@ -246,14 +247,6 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     if (routeRef.current.space !== "library") return true
     return (await librarySaveHandlerRef.current?.flush()) ?? true
   }, [])
-
-  useEffect(() => {
-    if (route.space !== "lockbox" || lockbox === null || lockbox.unlocked) {
-      return
-    }
-
-    setLockboxDialogMode(lockbox.configured ? "unlock" : "setup")
-  }, [route, lockbox, setLockboxDialogMode])
 
   useLockboxSecurityEffects({
     autoLock: (options) => {
@@ -895,6 +888,18 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     setRoute({ space: "lockbox", params: {} })
   }
 
+  // 传送门：从资料库挂载点推门直接落进密匣一级空间。上锁态由空间页
+  // 自己呈现（头部解锁按钮 + 上锁空态），解锁弹窗只由页内按钮触发，
+  // 不在推门瞬间弹出。未配置时空间还不存在，仍先引导设置。
+  function enterLockboxSpace() {
+    if (!lockbox?.configured) {
+      setLockboxDialogMode("setup")
+      return
+    }
+    setSelectedLockboxTag(null)
+    setRoute({ space: "lockbox", params: {} })
+  }
+
   function updateAppSettings(patch: Partial<AppSettings>) {
     setAppSettings((current) => {
       const next = { ...current, ...patch }
@@ -1268,8 +1273,8 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     searchReturnFocusRef.current = null
     setIsMindMapViewActive(false)
 
-    if (nextRoute.space === "lockbox" && !lockbox?.unlocked) {
-      openLockboxGate()
+    if (nextRoute.space === "lockbox" && !lockbox?.configured) {
+      setLockboxDialogMode("setup")
       return
     }
 
@@ -1766,6 +1771,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
             summaries={lockboxTagSummaries}
             timeline={{
               ...timelineHandlers,
+              emptyIcon: LockKeyholeIcon,
               emptyMessage: lockboxEmptyMessage,
               fragments: lockboxTimelineFragments,
               // 密匣内的关联候选保持密匣隔离，不混入公开内容
@@ -1832,7 +1838,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
             }}
             onLibraryMutation={handleLibraryMutation}
             onMoveToLockbox={handleMoveFragmentToLockbox}
-            onOpenLockbox={openLockboxGate}
+            onOpenLockbox={enterLockboxSpace}
             onRefreshFragments={refreshFragments}
             onRegisterSaveHandler={registerLibrarySaveHandler}
             onSave={handleUpdateFragment}

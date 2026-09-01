@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type UIEvent } from "react"
-import { InboxIcon, SparklesIcon, XIcon } from "@/components/icons"
+import { InboxIcon, SparklesIcon, XIcon, type ShardIcon } from "@/components/icons"
 
 import { FragmentCard } from "@/components/shard/fragment-card"
 import { OrganizeFragmentsDialog } from "@/components/shard/organize-fragments-dialog"
@@ -14,6 +14,7 @@ const WIDE_TIMELINE_QUERY = "(min-width: 96rem)"
 interface FragmentTimelineProps {
   csvFiles?: CsvFileSummary[]
   editingFragmentId?: string | null
+  emptyIcon?: ShardIcon
   emptyMessage?: string
   fragments: Fragment[]
   isLoading: boolean
@@ -61,6 +62,7 @@ interface FragmentTimelineProps {
 export function FragmentTimeline({
   csvFiles = [],
   editingFragmentId = null,
+  emptyIcon: EmptyIcon = InboxIcon,
   emptyMessage = "还没有片段。写下第一条，按 Cmd/Ctrl+Enter 保存。",
   fragments,
   isLoading,
@@ -468,7 +470,7 @@ export function FragmentTimeline({
               color: "var(--muted-foreground)",
             }}
           >
-            <InboxIcon className="size-(--shard-icon-size-xl)" />
+            <EmptyIcon className="size-(--shard-icon-size-xl)" />
             <div
               style={{
                 fontSize: "var(--font-size-sm)",
