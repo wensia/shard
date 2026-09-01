@@ -1083,7 +1083,8 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
         setIsSearchModeActive(false)
         setSearchSession(null)
         searchReturnFocusRef.current = null
-        openLockboxGate()
+        // 推门进密匣空间，解锁在空间内的面板里完成
+        enterLockboxSpace()
         toast("请先解锁密匣后查看笔记")
         return
       }
@@ -1362,6 +1363,8 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
   const isModalBusy =
     isVaultDialogOpen ||
     lockboxDialogMode !== null ||
+    // 内联重置发起时没有弹窗 mode，恢复密钥步骤仍会独立弹出
+    recoveryKey !== null ||
     isExportSheetOpen ||
     isLockboxArchiveConfirmOpen
   const isBlockingDialogOpen = isModalBusy
@@ -1615,9 +1618,9 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const lockboxEmptyMessage = lockbox?.unlocked
-    ? "密匣里还没有碎片。到 Inbox 输入 #密匣 即可保存到这里。"
-    : "密匣已上锁。"
+  // 上锁态的主体区是内联解锁面板，时间线只在解锁后渲染
+  const lockboxEmptyMessage =
+    "密匣里还没有碎片。到 Inbox 输入 #密匣 即可保存到这里。"
 
   const timelineHandlers = {
     csvFiles,
@@ -1763,8 +1766,9 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
             onChangePassword={() => setLockboxDialogMode("change")}
             onLock={() => void handleLockLockbox()}
             onOpenNote={openZenEditor}
+            onResetPassword={handleResetLockboxPassword}
             onSelectTag={setSelectedLockboxTag}
-            onUnlock={openLockboxGate}
+            onUnlock={handleUnlockLockbox}
             search={searchProps}
             searchContextBar={searchContextBarProps}
             selectedTag={selectedLockboxTag}

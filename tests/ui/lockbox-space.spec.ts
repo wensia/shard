@@ -152,21 +152,19 @@ async function unlockThroughPortal(page: Page) {
     .getByRole("complementary", { name: "资料库目录" })
     .getByRole("button", { name: "密匣（上锁空间）", exact: true })
     .click()
-  // 推门先落进上锁的一级空间，不直接弹解锁窗
+  // 推门先落进上锁的一级空间，解锁就在主体区完成，全程无弹窗
   await expect(
     page.getByRole("heading", { name: "密匣", exact: true })
   ).toBeVisible()
-  await expect(page.getByRole("heading", { name: "解锁密匣" })).toHaveCount(0)
-  await expect(page.getByText("密匣已上锁。")).toBeVisible()
-  // 解锁弹窗由页内按钮触发
-  await page.getByRole("button", { name: "解锁", exact: true }).click()
-  await expect(page.getByRole("heading", { name: "解锁密匣" })).toBeVisible()
-  await page.getByPlaceholder("密匣密码").fill("correct-password")
-  await page
-    .getByRole("dialog")
-    .getByRole("button", { name: "解锁", exact: true })
-    .click()
-  await expect(page.getByRole("heading", { name: "解锁密匣" })).toHaveCount(0)
+  await expect(page.getByRole("dialog")).toHaveCount(0)
+  const gate = page.getByRole("form", { name: "解锁密匣" })
+  await expect(
+    page.getByRole("heading", { name: "密匣已上锁", exact: true })
+  ).toBeVisible()
+  await gate.getByPlaceholder("密匣密码").fill("correct-password")
+  await gate.getByRole("button", { name: "解锁", exact: true }).click()
+  await expect(gate).toHaveCount(0)
+  await expect(page.getByRole("dialog")).toHaveCount(0)
 }
 
 test.beforeEach(async ({ page }) => {
@@ -196,21 +194,29 @@ test("旧的密匣 filter 路由值回退到纯捕捉页", async ({ page }) => {
     .toBe(JSON.stringify({ space: "fragments", params: {} }))
 })
 
-test("解锁密码框：原生大写指示器隐藏，细线提示走图标规范", async ({ page }) => {
+test("解锁密码框：text-security 遮蔽生效，大写提示走图标规范", async ({ page }) => {
   await page.goto("/")
   await page.getByRole("button", { name: "资料库", exact: true }).click()
   await page
     .getByRole("complementary", { name: "资料库目录" })
     .getByRole("button", { name: "密匣（上锁空间）", exact: true })
     .click()
-  // 推门先落上锁页，解锁弹窗由页内按钮触发
-  await page.getByRole("button", { name: "解锁", exact: true }).click()
-  await expect(page.getByRole("heading", { name: "解锁密匣" })).toBeVisible()
+  // 推门先落上锁页，密码框直接在主体区
+  const gate = page.getByRole("form", { name: "解锁密匣" })
+  await expect(gate).toBeVisible()
 
-  const input = page.getByPlaceholder("密匣密码")
-  // 注：WebKit 原生 Caps Lock 指示器的隐藏（::-webkit-caps-lock-indicator，
-  // frontend-rules.css）只在 WKWebView/Safari 存在，Chromium 无此伪元素，
-  // 这里只回归自绘提示；原生指示器以真机为准。
+  const input = gate.getByPlaceholder("密匣密码")
+  // 安全线：密码框刻意不是 type="password"（那会让 WKWebView 画出关不掉的
+  // 实底 Caps Lock 指示器），遮蔽改由 text-security 承担——一旦这条 CSS 或
+  // data 属性丢了，密码就会明文显示，所以在这里守住。
+  await expect(input).toHaveAttribute("type", "text")
+  await expect(input).toHaveAttribute("data-shard-password", "true")
+  await expect(input).toHaveAttribute("autocomplete", "off")
+  const security = await input.evaluate(
+    (el) => getComputedStyle(el).webkitTextSecurity
+  )
+  expect(security).toBe("disc")
+
   // 合成带 CapsLock 修饰态的按键，规范内的细线 ⇪ 提示应出现
   await input.evaluate((el) => {
     el.dispatchEvent(

@@ -109,21 +109,26 @@
   }
 
   /*
+   * 密码框一律是 type="text" + text-security 遮蔽（见 LockboxPasswordInput），
+   * 不用 type="password"：WKWebView 会在 type="password" 上直接绘制一个实底
+   * Caps Lock 指示器，那是引擎在 RenderTextControl 里画的，不是 shadow DOM
+   * 节点——::-webkit-caps-lock-indicator 早已不存在，display:none 隐藏不掉
+   * （真机验证过）。换掉 type 才能让它彻底不出现，大写提示由业务侧用规范内的
+   * 细线图标自绘。遮蔽必须无条件生效，否则密码会明文显示。
+   */
+  input[data-shard-password] {
+    -webkit-text-security: disc;
+  }
+
+  /*
    * WKWebView can render Verdana's password glyph as a hollow square. Keep
    * placeholders in the app font, then let the platform UI font and WebKit's
    * native text-security glyph paint entered characters as centered discs.
    */
-  input[type="password"]:not(:placeholder-shown) {
-    -webkit-text-security: disc;
+  input[data-shard-password]:not(:placeholder-shown) {
     font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
       "Segoe UI", sans-serif;
     letter-spacing: 0;
-  }
-
-  /* WebKit 原生 Caps Lock 指示器是实底图标，游离在图标规范之外；
-   * 一律隐藏，由业务侧用规范内的细线图标自绘提示（见 LockboxPasswordInput）。 */
-  input[type="password"]::-webkit-caps-lock-indicator {
-    display: none;
   }
 
   /*

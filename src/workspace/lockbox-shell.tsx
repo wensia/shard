@@ -1,4 +1,10 @@
-import { useMemo, useState, type ComponentProps } from "react"
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ComponentProps,
+} from "react"
 import {
   ChevronDownIcon,
   ChevronRightIcon,
@@ -14,8 +20,15 @@ import {
   SearchContextBar,
 } from "@/components/shard/fragment-search-workspace"
 import { FragmentTimeline } from "@/components/shard/fragment-timeline"
+import {
+  LockboxFormError,
+  LockboxPasswordInput,
+  validateLockboxPasswordPair,
+} from "@/components/shard/lockbox-dialog"
 import type { TaggedSummary } from "@/components/shard/tagged-panel"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { getApiErrorMessage } from "@/lib/api"
 import type { Fragment, LockboxState } from "@/types"
 
 import styles from "./lockbox-shell.module.css"
@@ -27,8 +40,9 @@ interface LockboxShellProps {
   onChangePassword: () => void
   onLock: () => void
   onOpenNote: (fragment: Fragment) => void
+  onResetPassword: (recoveryKey: string, newPassword: string) => Promise<void>
   onSelectTag: (tag: string | null) => void
-  onUnlock: () => void
+  onUnlock: (password: string) => Promise<void>
   search: ComponentProps<typeof FragmentSearchWorkspace>
   searchContextBar: ComponentProps<typeof SearchContextBar> | null
   selectedTag: string | null
@@ -48,6 +62,7 @@ export function LockboxShell({
   onChangePassword,
   onLock,
   onOpenNote,
+  onResetPassword,
   onSelectTag,
   onUnlock,
   search,
@@ -75,15 +90,20 @@ export function LockboxShell({
             onChangePassword={onChangePassword}
             onLock={onLock}
             onSelectTag={onSelectTag}
-            onUnlock={onUnlock}
           />
           {searchContextBar ? (
             <SearchContextBar {...searchContextBar} />
           ) : null}
-          {unlocked && notes.length > 0 ? (
-            <LockboxNotesTree notes={notes} onOpenNote={onOpenNote} />
-          ) : null}
-          <FragmentTimeline {...timeline} />
+          {unlocked ? (
+            <>
+              {notes.length > 0 ? (
+                <LockboxNotesTree notes={notes} onOpenNote={onOpenNote} />
+              ) : null}
+              <FragmentTimeline {...timeline} />
+            </>
+          ) : (
+            <LockboxGate onReset={onResetPassword} onUnlock={onUnlock} />
+          )}
         </div>
 
         {isSearchModeActive ? (
@@ -93,6 +113,190 @@ export function LockboxShell({
         ) : null}
       </div>
     </section>
+  )
+}
+
+/**
+ * 上锁态的主体区：解锁就在这里完成，不再弹窗。忘记密码切到同一块面板内的
+ * 恢复密钥重置，重置成功后的「保存恢复密钥」仍由 LockboxDialog 承接。
+ */
+function LockboxGate({
+  onReset,
+  onUnlock,
+}: {
+  onReset: (recoveryKey: string, newPassword: string) => Promise<void>
+  onUnlock: (password: string) => Promise<void>
+}) {
+  const [mode, setMode] = useState<"reset" | "unlock">("unlock")
+  const [password, setPassword] = useState("")
+  const [recoveryInput, setRecoveryInput] = useState("")
+  const [newPassword, setNewPassword] = useState("")
+  const [repeatPassword, setRepeatPassword] = useState("")
+  const [error, setError] = useState("")
+  const [isBusy, setIsBusy] = useState(false)
+  const passwordRef = useRef<HTMLInputElement>(null)
+  const recoveryRef = useRef<HTMLInputElement>(null)
+
+  // 进入上锁态与切换子表单时把焦点落到第一个输入框
+  useEffect(() => {
+    const target = mode === "unlock" ? passwordRef.current : recoveryRef.current
+    target?.focus()
+  }, [mode])
+
+  function switchMode(next: "reset" | "unlock") {
+    setMode(next)
+    setError("")
+    setPassword("")
+    setRecoveryInput("")
+    setNewPassword("")
+    setRepeatPassword("")
+  }
+
+  async function submit(action: () => Promise<void>) {
+    setError("")
+    setIsBusy(true)
+    try {
+      await action()
+    } catch (error) {
+      setError(getApiErrorMessage(error))
+    } finally {
+      setIsBusy(false)
+    }
+  }
+
+  return (
+    <div className={styles.gate}>
+      <div className={styles.gateCard}>
+        <LockKeyholeIcon
+          aria-hidden="true"
+          className="size-(--shard-icon-size-xl)"
+        />
+        <h2 className={styles.gateTitle}>
+          {mode === "unlock" ? "密匣已上锁" : "重置密匣密码"}
+        </h2>
+        <p className={styles.gateHint}>
+          {mode === "unlock"
+            ? "输入密码解锁，解锁后闲置数分钟自动上锁。"
+            : "用恢复密钥设置新密码，密匣内容保持不变。"}
+        </p>
+
+        {mode === "unlock" ? (
+          <form
+            aria-label="解锁密匣"
+            className={styles.gateForm}
+            onSubmit={(event) => {
+              event.preventDefault()
+              void submit(() => onUnlock(password))
+            }}
+          >
+            <label className="sr-only" htmlFor="lockbox-gate-password">
+              密匣密码
+            </label>
+            <div className={styles.gateRow}>
+              <LockboxPasswordInput
+                disabled={isBusy}
+                id="lockbox-gate-password"
+                onChange={(event) => setPassword(event.target.value)}
+                placeholder="密匣密码"
+                ref={passwordRef}
+                value={password}
+              />
+              <Button
+                disabled={isBusy || !password}
+                size="sm"
+                type="submit"
+                variant="primary"
+              >
+                {isBusy ? "解锁中" : "解锁"}
+              </Button>
+            </div>
+            <LockboxFormError message={error} />
+            <Button
+              className={styles.gateLink}
+              disabled={isBusy}
+              onClick={() => switchMode("reset")}
+              size="sm"
+              type="button"
+              variant="ghost"
+            >
+              忘记密码
+            </Button>
+          </form>
+        ) : (
+          <form
+            aria-label="重置密匣密码"
+            className={styles.gateForm}
+            onSubmit={(event) => {
+              event.preventDefault()
+              const message = validateLockboxPasswordPair(
+                newPassword,
+                repeatPassword
+              )
+              if (message) {
+                setError(message)
+                return
+              }
+              void submit(async () => {
+                await onReset(recoveryInput, newPassword)
+                switchMode("unlock")
+              })
+            }}
+          >
+            <label className="sr-only" htmlFor="lockbox-gate-recovery-key">
+              恢复密钥
+            </label>
+            <Input
+              disabled={isBusy}
+              id="lockbox-gate-recovery-key"
+              onChange={(event) => setRecoveryInput(event.target.value)}
+              placeholder="恢复密钥"
+              ref={recoveryRef}
+              value={recoveryInput}
+            />
+            <label className="sr-only" htmlFor="lockbox-gate-new-password">
+              新密码，至少 8 个字符
+            </label>
+            <LockboxPasswordInput
+              disabled={isBusy}
+              id="lockbox-gate-new-password"
+              onChange={(event) => setNewPassword(event.target.value)}
+              placeholder="新密码，至少 8 个字符"
+              value={newPassword}
+            />
+            <label className="sr-only" htmlFor="lockbox-gate-repeat-password">
+              再次输入新密码
+            </label>
+            <LockboxPasswordInput
+              disabled={isBusy}
+              id="lockbox-gate-repeat-password"
+              onChange={(event) => setRepeatPassword(event.target.value)}
+              placeholder="再次输入新密码"
+              value={repeatPassword}
+            />
+            <LockboxFormError message={error} />
+            <div className={styles.gateActions}>
+              <Button
+                disabled={isBusy}
+                onClick={() => switchMode("unlock")}
+                size="sm"
+                type="button"
+                variant="ghost"
+              >
+                返回解锁
+              </Button>
+              <Button
+                disabled={isBusy || !recoveryInput}
+                size="sm"
+                type="submit"
+                variant="primary"
+              >
+                {isBusy ? "重置中" : "重置密码"}
+              </Button>
+            </div>
+          </form>
+        )}
+      </div>
+    </div>
   )
 }
 
@@ -268,7 +472,6 @@ export function LockboxHeader({
   onChangePassword,
   onLock,
   onSelectTag,
-  onUnlock,
 }: {
   lockbox: LockboxState | null
   selectedTag: string | null
@@ -277,7 +480,6 @@ export function LockboxHeader({
   onChangePassword: () => void
   onLock: () => void
   onSelectTag: (tag: string | null) => void
-  onUnlock: () => void
 }) {
   return (
     <div
@@ -364,6 +566,7 @@ export function LockboxHeader({
               gap: "var(--shard-space-2)",
             }}
           >
+            {/* 上锁态的解锁动作只在主体面板里，头部不再放第二个入口 */}
             {lockbox?.unlocked ? (
               <>
                 <Button onClick={onChangePassword} size="sm" variant="secondary">
@@ -373,11 +576,7 @@ export function LockboxHeader({
                   上锁
                 </Button>
               </>
-            ) : (
-              <Button onClick={onUnlock} size="sm" variant="primary">
-                解锁
-              </Button>
-            )}
+            ) : null}
           </div>
         </div>
 

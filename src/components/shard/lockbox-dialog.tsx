@@ -41,19 +41,29 @@ const PASSWORD_INPUT_STYLE = {
 } as const
 
 /**
- * 密码输入框 + 大写锁定提示。WebKit 原生的 Caps Lock 指示器是实底图标，
- * 不符合图标规范，已在 frontend-rules.css 全局隐藏；这里用规范内的
- * 细线 ⇪ 在框内右侧自绘提示。
+ * 密码输入框 + 大写锁定提示。刻意不用 type="password"：WKWebView 会在它上面
+ * 直接绘制一个实底 Caps Lock 指示器，CSS 关不掉（详见 frontend-rules.css 里
+ * data-shard-password 那段）。这里改用 type="text" + text-security 遮蔽，
+ * 再用规范内的细线 ⇪ 自绘提示。因为不是真的 password 字段，浏览器不再托管
+ * 遮蔽与复制保护，所以自动填充、拼写检查、复制剪切都在这里显式关掉。
+ * 密匣空间的内联解锁面板复用同一个输入框。
  */
-function LockboxPasswordInput(props: ComponentProps<typeof Input>) {
+export function LockboxPasswordInput(props: ComponentProps<typeof Input>) {
   const [capsLockOn, setCapsLockOn] = useState(false)
   const syncCapsLock = (event: ReactKeyboardEvent<HTMLInputElement>) =>
     setCapsLockOn(event.getModifierState("CapsLock"))
   return (
     <div style={{ position: "relative" }}>
       <Input
-        type="password"
+        autoCapitalize="off"
+        autoComplete="off"
+        autoCorrect="off"
+        data-shard-password="true"
+        spellCheck={false}
+        type="text"
         onBlur={() => setCapsLockOn(false)}
+        onCopy={(event) => event.preventDefault()}
+        onCut={(event) => event.preventDefault()}
         onKeyDown={syncCapsLock}
         onKeyUp={syncCapsLock}
         style={{
@@ -118,7 +128,8 @@ export function LockboxDialog({
     setRepeatPassword("")
   }, [mode, recoveryKey])
 
-  if (!mode) return null
+  // 恢复密钥必须展示，哪怕流程是由密匣空间的内联面板发起、没有弹窗 mode
+  if (!mode && !recoveryKey) return null
 
   async function submit(action: () => Promise<void>) {
     setError("")
@@ -133,12 +144,9 @@ export function LockboxDialog({
   }
 
   function validateNewPassword() {
-    if (newPassword.length < 8) {
-      setError("密匣密码至少需要 8 个字符。")
-      return false
-    }
-    if (newPassword !== repeatPassword) {
-      setError("两次输入的密码不一致。")
+    const message = validateLockboxPasswordPair(newPassword, repeatPassword)
+    if (message) {
+      setError(message)
       return false
     }
     return true
@@ -326,27 +334,48 @@ export function LockboxDialog({
             </form>
           ) : null}
 
-            {error ? (
-              <div
-                style={{
-                  borderRadius: "var(--shard-radius-control)",
-                  border: "1px solid rgb(var(--shard-ruby-rgb) / var(--shard-alpha-34))",
-                  background: "rgb(var(--shard-ruby-rgb) / var(--shard-alpha-8))",
-                  paddingInline: "var(--shard-space-3)",
-                  paddingBlock: "var(--shard-space-2)",
-                  fontSize: "0.75rem",
-                  lineHeight: "1.25rem",
-                  color: "var(--shard-ruby)",
-                }}
-              >
-                {error}
-              </div>
-            ) : null}
+            <LockboxFormError message={error} />
           </div>
         </div>
       </DialogContent>
     </Dialog>
   )
+}
+
+/** 密匣表单的统一错误条，弹窗与内联解锁面板共用。 */
+export function LockboxFormError({ message }: { message: string }) {
+  if (!message) return null
+  return (
+    <div
+      role="alert"
+      style={{
+        borderRadius: "var(--shard-radius-control)",
+        border: "1px solid rgb(var(--shard-ruby-rgb) / var(--shard-alpha-34))",
+        background: "rgb(var(--shard-ruby-rgb) / var(--shard-alpha-8))",
+        paddingInline: "var(--shard-space-3)",
+        paddingBlock: "var(--shard-space-2)",
+        fontSize: "0.75rem",
+        lineHeight: "1.25rem",
+        textWrap: "pretty",
+        color: "var(--shard-ruby)",
+      }}
+    >
+      {message}
+    </div>
+  )
+}
+
+/**
+ * 新密码校验：长度与两次输入一致性。返回错误文案，通过则返回 null。
+ * 弹窗与内联重置面板共用同一套规则。
+ */
+export function validateLockboxPasswordPair(
+  newPassword: string,
+  repeatPassword: string
+) {
+  if (newPassword.length < 8) return "密匣密码至少需要 8 个字符。"
+  if (newPassword !== repeatPassword) return "两次输入的密码不一致。"
+  return null
 }
 
 function PasswordPairForm({

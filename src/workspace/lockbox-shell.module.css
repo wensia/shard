@@ -1,3 +1,72 @@
+/* 密匣空间的样式：几何对齐资料库树与时间线空态，全部消费 Kiln token */
+
+/* 上锁态主体区：解锁表单占据时间线空态的位置，视觉沿用空态的居中列 */
+.gate {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  align-items: center;
+  justify-content: center;
+  overflow-y: auto;
+  padding: var(--space-6) var(--space-4);
+}
+
+.gateCard {
+  display: flex;
+  width: 100%;
+  max-width: 320px;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+  color: var(--muted-foreground);
+  text-align: center;
+}
+
+.gateTitle {
+  color: var(--foreground);
+  font-size: var(--text-body);
+  font-weight: 600;
+  text-wrap: balance;
+}
+
+.gateHint {
+  margin: 0;
+  font-size: var(--text-small);
+  line-height: var(--space-5);
+  text-wrap: pretty;
+}
+
+.gateForm {
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  gap: var(--space-2);
+  text-align: left;
+}
+
+/* 密码框与解锁按钮同排，让上锁态只剩一个动作 */
+.gateRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.gateRow > :first-child {
+  flex: 1;
+  min-width: 0;
+}
+
+.gateActions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.gateLink {
+  align-self: center;
+}
+
 /* 密匣空间的笔记树：几何对齐资料库树（treeButton 规格），全部消费 Kiln token */
 
 .notesTree {
