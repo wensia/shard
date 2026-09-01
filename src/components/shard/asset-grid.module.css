@@ -73,6 +73,79 @@
   color: var(--primary);
 }
 
+.asyncPreview {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  align-items: center;
+  justify-content: center;
+}
+
+.textPreview {
+  display: -webkit-box;
+  width: 100%;
+  max-height: 100%;
+  overflow: hidden;
+  padding: var(--space-3);
+  color: var(--muted-foreground);
+  font-size: var(--text-tiny);
+  line-height: var(--leading-relaxed);
+  text-align: left;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 6;
+}
+
+.textPreviewLine {
+  display: block;
+}
+
+.mindMapPreview {
+  display: block;
+  width: 100%;
+  height: 100%;
+  padding: var(--space-2);
+}
+
+.mindMapEdges {
+  fill: none;
+  stroke: var(--muted-foreground);
+  stroke-width: 1;
+  opacity: var(--shard-alpha-34);
+}
+
+.mindMapNodes {
+  fill: var(--muted-foreground);
+  opacity: var(--shard-alpha-55);
+}
+
+.mindMapNodes rect {
+  rx: var(--radius-control);
+}
+
+.tablePreview {
+  width: 100%;
+  height: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  color: var(--muted-foreground);
+  font-size: var(--text-tiny);
+  line-height: var(--leading-tight);
+}
+
+.tablePreview td {
+  max-width: 0;
+  overflow: hidden;
+  border-bottom: 1px solid var(--border);
+  padding: var(--space-1);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tablePreview td + td {
+  border-left: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+}
+
 .image {
   width: 100%;
   height: 100%;

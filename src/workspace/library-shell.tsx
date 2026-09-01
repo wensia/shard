@@ -186,6 +186,10 @@ export function LibraryShell({
     () => fragments.filter((fragment) => deriveKind(fragment.tags) === "note"),
     [fragments]
   )
+  const markdownContentByPath = useMemo(
+    () => new Map(notes.map((note) => [note.path, note.content])),
+    [notes]
+  )
   const inboxTimelineFragments = useMemo(
     () =>
       fragments.filter(
@@ -245,6 +249,15 @@ export function LibraryShell({
     if (selection.path === "notes") return libraryTree?.entries ?? []
     return findTreeEntry(libraryTree?.entries ?? [], selection.path)?.children ?? []
   }, [libraryTree, selection])
+  const selectedDirectoryViewEntries = useMemo(
+    () =>
+      selectedDirectoryEntries.map((entry) =>
+        entry.kind === "markdown"
+          ? { ...entry, content: markdownContentByPath.get(entry.path) }
+          : entry
+      ),
+    [markdownContentByPath, selectedDirectoryEntries]
+  )
   const draftRef = useRef(draft)
   const lastSavedContentRef = useRef("")
   /** 上次读到/存下正文的 SHA-256，保存时作为基线校验；null=暂缺（放行保存）。 */
@@ -900,7 +913,7 @@ export function LibraryShell({
     if (selection?.kind === "directory") {
       return (
         <DirectoryView
-          entries={selectedDirectoryEntries}
+          entries={selectedDirectoryViewEntries}
           onOpenEntry={handleDirectoryEntryClick}
           path={selection.path}
           viewMode={directoryViewMode}

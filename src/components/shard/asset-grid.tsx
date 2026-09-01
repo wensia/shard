@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import {
   ArrowLeftIcon,
   FileSpreadsheetIcon,
@@ -14,6 +14,11 @@ import { Button } from "@/components/ui/button"
 import { getApiErrorMessage, revealFragmentImageInDir } from "@/lib/api"
 import { formatBytes, formatModifiedAt } from "@/lib/file-metadata"
 import { loadFragmentImageSrc } from "@/lib/fragment-images"
+import {
+  extractTextPreview,
+  loadLibraryPreview,
+  type LibraryPreview,
+} from "@/lib/library-preview"
 import type { LibraryAssetEntry } from "@/types"
 
 import styles from "./asset-grid.module.css"
@@ -24,7 +29,9 @@ interface AssetGridProps {
 }
 
 export interface LibraryGridItem {
+  content?: string
   kind: "csv" | "directory" | "image" | "markdown" | "mindmap"
+  mindMapId?: string
   modifiedAt: string
   name: string
   path: string
@@ -95,6 +102,153 @@ function LibraryItemIcon({ kind }: Pick<LibraryGridItem, "kind">) {
   return <FileTextIcon aria-hidden="true" />
 }
 
+function LibraryItemFallback({ kind }: Pick<LibraryGridItem, "kind">) {
+  return (
+    <span className={styles.fileIcon} data-kind={kind}>
+      <LibraryItemIcon kind={kind} />
+    </span>
+  )
+}
+
+function MindMapThumbnail({ preview }: { preview: LibraryPreview }) {
+  if (preview.kind !== "mindmap" || preview.layout.nodes.length === 0) {
+    return null
+  }
+
+  const { bounds, edges, nodes } = preview.layout
+
+  return (
+    <svg
+      aria-hidden="true"
+      className={styles.mindMapPreview}
+      data-library-preview="mindmap"
+      preserveAspectRatio="xMidYMid meet"
+      viewBox={`${bounds.x} ${bounds.y} ${bounds.width} ${bounds.height}`}
+    >
+      <g className={styles.mindMapEdges}>
+        {edges.map((edge) => (
+          <line
+            key={edge.id}
+            x1={edge.x1}
+            x2={edge.x2}
+            y1={edge.y1}
+            y2={edge.y2}
+          />
+        ))}
+      </g>
+      <g className={styles.mindMapNodes}>
+        {nodes.map((node) => (
+          <rect
+            height={node.height}
+            key={node.id}
+            width={node.width}
+            x={node.x}
+            y={node.y}
+          />
+        ))}
+      </g>
+    </svg>
+  )
+}
+
+function TableThumbnail({ preview }: { preview: LibraryPreview }) {
+  if (
+    preview.kind !== "table" ||
+    !preview.rows.some((row) => row.some((cell) => cell.trim().length > 0))
+  ) {
+    return null
+  }
+
+  return (
+    <table
+      aria-hidden="true"
+      className={styles.tablePreview}
+      data-library-preview="table"
+    >
+      <tbody>
+        {preview.rows.map((row, rowIndex) => (
+          <tr key={rowIndex}>
+            {row.map((cell, cellIndex) => (
+              <td key={cellIndex}>{cell}</td>
+            ))}
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  )
+}
+
+function AsyncLibraryItemThumbnail({ item }: { item: LibraryGridItem }) {
+  const targetRef = useRef<HTMLSpanElement>(null)
+  const [preview, setPreview] = useState<LibraryPreview | null>(null)
+
+  useEffect(() => {
+    const target = targetRef.current
+    let cancelled = false
+
+    setPreview(null)
+    if (!target || typeof IntersectionObserver === "undefined") return
+
+    const observer = new IntersectionObserver((entries) => {
+      if (!entries.some((entry) => entry.isIntersecting)) return
+      observer.disconnect()
+      void loadLibraryPreview(item).then((next) => {
+        if (!cancelled) setPreview(next)
+      })
+    })
+    observer.observe(target)
+
+    return () => {
+      cancelled = true
+      observer.disconnect()
+    }
+  }, [item.kind, item.mindMapId, item.modifiedAt, item.path])
+
+  const renderedPreview = preview
+    ? item.kind === "mindmap"
+      ? <MindMapThumbnail preview={preview} />
+      : <TableThumbnail preview={preview} />
+    : null
+
+  return (
+    <span className={styles.asyncPreview} ref={targetRef}>
+      {renderedPreview ?? <LibraryItemFallback kind={item.kind} />}
+    </span>
+  )
+}
+
+function LibraryItemThumbnail({ item }: { item: LibraryGridItem }) {
+  if (item.kind === "image") {
+    return (
+      <AssetThumbnail alt="" className={styles.image} path={item.path} />
+    )
+  }
+
+  if (item.kind === "markdown") {
+    const lines = extractTextPreview(item.content ?? "")
+    if (lines.length > 0) {
+      return (
+        <span
+          className={styles.textPreview}
+          data-library-preview="text"
+        >
+          {lines.map((line, index) => (
+            <span className={styles.textPreviewLine} key={index}>
+              {line}
+            </span>
+          ))}
+        </span>
+      )
+    }
+  }
+
+  if (item.kind === "mindmap" || item.kind === "csv") {
+    return <AsyncLibraryItemThumbnail item={item} />
+  }
+
+  return <LibraryItemFallback kind={item.kind} />
+}
+
 export function LibraryItemGrid({
   ariaLabel,
   emptyMessage,
@@ -126,17 +280,7 @@ export function LibraryItemGrid({
               type="button"
             >
               <span className={styles.thumbnail}>
-                {item.kind === "image" ? (
-                  <AssetThumbnail
-                    alt=""
-                    className={styles.image}
-                    path={item.path}
-                  />
-                ) : (
-                  <span className={styles.fileIcon} data-kind={item.kind}>
-                    <LibraryItemIcon kind={item.kind} />
-                  </span>
-                )}
+                <LibraryItemThumbnail item={item} />
               </span>
               <span className={styles.meta}>
                 <span className={styles.metaPrimary}>{item.name}</span>

@@ -269,11 +269,26 @@ async function installLibraryTreeMock(
           }
           if (command === "list_mind_maps") return clone([mindMapSummary])
           if (command === "read_mind_map") {
+            if (
+              (globalThis as typeof globalThis & {
+                __SHARD_FAIL_MIND_MAP_PREVIEW__?: boolean
+              }).__SHARD_FAIL_MIND_MAP_PREVIEW__
+            ) {
+              throw new Error("Mind map preview failed")
+            }
             return {
               file: clone(mindMapFile),
               path: mindMapSummary.path,
               lastSavedHash: "map-hash",
             }
+          }
+          if (command === "read_csv_file") {
+            return Array.from(
+              new TextEncoder().encode("事项,状态\r\n搭建预览,进行中")
+            )
+          }
+          if (command === "read_fragment_image") {
+            return "data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs="
           }
           if (command === "save_fragment_image") {
             return `assets/${String(args.fileName)}`
@@ -515,6 +530,87 @@ test("目录列表与宫格切换会持久化，宫格可进入子目录并打�
     page.getByRole("article", { name: "资料库查看器" })
       .getByRole("button", { name: "宫格视图", exact: true })
   ).toHaveAttribute("aria-pressed", "true")
+})
+
+test("目录宫格按文件类型显示内容缩略图，列表视图保持密集元数据", async ({ page }) => {
+  await page.getByRole("button", { name: "资料库", exact: true }).click()
+  const treePane = page.getByRole("complementary", { name: "资料库目录" })
+  await treePane.getByRole("button", {
+    name: "资料库根目录（2）",
+    exact: true,
+  }).click()
+  const viewer = page.getByRole("article", { name: "资料库查看器" })
+  const rootList = viewer.getByRole("region", {
+    name: "notes 目录列表",
+    exact: true,
+  })
+  await expect(rootList).toBeVisible()
+  await expect(rootList.locator('[data-library-preview], img')).toHaveCount(0)
+  await expect(rootList.getByText("待重命名", { exact: true })).toHaveCount(0)
+
+  await viewer.getByRole("button", { name: "宫格视图", exact: true }).click()
+  const rootGrid = viewer.getByRole("list", {
+    name: "notes 目录宫格",
+    exact: true,
+  })
+  const markdownCard = rootGrid.getByRole("button", {
+    name: "打开文件 旧笔记.md",
+    exact: true,
+  })
+  await expect(markdownCard.getByText("待重命名", { exact: true })).toBeVisible()
+  await expect(markdownCard.locator('[data-kind="markdown"]')).toHaveCount(0)
+
+  const mindMapCard = rootGrid.getByRole("button", {
+    name: "打开文件 项目导图.shardmap.json",
+    exact: true,
+  })
+  const mindMapPreview = mindMapCard.locator(
+    'svg[data-library-preview="mindmap"]'
+  )
+  await expect(mindMapPreview.locator("rect")).toHaveCount(1)
+  await expect(mindMapPreview.locator("text")).toHaveCount(0)
+
+  const csvCard = rootGrid.getByRole("button", {
+    name: "打开文件 清单.csv",
+    exact: true,
+  })
+  await expect(
+    csvCard.locator('table[data-library-preview="table"]')
+  ).toBeVisible()
+  await expect(csvCard.getByText("事项", { exact: true })).toBeVisible()
+})
+
+test("异步缩略图读取失败时保留类型图标且不抛页面错误", async ({ page }) => {
+  const pageErrors: Error[] = []
+  page.on("pageerror", (error) => pageErrors.push(error))
+  await page.evaluate(() => {
+    const runtime = globalThis as typeof globalThis & {
+      __SHARD_FAIL_MIND_MAP_PREVIEW__?: boolean
+    }
+    runtime.__SHARD_FAIL_MIND_MAP_PREVIEW__ = true
+  })
+
+  await page.getByRole("button", { name: "资料库", exact: true }).click()
+  const treePane = page.getByRole("complementary", { name: "资料库目录" })
+  await treePane.getByRole("button", {
+    name: "资料库根目录（2）",
+    exact: true,
+  }).click()
+  const viewer = page.getByRole("article", { name: "资料库查看器" })
+  await viewer.getByRole("button", { name: "宫格视图", exact: true }).click()
+  const mindMapCard = viewer.getByRole("list", {
+    name: "notes 目录宫格",
+    exact: true,
+  }).getByRole("button", {
+    name: "打开文件 项目导图.shardmap.json",
+    exact: true,
+  })
+
+  await expect(mindMapCard.locator('[data-kind="mindmap"]')).toBeVisible()
+  await expect(
+    mindMapCard.locator('[data-library-preview="mindmap"]')
+  ).toHaveCount(0)
+  expect(pageErrors).toEqual([])
 })
 
 test("空目录显示目录空态", async ({ page }) => {
@@ -1005,6 +1101,12 @@ test("资料库图片分组在第三栏打开网格并保留侧栏与目录树",
 
   // 网格就地展示，不接管窗口——侧栏与目录树都还在。
   await expect(page.getByRole("list", { name: "图片列表" })).toBeVisible()
+  await expect(
+    page.getByRole("list", { name: "图片列表" }).locator("img")
+  ).toHaveAttribute(
+    "src",
+    "data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs="
+  )
   await expect(sidebar).toBeVisible()
   await expect(treePane).toBeVisible()
 

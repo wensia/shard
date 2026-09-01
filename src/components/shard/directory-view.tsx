@@ -19,7 +19,7 @@ export type DirectoryViewMode = "grid" | "list"
 export const DIRECTORY_VIEW_STORAGE_KEY = "shard.library-directory-view"
 
 interface DirectoryViewProps {
-  entries: LibraryTreeEntry[]
+  entries: Array<LibraryTreeEntry & { content?: string }>
   onOpenEntry: (entry: LibraryTreeEntry) => void
   path: string
   viewMode: DirectoryViewMode
@@ -56,9 +56,13 @@ function entryTypeLabel(kind: LibraryTreeEntry["kind"]) {
   return "Markdown"
 }
 
-function gridItem(entry: LibraryTreeEntry): LibraryGridItem {
+function gridItem(
+  entry: LibraryTreeEntry & { content?: string }
+): LibraryGridItem {
   return {
+    content: entry.kind === "markdown" ? entry.content : undefined,
     kind: entry.kind,
+    mindMapId: entry.mindMapId,
     modifiedAt: entry.modifiedAt,
     name: entry.name,
     path: entry.path,
