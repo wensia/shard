@@ -999,7 +999,6 @@ export function LibraryShell({
             emptyMessage={emptyMessage}
             fragments={visibleTimelineFragments}
             scrollToFragmentId={fragmentsScrollTargetId}
-            variant="flat"
           />
         </div>
       )

@@ -330,6 +330,9 @@
   /* 顶部避让由 editorHeader 承担；这里只补内容与标题栏之间的常规呼吸距。
      InboxTagBar 在碎片空间靠上方 composer 撑开间距，本容器必须自己给。 */
   padding-top: var(--space-4);
+  /* 碎片卡片本身是 --card（白），第三栏默认底色也是 --card，白叠白会让卡片
+     完全消失。碎片视图退回页面底色，卡片边界才立得住——与碎片空间一致。 */
+  background: var(--background);
 }
 
 .noteList {
