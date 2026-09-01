@@ -124,6 +124,8 @@ struct LibraryTreeEntry {
     name: String,
     path: String,
     kind: String,
+    size: u64,
+    modified_at: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     children: Option<Vec<LibraryTreeEntry>>,
 }
@@ -2462,12 +2464,18 @@ fn build_library_tree(vault: &Path) -> Result<LibraryTreeSnapshot, String> {
     collect_mind_map_files(&vault.join("maps"), &mut mind_map_files)?;
     let mind_maps = mind_map_files
         .iter()
-        .filter_map(|path| read_mind_map_summary(path, vault).ok())
-        .map(|summary| LibraryTreeEntry {
-            name: summary.title,
-            path: summary.path,
-            kind: "mindmap".to_string(),
-            children: None,
+        .filter_map(|path| {
+            let summary = read_mind_map_summary(path, vault).ok()?;
+            let (size, modified_at) =
+                library_entry_metadata(path, false, &|entry_path| fs::metadata(entry_path));
+            Some(LibraryTreeEntry {
+                name: summary.title,
+                path: summary.path,
+                kind: "mindmap".to_string(),
+                size,
+                modified_at,
+                children: None,
+            })
         })
         .collect();
 
@@ -2543,6 +2551,32 @@ fn collect_library_entries(
     vault: &Path,
     directory: &Path,
 ) -> Result<Vec<LibraryTreeEntry>, String> {
+    collect_library_entries_with_metadata(vault, directory, &|path| fs::metadata(path))
+}
+
+fn library_entry_metadata<F>(path: &Path, is_directory: bool, read_metadata: &F) -> (u64, String)
+where
+    F: Fn(&Path) -> std::io::Result<fs::Metadata>,
+{
+    let Ok(metadata) = read_metadata(path) else {
+        return (0, String::new());
+    };
+    let modified_at = metadata
+        .modified()
+        .map(system_time_to_rfc3339)
+        .unwrap_or_default();
+    let size = if is_directory { 0 } else { metadata.len() };
+    (size, modified_at)
+}
+
+fn collect_library_entries_with_metadata<F>(
+    vault: &Path,
+    directory: &Path,
+    read_metadata: &F,
+) -> Result<Vec<LibraryTreeEntry>, String>
+where
+    F: Fn(&Path) -> std::io::Result<fs::Metadata>,
+{
     let mut entries = Vec::new();
     for entry in fs::read_dir(directory).map_err(|error| error.to_string())? {
         let entry = entry.map_err(|error| error.to_string())?;
@@ -2553,11 +2587,18 @@ fn collect_library_entries(
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().to_string();
         if file_type.is_dir() {
+            let (size, modified_at) = library_entry_metadata(&path, true, read_metadata);
             entries.push(LibraryTreeEntry {
                 name,
                 path: relative_path(vault, &path)?,
                 kind: "directory".to_string(),
-                children: Some(collect_library_entries(vault, &path)?),
+                size,
+                modified_at,
+                children: Some(collect_library_entries_with_metadata(
+                    vault,
+                    &path,
+                    read_metadata,
+                )?),
             });
         } else if file_type.is_file() {
             let kind = match path
@@ -2570,10 +2611,13 @@ fn collect_library_entries(
                 Some("csv") => "csv",
                 _ => continue,
             };
+            let (size, modified_at) = library_entry_metadata(&path, false, read_metadata);
             entries.push(LibraryTreeEntry {
                 name,
                 path: relative_path(vault, &path)?,
                 kind: kind.to_string(),
+                size,
+                modified_at,
                 children: None,
             });
         }
@@ -7174,6 +7218,78 @@ mod tests {
         assert_eq!(tree.fragment_stream.years[0].months[0].month, "08");
         assert_eq!(tree.fragment_stream.years[0].months[0].count, 2);
         assert!(tree.assets.is_empty());
+    }
+
+    #[test]
+    fn library_tree_entries_include_size_and_modified_at() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let vault = tempdir.path();
+        ensure_vault_layout(vault).unwrap();
+        let contents = "note metadata";
+        fs::write(vault.join("notes/说明.md"), contents).unwrap();
+
+        let tree = build_library_tree(vault).unwrap();
+
+        assert_eq!(tree.entries.len(), 1);
+        let entry = &tree.entries[0];
+        assert_eq!(entry.size, contents.len() as u64);
+        assert!(DateTime::parse_from_rfc3339(&entry.modified_at).is_ok());
+        let serialized = serde_json::to_value(entry).unwrap();
+        assert_eq!(serialized["size"], contents.len() as u64);
+        assert_eq!(serialized["modifiedAt"], entry.modified_at);
+    }
+
+    #[test]
+    fn library_tree_directory_size_is_zero() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let vault = tempdir.path();
+        ensure_vault_layout(vault).unwrap();
+        fs::create_dir_all(vault.join("notes/项目")).unwrap();
+        fs::write(vault.join("notes/项目/说明.md"), "nested note").unwrap();
+
+        let tree = build_library_tree(vault).unwrap();
+
+        assert_eq!(tree.entries.len(), 1);
+        let directory = &tree.entries[0];
+        assert_eq!(directory.kind, "directory");
+        assert_eq!(directory.size, 0);
+        assert!(DateTime::parse_from_rfc3339(&directory.modified_at).is_ok());
+    }
+
+    #[test]
+    fn library_tree_keeps_file_when_metadata_read_fails() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let vault = tempdir.path();
+        ensure_vault_layout(vault).unwrap();
+        let failed_path = vault.join("notes/metadata-error.md");
+        fs::write(&failed_path, "still visible").unwrap();
+        fs::write(vault.join("notes/healthy.md"), "healthy").unwrap();
+
+        let entries = collect_library_entries_with_metadata(vault, &vault.join("notes"), &|path| {
+            if path == failed_path {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    "simulated metadata failure",
+                ))
+            } else {
+                fs::metadata(path)
+            }
+        })
+        .unwrap();
+
+        assert_eq!(entries.len(), 2);
+        let failed = entries
+            .iter()
+            .find(|entry| entry.name == "metadata-error.md")
+            .unwrap();
+        assert_eq!(failed.size, 0);
+        assert!(failed.modified_at.is_empty());
+        let healthy = entries
+            .iter()
+            .find(|entry| entry.name == "healthy.md")
+            .unwrap();
+        assert_eq!(healthy.size, "healthy".len() as u64);
+        assert!(DateTime::parse_from_rfc3339(&healthy.modified_at).is_ok());
     }
 
     #[test]

@@ -29,6 +29,13 @@ import { toast } from "sonner"
 
 import { FragmentBacklinksPanel } from "@/components/shard/fragment-related"
 import { AssetGrid, AssetViewer } from "@/components/shard/asset-grid"
+import {
+  DirectoryView,
+  DirectoryViewToolbar,
+  type DirectoryViewMode,
+  readDirectoryViewPreference,
+  writeDirectoryViewPreference,
+} from "@/components/shard/directory-view"
 import { FragmentTimeline } from "@/components/shard/fragment-timeline"
 import { InboxTagBar } from "@/components/shard/inbox-tag-bar"
 import { SearchContextBar } from "@/components/shard/fragment-search-workspace"
@@ -149,6 +156,7 @@ type LibrarySelection =
   | { kind: "mindmap"; path: string }
   | { kind: "fragments"; month?: string; archived?: boolean }
   | { kind: "assets"; path?: string }
+  | { kind: "directory"; path: string }
   | null
 
 interface RenameState {
@@ -195,6 +203,8 @@ export function LibraryShell({
     [fragments]
   )
   const [selection, setSelection] = useState<LibrarySelection>(null)
+  const [directoryViewMode, setDirectoryViewMode] =
+    useState<DirectoryViewMode>(readDirectoryViewPreference)
   const [fragmentsTag, setFragmentsTag] = useState<string | null>(null)
   const [selectedTreePath, setSelectedTreePath] = useState("notes")
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(
@@ -234,6 +244,11 @@ export function LibraryShell({
         : null,
     [libraryTree, selection]
   )
+  const selectedDirectoryEntries = useMemo(() => {
+    if (selection?.kind !== "directory") return []
+    if (selection.path === "notes") return libraryTree?.entries ?? []
+    return findTreeEntry(libraryTree?.entries ?? [], selection.path)?.children ?? []
+  }, [libraryTree, selection])
   const draftRef = useRef(draft)
   const lastSavedContentRef = useRef("")
   /** 上次读到/存下正文的 SHA-256，保存时作为基线校验；null=暂缺（放行保存）。 */
@@ -585,6 +600,14 @@ export function LibraryShell({
     setMobilePane("editor")
   }
 
+  async function selectDirectoryView(path: string) {
+    if (!(await saveCurrentNote())) return
+    setSelection({ kind: "directory", path })
+    setSelectedTreePath(path)
+    setIsZen(false)
+    setMobilePane("editor")
+  }
+
   useEffect(() => {
     if (!navigateTo || navigateTo.requestId === consumedNavigationRef.current) {
       return
@@ -632,6 +655,10 @@ export function LibraryShell({
           : "碎片流"
       : selection?.kind === "assets"
         ? "图片"
+      : selection?.kind === "directory"
+        ? selection.path === "notes"
+          ? "资料库"
+          : selection.path.split("/").pop() || "资料库"
       : selectedNote
         ? selectedNote.path.split("/").pop()?.replace(/\.md$/iu, "") || "无标题笔记"
         : selectedMindMap?.title ?? "选择内容"
@@ -772,12 +799,17 @@ export function LibraryShell({
   }
 
   function handleTreeEntryClick(entry: LibraryTreeEntry) {
-    setSelectedTreePath(entry.path)
     if (entry.kind === "directory") {
       toggleSetValue(setExpandedPaths, entry.path)
+      void selectDirectoryView(entry.path)
+      return
+    }
+    if (entry.kind === "mindmap") {
+      void selectMindMap(entry.path)
       return
     }
     if (entry.kind === "csv") {
+      setSelectedTreePath(entry.path)
       void openCsvFile(entry.path).catch((error) =>
         toast.error(`打开 CSV 失败：${getApiErrorMessage(error)}`, {
           duration: Infinity,
@@ -791,6 +823,20 @@ export function LibraryShell({
     } else {
       toast.error("笔记索引尚未刷新，请稍后重试", { duration: Infinity })
     }
+  }
+
+  function handleDirectoryEntryClick(entry: LibraryTreeEntry) {
+    if (entry.kind === "directory") {
+      setExpandedPaths((current) => {
+        if (current.has(entry.path)) return current
+        const next = new Set(current)
+        next.add(entry.path)
+        return next
+      })
+      void selectDirectoryView(entry.path)
+      return
+    }
+    handleTreeEntryClick(entry)
   }
 
   function renderCreateDirectoryRow(parentPath: string) {
@@ -842,6 +888,17 @@ export function LibraryShell({
   )
 
   function renderSelectedViewer(zen: boolean) {
+    if (selection?.kind === "directory") {
+      return (
+        <DirectoryView
+          entries={selectedDirectoryEntries}
+          onOpenEntry={handleDirectoryEntryClick}
+          path={selection.path}
+          viewMode={directoryViewMode}
+        />
+      )
+    }
+
     if (selection?.kind === "fragments") {
       const emptyMessage = selection.archived
         ? "还没有归档内容。"
@@ -938,7 +995,7 @@ export function LibraryShell({
       )
     }
 
-    return <LibraryEmptyState message="从资料库目录选择碎片流、图片、笔记或思维导图" />
+    return <LibraryEmptyState message="从资料库目录选择碎片流、图片、目录、笔记或思维导图" />
   }
 
   return (
@@ -956,16 +1013,7 @@ export function LibraryShell({
               aria-current={selectedTreePath === "notes" ? "page" : undefined}
               aria-label={`资料库根目录（${notes.length}）`}
               className={styles.rootButton}
-              onClick={() => {
-                void (async () => {
-                  // 清掉选中会让 saveCurrentNote 失去保存对象，必须先 flush 草稿
-                  if (!(await saveCurrentNote())) return
-                  setSelection(null)
-                  setSelectedTreePath("notes")
-                  setIsZen(false)
-                  setMobilePane("list")
-                })()
-              }}
+              onClick={() => void selectDirectoryView("notes")}
               title="资料库根目录"
               type="button"
             >
@@ -1288,7 +1336,17 @@ export function LibraryShell({
             >
               <ChevronLeftIcon aria-hidden="true" />
             </Button>
-            {selectedNote &&
+            {selection?.kind === "directory" ? (
+              <DirectoryViewToolbar
+                onSelectDirectory={(path) => void selectDirectoryView(path)}
+                onViewModeChange={(mode) => {
+                  setDirectoryViewMode(mode)
+                  writeDirectoryViewPreference(mode)
+                }}
+                path={selection.path}
+                viewMode={directoryViewMode}
+              />
+            ) : selectedNote &&
             renaming?.source === "editor" &&
             renaming.path === selectedNote.path ? (
               <div className={styles.renameWrap}>
@@ -1346,6 +1404,7 @@ export function LibraryShell({
             ) : null}
             {selection &&
             selection.kind !== "fragments" &&
+            selection.kind !== "directory" &&
             (selection.kind !== "assets" || selection.path) ? (
               <Button
                 aria-label="进入禅模式"

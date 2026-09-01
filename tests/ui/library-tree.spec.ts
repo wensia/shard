@@ -115,16 +115,32 @@ async function installLibraryTreeMock(
         name: "项目",
         path: "notes/项目",
         kind: "directory",
+        size: 0,
+        modifiedAt: now,
         children: [
           {
             name: "项目计划.md",
             path: "notes/项目/项目计划.md",
             kind: "markdown",
+            size: 1_024,
+            modifiedAt: now,
           },
         ],
       },
-      { name: "旧笔记.md", path: "notes/旧笔记.md", kind: "markdown" },
-      { name: "清单.csv", path: "notes/清单.csv", kind: "csv" },
+      {
+        name: "旧笔记.md",
+        path: "notes/旧笔记.md",
+        kind: "markdown",
+        size: 512,
+        modifiedAt: now,
+      },
+      {
+        name: "清单.csv",
+        path: "notes/清单.csv",
+        kind: "csv",
+        size: 256,
+        modifiedAt: now,
+      },
     ] as Array<Record<string, unknown>>
     const mindMapSummary = {
       id: "map-project",
@@ -181,6 +197,8 @@ async function installLibraryTreeMock(
         name: mindMapSummary.title,
         path: mindMapSummary.path,
         kind: "mindmap",
+        size: 768,
+        modifiedAt: now,
       }],
       fragmentStream: {
         totalCount: fragments.filter((item) => !item.tags.includes("note") && !item.archived).length,
@@ -277,6 +295,8 @@ async function installLibraryTreeMock(
               name,
               path: `${parentPath}/${name}`,
               kind: "directory",
+              size: 0,
+              modifiedAt: now,
               children: [],
             })
             return result()
@@ -296,6 +316,8 @@ async function installLibraryTreeMock(
               name: `${title}.md`,
               path: fragment.path,
               kind: "markdown",
+              size: 0,
+              modifiedAt: now,
             })
             return result(fragment)
           }
@@ -340,7 +362,13 @@ async function installLibraryTreeMock(
             if (!fragment) throw new Error("Fragment not found")
             fragment.tags = [...fragment.tags, "note"]
             fragment.path = `${String(args.destinationDirectory ?? "notes")}/八月灵感.md`
-            entries.push({ name: "八月灵感.md", path: fragment.path, kind: "markdown" })
+            entries.push({
+              name: "八月灵感.md",
+              path: fragment.path,
+              kind: "markdown",
+              size: 0,
+              modifiedAt: now,
+            })
             return result(fragment)
           }
           if (command === "convert_note_to_fragment") {
@@ -386,6 +414,100 @@ async function commandCalls(page: Page, command: string) {
 test.beforeEach(async ({ page }) => {
   await installLibraryTreeMock(page)
   await page.goto("/")
+})
+
+test("点击树目录会同时展开节点并在第三栏浏览内容", async ({ page }) => {
+  await page.getByRole("button", { name: "资料库", exact: true }).click()
+  const treePane = page.getByRole("complementary", { name: "资料库目录" })
+  const viewer = page.getByRole("article", { name: "资料库查看器" })
+
+  await treePane.getByRole("button", { name: "项目", exact: true }).click()
+
+  await expect(
+    treePane.getByRole("button", { name: "项目计划.md", exact: true })
+  ).toBeVisible()
+  const directoryList = viewer.getByRole("region", {
+    name: "notes/项目 目录列表",
+    exact: true,
+  })
+  await expect(directoryList).toBeVisible()
+  await expect(
+    directoryList.getByRole("button", {
+      name: "打开文件 项目计划.md",
+      exact: true,
+    })
+  ).toBeVisible()
+  await expect(
+    page.getByRole("button", { name: "进入禅模式", exact: true })
+  ).toHaveCount(0)
+  const inspector = page.getByRole("complementary", { name: "笔记检查器" })
+  await expect(inspector.locator("button, input, textarea, [role=list]")).toHaveCount(0)
+})
+
+test("目录列表与宫格切换会持久化，宫格可进入子目录并打开笔记", async ({ page }) => {
+  await page.getByRole("button", { name: "资料库", exact: true }).click()
+  const treePane = page.getByRole("complementary", { name: "资料库目录" })
+  await treePane.getByRole("button", {
+    name: "资料库根目录（2）",
+    exact: true,
+  }).click()
+  const viewer = page.getByRole("article", { name: "资料库查看器" })
+  const gridButton = viewer.getByRole("button", { name: "宫格视图", exact: true })
+
+  await expect(
+    viewer.getByRole("button", { name: "列表视图", exact: true })
+  ).toHaveAttribute("aria-pressed", "true")
+  await gridButton.click()
+  await expect(gridButton).toHaveAttribute("aria-pressed", "true")
+  await expect.poll(() => page.evaluate(() =>
+    localStorage.getItem("shard.library-directory-view")
+  )).toBe("grid")
+
+  await viewer.getByRole("button", { name: "打开目录 项目", exact: true }).click()
+  await expect(viewer.getByRole("list", { name: "notes/项目 目录宫格", exact: true })).toBeVisible()
+  await viewer.getByRole("button", {
+    name: "打开文件 项目计划.md",
+    exact: true,
+  }).click()
+  await expect(page.locator('[data-shard-editor="library:note-plan"]')).toBeVisible()
+
+  await page.reload()
+  await page.getByRole("button", { name: "资料库", exact: true }).click()
+  await page.getByRole("complementary", { name: "资料库目录" })
+    .getByRole("button", { name: "资料库根目录（2）", exact: true })
+    .click()
+  await expect(
+    page.getByRole("article", { name: "资料库查看器" })
+      .getByRole("button", { name: "宫格视图", exact: true })
+  ).toHaveAttribute("aria-pressed", "true")
+})
+
+test("空目录显示目录空态", async ({ page }) => {
+  await page.getByRole("button", { name: "资料库", exact: true }).click()
+  const treePane = page.getByRole("complementary", { name: "资料库目录" })
+  await treePane.getByRole("button", { name: "新建目录", exact: true }).click()
+  const input = treePane.getByRole("textbox", { name: "新目录名称", exact: true })
+  await input.fill("待整理")
+  await input.press("Enter")
+  await treePane.getByRole("button", { name: "待整理", exact: true }).click()
+
+  await expect(
+    page.getByRole("article", { name: "资料库查看器" })
+      .getByText("这个目录还是空的", { exact: true })
+  ).toBeVisible()
+})
+
+test("脏笔记进入目录前先保存草稿", async ({ page }) => {
+  await page.getByRole("button", { name: "资料库", exact: true }).click()
+  const treePane = page.getByRole("complementary", { name: "资料库目录" })
+  await treePane.getByRole("button", { name: "旧笔记.md", exact: true }).click()
+  await fillEditor(page, "library:note-old", "# 旧笔记\n先保存再浏览目录")
+  await treePane.getByRole("button", { name: "项目", exact: true }).click()
+
+  await expect.poll(() => commandCalls(page, "update_fragment")).toHaveLength(1)
+  await expect(
+    page.getByRole("region", { name: "notes/项目 目录列表", exact: true })
+  ).toBeVisible()
 })
 
 test("资料库文件树只展示 notes 内容，碎片流年月在资料库就地浏览", async ({ page }) => {

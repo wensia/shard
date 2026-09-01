@@ -6,6 +6,7 @@
   gap: var(--shard-space-4);
   grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
   overflow-y: auto;
+  overscroll-behavior-y: none;
   padding: var(--shard-space-4);
   margin: 0;
   list-style: none;
@@ -22,17 +23,19 @@
   min-width: 0;
   flex-direction: column;
   gap: var(--shard-space-2);
-  border: 1px solid var(--border);
-  border-radius: var(--shard-surface-radius);
+  border: 1px solid transparent;
+  border-radius: var(--radius-panel);
   background: var(--card);
+  box-shadow: var(--shadow-card);
   padding: var(--shard-space-2);
   text-align: left;
-  transition: border-color 120ms ease, background 120ms ease;
+  transition: border-color 120ms ease, box-shadow 120ms ease, transform 120ms ease;
 }
 
 .card:hover {
-  border-color: var(--primary);
-  background: var(--accent);
+  border-color: color-mix(in srgb, var(--primary) var(--shard-alpha-21), transparent);
+  box-shadow: var(--shadow-card-hover);
+  transform: translateY(-1px);
 }
 
 .card:focus-visible {
@@ -49,6 +52,25 @@
   justify-content: center;
   border-radius: var(--shard-radius-control);
   background: var(--muted);
+}
+
+.fileIcon {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted-foreground);
+}
+
+.fileIcon svg {
+  width: var(--space-8);
+  height: var(--space-8);
+  stroke-width: 1.8;
+}
+
+.fileIcon[data-kind="directory"] {
+  color: var(--primary);
 }
 
 .image {

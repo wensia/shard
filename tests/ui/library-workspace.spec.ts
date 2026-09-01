@@ -139,11 +139,15 @@ async function installLibraryMock(page: Page, includeNotes = true) {
                       name: "最近更新的笔记.md",
                       path: "notes/最近更新的笔记.md",
                       kind: "markdown",
+                      size: 0,
+                      modifiedAt: "",
                     },
                     {
                       name: "没有标题的旧笔记.md",
                       path: "notes/没有标题的旧笔记.md",
                       kind: "markdown",
+                      size: 0,
+                      modifiedAt: "",
                     },
                   ]
                 : [],
@@ -161,11 +165,15 @@ async function installLibraryMock(page: Page, includeNotes = true) {
                         name: "最近更新的笔记.md",
                         path: "notes/最近更新的笔记.md",
                         kind: "markdown",
+                        size: 0,
+                        modifiedAt: "",
                       },
                       {
                         name: "没有标题的旧笔记.md",
                         path: "notes/没有标题的旧笔记.md",
                         kind: "markdown",
+                        size: 0,
+                        modifiedAt: "",
                       },
                     ]
                   : [],

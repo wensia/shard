@@ -1,8 +1,17 @@
-import { ArrowLeftIcon, FolderOpenIcon } from "lucide-react"
+import {
+  ArrowLeftIcon,
+  FileSpreadsheetIcon,
+  FileTextIcon,
+  FolderIcon,
+  FolderOpenIcon,
+  GitBranchIcon,
+  ImageIcon,
+} from "lucide-react"
 import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
 import { getApiErrorMessage, revealFragmentImageInDir } from "@/lib/api"
+import { formatBytes, formatModifiedAt } from "@/lib/file-metadata"
 import {
   ATTACHMENT_SCHEME,
   resolveFragmentImageSrc,
@@ -14,6 +23,22 @@ import styles from "./asset-grid.module.css"
 interface AssetGridProps {
   assets: LibraryAssetEntry[]
   onSelectAsset: (path: string) => void
+}
+
+export interface LibraryGridItem {
+  kind: "csv" | "directory" | "image" | "markdown" | "mindmap"
+  modifiedAt: string
+  name: string
+  path: string
+  secondary?: string
+  size: number
+}
+
+interface LibraryItemGridProps {
+  ariaLabel: string
+  emptyMessage: string
+  items: LibraryGridItem[]
+  onSelectItem: (item: LibraryGridItem) => void
 }
 
 interface AssetViewerProps {
@@ -31,26 +56,6 @@ function assetImageSrc(path: string) {
   return resolveFragmentImageSrc(`${ATTACHMENT_SCHEME}${hash}`)
 }
 
-function formatAssetSize(size: number) {
-  if (size < 1024) return `${size} B`
-  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`
-
-  return `${(size / (1024 * 1024)).toFixed(1)} MB`
-}
-
-function formatAssetDate(modifiedAt: string) {
-  if (!modifiedAt) return ""
-
-  const date = new Date(modifiedAt)
-  if (Number.isNaN(date.getTime())) return ""
-
-  return date.toLocaleDateString("zh-CN", {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-  })
-}
-
 function assetLabel(path: string) {
   const fileName = path.split("/").pop() ?? path
   const extension = fileName.match(/\.([a-z0-9]+)$/iu)?.[1]?.toUpperCase()
@@ -58,48 +63,86 @@ function assetLabel(path: string) {
   return extension ?? "图片"
 }
 
-export function AssetGrid({ assets, onSelectAsset }: AssetGridProps) {
-  if (assets.length === 0) {
+function LibraryItemIcon({ kind }: Pick<LibraryGridItem, "kind">) {
+  if (kind === "directory") return <FolderIcon aria-hidden="true" />
+  if (kind === "csv") return <FileSpreadsheetIcon aria-hidden="true" />
+  if (kind === "mindmap") return <GitBranchIcon aria-hidden="true" />
+  if (kind === "image") return <ImageIcon aria-hidden="true" />
+  return <FileTextIcon aria-hidden="true" />
+}
+
+export function LibraryItemGrid({
+  ariaLabel,
+  emptyMessage,
+  items,
+  onSelectItem,
+}: LibraryItemGridProps) {
+  if (items.length === 0) {
     return (
       <div className={styles.empty}>
-        <p className={styles.emptyText}>还没有图片附件</p>
+        <p className={styles.emptyText}>{emptyMessage}</p>
       </div>
     )
   }
 
   return (
-    <ul aria-label="图片列表" className={styles.grid}>
-      {assets.map((asset) => (
-        <li className={styles.cardItem} key={asset.path}>
-          <button
-            aria-label={`打开图片 ${assetLabel(asset.path)} ${formatAssetSize(asset.size)}`}
-            className={styles.card}
-            onClick={() => onSelectAsset(asset.path)}
-            type="button"
-          >
-            <span className={styles.thumbnail}>
-              <img
-                alt=""
-                className={styles.image}
-                loading="lazy"
-                src={assetImageSrc(asset.path)}
-              />
-            </span>
-            <span className={styles.meta}>
-              <span className={styles.metaPrimary}>
-                {assetLabel(asset.path)}
+    <ul aria-label={ariaLabel} className={styles.grid}>
+      {items.map((item) => {
+        const formattedDate = formatModifiedAt(item.modifiedAt)
+        const secondary =
+          item.secondary ??
+          [formatBytes(item.size), formattedDate].filter(Boolean).join(" · ")
+
+        return (
+          <li className={styles.cardItem} key={item.path}>
+            <button
+              aria-label={`打开${item.kind === "directory" ? "目录" : "文件"} ${item.name}`}
+              className={styles.card}
+              onClick={() => onSelectItem(item)}
+              type="button"
+            >
+              <span className={styles.thumbnail}>
+                {item.kind === "image" ? (
+                  <img
+                    alt=""
+                    className={styles.image}
+                    loading="lazy"
+                    src={assetImageSrc(item.path)}
+                  />
+                ) : (
+                  <span className={styles.fileIcon} data-kind={item.kind}>
+                    <LibraryItemIcon kind={item.kind} />
+                  </span>
+                )}
               </span>
-              <span className={styles.metaSecondary}>
-                {formatAssetSize(asset.size)}
-                {formatAssetDate(asset.modifiedAt)
-                  ? ` · ${formatAssetDate(asset.modifiedAt)}`
-                  : ""}
+              <span className={styles.meta}>
+                <span className={styles.metaPrimary}>{item.name}</span>
+                {secondary ? (
+                  <span className={styles.metaSecondary}>{secondary}</span>
+                ) : null}
               </span>
-            </span>
-          </button>
-        </li>
-      ))}
+            </button>
+          </li>
+        )
+      })}
     </ul>
+  )
+}
+
+export function AssetGrid({ assets, onSelectAsset }: AssetGridProps) {
+  return (
+    <LibraryItemGrid
+      ariaLabel="图片列表"
+      emptyMessage="还没有图片附件"
+      items={assets.map((asset) => ({
+        kind: "image",
+        modifiedAt: asset.modifiedAt,
+        name: assetLabel(asset.path),
+        path: asset.path,
+        size: asset.size,
+      }))}
+      onSelectItem={(item) => onSelectAsset(item.path)}
+    />
   )
 }
 
@@ -153,13 +196,13 @@ export function AssetViewer({ asset, onBack }: AssetViewerProps) {
         <div className={styles.viewerMetaRow}>
           <dt className={styles.viewerMetaKey}>大小</dt>
           <dd className={styles.viewerMetaValue}>
-            {formatAssetSize(asset.size)}
+            {formatBytes(asset.size)}
           </dd>
         </div>
         <div className={styles.viewerMetaRow}>
           <dt className={styles.viewerMetaKey}>修改时间</dt>
           <dd className={styles.viewerMetaValue}>
-            {formatAssetDate(asset.modifiedAt) || "未知"}
+            {formatModifiedAt(asset.modifiedAt) || "未知"}
           </dd>
         </div>
       </dl>

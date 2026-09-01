@@ -72,6 +72,8 @@ export interface LibraryTreeEntry {
   name: string
   path: string
   kind: LibraryTreeEntryKind
+  size: number
+  modifiedAt: string
   children?: LibraryTreeEntry[]
 }
 

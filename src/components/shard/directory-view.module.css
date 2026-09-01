@@ -1,0 +1,147 @@
+.toolbar {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.breadcrumbs,
+.breadcrumbPart {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+}
+
+.breadcrumbs {
+  overflow: hidden;
+}
+
+.breadcrumbPart {
+  flex: none;
+  gap: var(--space-1);
+}
+
+.breadcrumbPart:last-child {
+  min-width: 0;
+}
+
+.breadcrumbPart svg {
+  width: var(--space-3);
+  height: var(--space-3);
+  color: var(--muted-foreground);
+}
+
+.breadcrumbButton {
+  max-width: 100%;
+  overflow: hidden;
+  border-radius: var(--radius-control);
+  padding: var(--space-1) var(--space-2);
+  color: var(--muted-foreground);
+  font-size: var(--text-body);
+  line-height: var(--leading-tight);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.breadcrumbButton:hover {
+  background: var(--muted);
+  color: var(--foreground);
+}
+
+.breadcrumbButton[aria-current="page"] {
+  color: var(--foreground);
+  font-weight: var(--weight-medium);
+}
+
+.breadcrumbButton:focus-visible,
+.listRow:focus-visible {
+  outline: none;
+  box-shadow: var(--ring-focus);
+}
+
+.viewToggle {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.list {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--background);
+}
+
+.listHeader,
+.listRow {
+  display: grid;
+  min-width: 0;
+  align-items: center;
+  grid-template-columns: minmax(0, 2fr) repeat(3, minmax(0, 1fr));
+  gap: var(--space-3);
+  padding: 0 var(--space-4);
+  text-align: left;
+}
+
+.listHeader {
+  min-height: var(--control-height);
+  flex: none;
+  border-bottom: 1px solid var(--table-header-border);
+  background: var(--table-header);
+  color: var(--muted-foreground);
+  font-size: var(--text-meta);
+  font-weight: var(--weight-semibold);
+}
+
+.listBody {
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+  overscroll-behavior: none;
+}
+
+.listRow {
+  width: 100%;
+  min-height: var(--table-row-height);
+  border-bottom: 1px solid var(--border);
+  background: var(--card);
+  color: var(--foreground);
+  font-size: var(--text-body);
+  line-height: var(--leading-normal);
+}
+
+.listRow:hover {
+  background: var(--table-row-hover);
+}
+
+.listRow span {
+  min-width: 0;
+}
+
+.nameCell {
+  overflow: hidden;
+  font-weight: var(--weight-medium);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.numericCell {
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+}
+
+.empty {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-6);
+  color: var(--muted-foreground);
+  font-size: var(--text-body);
+}
