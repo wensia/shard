@@ -1367,7 +1367,7 @@ export function LibraryShell({
                 />
               </div>
             ) : (
-              <h2 className={styles.editorTitle} data-tauri-drag-region>
+              <>
                 {openedFileParentPath ? (
                   <Button
                     aria-label="返回所在目录"
@@ -1381,6 +1381,7 @@ export function LibraryShell({
                     <ChevronLeftIcon aria-hidden="true" />
                   </Button>
                 ) : null}
+                <h2 className={styles.editorTitle} data-tauri-drag-region>
                 {selectedNote ? (
                   <button
                     aria-label="重命名文件"
@@ -1397,7 +1398,8 @@ export function LibraryShell({
                 ) : (
                   "选择内容"
                 )}
-              </h2>
+                </h2>
+              </>
             )}
             {selectedNote ? (
               <span
