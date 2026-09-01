@@ -303,7 +303,7 @@ test("多选公开碎片并以模板生成笔记，生成中保持局部进度�
         name: "访谈问题与行动建议.md",
         exact: true,
       })
-  ).toBeVisible()
+  ).toHaveCount(0)
   await expect(
     page.locator('[data-shard-editor="library:note-organized"]')
   ).toBeVisible()

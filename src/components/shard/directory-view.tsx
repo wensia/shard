@@ -2,6 +2,7 @@ import {
   ChevronRightIcon,
   Grid2X2Icon,
   ListIcon,
+  MoreHorizontalIcon,
 } from "lucide-react"
 
 import {
@@ -9,6 +10,17 @@ import {
   type LibraryGridItem,
 } from "@/components/shard/asset-grid"
 import { Button } from "@/components/ui/button"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import { Input } from "@/components/ui/input"
 import { formatBytes, formatModifiedAt } from "@/lib/file-metadata"
 import type { LibraryTreeEntry } from "@/types"
 
@@ -19,10 +31,33 @@ export type DirectoryViewMode = "grid" | "list"
 export const DIRECTORY_VIEW_STORAGE_KEY = "shard.library-directory-view"
 
 interface DirectoryViewProps {
+  busy: boolean
+  destinations: string[]
   entries: Array<LibraryTreeEntry & { content?: string }>
+  onConvertToFragment: (entry: LibraryTreeEntry) => void
+  onDelete: (entry: LibraryTreeEntry) => void
+  onMove: (entry: LibraryTreeEntry, destinationDirectory: string) => void
+  onMoveToLockbox: (entry: LibraryTreeEntry) => void
   onOpenEntry: (entry: LibraryTreeEntry) => void
+  onRename: (entry: LibraryTreeEntry) => void
+  onRenameCancel: () => void
+  onRenameChange: (value: string) => void
+  onRenameSubmit: () => void
   path: string
+  renaming: { path: string; value: string } | null
   viewMode: DirectoryViewMode
+}
+
+interface LibraryEntryMenuProps {
+  busy: boolean
+  className?: string
+  destinations: string[]
+  entry: LibraryTreeEntry
+  onConvertToFragment: (entry: LibraryTreeEntry) => void
+  onDelete: (entry: LibraryTreeEntry) => void
+  onMove: (entry: LibraryTreeEntry, destinationDirectory: string) => void
+  onMoveToLockbox: (entry: LibraryTreeEntry) => void
+  onRename: (entry: LibraryTreeEntry) => void
 }
 
 interface DirectoryViewToolbarProps {
@@ -82,6 +117,121 @@ function breadcrumbParts(path: string) {
   }))
 }
 
+export function libraryEntryDestinations(
+  entry: LibraryTreeEntry,
+  directories: string[]
+) {
+  return directories.filter(
+    (path) =>
+      path !== entry.path &&
+      !path.startsWith(`${entry.path}/`) &&
+      path !== entry.path.slice(0, entry.path.lastIndexOf("/"))
+  )
+}
+
+export function LibraryEntryMenu({
+  busy,
+  className,
+  destinations,
+  entry,
+  onConvertToFragment,
+  onDelete,
+  onMove,
+  onMoveToLockbox,
+  onRename,
+}: LibraryEntryMenuProps) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        disabled={busy}
+        render={
+          <Button
+            aria-label={`${entry.name} 操作`}
+            className={className}
+            size="icon-sm"
+            type="button"
+            variant="ghost"
+          />
+        }
+      >
+        <MoreHorizontalIcon aria-hidden="true" />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuItem onClick={() => onRename(entry)}>
+          重命名
+        </DropdownMenuItem>
+        <DropdownMenuSub>
+          <DropdownMenuSubTrigger>移动到…</DropdownMenuSubTrigger>
+          <DropdownMenuSubContent>
+            {destinations.map((directory) => (
+              <DropdownMenuItem
+                key={directory}
+                onClick={() => onMove(entry, directory)}
+              >
+                {directory === "notes"
+                  ? "资料库根目录"
+                  : directory.replace(/^notes\//u, "")}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuSubContent>
+        </DropdownMenuSub>
+        {entry.kind === "markdown" ? (
+          <>
+            <DropdownMenuItem onClick={() => onConvertToFragment(entry)}>
+              转为碎片
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => onMoveToLockbox(entry)}>
+              移入密匣
+            </DropdownMenuItem>
+          </>
+        ) : null}
+        <DropdownMenuSeparator />
+        <DropdownMenuItem
+          onClick={() => onDelete(entry)}
+          variant="destructive"
+        >
+          删除
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+}
+
+function RenameInput({
+  busy,
+  onCancel,
+  onChange,
+  onSubmit,
+  value,
+}: {
+  busy: boolean
+  onCancel: () => void
+  onChange: (value: string) => void
+  onSubmit: () => void
+  value: string
+}) {
+  return (
+    <Input
+      aria-label="重命名名称"
+      autoFocus
+      disabled={busy}
+      onBlur={onSubmit}
+      onChange={(event) => onChange(event.target.value)}
+      onFocus={(event) => event.target.select()}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") {
+          event.preventDefault()
+          onSubmit()
+        } else if (event.key === "Escape") {
+          event.stopPropagation()
+          onCancel()
+        }
+      }}
+      value={value}
+    />
+  )
+}
+
 export function DirectoryViewToolbar({
   onSelectDirectory,
   onViewModeChange,
@@ -134,11 +284,35 @@ export function DirectoryViewToolbar({
 }
 
 export function DirectoryView({
+  busy,
+  destinations,
   entries,
+  onConvertToFragment,
+  onDelete,
+  onMove,
+  onMoveToLockbox,
   onOpenEntry,
+  onRename,
+  onRenameCancel,
+  onRenameChange,
+  onRenameSubmit,
   path,
+  renaming,
   viewMode,
 }: DirectoryViewProps) {
+  const renderEntryMenu = (entry: LibraryTreeEntry) => (
+    <LibraryEntryMenu
+      busy={busy}
+      destinations={libraryEntryDestinations(entry, destinations)}
+      entry={entry}
+      onConvertToFragment={onConvertToFragment}
+      onDelete={onDelete}
+      onMove={onMove}
+      onMoveToLockbox={onMoveToLockbox}
+      onRename={onRename}
+    />
+  )
+
   if (viewMode === "grid") {
     return (
       <LibraryItemGrid
@@ -149,6 +323,21 @@ export function DirectoryView({
           const entry = entries.find((candidate) => candidate.path === item.path)
           if (entry) onOpenEntry(entry)
         }}
+        renderItemActions={(item) => {
+          const entry = entries.find((candidate) => candidate.path === item.path)
+          return entry ? renderEntryMenu(entry) : null
+        }}
+        renderItemRename={(item) =>
+          renaming?.path === item.path ? (
+            <RenameInput
+              busy={busy}
+              onCancel={onRenameCancel}
+              onChange={onRenameChange}
+              onSubmit={onRenameSubmit}
+              value={renaming.value}
+            />
+          ) : null
+        }
       />
     )
   }
@@ -168,28 +357,53 @@ export function DirectoryView({
         <span>类型</span>
         <span>大小</span>
         <span>修改时间</span>
+        <span aria-hidden="true" />
       </div>
       <div className={styles.listBody}>
-        {entries.map((entry) => (
-          <button
-            aria-label={`打开${entry.kind === "directory" ? "目录" : "文件"} ${entry.name}`}
-            className={styles.listRow}
-            key={entry.path}
-            onClick={() => onOpenEntry(entry)}
-            type="button"
-          >
-            <span className={styles.nameCell} title={entry.name}>
-              {entry.name}
-            </span>
-            <span>{entryTypeLabel(entry.kind)}</span>
-            <span className={styles.numericCell}>
-              {entry.kind === "directory" ? "—" : formatBytes(entry.size)}
-            </span>
-            <span className={styles.numericCell}>
-              {formatModifiedAt(entry.modifiedAt) || "未知"}
-            </span>
-          </button>
-        ))}
+        {entries.map((entry) => {
+          const isRenaming = renaming?.path === entry.path
+          return (
+            <div className={styles.listRow} key={entry.path}>
+              {isRenaming ? (
+                <div className={styles.listOpenButton}>
+                  <RenameInput
+                    busy={busy}
+                    onCancel={onRenameCancel}
+                    onChange={onRenameChange}
+                    onSubmit={onRenameSubmit}
+                    value={renaming.value}
+                  />
+                  <span>{entryTypeLabel(entry.kind)}</span>
+                  <span className={styles.numericCell}>
+                    {entry.kind === "directory" ? "—" : formatBytes(entry.size)}
+                  </span>
+                  <span className={styles.numericCell}>
+                    {formatModifiedAt(entry.modifiedAt) || "未知"}
+                  </span>
+                </div>
+              ) : (
+                <button
+                  aria-label={`打开${entry.kind === "directory" ? "目录" : "文件"} ${entry.name}`}
+                  className={styles.listOpenButton}
+                  onClick={() => onOpenEntry(entry)}
+                  type="button"
+                >
+                  <span className={styles.nameCell} title={entry.name}>
+                    {entry.name}
+                  </span>
+                  <span>{entryTypeLabel(entry.kind)}</span>
+                  <span className={styles.numericCell}>
+                    {entry.kind === "directory" ? "—" : formatBytes(entry.size)}
+                  </span>
+                  <span className={styles.numericCell}>
+                    {formatModifiedAt(entry.modifiedAt) || "未知"}
+                  </span>
+                </button>
+              )}
+              {isRenaming ? <span /> : renderEntryMenu(entry)}
+            </div>
+          )
+        })}
       </div>
     </div>
   )

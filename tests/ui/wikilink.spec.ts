@@ -256,9 +256,14 @@ test("断链使用待建样式，点击仅提示且编辑器可继续输入", as
 
 test("资料库保存通过现有 relation 命令同步 wikilink diff", async ({ page }) => {
   await page.getByRole("button", { name: "资料库", exact: true }).click()
-  await page.getByRole("complementary", { name: "资料库目录" }).getByRole("button", { name: "目标笔记.md", exact: true }).click()
+  const tree = page.getByRole("complementary", { name: "资料库目录" })
+  await tree.getByRole("button", { name: /^资料库根目录/ }).click()
+  await page.getByRole("region", { name: "notes 目录列表", exact: true })
+    .getByRole("button", { name: "打开文件 目标笔记.md", exact: true }).click()
   await fillEditor(page, "library:note-target", "# 目标笔记\n[[fragment-target]]")
-  await page.getByRole("complementary", { name: "资料库目录" }).getByRole("button", { name: "来源笔记.md", exact: true }).click()
+  await tree.getByRole("button", { name: /^资料库根目录/ }).click()
+  await page.getByRole("region", { name: "notes 目录列表", exact: true })
+    .getByRole("button", { name: "打开文件 来源笔记.md", exact: true }).click()
 
   await expect
     .poll(() =>
@@ -285,7 +290,10 @@ test("资料库保存通过现有 relation 命令同步 wikilink diff", async ({
 
 test("资料库第三栏展示 wikilink 反向链接分组", async ({ page }) => {
   await page.getByRole("button", { name: "资料库", exact: true }).click()
-  await page.getByRole("complementary", { name: "资料库目录" }).getByRole("button", { name: "目标笔记.md", exact: true }).click()
+  await page.getByRole("complementary", { name: "资料库目录" })
+    .getByRole("button", { name: /^资料库根目录/ }).click()
+  await page.getByRole("region", { name: "notes 目录列表", exact: true })
+    .getByRole("button", { name: "打开文件 目标笔记.md", exact: true }).click()
 
   const inspector = page.locator("[data-library-inspector-slot]")
   await expect(inspector.getByRole("region", { name: "反向链接" })).toBeVisible()

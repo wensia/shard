@@ -14,16 +14,12 @@ import {
   ChevronDownIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
-  DatabaseIcon,
   FilePlus2Icon,
-  FileTextIcon,
   FolderIcon,
   FolderPlusIcon,
-  GitBranchIcon,
   ImageIcon,
   LockKeyholeIcon,
   Maximize2Icon,
-  MoreHorizontalIcon,
 } from "lucide-react"
 import { toast } from "sonner"
 
@@ -32,7 +28,9 @@ import { AssetGrid, AssetViewer } from "@/components/shard/asset-grid"
 import {
   DirectoryView,
   DirectoryViewToolbar,
+  LibraryEntryMenu,
   type DirectoryViewMode,
+  libraryEntryDestinations,
   readDirectoryViewPreference,
   writeDirectoryViewPreference,
 } from "@/components/shard/directory-view"
@@ -50,16 +48,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuSub,
-  DropdownMenuSubContent,
-  DropdownMenuSubTrigger,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
 import { ShardEditor } from "@/editor/shard-editor"
 import { createShardTagAutocomplete } from "@/editor/extensions/tag-autocomplete"
@@ -157,7 +145,7 @@ type LibrarySelection =
 
 interface RenameState {
   path: string
-  source: "editor" | "tree"
+  source: "directory" | "editor" | "tree"
   value: string
 }
 
@@ -662,6 +650,15 @@ export function LibraryShell({
     ? pendingScrollFragmentId
     : null
 
+  // 树只剩目录后，第三栏打开文件就没有回到列表的路了——给出所在目录的返回口，
+  // 与图片单张视图的「返回图片列表」同一个模式。
+  const openedFileParentPath = (() => {
+    const path = selectedNote?.path ?? selectedMindMap?.path
+    if (!path) return null
+    const separator = path.lastIndexOf("/")
+    return separator > 0 ? path.slice(0, separator) : "notes"
+  })()
+
   const selectedTitle =
     selection?.kind === "fragments"
       ? selection.archived
@@ -741,6 +738,40 @@ export function LibraryShell({
     setTreeDialog({ kind: "delete", entry })
   }
 
+  function moveEntry(entry: LibraryTreeEntry, destinationDirectory: string) {
+    void runSavedMutation("移动", () =>
+      moveLibraryEntry(entry.path, destinationDirectory)
+    )
+  }
+
+  function convertEntryToFragment(entry: LibraryTreeEntry) {
+    const note = notes.find((candidate) => candidate.path === entry.path)
+    if (!note) return
+    void runSavedMutation("转回碎片", () =>
+      convertNoteToFragment(note.id)
+    ).then((result) => {
+      if (!result) return
+      setSelection(null)
+      setSelectedTreePath("notes")
+      setIsZen(false)
+      setMobilePane("list")
+    })
+  }
+
+  function moveEntryToLockbox(entry: LibraryTreeEntry) {
+    const note = notes.find((candidate) => candidate.path === entry.path)
+    if (!note || busyAction) return
+    void (async () => {
+      if (!(await saveCurrentNote())) return
+      setBusyAction("移入密匣")
+      try {
+        await onMoveToLockbox(note)
+      } finally {
+        setBusyAction(null)
+      }
+    })()
+  }
+
   function startRename(path: string, source: RenameState["source"]) {
     const fileName = path.split("/").pop() ?? ""
     setRenaming({
@@ -778,8 +809,10 @@ export function LibraryShell({
     if (parent !== "notes") {
       setExpandedPaths((current) => new Set(current).add(parent))
     }
+    setSelection({ kind: "directory", path: parent })
+    setSelectedTreePath(parent)
     setMobilePane("list")
-    startRename(result.fragment.path, "tree")
+    startRename(result.fragment.path, "directory")
   }
 
   function startCreateDirectory() {
@@ -913,9 +946,24 @@ export function LibraryShell({
     if (selection?.kind === "directory") {
       return (
         <DirectoryView
+          busy={busyAction !== null}
+          destinations={directories}
           entries={selectedDirectoryViewEntries}
+          onConvertToFragment={convertEntryToFragment}
+          onDelete={requestDelete}
+          onMove={moveEntry}
+          onMoveToLockbox={moveEntryToLockbox}
           onOpenEntry={handleDirectoryEntryClick}
+          onRename={(entry) => startRename(entry.path, "directory")}
+          onRenameCancel={() => setRenaming(null)}
+          onRenameChange={(value) =>
+            setRenaming((current) =>
+              current ? { ...current, value } : null
+            )
+          }
+          onRenameSubmit={() => void submitRename()}
           path={selection.path}
+          renaming={renaming?.source === "directory" ? renaming : null}
           viewMode={directoryViewMode}
         />
       )
@@ -1223,42 +1271,10 @@ export function LibraryShell({
                       entries={libraryTree.entries}
                       expandedPaths={expandedPaths}
                       onDelete={requestDelete}
-                      onConvertToFragment={(entry) => {
-                        const note = notes.find(
-                          (candidate) => candidate.path === entry.path
-                        )
-                        if (!note) return
-                        void runSavedMutation("转回碎片", () =>
-                          convertNoteToFragment(note.id)
-                        ).then((result) => {
-                          if (!result) return
-                          setSelection(null)
-                          setSelectedTreePath("notes")
-                          setIsZen(false)
-                          setMobilePane("list")
-                        })
-                      }}
+                      onConvertToFragment={convertEntryToFragment}
                       onEntryClick={handleTreeEntryClick}
-                      onMove={(entry, destinationDirectory) => {
-                        void runSavedMutation("移动", () =>
-                          moveLibraryEntry(entry.path, destinationDirectory)
-                        )
-                      }}
-                      onMoveToLockbox={(entry) => {
-                        const note = notes.find(
-                          (candidate) => candidate.path === entry.path
-                        )
-                        if (!note || busyAction) return
-                        void (async () => {
-                          if (!(await saveCurrentNote())) return
-                          setBusyAction("移入密匣")
-                          try {
-                            await onMoveToLockbox(note)
-                          } finally {
-                            setBusyAction(null)
-                          }
-                        })()
-                      }}
+                      onMove={moveEntry}
+                      onMoveToLockbox={moveEntryToLockbox}
                       onRename={(entry) => startRename(entry.path, "tree")}
                       onRenameCancel={() => setRenaming(null)}
                       onRenameChange={(value) =>
@@ -1352,6 +1368,19 @@ export function LibraryShell({
               </div>
             ) : (
               <h2 className={styles.editorTitle} data-tauri-drag-region>
+                {openedFileParentPath ? (
+                  <Button
+                    aria-label="返回所在目录"
+                    className={styles.backToDirectory}
+                    disabled={busyAction !== null}
+                    onClick={() => void selectDirectoryView(openedFileParentPath)}
+                    size="icon-sm"
+                    title="返回所在目录"
+                    variant="ghost"
+                  >
+                    <ChevronLeftIcon aria-hidden="true" />
+                  </Button>
+                ) : null}
                 {selectedNote ? (
                   <button
                     aria-label="重命名文件"
@@ -1520,34 +1549,25 @@ function TreeEntries({
   renderCreateRow,
   selectedPath,
 }: TreeEntriesProps) {
-  return entries.map((entry) => {
-    const expanded =
-      entry.kind === "directory" && expandedPaths.has(entry.path)
-    const destinations = directories.filter(
-      (path) =>
-        path !== entry.path &&
-        !path.startsWith(`${entry.path}/`) &&
-        path !== entry.path.slice(0, entry.path.lastIndexOf("/"))
+  return entries.filter((entry) => entry.kind === "directory").map((entry) => {
+    const childDirectories = (entry.children ?? []).filter(
+      (child) => child.kind === "directory"
     )
-    const Icon =
-      entry.kind === "directory"
-        ? FolderIcon
-        : entry.kind === "csv"
-          ? DatabaseIcon
-          : entry.kind === "mindmap"
-            ? GitBranchIcon
-            : FileTextIcon
+    const createRow = renderCreateRow(entry.path)
+    const canExpand = childDirectories.length > 0 || createRow !== null
+    const expanded = canExpand && expandedPaths.has(entry.path)
+    const destinations = libraryEntryDestinations(entry, directories)
 
     return (
       <li
-        aria-expanded={entry.kind === "directory" ? expanded : undefined}
+        aria-expanded={canExpand ? expanded : undefined}
         key={entry.path}
         role="treeitem"
       >
         {renaming?.path === entry.path ? (
           <div className={styles.renameRow}>
             <span className={styles.treeIndentIcon} />
-            <Icon aria-hidden="true" />
+            <FolderIcon aria-hidden="true" />
             <div className={styles.renameWrap}>
               <Input
                 aria-label="重命名名称"
@@ -1581,7 +1601,7 @@ function TreeEntries({
               onClick={() => onEntryClick(entry)}
               type="button"
             >
-              {entry.kind === "directory" ? (
+              {canExpand ? (
                 expanded ? (
                   <ChevronDownIcon aria-hidden="true" />
                 ) : (
@@ -1590,73 +1610,29 @@ function TreeEntries({
               ) : (
                 <span className={styles.treeIndentIcon} />
               )}
-              <Icon aria-hidden="true" />
+              <FolderIcon aria-hidden="true" />
               <span className={styles.treeLabel}>{entry.name}</span>
             </button>
-            <DropdownMenu>
-              <DropdownMenuTrigger
-                disabled={busy}
-                render={
-                  <Button
-                    aria-label={`${entry.name} 操作`}
-                    className={styles.treeMenuButton}
-                    size="icon-sm"
-                    type="button"
-                    variant="ghost"
-                  />
-                }
-              >
-                <MoreHorizontalIcon aria-hidden="true" />
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem onClick={() => onRename(entry)}>
-                  重命名
-                </DropdownMenuItem>
-                <DropdownMenuSub>
-                  <DropdownMenuSubTrigger>移动到…</DropdownMenuSubTrigger>
-                  <DropdownMenuSubContent>
-                    {destinations.map((directory) => (
-                      <DropdownMenuItem
-                        key={directory}
-                        onClick={() => onMove(entry, directory)}
-                      >
-                        {directory === "notes"
-                          ? "资料库根目录"
-                          : directory.replace(/^notes\//u, "")}
-                      </DropdownMenuItem>
-                    ))}
-                  </DropdownMenuSubContent>
-                </DropdownMenuSub>
-                {entry.kind === "markdown" ? (
-                  <>
-                    <DropdownMenuItem onClick={() => onConvertToFragment(entry)}>
-                      转为碎片
-                    </DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => onMoveToLockbox(entry)}>
-                      移入密匣
-                    </DropdownMenuItem>
-                  </>
-                ) : null}
-                <DropdownMenuSeparator />
-                <DropdownMenuItem
-                  onClick={() => onDelete(entry)}
-                  variant="destructive"
-                >
-                  删除
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+            <LibraryEntryMenu
+              busy={busy}
+              className={styles.treeMenuButton}
+              destinations={destinations}
+              entry={entry}
+              onConvertToFragment={onConvertToFragment}
+              onDelete={onDelete}
+              onMove={onMove}
+              onMoveToLockbox={onMoveToLockbox}
+              onRename={onRename}
+            />
           </div>
         )}
-        {expanded &&
-        ((entry.children?.length ?? 0) > 0 ||
-          renderCreateRow(entry.path) !== null) ? (
+        {expanded ? (
           <ul role="group">
-            {renderCreateRow(entry.path)}
+            {createRow}
             <TreeEntries
               busy={busy}
               directories={directories}
-              entries={entry.children ?? []}
+              entries={childDirectories}
               expandedPaths={expandedPaths}
               onConvertToFragment={onConvertToFragment}
               onDelete={onDelete}

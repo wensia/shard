@@ -514,3 +514,9 @@
     border-left: 1px solid var(--border);
   }
 }
+
+/* 第三栏打开文件时的返回口：树只剩目录后，这是回到文件列表的唯一路径。 */
+.backToDirectory {
+  flex-shrink: 0;
+  margin-right: calc(var(--shard-space-1) * -1);
+}

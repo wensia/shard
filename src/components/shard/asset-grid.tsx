@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react"
+import { type ReactNode, useEffect, useRef, useState } from "react"
 import {
   ArrowLeftIcon,
   FileSpreadsheetIcon,
@@ -44,6 +44,8 @@ interface LibraryItemGridProps {
   emptyMessage: string
   items: LibraryGridItem[]
   onSelectItem: (item: LibraryGridItem) => void
+  renderItemActions?: (item: LibraryGridItem) => ReactNode
+  renderItemRename?: (item: LibraryGridItem) => ReactNode
 }
 
 interface AssetViewerProps {
@@ -254,6 +256,8 @@ export function LibraryItemGrid({
   emptyMessage,
   items,
   onSelectItem,
+  renderItemActions,
+  renderItemRename,
 }: LibraryItemGridProps) {
   if (items.length === 0) {
     return (
@@ -270,25 +274,45 @@ export function LibraryItemGrid({
         const secondary =
           item.secondary ??
           [formatBytes(item.size), formattedDate].filter(Boolean).join(" · ")
+        const renameInput = renderItemRename?.(item)
 
         return (
           <li className={styles.cardItem} key={item.path}>
-            <button
-              aria-label={`打开${item.kind === "directory" ? "目录" : "文件"} ${item.name}`}
-              className={styles.card}
-              onClick={() => onSelectItem(item)}
-              type="button"
-            >
-              <span className={styles.thumbnail}>
-                <LibraryItemThumbnail item={item} />
+            {renameInput ? (
+              <div className={styles.card}>
+                <span className={styles.thumbnail}>
+                  <LibraryItemThumbnail item={item} />
+                </span>
+                <span className={styles.meta}>
+                  {renameInput}
+                  {secondary ? (
+                    <span className={styles.metaSecondary}>{secondary}</span>
+                  ) : null}
+                </span>
+              </div>
+            ) : (
+              <button
+                aria-label={`打开${item.kind === "directory" ? "目录" : "文件"} ${item.name}`}
+                className={styles.card}
+                onClick={() => onSelectItem(item)}
+                type="button"
+              >
+                <span className={styles.thumbnail}>
+                  <LibraryItemThumbnail item={item} />
+                </span>
+                <span className={styles.meta}>
+                  <span className={styles.metaPrimary}>{item.name}</span>
+                  {secondary ? (
+                    <span className={styles.metaSecondary}>{secondary}</span>
+                  ) : null}
+                </span>
+              </button>
+            )}
+            {renderItemActions && !renameInput ? (
+              <span className={styles.cardActions}>
+                {renderItemActions(item)}
               </span>
-              <span className={styles.meta}>
-                <span className={styles.metaPrimary}>{item.name}</span>
-                {secondary ? (
-                  <span className={styles.metaSecondary}>{secondary}</span>
-                ) : null}
-              </span>
-            </button>
+            ) : null}
           </li>
         )
       })}

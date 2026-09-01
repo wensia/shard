@@ -236,6 +236,13 @@ async function getUpdateCalls(page: Page) {
   )
 }
 
+async function openRootDirectory(page: Page) {
+  await page.getByRole("complementary", { name: "资料库目录" })
+    .getByRole("button", { name: /^资料库根目录/ })
+    .click()
+  return page.getByRole("region", { name: "notes 目录列表", exact: true })
+}
+
 test("捕捉门禁：冷启动可输入保存并在时间线看见新条目", async ({ page }) => {
   await installLibraryMock(page)
   await page.goto("/")
@@ -253,20 +260,20 @@ test("捕捉门禁：冷启动可输入保存并在时间线看见新条目", as
   await expect.poll(() => readEditor(page, "composer")).toBe("")
 })
 
-test("资料库文件树选择笔记，并在切笔记、切空间与捕捉时自动保存", async ({
+test("资料库第三栏选择笔记，并在切笔记、切空间与捕捉时自动保存", async ({
   page,
 }) => {
   await installLibraryMock(page)
   await page.goto("/")
   await page.getByRole("button", { name: "资料库", exact: true }).click()
 
-  const list = page.getByRole("complementary", { name: "资料库目录" })
-  const newestNote = list.getByRole("button", {
-    name: "最近更新的笔记.md",
+  let directory = await openRootDirectory(page)
+  let newestNote = directory.getByRole("button", {
+    name: "打开文件 最近更新的笔记.md",
     exact: true,
   })
-  const oldestNote = list.getByRole("button", {
-    name: "没有标题的旧笔记.md",
+  const oldestNote = directory.getByRole("button", {
+    name: "打开文件 没有标题的旧笔记.md",
     exact: true,
   })
   await expect(newestNote).toBeVisible()
@@ -275,6 +282,8 @@ test("资料库文件树选择笔记，并在切笔记、切空间与捕捉时�
 
   await newestNote.click()
   await fillEditor(page, "library:note-new", "# 已自动保存的新标题\n正文 #work")
+  // 树只剩目录后，切文件要先经第三栏的「返回所在目录」回到列表。
+  await page.getByRole("button", { name: "返回所在目录", exact: true }).click()
   await oldestNote.click()
   await expect.poll(() => getUpdateCalls(page)).toHaveLength(1)
   expect((await getUpdateCalls(page))[0].args).toMatchObject({
@@ -293,6 +302,11 @@ test("资料库文件树选择笔记，并在切笔记、切空间与捕捉时�
   await expect(page.locator('[data-shard-editor="composer"]')).toBeVisible()
 
   await page.getByRole("button", { name: "资料库", exact: true }).click()
+  directory = await openRootDirectory(page)
+  newestNote = directory.getByRole("button", {
+    name: "打开文件 最近更新的笔记.md",
+    exact: true,
+  })
   await newestNote.click()
   await fillEditor(page, "library:note-new", "捕捉事件前保存 #work")
   await page.keyboard.press("ControlOrMeta+n")
@@ -305,9 +319,8 @@ test("编辑停顿后自动保存，Cmd+S 立即保存", async ({ page }) => {
   await page.goto("/")
   await page.getByRole("button", { name: "资料库", exact: true }).click()
 
-  const list = page.getByRole("complementary", { name: "资料库目录" })
-  await list
-    .getByRole("button", { name: "最近更新的笔记.md", exact: true })
+  await (await openRootDirectory(page))
+    .getByRole("button", { name: "打开文件 最近更新的笔记.md", exact: true })
     .click()
 
   // 停止输入 800ms 后防抖自动保存，无需切换笔记或空间
@@ -330,9 +343,8 @@ test("保存基线过期：取消对话框后载入磁盘最新版本", async ({
   await installLibraryMock(page)
   await page.goto("/")
   await page.getByRole("button", { name: "资料库", exact: true }).click()
-  const list = page.getByRole("complementary", { name: "资料库目录" })
-  await list
-    .getByRole("button", { name: "最近更新的笔记.md", exact: true })
+  await (await openRootDirectory(page))
+    .getByRole("button", { name: "打开文件 最近更新的笔记.md", exact: true })
     .click()
 
   // 模拟远端已改写磁盘：下一次保存抛 STALE_BASE，mock 磁盘内容换成远端版
@@ -353,9 +365,8 @@ test("保存基线过期：确认对话框后强制覆盖磁盘版本", async ({
   await installLibraryMock(page)
   await page.goto("/")
   await page.getByRole("button", { name: "资料库", exact: true }).click()
-  const list = page.getByRole("complementary", { name: "资料库目录" })
-  await list
-    .getByRole("button", { name: "最近更新的笔记.md", exact: true })
+  await (await openRootDirectory(page))
+    .getByRole("button", { name: "打开文件 最近更新的笔记.md", exact: true })
     .click()
 
   await page.evaluate(() => {
@@ -396,11 +407,12 @@ test("窄屏资料库使用列表与编辑器两级导航", async ({ page }) => 
   await expect(list).toBeVisible()
   await expect(editor).toBeHidden()
 
-  await list
-    .getByRole("button", { name: "最近更新的笔记.md", exact: true })
-    .click()
+  await list.getByRole("button", { name: /^资料库根目录/ }).click()
   await expect(list).toBeHidden()
   await expect(editor).toBeVisible()
+  await editor.getByRole("region", { name: "notes 目录列表", exact: true })
+    .getByRole("button", { name: "打开文件 最近更新的笔记.md", exact: true })
+    .click()
   await expect(page.getByRole("button", { name: "返回资料库目录" })).toBeVisible()
 
   await page.getByRole("button", { name: "返回资料库目录" }).click()

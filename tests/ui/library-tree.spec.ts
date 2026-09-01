@@ -449,7 +449,7 @@ test("点击树目录会同时展开节点并在第三栏浏览内容", async ({
 
   await expect(
     treePane.getByRole("button", { name: "项目计划.md", exact: true })
-  ).toBeVisible()
+  ).toHaveCount(0)
   const directoryList = viewer.getByRole("region", {
     name: "notes/项目 目录列表",
     exact: true,
@@ -631,7 +631,13 @@ test("空目录显示目录空态", async ({ page }) => {
 test("脏笔记进入目录前先保存草稿", async ({ page }) => {
   await page.getByRole("button", { name: "资料库", exact: true }).click()
   const treePane = page.getByRole("complementary", { name: "资料库目录" })
-  await treePane.getByRole("button", { name: "旧笔记.md", exact: true }).click()
+  await treePane.getByRole("button", {
+    name: "资料库根目录（2）",
+    exact: true,
+  }).click()
+  await page.getByRole("region", { name: "notes 目录列表", exact: true })
+    .getByRole("button", { name: "打开文件 旧笔记.md", exact: true })
+    .click()
   await fillEditor(page, "library:note-old", "# 旧笔记\n先保存再浏览目录")
   await treePane.getByRole("button", { name: "项目", exact: true }).click()
 
@@ -641,19 +647,22 @@ test("脏笔记进入目录前先保存草稿", async ({ page }) => {
   ).toBeVisible()
 })
 
-test("资料库文件树平级展示 notes 文档与导图，碎片流年月就地浏览", async ({ page }) => {
+test("资料库树只展示目录并保留特殊入口，碎片流年月就地浏览", async ({ page }) => {
   await page.getByRole("button", { name: "资料库", exact: true }).click()
   const treePane = page.getByRole("complementary", { name: "资料库目录" })
 
   await expect(treePane.getByRole("button", { name: "项目", exact: true })).toBeVisible()
-  await expect(treePane.getByRole("button", { name: "旧笔记.md", exact: true })).toBeVisible()
+  await expect(treePane.getByRole("button", { name: "旧笔记.md", exact: true })).toHaveCount(0)
   await expect(
     treePane.getByRole("button", {
       name: "项目导图.shardmap.json",
       exact: true,
     })
-  ).toBeVisible()
-  await expect(treePane.getByRole("button", { name: "清单.csv", exact: true })).toBeVisible()
+  ).toHaveCount(0)
+  await expect(treePane.getByRole("button", { name: "清单.csv", exact: true })).toHaveCount(0)
+  await expect(treePane.getByRole("button", { name: "碎片流（2）", exact: true })).toBeVisible()
+  await expect(treePane.getByRole("button", { name: "图片（1）", exact: true })).toBeVisible()
+  await expect(treePane.getByRole("button", { name: "密匣（上锁空间）", exact: true })).toBeVisible()
   await expect(
     treePane.getByRole("button", { name: /^思维导图（/ })
   ).toHaveCount(0)
@@ -706,7 +715,13 @@ test("碎片流分组、标签与归档都在资料库查看器内工作", async
 test("脏笔记进入碎片流前先保存草稿", async ({ page }) => {
   await page.getByRole("button", { name: "资料库", exact: true }).click()
   const treePane = page.getByRole("complementary", { name: "资料库目录" })
-  await treePane.getByRole("button", { name: "旧笔记.md", exact: true }).click()
+  await treePane.getByRole("button", {
+    name: "资料库根目录（2）",
+    exact: true,
+  }).click()
+  await page.getByRole("region", { name: "notes 目录列表", exact: true })
+    .getByRole("button", { name: "打开文件 旧笔记.md", exact: true })
+    .click()
   await fillEditor(page, "library:note-old", "# 旧笔记\n先保存再看碎片")
   await treePane.getByRole("button", { name: "碎片流（2）", exact: true }).click()
 
@@ -725,13 +740,21 @@ test("资料库普通导图条目在第三栏打开并保留侧栏与目录树",
   await expect(
     treePane.getByRole("button", { name: /^思维导图（/ })
   ).toHaveCount(0)
-  const mapEntry = treePane.getByRole("button", {
-    name: "项目导图.shardmap.json",
+  await treePane.getByRole("button", {
+    name: "资料库根目录（2）",
+    exact: true,
+  }).click()
+  const rootList = page.getByRole("region", {
+    name: "notes 目录列表",
+    exact: true,
+  })
+  const mapEntry = rootList.getByRole("button", {
+    name: "打开文件 项目导图.shardmap.json",
     exact: true,
   })
   await expect(mapEntry).toBeVisible()
   await expect(
-    treePane.getByRole("button", {
+    rootList.getByRole("button", {
       name: "项目导图.shardmap.json 操作",
       exact: true,
     })
@@ -741,7 +764,9 @@ test("资料库普通导图条目在第三栏打开并保留侧栏与目录树",
   await expect(page.getByLabel("思维导图编辑器", { exact: true })).toBeVisible()
   await expect(sidebar).toBeVisible()
   await expect(treePane).toBeVisible()
-  await expect(mapEntry).toBeVisible()
+  await expect(
+    treePane.getByRole("button", { name: "项目导图.shardmap.json", exact: true })
+  ).toHaveCount(0)
   await expect(
     page.getByRole("button", { name: "退出思维导图", exact: true })
   ).toHaveCount(0)
@@ -751,7 +776,9 @@ test("资料库笔记禅模式进出后保留同一份草稿", async ({ page }) 
   await page.getByRole("button", { name: "资料库", exact: true }).click()
   const treePane = page.getByRole("complementary", { name: "资料库目录" })
   await treePane.getByRole("button", { name: "项目", exact: true }).click()
-  await treePane.getByRole("button", { name: "项目计划.md", exact: true }).click()
+  await page.getByRole("region", { name: "notes/项目 目录列表", exact: true })
+    .getByRole("button", { name: "打开文件 项目计划.md", exact: true })
+    .click()
 
   const editorId = "library:note-plan"
   const zenDraft = "# 项目计划\n禅模式共用草稿"
@@ -776,9 +803,15 @@ test("资料库思维导图可进入并退出禅模式", async ({ page }) => {
   await page.getByRole("button", { name: "资料库", exact: true }).click()
   const treePane = page.getByRole("complementary", { name: "资料库目录" })
   await treePane.getByRole("button", {
-    name: "项目导图.shardmap.json",
+    name: "资料库根目录（2）",
     exact: true,
   }).click()
+  await page.getByRole("region", { name: "notes 目录列表", exact: true })
+    .getByRole("button", {
+      name: "打开文件 项目导图.shardmap.json",
+      exact: true,
+    })
+    .click()
   await expect(page.getByLabel("思维导图编辑器", { exact: true })).toBeVisible()
 
   await page.getByRole("button", { name: "进入禅模式", exact: true }).click()
@@ -829,7 +862,9 @@ test("资料库笔记粘贴图片会调用共享上传命令", async ({ page }) 
   await page.getByRole("button", { name: "资料库", exact: true }).click()
   const treePane = page.getByRole("complementary", { name: "资料库目录" })
   await treePane.getByRole("button", { name: "项目", exact: true }).click()
-  await treePane.getByRole("button", { name: "项目计划.md", exact: true }).click()
+  await page.getByRole("region", { name: "notes/项目 目录列表", exact: true })
+    .getByRole("button", { name: "打开文件 项目计划.md", exact: true })
+    .click()
 
   const editor = page.locator('[data-shard-editor="library:note-plan"]')
   await editor.locator(".cm-content").evaluate((element) => {
@@ -867,15 +902,20 @@ test("碎片与笔记通过菜单双向搬移并刷新资料库树", async ({ pa
 
   await page.getByRole("button", { name: "资料库", exact: true }).click()
   const treePane = page.getByRole("complementary", { name: "资料库目录" })
-  await expect(treePane.getByRole("button", { name: "八月灵感.md", exact: true })).toBeVisible()
-  await treePane.getByRole("button", { name: "八月灵感.md 操作", exact: true }).click()
+  await treePane.getByRole("button", {
+    name: "资料库根目录（3）",
+    exact: true,
+  }).click()
+  const rootList = page.getByRole("region", { name: "notes 目录列表", exact: true })
+  await expect(rootList.getByRole("button", { name: "打开文件 八月灵感.md", exact: true })).toBeVisible()
+  await rootList.getByRole("button", { name: "八月灵感.md 操作", exact: true }).click()
   await page.getByRole("menuitem", { name: "转为碎片", exact: true }).click()
 
   await expect.poll(() => commandCalls(page, "convert_note_to_fragment")).toHaveLength(1)
   expect((await commandCalls(page, "convert_note_to_fragment"))[0].args).toEqual({
     id: "fragment-august",
   })
-  await expect(treePane.getByRole("button", { name: "八月灵感.md", exact: true })).toHaveCount(0)
+  await expect(rootList.getByRole("button", { name: "打开文件 八月灵感.md", exact: true })).toHaveCount(0)
 })
 
 test("未配置密匣时点击树上挂载点直接进入设置流程", async ({ page }) => {
@@ -904,11 +944,16 @@ test("解锁密匣后从资料库菜单移入笔记并刷新资料库树", async
   await page.goto("/")
   await page.getByRole("button", { name: "资料库", exact: true }).click()
   const treePane = page.getByRole("complementary", { name: "资料库目录" })
-  const note = treePane.getByRole("button", { name: "旧笔记.md", exact: true })
+  await treePane.getByRole("button", {
+    name: "资料库根目录（2）",
+    exact: true,
+  }).click()
+  const rootList = page.getByRole("region", { name: "notes 目录列表", exact: true })
+  const note = rootList.getByRole("button", { name: "打开文件 旧笔记.md", exact: true })
   await expect(note).toBeVisible()
 
   page.once("dialog", (dialog) => dialog.accept())
-  await treePane
+  await rootList
     .getByRole("button", { name: "旧笔记.md 操作", exact: true })
     .click()
   await page.getByRole("menuitem", { name: "移入密匣", exact: true }).click()
@@ -920,16 +965,21 @@ test("解锁密匣后从资料库菜单移入笔记并刷新资料库树", async
   await expect(note).toHaveCount(0)
 })
 
-test("导图与 Markdown 共用重命名、移动和删除菜单", async ({ page }) => {
+test("目录列表里的文件可重命名、移动和删除", async ({ page }) => {
   await page.getByRole("button", { name: "资料库", exact: true }).click()
   const treePane = page.getByRole("complementary", { name: "资料库目录" })
-
   await treePane.getByRole("button", {
+    name: "资料库根目录（2）",
+    exact: true,
+  }).click()
+  const rootList = page.getByRole("region", { name: "notes 目录列表", exact: true })
+
+  await rootList.getByRole("button", {
     name: "项目导图.shardmap.json 操作",
     exact: true,
   }).click()
   await page.getByRole("menuitem", { name: "重命名", exact: true }).click()
-  const renameInput = treePane.getByRole("textbox", {
+  const renameInput = rootList.getByRole("textbox", {
     name: "重命名名称",
     exact: true,
   })
@@ -937,27 +987,31 @@ test("导图与 Markdown 共用重命名、移动和删除菜单", async ({ page
   await renameInput.fill("架构总览")
   await renameInput.press("Enter")
   await expect(
-    treePane.getByRole("button", {
-      name: "架构总览.shardmap.json",
+    rootList.getByRole("button", {
+      name: "打开文件 架构总览.shardmap.json",
       exact: true,
     })
   ).toBeVisible()
 
-  await treePane.getByRole("button", {
+  await rootList.getByRole("button", {
     name: "架构总览.shardmap.json 操作",
     exact: true,
   }).click()
   await page.getByRole("menuitem", { name: "移动到…", exact: true }).hover()
   await page.getByRole("menuitem", { name: "项目", exact: true }).click()
   await treePane.getByRole("button", { name: "项目", exact: true }).click()
+  const projectList = page.getByRole("region", {
+    name: "notes/项目 目录列表",
+    exact: true,
+  })
   await expect(
-    treePane.getByRole("button", {
-      name: "架构总览.shardmap.json",
+    projectList.getByRole("button", {
+      name: "打开文件 架构总览.shardmap.json",
       exact: true,
     })
   ).toBeVisible()
 
-  await treePane.getByRole("button", {
+  await projectList.getByRole("button", {
     name: "架构总览.shardmap.json 操作",
     exact: true,
   }).click()
@@ -981,11 +1035,112 @@ test("导图与 Markdown 共用重命名、移动和删除菜单", async ({ page
     path: "notes/项目/架构总览.shardmap.json",
   })
   await expect(
-    treePane.getByRole("button", {
-      name: "架构总览.shardmap.json",
+    projectList.getByRole("button", {
+      name: "打开文件 架构总览.shardmap.json",
       exact: true,
     })
   ).toHaveCount(0)
+})
+
+test("目录宫格里的文件可重命名、移动和删除，菜单按 hover 或 focus 显形", async ({ page }) => {
+  await page.getByRole("button", { name: "资料库", exact: true }).click()
+  const treePane = page.getByRole("complementary", { name: "资料库目录" })
+  await treePane.getByRole("button", {
+    name: "资料库根目录（2）",
+    exact: true,
+  }).click()
+  const viewer = page.getByRole("article", { name: "资料库查看器" })
+  await viewer.getByRole("button", { name: "宫格视图", exact: true }).click()
+  const rootGrid = viewer.getByRole("list", { name: "notes 目录宫格", exact: true })
+  const noteCard = rootGrid.getByRole("button", {
+    name: "打开文件 旧笔记.md",
+    exact: true,
+  })
+  const noteMenu = rootGrid.getByRole("button", {
+    name: "旧笔记.md 操作",
+    exact: true,
+  })
+
+  await expect(noteMenu.locator("..")).toHaveCSS("opacity", "0")
+  await noteCard.hover()
+  await expect(noteMenu.locator("..")).toHaveCSS("opacity", "1")
+  await noteMenu.click()
+  await expect(page.getByRole("menuitem", { name: "转为碎片", exact: true })).toBeVisible()
+  await expect(page.getByRole("menuitem", { name: "移入密匣", exact: true })).toBeVisible()
+  await page.getByRole("menuitem", { name: "重命名", exact: true }).click()
+  const renameInput = rootGrid.getByRole("textbox", {
+    name: "重命名名称",
+    exact: true,
+  })
+  await renameInput.fill("宫格笔记")
+  await renameInput.press("Enter")
+
+  await treePane.getByRole("button", {
+    name: "资料库根目录（2）",
+    exact: true,
+  }).click()
+  const renamedMenu = viewer.getByRole("list", {
+    name: "notes 目录宫格",
+    exact: true,
+  }).getByRole("button", { name: "宫格笔记.md 操作", exact: true })
+  await renamedMenu.focus()
+  await expect(renamedMenu.locator("..")).toHaveCSS("opacity", "1")
+  await renamedMenu.click()
+  await page.getByRole("menuitem", { name: "移动到…", exact: true }).hover()
+  await page.getByRole("menuitem", { name: "项目", exact: true }).click()
+
+  await treePane.getByRole("button", { name: "项目", exact: true }).click()
+  const projectGrid = viewer.getByRole("list", {
+    name: "notes/项目 目录宫格",
+    exact: true,
+  })
+  const projectMenu = projectGrid.getByRole("button", {
+    name: "宫格笔记.md 操作",
+    exact: true,
+  })
+  // 宫格菜单靠 hover/focus 显形，直接 click 会被缩略图挡住命中测试。
+  await projectMenu.focus()
+  await projectMenu.click()
+  await page.getByRole("menuitem", { name: "删除", exact: true }).click()
+  await page.getByRole("dialog", { name: "确认删除" })
+    .getByRole("button", { name: "删除", exact: true })
+    .click()
+
+  await expect.poll(() => commandCalls(page, "rename_library_entry")).toHaveLength(1)
+  await expect.poll(() => commandCalls(page, "move_library_entry")).toHaveLength(1)
+  await expect.poll(() => commandCalls(page, "delete_library_entry")).toHaveLength(1)
+  await expect(projectGrid.getByRole("button", {
+    name: "打开文件 宫格笔记.md",
+    exact: true,
+  })).toHaveCount(0)
+})
+
+test("第三栏菜单只给 Markdown 提供转碎片和移入密匣", async ({ page }) => {
+  await page.getByRole("button", { name: "资料库", exact: true }).click()
+  const treePane = page.getByRole("complementary", { name: "资料库目录" })
+  await treePane.getByRole("button", {
+    name: "资料库根目录（2）",
+    exact: true,
+  }).click()
+  const rootList = page.getByRole("region", { name: "notes 目录列表", exact: true })
+
+  await rootList.getByRole("button", { name: "旧笔记.md 操作", exact: true }).click()
+  await expect(page.getByRole("menuitem", { name: "转为碎片", exact: true })).toBeVisible()
+  await expect(page.getByRole("menuitem", { name: "移入密匣", exact: true })).toBeVisible()
+  await page.keyboard.press("Escape")
+  // 菜单需完全卸载再开下一个，否则两个菜单并存会撞 strict mode。
+  await expect(page.getByRole("menu")).toHaveCount(0)
+
+  for (const name of ["清单.csv", "项目导图.shardmap.json", "项目"]) {
+    await rootList.getByRole("button", { name: `${name} 操作`, exact: true }).click()
+    await expect(page.getByRole("menuitem", { name: "重命名", exact: true })).toBeVisible()
+    await expect(page.getByRole("menuitem", { name: "移动到…", exact: true })).toBeVisible()
+    await expect(page.getByRole("menuitem", { name: "删除", exact: true })).toBeVisible()
+    await expect(page.getByRole("menuitem", { name: "转为碎片", exact: true })).toHaveCount(0)
+    await expect(page.getByRole("menuitem", { name: "移入密匣", exact: true })).toHaveCount(0)
+    await page.keyboard.press("Escape")
+    await expect(page.getByRole("menu")).toHaveCount(0)
+  }
 })
 
 test("目录树 MVP 支持新建、重命名、菜单移动和非空目录删除阻止", async ({ page }) => {
@@ -1002,15 +1157,17 @@ test("目录树 MVP 支持新建、重命名、菜单移动和非空目录删除
   await expect(treePane.getByRole("button", { name: "空目录", exact: true })).toBeVisible()
 
   await treePane.getByRole("button", { name: "新建笔记", exact: true }).click()
-  const noteNameInput = treePane.getByRole("textbox", {
+  const viewer = page.getByRole("article", { name: "资料库查看器" })
+  const noteNameInput = viewer.getByRole("textbox", {
     name: "重命名名称",
     exact: true,
   })
   await expect(noteNameInput).toHaveValue("未命名")
   await noteNameInput.press("Escape")
-  await expect(treePane.getByRole("button", { name: "未命名.md", exact: true })).toBeVisible()
+  const rootList = viewer.getByRole("region", { name: "notes 目录列表", exact: true })
+  await expect(rootList.getByRole("button", { name: "打开文件 未命名.md", exact: true })).toBeVisible()
 
-  await treePane.getByRole("button", { name: "未命名.md", exact: true }).click()
+  await rootList.getByRole("button", { name: "打开文件 未命名.md", exact: true }).click()
   await page.getByRole("button", { name: "重命名文件", exact: true }).click()
   const editorRenameInput = page.getByRole("textbox", {
     name: "重命名名称",
@@ -1018,19 +1175,31 @@ test("目录树 MVP 支持新建、重命名、菜单移动和非空目录删除
   })
   await editorRenameInput.fill("已改名")
   await editorRenameInput.press("Enter")
-  await expect(treePane.getByRole("button", { name: "已改名.md", exact: true })).toBeVisible()
   await expect(page.getByRole("button", { name: "重命名文件", exact: true })).toHaveText(
     "已改名"
   )
   await expect.poll(() => readEditor(page, "library:note-created-5")).toBe("# 未命名")
 
-  await treePane.getByRole("button", { name: "已改名.md 操作", exact: true }).click()
+  await treePane.getByRole("button", {
+    name: "资料库根目录（3）",
+    exact: true,
+  }).click()
+  await viewer.getByRole("region", { name: "notes 目录列表", exact: true })
+    .getByRole("button", { name: "已改名.md 操作", exact: true })
+    .click()
   await page.getByRole("menuitem", { name: "移动到…", exact: true }).hover()
   await page.getByRole("menuitem", { name: "项目", exact: true }).click()
   await treePane.getByRole("button", { name: "项目", exact: true }).click()
-  await expect(treePane.getByRole("button", { name: "已改名.md", exact: true })).toBeVisible()
+  await expect(viewer.getByRole("region", { name: "notes/项目 目录列表", exact: true })
+    .getByRole("button", { name: "打开文件 已改名.md", exact: true })).toBeVisible()
 
-  await treePane.getByRole("button", { name: "项目 操作", exact: true }).click()
+  await treePane.getByRole("button", {
+    name: "资料库根目录（3）",
+    exact: true,
+  }).click()
+  await viewer.getByRole("region", { name: "notes 目录列表", exact: true })
+    .getByRole("button", { name: "项目 操作", exact: true })
+    .click()
   await page.getByRole("menuitem", { name: "删除", exact: true }).click()
   await expect(page.getByText("目录非空，不能删除", { exact: true })).toBeVisible()
   await expect.poll(() => commandCalls(page, "delete_library_entry")).toHaveLength(0)
@@ -1062,10 +1231,15 @@ test("目录树 MVP 支持新建、重命名、菜单移动和非空目录删除
 test("重命名批量更新旧 wikilink 后仍可从别名链接导航", async ({ page }) => {
   await page.getByRole("button", { name: "资料库", exact: true }).click()
   const treePane = page.getByRole("complementary", { name: "资料库目录" })
+  await treePane.getByRole("button", {
+    name: "资料库根目录（2）",
+    exact: true,
+  }).click()
+  const rootList = page.getByRole("region", { name: "notes 目录列表", exact: true })
 
-  await treePane.getByRole("button", { name: "旧笔记.md 操作", exact: true }).click()
+  await rootList.getByRole("button", { name: "旧笔记.md 操作", exact: true }).click()
   await page.getByRole("menuitem", { name: "重命名", exact: true }).click()
-  const renameInput = treePane.getByRole("textbox", {
+  const renameInput = rootList.getByRole("textbox", {
     name: "重命名名称",
     exact: true,
   })
@@ -1078,7 +1252,9 @@ test("重命名批量更新旧 wikilink 后仍可从别名链接导航", async (
   })
 
   await treePane.getByRole("button", { name: "项目", exact: true }).click()
-  await treePane.getByRole("button", { name: "项目计划.md", exact: true }).click()
+  await page.getByRole("region", { name: "notes/项目 目录列表", exact: true })
+    .getByRole("button", { name: "打开文件 项目计划.md", exact: true })
+    .click()
   const sourceEditor = page.locator('[data-shard-editor="library:note-plan"]')
   await expect.poll(() => readEditor(page, "library:note-plan")).toContain(
     "[[新笔记|打开笔记]]"
@@ -1148,7 +1324,7 @@ test("没有图片时不渲染图片分组", async ({ page }) => {
       name: "项目导图.shardmap.json",
       exact: true,
     })
-  ).toBeVisible()
+  ).toHaveCount(0)
   await expect(
     treePane.getByRole("button", { name: /^思维导图（/ })
   ).toHaveCount(0)

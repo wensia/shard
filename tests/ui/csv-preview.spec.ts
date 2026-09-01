@@ -214,8 +214,9 @@ async function openLibraryFragmentStream(page: Page) {
 test("资料库与 Zen 的 CSV 嵌入预览最多展示 50 行", async ({ page }) => {
   await page.getByRole("button", { name: "资料库", exact: true }).click()
   const noteList = page.getByRole("complementary", { name: "资料库目录" })
-  await noteList
-    .getByRole("button", { name: "CSV 资料笔记.md", exact: true })
+  await noteList.getByRole("button", { name: /^资料库根目录/ }).click()
+  await page.getByRole("region", { name: "notes 目录列表", exact: true })
+    .getByRole("button", { name: "打开文件 CSV 资料笔记.md", exact: true })
     .click()
 
   const libraryEditor = page.locator('[data-shard-editor="library:note-csv"]')

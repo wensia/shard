@@ -56,7 +56,7 @@
 }
 
 .breadcrumbButton:focus-visible,
-.listRow:focus-visible {
+.listOpenButton:focus-visible {
   outline: none;
   box-shadow: var(--ring-focus);
 }
@@ -82,7 +82,7 @@
   display: grid;
   min-width: 0;
   align-items: center;
-  grid-template-columns: minmax(0, 2fr) repeat(3, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 2fr) repeat(3, minmax(0, 1fr)) var(--control-height-sm);
   gap: var(--space-3);
   padding: 0 var(--space-4);
   text-align: left;
@@ -113,6 +113,16 @@
   color: var(--foreground);
   font-size: var(--text-body);
   line-height: var(--leading-normal);
+}
+
+.listOpenButton {
+  display: grid;
+  min-width: 0;
+  align-items: center;
+  grid-column: 1 / 5;
+  grid-template-columns: minmax(0, 2fr) repeat(3, minmax(0, 1fr));
+  gap: var(--space-3);
+  text-align: left;
 }
 
 .listRow:hover {
