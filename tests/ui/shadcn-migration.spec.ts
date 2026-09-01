@@ -1031,6 +1031,26 @@ test("search recall mode preserves context, focus, and timeline scrolling", asyn
   await expect(locatedFragment).toBeVisible()
   await expect(locatedFragment).toBeInViewport()
 
+  // 定位滚动是 behavior:"smooth"。toBeInViewport() 只要求部分可见，滚到一半就
+  // 满足，此时取 rect 会量到动画中途的位置（实测全量跑比单独跑少滚 199px，
+  // 机器负载越高越明显）。先等目标完全落入视口，再测量。
+  await page.waitForFunction(() => {
+    const target = document.querySelector<HTMLElement>(
+      '[data-shard-fragment-id="fragment-19"]'
+    )
+    const viewport = target?.closest<HTMLElement>(
+      '[data-slot="scroll-area-viewport"]'
+    )
+    if (!target || !viewport) return false
+
+    const targetRect = target.getBoundingClientRect()
+    const viewportRect = viewport.getBoundingClientRect()
+    return (
+      targetRect.top >= viewportRect.top &&
+      targetRect.bottom <= viewportRect.bottom
+    )
+  })
+
   const scrollContract = await page.evaluate(() => {
     const target = document.querySelector<HTMLElement>(
       '[data-shard-fragment-id="fragment-19"]'
