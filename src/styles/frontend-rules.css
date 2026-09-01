@@ -120,6 +120,12 @@
     letter-spacing: 0;
   }
 
+  /* WebKit 原生 Caps Lock 指示器是实底图标，游离在图标规范之外；
+   * 一律隐藏，由业务侧用规范内的细线图标自绘提示（见 LockboxPasswordInput）。 */
+  input[type="password"]::-webkit-caps-lock-indicator {
+    display: none;
+  }
+
   /*
    * 图标描边由 token 集中控制（design.md）：这是全应用唯一一条图标
    * stroke-width 规则，CSS property 覆盖 lucide 输出的 SVG 属性。组件

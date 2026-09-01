@@ -1,6 +1,13 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react"
+import {
+  useEffect,
+  useMemo,
+  useState,
+  type ComponentProps,
+  type FormEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
+} from "react"
 import { save } from "@tauri-apps/plugin-dialog"
-import { XIcon } from "@/components/icons"
+import { ArrowBigUpIcon, XIcon } from "@/components/icons"
 import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
@@ -32,6 +39,50 @@ const PASSWORD_INPUT_STYLE = {
   minHeight: "var(--shard-space-8)",
   borderRadius: "var(--shard-radius-control)",
 } as const
+
+/**
+ * 密码输入框 + 大写锁定提示。WebKit 原生的 Caps Lock 指示器是实底图标，
+ * 不符合图标规范，已在 frontend-rules.css 全局隐藏；这里用规范内的
+ * 细线 ⇪ 在框内右侧自绘提示。
+ */
+function LockboxPasswordInput(props: ComponentProps<typeof Input>) {
+  const [capsLockOn, setCapsLockOn] = useState(false)
+  const syncCapsLock = (event: ReactKeyboardEvent<HTMLInputElement>) =>
+    setCapsLockOn(event.getModifierState("CapsLock"))
+  return (
+    <div style={{ position: "relative" }}>
+      <Input
+        type="password"
+        onBlur={() => setCapsLockOn(false)}
+        onKeyDown={syncCapsLock}
+        onKeyUp={syncCapsLock}
+        style={{
+          ...PASSWORD_INPUT_STYLE,
+          ...(capsLockOn ? { paddingRight: "var(--shard-space-8)" } : null),
+        }}
+        {...props}
+      />
+      {capsLockOn ? (
+        <span
+          role="status"
+          style={{
+            position: "absolute",
+            top: 0,
+            bottom: 0,
+            right: "var(--shard-space-3)",
+            display: "inline-flex",
+            alignItems: "center",
+            color: "var(--muted-foreground)",
+            pointerEvents: "none",
+          }}
+        >
+          <ArrowBigUpIcon className="size-(--shard-icon-size-sm)" />
+          <span className="sr-only">大写锁定已开启</span>
+        </span>
+      ) : null}
+    </div>
+  )
+}
 
 export function LockboxDialog({
   mode,
@@ -168,14 +219,12 @@ export function LockboxDialog({
               <label className="sr-only" htmlFor="lockbox-password">
                 密匣密码
               </label>
-              <Input
+              <LockboxPasswordInput
                 autoFocus
                 disabled={isBusy}
                 id="lockbox-password"
                 onChange={(event) => setPassword(event.target.value)}
                 placeholder="密匣密码"
-                style={PASSWORD_INPUT_STYLE}
-                type="password"
                 value={password}
               />
               <div className="flex items-center justify-between gap-3">
@@ -252,14 +301,12 @@ export function LockboxDialog({
               <label className="sr-only" htmlFor="lockbox-current-password">
                 当前密码
               </label>
-              <Input
+              <LockboxPasswordInput
                 autoFocus
                 disabled={isBusy}
                 id="lockbox-current-password"
                 onChange={(event) => setCurrentPassword(event.target.value)}
                 placeholder="当前密码"
-                style={PASSWORD_INPUT_STYLE}
-                type="password"
                 value={currentPassword}
               />
               <PasswordPairFields
@@ -362,26 +409,22 @@ function PasswordPairFields({
       <label className="sr-only" htmlFor="lockbox-new-password">
         新密码，至少 8 个字符
       </label>
-      <Input
+      <LockboxPasswordInput
         autoFocus
         disabled={isBusy}
         id="lockbox-new-password"
         onChange={(event) => onNewPassword(event.target.value)}
         placeholder="新密码，至少 8 个字符"
-        style={PASSWORD_INPUT_STYLE}
-        type="password"
         value={newPassword}
       />
       <label className="sr-only" htmlFor="lockbox-repeat-password">
         再次输入新密码
       </label>
-      <Input
+      <LockboxPasswordInput
         disabled={isBusy}
         id="lockbox-repeat-password"
         onChange={(event) => onRepeatPassword(event.target.value)}
         placeholder="再次输入新密码"
-        style={PASSWORD_INPUT_STYLE}
-        type="password"
         value={repeatPassword}
       />
     </>

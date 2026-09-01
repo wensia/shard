@@ -13,6 +13,7 @@ import { forwardRef } from "react"
 import {
   ArchiveIcon as LArchive,
   ArchiveRestoreIcon as LArchiveRestore,
+  ArrowBigUpIcon as LArrowBigUp,
   ArrowDownIcon as LArrowDown,
   ArrowLeftIcon as LArrowLeft,
   ArrowRightIcon as LArrowRight,
@@ -97,6 +98,7 @@ function withIconDefaults(Icon: LucideIcon): LucideIcon {
 
 export const ArchiveIcon = /*#__PURE__*/ withIconDefaults(LArchive)
 export const ArchiveRestoreIcon = /*#__PURE__*/ withIconDefaults(LArchiveRestore)
+export const ArrowBigUpIcon = /*#__PURE__*/ withIconDefaults(LArrowBigUp)
 export const ArrowDownIcon = /*#__PURE__*/ withIconDefaults(LArrowDown)
 export const ArrowLeftIcon = /*#__PURE__*/ withIconDefaults(LArrowLeft)
 export const ArrowRightIcon = /*#__PURE__*/ withIconDefaults(LArrowRight)
