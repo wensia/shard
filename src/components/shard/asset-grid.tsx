@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react"
 import {
   ArrowLeftIcon,
   FileSpreadsheetIcon,
@@ -12,10 +13,7 @@ import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { getApiErrorMessage, revealFragmentImageInDir } from "@/lib/api"
 import { formatBytes, formatModifiedAt } from "@/lib/file-metadata"
-import {
-  ATTACHMENT_SCHEME,
-  resolveFragmentImageSrc,
-} from "@/lib/fragment-images"
+import { loadFragmentImageSrc } from "@/lib/fragment-images"
 import type { LibraryAssetEntry } from "@/types"
 
 import styles from "./asset-grid.module.css"
@@ -46,14 +44,40 @@ interface AssetViewerProps {
   onBack: () => void
 }
 
-// 内容寻址决定了文件名去掉扩展名就是 64 位 hash（save_fragment_image 写的是
-// `{hash}.{extension}`），转成附件引用格式才能走 convertFileSrc 自定义协议——
-// 直接把 assets/ 相对路径交给 loadFragmentImageSrc 会退回 base64-over-IPC。
-function assetImageSrc(path: string) {
-  const hash = path.split("/").pop()?.replace(/\.[^.]+$/u, "") ?? ""
-  if (!hash) return ""
+// 走 loadFragmentImageSrc 而非 resolveFragmentImageSrc 的自定义协议：
+// `shard-attachment` 从未在 Tauri 端 register_uri_scheme_protocol 注册，
+// 它只是 resolve_vault_asset_path 认的内部引用格式。convertFileSrc 拼出的
+// 地址指向不存在的协议，真机上缩略图会全部裂图（曾在第十一批真机验证时踩到）。
+// loadFragmentImageSrc 内部有 imageSrcCache，同一路径不会重复走 IPC。
+function AssetThumbnail({
+  alt,
+  className,
+  path,
+}: {
+  alt: string
+  className: string
+  path: string
+}) {
+  const [src, setSrc] = useState("")
 
-  return resolveFragmentImageSrc(`${ATTACHMENT_SCHEME}${hash}`)
+  useEffect(() => {
+    let cancelled = false
+    void loadFragmentImageSrc(path)
+      .then((next) => {
+        if (!cancelled) setSrc(next)
+      })
+      .catch(() => {
+        if (!cancelled) setSrc("")
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [path])
+
+  if (!src) return null
+
+  return <img alt={alt} className={className} loading="lazy" src={src} />
 }
 
 function assetLabel(path: string) {
@@ -103,11 +127,10 @@ export function LibraryItemGrid({
             >
               <span className={styles.thumbnail}>
                 {item.kind === "image" ? (
-                  <img
+                  <AssetThumbnail
                     alt=""
                     className={styles.image}
-                    loading="lazy"
-                    src={assetImageSrc(item.path)}
+                    path={item.path}
                   />
                 ) : (
                   <span className={styles.fileIcon} data-kind={item.kind}>
@@ -181,10 +204,10 @@ export function AssetViewer({ asset, onBack }: AssetViewerProps) {
       </div>
 
       <div className={styles.viewerStage}>
-        <img
+        <AssetThumbnail
           alt={assetLabel(asset.path)}
           className={styles.viewerImage}
-          src={assetImageSrc(asset.path)}
+          path={asset.path}
         />
       </div>
 
