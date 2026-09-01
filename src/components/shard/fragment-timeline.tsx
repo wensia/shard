@@ -489,8 +489,10 @@ export function FragmentTimeline({
               style={{
                 display: "grid",
                 gridTemplateColumns: `repeat(${usesWaterfallColumns ? 2 : 1}, minmax(0, 1fr))`,
-                alignItems: "start",
-                gap: "var(--shard-space-4)",
+                // flat 变体列间距改由列内边距承担、纵向分割线画在列左缘；
+                // 列拉伸到行高，让分割线贯穿到最长一列的底部
+                alignItems: variant === "flat" ? "stretch" : "start",
+                gap: variant === "flat" ? 0 : "var(--shard-space-4)",
               }}
             >
               {timelineColumns.map((column, columnIndex) => (

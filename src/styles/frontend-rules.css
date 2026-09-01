@@ -520,9 +520,27 @@
   }
 
   /* 时间线 flat 变体（资料库中列）：容器背景即 --card，卡片透明底靠不出
-     色差，条目分割改由细实线承担；线落在上下卡片各自的内边距之间。 */
+     色差，条目分割改由细实线承担；横线落在上下卡片各自的内边距之间。 */
   .shard-timeline-flat-column > [data-shard-fragment-id]:not(:last-child) {
     border-bottom: 1px solid var(--border);
+  }
+
+  /* 双列瀑布流的纵向分割：grid 间距归零后由列内边距均分，线画在
+     非首列左缘，正好居于两列内容之间；单列时首末规则互相抵消为无。 */
+  .shard-timeline-flat-column {
+    padding-inline: calc(var(--shard-space-4) / 2);
+  }
+
+  .shard-timeline-flat-column:first-child {
+    padding-left: 0;
+  }
+
+  .shard-timeline-flat-column:last-child {
+    padding-right: 0;
+  }
+
+  .shard-timeline-flat-column + .shard-timeline-flat-column {
+    border-left: 1px solid var(--border);
   }
 
   /* 正文里的 GFM 表格。内容是内联文本流（white-space: pre-wrap），
