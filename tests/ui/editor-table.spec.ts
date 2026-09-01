@@ -67,6 +67,7 @@ async function installTauriMock(page: Page) {
             case "list_library_tree":
               return {
                 entries: [],
+                assets: [],
                 mindMaps: [],
                 fragmentStream: { totalCount: 0, years: [] },
               }
@@ -74,6 +75,7 @@ async function installTauriMock(page: Page) {
               return {
                 tree: {
                   entries: [],
+                  assets: [],
                   mindMaps: [],
                   fragmentStream: { totalCount: 0, years: [] },
                 },
@@ -89,6 +91,7 @@ async function installTauriMock(page: Page) {
               return {
                 tree: {
                   entries: [],
+                  assets: [],
                   mindMaps: [],
                   fragmentStream: { totalCount: 0, years: [] },
                 },

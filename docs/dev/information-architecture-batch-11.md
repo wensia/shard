@@ -34,7 +34,18 @@ let path = dir.join(format!("{hash}.{extension}"));
 |---|---|
 | D1 | **按类型选形态，不强求统一。** 每种内容用适合它的形态：`notes/` 有文件名 → 树展开；导图有标题 → 树展开；碎片有时间 → 分组节点进第三栏时间线；**图片无名字 → 分组节点进第三栏网格**。这正是「对文件格式的支持更好」的落点。 |
 | D2 | **不做全局视图切换**（树/列表/网格三态）。那是第十二批。本批只让图片在第三栏用网格——因为那是它的最小可用形态，不是增强。 |
-| D3 | **不生成缩略图。** 复用 `src/lib/fragment-images.ts` 的 `loadFragmentImageSrc` → `convertFileSrc(hash, "shard-attachment")` 自定义协议（浏览器流式加载，不走 base64），配合 `loading="lazy"` 与 CSS 缩放。缩略图缓存留给实测出性能问题后再做。 |
+| D3 | **不生成缩略图。** 用 `src/lib/fragment-images.ts` 的 **`resolveFragmentImageSrc`**（同步，走 `convertFileSrc(hash, "shard-attachment")` 自定义协议），配合 `loading="lazy"` 与 CSS 缩放。缩略图缓存留给实测出性能问题后再做。
+
+  **修订（2026-09-01，主席裁决）**：初版写的是「复用 `loadFragmentImageSrc`」，**那是错的**。该文件里两个函数分工不同：`resolveFragmentImageSrc` 同步、对 `shard-attachment:<hash>` 走 `convertFileSrc`；而 `loadFragmentImageSrc` 在 Tauri 下**无条件走 `readFragmentImage`（base64）**。
+
+  正确做法：`list_library_tree` 返回的 `assets/a3/<hash>.png` 是**磁盘路径**，不是 `shard-attachment:` **引用格式**——但内容寻址决定了**文件名去掉扩展名就是 64 位 hash**（`save_fragment_image` 写的是 `{hash}.{extension}`），恰好匹配 `ATTACHMENT_HASH_PATTERN = /^[a-f\d]{64}$/i`。
+
+  所以在 `AssetGrid` 内把 path 转成引用格式再取 src：
+  ```ts
+  const hash = path.split("/").pop()?.replace(/\.[^.]+$/u, "") ?? ""
+  const src = resolveFragmentImageSrc(`${ATTACHMENT_SCHEME}${hash}`)
+  ```
+  **不要修改 `src/lib/fragment-images.ts`** —— 改它会波及正文图片渲染这条主链路，超出本批范围。（注：`loadFragmentImageSrc` 在 Tauri 下让 `resolveFragmentImageSrc` 的自定义协议优化失效，是一处既有性能缺陷，但**不在本批处理**。） |
 | D4 | 图片在树上是**单个分组节点**「图片（N）」，不可展开列单文件（hash 名无意义），与碎片流同构。 |
 | D5 | `LibrarySelection` 加第五支 `{ kind: "assets"; path?: string }`——无 `path` 时第三栏显示网格，有 `path` 时显示单张大图。selection 仍是组件 state 不进路由。 |
 | D6 | 树排序沿用第十批 D5 原则「就地内容在上、传送门在下」：碎片流 → 图片 → 思维导图 → notes 树 → 密匣挂载点殿后。图片紧邻碎片流（都是无名字的就地内容）。 |

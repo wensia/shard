@@ -147,6 +147,7 @@ async function installLibraryMock(page: Page, includeNotes = true) {
                     },
                   ]
                 : [],
+              assets: [],
               mindMaps: [],
               fragmentStream: { totalCount: 0, years: [] },
             }
@@ -168,6 +169,7 @@ async function installLibraryMock(page: Page, includeNotes = true) {
                       },
                     ]
                   : [],
+                assets: [],
                 mindMaps: [],
                 fragmentStream: { totalCount: 0, years: [] },
               },
@@ -186,6 +188,7 @@ async function installLibraryMock(page: Page, includeNotes = true) {
             return {
               tree: {
                 entries: [],
+                assets: [],
                 mindMaps: [],
                 fragmentStream: { totalCount: 0, years: [] },
               },

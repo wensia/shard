@@ -39,6 +39,7 @@ async function installSidebarMock(page: Page) {
     }
     const tree = {
       entries: [],
+      assets: [],
       mindMaps: [],
       fragmentStream: {
         totalCount: 1,

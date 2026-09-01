@@ -91,7 +91,15 @@ export interface LibraryFragmentStream {
   years: LibraryFragmentYear[]
 }
 
+export interface LibraryAssetEntry {
+  path: string
+  size: number
+  modifiedAt: string
+  mimeType: string
+}
+
 export interface LibraryTreeSnapshot {
+  assets: LibraryAssetEntry[]
   entries: LibraryTreeEntry[]
   fragmentStream: LibraryFragmentStream
   mindMaps: LibraryTreeEntry[]

@@ -1,0 +1,155 @@
+.grid {
+  display: grid;
+  min-height: 0;
+  flex: 1;
+  align-content: start;
+  gap: var(--shard-space-4);
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  overflow-y: auto;
+  padding: var(--shard-space-4);
+  margin: 0;
+  list-style: none;
+}
+
+.cardItem {
+  display: flex;
+  min-width: 0;
+}
+
+.card {
+  width: 100%;
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--shard-space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--shard-surface-radius);
+  background: var(--card);
+  padding: var(--shard-space-2);
+  text-align: left;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+
+.card:hover {
+  border-color: var(--primary);
+  background: var(--accent);
+}
+
+.card:focus-visible {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: var(--shadow-primary-focus);
+}
+
+.thumbnail {
+  display: flex;
+  overflow: hidden;
+  aspect-ratio: 1 / 1;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--shard-radius-control);
+  background: var(--muted);
+}
+
+.image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.meta {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: calc(var(--shard-space-1) / 2);
+}
+
+.metaPrimary {
+  overflow: hidden;
+  color: var(--foreground);
+  font-size: var(--shard-text-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.metaSecondary {
+  overflow: hidden;
+  color: var(--muted-foreground);
+  font-size: var(--shard-text-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.empty {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  padding: var(--shard-space-6);
+}
+
+.emptyText {
+  color: var(--muted-foreground);
+  font-size: var(--shard-text-sm);
+}
+
+.viewer {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--shard-space-3);
+  padding: var(--shard-space-4);
+}
+
+.viewerToolbar {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--shard-space-2);
+}
+
+.viewerStage {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border-radius: var(--shard-surface-radius);
+  background: var(--muted);
+}
+
+.viewerImage {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+.viewerMeta {
+  display: flex;
+  flex-shrink: 0;
+  flex-direction: column;
+  gap: var(--shard-space-1);
+  margin: 0;
+}
+
+.viewerMetaRow {
+  display: grid;
+  align-items: baseline;
+  gap: var(--shard-space-2);
+  grid-template-columns: 64px minmax(0, 1fr);
+}
+
+.viewerMetaKey {
+  color: var(--muted-foreground);
+  font-size: var(--shard-text-xs);
+}
+
+.viewerMetaValue {
+  overflow-wrap: anywhere;
+  margin: 0;
+  color: var(--foreground);
+  font-size: var(--shard-text-xs);
+}

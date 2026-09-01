@@ -25,9 +25,13 @@ const DEFAULT_LOCKBOX_STATE: LockboxMockState = {
 
 async function installLibraryTreeMock(
   page: Page,
-  lockboxState: LockboxMockState = DEFAULT_LOCKBOX_STATE
+  lockboxState: LockboxMockState = DEFAULT_LOCKBOX_STATE,
+  includeAssets = true
 ) {
-  await page.addInitScript((lockbox: LockboxMockState) => {
+  await page.addInitScript(({ includeAssets, lockbox }: {
+    includeAssets: boolean
+    lockbox: LockboxMockState
+  }) => {
     const now = "2026-08-30T10:00:00.000Z"
     const fragments = [
       {
@@ -165,6 +169,14 @@ async function installLibraryTreeMock(
     }
     const snapshot = () => ({
       entries: clone(entries),
+      assets: includeAssets
+        ? [{
+            path: "assets/a3/a3f5e8c9d2aa0000000000000000000000000000000000000000000000000000.png",
+            size: 2_048,
+            modifiedAt: "2026-08-29T09:08:07.000Z",
+            mimeType: "image/png",
+          }]
+        : [],
       mindMaps: [{
         name: mindMapSummary.title,
         path: mindMapSummary.path,
@@ -219,6 +231,9 @@ async function installLibraryTreeMock(
       isTauri: true,
       __SHARD_LIBRARY_TREE_CALLS__: calls,
       __TAURI_INTERNALS__: {
+        // 自定义协议：真实环境由 Tauri 注入，测试里回一个可辨识的占位地址。
+        convertFileSrc: (path: string, scheme?: string) =>
+          `${scheme ?? "asset"}://localhost/${path}`,
         invoke: async (command: string, args: Record<string, unknown> = {}) => {
           calls.push({ command, args: clone(args) })
           if (command === "list_fragments") {
@@ -355,7 +370,7 @@ async function installLibraryTreeMock(
         },
       },
     })
-  }, lockboxState)
+  }, { includeAssets, lockbox: lockboxState })
 }
 
 async function commandCalls(page: Page, command: string) {
@@ -733,4 +748,56 @@ test("重命名批量更新旧 wikilink 后仍可从别名链接导航", async (
   )
   await sourceEditor.locator(".shard-cm-wikilink").click()
   await expect(page.locator('[data-shard-editor="library:note-old"]')).toBeVisible()
+})
+
+test("资料库图片分组在第三栏打开网格并保留侧栏与目录树", async ({ page }) => {
+  await page.getByRole("button", { name: "资料库", exact: true }).click()
+  const treePane = page.getByRole("complementary", { name: "资料库目录" })
+  const sidebar = page.getByRole("navigation", { name: "工作台导航" })
+
+  const group = treePane.getByRole("button", { name: "图片（1）", exact: true })
+  await expect(group).toBeVisible()
+  await group.click()
+
+  // 网格就地展示，不接管窗口——侧栏与目录树都还在。
+  await expect(page.getByRole("list", { name: "图片列表" })).toBeVisible()
+  await expect(sidebar).toBeVisible()
+  await expect(treePane).toBeVisible()
+
+  // 网格是列表视图，没有「专注编辑」语义。
+  await expect(
+    page.getByRole("button", { name: "进入禅模式", exact: true })
+  ).toHaveCount(0)
+})
+
+test("图片网格可进单张视图并返回", async ({ page }) => {
+  await page.getByRole("button", { name: "资料库", exact: true }).click()
+  const treePane = page.getByRole("complementary", { name: "资料库目录" })
+  await treePane.getByRole("button", { name: "图片（1）", exact: true }).click()
+
+  await page.getByRole("list", { name: "图片列表" }).getByRole("button").first().click()
+  await expect(
+    page.getByRole("button", { name: "返回图片列表", exact: true })
+  ).toBeVisible()
+
+  // 单张大图有专注语义，禅按钮回来了。
+  await expect(
+    page.getByRole("button", { name: "进入禅模式", exact: true })
+  ).toBeVisible()
+
+  await page.getByRole("button", { name: "返回图片列表", exact: true }).click()
+  await expect(page.getByRole("list", { name: "图片列表" })).toBeVisible()
+})
+
+test("没有图片时不渲染图片分组", async ({ page }) => {
+  await installLibraryTreeMock(page, DEFAULT_LOCKBOX_STATE, false)
+  await page.goto("/")
+
+  await page.getByRole("button", { name: "资料库", exact: true }).click()
+  const treePane = page.getByRole("complementary", { name: "资料库目录" })
+  await expect(treePane.getByRole("button", { name: /^图片（/ })).toHaveCount(0)
+  // 其余分组不受影响。
+  await expect(
+    treePane.getByRole("button", { name: "思维导图（1）", exact: true })
+  ).toBeVisible()
 })

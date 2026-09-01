@@ -20,6 +20,7 @@ import {
   FolderIcon,
   FolderPlusIcon,
   GitBranchIcon,
+  ImageIcon,
   LockKeyholeIcon,
   Maximize2Icon,
   MoreHorizontalIcon,
@@ -27,6 +28,7 @@ import {
 import { toast } from "sonner"
 
 import { FragmentBacklinksPanel } from "@/components/shard/fragment-related"
+import { AssetGrid, AssetViewer } from "@/components/shard/asset-grid"
 import { FragmentTimeline } from "@/components/shard/fragment-timeline"
 import { InboxTagBar } from "@/components/shard/inbox-tag-bar"
 import { SearchContextBar } from "@/components/shard/fragment-search-workspace"
@@ -81,6 +83,7 @@ import {
 import type {
   CsvFileSummary,
   Fragment,
+  LibraryAssetEntry,
   LibraryMutationResult,
   LibraryTreeEntry,
   LibraryTreeSnapshot,
@@ -145,6 +148,7 @@ type LibrarySelection =
   | { kind: "note"; id: string }
   | { kind: "mindmap"; path: string }
   | { kind: "fragments"; month?: string; archived?: boolean }
+  | { kind: "assets"; path?: string }
   | null
 
 interface RenameState {
@@ -222,6 +226,13 @@ export function LibraryShell({
         ? mindMaps.find((map) => map.path === selection.path) ?? null
         : null,
     [mindMaps, selection]
+  )
+  const selectedAsset = useMemo<LibraryAssetEntry | null>(
+    () =>
+      selection?.kind === "assets" && selection.path
+        ? libraryTree?.assets.find((asset) => asset.path === selection.path) ?? null
+        : null,
+    [libraryTree, selection]
   )
   const draftRef = useRef(draft)
   const lastSavedContentRef = useRef("")
@@ -566,6 +577,14 @@ export function LibraryShell({
     setMobilePane("editor")
   }
 
+  async function selectAssetsView(path?: string) {
+    if (!(await saveCurrentNote())) return
+    setSelection(path ? { kind: "assets", path } : { kind: "assets" })
+    setSelectedTreePath("::assets")
+    setIsZen(false)
+    setMobilePane("editor")
+  }
+
   useEffect(() => {
     if (!navigateTo || navigateTo.requestId === consumedNavigationRef.current) {
       return
@@ -611,6 +630,8 @@ export function LibraryShell({
         : selection.month
           ? `${selection.month.slice(0, 4)}年${selection.month.slice(5)}月`
           : "碎片流"
+      : selection?.kind === "assets"
+        ? "图片"
       : selectedNote
         ? selectedNote.path.split("/").pop()?.replace(/\.md$/iu, "") || "无标题笔记"
         : selectedMindMap?.title ?? "选择内容"
@@ -857,6 +878,23 @@ export function LibraryShell({
       )
     }
 
+    if (selection?.kind === "assets") {
+      if (selection.path && selectedAsset) {
+        return (
+          <AssetViewer
+            asset={selectedAsset}
+            onBack={() => void selectAssetsView()}
+          />
+        )
+      }
+      return (
+        <AssetGrid
+          assets={libraryTree?.assets ?? []}
+          onSelectAsset={(path) => void selectAssetsView(path)}
+        />
+      )
+    }
+
     if (selectedNote) {
       return (
         <div className={zen ? styles.zenNoteViewport : styles.editorViewport}>
@@ -900,7 +938,7 @@ export function LibraryShell({
       )
     }
 
-    return <LibraryEmptyState message="从资料库目录选择碎片流、笔记或思维导图" />
+    return <LibraryEmptyState message="从资料库目录选择碎片流、图片、笔记或思维导图" />
   }
 
   return (
@@ -1084,6 +1122,26 @@ export function LibraryShell({
                     </ul>
                   ) : null}
                 </div>
+
+                {libraryTree.assets.length > 0 ? (
+                  <div className={styles.fragmentStream}>
+                    <button
+                      aria-label={`图片（${libraryTree.assets.length}）`}
+                      className={styles.treeButton}
+                      data-selected={
+                        selection?.kind === "assets" ? "true" : undefined
+                      }
+                      onClick={() => void selectAssetsView()}
+                      type="button"
+                    >
+                      <ImageIcon aria-hidden="true" />
+                      <span>图片</span>
+                      <span className={styles.treeCount}>
+                        {libraryTree.assets.length}
+                      </span>
+                    </button>
+                  </div>
+                ) : null}
 
                 <div className={styles.fragmentStream}>
                   <button
@@ -1286,7 +1344,9 @@ export function LibraryShell({
                 {formatSaveState(saveState)}
               </span>
             ) : null}
-            {selection && selection.kind !== "fragments" ? (
+            {selection &&
+            selection.kind !== "fragments" &&
+            (selection.kind !== "assets" || selection.path) ? (
               <Button
                 aria-label="进入禅模式"
                 onClick={() => setIsZen(true)}
@@ -1331,6 +1391,15 @@ export function LibraryShell({
       {isZen && selection?.kind === "note" ? (
         <ZenSurface
           ariaLabel="资料库笔记禅模式"
+          onRequestClose={() => setIsZen(false)}
+        >
+          {renderSelectedViewer(true)}
+        </ZenSurface>
+      ) : null}
+
+      {isZen && selection?.kind === "assets" && selectedAsset ? (
+        <ZenSurface
+          ariaLabel="资料库图片禅模式"
           onRequestClose={() => setIsZen(false)}
         >
           {renderSelectedViewer(true)}

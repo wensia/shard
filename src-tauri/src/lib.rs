@@ -152,9 +152,19 @@ struct FragmentStreamSummary {
 
 #[derive(Debug, Serialize, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
+struct LibraryAssetEntry {
+    path: String,
+    size: u64,
+    modified_at: String,
+    mime_type: String,
+}
+
+#[derive(Debug, Serialize, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
 struct LibraryTreeSnapshot {
     entries: Vec<LibraryTreeEntry>,
     fragment_stream: FragmentStreamSummary,
+    assets: Vec<LibraryAssetEntry>,
     mind_maps: Vec<LibraryTreeEntry>,
 }
 
@@ -2464,8 +2474,69 @@ fn build_library_tree(vault: &Path) -> Result<LibraryTreeSnapshot, String> {
     Ok(LibraryTreeSnapshot {
         entries: collect_library_entries(vault, &vault.join("notes"))?,
         fragment_stream: summarize_fragment_stream(vault)?,
+        assets: collect_library_assets(vault),
         mind_maps,
     })
+}
+
+fn collect_library_assets(vault: &Path) -> Vec<LibraryAssetEntry> {
+    fn collect(vault: &Path, directory: &Path, assets: &mut Vec<LibraryAssetEntry>) {
+        let Ok(entries) = fs::read_dir(directory) else {
+            return;
+        };
+
+        for entry in entries.flatten() {
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
+            if file_type.is_symlink() {
+                continue;
+            }
+
+            let path = entry.path();
+            if file_type.is_dir() {
+                if entry
+                    .file_name()
+                    .to_str()
+                    .map(|name| name.starts_with('.'))
+                    .unwrap_or(false)
+                {
+                    continue;
+                }
+                collect(vault, &path, assets);
+                continue;
+            }
+            if !file_type.is_file() {
+                continue;
+            }
+
+            let Some(asset) = (|| {
+                let bytes = fs::read(&path).ok()?;
+                let mime_type = sniff_image_mime_type(&bytes).ok()?;
+                let metadata = entry.metadata().ok()?;
+                let modified_at = metadata.modified().ok()?;
+                Some(LibraryAssetEntry {
+                    path: relative_path(vault, &path).ok()?,
+                    size: metadata.len(),
+                    modified_at: system_time_to_rfc3339(modified_at),
+                    mime_type: mime_type.to_string(),
+                })
+            })() else {
+                continue;
+            };
+            assets.push(asset);
+        }
+    }
+
+    let mut assets = Vec::new();
+    collect(vault, &vault.join("assets"), &mut assets);
+    assets.sort_by(|left, right| {
+        right
+            .modified_at
+            .cmp(&left.modified_at)
+            .then_with(|| left.path.cmp(&right.path))
+    });
+    assets
 }
 
 fn collect_library_entries(
@@ -7102,6 +7173,61 @@ mod tests {
         assert_eq!(tree.fragment_stream.years[0].year, "2026");
         assert_eq!(tree.fragment_stream.years[0].months[0].month, "08");
         assert_eq!(tree.fragment_stream.years[0].months[0].count, 2);
+        assert!(tree.assets.is_empty());
+    }
+
+    #[test]
+    fn library_tree_lists_image_assets_with_metadata_and_preserves_other_sections() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let vault = tempdir.path();
+        ensure_vault_layout(vault).unwrap();
+        fs::write(vault.join("notes/说明.md"), "note").unwrap();
+        create_mind_map_in_vault(vault, "项目导图".to_string(), None).unwrap();
+        let asset_dir = vault.join("assets/a3");
+        fs::create_dir_all(&asset_dir).unwrap();
+        let bytes = b"\x89PNG\r\n\x1a\nimage-data";
+        fs::write(asset_dir.join("a3f5e8c9.png"), bytes).unwrap();
+
+        let tree = build_library_tree(vault).unwrap();
+
+        assert_eq!(tree.assets.len(), 1);
+        let asset = &tree.assets[0];
+        assert_eq!(asset.path, "assets/a3/a3f5e8c9.png");
+        assert_eq!(asset.size, bytes.len() as u64);
+        assert_eq!(asset.mime_type, "image/png");
+        assert!(DateTime::parse_from_rfc3339(&asset.modified_at).is_ok());
+        assert_eq!(tree.entries.len(), 1);
+        assert_eq!(tree.entries[0].name, "说明.md");
+        assert_eq!(tree.mind_maps.len(), 1);
+        assert_eq!(tree.mind_maps[0].name, "项目导图");
+
+        let serialized = serde_json::to_value(&tree).unwrap();
+        assert_eq!(serialized["assets"][0]["modifiedAt"], asset.modified_at);
+        assert_eq!(serialized["assets"][0]["mimeType"], "image/png");
+    }
+
+    #[test]
+    fn library_tree_skips_non_images_damaged_assets_and_hidden_directories() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let vault = tempdir.path();
+        ensure_vault_layout(vault).unwrap();
+        fs::write(vault.join("notes/说明.md"), "note").unwrap();
+        let asset_dir = vault.join("assets/ff");
+        fs::create_dir_all(&asset_dir).unwrap();
+        fs::write(asset_dir.join("valid.jpg"), b"\xff\xd8\xffimage-data").unwrap();
+        fs::write(asset_dir.join("not-image.txt"), b"plain text").unwrap();
+        fs::write(asset_dir.join("damaged.png"), b"not really a png").unwrap();
+        let hidden_dir = vault.join("assets/.conflicts");
+        fs::create_dir_all(&hidden_dir).unwrap();
+        fs::write(hidden_dir.join("hidden.png"), b"\x89PNG\r\n\x1a\nhidden").unwrap();
+
+        let tree = build_library_tree(vault).unwrap();
+
+        assert_eq!(tree.assets.len(), 1);
+        assert_eq!(tree.assets[0].path, "assets/ff/valid.jpg");
+        assert_eq!(tree.assets[0].mime_type, "image/jpeg");
+        assert_eq!(tree.entries.len(), 1);
+        assert_eq!(tree.entries[0].name, "说明.md");
     }
 
     #[test]
