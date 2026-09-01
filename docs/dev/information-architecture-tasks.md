@@ -24,7 +24,9 @@
 | 第五批 | A3 单读 + 计数修正 | T5.1 – T5.3 | 未派发 |
 | 第六批 | D 标签全局化 | T6.1 – T6.2 | 未派发 |
 | 第七批 | E 资料库容纳导图 | T7.1 – T7.4 | **已完成**（Codex 实现；Claude 验收：cargo 53 / unit 68 / ui 103 全绿） |
-| 第八批 | F 查看器统一 + 禅模式通用化 | T8.1 – T8.7 | 未派发 |
+| 第八批 | F 查看器统一 + 禅模式通用化 | T8.1 – T8.7 | **已完成**（Codex high 实现；Claude 验收修正 2 处 UI 回归；cargo 53 / unit 68 / ui 108 全绿；与第七批合并提交 22a5a8f） |
+| 第九批 | G 右栏属性面板（导图） | T9.1 – T9.5 | 未派发 |
+| 第十批 | H 碎片空间纯捕捉化 + 碎片浏览入资料库 | T10.1 – T10.5 | **已完成**（2026-09-01；施工图 `docs/dev/information-architecture-batch-10.md`；Codex 实现、Claude 验收修正 5 处回归 + 3 处链路缺陷；cargo 53 / unit 68 / ui 110 全绿。验收修正：FragmentTimeline 增 `relationFragments` 分离展示切片与关联候选域（捕捉页 5 条切片曾截断关联对话框候选与反链索引）；搜索分派 note 分支排除归档笔记并不设滚动目标；navigateTo 消费 effect 改为 notes 未含目标时不消费（保住整理/wikilink 的重试语义）；底栏二级导航断言、csv 用例迁资料库碎片流、note-created 编号跟随 mock 修正） |
 
 **A2/A3 涉及存量数据迁移与语义翻转，风险最高，不得与 C 进同一 PR。** 每批派发前由主席（Claude）重新确认前一批验收结果。
 
@@ -500,6 +502,168 @@ pnpm test:ui
    - 资料库里粘贴图片触发上传（T8.4 的修复）
 2. **补齐全部 spec 文件的 mock**：若任何 Tauri command 的签名或返回值发生变化，必须同步所有 spec。
 3. 断言用 `exact` 或区域限定。
+
+**验收命令**（三条全绿）：
+
+```bash
+cargo test --manifest-path src-tauri/Cargo.toml
+pnpm build && pnpm test:unit
+pnpm test:ui
+```
+
+**禁止**：不要放宽既有断言；既有用例数量只能增不能减
+
+---
+
+# 第九批：G —— 右栏属性面板（导图）（未派发）
+
+**目标**：让资料库第四栏（右侧检查器）在打开导图时不再空白——承载节点样式配置与节点链接汇总，并激活数据模型里两个一直没有 UI 入口的死字段。
+
+## 诊断（施工前必读）
+
+第四栏 `inspectorSlot`（`library-shell.tsx:1152`）目前对笔记渲染 `FragmentBacklinksPanel`，对导图渲染 `null`——因为面板 props 是 `fragment: Fragment` 强绑定，导图不是 Fragment。第八批统一了第三栏（多态查看器），第四栏还没统一，空白就是没统一完的证据。
+
+**数据模型早已预留，缺的只是入口**（`src/types.ts:187-202`）：
+
+```ts
+export interface ShardMapNode {
+  width?: number                                              // 手动宽度，无 UI
+  style?: { tone?: "default" | "accent" | "success" | "warning" }  // 色调，无 UI 且无渲染
+  links?: ShardDocumentLink[]                                 // 三种目标，无汇总视图
+}
+```
+
+全仓库 grep 不到任何设置 `style.tone` / `width` 的代码，也grep 不到消费 `tone` 的渲染代码——**这两个字段目前完全是死的**。原因是全屏工作区里没地方放属性面板，加一个就挤占画布；第八批把导图挪进分栏后，右栏正好是它们的归宿。
+
+`links` 则是另一种浪费：节点链接藏在节点内部，不逐个点开根本看不见，恰恰最需要汇总面板。
+
+## 用户定调
+
+- 右栏未来承载「思维导图更多的样式等等配置」——它的定位从**检查器**（只读观察）扩展为**属性面板**（可编辑配置）。
+- **禅模式不配置右栏**：专注模式只看不配，要调样式退回常规工作区。
+
+## 双粒度约束（本批最重要的设计点）
+
+右栏内容源不再只是"打开的文档"，而是**文档 + 文档内选中对象**：
+
+| 上下文 | 右栏内容 |
+| --- | --- |
+| 打开笔记 | 文档级：现有反链面板（不变） |
+| 打开导图，未选中节点 | 文档级：节点链接汇总 |
+| 打开导图，选中某节点 | 节点级：色调、宽度、该节点的链接 |
+
+这是 Figma / Sketch 的标准模式（未选中显示画布属性，选中显示对象属性）。
+
+## 非目标
+
+- **不做导图反链**（谁 `[[引用]]` 了这张导图）。查证：正文里的 wikilink **不会**自动落成 `FragmentRelation`——relation 是显式建立的（`link_fragments` command 或 AI 整理 `lib.rs:1227`），`buildRelationsIndex`（`src/lib/relations.ts:49`）的 backlinks 只来自 `fragment.related`。做导图反链需要新增"全库正文 wikilink 扫描索引"能力，成本超出本批，单独立项。
+- 不做节点级以外的导图全局设置（主题、布局方向等），本批只激活已有字段。
+- 不引入**新的**格式特性（画布坐标、新节点类型等），不动 `layoutMindMap()`、不引入画布库。
+
+  **澄清（2026-09-01，主席裁决）**：「不改导图文件格式」指的是不引入新特性，**不包括修复前后端契约漂移**。派发时 Codex 查出一处必须修的漂移：
+
+  | | 前端 | 后端 `lib.rs:379-395` |
+  | --- | --- | --- |
+  | `style.tone` | 定义 | ✅ `ShardMapNodeStyle { tone }` 支持 |
+  | `width` | 定义 + 注释「用户手动设置的节点宽度」+ `layoutMindMap()` 已消费 | ❌ 缺失，且 `deny_unknown_fields` |
+
+  `write_mind_map` 把前端文件反序列化为 Rust `ShardMapNode`，一旦设置 `width` 就会在入参反序列化阶段失败——**保存、自动保存、冲突检测全部不成立**。这是既有的定时炸弹，现在没炸只因为没有 UI 能设置它。
+
+  **授权**：本批把 Rust `ShardMapNode` 补上 `width: Option<f64>`，必须带 `#[serde(default, skip_serializing_if = "Option::is_none")]`（未设置时一个字节都不写入文件，旧文件读取与 Git diff 均不受影响），补齐节点构造位置，并补宽度读写往返测试。
+- **不给禅模式加右栏**（`ZenSurface` 全屏覆盖，右栏自然不可见，这是预期行为）。
+
+---
+
+## T9.1 第四栏改为多态属性面板容器
+
+**文件**：`src/workspace/library-shell.tsx`
+
+**做什么**
+
+1. `inspectorSlot`（`:1152`）的内容按 `selection.kind` 分派，与第三栏 `renderSelectedViewer` 同构：
+   - `note` → 现有 `FragmentBacklinksPanel`，**行为完全不变**
+   - `mindmap` → 新的 `MindMapInspector`（T9.3/T9.4 实现）
+   - 无选中 → 保持现有空态
+2. 栏位**始终存在**，不按内容类型显隐——否则切换笔记↔导图时编辑区宽度会跳变。
+3. `inspectorHeader` 的 `data-tauri-drag-region` 保持不动。
+
+**验收**：`pnpm build` 通过
+
+**禁止**：不要改 `FragmentBacklinksPanel` 的既有契约与行为；不要让第四栏在导图时收起
+
+---
+
+## T9.2 `MindMapCanvas` 暴露选中节点与节点更新能力
+
+**文件**：`src/components/shard/mind-map-workspace.tsx`、`src/components/shard/mind-map-canvas-editor.tsx`
+
+**做什么**
+
+1. `MindMapCanvasProps`（`:48`）新增 `onSelectedNodeChange?: (node: ShardMapNode | null) => void`，在内部 `selectedNodeIds`（`:83`）派生的 `selectedNode`（`:126`）变化时上报。多选时上报 `null`（本批属性面板只处理单选）。
+2. `MindMapCanvasHandle`（`:55`）新增 `updateNodeStyle(nodeId: string, patch: { tone?: ...; width?: number }) => void`。
+3. **节点更新必须走 Canvas 内部既有的 draft 变更通路**（与节点改名、增删同一条路径），以便：
+   - 进入撤销栈（`undoDraft` / `redoDraft` 可回退样式变更）
+   - 触发 `isDirty` 与自动保存
+   - 参与冲突检测
+   **绝对不要**让外部直接改 `draftFile` 或绕过 draft 写文件。
+4. 采用「上报 + handle 下达」而非 render prop：右栏与第三栏是并列 DOM，不该嵌套进 Canvas。
+
+**验收**：`pnpm build` 通过；既有导图交互（增删改节点、撤销重做、自动保存、冲突处理）全部不受影响
+
+**禁止**：不要改导图文件格式；不要新增 Tauri command；不要让样式变更绕过撤销栈
+
+---
+
+## T9.3 导图节点属性面板 + 让 `tone` 真正生效
+
+**文件**：新建 `src/components/shard/mind-map-inspector.tsx`（+ `.module.css`）、`src/components/shard/mind-map-canvas-editor.tsx`
+
+**做什么**
+
+1. 新建 `MindMapInspector`，选中节点时显示：
+   - **色调**：`default` / `accent` / `success` / `warning` 四选一，消费 Kiln token，不新造颜色
+   - **宽度**：手动设置与「恢复自适应」（清空 `width` 回到按文字自适应）
+   - 节点自身的 `links` 列表（可点击跳转，复用既有导航通路）
+2. **让 `tone` 影响渲染**：`mind-map-canvas-editor.tsx:1280` 的节点元素按 `node.style?.tone` 应用对应样式。当前 `tone` 无任何渲染消费，只加面板不改渲染等于配了没效果。
+3. 色调映射到 Kiln 既有语义 token（accent / success / warning），**不要新造色板**。
+4. 变更即时生效（走 T9.2 的 handle），无需"应用"按钮；撤销可回退。
+
+**验收**：`pnpm build` 通过；改色调后节点外观立即变化，Cmd+Z 可回退
+
+**禁止**：不要新造颜色变量；不要把样式写进 inline style 硬编码色值；不要让面板直接改文件
+
+---
+
+## T9.4 节点链接汇总（文档级，只读）
+
+**文件**：`src/components/shard/mind-map-inspector.tsx`
+
+**做什么**
+
+1. 未选中节点时，面板显示当前导图的**全部节点链接汇总**：遍历 `draftFile.nodes` 的 `links`，按「节点名 → 链接目标」列出。
+2. 三种目标类型（`ShardFragmentLink` / `ShardMarkdownPathLink` / `ShardMapLink`）都要能展示并跳转，复用既有导航通路。
+3. 无链接时显示空态文案，不显示空列表框。
+4. 这是本批唯一的文档级信息，数据从 T9.2 上报或由 Canvas 另行暴露（只读快照即可，不要让面板持有 draft 引用）。
+
+**验收**：`pnpm build` 通过
+
+**禁止**：不要为此新增 Tauri command；不要做导图反链（见非目标）
+
+---
+
+## T9.5 测试
+
+**做什么**
+
+1. **Playwright**：
+   - 打开导图时第四栏可见且非空（未选中节点 → 链接汇总或空态）
+   - 选中节点 → 第四栏显示节点属性；改色调后节点外观变化；Cmd+Z 回退
+   - 清空宽度回到自适应
+   - 打开笔记时第四栏仍是反链面板（回归保护）
+   - **进入禅模式后第四栏不可见**（`ZenSurface` 覆盖，确认预期行为）
+   - 切换笔记↔导图时编辑区宽度不跳变（第四栏始终在）
+2. 若任何 Tauri command 签名或返回值变化，同步补齐**全部** spec mock（本批预期不需要）。
+3. 断言用 `exact` 或区域限定：「思维导图」会撞侧栏同名入口与树内分组，必须限定区域。
 
 **验收命令**（三条全绿）：
 
