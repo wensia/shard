@@ -354,7 +354,14 @@ export function FragmentImageExporter({
             <Button disabled={isBusy} onClick={onClose} variant="secondary">
               取消
             </Button>
+            {/*
+              忙碌态只换图标、不换文案：换成「复制中」会少一个字，按钮跟着
+              收缩十几像素。这一步紧接着是原生保存/剪贴板交互，WKWebView 在
+              原生模态期间不重绘，收缩前后的两帧就叠在一起，看着像文字重影
+              加边框错位。状态由 spinner 与 aria-busy 表达，几何保持不动。
+            */}
             <Button
+              aria-busy={isCopying || undefined}
               disabled={isBusy || isPreviewing || !fragment}
               onClick={() => {
                 void handleCopy()
@@ -366,9 +373,10 @@ export function FragmentImageExporter({
               ) : (
                 <CopyIcon aria-hidden="true" />
               )}
-              {isCopying ? "复制中" : "复制图片"}
+              复制图片
             </Button>
             <Button
+              aria-busy={isExporting || undefined}
               disabled={isBusy || isPreviewing || !fragment}
               onClick={() => {
                 void handleExport()
@@ -380,7 +388,7 @@ export function FragmentImageExporter({
               ) : (
                 <DownloadIcon aria-hidden="true" />
               )}
-              {isExporting ? "保存中" : "保存图片"}
+              保存图片
             </Button>
           </div>
         </footer>
