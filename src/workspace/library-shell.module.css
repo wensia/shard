@@ -101,6 +101,9 @@
 
 .paneActions {
   display: flex;
+  /* 靠右钉住：标题长短不该牵动动作按钮的位置。原先是 .rootButton 的
+     flex:1 把它们推过去的，标题改成纯文本后得自己 auto margin。 */
+  margin-left: auto;
   flex: none;
   align-items: center;
   gap: var(--space-1);
