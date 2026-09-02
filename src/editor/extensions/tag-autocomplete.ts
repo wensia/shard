@@ -8,7 +8,7 @@ import {
   type CompletionSource,
 } from "@codemirror/autocomplete"
 import { Transaction, type Extension } from "@codemirror/state"
-import { EditorView, ViewPlugin } from "@codemirror/view"
+import { EditorView, ViewPlugin, tooltips } from "@codemirror/view"
 
 import { textEditToTransaction } from "@/editor/text-edit"
 import {
@@ -78,7 +78,12 @@ function createCompletionListA11yPlugin() {
 
       constructor(private readonly view: EditorView) {
         this.observer = new MutationObserver(() => this.labelListbox())
-        this.observer.observe(view.dom, { childList: true, subtree: true })
+        // 补全面板挂在 body（见上面 tooltips 的理由），不再是 view.dom 的后代，
+        // 所以要盯着面板真正的宿主，否则永远等不到它出现。
+        this.observer.observe(this.tooltipHost(), {
+          childList: true,
+          subtree: true,
+        })
         this.labelListbox()
       }
 
@@ -90,8 +95,12 @@ function createCompletionListA11yPlugin() {
         this.observer.disconnect()
       }
 
+      private tooltipHost() {
+        return this.view.dom.ownerDocument.body
+      }
+
       private labelListbox() {
-        this.view.dom
+        this.tooltipHost()
           .querySelectorAll<HTMLElement>(
             ".cm-tooltip-autocomplete > ul[role='listbox']",
           )
@@ -176,6 +185,10 @@ export function createShardTagAutocomplete({
   }
 
   return [
+    // 补全面板挂到 body：它默认是 .cm-editor 的子节点，而编辑器视口
+    // （.codeMirrorViewport）overflow:hidden——面板即使 position:fixed 也会被
+    // 那条裁切链切断，候选项一多就只露出上半截（在捕捉框里被工具栏切平）。
+    tooltips({ parent: document.body, position: "fixed" }),
     autocompletion({
       activateOnTyping: true,
       addToOptions: [{ position: 80, render: renderTagBadge }],
