@@ -241,7 +241,7 @@ async function getUpdateCalls(page: Page) {
 
 async function openRootDirectory(page: Page) {
   await page.getByRole("complementary", { name: "资料库目录" })
-    .getByRole("button", { name: /^资料库根目录/ })
+    .getByRole("button", { name: /^全部笔记/ })
     .click()
   return page.getByRole("region", { name: "notes 目录列表", exact: true })
 }
@@ -418,7 +418,7 @@ test("窄屏资料库使用列表与编辑器两级导航", async ({ page }) => 
   await expect(list).toBeVisible()
   await expect(editor).toBeHidden()
 
-  await list.getByRole("button", { name: /^资料库根目录/ }).click()
+  await list.getByRole("button", { name: /^全部笔记/ }).click()
   await expect(list).toBeHidden()
   await expect(editor).toBeVisible()
   await editor.getByRole("region", { name: "notes 目录列表", exact: true })

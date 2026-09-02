@@ -1182,18 +1182,7 @@ export function LibraryShell({
         >
           {/* 标题栏工具条：根目录 + 新建操作直接放进 Overlay 标题栏，空白处保持可拖拽 */}
           <div className={styles.paneHeader} data-tauri-drag-region>
-            <button
-              aria-current={selectedTreePath === "notes" ? "page" : undefined}
-              aria-label={`资料库根目录（${notes.length}）`}
-              className={styles.rootButton}
-              onClick={() => void selectDirectoryView("notes")}
-              title="资料库根目录"
-              type="button"
-            >
-              <FolderIcon aria-hidden="true" />
-              <span className={styles.rootLabel}>资料库</span>
-              <span className={styles.noteCount}>{notes.length}</span>
-            </button>
+            <h2 className={styles.paneTitle}>资料库</h2>
             <div className={styles.paneActions}>
               <Button
                 aria-label="新建笔记"
@@ -1266,9 +1255,24 @@ export function LibraryShell({
                   </div>
                 ) : null}
 
-                {libraryTree.entries.length === 0 && !creatingDirectory ? (
-                  <LibraryEmptyState message="到碎片流把一条内容转为笔记" />
-                ) : (
+                <div className={styles.notesGroup}>
+                  <button
+                    aria-label={`全部笔记（${notes.length}）`}
+                    className={styles.treeButton}
+                    data-selected={
+                      selectedTreePath === "notes" ? "true" : undefined
+                    }
+                    onClick={() => void selectDirectoryView("notes")}
+                    type="button"
+                  >
+                    <FolderIcon aria-hidden="true" />
+                    <span>全部笔记</span>
+                    <span className={styles.treeCount}>{notes.length}</span>
+                  </button>
+
+                  {libraryTree.entries.length === 0 && !creatingDirectory ? (
+                    <LibraryEmptyState message="到碎片流把一条内容转为笔记" />
+                  ) : (
                   <ul aria-label="笔记和数据文件" className={styles.tree} role="tree">
                     {renderCreateDirectoryRow("notes")}
                     <TreeEntries
@@ -1294,8 +1298,8 @@ export function LibraryShell({
                       selectedPath={selectedTreePath}
                     />
                   </ul>
-                )}
-
+                  )}
+                </div>
               </div>
             )}
           </div>
@@ -1358,6 +1362,7 @@ export function LibraryShell({
             {selection?.kind === "directory" ? (
               <DirectoryViewToolbar
                 onSelectDirectory={(path) => void selectDirectoryView(path)}
+                rootLabel="全部笔记"
                 onViewModeChange={(mode) => {
                   setDirectoryViewMode(mode)
                   writeDirectoryViewPreference(mode)

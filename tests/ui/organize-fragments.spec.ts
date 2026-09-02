@@ -297,7 +297,7 @@ test("多选公开碎片并以模板生成笔记，生成中保持局部进度�
   await expect(
     page
       .getByRole("complementary", { name: "资料库目录" })
-      .getByRole("button", { name: /^资料库根目录/ })
+      .getByRole("button", { name: /^全部笔记/ })
   ).toBeVisible()
   await expect(
     page

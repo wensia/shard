@@ -556,7 +556,7 @@ test("目录列表与宫格切换会持久化，宫格可进入子目录并打�
   await page.getByRole("button", { name: "资料库", exact: true }).click()
   const treePane = page.getByRole("complementary", { name: "资料库目录" })
   await treePane.getByRole("button", {
-    name: "资料库根目录（2）",
+    name: "全部笔记（2）",
     exact: true,
   }).click()
   const viewer = page.getByRole("article", { name: "资料库查看器" })
@@ -608,7 +608,7 @@ test("目录列表与宫格切换会持久化，宫格可进入子目录并打�
   await page.reload()
   await page.getByRole("button", { name: "资料库", exact: true }).click()
   await page.getByRole("complementary", { name: "资料库目录" })
-    .getByRole("button", { name: "资料库根目录（2）", exact: true })
+    .getByRole("button", { name: "全部笔记（2）", exact: true })
     .click()
   await expect(
     page.getByRole("article", { name: "资料库查看器" })
@@ -620,7 +620,7 @@ test("目录宫格按文件类型显示内容缩略图，列表视图保持密�
   await page.getByRole("button", { name: "资料库", exact: true }).click()
   const treePane = page.getByRole("complementary", { name: "资料库目录" })
   await treePane.getByRole("button", {
-    name: "资料库根目录（2）",
+    name: "全部笔记（2）",
     exact: true,
   }).click()
   const viewer = page.getByRole("article", { name: "资料库查看器" })
@@ -682,7 +682,7 @@ test("异步缩略图读取失败时保留类型图标且不抛页面错误", as
   await page.getByRole("button", { name: "资料库", exact: true }).click()
   const treePane = page.getByRole("complementary", { name: "资料库目录" })
   await treePane.getByRole("button", {
-    name: "资料库根目录（2）",
+    name: "全部笔记（2）",
     exact: true,
   }).click()
   const viewer = page.getByRole("article", { name: "资料库查看器" })
@@ -721,7 +721,7 @@ test("脏笔记进入目录前先保存草稿", async ({ page }) => {
   await page.getByRole("button", { name: "资料库", exact: true }).click()
   const treePane = page.getByRole("complementary", { name: "资料库目录" })
   await treePane.getByRole("button", {
-    name: "资料库根目录（2）",
+    name: "全部笔记（2）",
     exact: true,
   }).click()
   await page.getByRole("region", { name: "notes 目录列表", exact: true })
@@ -823,7 +823,7 @@ test("删除笔记移入回收站并可从原位置恢复", async ({ page }) => 
   const treePane = page.getByRole("complementary", { name: "资料库目录" })
   const viewer = page.getByRole("article", { name: "资料库查看器" })
   await treePane.getByRole("button", {
-    name: "资料库根目录（2）",
+    name: "全部笔记（2）",
     exact: true,
   }).click()
   const rootList = viewer.getByRole("region", { name: "notes 目录列表", exact: true })
@@ -846,7 +846,7 @@ test("删除笔记移入回收站并可从原位置恢复", async ({ page }) => 
 
   await expect.poll(() => commandCalls(page, "restore_from_trash")).toHaveLength(1)
   await treePane.getByRole("button", {
-    name: "资料库根目录（2）",
+    name: "全部笔记（2）",
     exact: true,
   }).click()
   await expect(
@@ -874,7 +874,7 @@ test("脏笔记进入碎片流前先保存草稿", async ({ page }) => {
   await page.getByRole("button", { name: "资料库", exact: true }).click()
   const treePane = page.getByRole("complementary", { name: "资料库目录" })
   await treePane.getByRole("button", {
-    name: "资料库根目录（2）",
+    name: "全部笔记（2）",
     exact: true,
   }).click()
   await page.getByRole("region", { name: "notes 目录列表", exact: true })
@@ -899,7 +899,7 @@ test("资料库普通导图条目在第三栏打开并保留侧栏与目录树",
     treePane.getByRole("button", { name: /^思维导图（/ })
   ).toHaveCount(0)
   await treePane.getByRole("button", {
-    name: "资料库根目录（2）",
+    name: "全部笔记（2）",
     exact: true,
   }).click()
   const rootList = page.getByRole("region", {
@@ -961,7 +961,7 @@ test("资料库思维导图可进入并退出禅模式", async ({ page }) => {
   await page.getByRole("button", { name: "资料库", exact: true }).click()
   const treePane = page.getByRole("complementary", { name: "资料库目录" })
   await treePane.getByRole("button", {
-    name: "资料库根目录（2）",
+    name: "全部笔记（2）",
     exact: true,
   }).click()
   await page.getByRole("region", { name: "notes 目录列表", exact: true })
@@ -1061,7 +1061,7 @@ test("碎片与笔记通过菜单双向搬移并刷新资料库树", async ({ pa
   await page.getByRole("button", { name: "资料库", exact: true }).click()
   const treePane = page.getByRole("complementary", { name: "资料库目录" })
   await treePane.getByRole("button", {
-    name: "资料库根目录（3）",
+    name: "全部笔记（3）",
     exact: true,
   }).click()
   const rootList = page.getByRole("region", { name: "notes 目录列表", exact: true })
@@ -1103,7 +1103,7 @@ test("解锁密匣后从资料库菜单移入笔记并刷新资料库树", async
   await page.getByRole("button", { name: "资料库", exact: true }).click()
   const treePane = page.getByRole("complementary", { name: "资料库目录" })
   await treePane.getByRole("button", {
-    name: "资料库根目录（2）",
+    name: "全部笔记（2）",
     exact: true,
   }).click()
   const rootList = page.getByRole("region", { name: "notes 目录列表", exact: true })
@@ -1127,7 +1127,7 @@ test("目录列表里的文件可重命名、移动和删除", async ({ page }) 
   await page.getByRole("button", { name: "资料库", exact: true }).click()
   const treePane = page.getByRole("complementary", { name: "资料库目录" })
   await treePane.getByRole("button", {
-    name: "资料库根目录（2）",
+    name: "全部笔记（2）",
     exact: true,
   }).click()
   const rootList = page.getByRole("region", { name: "notes 目录列表", exact: true })
@@ -1204,7 +1204,7 @@ test("目录宫格里的文件可重命名、移动和删除，菜单按 hover �
   await page.getByRole("button", { name: "资料库", exact: true }).click()
   const treePane = page.getByRole("complementary", { name: "资料库目录" })
   await treePane.getByRole("button", {
-    name: "资料库根目录（2）",
+    name: "全部笔记（2）",
     exact: true,
   }).click()
   const viewer = page.getByRole("article", { name: "资料库查看器" })
@@ -1234,7 +1234,7 @@ test("目录宫格里的文件可重命名、移动和删除，菜单按 hover �
   await renameInput.press("Enter")
 
   await treePane.getByRole("button", {
-    name: "资料库根目录（2）",
+    name: "全部笔记（2）",
     exact: true,
   }).click()
   const renamedMenu = viewer.getByRole("list", {
@@ -1277,7 +1277,7 @@ test("第三栏菜单只给 Markdown 提供转碎片和移入密匣", async ({ p
   await page.getByRole("button", { name: "资料库", exact: true }).click()
   const treePane = page.getByRole("complementary", { name: "资料库目录" })
   await treePane.getByRole("button", {
-    name: "资料库根目录（2）",
+    name: "全部笔记（2）",
     exact: true,
   }).click()
   const rootList = page.getByRole("region", { name: "notes 目录列表", exact: true })
@@ -1339,7 +1339,7 @@ test("目录树 MVP 支持新建、重命名、菜单移动和非空目录整棵
   await expect.poll(() => readEditor(page, "library:note-created-5")).toBe("# 未命名")
 
   await treePane.getByRole("button", {
-    name: "资料库根目录（3）",
+    name: "全部笔记（3）",
     exact: true,
   }).click()
   await viewer.getByRole("region", { name: "notes 目录列表", exact: true })
@@ -1352,7 +1352,7 @@ test("目录树 MVP 支持新建、重命名、菜单移动和非空目录整棵
     .getByRole("button", { name: "打开文件 已改名.md", exact: true })).toBeVisible()
 
   await treePane.getByRole("button", {
-    name: "资料库根目录（3）",
+    name: "全部笔记（3）",
     exact: true,
   }).click()
   await viewer.getByRole("region", { name: "notes 目录列表", exact: true })
@@ -1392,7 +1392,7 @@ test("重命名批量更新旧 wikilink 后仍可从别名链接导航", async (
   await page.getByRole("button", { name: "资料库", exact: true }).click()
   const treePane = page.getByRole("complementary", { name: "资料库目录" })
   await treePane.getByRole("button", {
-    name: "资料库根目录（2）",
+    name: "全部笔记（2）",
     exact: true,
   }).click()
   const rootList = page.getByRole("region", { name: "notes 目录列表", exact: true })

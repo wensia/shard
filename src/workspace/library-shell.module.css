@@ -92,55 +92,11 @@
   color: var(--primary);
 }
 
-.noteCount,
 .updatedAt,
 .saveState {
   color: var(--muted-foreground);
   font-size: var(--text-meta);
   font-variant-numeric: tabular-nums;
-}
-
-.noteCount {
-  margin-left: auto;
-}
-
-.rootButton {
-  display: flex;
-  min-width: 0;
-  min-height: var(--control-height-sm);
-  flex: 1;
-  align-items: center;
-  gap: var(--space-2);
-  border: 1px solid transparent;
-  border-radius: var(--radius-control);
-  background: transparent;
-  padding: var(--space-1) var(--space-2);
-  color: var(--foreground);
-  font-size: var(--text-section-title);
-  font-weight: var(--weight-semibold);
-  line-height: var(--leading-tight);
-  text-align: left;
-}
-
-.rootButton:hover {
-  background: var(--muted);
-}
-
-/* 根目录被选中 = 新建笔记/目录会落在根目录，与树节点选中态同一套信号 */
-.rootButton[aria-current="page"] {
-  border-color: color-mix(
-    in srgb,
-    var(--primary) var(--shard-alpha-21),
-    transparent
-  );
-  background: var(--primary-subtle);
-}
-
-.rootLabel {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .paneActions {
@@ -150,13 +106,6 @@
   gap: var(--space-1);
 }
 
-.rootButton svg {
-  width: var(--shard-icon-size-md);
-  height: var(--shard-icon-size-md);
-  flex: none;
-}
-
-.rootButton:focus-visible,
 .treeButton:focus-visible,
 .treeMenuButton:focus-visible {
   outline: none;
@@ -174,6 +123,15 @@
 .fragmentStream {
   border-bottom: 1px solid var(--border);
   padding-bottom: var(--space-2);
+}
+
+/* 「全部笔记」是笔记树的根，与树连成一组：中间不加分组分隔线，
+   行距沿用树内部的紧凑间距，读起来才是一棵树而不是两块东西。 */
+.notesGroup {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-0\.5);
 }
 
 /*
