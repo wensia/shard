@@ -1,0 +1,233 @@
+{
+  "date": "2026-09-07",
+  "appIdentifier": "dev.shard.tables-acceptance-20260907",
+  "vault": "task-owned temporary vault",
+  "build": "Tauri dev, actual Shard Rust commands, WKWebView; no IPC mocks",
+  "uiSuite": {
+    "chromiumPassed": 172,
+    "unitPassed": 203,
+    "webkitWorkspacePassed": 13,
+    "webkitWorkspaceSkipped": 1,
+    "skipReason": "Playwright WebKit does not grant clipboard-write permission"
+  },
+  "nativeEditing": {
+    "ascii": "abc saved revision 2",
+    "unicodePaste": "中文桌面验收甲 saved revision 3",
+    "escape": "discarded overlay retains saved value",
+    "undo": "abc saved revision 4",
+    "redo": "中文桌面验收甲 saved revision 5"
+  },
+  "xlsxRoundtrip": {
+    "steps": [
+      "export with actual Rust",
+      "choose XLSX through native OpenPanel",
+      "map all six field types",
+      "validate all rows",
+      "create through actual Rust",
+      "normal quit",
+      "restart",
+      "open imported table in Library",
+      "export XLSX again",
+      "independent openpyxl comparison"
+    ],
+    "recordCount": 4,
+    "fieldCount": 6,
+    "allValuesAndTypesEqual": true,
+    "independentTableId": "tbl_8bbbe0da865eb45bb10ccaba1b3f60a1",
+    "importedRevision": 1,
+    "semanticSnapshot": {
+      "fields": [
+        [
+          "名称",
+          "text"
+        ],
+        [
+          "数值",
+          "number"
+        ],
+        [
+          "日期",
+          "date"
+        ],
+        [
+          "状态",
+          "select"
+        ],
+        [
+          "标签",
+          "multiSelect"
+        ],
+        [
+          "确认",
+          "checkbox"
+        ]
+      ],
+      "rows": [
+        [
+          "中文桌面验收甲",
+          0.0,
+          "2024-02-29",
+          "待办",
+          [
+            "中文",
+            "长文本"
+          ],
+          false
+        ],
+        [
+          "Apple",
+          -3.5,
+          "2026-09-07",
+          "完成",
+          [],
+          true
+        ],
+        [
+          "",
+          null,
+          null,
+          null,
+          [
+            "长文本"
+          ],
+          false
+        ],
+        [
+          null,
+          42.0,
+          "2001-01-01",
+          null,
+          null,
+          null
+        ]
+      ]
+    },
+    "sourceSha256": "bb26b7a50c7cf252f9125f796e2738971240b340c73e36946593800fe8675483",
+    "roundtripSha256": "8b0e2b6154a7cfd904b6956d6a7736b792f47f046f40b628f1f421dd0e444cd9",
+    "fixtureAdjustment": "Task-only fixture last row date changed from 0001-01-01 to 2001-01-01 for Excel compatibility. Year 0001 export was separately rejected with explicit error."
+  },
+  "nativeExportFix": "macOS skipped optional directory File::open+sync after rename; file.sync_all and same-directory atomic rename retained. Native CSV/XLSX export success confirmed after rebuilding isolated app.",
+  "remaining": [
+    "Real system Chinese IME candidate selection and cancellation",
+    "Native horizontal scroll and full keyboard/accessibility matrix",
+    "A/B cold-open and input-to-pixel performance; real IPC+render distributions",
+    "Final full checkpoint/sync and navigation/exit acceptance matrix"
+  ],
+  "csvRoundtrip": {
+    "verified_at": "2026-09-07T05:56:33.750965+08:00",
+    "native_ui_flow": "CSV import with explicit six types -> create -> normal Cmd+Q exit confirmed -> app reopened by test bundle path -> library all notes -> reopened imported table -> CSV export with native SavePanel GoToFolder and basename",
+    "source": "/tmp/shard-tables-mt5-native/native-export-fixed.csv",
+    "roundtrip": "/tmp/shard-tables-mt5-native/native-csv-roundtrip.csv",
+    "imported_table": "/tmp/shard-tables-mt5-native/vault/notes/native-export-fixed.shardtable.json",
+    "table_id": "tbl_f13719e8f09a4ae257d0ba7969f1a72e",
+    "field_types": [
+      "text",
+      "number",
+      "date",
+      "select",
+      "multiSelect",
+      "checkbox"
+    ],
+    "revision": 1,
+    "records": 4,
+    "columns": 6,
+    "cells_compared": 24,
+    "csv_values_exact_match": true,
+    "imported_typed_values_match": true,
+    "new_table_id": true,
+    "csv_empty_text_null_semantics": "CSV empty text and null are intentionally merged; compared CSV strings and typed import mapping",
+    "before_quit_pid": 54638,
+    "after_restart_pid": 63809,
+    "source_sha256": "c8fb60abeb3edcfe8d97af8f22a2498325d5feb3303374fb276c35d4f607a192",
+    "roundtrip_sha256": "c8fb60abeb3edcfe8d97af8f22a2498325d5feb3303374fb276c35d4f607a192",
+    "source_bytes": 210,
+    "roundtrip_bytes": 210,
+    "csv_values": [
+      [
+        "名称",
+        "数值",
+        "日期",
+        "状态",
+        "标签",
+        "确认"
+      ],
+      [
+        "中文桌面验收甲",
+        "0",
+        "2024-02-29",
+        "待办",
+        "[\"中文\",\"长文本\"]",
+        "false"
+      ],
+      [
+        "Apple",
+        "-3.5",
+        "2026-09-07",
+        "完成",
+        "[]",
+        "true"
+      ],
+      [
+        "",
+        "",
+        "",
+        "",
+        "[\"长文本\"]",
+        "false"
+      ],
+      [
+        "",
+        "42",
+        "2001-01-01",
+        "",
+        "",
+        ""
+      ]
+    ],
+    "typed_values": [
+      [
+        "中文桌面验收甲",
+        0.0,
+        "2024-02-29",
+        "待办",
+        [
+          "中文",
+          "长文本"
+        ],
+        false
+      ],
+      [
+        "Apple",
+        -3.5,
+        "2026-09-07",
+        "完成",
+        [],
+        true
+      ],
+      [
+        "",
+        null,
+        null,
+        null,
+        [
+          "长文本"
+        ],
+        false
+      ],
+      [
+        "",
+        42.0,
+        "2001-01-01",
+        null,
+        null,
+        null
+      ]
+    ]
+  },
+  "followupEvidence": {
+    "exitAndNavigation": "table-acceptance-runs-2026-09-07.json",
+    "nativePerformance": "table-native-performance-attempt-2026-09-07.json",
+    "webkitScrolling": "table-workspace-scroll-webkit-2026-09-07.json"
+  },
+  "nativeAcceptanceBlocker": "Mac locked; manual unlock required for remaining native checks. Frame attempt separately blocked at rAF while document.visibilityState was hidden."
+}

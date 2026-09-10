@@ -1,0 +1,15 @@
+{
+  "expected": {
+    "deletedFieldIds": [
+      "fld_00000000000000000000000000000004"
+    ],
+    "mustRemoveValuesForField": "fld_00000000000000000000000000000004"
+  },
+  "operations": [
+    {
+      "fieldId": "fld_00000000000000000000000000000004",
+      "type": "deleteField"
+    }
+  ],
+  "source": "valid/independent-views.json"
+}

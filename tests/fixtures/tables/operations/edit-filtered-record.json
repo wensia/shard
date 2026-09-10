@@ -1,0 +1,22 @@
+{
+  "expected": {
+    "changedValues": {
+      "rec_00000000000000000000000000000004": {
+        "fld_00000000000000000000000000000002": 43
+      }
+    }
+  },
+  "operations": [
+    {
+      "cells": [
+        {
+          "fieldId": "fld_00000000000000000000000000000002",
+          "recordId": "rec_00000000000000000000000000000004",
+          "value": 43
+        }
+      ],
+      "type": "setCells"
+    }
+  ],
+  "source": "valid/six-types.json"
+}

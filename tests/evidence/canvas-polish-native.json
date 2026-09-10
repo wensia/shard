@@ -1,0 +1,41 @@
+{
+  "appIdentifier": "dev.shard.multidrag-acceptance-20260907",
+  "environment": "isolated native Tauri / WKWebView with existing Vite dev server and temporary vault",
+  "file": "/var/folders/jd/9rnt7sl15d7_gkzln2svt9xw0000gn/T/shard-multidrag-native-px2jcycn/notes/原生画布验收.shardcanvas.json",
+  "revision": 11,
+  "nodes": [
+    {
+      "kind": "mindmap",
+      "text": "多选拖动验收",
+      "x": 510.0,
+      "y": 298.5
+    },
+    {
+      "kind": "process",
+      "text": "流程保持可见",
+      "x": 610.0,
+      "y": 291.0
+    },
+    {
+      "kind": "process",
+      "text": "统一编辑边框\n多行文字保持居中",
+      "x": 610.0,
+      "y": 195.0
+    },
+    {
+      "kind": "decision",
+      "text": "判断条件",
+      "x": 510.0,
+      "y": 459.5
+    }
+  ],
+  "nativeVerified": [
+    "New process enters editing with a single object outline and no native resize handle",
+    "Multiline text remains centered with unchanged object geometry when leaving editing",
+    "Decision node retains a diamond outline while editing",
+    "New objects placed apart from existing objects",
+    "Save and reopen retains multiline text and decision shape"
+  ],
+  "limits": "Native visual inspection and accessible text entry only. Full pointer and geometry regression runs use WebKit with mock storage; physical IME and trackpad acceptance are separate.",
+  "runtimeMeasurementsPersisted": false
+}

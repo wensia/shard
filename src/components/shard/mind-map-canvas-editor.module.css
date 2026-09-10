@@ -34,6 +34,10 @@
   touch-action: none;
 }
 
+[data-tone="accent"] > .nodeShape { fill: var(--primary-subtle); stroke: var(--primary); }
+[data-tone="success"] > .nodeShape { fill: var(--success-bg); stroke: var(--success); }
+[data-tone="warning"] > .nodeShape { fill: var(--warning-bg); stroke: var(--warning); }
+
 /* 按住空格 = 抓手工具（Photoshop 约定）。
    抓手期间整块画布都是抓手，节点和文字的光标不能再冒出来。 */
 .canvasSvgSpacePan,

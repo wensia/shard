@@ -1,18 +1,17 @@
-import { type ReactNode, useEffect, useRef, useState } from "react"
+import { Fragment, type KeyboardEvent, type ReactElement, type ReactNode, useEffect, useRef, useState } from "react"
 import {
   ArrowLeftIcon,
-  FileSpreadsheetIcon,
-  FileTextIcon,
-  FolderIcon,
   FolderOpenIcon,
-  GitBranchIcon,
   ImageIcon,
 } from "@/components/icons"
 import { toast } from "sonner"
 
+import { LibraryFileIcon } from "@/components/shard/library-file-icon"
 import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
 import { getApiErrorMessage, revealFragmentImageInDir } from "@/lib/api"
 import { formatBytes, formatModifiedAt } from "@/lib/file-metadata"
+import { libraryEntryName, libraryEntryTypeLabel } from "@/lib/library-entry"
 import { loadFragmentImageSrc } from "@/lib/fragment-images"
 import {
   loadLibraryPreview,
@@ -33,7 +32,7 @@ interface AssetGridProps {
 
 export interface LibraryGridItem {
   content?: string
-  kind: "csv" | "directory" | "file" | "image" | "markdown" | "mindmap"
+  kind: "csv" | "directory" | "file" | "image" | "markdown" | "mindmap" | "table" | "canvas" | "flowchart"
   mindMapId?: string
   modifiedAt: string
   name: string
@@ -43,13 +42,28 @@ export interface LibraryGridItem {
 }
 
 interface LibraryItemGridProps {
+  bottomInset?: number
   ariaLabel: string
+  busy?: boolean
   emptyMessage: string
   items: LibraryGridItem[]
   onSelectItem: (item: LibraryGridItem) => void
   isItemOpenable?: (item: LibraryGridItem) => boolean
   renderItemActions?: (item: LibraryGridItem) => ReactNode
+  renderItemContainer?: (item: LibraryGridItem, element: ReactElement) => ReactNode
   renderItemRename?: (item: LibraryGridItem) => ReactNode
+  selection?: {
+    active: boolean
+    paths: ReadonlySet<string>
+    onToggle: (item: LibraryGridItem, modifiers?: LibrarySelectionModifiers) => void
+    onKeyDown: (event: KeyboardEvent<HTMLElement>) => void
+  }
+}
+
+export interface LibrarySelectionModifiers {
+  shiftKey?: boolean
+  metaKey?: boolean
+  ctrlKey?: boolean
 }
 
 interface AssetViewerProps {
@@ -100,20 +114,28 @@ function assetLabel(path: string) {
   return extension ?? "图片"
 }
 
-function LibraryItemIcon({ kind }: Pick<LibraryGridItem, "kind">) {
-  if (kind === "directory") return <FolderIcon aria-hidden="true" />
-  if (kind === "csv") return <FileSpreadsheetIcon aria-hidden="true" />
-  if (kind === "mindmap") return <GitBranchIcon aria-hidden="true" />
-  if (kind === "image") return <ImageIcon aria-hidden="true" />
-  return <FileTextIcon aria-hidden="true" />
-}
-
 function LibraryItemFallback({ kind }: Pick<LibraryGridItem, "kind">) {
   return (
     <span className={styles.fileIcon} data-kind={kind}>
-      <LibraryItemIcon kind={kind} />
+      <LibraryFileIcon kind={kind} />
     </span>
   )
+}
+
+function CanvasThumbnail({ preview }: { preview: LibraryPreview }) {
+  if (preview.kind !== "canvas" || preview.nodes.length === 0) return null
+  const nodes = new Map(preview.nodes.map(node => [node.id, node]))
+  const left = Math.min(...preview.nodes.map(node => node.x)) - 20
+  const top = Math.min(...preview.nodes.map(node => node.y)) - 20
+  const width = Math.max(...preview.nodes.map(node => node.x + node.width)) - left + 20
+  const height = Math.max(...preview.nodes.map(node => node.y + node.height)) - top + 20
+  return <svg aria-hidden="true" className={styles.mindMapPreview} data-library-preview="canvas" viewBox={`${left} ${top} ${width} ${height}`}>
+    <g className={styles.mindMapEdges}>{preview.edges.map((edge, index) => {
+      const source = nodes.get(edge.source), target = nodes.get(edge.target)
+      return source && target ? <line key={index} x1={source.x + source.width / 2} y1={source.y + source.height / 2} x2={target.x + target.width / 2} y2={target.y + target.height / 2} /> : null
+    })}</g>
+    <g className={styles.mindMapNodes}>{preview.nodes.map(node => <rect key={node.id} x={node.x} y={node.y} width={node.width} height={node.height} />)}</g>
+  </svg>
 }
 
 function MindMapThumbnail({ preview }: { preview: LibraryPreview }) {
@@ -211,7 +233,9 @@ function AsyncLibraryItemThumbnail({ item }: { item: LibraryGridItem }) {
   }, [item.kind, item.mindMapId, item.modifiedAt, item.path])
 
   const renderedPreview = preview
-    ? item.kind === "mindmap"
+    ? (item.kind === "canvas" || item.kind === "flowchart")
+      ? <CanvasThumbnail preview={preview} />
+      : item.kind === "mindmap"
       ? <MindMapThumbnail preview={preview} />
       : <TableThumbnail preview={preview} />
     : null
@@ -307,7 +331,7 @@ function LibraryItemThumbnail({ item }: { item: LibraryGridItem }) {
     }
   }
 
-  if (item.kind === "mindmap" || item.kind === "csv") {
+  if (item.kind === "mindmap" || item.kind === "csv" || (item.kind === "canvas" || item.kind === "flowchart")) {
     return <AsyncLibraryItemThumbnail item={item} />
   }
 
@@ -316,81 +340,126 @@ function LibraryItemThumbnail({ item }: { item: LibraryGridItem }) {
 
 export function LibraryItemGrid({
   ariaLabel,
+  bottomInset,
+  busy = false,
   emptyMessage,
   items,
   isItemOpenable = () => true,
   onSelectItem,
   renderItemActions,
+  renderItemContainer,
   renderItemRename,
+  selection,
 }: LibraryItemGridProps) {
   if (items.length === 0) {
     return (
-      <div className={styles.empty}>
+      <div aria-busy={busy} className={styles.empty} onKeyDown={selection?.onKeyDown} tabIndex={selection ? 0 : undefined}>
         <p className={styles.emptyText}>{emptyMessage}</p>
       </div>
     )
   }
 
   return (
-    <ul aria-label={ariaLabel} className={styles.grid}>
+    <ul
+      aria-busy={busy}
+      aria-label={ariaLabel}
+      className={styles.grid}
+      style={bottomInset === undefined ? undefined : {
+        paddingBottom: `calc(var(--shard-space-4) + ${bottomInset}px)`,
+        scrollPaddingBottom: bottomInset,
+        scrollbarGutter: "stable",
+      }}
+      data-selection-active={selection?.active || undefined}
+      onKeyDown={selection?.onKeyDown}
+      tabIndex={selection ? 0 : undefined}
+    >
       {items.map((item) => {
         const formattedDate = formatModifiedAt(item.modifiedAt)
         const secondary =
           item.secondary ??
           [formatBytes(item.size), formattedDate].filter(Boolean).join(" · ")
         const renameInput = renderItemRename?.(item)
+        const selected = selection?.paths.has(item.path) ?? false
+        const openable = isItemOpenable(item)
+        const typeLabel = libraryEntryTypeLabel(item.kind)
+        const body = (
+          <>
+            <span className={styles.thumbnail} data-slot="library-card-preview">
+              <LibraryItemThumbnail item={item} />
+            </span>
+            <span className={styles.meta}>
+              <span className={styles.metaPrimary}>
+                {renameInput ?? (
+                  <span className={styles.fileName} data-slot="library-card-name" title={item.name}>
+                    {libraryEntryName(item)}
+                  </span>
+                )}
+              </span>
+              {secondary ? <span className={styles.metaSecondary}>{secondary}</span> : null}
+            </span>
+          </>
+        )
 
-        return (
-          <li className={styles.cardItem} key={item.path}>
+        const card = (
+          <li className={styles.cardItem} data-path={item.path} data-selected={selected || undefined} key={item.path}>
+            <div className={styles.cardHeader} data-slot="library-card-header">
+              {selection ? (
+                <span className={styles.cardSelection} onClick={(event) => event.stopPropagation()}>
+                  <Checkbox
+                    aria-label={`选择 ${item.name}`}
+                    checked={selected}
+                    disabled={busy || Boolean(renameInput)}
+                    onCheckedChange={(_, { event }) => {
+                      if (busy || renameInput) return
+                      selection.onToggle(item, {
+                        shiftKey: "shiftKey" in event && event.shiftKey === true,
+                        metaKey: "metaKey" in event && event.metaKey === true,
+                        ctrlKey: "ctrlKey" in event && event.ctrlKey === true,
+                      })
+                    }}
+                  />
+                </span>
+              ) : null}
+              <span className={styles.cardType} data-slot="library-card-type" title={typeLabel}>
+                <LibraryFileIcon kind={item.kind} />
+                <span>{typeLabel}</span>
+              </span>
+              {renderItemActions ? (
+                <span className={styles.cardActions} onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}>
+                  {renameInput ? null : renderItemActions(item)}
+                </span>
+              ) : null}
+            </div>
             {renameInput ? (
-              <div className={styles.card}>
-                <span className={styles.thumbnail}>
-                  <LibraryItemThumbnail item={item} />
-                </span>
-                <span className={styles.meta}>
-                  {renameInput}
-                  {secondary ? (
-                    <span className={styles.metaSecondary}>{secondary}</span>
-                  ) : null}
-                </span>
+              <div className={styles.cardBody} onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}>
+                {body}
               </div>
-            ) : isItemOpenable(item) ? (
+            ) : openable || selection ? (
               <button
-                aria-label={`打开${item.kind === "directory" ? "目录" : "文件"} ${item.name}`}
-                className={styles.card}
-                onClick={() => onSelectItem(item)}
+                aria-label={`${selection?.active || !openable ? "选择" : "打开"}${item.kind === "directory" ? "目录" : "文件"} ${item.name}`}
+                aria-pressed={selection?.active ? selected : undefined}
+                className={styles.cardBody}
+                disabled={busy}
+                onClick={(event) => {
+                  if (busy) return
+                  if (selection && (selection.active || event.shiftKey || event.metaKey || event.ctrlKey || !openable)) {
+                    event.preventDefault()
+                    selection.onToggle(item, event)
+                  } else if (openable) {
+                    onSelectItem(item)
+                  }
+                }}
                 type="button"
               >
-                <span className={styles.thumbnail}>
-                  <LibraryItemThumbnail item={item} />
-                </span>
-                <span className={styles.meta}>
-                  <span className={styles.metaPrimary}>{item.name}</span>
-                  {secondary ? (
-                    <span className={styles.metaSecondary}>{secondary}</span>
-                  ) : null}
-                </span>
+                {body}
               </button>
             ) : (
-              <div className={styles.card}>
-                <span className={styles.thumbnail}>
-                  <LibraryItemThumbnail item={item} />
-                </span>
-                <span className={styles.meta}>
-                  <span className={styles.metaPrimary}>{item.name}</span>
-                  {secondary ? (
-                    <span className={styles.metaSecondary}>{secondary}</span>
-                  ) : null}
-                </span>
-              </div>
+              <div className={styles.cardBody}>{body}</div>
             )}
-            {renderItemActions && !renameInput ? (
-              <span className={styles.cardActions}>
-                {renderItemActions(item)}
-              </span>
-            ) : null}
           </li>
         )
+
+        return <Fragment key={item.path}>{renderItemContainer ? renderItemContainer(item, card) : card}</Fragment>
       })}
     </ul>
   )

@@ -1,0 +1,49 @@
+{
+  "date": "2026-09-08",
+  "request": [
+    "Field row vertical spacing",
+    "More button hover feedback",
+    "Nested menu preserves field configuration"
+  ],
+  "checks": {
+    "pnpm build": "passed",
+    "Chromium new field menu tests": 7,
+    "Chromium existing table regression": 46,
+    "WebKit new field menu tests": 7,
+    "git diff --check": "passed",
+    "Kiln git diff --check": "passed"
+  },
+  "coverage": [
+    "Space-token gutter above and below controls",
+    "Visible hover and shared tooltip",
+    "Click retains parent search and field list",
+    "Tooltip closed while menu is open and after focus return",
+    "Escape closes one overlay at a time",
+    "Primary field protection",
+    "Hide and restore preserve stable IDs and data",
+    "Editing the selected field",
+    "375 and 680 viewport boundaries"
+  ],
+  "test_layer": "Actual React components and Table Worker with mock Tauri IPC; no user vault writes",
+  "logs": [
+    "tests/evidence/ui-controls/field-menu-refinement-2026-09-08/build.log",
+    "tests/evidence/ui-controls/field-menu-refinement-2026-09-08/related.log",
+    "tests/evidence/ui-controls/field-menu-refinement-2026-09-08/menu-chromium.log",
+    "tests/evidence/ui-controls/field-menu-refinement-2026-09-08/menu-webkit.log"
+  ],
+  "screenshots": [
+    "tests/evidence/ui-controls/field-menu-refinement-2026-09-08/field-row-spacing.png",
+    "tests/evidence/ui-controls/field-menu-refinement-2026-09-08/field-more-hover.png",
+    "tests/evidence/ui-controls/field-menu-refinement-2026-09-08/field-menu-nested.png",
+    "tests/evidence/ui-controls/field-menu-refinement-2026-09-08/field-menu-375.png"
+  ],
+  "source_sha256": {
+    "src/features/tables/table-field-list.tsx": "14987b17d7ca61be29755ba6583a7fcf514c17ec29bd12545461954bed9c3f48",
+    "src/features/tables/table-field-list.css": "172bb567f5eff63f0ada5d6a006c15a4b8f23249f18411726fda6d175d48625a",
+    "src/features/tables/table-field-menu.tsx": "e2917e289baaf8a5fcef4376d5ff0a3db8200d75e9731476c7a8f4507ea46333",
+    "src/features/tables/table-workspace.tsx": "aafd74117e6f07624480b75f6b11740d23dc2c4c423d6dd16a885e6aa573ca72",
+    "tests/ui/table-field-menu.spec.ts": "e44d4e7b9eff54183ccae63434376417411571042649f21b9c4c4015a3dc4f9f",
+    "tests/ui/table-workspace.spec.ts": "137c41813928b274aad7fdfafe2021230b1f78293c60e150f6634e0dd6c74a00",
+    "vendor/kiln/references/components.md": "22f961066a5c33ae81671745252c5975ed9384436bee7fab27659fe984bf170c"
+  }
+}

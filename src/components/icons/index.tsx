@@ -15,9 +15,14 @@ import {
   ArchiveRestoreIcon as LArchiveRestore,
   ArrowBigUpIcon as LArrowBigUp,
   ArrowDownIcon as LArrowDown,
+  ArrowDownWideNarrowIcon as LArrowDownWideNarrow,
+  FunnelIcon as LFunnel,
+  Undo2Icon as LUndo2,
+  Redo2Icon as LRedo2,
   ArrowLeftIcon as LArrowLeft,
   ArrowRightIcon as LArrowRight,
   ArrowUpIcon as LArrowUp,
+  ArrowUpDownIcon as LArrowUpDown,
   BoldIcon as LBold,
   BookOpenIcon as LBookOpen,
   CalendarDaysIcon as LCalendarDays,
@@ -30,6 +35,7 @@ import {
   CopyIcon as LCopy,
   CornerUpLeftIcon as LCornerUpLeft,
   DownloadIcon as LDownload,
+  FileIcon as LFile,
   FilePlus2Icon as LFilePlus2,
   FileSpreadsheetIcon as LFileSpreadsheet,
   FileTextIcon as LFileText,
@@ -42,7 +48,6 @@ import {
   HashIcon as LHash,
   HelpCircleIcon as LHelpCircle,
   HighlighterIcon as LHighlighter,
-  HistoryIcon as LHistory,
   ImageIcon as LImage,
   InboxIcon as LInbox,
   InfoIcon as LInfo,
@@ -59,26 +64,26 @@ import {
   MoveIcon as LMove,
   PaletteIcon as LPalette,
   PanelLeftIcon as LPanelLeft,
+  PanelsTopLeftIcon as LPanelsTopLeft,
   PaperclipIcon as LPaperclip,
   PencilLineIcon as LPencilLine,
   PinIcon as LPin,
   PinOffIcon as LPinOff,
   PlusIcon as LPlus,
   RefreshCwIcon as LRefreshCw,
-  RouteIcon as LRoute,
   SaveIcon as LSave,
   SearchIcon as LSearch,
   SendHorizontalIcon as LSendHorizontal,
   SeparatorHorizontalIcon as LSeparatorHorizontal,
   SettingsIcon as LSettings,
   Share2Icon as LShare2,
-  SparklesIcon as LSparkles,
   TableIcon as LTable,
   TagIcon as LTag,
   TextCursorInputIcon as LTextCursorInput,
   Trash2Icon as LTrash2,
   TriangleAlertIcon as LTriangleAlert,
   UnderlineIcon as LUnderline,
+  WorkflowIcon as LWorkflow,
   XIcon as LX,
   type LucideIcon,
   type LucideProps,
@@ -97,12 +102,17 @@ function withIconDefaults(Icon: LucideIcon): LucideIcon {
 }
 
 export const ArchiveIcon = /*#__PURE__*/ withIconDefaults(LArchive)
+export const ArrowDownWideNarrowIcon = /*#__PURE__*/ withIconDefaults(LArrowDownWideNarrow)
+export const FunnelIcon = /*#__PURE__*/ withIconDefaults(LFunnel)
+export const Undo2Icon = /*#__PURE__*/ withIconDefaults(LUndo2)
+export const Redo2Icon = /*#__PURE__*/ withIconDefaults(LRedo2)
 export const ArchiveRestoreIcon = /*#__PURE__*/ withIconDefaults(LArchiveRestore)
 export const ArrowBigUpIcon = /*#__PURE__*/ withIconDefaults(LArrowBigUp)
 export const ArrowDownIcon = /*#__PURE__*/ withIconDefaults(LArrowDown)
 export const ArrowLeftIcon = /*#__PURE__*/ withIconDefaults(LArrowLeft)
 export const ArrowRightIcon = /*#__PURE__*/ withIconDefaults(LArrowRight)
 export const ArrowUpIcon = /*#__PURE__*/ withIconDefaults(LArrowUp)
+export const ArrowUpDownIcon = /*#__PURE__*/ withIconDefaults(LArrowUpDown)
 export const BoldIcon = /*#__PURE__*/ withIconDefaults(LBold)
 export const BookOpenIcon = /*#__PURE__*/ withIconDefaults(LBookOpen)
 export const CalendarDaysIcon = /*#__PURE__*/ withIconDefaults(LCalendarDays)
@@ -115,6 +125,7 @@ export const CircleCheckIcon = /*#__PURE__*/ withIconDefaults(LCircleCheck)
 export const CopyIcon = /*#__PURE__*/ withIconDefaults(LCopy)
 export const CornerUpLeftIcon = /*#__PURE__*/ withIconDefaults(LCornerUpLeft)
 export const DownloadIcon = /*#__PURE__*/ withIconDefaults(LDownload)
+export const FileIcon = /*#__PURE__*/ withIconDefaults(LFile)
 export const FilePlus2Icon = /*#__PURE__*/ withIconDefaults(LFilePlus2)
 export const FileSpreadsheetIcon = /*#__PURE__*/ withIconDefaults(LFileSpreadsheet)
 export const FileTextIcon = /*#__PURE__*/ withIconDefaults(LFileText)
@@ -127,7 +138,6 @@ export const GripVerticalIcon = /*#__PURE__*/ withIconDefaults(LGripVertical)
 export const HashIcon = /*#__PURE__*/ withIconDefaults(LHash)
 export const HelpCircleIcon = /*#__PURE__*/ withIconDefaults(LHelpCircle)
 export const HighlighterIcon = /*#__PURE__*/ withIconDefaults(LHighlighter)
-export const HistoryIcon = /*#__PURE__*/ withIconDefaults(LHistory)
 export const ImageIcon = /*#__PURE__*/ withIconDefaults(LImage)
 export const InboxIcon = /*#__PURE__*/ withIconDefaults(LInbox)
 export const InfoIcon = /*#__PURE__*/ withIconDefaults(LInfo)
@@ -144,26 +154,26 @@ export const MoreHorizontalIcon = /*#__PURE__*/ withIconDefaults(LMoreHorizontal
 export const MoveIcon = /*#__PURE__*/ withIconDefaults(LMove)
 export const PaletteIcon = /*#__PURE__*/ withIconDefaults(LPalette)
 export const PanelLeftIcon = /*#__PURE__*/ withIconDefaults(LPanelLeft)
+export const PanelsTopLeftIcon = /*#__PURE__*/ withIconDefaults(LPanelsTopLeft)
 export const PaperclipIcon = /*#__PURE__*/ withIconDefaults(LPaperclip)
 export const PencilLineIcon = /*#__PURE__*/ withIconDefaults(LPencilLine)
 export const PinIcon = /*#__PURE__*/ withIconDefaults(LPin)
 export const PinOffIcon = /*#__PURE__*/ withIconDefaults(LPinOff)
 export const PlusIcon = /*#__PURE__*/ withIconDefaults(LPlus)
 export const RefreshCwIcon = /*#__PURE__*/ withIconDefaults(LRefreshCw)
-export const RouteIcon = /*#__PURE__*/ withIconDefaults(LRoute)
 export const SaveIcon = /*#__PURE__*/ withIconDefaults(LSave)
 export const SearchIcon = /*#__PURE__*/ withIconDefaults(LSearch)
 export const SendHorizontalIcon = /*#__PURE__*/ withIconDefaults(LSendHorizontal)
 export const SeparatorHorizontalIcon = /*#__PURE__*/ withIconDefaults(LSeparatorHorizontal)
 export const SettingsIcon = /*#__PURE__*/ withIconDefaults(LSettings)
 export const Share2Icon = /*#__PURE__*/ withIconDefaults(LShare2)
-export const SparklesIcon = /*#__PURE__*/ withIconDefaults(LSparkles)
 export const TableIcon = /*#__PURE__*/ withIconDefaults(LTable)
 export const TagIcon = /*#__PURE__*/ withIconDefaults(LTag)
 export const TextCursorInputIcon = /*#__PURE__*/ withIconDefaults(LTextCursorInput)
 export const Trash2Icon = /*#__PURE__*/ withIconDefaults(LTrash2)
 export const TriangleAlertIcon = /*#__PURE__*/ withIconDefaults(LTriangleAlert)
 export const UnderlineIcon = /*#__PURE__*/ withIconDefaults(LUnderline)
+export const WorkflowIcon = /*#__PURE__*/ withIconDefaults(LWorkflow)
 export const XIcon = /*#__PURE__*/ withIconDefaults(LX)
 
 // 签名图标（design.md）：手绘、单色、与库图标同管道。

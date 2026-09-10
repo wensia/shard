@@ -1,0 +1,55 @@
+{
+  "date": "2026-09-09",
+  "scope": "View tabs share their complete selected, hover and menu-open background; full-height More keeps an inset keyboard focus outline",
+  "checks": {
+    "build": "passed",
+    "existing UI regression": 30,
+    "surface_states": {
+      "engines": [
+        "Chromium",
+        "WebKit"
+      ],
+      "widths": [
+        1280,
+        680,
+        375
+      ],
+      "states": [
+        "rest",
+        "active-name-hover",
+        "active-more-hover",
+        "inactive-name-hover",
+        "menu-open-pointer-away",
+        "switched-active"
+      ]
+    },
+    "final_focus": {
+      "engines": [
+        "Chromium",
+        "WebKit"
+      ],
+      "widths": [
+        1280,
+        375
+      ],
+      "result": "all passed: solid 2px outline, -2px offset, no box shadow"
+    },
+    "git diff --check": "passed",
+    "Kiln git diff --check": "passed"
+  },
+  "test_layer": "real components/Worker with mock IPC and synthetic data",
+  "source_sha256": {
+    "src/features/tables/table-workspace.css": "7ecd67090f5380a08f02e1ea00d5d1b9fdddeb9b6f72320699095d962571e705",
+    "vendor/kiln/references/components.md": "6b77c1ec4ad40d830e2cacedf0a2d0575351bc4931fb2288a505ef289e98113e"
+  },
+  "artifacts": [
+    "tests/evidence/ui-controls/view-tab-surface-2026-09-09/chromium-1280-active-more-hover.png",
+    "tests/evidence/ui-controls/view-tab-surface-2026-09-09/regression.log",
+    "tests/evidence/ui-controls/view-tab-surface-2026-09-09/focus-verified.json",
+    "tests/evidence/ui-controls/view-tab-surface-2026-09-09/webkit-375-menu-open-pointer-away.png",
+    "tests/evidence/ui-controls/view-tab-surface-2026-09-09/chromium-1280-active-name-hover.png",
+    "tests/evidence/ui-controls/view-tab-surface-2026-09-09/surface-states.json",
+    "tests/evidence/ui-controls/view-tab-surface-2026-09-09/webkit-375-escape-focus.png",
+    "tests/evidence/ui-controls/view-tab-surface-2026-09-09/build.log"
+  ]
+}

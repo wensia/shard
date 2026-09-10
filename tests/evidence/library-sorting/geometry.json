@@ -1,0 +1,93 @@
+[
+  {
+    "width": 390,
+    "viewport": 390,
+    "content": 768,
+    "headers": [
+      {
+        "label": "名称",
+        "delta": 0
+      },
+      {
+        "label": "类型",
+        "delta": 0
+      },
+      {
+        "label": "大小",
+        "delta": 0
+      },
+      {
+        "label": "创建时间",
+        "delta": 0
+      },
+      {
+        "label": "修改时间",
+        "delta": 0
+      },
+      {
+        "label": "操作",
+        "delta": 0
+      }
+    ],
+    "names": [
+      "项目",
+      "参考图片",
+      "产品需求与版本迭代计划-这是用于检查长文件名截断的笔记",
+      "附件",
+      "旧笔记",
+      "灵感画布",
+      "清单",
+      "审批流程",
+      "项目导图",
+      "项目任务"
+    ],
+    "icons": [
+      {
+        "width": "16px",
+        "stroke": "1.5px"
+      },
+      {
+        "width": "16px",
+        "stroke": "1.5px"
+      },
+      {
+        "width": "16px",
+        "stroke": "1.5px"
+      },
+      {
+        "width": "16px",
+        "stroke": "1.5px"
+      },
+      {
+        "width": "16px",
+        "stroke": "1.5px"
+      },
+      {
+        "width": "16px",
+        "stroke": "1.5px"
+      },
+      {
+        "width": "16px",
+        "stroke": "1.5px"
+      },
+      {
+        "width": "16px",
+        "stroke": "1.5px"
+      },
+      {
+        "width": "16px",
+        "stroke": "1.5px"
+      },
+      {
+        "width": "16px",
+        "stroke": "1.5px"
+      }
+    ],
+    "documentOverflow": false,
+    "after": {
+      "scrollLeft": 378,
+      "headerRight": 390,
+      "cellRight": 390
+    }
+  }
+]

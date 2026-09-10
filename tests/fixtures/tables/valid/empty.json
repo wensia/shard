@@ -1,0 +1,48 @@
+{
+  "createdAt": "2026-09-07T00:00:00.000Z",
+  "creation": {
+    "payloadHash": "24c35d9928e86562685c84b7070a0d913cc49bc61c5a86bde8cac32255091898",
+    "requestId": "req_00000000000000000000000000000001"
+  },
+  "fieldOrder": [
+    "fld_00000000000000000000000000000001"
+  ],
+  "fields": {
+    "fld_00000000000000000000000000000001": {
+      "id": "fld_00000000000000000000000000000001",
+      "name": "名称",
+      "type": "text"
+    }
+  },
+  "id": "tbl_00000000000000000000000000000001",
+  "kind": "shard.table",
+  "lastMutationHash": null,
+  "lastMutationId": null,
+  "primaryFieldId": "fld_00000000000000000000000000000001",
+  "recordOrder": [],
+  "records": {},
+  "revision": 1,
+  "schemaVersion": 1,
+  "updatedAt": "2026-09-07T00:00:00.000Z",
+  "viewOrder": [
+    "view_00000000000000000000000000000001"
+  ],
+  "views": {
+    "view_00000000000000000000000000000001": {
+      "columnWidths": {},
+      "fieldOrder": [
+        "fld_00000000000000000000000000000001"
+      ],
+      "filters": {
+        "conditions": [],
+        "operator": "and"
+      },
+      "groupBy": null,
+      "hiddenFieldIds": [],
+      "id": "view_00000000000000000000000000000001",
+      "name": "全部记录",
+      "sorts": [],
+      "type": "table"
+    }
+  }
+}

@@ -1,30 +1,42 @@
 import {
-  ArchiveRestoreIcon,
+  ArrowDownIcon,
+  ArrowUpIcon,
+  ArrowUpDownIcon,
   ChevronRightIcon,
   Grid2X2Icon,
   ListIcon,
-  MoreHorizontalIcon,
-  Trash2Icon,
 } from "@/components/icons"
-import type { ReactNode } from "react"
+import { type KeyboardEvent, type MouseEvent, type ReactElement, type ReactNode, useMemo, useState } from "react"
 
 import {
   LibraryItemGrid,
   type LibraryGridItem,
+  type LibrarySelectionModifiers,
 } from "@/components/shard/asset-grid"
+import { FileContextMenu, LibraryEntryContextMenu, LibraryEntryMenu, TrashEntryMenu, type LibraryEntryMenuProps } from "@/components/shard/library-entry-menu"
+export { LibraryEntryMenu, TrashEntryMenu }
+
+import { LibraryFileIcon } from "@/components/shard/library-file-icon"
 import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuSeparator,
-  DropdownMenuSub,
-  DropdownMenuSubContent,
-  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
 import { formatBytes, formatModifiedAt } from "@/lib/file-metadata"
+import {
+  libraryEntryName,
+  libraryEntryTypeLabel,
+  sortLibraryEntries,
+  type LibrarySort,
+  type LibrarySortKey,
+} from "@/lib/library-entry"
 import type { LibraryTreeEntry } from "@/types"
 
 import styles from "./directory-view.module.css"
@@ -32,15 +44,45 @@ import styles from "./directory-view.module.css"
 export type DirectoryViewMode = "grid" | "list"
 
 export const DIRECTORY_VIEW_STORAGE_KEY = "shard.library-directory-view"
+const DIRECTORY_SORT_STORAGE_KEY = "shard.library-directory-sort"
+const SORT_OPTIONS: { key: LibrarySortKey; label: string }[] = [
+  { key: "name", label: "名称" },
+  { key: "kind", label: "类型" },
+  { key: "size", label: "大小" },
+  { key: "createdAt", label: "创建时间" },
+  { key: "modifiedAt", label: "修改时间" },
+]
 
-interface DirectoryViewProps {
+interface DirectorySortProps {
+  sort: LibrarySort
+  onSortChange: (sort: LibrarySort) => void
+}
+
+export interface DirectorySelection {
+  active: boolean
+  paths: ReadonlySet<string>
+  onToggle: (entry: LibraryTreeEntry, modifiers?: LibrarySelectionModifiers) => void
+  onSelectAll: () => void
+  onClear: () => void
+  onMenuTarget: (entry: LibraryTreeEntry) => void
+  onKeyDown: (event: KeyboardEvent<HTMLElement>) => void
+}
+
+interface DirectoryViewProps extends DirectorySortProps {
+  bottomInset?: number
   busy: boolean
   destinations: string[]
   entries: Array<LibraryTreeEntry & { content?: string }>
   emptyMessage?: string
   isEntryOpenable?: (entry: LibraryTreeEntry) => boolean
   onConvertToFragment: (entry: LibraryTreeEntry) => void
+  onCreateNote?: () => void
+  onCreateDirectory?: () => void
+  onBatchDelete?: (entries: LibraryTreeEntry[]) => void
+  onBatchMove?: (entries: LibraryTreeEntry[], destination: string) => void
+  onCopyDocumentLink?: (entry: LibraryTreeEntry) => void
   onDelete: (entry: LibraryTreeEntry) => void
+  onImportTable?: (entry: LibraryTreeEntry) => void
   onMove: (entry: LibraryTreeEntry, destinationDirectory: string) => void
   onMoveToLockbox: (entry: LibraryTreeEntry) => void
   onOpenEntry: (entry: LibraryTreeEntry) => void
@@ -51,29 +93,12 @@ interface DirectoryViewProps {
   path: string
   renaming: { path: string; value: string } | null
   renderEntryActions?: (entry: LibraryTreeEntry) => ReactNode
+  renderEntryContextMenu?: (entry: LibraryTreeEntry, element: ReactElement) => ReactNode
+  selection?: DirectorySelection
   viewMode: DirectoryViewMode
 }
 
-interface LibraryEntryMenuProps {
-  busy: boolean
-  className?: string
-  destinations: string[]
-  entry: LibraryTreeEntry
-  onConvertToFragment: (entry: LibraryTreeEntry) => void
-  onDelete: (entry: LibraryTreeEntry) => void
-  onMove: (entry: LibraryTreeEntry, destinationDirectory: string) => void
-  onMoveToLockbox: (entry: LibraryTreeEntry) => void
-  onRename: (entry: LibraryTreeEntry) => void
-}
-
-interface TrashEntryMenuProps {
-  busy: boolean
-  entry: LibraryTreeEntry
-  onPurge: (entry: LibraryTreeEntry) => void
-  onRestore: (entry: LibraryTreeEntry) => void
-}
-
-interface DirectoryViewToolbarProps {
+interface DirectoryViewToolbarProps extends DirectorySortProps {
   action?: ReactNode
   onSelectDirectory: (path: string) => void
   onViewModeChange: (mode: DirectoryViewMode) => void
@@ -99,13 +124,27 @@ export function writeDirectoryViewPreference(mode: DirectoryViewMode) {
   }
 }
 
-function entryTypeLabel(kind: LibraryTreeEntry["kind"]) {
-  if (kind === "directory") return "目录"
-  if (kind === "csv") return "CSV"
-  if (kind === "mindmap") return "思维导图"
-  if (kind === "image") return "图片"
-  if (kind === "file") return "文件"
-  return "Markdown"
+export function readDirectorySortPreference(): LibrarySort {
+  try {
+    const stored = JSON.parse(window.localStorage.getItem(DIRECTORY_SORT_STORAGE_KEY) ?? "null")
+    if (stored && SORT_OPTIONS.some(({ key }) => key === stored.key) &&
+      (stored.direction === "asc" || stored.direction === "desc")) return stored
+  } catch {
+    // 无效或不可用的存储回退到目录默认顺序。
+  }
+  return { key: "name", direction: "asc" }
+}
+
+export function writeDirectorySortPreference(sort: LibrarySort) {
+  try {
+    window.localStorage.setItem(DIRECTORY_SORT_STORAGE_KEY, JSON.stringify(sort))
+  } catch {
+    // 排序仍在当前会话内生效。
+  }
+}
+
+function initialSort(key: LibrarySortKey): LibrarySort {
+  return { key, direction: key === "name" || key === "kind" ? "asc" : "desc" }
 }
 
 function gridItem(
@@ -121,7 +160,7 @@ function gridItem(
     secondary:
       entry.kind === "directory"
         ? `${entry.children?.length ?? 0} 项`
-        : [entryTypeLabel(entry.kind), formatBytes(entry.size)].join(" · "),
+        : formatBytes(entry.size),
     size: entry.size,
   }
 }
@@ -149,112 +188,6 @@ export function libraryEntryDestinations(
   )
 }
 
-export function LibraryEntryMenu({
-  busy,
-  className,
-  destinations,
-  entry,
-  onConvertToFragment,
-  onDelete,
-  onMove,
-  onMoveToLockbox,
-  onRename,
-}: LibraryEntryMenuProps) {
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger
-        disabled={busy}
-        render={
-          <Button
-            aria-label={`${entry.name} 操作`}
-            className={className}
-            size="icon-sm"
-            type="button"
-            variant="ghost"
-          />
-        }
-      >
-        <MoreHorizontalIcon aria-hidden="true" />
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end">
-        <DropdownMenuItem onClick={() => onRename(entry)}>
-          重命名
-        </DropdownMenuItem>
-        <DropdownMenuSub>
-          <DropdownMenuSubTrigger>移动到…</DropdownMenuSubTrigger>
-          <DropdownMenuSubContent>
-            {destinations.map((directory) => (
-              <DropdownMenuItem
-                key={directory}
-                onClick={() => onMove(entry, directory)}
-              >
-                {directory === "notes"
-                  ? "资料库根目录"
-                  : directory.replace(/^notes\//u, "")}
-              </DropdownMenuItem>
-            ))}
-          </DropdownMenuSubContent>
-        </DropdownMenuSub>
-        {entry.kind === "markdown" ? (
-          <>
-            <DropdownMenuItem onClick={() => onConvertToFragment(entry)}>
-              转为碎片
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => onMoveToLockbox(entry)}>
-              移入密匣
-            </DropdownMenuItem>
-          </>
-        ) : null}
-        <DropdownMenuSeparator />
-        <DropdownMenuItem
-          onClick={() => onDelete(entry)}
-          variant="destructive"
-        >
-          删除
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
-  )
-}
-
-export function TrashEntryMenu({
-  busy,
-  entry,
-  onPurge,
-  onRestore,
-}: TrashEntryMenuProps) {
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger
-        disabled={busy}
-        render={
-          <Button
-            aria-label={`${entry.name} 操作`}
-            size="icon-sm"
-            type="button"
-            variant="ghost"
-          />
-        }
-      >
-        <MoreHorizontalIcon aria-hidden="true" />
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end">
-        <DropdownMenuItem onClick={() => onRestore(entry)}>
-          <ArchiveRestoreIcon aria-hidden="true" />
-          恢复
-        </DropdownMenuItem>
-        <DropdownMenuItem
-          onClick={() => onPurge(entry)}
-          variant="destructive"
-        >
-          <Trash2Icon aria-hidden="true" />
-          彻底删除
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
-  )
-}
-
 function RenameInput({
   busy,
   onCancel,
@@ -276,7 +209,9 @@ function RenameInput({
       onBlur={onSubmit}
       onChange={(event) => onChange(event.target.value)}
       onFocus={(event) => event.target.select()}
+      onClick={(event) => event.stopPropagation()}
       onKeyDown={(event) => {
+        event.stopPropagation()
         if (event.key === "Enter") {
           event.preventDefault()
           onSubmit()
@@ -294,8 +229,10 @@ export function DirectoryViewToolbar({
   action,
   onSelectDirectory,
   onViewModeChange,
+  onSortChange,
   path,
   rootLabel,
+  sort,
   viewMode,
 }: DirectoryViewToolbarProps) {
   return (
@@ -317,6 +254,38 @@ export function DirectoryViewToolbar({
       </nav>
       <div className={styles.toolbarActions}>
         {action}
+        <DropdownMenu>
+          <DropdownMenuTrigger render={
+            <Button
+              aria-label={`排序：${SORT_OPTIONS.find(({ key }) => key === sort.key)?.label}，${sort.direction === "asc" ? "升序" : "降序"}`}
+              size="sm"
+              variant="outline"
+            />
+          }>
+            {sort.direction === "asc" ? <ArrowUpIcon /> : <ArrowDownIcon />}
+            {SORT_OPTIONS.find(({ key }) => key === sort.key)?.label}
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuRadioGroup
+              aria-label="排序字段"
+              value={sort.key}
+              onValueChange={(key) => onSortChange(initialSort(key as LibrarySortKey))}
+            >
+              {SORT_OPTIONS.map(({ key, label }) => (
+                <DropdownMenuRadioItem key={key} value={key}>{label}</DropdownMenuRadioItem>
+              ))}
+            </DropdownMenuRadioGroup>
+            <DropdownMenuSeparator />
+            <DropdownMenuRadioGroup
+              aria-label="排序方向"
+              value={sort.direction}
+              onValueChange={(direction) => onSortChange({ ...sort, direction: direction as LibrarySort["direction"] })}
+            >
+              <DropdownMenuRadioItem value="asc">升序</DropdownMenuRadioItem>
+              <DropdownMenuRadioItem value="desc">降序</DropdownMenuRadioItem>
+            </DropdownMenuRadioGroup>
+          </DropdownMenuContent>
+        </DropdownMenu>
         <div aria-label="目录视图形态" className={styles.viewToggle} role="group">
           <Button
             aria-label="列表视图"
@@ -347,13 +316,20 @@ export function DirectoryViewToolbar({
 }
 
 export function DirectoryView({
+  bottomInset,
   busy,
   destinations,
   entries,
   emptyMessage = "这个目录还是空的",
   isEntryOpenable = () => true,
   onConvertToFragment,
+  onCreateNote,
+  onCreateDirectory,
+  onBatchDelete,
+  onBatchMove,
+  onCopyDocumentLink,
   onDelete,
+  onImportTable,
   onMove,
   onMoveToLockbox,
   onOpenEntry,
@@ -361,38 +337,90 @@ export function DirectoryView({
   onRenameCancel,
   onRenameChange,
   onRenameSubmit,
+  onSortChange,
   path,
   renaming,
   renderEntryActions,
+  renderEntryContextMenu,
+  selection,
+  sort,
   viewMode,
 }: DirectoryViewProps) {
-  const renderEntryMenu = (entry: LibraryTreeEntry) =>
-    renderEntryActions?.(entry) ?? (
-      <LibraryEntryMenu
-      busy={busy}
-      destinations={libraryEntryDestinations(entry, destinations)}
-      entry={entry}
-      onConvertToFragment={onConvertToFragment}
-      onDelete={onDelete}
-      onMove={onMove}
-      onMoveToLockbox={onMoveToLockbox}
-      onRename={onRename}
-      />
-    )
+  const [openMenu, setOpenMenu] = useState<string | null>(null)
+  const sortedEntries = useMemo(() => sortLibraryEntries(entries, sort), [entries, sort])
+  const selectedCount = sortedEntries.filter((entry) => selection?.paths.has(entry.path)).length
+  const handleEntryClick = (entry: LibraryTreeEntry, event: MouseEvent<HTMLElement>) => {
+    if (busy || renaming?.path === entry.path) return
+    if (selection && (selection.active || event.shiftKey || event.metaKey || event.ctrlKey || !isEntryOpenable(entry))) {
+      event.preventDefault()
+      selection.onToggle(entry, event)
+    } else if (isEntryOpenable(entry)) {
+      onOpenEntry(entry)
+    }
+  }
+  function menuControl(owner: string) {
+    return {
+      open: openMenu === owner,
+      onOpenChange: (open: boolean) => setOpenMenu(current => open ? owner : current === owner ? null : current),
+    }
+  }
+  function menuProps(entry: LibraryTreeEntry): LibraryEntryMenuProps {
+    const targets = selection?.paths.has(entry.path)
+      ? sortedEntries.filter(item => selection.paths.has(item.path)) : [entry]
+    const batch = targets.length > 1 && onBatchDelete && onBatchMove ? {
+      count: targets.length,
+      onDelete: () => onBatchDelete(targets),
+      onMove: (destination: string) => onBatchMove(targets, destination),
+    } : undefined
+    return {
+      busy: busy || Boolean(renaming), entry, batch,
+      destinations: targets.reduce((available, item) => libraryEntryDestinations(item, available), destinations),
+      onConvertToFragment, onCopyDocumentLink, onDelete, onImportTable, onMove, onMoveToLockbox, onRename,
+      onOpenEntry: isEntryOpenable(entry) ? onOpenEntry : undefined,
+      onPrepare: () => selection?.onMenuTarget(entry),
+    }
+  }
+  const renderEntryMenu = (entry: LibraryTreeEntry) => renderEntryActions?.(entry) ?? (
+    <LibraryEntryMenu {...menuProps(entry)} {...menuControl(`overflow:${entry.path}`)} />
+  )
+  const wrapEntry = (entry: LibraryTreeEntry, element: ReactElement) => renderEntryContextMenu?.(entry, element) ?? (
+    <LibraryEntryContextMenu key={entry.path} {...menuProps(entry)} {...menuControl(`context:${entry.path}`)}>
+      {element}
+    </LibraryEntryContextMenu>
+  )
+  const wrapDirectory = (element: ReactElement) => selection || onCreateNote || onCreateDirectory ? (
+    <FileContextMenu busy={busy || Boolean(renaming)} {...menuControl(`blank:${path}`)} content={run => <>
+      {onCreateNote ? <DropdownMenuItem onClick={() => run(onCreateNote)}>新建文档</DropdownMenuItem> : null}
+      {onCreateDirectory ? <DropdownMenuItem onClick={() => run(onCreateDirectory)}>新建目录</DropdownMenuItem> : null}
+      {(onCreateNote || onCreateDirectory) && selection ? <DropdownMenuSeparator /> : null}
+      {selection ? <>
+        <DropdownMenuItem disabled={entries.length === 0} onClick={() => run(selection.onSelectAll)}>全选</DropdownMenuItem>
+        {selection.active ? <DropdownMenuItem onClick={() => run(selection.onClear)}>退出多选</DropdownMenuItem> : null}
+      </> : null}
+    </>}>
+      <div className={styles.directorySurface}>{element}</div>
+    </FileContextMenu>
+  ) : element
 
   if (viewMode === "grid") {
-    return (
+    return wrapDirectory(
       <LibraryItemGrid
+        bottomInset={bottomInset}
         ariaLabel={`${path} 目录宫格`}
+        busy={busy}
         emptyMessage={emptyMessage}
         isItemOpenable={(item) => {
           const entry = entries.find((candidate) => candidate.path === item.path)
           return entry ? isEntryOpenable(entry) : false
         }}
-        items={entries.map(gridItem)}
+        items={sortedEntries.map(gridItem)}
+        renderItemContainer={(item, element) => {
+          const entry = entries.find(candidate => candidate.path === item.path)
+          return entry ? wrapEntry(entry, element) : element
+        }}
         onSelectItem={(item) => {
           const entry = entries.find((candidate) => candidate.path === item.path)
-          if (entry) onOpenEntry(entry)
+          if (entry && !busy) onOpenEntry(entry)
         }}
         renderItemActions={(item) => {
           const entry = entries.find((candidate) => candidate.path === item.path)
@@ -409,86 +437,182 @@ export function DirectoryView({
             />
           ) : null
         }
+        selection={selection ? {
+          active: selection.active,
+          paths: selection.paths,
+          onKeyDown: selection.onKeyDown,
+          onToggle: (item, modifiers) => {
+            const entry = entries.find((candidate) => candidate.path === item.path)
+            if (entry && !busy) selection.onToggle(entry, modifiers)
+          },
+        } : undefined}
       />
     )
   }
 
   if (entries.length === 0) {
-    return (
-      <div className={styles.empty}>
+    return wrapDirectory(
+      <div aria-busy={busy} className={styles.empty} onKeyDown={selection?.onKeyDown} tabIndex={selection ? 0 : undefined}>
         <p>{emptyMessage}</p>
       </div>
     )
   }
 
-  return (
-    <div aria-label={`${path} 目录列表`} className={styles.list} role="region">
-      <div className={styles.listHeader}>
-        <span>名称</span>
-        <span>类型</span>
-        <span>大小</span>
-        <span>修改时间</span>
-        <span aria-hidden="true" />
-      </div>
-      <div className={styles.listBody}>
-        {entries.map((entry) => {
-          const isRenaming = renaming?.path === entry.path
-          return (
-            <div className={styles.listRow} key={entry.path}>
-              {isRenaming ? (
-                <div className={styles.listOpenButton}>
-                  <RenameInput
-                    busy={busy}
-                    onCancel={onRenameCancel}
-                    onChange={onRenameChange}
-                    onSubmit={onRenameSubmit}
-                    value={renaming.value}
+  return wrapDirectory(
+    <div
+      aria-busy={busy}
+      aria-label={`${path} 目录列表`}
+      className={styles.list}
+      style={bottomInset === undefined ? undefined : {
+        paddingBottom: bottomInset,
+        scrollPaddingBottom: bottomInset,
+        scrollbarGutter: "stable",
+      }}
+      data-selection-active={selection?.active || undefined}
+      onKeyDown={selection?.onKeyDown}
+      role="region"
+      tabIndex={selection ? 0 : undefined}
+    >
+      <table aria-label="目录文件" className={styles.listTable}>
+        <colgroup>
+          {selection ? <col className={styles.selectionColumn} /> : null}
+          <col />
+          <col className={styles.typeColumn} />
+          <col className={styles.sizeColumn} />
+          <col className={styles.dateColumn} />
+          <col className={styles.dateColumn} />
+          <col className={styles.actionsColumn} />
+        </colgroup>
+        <thead>
+          <tr className={styles.listHeader}>
+            {selection ? (
+              <th className={styles.selectionCell} scope="col">
+                <span className={styles.selectionControl}>
+                  <Checkbox
+                    aria-label="全选当前目录"
+                    checked={selectedCount === sortedEntries.length}
+                    disabled={busy}
+                    indeterminate={selectedCount > 0 && selectedCount < sortedEntries.length}
+                    onCheckedChange={() => {
+                      if (busy) return
+                      if (selectedCount === sortedEntries.length) selection.onClear()
+                      else selection.onSelectAll()
+                    }}
                   />
-                  <span>{entryTypeLabel(entry.kind)}</span>
-                  <span className={styles.numericCell}>
-                    {entry.kind === "directory" ? "—" : formatBytes(entry.size)}
-                  </span>
-                  <span className={styles.numericCell}>
-                    {formatModifiedAt(entry.modifiedAt) || "未知"}
-                  </span>
-                </div>
-              ) : isEntryOpenable(entry) ? (
-                <button
-                  aria-label={`打开${entry.kind === "directory" ? "目录" : "文件"} ${entry.name}`}
-                  className={styles.listOpenButton}
-                  onClick={() => onOpenEntry(entry)}
-                  type="button"
+                </span>
+              </th>
+            ) : null}
+            {SORT_OPTIONS.map(({ key, label }) => {
+              const active = sort.key === key
+              const SortIcon = active ? (sort.direction === "asc" ? ArrowUpIcon : ArrowDownIcon) : ArrowUpDownIcon
+              return (
+                <th
+                  aria-sort={active ? (sort.direction === "asc" ? "ascending" : "descending") : "none"}
+                  className={key === "size" ? styles.sizeCell : undefined}
+                  key={key}
+                  scope="col"
                 >
-                  <span className={styles.nameCell} title={entry.name}>
-                    {entry.name}
-                  </span>
-                  <span>{entryTypeLabel(entry.kind)}</span>
-                  <span className={styles.numericCell}>
-                    {entry.kind === "directory" ? "—" : formatBytes(entry.size)}
-                  </span>
-                  <span className={styles.numericCell}>
-                    {formatModifiedAt(entry.modifiedAt) || "未知"}
-                  </span>
-                </button>
-              ) : (
-                <div className={styles.listOpenButton}>
-                  <span className={styles.nameCell} title={entry.name}>
-                    {entry.name}
-                  </span>
-                  <span>{entryTypeLabel(entry.kind)}</span>
-                  <span className={styles.numericCell}>
-                    {entry.kind === "directory" ? "—" : formatBytes(entry.size)}
-                  </span>
-                  <span className={styles.numericCell}>
-                    {formatModifiedAt(entry.modifiedAt) || "未知"}
-                  </span>
-                </div>
-              )}
-              {isRenaming ? <span /> : renderEntryMenu(entry)}
-            </div>
-          )
-        })}
-      </div>
+                  <Button
+                    aria-label={`按${label}排序`}
+                    className={styles.sortButton}
+                    data-active={active}
+                    onClick={() => onSortChange(active
+                      ? { ...sort, direction: sort.direction === "asc" ? "desc" : "asc" }
+                      : initialSort(key))}
+                    size="sm"
+                    title={`${label}：${active && sort.direction === "asc" ? "切换为降序" : active ? "切换为升序" : "点击排序"}`}
+                    variant="ghost"
+                  >
+                    {label}
+                    <SortIcon />
+                  </Button>
+                </th>
+              )
+            })}
+            <th scope="col"><span className="sr-only">操作</span></th>
+          </tr>
+        </thead>
+        <tbody>
+          {sortedEntries.map((entry) => {
+            const isRenaming = renaming?.path === entry.path
+            const openable = isEntryOpenable(entry)
+            const name = libraryEntryName(entry)
+            const fileName = (
+              <span className={styles.nameCell} title={entry.name}>
+                <LibraryFileIcon kind={entry.kind} />
+                <span className={styles.nameText}>{name}</span>
+              </span>
+            )
+            return wrapEntry(entry,
+              <tr
+                className={styles.listRow}
+                data-path={entry.path}
+                data-selected={selection?.paths.has(entry.path) || undefined}
+                key={entry.path}
+                onClick={(event) => handleEntryClick(entry, event)}
+              >
+                {selection ? (
+                  <td className={styles.selectionCell} onClick={(event) => event.stopPropagation()}>
+                    <span className={styles.selectionControl}>
+                      <Checkbox
+                        aria-label={`选择 ${entry.name}`}
+                        checked={selection.paths.has(entry.path)}
+                        disabled={busy || isRenaming}
+                        onCheckedChange={(_, { event }) => {
+                          if (busy || isRenaming) return
+                          selection.onToggle(entry, {
+                            shiftKey: "shiftKey" in event && event.shiftKey === true,
+                            metaKey: "metaKey" in event && event.metaKey === true,
+                            ctrlKey: "ctrlKey" in event && event.ctrlKey === true,
+                          })
+                        }}
+                      />
+                    </span>
+                  </td>
+                ) : null}
+                <td>
+                  {isRenaming ? (
+                    <span className={styles.nameCell}>
+                      <LibraryFileIcon kind={entry.kind} />
+                      <RenameInput
+                        busy={busy}
+                        onCancel={onRenameCancel}
+                        onChange={onRenameChange}
+                        onSubmit={onRenameSubmit}
+                        value={renaming.value}
+                      />
+                    </span>
+                  ) : openable || selection ? (
+                    <button
+                      aria-label={`${selection?.active || !openable ? "选择" : "打开"}${entry.kind === "directory" ? "目录" : "文件"} ${entry.name}`}
+                      aria-pressed={selection?.active ? selection.paths.has(entry.path) : undefined}
+                      className={styles.listOpenButton}
+                      disabled={busy}
+                      onClick={(event) => { event.stopPropagation(); handleEntryClick(entry, event) }}
+                      type="button"
+                    >
+                      {fileName}
+                    </button>
+                  ) : fileName}
+                </td>
+                <td>{libraryEntryTypeLabel(entry.kind)}</td>
+                <td className={styles.sizeCell}>
+                  {entry.kind === "directory" ? "—" : formatBytes(entry.size)}
+                </td>
+                <td className={styles.numericCell}>
+                  {formatModifiedAt(entry.createdAt ?? "") || "未知"}
+                </td>
+                <td className={styles.numericCell}>
+                  {formatModifiedAt(entry.modifiedAt) || "未知"}
+                </td>
+                <td className={styles.actionsCell} onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}>
+                  {isRenaming ? null : renderEntryMenu(entry)}
+                </td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
     </div>
   )
 }

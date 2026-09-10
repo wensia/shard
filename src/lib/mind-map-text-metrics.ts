@@ -57,27 +57,48 @@ export function measureMindMapInkBaselineOffset(
   return offset
 }
 
-// 容器挂载后读取其实际 font-family；网络字体（Noto Sans SC）加载完成后再读一次。
-export function useMindMapFontFamily(
-  containerRef: RefObject<HTMLElement | null>
+// Font loading can change glyph metrics without changing the CSS family string.
+export function useMindMapFontStyle(
+  containerRef: RefObject<HTMLElement | null>,
+  enabled = true
 ) {
-  const [fontFamily, setFontFamily] = useState<string | null>(null)
+  const [fontStyle, setFontStyle] = useState<{
+    fontFamily: string
+    fontSize: number
+    fontWeight: string
+  } | null>(null)
 
   useEffect(() => {
     const element = containerRef.current
-    if (!element) return
+    if (!element || !enabled) return
 
-    const read = () => setFontFamily(getComputedStyle(element).fontFamily)
+    const read = () => {
+      const style = getComputedStyle(element)
+      setFontStyle({
+        fontFamily: style.fontFamily,
+        fontSize: parseFloat(style.fontSize),
+        fontWeight: style.fontWeight,
+      })
+    }
     read()
 
     let cancelled = false
-    void document.fonts?.ready.then(() => {
-      if (!cancelled) read()
-    })
+    const refresh = () => {
+      if (cancelled) return
+      offsetCache.clear()
+      read()
+    }
+    void document.fonts?.ready.then(refresh)
+    document.fonts?.addEventListener("loadingdone", refresh)
     return () => {
       cancelled = true
+      document.fonts?.removeEventListener("loadingdone", refresh)
     }
-  }, [containerRef])
+  }, [containerRef, enabled])
 
-  return fontFamily
+  return fontStyle
+}
+
+export function useMindMapFontFamily(containerRef: RefObject<HTMLElement | null>) {
+  return useMindMapFontStyle(containerRef)?.fontFamily ?? null
 }

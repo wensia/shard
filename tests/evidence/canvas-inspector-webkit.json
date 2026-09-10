@@ -1,0 +1,98 @@
+{
+  "layer": "WebKit browser with isolated mock storage",
+  "viewport": {
+    "width": 1280,
+    "height": 720
+  },
+  "metrics": {
+    "width": 288,
+    "height": 619,
+    "bodyOverflow": "auto",
+    "controls": [
+      {
+        "label": "关闭",
+        "height": 32,
+        "fontSize": "13px",
+        "radius": "4px",
+        "fill": "rgb(255, 255, 255)"
+      },
+      {
+        "label": "属性",
+        "height": 40,
+        "fontSize": "13px",
+        "radius": "0px",
+        "fill": "rgba(0, 0, 0, 0)"
+      },
+      {
+        "label": "大纲",
+        "height": 40,
+        "fontSize": "13px",
+        "radius": "0px",
+        "fill": "rgba(0, 0, 0, 0)"
+      },
+      {
+        "label": "子节点",
+        "height": 32,
+        "fontSize": "13px",
+        "radius": "4px",
+        "fill": "rgb(255, 255, 255)"
+      },
+      {
+        "label": "同级节点",
+        "height": 32,
+        "fontSize": "13px",
+        "radius": "4px",
+        "fill": "rgb(255, 255, 255)"
+      },
+      {
+        "label": "更多主题操作",
+        "height": 32,
+        "fontSize": "13px",
+        "radius": "4px",
+        "fill": "rgb(255, 255, 255)"
+      },
+      {
+        "label": "导图节点文字",
+        "height": 74.53125,
+        "fontSize": "13px",
+        "radius": "4px",
+        "fill": "rgb(255, 255, 255)"
+      },
+      {
+        "label": "主题颜色：默认",
+        "height": 63.390625,
+        "fontSize": "13px",
+        "radius": "4px",
+        "fill": "rgba(0, 0, 0, 0)"
+      },
+      {
+        "label": "主题颜色：强调",
+        "height": 63.390625,
+        "fontSize": "13px",
+        "radius": "4px",
+        "fill": "rgba(0, 0, 0, 0)"
+      },
+      {
+        "label": "主题颜色：完成",
+        "height": 63.390625,
+        "fontSize": "13px",
+        "radius": "4px",
+        "fill": "color(srgb 0.885255 0.920392 0.926431)"
+      },
+      {
+        "label": "主题颜色：提醒",
+        "height": 63.390625,
+        "fontSize": "13px",
+        "radius": "4px",
+        "fill": "rgba(0, 0, 0, 0)"
+      },
+      {
+        "label": "节点宽度",
+        "height": 32,
+        "fontSize": "13px",
+        "radius": "4px",
+        "fill": "rgb(255, 255, 255)"
+      }
+    ]
+  }
+}

@@ -7,7 +7,6 @@ import {
   type FocusEvent,
 } from "react"
 import { isTauri } from "@tauri-apps/api/core"
-import { open } from "@tauri-apps/plugin-dialog"
 import { startCompletion } from "@codemirror/autocomplete"
 import { Loader2Icon, LockKeyholeIcon, SendHorizontalIcon, XIcon } from "@/components/icons"
 import { toast } from "sonner"
@@ -32,8 +31,6 @@ import {
   applyLineFormat,
   extractTags,
   insertHorizontalRule,
-  insertMarkdownBlock,
-  insertMarkdownTable,
   insertTagMarker,
   normalizeTagList,
   parseMarkdownImageLine,
@@ -42,20 +39,11 @@ import {
   type TextEdit,
 } from "@/lib/editor-format"
 import {
-  convertTableDocumentToMarkdown,
   getApiErrorMessage,
   setWindowControlsHidden,
 } from "@/lib/api"
 import { hasMarkdownImage, wantsLockbox } from "@/lib/lockbox"
-import {
-  getFirstEditableTableOffset,
-  hasOversizedTable,
-  MAX_EDITABLE_TABLE_CELLS,
-} from "@/lib/markdown-table"
-import {
-  TABLE_DOCUMENT_FILTER,
-  useTableDocumentDrop,
-} from "@/lib/use-table-document-drop"
+import { useTableDocumentDrop } from "@/lib/use-table-document-drop"
 import { buildCsvWikilinkCandidates, buildWikilinkCandidates } from "@/lib/wikilink"
 import type { CsvFileSummary, Fragment } from "@/types"
 import styles from "./fragment-editor.module.css"
@@ -73,6 +61,7 @@ interface FragmentEditorProps {
   fragments?: Fragment[]
   knownTags: string[]
   onClose: () => void
+  onRegisterFlush?: (flush: (() => Promise<boolean>) | null) => void
   onCreate?: (content: string, tags: string[]) => Promise<void>
   onNavigateToFragment?: (fragmentId: string) => void
   onSave: (id: string, content: string, tags: string[]) => Promise<Fragment>
@@ -97,6 +86,7 @@ export function FragmentEditor({
   fragments = [],
   knownTags,
   onClose,
+  onRegisterFlush,
   onCreate,
   onNavigateToFragment,
   onSave,
@@ -119,7 +109,9 @@ export function FragmentEditor({
   const editorFrameRef = useRef<HTMLDivElement>(null)
   const shardEditorRef = useRef<ShardEditorHandle>(null)
   const closeEditorRef = useRef<() => void>(() => undefined)
-  const [isImportingTable, setIsImportingTable] = useState(false)
+  const savePromiseRef = useRef<Promise<boolean> | null>(null)
+  const flushRef = useRef<() => Promise<boolean>>(async () => true)
+  flushRef.current = handleSubmit
   const isZen = variant === "zen"
   const isDraft = fragment === null && draft !== null
   const isOpen = fragment !== null || draft !== null
@@ -165,7 +157,7 @@ export function FragmentEditor({
         getCandidates: () => wikilinkCandidatesRef.current,
         maxCsvRows: isZen ? 50 : 10,
         onMissingTarget: (target) =>
-          toast(`待建链接「${target}」尚不存在，可在资料库新建笔记`),
+          toast(`待建链接「${target}」尚不存在，可在资料库新建文档`),
         onNavigate: (fragmentId) =>
           wikilinkNavigateRef.current?.(fragmentId),
       }),
@@ -275,18 +267,10 @@ export function FragmentEditor({
     }
   }, [draft?.id, fragment?.id, isOpen, isZen])
 
-  /**
-   * 表格文档导入：转成 Markdown 表格插进正文，原文件不进 vault。
-   * 数据留在正文里，搜索、标签、git diff 才都还能用上。
-   *
-   * 必须放在下面的 `if (!isOpen) return null` 之前：hook 一旦排在提前
-   * return 之后，编辑器从关闭到打开时 hooks 数量就会变化，React 会报
-   * "Rendered more hooks than during the previous render" 并卸载整棵树
-   * （禅模式白屏就是这么来的）。`insertTableDocuments` 是函数声明，提升后可用。
-   */
+  // 与其他 hooks 一样，必须位于关闭编辑器的提前 return 之前。
   const { isDropTarget: isTableDropTarget } = useTableDocumentDrop({
+    enabled: isOpen,
     frameRef: editorFrameRef,
-    onDrop: (paths) => insertTableDocuments(paths),
   })
   const { uploadImage, uploadPastedImages } = useImageUpload({
     canUpload: () => Boolean(shardEditorRef.current?.view),
@@ -307,6 +291,12 @@ export function FragmentEditor({
       })
     },
   })
+
+  useEffect(() => {
+    if (!isOpen) return
+    onRegisterFlush?.(() => flushRef.current())
+    return () => onRegisterFlush?.(null)
+  }, [isOpen, onRegisterFlush])
 
   if (!isOpen) return null
 
@@ -337,15 +327,14 @@ export function FragmentEditor({
     clearSaveTimer()
 
     const currentDraftContent = getCurrentDraftContent()
-    if (currentDraftContent === lastSavedContentRef.current) {
+    if (currentDraftContent === lastSavedContentRef.current && !savePromiseRef.current) {
       onClose()
-      return
+      return true
     }
 
     const saved = await saveDraft(currentDraftContent)
-    if (saved) {
-      onClose()
-    }
+    if (saved) onClose()
+    return saved
   }
 
   function handleEditorBlur(event: FocusEvent<HTMLElement>) {
@@ -367,7 +356,19 @@ export function FragmentEditor({
     }, 0)
   }
 
-  async function saveDraft(nextContent: string) {
+  async function saveDraft(nextContent: string): Promise<boolean> {
+    if (savePromiseRef.current) {
+      if (!(await savePromiseRef.current)) return false
+      if (nextContent === lastSavedContentRef.current) return true
+    }
+    const pending = persistDraft(nextContent)
+    savePromiseRef.current = pending
+    try { return await pending } finally {
+      if (savePromiseRef.current === pending) savePromiseRef.current = null
+    }
+  }
+
+  async function persistDraft(nextContent: string) {
     if (nextContent.trim().length === 0) {
       setSaveState("error")
       toast.error("片段内容不能为空", { duration: Infinity })
@@ -448,93 +449,6 @@ export function FragmentEditor({
         selection.end
       )
     )
-  }
-
-  function insertTable(columns: number, rows: number) {
-    const selection = getEditorSelection()
-    const currentContent = getEditorValue()
-
-    const nextEdit = insertMarkdownTable(
-      currentContent,
-      selection.start,
-      selection.end,
-      columns,
-      rows
-    )
-    applyTextEdit(nextEdit)
-    focusInsertedTable(nextEdit.content, nextEdit.selectionStart)
-  }
-
-  /** 插完表格直接进第一个表头格，省得用户再点一下。 */
-  function focusInsertedTable(nextContent: string, cursor: number) {
-    const tableStart = nextContent.lastIndexOf("\n", cursor - 1) + 1
-
-    requestAnimationFrame(() => {
-      shardEditorRef.current?.focusTableCell(tableStart, "-1:0")
-    })
-  }
-
-  async function insertTableDocuments(paths: string[]) {
-    if (paths.length === 0 || isImportingTable) return
-
-    setIsImportingTable(true)
-    try {
-      const blocks: string[] = []
-      for (const path of paths) {
-        blocks.push(await convertTableDocumentToMarkdown(path))
-      }
-
-      const markdown = blocks.join("\n\n")
-      if (hasOversizedTable(markdown)) {
-        toast.info(
-          `表格较大，已作为纯文本插入：超过 ${MAX_EDITABLE_TABLE_CELLS} 个单元格不提供可视化编辑，源码照常可改。`
-        )
-      }
-
-      const body = markdown.trim()
-      const currentContent = getEditorValue()
-      const selection = getEditorSelection()
-      const nextEdit = insertMarkdownBlock(
-        currentContent,
-        selection.start,
-        selection.end,
-        markdown
-      )
-      applyTextEdit(nextEdit)
-
-      const relativeTableStart = getFirstEditableTableOffset(body)
-      if (relativeTableStart !== null) {
-        const bodyStart = nextEdit.selectionStart - body.length
-        shardEditorRef.current?.focusTableCell(
-          bodyStart + relativeTableStart,
-          "-1:0",
-        )
-      }
-    } catch (error) {
-      toast.error(`导入表格失败：${getApiErrorMessage(error)}`, {
-        duration: Infinity,
-      })
-    } finally {
-      setIsImportingTable(false)
-    }
-  }
-
-  async function pickTableDocument() {
-    try {
-      const selected = await open({
-        filters: [TABLE_DOCUMENT_FILTER],
-        multiple: false,
-        title: "选择表格文件",
-      })
-      const path = Array.isArray(selected) ? selected[0] : selected
-      if (!path) return
-
-      await insertTableDocuments([path])
-    } catch (error) {
-      toast.error(`选择文件失败：${getApiErrorMessage(error)}`, {
-        duration: Infinity,
-      })
-    }
   }
 
   function removeImageAttachment(id: string) {
@@ -687,9 +601,9 @@ export function FragmentEditor({
           variant={isZen ? "zen" : "inline"}
         />
       </div>
-      {isTableDropTarget || isImportingTable ? (
+      {isTableDropTarget ? (
         <div className="shard-editor-drop-hint">
-          {isImportingTable ? "正在导入表格…" : "松手导入为表格"}
+          请在资料库中导入为多维表格
         </div>
       ) : null}
     </div>
@@ -714,10 +628,8 @@ export function FragmentEditor({
           <EditorToolbar
             disabled={saveState === "saving"}
             onImageUpload={uploadImage}
-            onImportTable={isTauri() ? pickTableDocument : undefined}
             onInlineFormat={formatInline}
             onInsertHorizontalRule={insertDivider}
-            onInsertTable={insertTable}
             onInsertTag={insertTag}
             onLineFormat={formatLines}
             trailing={
@@ -814,10 +726,8 @@ export function FragmentEditor({
             <EditorToolbar
               disabled={saveState === "saving"}
               onImageUpload={uploadImage}
-              onImportTable={isTauri() ? pickTableDocument : undefined}
               onInlineFormat={formatInline}
               onInsertHorizontalRule={insertDivider}
-              onInsertTable={insertTable}
               onInsertTag={insertTag}
               onLineFormat={formatLines}
               trailing={

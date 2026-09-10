@@ -1,10 +1,10 @@
 export const WORKSPACE_ROUTE_STORAGE_KEY = "shard.workspace-route"
 
-export type ReviewWorkspaceMode = "dailyReview" | "insight" | "walk"
+export type FragmentsView = "all" | "trash"
 
 export type FragmentsRoute = {
   space: "fragments"
-  params: Record<string, never>
+  params: { view?: FragmentsView }
 }
 
 export type LibraryRoute = {
@@ -18,27 +18,17 @@ export type LockboxRoute = {
   params: Record<string, never>
 }
 
-export type ReviewRoute = {
-  space: "review"
-  params: { mode: ReviewWorkspaceMode }
-}
-
 export type WorkspaceRoute =
   | FragmentsRoute
   | LibraryRoute
   | LockboxRoute
-  | ReviewRoute
 
 export const DEFAULT_WORKSPACE_ROUTE: WorkspaceRoute = {
   space: "fragments",
   params: {},
 }
 
-const REVIEW_MODES: readonly ReviewWorkspaceMode[] = [
-  "dailyReview",
-  "insight",
-  "walk",
-]
+const FRAGMENT_VIEWS: readonly FragmentsView[] = ["all", "trash"]
 
 export function isWorkspaceRoute(value: unknown): value is WorkspaceRoute {
   if (
@@ -49,17 +39,17 @@ export function isWorkspaceRoute(value: unknown): value is WorkspaceRoute {
     return false
   }
 
-  if (value.space === "review") {
+  if (value.space === "fragments") {
     return (
-      hasOnlyKeys(value.params, ["mode"]) &&
-      typeof value.params.mode === "string" &&
-      REVIEW_MODES.includes(value.params.mode as ReviewWorkspaceMode)
+      hasOnlyKeys(value.params, []) ||
+      (hasOnlyKeys(value.params, ["view"]) &&
+        typeof value.params.view === "string" &&
+        FRAGMENT_VIEWS.includes(value.params.view as FragmentsView))
     )
   }
 
   return (
-    (value.space === "fragments" ||
-      value.space === "library" ||
+    (value.space === "library" ||
       value.space === "lockbox") &&
     hasOnlyKeys(value.params, [])
   )
@@ -71,10 +61,15 @@ export function readWorkspaceRoute(): WorkspaceRoute {
     if (!serialized) return DEFAULT_WORKSPACE_ROUTE
 
     const route: unknown = JSON.parse(serialized)
-    return isWorkspaceRoute(route) ? route : DEFAULT_WORKSPACE_ROUTE
+    return normalizeWorkspaceRoute(route)
   } catch {
     return DEFAULT_WORKSPACE_ROUTE
   }
+}
+
+/** Unsupported or removed workspace routes return to the fragment stream. */
+export function normalizeWorkspaceRoute(value: unknown): WorkspaceRoute {
+  return isWorkspaceRoute(value) ? value : DEFAULT_WORKSPACE_ROUTE
 }
 
 export function writeWorkspaceRoute(route: WorkspaceRoute): void {

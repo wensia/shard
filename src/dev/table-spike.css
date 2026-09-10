@@ -1,0 +1,13 @@
+.table-spike { display: flex; flex-direction: column; height: 100dvh; min-height: 0; overflow: hidden; background: var(--background); color: var(--foreground); font-family: "Noto Sans SC", var(--font-sans); }
+.table-spike-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--border); }
+.table-spike-toolbar > span, .table-spike-accessible p { color: var(--muted-foreground); }
+.table-spike-toolbar input { width: 16em; }
+.table-spike-toolbar select { background: var(--card); border: 1px solid var(--border-visible); border-radius: var(--radius-sm); padding: var(--space-1) var(--space-2); height: var(--control-height); }
+.table-spike-grid { flex: 1; min-height: 0; overflow: hidden; }
+.table-spike-grid .dvn-scroller { overscroll-behavior: none; }
+.table-native-cell-editor { display: block; width: 100%; min-width: 0; resize: none; border: 0; outline: none; background: var(--card); color: var(--foreground); font: inherit; line-height: var(--leading-normal); }
+.table-spike-footer { display: flex; justify-content: space-between; align-items: center; flex-shrink: 0; height: var(--table-pagination-height); padding-inline: var(--space-4); border-top: 1px solid var(--border); font-variant-numeric: tabular-nums; }
+.table-spike-accessible { padding: var(--space-3) var(--space-4); border-top: 1px solid var(--border); }
+.table-spike-accessible label { display: flex; align-items: center; gap: var(--space-3); }
+.table-spike-accessible input { flex: 1; }
+.table-spike-accessible p { margin-top: var(--space-2); }

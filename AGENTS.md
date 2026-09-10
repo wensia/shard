@@ -19,6 +19,7 @@
 ## Design System
 
 - 前端设计系统的唯一真相源是 `vendor/kiln/SKILL.md`、`vendor/kiln/references/` 与 `vendor/kiln/tokens/`；所有 UI 设计、实现和审查先读取 Kiln 对应规范。
+- Shard 的产品选择见 `docs/design/frontend.md`：明确采用 `pointer-first`，关闭全局 Tab 默认焦点轮转与焦点框，保留编辑器局部 Tab 操作及业务选中态。该产品选择优先于 Kiln 默认 `keyboard` 策略的焦点环要求，不改变共享设计系统的默认值。
 - `src/styles/frontend-rules.css` 只保存 Kiln 未覆盖的 Shard 编辑器、时间线、附件与 macOS 壳层几何，不得发展成第二套通用设计系统。
 - 可复用的颜色、字体、间距、圆角、阴影和控件规格必须消费 Kiln token；新增 Shard 扩展前先确认不能由 Kiln 语义 token 表达。
 - UI 改动至少运行 `pnpm build` 与 `git diff --check`；涉及视觉一致性时还要运行 `pnpm test:ui` 并核对真实计算样式。

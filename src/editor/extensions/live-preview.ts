@@ -1,7 +1,9 @@
 import { syntaxTree } from "@codemirror/language"
+import { isolateHistory } from "@codemirror/commands"
 import {
   Compartment,
   StateEffect,
+  Transaction,
   type EditorSelection,
   type Range,
 } from "@codemirror/state"
@@ -14,13 +16,12 @@ import {
   type ViewUpdate,
 } from "@codemirror/view"
 
-import { textEditToTransaction } from "@/editor/text-edit"
 import {
   getTagRanges,
   normalizeTag,
   parseMarkdownImageLine,
-  toggleTaskLine,
 } from "@/lib/editor-format"
+import { markdownTaskFromNode } from "@/lib/markdown-tasks"
 import { LOCKBOX_TAG } from "@/lib/lockbox"
 import { loadFragmentImageSrc } from "@/lib/fragment-images"
 
@@ -68,16 +69,21 @@ function lineRanges(view: EditorView) {
 class TaskCheckboxWidget extends WidgetType {
   constructor(
     readonly checked: boolean,
-    readonly lineIndex: number,
+    readonly markerOffset: number,
+    readonly readOnly: boolean,
   ) {
     super()
   }
 
   eq(other: TaskCheckboxWidget) {
-    return this.checked === other.checked && this.lineIndex === other.lineIndex
+    return this.checked === other.checked &&
+      this.markerOffset === other.markerOffset &&
+      this.readOnly === other.readOnly
   }
 
   toDOM(view: EditorView) {
+    const marker = document.createElement("span")
+    marker.className = "shard-task-marker shard-cm-task-marker"
     const checkbox = document.createElement("span")
     checkbox.className = [
       "shard-task-checkbox",
@@ -88,35 +94,40 @@ class TaskCheckboxWidget extends WidgetType {
       .join(" ")
     checkbox.setAttribute("aria-label", this.checked ? "标记为未完成" : "标记为完成")
     checkbox.setAttribute("aria-checked", String(this.checked))
+    checkbox.setAttribute("aria-readonly", String(this.readOnly))
     checkbox.setAttribute("role", "checkbox")
-    checkbox.tabIndex = 0
+    checkbox.tabIndex = this.readOnly ? -1 : 0
 
     const toggle = (event: Event) => {
       event.preventDefault()
       event.stopPropagation()
-      const content = view.state.doc.toString()
-      const nextContent = toggleTaskLine(content, this.lineIndex)
-      if (nextContent === content) return
-      const selection = view.state.selection.main
-      view.dispatch(
-        textEditToTransaction(view.state, {
-          content: nextContent,
-          selectionEnd: selection.to,
-          selectionStart: selection.from,
-        }),
-      )
+      if (view.state.readOnly || view.composing) return
+      // 从当前 widget 位置定位，避免上方插入/删除行后写到旧偏移；只改状态字符。
+      const markerFrom = view.posAtDOM(marker) + this.markerOffset
+      const current = view.state.doc.sliceString(markerFrom, markerFrom + 3)
+      if (!/^\[[ xX]\]$/u.test(current)) return
+      view.dispatch({
+        changes: {
+          from: markerFrom + 1,
+          to: markerFrom + 2,
+          insert: current[1].toLowerCase() === "x" ? " " : "x",
+        },
+        annotations: [Transaction.userEvent.of("input.task"), isolateHistory.of("full")],
+      })
       view.focus()
     }
 
+    checkbox.addEventListener("mousedown", (event) => event.preventDefault())
     checkbox.addEventListener("click", toggle)
     checkbox.addEventListener("keydown", (event) => {
       if (event.key === "Enter" || event.key === " ") toggle(event)
     })
-    return checkbox
+    marker.append(checkbox)
+    return marker
   }
 
-  ignoreEvent(event: Event) {
-    return event.type !== "mousedown" && event.type !== "click"
+  ignoreEvent() {
+    return true
   }
 }
 
@@ -256,14 +267,19 @@ function buildLivePreviewDecorations(view: EditorView): DecorationSet {
         }
 
         if (node.name === "TaskMarker") {
-          const marker = view.state.doc.sliceString(node.from, node.to)
-          const lineIndex = view.state.doc.lineAt(node.from).number - 1
-          const checked = /x/iu.test(marker)
+          const task = markdownTaskFromNode(node.node, (from, to) =>
+            view.state.doc.sliceString(from, to),
+          )
+          if (!task) return
           add(
-            `task:${node.from}:${node.to}:${checked}`,
+            `task:${task.from}:${task.to}:${task.checked}`,
             Decoration.replace({
-              widget: new TaskCheckboxWidget(checked, lineIndex),
-            }).range(node.from, node.to),
+              widget: new TaskCheckboxWidget(
+                task.checked,
+                task.markerFrom - task.from,
+                view.state.readOnly,
+              ),
+            }).range(task.from, task.to),
           )
           return
         }
@@ -358,9 +374,17 @@ function buildLivePreviewDecorations(view: EditorView): DecorationSet {
 const livePreviewPlugin = ViewPlugin.fromClass(
   class {
     decorations: DecorationSet
+    taskRanges: DecorationSet
 
     constructor(view: EditorView) {
       this.decorations = buildLivePreviewDecorations(view)
+      this.taskRanges = this.getTaskRanges()
+    }
+
+    getTaskRanges() {
+      return this.decorations.update({
+        filter: (_from, _to, decoration) => decoration.spec.widget instanceof TaskCheckboxWidget,
+      })
     }
 
     update(update: ViewUpdate) {
@@ -371,7 +395,9 @@ const livePreviewPlugin = ViewPlugin.fromClass(
         !refreshRequested &&
         !update.docChanged &&
         !update.viewportChanged &&
-        !update.selectionSet
+        !update.selectionSet &&
+        update.startState.readOnly === update.state.readOnly &&
+        syntaxTree(update.startState) === syntaxTree(update.state)
       ) {
         return
       }
@@ -379,13 +405,21 @@ const livePreviewPlugin = ViewPlugin.fromClass(
       if (update.view.composing) {
         if (update.docChanged) {
           this.decorations = this.decorations.map(update.changes)
+          this.taskRanges = this.taskRanges.map(update.changes)
         }
         return
       }
       this.decorations = buildLivePreviewDecorations(update.view)
+      this.taskRanges = this.getTaskRanges()
     }
   },
-  { decorations: (plugin) => plugin.decorations },
+  {
+    decorations: (plugin) => plugin.decorations,
+    // 隐藏的任务前缀作为整体移动光标，不能把输入落在看不见的 Markdown 中间。
+    provide: (plugin) => EditorView.atomicRanges.of((view) =>
+      view.plugin(plugin)?.taskRanges ?? Decoration.none,
+    ),
+  },
 )
 
 const compositionRefresh = EditorView.domEventHandlers({

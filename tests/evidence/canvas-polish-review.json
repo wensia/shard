@@ -1,0 +1,152 @@
+{
+  "scope": "Independent read-only product review; isolated browser mock only",
+  "engine": "Playwright WebKit",
+  "viewport": {
+    "width": 1200,
+    "height": 850
+  },
+  "importCase": {
+    "sourceTreeNodeCount": 6,
+    "beforeNodes": 5,
+    "importedNodes": 6,
+    "placement": {
+      "nodes": [
+        {
+          "id": "33085351-c7a5-478b-a581-f5a5880b92c5",
+          "kind": "mindmap",
+          "rect": {
+            "x": 512.7907104492188,
+            "y": 339.3565979003906,
+            "width": 389.53485107421875,
+            "height": 365.6885681152344,
+            "top": 339.3565979003906,
+            "right": 902.3255615234375,
+            "bottom": 705.045166015625,
+            "left": 512.7907104492188
+          }
+        },
+        {
+          "id": "ddaccc21-e82a-458b-8840-31649f2cc5b1",
+          "kind": "process",
+          "rect": {
+            "x": 925.5814208984375,
+            "y": 339.3565979003906,
+            "width": 174.4185791015625,
+            "height": 69.76742553710938,
+            "top": 339.3565979003906,
+            "right": 1100,
+            "bottom": 409.1240234375,
+            "left": 925.5814208984375
+          }
+        },
+        {
+          "id": "a253b35d-21b3-4015-83c6-f89c1dd83361",
+          "kind": "process",
+          "rect": {
+            "x": 925.5814208984375,
+            "y": 432.3798522949219,
+            "width": 174.4185791015625,
+            "height": 69.76742553710938,
+            "top": 432.3798522949219,
+            "right": 1100,
+            "bottom": 502.14727783203125,
+            "left": 925.5814208984375
+          }
+        },
+        {
+          "id": "dd1929c9-b99a-423e-aa47-42aea6dfb96e",
+          "kind": "process",
+          "rect": {
+            "x": 925.5814208984375,
+            "y": 246.3333282470703,
+            "width": 174.4185791015625,
+            "height": 69.76744079589844,
+            "top": 246.3333282470703,
+            "right": 1100,
+            "bottom": 316.10076904296875,
+            "left": 925.5814208984375
+          }
+        },
+        {
+          "id": "a037ec18-7d18-4f70-994e-1d92fee8dca6",
+          "kind": "process",
+          "rect": {
+            "x": 727.906982421875,
+            "y": 246.3333282470703,
+            "width": 174.4185791015625,
+            "height": 69.76744079589844,
+            "top": 246.3333282470703,
+            "right": 902.3255615234375,
+            "bottom": 316.10076904296875,
+            "left": 727.906982421875
+          }
+        },
+        {
+          "id": "9d8c41bd-7d8a-4be7-9d32-4803679a9f46",
+          "kind": "mindmap",
+          "rect": {
+            "x": 100,
+            "y": 339.3565979003906,
+            "width": 389.5348815917969,
+            "height": 365.6885681152344,
+            "top": 339.3565979003906,
+            "right": 489.5348815917969,
+            "bottom": 705.045166015625,
+            "left": 100
+          }
+        }
+      ],
+      "overlaps": []
+    },
+    "overlapCount": 0,
+    "oneUndoRestoresExactBefore": true
+  },
+  "layoutFailure": {
+    "injection": "Mock read_mind_map returns nodes:null; actual layout worker returns its caught error",
+    "message": "TypeError: null is not an object (evaluating 'file.nodes[file.rootId]')",
+    "nodesUnchanged": true,
+    "noAdditionalWrite": true,
+    "dirty": false,
+    "redoHistoryPreserved": true
+  },
+  "pageErrors": [],
+  "screenshots": [
+    "tests/evidence/canvas-polish-webkit.png",
+    "tests/evidence/canvas-polish-import-webkit.png"
+  ],
+  "priorReviewObserved": {
+    "editorBorder": "0px",
+    "editorOutlineStyle": "none",
+    "editorResize": "none",
+    "singleAndDoubleLineCenterOffset": 0,
+    "processAndTerminal": {
+      "width": 180,
+      "height": 72
+    },
+    "decision": {
+      "width": 180,
+      "height": 108,
+      "selectedStroke": "shape polygon"
+    },
+    "ordinaryDrag": {
+      "dx": 40,
+      "dy": 20,
+      "visible": true
+    },
+    "elevenNewNodesOverlapCount": 0,
+    "narrow440Container": {
+      "viewportWidth": 440,
+      "inspectorPosition": "absolute",
+      "inspectorWidth": 320,
+      "pageHorizontalOverflow": false
+    },
+    "short1000x340": {
+      "outlineRows": 7,
+      "outlineHeight": 96,
+      "panelHeight": 239,
+      "panelScrollHeight": 361,
+      "deleteButtonReachable": true,
+      "fifthOutlineRowClickable": true
+    }
+  }
+}

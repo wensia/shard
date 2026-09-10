@@ -1,0 +1,83 @@
+{
+  "scope": "Infinite canvas embedded mind-map text vertical centering only",
+  "storage": "Isolated browser mock harness; no native vault modified",
+  "method": "Whole-page browser PNG decoded into an off-DOM canvas, scanning dark glyph pixels inside each topic rectangle. CSS-pixel ink center compared with actual rectangle center; no SVG getBBox or duplicated baseline formula.",
+  "toleranceCssPx": 1,
+  "comparison": {
+    "engine": "Playwright WebKit",
+    "deviceScaleFactor": 2,
+    "zoom": 1,
+    "fontSizePx": 13,
+    "fontWeight": 400,
+    "beforeMethod": "Replayed the previous dominant-baseline=central and tspan dy attributes only in an isolated DOM, with current geometry. This confirms the regression oracle rejects the prior rendering logic.",
+    "before": [
+      {
+        "label": "导图节点：中心主题",
+        "offsetCss": -4.390625
+      },
+      {
+        "label": "导图节点：未命名",
+        "offsetCss": -4.390625
+      },
+      {
+        "label": "导图节点：Alpha gyp",
+        "offsetCss": -3.140625
+      },
+      {
+        "label": "导图节点：中文 Alpha",
+        "offsetCss": -4.140625
+      },
+      {
+        "label": "导图节点：这是用于检查自动换行后整个文字组仍然垂直居中的长主题名称",
+        "offsetCss": -4.390625
+      }
+    ],
+    "after": [
+      {
+        "label": "导图节点：中心主题",
+        "offsetCss": 0.609375
+      },
+      {
+        "label": "导图节点：未命名",
+        "offsetCss": 0.109375
+      },
+      {
+        "label": "导图节点：Alpha gyp",
+        "offsetCss": 0.859375
+      },
+      {
+        "label": "导图节点：中文 Alpha",
+        "offsetCss": 0.359375
+      },
+      {
+        "label": "导图节点：这是用于检查自动换行后整个文字组仍然垂直居中的长主题名称",
+        "offsetCss": 0.609375
+      }
+    ]
+  },
+  "tests": {
+    "command": "pnpm exec playwright test tests/ui/canvas-text-center.spec.ts --workers=1",
+    "passed": 4,
+    "durationSeconds": 7.6,
+    "engines": [
+      "WebKit",
+      "Chromium"
+    ],
+    "zoomPercent": [
+      48,
+      100,
+      207
+    ],
+    "labels": [
+      "中心主题",
+      "未命名",
+      "Alpha gyp",
+      "中文 Alpha",
+      "Three automatically wrapped Chinese lines"
+    ],
+    "fontLoading": "Real Latin WOFF2 response held until after initial rendering of Alpha gyp, then released; unchanged CSS font-family string, changed baseline y, final raster ink center within tolerance.",
+    "fontLoadingScope": "A single Latin root topic isolates the glyph set supplied by the delayed Latin font. Standard mixed-language labels are checked in the zoom tests."
+  },
+  "screenshot": "canvas-text-center-webkit.png",
+  "review": "Container and SVG text currently share the same computed family, size and weight. Same text uses the glyph cache; non-mindmap objects do not activate the font hook. Font events refresh metric cache and trigger rendering without changing canvas persistence."
+}

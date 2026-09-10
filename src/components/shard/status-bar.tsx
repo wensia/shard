@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react"
 import {
+  GitBranchIcon,
   HelpCircleIcon,
   KeyboardIcon,
   Maximize2Icon,
@@ -39,6 +40,7 @@ interface StatusBarProps {
   onCheckpoint: () => void
   onHelp: () => void
   onOpenGitSettings: () => void
+  onOpenMindMaps: () => void
   onOpenSettings: () => void
   onRestoreWindow: () => void
   onShortcuts: () => void
@@ -62,6 +64,7 @@ export function StatusBar({
   onCheckpoint,
   onHelp,
   onOpenGitSettings,
+  onOpenMindMaps,
   onOpenSettings,
   onRestoreWindow,
   onShortcuts,
@@ -202,6 +205,11 @@ export function StatusBar({
             <span className="sr-only">更多操作</span>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" side="top" style={{ width: 160 }}>
+            <StatusBarMenuItem
+              icon={GitBranchIcon}
+              label="思维导图"
+              onSelect={onOpenMindMaps}
+            />
             <StatusBarMenuItem
               icon={SettingsIcon}
               label="设置"

@@ -1,11 +1,13 @@
 import {
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
   type KeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
+  type RefObject,
 } from "react"
 import { Maximize2Icon, MoveIcon } from "@/components/icons"
 
@@ -28,10 +30,11 @@ import {
 } from "@/lib/mind-map-layout"
 import {
   measureMindMapInkBaselineOffset,
-  useMindMapFontFamily,
+  useMindMapFontStyle,
 } from "@/lib/mind-map-text-metrics"
 import {
   addMindMapChild,
+  addMindMapParent,
   addMindMapSibling,
   canMoveMindMapNodesToTarget,
   deleteMindMapNode,
@@ -42,6 +45,7 @@ import {
   type MindMapDropMode,
   type MindMapDropTarget,
   moveMindMapNodesToTarget,
+  moveMindMapNode,
   outdentMindMapNode,
   toggleMindMapNodeCollapsed,
   updateMindMapNodeText,
@@ -58,6 +62,15 @@ interface MindMapCanvasEditorProps {
   onSelectNodes?: (nodeIds: string[], primaryNodeId: string | null) => void
   selectedNodeId: string | null
   selectedNodeIds: string[]
+  inspectorVisible?: boolean
+  sessionStateRef?: RefObject<MindMapCanvasSessionState | null>
+}
+
+export interface MindMapCanvasSessionState {
+  fileId: string
+  scale: number
+  x: number
+  y: number
 }
 
 interface CanvasDragState {
@@ -121,8 +134,11 @@ const WHEEL_ZOOM_INTENSITY = 0.0018
 const CANVAS_REVEAL_MARGIN_PX = 48
 const CANVAS_REVEAL_DURATION_MS = 180
 const MIND_MAP_LAYOUT_OPTIONS = {
+  // 三行省略仅适用于卡片预览，文档节点与输入框必须容纳完整正文。
+  maxNodeLines: Number.POSITIVE_INFINITY,
   horizontalGap: 96,
   nodeHeight: 48,
+  nodeVerticalPadding: 13,
   nodeWidth: 190,
   verticalGap: 22,
 } as const
@@ -135,6 +151,8 @@ export function MindMapCanvasEditor({
   onSelectNodes,
   selectedNodeId,
   selectedNodeIds,
+  inspectorVisible = false,
+  sessionStateRef,
 }: MindMapCanvasEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const selectedInputRef = useRef<HTMLTextAreaElement | null>(null)
@@ -151,7 +169,10 @@ export function MindMapCanvasEditor({
   const revealAnimationRef = useRef<number | null>(null)
   const [size, setSize] = useState({ height: 720, width: 980 })
   const [dragState, setDragState] = useState<CanvasDragState | null>(null)
-  const [viewOverride, setViewOverride] = useState<CanvasViewState | null>(null)
+  const [viewOverride, setViewOverride] = useState<CanvasViewState | null>(() =>
+    readCanvasSession(sessionStateRef?.current, file.id)
+  )
+  const viewFileIdRef = useRef(file.id)
   const [hasPanSession, setHasPanSession] = useState(false)
   const [canvasPanActive, setCanvasPanActive] = useState(false)
   const [marqueeState, setMarqueeState] = useState<CanvasMarqueeState | null>(
@@ -161,10 +182,26 @@ export function MindMapCanvasEditor({
   const [spaceHeld, setSpaceHeld] = useState(false)
   // 画布区分两态：单击 = 选中（可直接 Delete 删节点），双击/F2/新建 = 编辑文本。
   const [editingNodeId, setEditingNodeId] = useState<string | null>(null)
+  const [editorMeasurement, setEditorMeasurement] = useState<{
+    nodeId: string
+    text: string
+    contentHeight: number
+  } | null>(null)
   const [contextMenuOpen, setContextMenuOpen] = useState(false)
+  const measuredEditorContentHeight =
+    editorMeasurement?.nodeId === editingNodeId &&
+    editorMeasurement?.text === file.nodes[editingNodeId ?? ""]?.text
+      ? editorMeasurement?.contentHeight ?? 0
+      : 0
+  const layoutOptions = useMemo(() => ({
+    ...MIND_MAP_LAYOUT_OPTIONS,
+    nodeMinHeights: editingNodeId && measuredEditorContentHeight
+      ? new Map([[editingNodeId, measuredEditorContentHeight + MIND_MAP_LAYOUT_OPTIONS.nodeVerticalPadding * 2]])
+      : undefined,
+  }), [editingNodeId, measuredEditorContentHeight])
   const layout = useMemo(
-    () => layoutMindMap(file, MIND_MAP_LAYOUT_OPTIONS),
-    [file]
+    () => layoutMindMap(file, layoutOptions),
+    [file, layoutOptions]
   )
   const fit = useMemo(
     () => fitMindMapLayout(layout, size.width, size.height, 56),
@@ -179,7 +216,8 @@ export function MindMapCanvasEditor({
   viewOverrideRef.current = viewOverride
   const compactText = shouldUseCompactMindMapText(layout, effectiveFit.scale)
   // 节点文字的实际字体（挂载后读取，字体加载完成自动复测）。
-  const nodeFontFamily = useMindMapFontFamily(containerRef)
+  const nodeFontStyle = useMindMapFontStyle(containerRef)
+  const nodeFontFamily = nodeFontStyle?.fontFamily ?? null
   const selectedNodeIdsSet = useMemo(
     () => new Set(selectedNodeIds.filter((nodeId) => file.nodes[nodeId])),
     [file.nodes, selectedNodeIds]
@@ -220,7 +258,9 @@ export function MindMapCanvasEditor({
         0,
         (selectedEditorRect.height -
           editorBorderWidth * 2 -
-          editorLineHeight * editorLineCount) /
+          (measuredEditorContentHeight
+            ? measuredEditorContentHeight * editorScale
+            : editorLineHeight * editorLineCount)) /
           2
       )
     : 0
@@ -241,25 +281,42 @@ export function MindMapCanvasEditor({
     (nodeId) => nodeId !== file.rootId && file.nodes[nodeId]
   ).length
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const element = containerRef.current
     if (!element) return
 
+    // 首帧使用真实画布尺寸，避免先按占位尺寸固定视口，再恢复时偏移。
+    const rect = element.getBoundingClientRect()
+    setSize({ height: Math.max(1, rect.height), width: Math.max(1, rect.width) })
     const observer = new ResizeObserver(([entry]) => {
-      setSize({
+      const nextSize = {
         height: Math.max(1, entry.contentRect.height),
         width: Math.max(1, entry.contentRect.width),
-      })
+      }
+      // 面板开关只改变可用范围，保留操作中的实际比例和视口原点。
+      const current = viewOverrideRef.current ?? fitRef.current
+      if (current) setViewOverride({ scale: current.scale, x: current.x, y: current.y })
+      setSize(currentSize => currentSize.height === nextSize.height && currentSize.width === nextSize.width ? currentSize : nextSize)
     })
     observer.observe(element)
 
     return () => observer.disconnect()
   }, [])
 
-  useEffect(() => {
-    setViewOverride(null)
+  useLayoutEffect(() => {
+    if (viewFileIdRef.current === file.id) return
+    viewFileIdRef.current = file.id
+    const restored = readCanvasSession(sessionStateRef?.current, file.id)
+    viewOverrideRef.current = restored
+    setViewOverride(restored)
     setEditingNodeId(null)
-  }, [file.id])
+  }, [file.id, sessionStateRef])
+
+  useLayoutEffect(() => {
+    if (!sessionStateRef) return
+    const current = viewOverrideRef.current ?? fitRef.current
+    if (current) sessionStateRef.current = { fileId: file.id, scale: current.scale, x: current.x, y: current.y }
+  })
 
   // Photoshop 式交互：默认是选择工具（点选/框选），按住空格临时切换为抓手工具平移画布。
   // 输入框/输入法组合中的空格不拦截。
@@ -273,6 +330,7 @@ export function MindMapCanvasEditor({
 
     function handleKeyDown(event: globalThis.KeyboardEvent) {
       if (event.key !== " " || event.repeat || event.isComposing) return
+      if (event.defaultPrevented || !(event.target instanceof Node) || !containerRef.current?.contains(event.target)) return
       if (isTextInputTarget(event.target)) return
 
       event.preventDefault()
@@ -303,6 +361,11 @@ export function MindMapCanvasEditor({
       window.removeEventListener("keydown", handleKeyDown)
       window.removeEventListener("keyup", handleKeyUp)
       window.removeEventListener("blur", handleWindowBlur)
+      spaceHeldRef.current = false
+      dragStateRef.current = null
+      canvasPanStateRef.current = null
+      marqueeStateRef.current = null
+      void setCanvasGrabCursor(false).catch(() => {})
     }
   }, [])
 
@@ -313,8 +376,10 @@ export function MindMapCanvasEditor({
     }
   }, [editingNodeId, selectedNodeId])
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!selectedNodeId || viewOverrideRef.current) return
+    const rect = containerRef.current?.getBoundingClientRect()
+    if (!rect || Math.abs(rect.width - size.width) > 0.5 || Math.abs(rect.height - size.height) > 0.5) return
 
     const currentFit = fitRef.current
     if (!currentFit) return
@@ -325,7 +390,7 @@ export function MindMapCanvasEditor({
       x: currentFit.x,
       y: currentFit.y,
     })
-  }, [selectedNodeId])
+  }, [selectedNodeId, size.height, size.width])
 
   useEffect(() => {
     return () => {
@@ -559,7 +624,7 @@ export function MindMapCanvasEditor({
           } else {
             selectCanvasNodes(hitNodeIds, hitNodeIds[0] ?? null)
           }
-          container.focus()
+          container.focus({ preventScroll: true })
         }
         window.setTimeout(() => {
           suppressNodeClickRef.current = false
@@ -598,10 +663,31 @@ export function MindMapCanvasEditor({
     }
   }, [])
 
-  useEffect(() => {
-    if (!isEditingSelected) return
+  useLayoutEffect(() => {
+    const input = selectedInputRef.current
+    if (!isEditingSelected || !input || !selectedNode) return
 
-    requestAnimationFrame(() => {
+    // 只测量当前输入框。临时移除高度与纵向留白，读取浏览器实际排出的全部行；
+    // 不以旧框高度作基准，文字删除后也能收缩，并避免居中留白反复叠加。
+    const previousHeight = input.style.height
+    const previousPadding = input.style.paddingBlock
+    input.style.height = "0px"
+    input.style.paddingBlock = "0px"
+    const contentHeight = Math.ceil(input.scrollHeight / editorScale)
+    input.style.height = previousHeight
+    input.style.paddingBlock = previousPadding
+    input.scrollTop = 0
+    setEditorMeasurement(current =>
+      current?.nodeId === selectedNode.id && current.text === selectedNode.text &&
+      current.contentHeight === contentHeight
+        ? current
+        : { nodeId: selectedNode.id, text: selectedNode.text, contentHeight }
+    )
+  }, [isEditingSelected, selectedNode?.id, selectedNode?.text, selectedEditorRect?.width,
+    editorScale, editorFontSize, editorLineHeight, nodeFontStyle])
+
+  useLayoutEffect(() => {
+    if (!isEditingSelected) return
       const input = selectedInputRef.current
       if (!input) return
       input.focus()
@@ -612,7 +698,6 @@ export function MindMapCanvasEditor({
       } else {
         input.select()
       }
-    })
   }, [isEditingSelected, selectedNodeId])
 
   useEffect(() => {
@@ -781,26 +866,41 @@ export function MindMapCanvasEditor({
 
   // Tab/Enter 新增节点、方向键导航后，编辑态的视口是锁定的，目标节点可能落在画布外；
   // 这里按当前文件布局，把视口平滑平移到刚好容纳目标节点的位置（缩放不变）。
-  function revealNodeOnCanvas(nextFile: ShardMapFile, nodeId: string) {
-    const currentView = viewOverrideRef.current
+  function revealNodeOnCanvas(nextFile: ShardMapFile, nodeId: string, animate = true) {
+    const currentView = viewOverrideRef.current ?? fitRef.current
     if (!currentView) return
 
-    const nextLayout = layoutMindMap(nextFile, MIND_MAP_LAYOUT_OPTIONS)
-    const layoutNode = nextLayout.nodes.find((node) => node.id === nodeId)
+    const nextLayout = nextFile === file ? layout : layoutMindMap(nextFile, MIND_MAP_LAYOUT_OPTIONS)
+    // 另一视图可能选择了折叠分支内的主题，只显露最近可见祖先，不改动折叠数据。
+    let visibleNodeId: string | null | undefined = nodeId
+    let layoutNode = nextLayout.nodes.find((node) => node.id === visibleNodeId)
+    while (!layoutNode && visibleNodeId) {
+      visibleNodeId = nextFile.nodes[visibleNodeId]?.parentId
+      layoutNode = nextLayout.nodes.find((node) => node.id === visibleNodeId)
+    }
     if (!layoutNode) return
 
-    const { height, width } = sizeRef.current
+    const { height } = sizeRef.current
+    let { width } = sizeRef.current
+    const containerRect = containerRef.current?.getBoundingClientRect()
+    const inspectorRect = containerRef.current?.closest('[aria-label="思维导图画布"]')
+      ?.querySelector("[data-mind-map-side-panel], [data-mind-map-inspector]")?.getBoundingClientRect()
+    if (containerRect && inspectorRect && inspectorRect.left < containerRect.right &&
+      inspectorRect.right > containerRect.left && inspectorRect.bottom > containerRect.top && inspectorRect.top < containerRect.bottom) {
+      width = Math.max(1, inspectorRect.left - containerRect.left)
+    }
     const { scale } = currentView
     const left = (layoutNode.x - currentView.x) * scale
     const right = (layoutNode.x + layoutNode.width - currentView.x) * scale
     const top = (layoutNode.y - currentView.y) * scale
     const bottom = (layoutNode.y + layoutNode.height - currentView.y) * scale
+    const marginX = Math.min(CANVAS_REVEAL_MARGIN_PX, Math.max(0, (width - layoutNode.width * scale) / 2))
 
     let deltaX = 0
-    if (right > width - CANVAS_REVEAL_MARGIN_PX) {
-      deltaX = right - (width - CANVAS_REVEAL_MARGIN_PX)
-    } else if (left < CANVAS_REVEAL_MARGIN_PX) {
-      deltaX = left - CANVAS_REVEAL_MARGIN_PX
+    if (right > width - marginX) {
+      deltaX = right - (width - marginX)
+    } else if (left < marginX) {
+      deltaX = left - marginX
     }
 
     let deltaY = 0
@@ -812,12 +912,26 @@ export function MindMapCanvasEditor({
 
     if (deltaX === 0 && deltaY === 0) return
 
-    animateViewTo({
+    const target = {
       scale,
       x: currentView.x + deltaX / scale,
       y: currentView.y + deltaY / scale,
-    })
+    }
+    if (animate) animateViewTo(target)
+    else {
+      cancelRevealAnimation()
+      viewOverrideRef.current = target
+      setViewOverride(target)
+    }
   }
+
+  // Text growth and the inspector changing geometry can hide an already selected topic.
+  // Recalculate against its final layout before paint; only this SVG viewport moves.
+  useLayoutEffect(() => {
+    const rect = containerRef.current?.getBoundingClientRect()
+    if (!rect || Math.abs(rect.width - size.width) > 0.5 || Math.abs(rect.height - size.height) > 0.5) return
+    if (selectedNodeId && selectedNodeIds.length === 1) revealNodeOnCanvas(file, selectedNodeId, false)
+  }, [file, layout, selectedNodeId, selectedNodeIds.length, size.width, size.height, inspectorVisible])
 
   function addChild(nodeId: string) {
     // 目标处于折叠态时顺带展开，否则新节点不可见、编辑态幽灵化。
@@ -831,13 +945,13 @@ export function MindMapCanvasEditor({
     revealNodeOnCanvas(next.file, next.nodeId)
   }
 
-  function addSibling(nodeId: string) {
+  function addSibling(nodeId: string, placement: "before" | "after" = "after") {
     const parentId = file.nodes[nodeId]?.parentId
     const base =
       parentId && file.nodes[parentId]?.collapsed
         ? toggleMindMapNodeCollapsed(file, parentId)
         : file
-    const next = addMindMapSibling(base, nodeId)
+    const next = addMindMapSibling(base, nodeId, placement)
     onChange(next.file)
     setEditingNodeId(next.nodeId)
     onSelectNode?.(next.nodeId)
@@ -933,12 +1047,15 @@ export function MindMapCanvasEditor({
 
   // 通过 ref 暴露给平移监听器，避免为了拿到最新的选中状态而重新绑定 pointer 事件。
   function exitNodeEditing() {
-    if (!selectedNodeId && selectedNodeIds.length === 0) return
-
-    // 先 blur：结束可能进行中的输入法组合，让最后一段文本通过 onChange 写入草稿。
-    selectedInputRef.current?.blur()
-    setEditingNodeId(null)
-    onSelectNodes?.([], null)
+    if (selectedNodeId || selectedNodeIds.length > 0) {
+      // 先 blur：结束可能进行中的输入法组合，让最后一段文本通过 onChange 写入草稿。
+      selectedInputRef.current?.blur()
+      setEditingNodeId(null)
+      onSelectNodes?.([], null)
+    }
+    // 仅由画布空白单击和画布 Escape 调用；工具栏/侧栏点击保留各自焦点。
+    // 输入框卸载后仍需留在工作区内，才能继续使用保存、关闭等快捷键。
+    containerRef.current?.focus({ preventScroll: true })
   }
   exitNodeEditingRef.current = exitNodeEditing
 
@@ -965,6 +1082,7 @@ export function MindMapCanvasEditor({
 
     // 空格按住 = 抓手工具：任意位置（包括节点上方）按下都进入平移。
     if (spaceHeldRef.current) {
+      containerRef.current?.focus({ preventScroll: true })
       const currentView: CanvasViewState = viewOverride ?? {
         scale: fit.scale,
         x: fit.x,
@@ -1030,7 +1148,14 @@ export function MindMapCanvasEditor({
     }
 
     if (event.key === "Enter") {
+      if (event.shiftKey && !event.metaKey && !event.ctrlKey && !event.altKey) return
       event.preventDefault()
+      event.stopPropagation()
+      if (event.metaKey || event.ctrlKey) {
+        setEditingNodeId(null)
+        containerRef.current?.focus()
+        return
+      }
       if (
         !event.altKey &&
         !event.ctrlKey &&
@@ -1072,6 +1197,9 @@ export function MindMapCanvasEditor({
   ) {
     if (!open) {
       setContextMenuOpen(false)
+      if (details.event instanceof globalThis.KeyboardEvent && details.event.key === "Escape") {
+        containerRef.current?.focus({ preventScroll: true })
+      }
       return
     }
 
@@ -1125,6 +1253,7 @@ export function MindMapCanvasEditor({
   // textarea / 拖拽按钮等子元素的按键事件不在这里处理。
   function handleCanvasKeyDown(event: KeyboardEvent<HTMLDivElement>) {
     if (event.target !== event.currentTarget || isDraggingNode) return
+    if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229 || event.key === "Process") return
 
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
       event.preventDefault()
@@ -1159,28 +1288,33 @@ export function MindMapCanvasEditor({
       return
     }
 
-    if (event.key === "F2") {
+    if (event.key === "F2" || event.key === " ") {
       if (!canEditSelectedNode) return
       event.preventDefault()
+      event.stopPropagation()
       setEditingNodeId(selectedNodeId)
       return
     }
 
     if (event.key.startsWith("Arrow")) {
       event.preventDefault()
-      navigateSelection(event.key)
+      if (event.altKey && (event.key === "ArrowUp" || event.key === "ArrowDown")) {
+        onChange(moveMindMapNode(file, selectedNodeId, event.key === "ArrowUp" ? "up" : "down"))
+      } else navigateSelection(event.key)
       return
     }
 
     if (event.key === "Enter") {
       event.preventDefault()
-      if (
-        !event.altKey &&
-        !event.ctrlKey &&
-        !event.metaKey &&
-        !event.shiftKey
-      ) {
-        addSibling(selectedNodeId)
+      if (event.metaKey || event.ctrlKey) {
+        if (selectedNodeId === file.rootId) return
+        const next = addMindMapParent(file, selectedNodeId)
+        onChange(next.file)
+        setEditingNodeId(next.nodeId)
+        onSelectNode?.(next.nodeId)
+        revealNodeOnCanvas(next.file, next.nodeId)
+      } else if (!event.altKey) {
+        addSibling(selectedNodeId, event.shiftKey ? "before" : "after")
       }
       return
     }
@@ -1279,6 +1413,10 @@ export function MindMapCanvasEditor({
             <g
               className={isRoot ? styles.textCursor : styles.grabbable}
               data-mind-map-node={layoutNode.id}
+              data-tone={layoutNode.node.style?.tone ?? "default"}
+              role="button"
+              aria-label={`导图节点：${layoutNode.node.text || "未命名"}`}
+              aria-pressed={selected}
               key={layoutNode.id}
               onClick={(event) => {
                 if (suppressNodeClickRef.current) {
@@ -1314,6 +1452,7 @@ export function MindMapCanvasEditor({
                     />
                   ) : null}
                   <rect
+                    className={styles.nodeShape}
                     fill={
                       isRoot
                         ? "var(--shard-accent-soft)"
@@ -1515,7 +1654,7 @@ export function MindMapCanvasEditor({
               updateMindMapNodeText(
                 file,
                 selectedNode.id,
-                event.target.value.replace(/\s*[\r\n]+\s*/g, " ")
+                event.target.value
               ),
               { mergeKey: `text:${selectedNode.id}` }
             )
@@ -1806,6 +1945,16 @@ function getCanvasDropMode(
   if (offsetY < layoutNode.height * 0.28) return "before"
   if (offsetY > layoutNode.height * 0.72) return "after"
   return "inside"
+}
+
+function readCanvasSession(
+  saved: MindMapCanvasSessionState | null | undefined,
+  fileId: string
+): CanvasViewState | null {
+  if (!saved || saved.fileId !== fileId || !Number.isFinite(saved.scale) ||
+    !Number.isFinite(saved.x) || !Number.isFinite(saved.y) || saved.scale <= 0) return null
+  // 自动适应大型导图的比例可小于手动缩放下限，恢复时不能把它放大。
+  return { scale: saved.scale, x: saved.x, y: saved.y }
 }
 
 function viewStateToFit(

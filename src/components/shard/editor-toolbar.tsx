@@ -12,7 +12,6 @@ import {
   ShardZenIcon,
 } from "@/components/icons"
 
-import { TableSizePicker } from "@/components/shard/table-size-picker"
 import { ToolbarIconButton } from "@/components/ui/toolbar-icon-button"
 import type { InlineFormat, LineFormat } from "@/lib/editor-format"
 
@@ -20,9 +19,7 @@ interface EditorToolbarProps {
   disabled?: boolean
   onImageUpload: (file: File) => void | Promise<void>
   onInlineFormat: (format: InlineFormat) => void
-  onImportTable?: () => void
   onInsertHorizontalRule: () => void
-  onInsertTable: (columns: number, rows: number) => void
   onInsertTag: () => void
   onLineFormat: (format: LineFormat) => void
   onOpenZen?: () => void
@@ -32,10 +29,8 @@ interface EditorToolbarProps {
 export function EditorToolbar({
   disabled = false,
   onImageUpload,
-  onImportTable,
   onInlineFormat,
   onInsertHorizontalRule,
-  onInsertTable,
   onInsertTag,
   onLineFormat,
   onOpenZen,
@@ -114,11 +109,6 @@ export function EditorToolbar({
           icon={<SeparatorHorizontalIcon />}
           label="分割线"
           onClick={onInsertHorizontalRule}
-        />
-        <TableSizePicker
-          disabled={disabled}
-          onImport={onImportTable}
-          onSelect={onInsertTable}
         />
         <ToolbarDivider />
         <EditorToolbarButton

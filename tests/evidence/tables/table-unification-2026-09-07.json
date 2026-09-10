@@ -1,0 +1,65 @@
+{
+  "recordedAt": "2026-09-07T14:57:35.905073+00:00",
+  "scope": "Unify managed tables as multidimensional tables; preserve legacy Markdown content and CSV/XLSX sources",
+  "layers": {
+    "unit": {
+      "passed": 119,
+      "command": "pnpm exec vitest run src/lib/table-*.test.ts src/lib/markdown-table.test.ts src/lib/library-preview.test.ts"
+    },
+    "chromium": {
+      "passedUnique": 53,
+      "suites": {
+        "table-workspace": 17,
+        "table-exchange": 6,
+        "library-tree related regression": 12,
+        "editor-table": 15,
+        "shadcn Markdown compatibility": 3
+      },
+      "directImportAfterFix": "Passed in full main StrictMode: one read_table_exchange_file call, no picker, no create on cancel"
+    },
+    "webkit": {
+      "passed": 16,
+      "skipped": 1,
+      "suite": "table-workspace",
+      "skipReason": "clipboard permissions"
+    },
+    "layout": "320px local view-tab overflow without page overflow; tab keyboard activation, actual Kiln computed styles verified",
+    "build": {
+      "command": "pnpm build",
+      "result": "passed",
+      "warnings": [
+        "Existing large JavaScript chunk warning"
+      ]
+    },
+    "native": "Not rerun for this batch; real WKWebView IME, horizontal scrolling and full performance acceptance remain pending"
+  },
+  "regressionsFixed": [
+    "Legacy Markdown toolbar/table-widget editor removed without rewriting stored content",
+    "Frontmost editor alone handles CSV/Excel drop guidance",
+    "Direct import effect avoids duplicate disk reads under StrictMode",
+    "Cancelled XLSX inspection cannot proceed to preview",
+    "Invalid cell/configuration drafts and active composition block view switching",
+    "Column header opens field by stable ID after reordering"
+  ],
+  "preservation": {
+    "priorUntrackedTableFilesUnchanged": 106,
+    "missingPriorTableFiles": 0,
+    "unexpectedOtherTableFileChanges": [],
+    "realVaultWrites": false,
+    "commitOrPublish": false
+  },
+  "sourceSha256": {
+    "src/components/shard/capture-box.tsx": "6289fce42382efa6a8c998c48736e0dffa24bf11933b631a8df943ad8b2b430f",
+    "src/components/shard/fragment-editor.tsx": "f72611a404e6b8319f4fa04f565544501814161e1376eafcac68aec2d4d68134",
+    "src/components/shard/editor-toolbar.tsx": "5a3dada0266f1a1a4efc96fff85d48524302a86ccd3fe65d1b198a338706dc82",
+    "src/editor/shard-editor.tsx": "90dae004219b01b51c4e840012b4f736f6c38e19a89ea942758bd25808179fe2",
+    "src/lib/use-table-document-drop.ts": "cb8dca42d399b3541d2504f9de5ecec764d9774d80d7d6d2db96c5c77ea4db93",
+    "src/features/tables/table-workspace.tsx": "a0148a96580298569251edf3f74bc7886ecd07910254d06bec4b8b39f7d8f14e",
+    "src/features/tables/table-workspace.css": "3992260d13069d0d9d0add2c9cbff19dbfd3508fda741a59a4ba4d1d7c489b46",
+    "src/features/tables/table-config-panel.tsx": "18746dd69d268fbf3d5e8067e440ecdbfecaf54563077f6b28b7ce07421a3db7",
+    "src/features/tables/exchange-dialog.tsx": "6cb112da4eae395b4e863b15e23b04dca5b70d7bc1b5d4e90567a2fa1266b337",
+    "src/workspace/library-shell.tsx": "6f4f669bf0c29dd735e53d221099567e7a2364b806c36a279a6abd64cd73cf09",
+    "src/workspace/workbench-shell.tsx": "b7742c45cc2dd95d9c92e7c8ea61a879d0e13915dca782e2cbee7fdf7c00af53",
+    "src/components/shard/directory-view.tsx": "fbdcbd7d0e10220dbb741209aed2ea30b6bfae251a8ffcfe87b67c9777b3822b"
+  }
+}

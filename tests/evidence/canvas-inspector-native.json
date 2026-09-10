@@ -1,0 +1,26 @@
+{
+  "environment": "Isolated native Tauri WKWebView with current Vite frontend",
+  "appIdentifier": "dev.shard.multidrag-acceptance-20260907",
+  "file": "/var/folders/jd/9rnt7sl15d7_gkzln2svt9xw0000gn/T/shard-multidrag-native-px2jcycn/notes/原生画布验收.shardcanvas.json",
+  "beforeRevision": 15,
+  "revision": 17,
+  "topLevelNodes": 4,
+  "treeNodes": 4,
+  "topic": {
+    "id": "node-mtr3smv1-x7i90i",
+    "text": "子主题保持可见",
+    "width": 240.0,
+    "tone": "success"
+  },
+  "verified": [
+    "Selected existing topic and visually inspected compact properties sidebar, line tabs, editor and appearance controls",
+    "Clicked success emphasis and native width select option 适中; topic fill and width changed in the native canvas",
+    "Switched to outline: text editor unmounted, hierarchy and fold control were visible",
+    "Clicked outline child Tab创建子节点; canvas panned to reveal it without changing stored object positions",
+    "Closed inspector and observed child selection retained; toolbar kept its reopen control",
+    "Space from the closed inspector reopened Properties and focused the selected topic text editor",
+    "Reopened the canvas using native UI and inspected retained success emphasis and 适中 width",
+    "Actual Rust-written file revision 17 contains width 240 and success tone; all four top-level IDs and positions unchanged"
+  ],
+  "limits": "Native isolated route and temporary vault only; does not claim full main-window navigation or physical IME/trackpad acceptance."
+}

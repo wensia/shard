@@ -1,0 +1,25 @@
+{
+  "expected": {
+    "errorCode": "INVALID_VALUE",
+    "unchanged": true
+  },
+  "operations": [
+    {
+      "beforeFieldId": null,
+      "field": {
+        "id": "fld_00000000000000000000000000000004",
+        "name": "状态",
+        "options": [
+          {
+            "color": "green",
+            "id": "opt_00000000000000000000000000000002",
+            "label": "完成"
+          }
+        ],
+        "type": "select"
+      },
+      "type": "putField"
+    }
+  ],
+  "source": "valid/six-types.json"
+}

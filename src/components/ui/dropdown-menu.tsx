@@ -19,31 +19,35 @@ function DropdownMenuTrigger({ ...props }: MenuPrimitive.Trigger.Props) {
 }
 
 function DropdownMenuContent({
+  anchor,
   align = "start",
   alignOffset = 0,
   className,
+  positionMethod,
   side = "bottom",
   sideOffset = 4,
   ...props
 }: MenuPrimitive.Popup.Props &
   Pick<
     MenuPrimitive.Positioner.Props,
-    "align" | "alignOffset" | "side" | "sideOffset"
+    "anchor" | "align" | "alignOffset" | "side" | "sideOffset" | "positionMethod"
   >) {
   return (
     <DropdownMenuPortal>
       <MenuPrimitive.Positioner
         data-slot="dropdown-menu-positioner"
+        anchor={anchor}
         align={align}
         alignOffset={alignOffset}
         side={side}
         sideOffset={sideOffset}
+        positionMethod={positionMethod}
         className="isolate z-50 outline-none"
       >
         <MenuPrimitive.Popup
           data-slot="dropdown-menu-content"
           className={cn(
-            "z-50 max-h-(--available-height) w-fit min-w-0 origin-(--transform-origin) overflow-x-hidden overflow-y-auto rounded-[var(--shard-radius-control)] bg-popover p-[var(--shard-space-1)] text-popover-foreground shadow-[0_8px_20px_rgb(0_0_0/var(--shard-alpha-8))] ring-1 ring-black/[var(--shard-alpha-13)] duration-100 outline-none data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:overflow-hidden data-closed:fade-out-0 data-closed:zoom-out-95",
+            "z-50 max-h-(--available-height) w-fit min-w-0 origin-(--transform-origin) overflow-x-hidden overflow-y-auto rounded-[var(--radius-card)] bg-popover p-[var(--shard-space-1)] text-popover-foreground shadow-[var(--shadow-popover)] ring-1 ring-black/[var(--shard-alpha-13)] duration-100 outline-none data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:overflow-hidden data-closed:fade-out-0 data-closed:zoom-out-95",
             className
           )}
           {...props}
@@ -133,7 +137,8 @@ function DropdownMenuSubContent({
   alignOffset = -3,
   className,
   side = "right",
-  sideOffset = 0,
+  // The anchor is an inset menu item; clear the parent popup's padding and border.
+  sideOffset = 6,
   ...props
 }: React.ComponentProps<typeof DropdownMenuContent>) {
   return (

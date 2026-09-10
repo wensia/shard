@@ -1,0 +1,76 @@
+[
+  {
+    "viewportWidth": 1280,
+    "left": 13,
+    "right": 198.875,
+    "top": 237,
+    "bottom": 635.15625,
+    "width": 185.875,
+    "viewportHeight": 760,
+    "radius": 6,
+    "shadow": "rgba(54, 47, 42, 0.12) 0px 8px 28px 0px, rgba(54, 47, 42, 0.07) 0px 2px 6px 0px",
+    "fontSize": 14,
+    "weight": "400",
+    "itemHeight": 32,
+    "itemFontSize": 14,
+    "itemWeight": "400",
+    "iconWidth": 16,
+    "metaFontSize": 12
+  },
+  {
+    "submenus": [
+      {
+        "left": 13,
+        "right": 198.875,
+        "top": 237,
+        "bottom": 635.15625,
+        "size": 14
+      },
+      {
+        "left": 200,
+        "right": 362.765625,
+        "top": 494,
+        "bottom": 641,
+        "size": 14
+      }
+    ],
+    "gap": 1.125
+  },
+  {
+    "viewportWidth": 640,
+    "left": 45,
+    "right": 230.875,
+    "top": 237,
+    "bottom": 635.15625,
+    "width": 185.875,
+    "viewportHeight": 760,
+    "radius": 6,
+    "shadow": "rgba(54, 47, 42, 0.12) 0px 8px 28px 0px, rgba(54, 47, 42, 0.07) 0px 2px 6px 0px",
+    "fontSize": 14,
+    "weight": "400",
+    "itemHeight": 32,
+    "itemFontSize": 14,
+    "itemWeight": "400",
+    "iconWidth": 16,
+    "metaFontSize": 12
+  },
+  {
+    "submenus": [
+      {
+        "left": 45,
+        "right": 230.875,
+        "top": 237,
+        "bottom": 635.15625,
+        "size": 14
+      },
+      {
+        "left": 232,
+        "right": 394.765625,
+        "top": 494,
+        "bottom": 641,
+        "size": 14
+      }
+    ],
+    "gap": 1.125
+  }
+]

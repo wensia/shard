@@ -1,88 +1,476 @@
-/*
- * mind-map-outline-editor.tsx 专属样式。
- *
- * 这里之所以没有走默认的内联 style，是因为原设计需要三组"父级悬停/聚焦时
- * 子元素才显示"的 group-hover / group-focus-within 效果（拖拽把手、行内操作
- * 按钮组），以及输入框聚焦态的 :focus-within 边框——这些伪类/后代选择器组合
- * 内联 style 做不到，且这三组规则在每一行大纲节点上都会重复渲染，属于
- * "同一文件内重复出现 + 需要伪类" 的场景，符合新建同名 CSS Module 的条件。
- */
+/* 幕布式文档排版；字号与阅读宽度局限在内容编辑器，壳层继续消费 Kiln 控件规格。 */
+.viewport {
+  container-type: inline-size;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: var(--space-12) var(--space-8);
+  background: var(--background);
+  outline: none;
+}
+
+.outline {
+  --outline-indent: calc(var(--space-6) + var(--space-1));
+  --outline-bullet-center: var(--space-3);
+  --outline-menu-size: calc(var(--space-3) * 1.5);
+  --outline-guide-gap: var(--space-1);
+  --outline-menu-cutout-start: calc((var(--space-8) - var(--outline-menu-size)) / 2 - var(--outline-guide-gap));
+  --outline-menu-cutout-end: calc((var(--space-8) + var(--outline-menu-size)) / 2 + var(--outline-guide-gap));
+  --outline-guide-color: color-mix(in oklab, var(--muted-foreground) 25%, transparent);
+  --outline-menu-cutout: linear-gradient(to bottom, var(--outline-guide-color) 0 var(--outline-menu-cutout-start), transparent var(--outline-menu-cutout-start) var(--outline-menu-cutout-end), var(--outline-guide-color) var(--outline-menu-cutout-end));
+  --outline-body-size: 1rem;
+  --outline-title-size: 2.125rem;
+  --outline-reading-width: 54.5rem;
+  --outline-line-height: calc(var(--outline-body-size) * var(--leading-relaxed));
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  min-width: 0;
+  max-width: var(--outline-reading-width);
+  margin-inline: auto;
+  padding-inline: var(--space-6);
+  padding-block-end: var(--space-12);
+  gap: 0;
+}
+
+.breadcrumbs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  margin-block-end: var(--space-6);
+  padding-inline-start: calc(var(--space-6) + var(--space-1));
+  color: var(--muted-foreground);
+  font-size: var(--text-meta);
+}
+
+.breadcrumbs > span {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  max-width: 100%;
+}
+
+.breadcrumbs > span[aria-current="page"] {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.breadcrumbs svg {
+  flex-shrink: 0;
+  width: var(--space-3);
+  height: var(--space-3);
+}
+
+.breadcrumbButton {
+  min-width: 0;
+  max-width: 100%;
+  min-height: var(--space-6);
+  height: auto;
+  padding: var(--space-1) var(--space-2);
+  border: 0;
+  background: transparent;
+  color: var(--muted-foreground);
+  font-size: var(--text-meta);
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: start;
+}
+
+.breadcrumbButton:hover,
+.breadcrumbButton:focus-visible {
+  background: var(--muted);
+  color: var(--foreground);
+}
 
 .row {
   position: relative;
-  display: grid;
-  min-width: 0;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: var(--shard-space-2);
-  border-radius: var(--shard-radius-control);
-  padding-block: 4px;
-  padding-inline-end: 4px;
-  transition: background-color 140ms ease;
+  min-width: calc(var(--space-8) * 5);
+  border-radius: var(--radius-control);
+  padding-block: 0;
+  padding-inline-end: var(--space-1);
+  background: transparent;
 }
 
-.guideLine {
-  position: absolute;
-  top: 0;
-  width: 1px;
-  background: var(--border-visible);
-  pointer-events: none;
-}
-
-.row:hover {
-  background: color-mix(in oklab, var(--muted) 70%, transparent);
-}
-
+/* 文本光标不等于整主题多选；普通编辑不渲染卡片底色或输入框轮廓。 */
 .rowActive,
-.rowActive:hover {
-  background: var(--shard-accent-soft);
+.rowActive:hover,
+.row[data-selected="true"] {
+  background: transparent;
+}
+
+.row[data-drop="inside"] {
+  outline: 1px dashed var(--primary);
+  outline-offset: -1px;
+}
+
+.row[data-topic-selected="true"] {
+  background: color-mix(in srgb, var(--primary) 6%, var(--background));
 }
 
 .rowDragging {
   opacity: 0.5;
 }
 
-.rowMain {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: var(--shard-space-2);
+.titleRow {
+  margin-block-end: var(--space-8);
 }
 
+.guideLine {
+  position: absolute;
+  top: 0;
+  width: 1px;
+  transform: translateX(-50%);
+  background: var(--outline-guide-color);
+  pointer-events: none;
+}
+
+/* 菜单与父级圆点共用中轴；只断开该轴上的线，并从第一行而非整行中点计算留白。 */
+.row:hover > .guideLine[data-outline-guide-menu="true"],
+.row:focus-within > .guideLine[data-outline-guide-menu="true"],
+.row:has(.actionsRow [aria-expanded="true"]) > .guideLine[data-outline-guide-menu="true"] {
+  background: var(--outline-menu-cutout);
+}
+
+.rowMain {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  align-items: start;
+  gap: var(--space-1);
+}
+
+.inputWrap {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.titleRow .inputWrap {
+  padding-inline-start: 0;
+}
+
+/* 圆点同时承担主题聚焦与拖动，折叠箭头在它的左侧独立占位。 */
 .dragHandle {
-  margin-left: -4px;
+  position: relative;
+  display: grid;
+  place-items: center;
+  flex: 0 0 var(--space-6);
+  width: var(--space-6);
+  height: var(--space-8);
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
   cursor: grab;
   color: var(--muted-foreground);
-  opacity: 0;
-  transition: opacity 120ms ease;
+  box-shadow: none;
+}
+
+.dragHandle:hover {
+  background: transparent;
 }
 
 .dragHandle:active {
   cursor: grabbing;
 }
 
-.row:hover .dragHandle,
-.row:focus-within .dragHandle {
+.dragHandle:focus-visible {
+  outline: 1px solid var(--ring);
+  outline-offset: -1px;
+}
+
+.bullet {
+  position: relative;
+  width: calc(var(--space-3) / 2);
+  height: calc(var(--space-3) / 2);
+  border-radius: 50%;
+  background: var(--muted-foreground);
+  transition: background-color 120ms ease;
+}
+
+.row[data-collapsed="true"] .dragHandle::before {
+  content: "";
+  position: absolute;
+  width: calc(var(--space-3) * 1.5);
+  height: calc(var(--space-3) * 1.5);
+  border-radius: 50%;
+  background: var(--muted);
+}
+
+.branchToggle {
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline-start: calc(-1 * var(--space-12));
+  display: grid;
+  place-items: center;
+  width: calc(var(--space-4) + var(--space-1));
+  height: var(--space-8);
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--muted-foreground);
+  opacity: 0;
+  transition: color 120ms ease, opacity 120ms ease;
+}
+
+.row:hover .branchToggle,
+.row:focus-within .branchToggle {
   opacity: 1;
 }
 
+.branchToggle:hover {
+  background: var(--muted);
+  color: var(--foreground);
+}
+
+.branchToggle:focus-visible {
+  outline: 1px solid var(--ring);
+  outline-offset: -1px;
+}
+
+.branchToggle svg {
+  width: var(--space-3);
+  height: var(--space-3);
+}
+
+.nodeInput,
+.noteInput {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  min-height: var(--space-8);
+  margin: 0;
+  padding-block: calc((var(--space-8) - var(--outline-line-height)) / 2);
+  padding-inline: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--foreground);
+  caret-color: var(--primary);
+  font-family: inherit;
+  font-size: var(--outline-body-size);
+  font-weight: var(--weight-regular);
+  line-height: var(--leading-relaxed);
+  letter-spacing: 0;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  resize: none;
+  outline: none;
+  box-shadow: none;
+}
+
+.nodeInput::placeholder,
+.noteInput::placeholder {
+  color: var(--muted-foreground);
+  opacity: 0.72;
+}
+
+.nodeInput:focus,
+.noteInput:focus {
+  background: transparent;
+  outline: none;
+  box-shadow: none;
+}
+
+.titleInput {
+  min-height: 0;
+  padding: 0;
+  font-size: var(--outline-title-size);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-tight);
+}
+
+.noteInput {
+  min-height: var(--space-6);
+  padding-block: var(--space-1);
+  color: var(--muted-foreground);
+  font-size: var(--text-section-title);
+}
+
 .actionsRow {
-  display: flex;
-  flex-shrink: 0;
-  align-items: center;
-  gap: 2px;
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline-start: calc(-1 * var(--outline-indent));
+  display: grid;
+  place-items: center;
+  width: var(--space-6);
+  height: var(--space-8);
   opacity: 0;
   transition: opacity 120ms ease;
 }
 
 .row:hover .actionsRow,
-.row:focus-within .actionsRow {
+.row:focus-within .actionsRow,
+.actionsRow:has([aria-expanded="true"]) {
   opacity: 1;
 }
 
-/* 输入框默认无边框/无背景，融入行内；聚焦时露出边框提示当前焦点。
-   基础态（透明边框/背景/阴影）额外用内联 style 强制设置，这里只负责
-   :focus-within 这一条内联 style 做不到的伪类规则。 */
-.nodeInputFocusRing:focus-within {
-  border-color: var(--border);
+.actionsRow > button {
+  width: var(--outline-menu-size);
+  height: var(--outline-menu-size);
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--muted);
+  color: var(--muted-foreground);
+}
+
+.actionsRow > button:hover {
+  background: var(--muted);
+  color: var(--foreground);
+}
+
+.actionsRow > button[aria-expanded="true"] {
+  background: color-mix(in srgb, var(--muted-foreground) 14%, var(--card));
+  color: var(--foreground);
+}
+
+.titleRow .actionsRow {
+  margin-block-start: var(--space-1);
+}
+
+/* 主题菜单跟随内容定宽，沿用共享菜单的焦点与子菜单行为。 */
+.menuContent {
+  box-sizing: border-box;
+  width: max-content;
+  min-width: calc(var(--space-8) * 5);
+  max-width: calc(100vw - var(--space-8));
+  padding: var(--space-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--popover);
+  color: var(--popover-foreground);
+  box-shadow: var(--shadow-popover);
+  font-family: var(--font-sans);
+  font-size: var(--text-section-title);
+  font-weight: var(--weight-regular);
+}
+
+.menuContent [data-slot="dropdown-menu-item"],
+.menuContent [data-slot="dropdown-menu-sub-trigger"] {
+  min-height: var(--space-8);
+  height: auto;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-control);
+  color: var(--popover-foreground);
+  font-size: var(--text-section-title);
+  font-weight: var(--weight-regular);
+  line-height: var(--leading-normal);
+}
+
+.menuContent [data-slot="dropdown-menu-item"] svg,
+.menuContent [data-slot="dropdown-menu-sub-trigger"] svg {
+  width: var(--space-4);
+  height: var(--space-4);
+  color: currentColor;
+}
+
+.menuContent [data-slot="dropdown-menu-item"]:focus,
+.menuContent [data-slot="dropdown-menu-item"][data-highlighted],
+.menuContent [data-slot="dropdown-menu-sub-trigger"]:focus,
+.menuContent [data-slot="dropdown-menu-sub-trigger"][data-highlighted],
+.menuContent [data-slot="dropdown-menu-sub-trigger"][data-popup-open] {
+  background: var(--accent);
+  color: var(--popover-foreground);
+}
+
+.menuContent [data-slot="dropdown-menu-item"][data-variant="destructive"] {
+  color: var(--destructive);
+}
+
+.menuContent [data-slot="dropdown-menu-sub-trigger"][data-disabled] {
+  color: var(--muted-foreground);
+}
+
+.menuContent [data-slot="dropdown-menu-shortcut"] {
+  margin-inline-start: auto;
+  padding-inline-start: var(--space-3);
+  color: var(--muted-foreground);
+  font-size: var(--text-meta);
+  font-weight: var(--weight-regular);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+}
+
+.menuContent [data-slot="dropdown-menu-separator"] {
+  margin: var(--space-1) var(--space-2);
+  background: var(--border);
+}
+
+.menuSectionLabel {
+  padding: var(--space-1) var(--space-2);
+  color: var(--muted-foreground);
+  font-size: var(--text-meta);
+  font-weight: var(--weight-regular);
+  line-height: var(--leading-relaxed);
+}
+
+.menuFooter {
+  display: grid;
+  gap: var(--space-1);
+  margin-block-start: var(--space-1);
+  padding: var(--space-2);
+  border-block-start: 1px solid var(--border);
+  color: var(--muted-foreground);
+  font-size: var(--text-meta);
+  font-weight: var(--weight-regular);
+  line-height: var(--leading-normal);
+}
+
+.menuMetaLine {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-4);
+  min-width: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+@container (max-width: 640px) {
+  .outline {
+    padding-inline: var(--space-4) var(--space-3);
+  }
+}
+
+@container (max-width: 480px) {
+  .outline {
+    --outline-title-size: 1.75rem;
+    padding-inline: var(--space-4) 0;
+  }
+
+  .titleRow {
+    margin-block-end: var(--space-6);
+  }
+}
+
+@media (hover: none), (pointer: coarse) {
+  .branchToggle,
+  .actionsRow {
+    opacity: 1;
+  }
+
+  .guideLine[data-outline-guide-menu="true"] {
+    background: var(--outline-menu-cutout);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bullet,
+  .branchToggle,
+  .actionsRow {
+    transition: none;
+  }
 }

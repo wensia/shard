@@ -1,0 +1,25 @@
+{
+  "recordedAt": "2026-09-07T15:47:17.613341+00:00",
+  "surface": "Real Tauri WKWebView, Library > notes > standalone mind map",
+  "app": "/tmp/Shard Multidrag Acceptance.app",
+  "vault": "/var/folders/jd/9rnt7sl15d7_gkzln2svt9xw0000gn/T/shard-multidrag-native-px2jcycn",
+  "file": "/var/folders/jd/9rnt7sl15d7_gkzln2svt9xw0000gn/T/shard-multidrag-native-px2jcycn/notes/多选拖动验收.shardmap.json",
+  "nodeId": "node-mtretdti-ihhwtx",
+  "revision": 9,
+  "persistedText": "物品收纳个茶擦\n大口大口洛克菲勒啦咖啡了\n卡夫卡\n\n1111\n\n末行完整可见\n\n新增末行",
+  "observed": [
+    "Native inline input grows when Shift+Enter adds successive blank lines.",
+    "First line, interior blank lines, final text and caret are visible in native screenshot.",
+    "Sibling nodes and branch endpoints follow the enlarged editor.",
+    "Replacing all content with x shrinks the editor to a single-line topic.",
+    "After quitting and relaunching the app, F2 loads the complete multiline text.",
+    "Undo restored the multiline acceptance sample; automatic save and filesystem readback agree."
+  ],
+  "validation": {
+    "targetedUnitTests": 18,
+    "targetedBrowserTests": 22,
+    "build": "passed",
+    "gitDiffCheck": "passed"
+  },
+  "scope": "Isolated acceptance vault; no writes to the user production vault."
+}

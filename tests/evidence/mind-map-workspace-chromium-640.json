@@ -1,0 +1,41 @@
+{
+  "viewport": {
+    "x": 0,
+    "y": 107,
+    "width": 352,
+    "height": 593,
+    "right": 352,
+    "bottom": 700
+  },
+  "panel": {
+    "x": 352,
+    "y": 107,
+    "width": 288,
+    "height": 593,
+    "right": 640,
+    "bottom": 700
+  },
+  "tabs": {
+    "x": 12,
+    "y": 56,
+    "width": 176,
+    "height": 42,
+    "right": 188,
+    "bottom": 98
+  },
+  "input": {
+    "x": 76,
+    "y": 371,
+    "width": 240,
+    "height": 32,
+    "right": 316,
+    "bottom": 403
+  },
+  "pageOverflow": 0,
+  "windowScroll": 0,
+  "documentScroll": 0,
+  "panelOverflowY": "hidden",
+  "fontFamily": "-apple-system, \"Helvetica Neue\", Arial, \"Noto Sans SC\", \"Hiragino Sans GB\", STHeiti, \"Microsoft YaHei\", \"Microsoft JhengHei\", \"Source Han Sans SC\", \"Noto Sans CJK SC\", \"Source Han Sans CN\", \"Source Han Sans TC\", \"Noto Sans CJK TC\", SimSun, sans-serif",
+  "inputFontSize": "16px",
+  "panelFontSize": "13px"
+}

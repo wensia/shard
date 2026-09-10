@@ -19,13 +19,6 @@
   border-color: var(--shard-sapphire);
 }
 
-.zenEditorShell {
-  --zen-editor-inline-padding: max(
-    var(--shard-content-inset),
-    calc((100% - var(--shard-content-max-width)) / 2)
-  );
-}
-
 .zenFooter {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
@@ -57,15 +50,6 @@
   .zenStats {
     grid-column: 1;
     justify-self: center;
-  }
-}
-
-@media (width >= 64rem) {
-  .zenEditorShell {
-    --zen-editor-inline-padding: max(
-      var(--shard-content-inset-lg),
-      calc((100% - var(--shard-content-max-width)) / 2)
-    );
   }
 }
 

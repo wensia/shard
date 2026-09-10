@@ -1,0 +1,173 @@
+/* Scoped defaults: no reset, font download, or application-wide focus policy. */
+@layer components {
+  .md-content,
+  .md-document {
+    overflow-wrap: break-word;
+    -webkit-user-select: text;
+    user-select: text;
+  }
+
+  .md-content { white-space: pre-wrap; }
+
+  .shard-task-marker,
+  .shard-task-checkbox,
+  .shard-task-toggle { box-sizing: border-box; }
+
+  .md-document { line-height: var(--md-line-height, 1.65); }
+  .md-document > :first-child { margin-top: 0; }
+  .md-document > :last-child { margin-bottom: 0; }
+  .md-document .shard-markdown-heading { font-weight: 600; line-height: 1.3; margin-block: 1em 0.5em; }
+  .md-document h1 { font-size: 2em; }
+  .md-document h2 { font-size: 1.5em; }
+  .md-document h3 { font-size: 1.25em; }
+  .md-document h4 { font-size: 1em; }
+  .md-document .shard-markdown-paragraph { margin-block: 0.75em; }
+  .md-document .shard-markdown-list { margin-block: 0.75em; padding-inline-start: 1.5em; }
+  .md-document ul { list-style: disc; }
+  .md-document ol { list-style: decimal; }
+  .md-document .shard-markdown-quote { margin-inline: 0; padding-inline: 1em; color: var(--md-muted-foreground, inherit); font-style: italic; }
+  .md-document .shard-markdown-code { max-width: 100%; overflow-x: auto; padding: 1em; background: var(--md-muted, color-mix(in srgb, currentColor 6%, transparent)); border-radius: var(--md-radius, 0.25rem); }
+  .md-document code { font-family: monospace; }
+  .md-document a { color: var(--md-accent, LinkText); text-decoration: underline; }
+  .md-document .shard-markdown-rule { border: 0; border-top: 1px solid var(--md-border, currentColor); margin-block: 1em; }
+
+  /* Tables scroll inside the available reading width. */
+  .shard-markdown-table {
+    display: block;
+    width: fit-content;
+    max-width: 100%;
+    margin-block: var(--md-space-3, 0.75rem);
+    overflow-x: auto;
+    border-collapse: collapse;
+    border: 1px solid var(--md-border, color-mix(in srgb, currentColor 18%, transparent));
+    border-radius: var(--md-radius, 0.25rem);
+    white-space: normal;
+    font-size: var(--md-font-size, inherit);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .shard-markdown-table th,
+  .shard-markdown-table td {
+    padding: var(--md-space-2, 0.5rem) var(--md-space-3, 0.75rem);
+    border-bottom: 1px solid var(--md-border, color-mix(in srgb, currentColor 18%, transparent));
+    text-align: left;
+    vertical-align: top;
+  }
+
+  .shard-markdown-table th {
+    background: var(--md-muted, color-mix(in srgb, currentColor 6%, transparent));
+    color: var(--md-foreground, inherit);
+    font-weight: 600;
+    white-space: nowrap;
+  }
+
+  .shard-markdown-table tr:last-child td {
+    border-bottom: none;
+  }
+
+  .shard-markdown-table th + th,
+  .shard-markdown-table td + td {
+    border-left: 1px solid var(--md-border, color-mix(in srgb, currentColor 18%, transparent));
+  }
+
+  .shard-fragment-divider {
+    display: block;
+    width: calc(100% + var(--md-divider-extension, 0px));
+    height: 1px;
+    margin-block: var(--md-space-3, 0.75rem);
+    border-radius: 999px;
+    background: var(--md-border-visible, color-mix(in srgb, currentColor 30%, transparent));
+    opacity: var(--md-divider-opacity, 0.55);
+  }
+
+  /* Align the marker to the capital height of the surrounding text. */
+  .shard-task-marker {
+    vertical-align: text-bottom;
+    vertical-align: calc(0.5cap - 0.5em);
+  }
+
+  .shard-task-marker {
+    position: relative;
+    display: inline-block;
+    width: calc(1em + 2 * var(--md-space-2, 0.5rem));
+    height: 1em;
+    padding: 0;
+    padding-inline: var(--md-space-2, 0.5rem);
+    border: 0;
+    margin: 0;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    line-height: inherit;
+    text-align: left;
+  }
+
+  .shard-task-toggle {
+    position: absolute;
+    top: 0;
+    left: var(--md-space-2, 0.5rem);
+    display: block;
+    width: 1em;
+    height: 1em;
+    padding: 0;
+    border: 0;
+    margin: 0;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+    font: inherit;
+    line-height: 1;
+    pointer-events: auto;
+  }
+
+  .shard-task-toggle:focus-visible {
+    outline: none;
+  }
+
+  .shard-task-toggle:focus-visible .shard-task-checkbox {
+    box-shadow: var(--md-focus-shadow, 0 0 0 2px currentColor);
+  }
+
+  .shard-task-list-marker {
+    white-space: pre;
+  }
+
+  .shard-task-checkbox {
+    position: absolute;
+    top: 0;
+    left: var(--md-space-2, 0.5rem);
+    display: inline-block;
+    width: 1em;
+    height: 1em;
+    border: 1.4px solid var(--md-muted-foreground, currentColor);
+    border-radius: calc(var(--md-radius, 0.25rem) - 2px);
+    background: transparent;
+  }
+
+  .shard-task-toggle .shard-task-checkbox {
+    position: static;
+    width: 100%;
+    height: 100%;
+    transform: none;
+  }
+
+  .shard-task-checkbox-checked {
+    border-color: var(--md-accent, currentColor);
+    background: var(--md-accent, currentColor);
+  }
+
+  .shard-task-checkbox-checked::after {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    box-sizing: border-box;
+    width: 0.32em;
+    height: 0.56em;
+    border: solid var(--md-on-accent, Canvas);
+    border-width: 0 0.12em 0.12em 0;
+    content: "";
+    transform: translate(-50%, -58%) rotate(45deg);
+    transform-origin: center;
+  }
+
+}

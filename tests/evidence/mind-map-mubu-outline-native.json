@@ -1,0 +1,67 @@
+{
+  "date": "2026-09-08",
+  "layer": "native Tauri WKWebView + real filesystem readback",
+  "appPath": "/tmp/Shard Multidrag Acceptance.app",
+  "bundleId": "dev.shard.multidrag-acceptance-20260907",
+  "frontendUrl": "http://127.0.0.1:1420",
+  "vault": "/var/folders/jd/9rnt7sl15d7_gkzln2svt9xw0000gn/T/shard-multidrag-native-px2jcycn",
+  "filePath": "/var/folders/jd/9rnt7sl15d7_gkzln2svt9xw0000gn/T/shard-multidrag-native-px2jcycn/notes/未命名思维导图.shardmap.json",
+  "file": {
+    "kind": "shard.map",
+    "schemaVersion": 1,
+    "id": "map-20260908-034053-e728",
+    "title": "幕布式大纲原生验收",
+    "createdAt": "2026-09-08T03:40:53.345242+08:00",
+    "updatedAt": "2026-09-08T03:43:12.508609+08:00",
+    "savedWithAppVersion": "0.1.3",
+    "revision": 9,
+    "rootId": "node-e728-root",
+    "hasProtectedLinks": false,
+    "nodes": {
+      "node-e728-branch": {
+        "id": "node-e728-branch",
+        "parentId": "node-e728-root",
+        "sortKey": "m",
+        "text": "需求整理",
+        "createdAt": "2026-09-08T03:40:53.345242+08:00",
+        "updatedAt": "2026-09-07T19:41:50.486Z"
+      },
+      "node-e728-root": {
+        "id": "node-e728-root",
+        "parentId": null,
+        "sortKey": "m",
+        "text": "幕布式大纲原生验收",
+        "createdAt": "2026-09-08T03:40:53.345242+08:00",
+        "updatedAt": "2026-09-07T19:41:38.268Z"
+      },
+      "node-mtrnd3e0-l1xazu": {
+        "id": "node-mtrnd3e0-l1xazu",
+        "parentId": "node-e728-branch",
+        "sortKey": "U",
+        "text": "交互验收",
+        "note": "第一行描述\n第二行说明",
+        "createdAt": "2026-09-07T19:42:06.696Z",
+        "updatedAt": "2026-09-07T19:42:38.034Z"
+      }
+    }
+  },
+  "sha256AfterSave": "c1172a5a8d9bb9d76b4c05d2718397702b220b0e37454ee3153ecf5c7206a3c9",
+  "sha256AfterFocusReopenAndEmptyDescriptionHelp": "c1172a5a8d9bb9d76b4c05d2718397702b220b0e37454ee3153ecf5c7206a3c9",
+  "observations": [
+    "Created a new test mind map through the native Library UI in the existing isolated acceptance vault.",
+    "Entered Chinese document title and topic text through native clipboard paste.",
+    "Title Enter entered the first topic. Topic Enter created a sibling. Tab indented it.",
+    "Shift+Enter opened an independent description. Return inserted a newline without creating a topic.",
+    "Shift+Enter returned to the topic. Shift+Tab promoted it. Undo restored its child relationship.",
+    "Saved through native shortcut and observed saved status. File readback preserved all three nodes and the two-line note.",
+    "Clicked a topic bullet to focus the subtree; the title and ancestor breadcrumbs appeared. Returned to the full outline.",
+    "Returned to Library, reopened the same file, and observed the full title, hierarchy and both description lines.",
+    "On final source, opened an empty description, opened then closed keyboard help: native focus returned to the same empty description.",
+    "Shift+Enter returned from that empty description to topic text and collapsed the empty editor. File hash remained unchanged."
+  ],
+  "limits": [
+    "Native Chinese clipboard input was tested; actual pinyin candidate composition was not exercised. Browser regression separately covers composition event guards.",
+    "The original Mubu cloud document was inspected read-only. Mid-text Enter splitting and destructive empty-topic boundaries in Mubu were not experimentally verified.",
+    "No main vault mutation, app package rebuild, commit, push or deployment is claimed."
+  ]
+}

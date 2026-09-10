@@ -1,0 +1,24 @@
+{
+  "expected": {
+    "errorCode": "INVALID_VALUE",
+    "unchanged": true
+  },
+  "operations": [
+    {
+      "cells": [
+        {
+          "fieldId": "fld_00000000000000000000000000000002",
+          "recordId": "rec_00000000000000000000000000000001",
+          "value": 5
+        },
+        {
+          "fieldId": "fld_00000000000000000000000000000006",
+          "recordId": "rec_00000000000000000000000000000002",
+          "value": "false"
+        }
+      ],
+      "type": "setCells"
+    }
+  ],
+  "source": "valid/six-types.json"
+}

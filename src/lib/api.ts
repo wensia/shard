@@ -3,13 +3,8 @@ import { invoke, isTauri } from "@tauri-apps/api/core"
 import { deriveKind } from "@/lib/content-kind"
 import type {
   CheckpointResult,
-  AiAgentKind,
-  AiAgentStatus,
-  CodexInsightLens,
-  CodexReviewFragment,
-  CodexReviewTask,
-  CodexReviewTaskResult,
   CsvFileSummary,
+  DiagramDocumentSummary,
   Fragment,
   FragmentRelation,
   GithubCliInfo,
@@ -90,6 +85,10 @@ export function listMindMaps() {
   return desktopInvoke<MindMapSummary[]>("list_mind_maps")
 }
 
+export function listDiagramDocuments() {
+  return desktopInvoke<DiagramDocumentSummary[]>("list_diagram_documents")
+}
+
 export function listCsvFiles() {
   return desktopInvoke<CsvFileSummary[]>("list_csv_files")
 }
@@ -142,17 +141,19 @@ export function purgeFromTrash(path: string) {
   return invokeLibraryMutation("purge_from_trash", { path })
 }
 
-export function emptyTrash() {
-  return invokeLibraryMutation("empty_trash")
+export function emptyTrash(scope: "library" | "fragments" = "library") {
+  return invokeLibraryMutation("empty_trash", { scope })
 }
 
 export function convertFragmentToNote(
   id: string,
-  destinationDirectory?: string
+  destinationDirectory?: string,
+  title?: string
 ) {
   return invokeLibraryMutation("convert_fragment_to_note", {
     id,
     destinationDirectory: destinationDirectory ?? null,
+    title: title ?? null,
   })
 }
 
@@ -168,10 +169,11 @@ export function openCsvFile(path: string) {
   return desktopInvoke<void>("open_csv_file", { path })
 }
 
-export function createMindMap(title: string, sourceFragmentId?: string) {
+export function createMindMap(title: string, sourceFragmentId?: string, parentPath?: string) {
   return desktopInvoke<MindMapReadResult>("create_mind_map", {
     title,
     sourceFragmentId: sourceFragmentId ?? null,
+    parentPath: parentPath ?? null,
   })
 }
 
@@ -370,30 +372,6 @@ export function setVaultRemote(remoteUrl: string) {
 
 export function getGithubCliStatus() {
   return desktopInvoke<GithubCliInfo>("github_cli_status")
-}
-
-export function getAiAgentStatuses() {
-  return desktopInvoke<AiAgentStatus[]>("ai_agent_statuses")
-}
-
-export function runAiReviewTask(
-  agent: AiAgentKind,
-  task: CodexReviewTask,
-  fragments: CodexReviewFragment[],
-  vaultPath: string,
-  lens?: CodexInsightLens,
-  includeLockbox?: boolean
-) {
-  return desktopInvoke<CodexReviewTaskResult>("run_ai_review_task", {
-    request: {
-      agent,
-      task,
-      lens,
-      fragments,
-      vaultPath,
-      includeLockbox,
-    },
-  })
 }
 
 export function createGithubVaultRepo(repoName: string) {

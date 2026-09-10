@@ -1,0 +1,75 @@
+{
+  "date": "2026-09-07",
+  "appIdentifier": "dev.shard.tables-acceptance-20260907",
+  "buildMode": "Tauri dev, unoptimized Rust; actual native IPC and WKWebView; task-owned vault only",
+  "measurementEntry": "table-performance-test.html",
+  "datasets": [
+    {
+      "label": "A",
+      "path": "/tmp/shard-table-performance-inputs/performance-A.shardtable.json",
+      "rows": 1000,
+      "columns": 20,
+      "cells": 20000,
+      "bytes": 1951802,
+      "sha256": "e0e310be8d23c6006cae48ef6d94650b60d6bb466580f9e23616a28b986d7809",
+      "tableId": "tbl_7c9affc2c2bbd45a93f394a7f59d0392",
+      "schemaVersion": 1,
+      "fixture": "Six field types, Chinese, null every 17 cells, empty text, >560-character text every 100 rows, two-of-four multi-select options",
+      "validation": {
+        "parser": "current src/features/tables/model.ts parseTableFile (strict JSON + model)",
+        "passed": true
+      },
+      "unchangedAfterNativeAttempt": true
+    },
+    {
+      "label": "B",
+      "path": "/tmp/shard-table-performance-inputs/performance-B.shardtable.json",
+      "rows": 10000,
+      "columns": 30,
+      "cells": 300000,
+      "bytes": 28196758,
+      "sha256": "c65d63a405fa3e42d2ffacfc1bb86442bd87fcded0abc17c1d092d9fe04de224",
+      "tableId": "tbl_02bdefaf33c119243c517422884c346e",
+      "schemaVersion": 1,
+      "fixture": "Six field types, Chinese, null every 17 cells, empty text, >560-character text every 100 rows, two-of-four multi-select options",
+      "validation": {
+        "parser": "current src/features/tables/model.ts parseTableFile (strict JSON + model)",
+        "passed": true
+      },
+      "unchangedAfterNativeAttempt": true
+    }
+  ],
+  "nativeFrameAttempt": {
+    "dataset": "A",
+    "completedFrameSamples": 0,
+    "initialAttemptTimeoutMs": 30139,
+    "diagnosticAttemptTimeoutMs": 30123,
+    "diagnostics": {
+      "saveState": "saved",
+      "canvasWidth": 1180,
+      "canvasHeight": 296,
+      "loadingPresent": false,
+      "measuring": true,
+      "rafStage": 0,
+      "visibilityState": "hidden",
+      "documentFocus": true
+    },
+    "observation": "Actual table displayed 1000/1000 records and 20 columns. Saved/loading/canvas readiness reached, first rAF never executed. Timeout is not read/load latency.",
+    "foregroundAttempts": "Opened application through Finder and invoked exposed window zoom action; no verified visibility recovery."
+  },
+  "separateDataReactMode": {
+    "measurementMode": "data-react-ready-no-frame",
+    "implemented": true,
+    "completedNativeSamples": 0,
+    "boundary": "Stops at saved/no-loading/valid canvas geometry, excludes rAF and pixels; not a replacement for frame acceptance."
+  },
+  "blocker": "CUA returned: The Mac is locked and automatic unlock could not unlock it. Native interaction stopped; manual unlock required.",
+  "remaining": [
+    "A/B native data-react-ready sample distributions",
+    "Cold application start and input-to-pixel/frame measurements",
+    "Real system Chinese IME candidates/cancel",
+    "Native horizontal scroll/keyboard/accessibility acceptance"
+  ],
+  "generator": "scripts/dev/generate-table-performance-inputs.py",
+  "validation": "Both files passed current strict TypeScript parseTableFile; A also read by actual Rust in native attempt; hashes unchanged after attempts."
+}

@@ -1,0 +1,288 @@
+.shard-canvas-workspace {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  color: var(--foreground);
+  background: var(--background);
+  font-family: var(--font-sans);
+  font-size: var(--text-body);
+  container: shard-canvas / inline-size;
+}
+
+/* The shell receives shortcuts after deselection; nodes and controls own focus indicators. */
+.shard-canvas-workspace:focus { outline: none; }
+
+.shard-canvas-toolbar,
+.shard-canvas-toolbar-group,
+.shard-canvas-inspector-heading,
+.shard-canvas-tree-actions,
+.shard-canvas-zoom {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.shard-canvas-toolbar {
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--border);
+  background: var(--card);
+}
+
+.shard-canvas-save-status {
+  margin-left: auto;
+  white-space: nowrap;
+  color: var(--muted-foreground);
+  font-size: var(--text-meta);
+}
+.shard-canvas-selection-status { color: var(--muted-foreground); font-size: var(--text-meta); white-space: nowrap; }
+
+.shard-canvas-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  position: relative;
+}
+
+.shard-canvas-viewport { position: relative; flex: 1; min-height: 0; min-width: 0; overflow: hidden; }
+.shard-canvas-viewport .react-flow { background: var(--background); }
+.shard-canvas-viewport .react-flow__node { border-radius: var(--radius-card); }
+.shard-canvas-viewport .react-flow__node:focus-visible { outline: none; }
+.shard-canvas-viewport .react-flow__edge-path { stroke: var(--muted-foreground); }
+.shard-canvas-viewport .react-flow__edge.selected .react-flow__edge-path,
+.shard-canvas-viewport .react-flow__edge:focus-visible .react-flow__edge-path { stroke: var(--primary); }
+.shard-canvas-viewport .react-flow__connection-path { stroke: var(--primary); }
+.shard-canvas-viewport .react-flow__selection { background: var(--primary-subtle); border: 1px dashed var(--primary); }
+.shard-canvas-viewport .react-flow__nodesselection-rect { background: transparent; border: 1px dashed var(--primary); }
+.shard-canvas-viewport .react-flow__attribution { background: var(--card); color: var(--muted-foreground); font-size: var(--text-tiny); }
+.shard-canvas-viewport .react-flow__handle {
+  background: var(--card); border-color: var(--muted-foreground); width: var(--space-2); height: var(--space-2);
+  opacity: 0;
+}
+.shard-canvas-object:hover .react-flow__handle,
+.shard-canvas-object.is-selected .react-flow__handle,
+.shard-canvas-object:focus-within .react-flow__handle,
+.shard-canvas-viewport .react-flow__node:focus-visible .react-flow__handle,
+.shard-canvas-viewport.is-connecting .react-flow__handle { opacity: 1; }
+.shard-canvas-viewport .react-flow__handle:hover,
+.shard-canvas-viewport .react-flow__handle.connectingfrom,
+.shard-canvas-viewport .react-flow__handle.valid { background: var(--primary); border-color: var(--primary); }
+
+.shard-canvas-object {
+  position: relative;
+  min-height: calc(var(--control-height) * 2);
+  width: 100%;
+  border-radius: var(--radius-card);
+  background: var(--card);
+  box-shadow: var(--shadow-card);
+}
+.shard-canvas-object.is-selected,
+.shard-canvas-object.is-editing,
+.shard-canvas-viewport .react-flow__node:focus-visible .shard-canvas-object { outline: 1px solid var(--primary); outline-offset: 0; }
+.shard-canvas-node-content { position: relative; }
+.shard-canvas-node-label {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: calc(var(--control-height) * 2);
+  max-height: calc(var(--control-height) * 5);
+  overflow: hidden;
+  padding: var(--space-4);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: var(--leading-normal);
+  text-align: center;
+}
+.shard-canvas-object.is-editing .shard-canvas-node-label { visibility: hidden; }
+.shard-canvas-object-decision { background: transparent; box-shadow: none; min-height: calc(var(--control-height) * 3); }
+.shard-canvas-shape {
+  position: absolute;
+  inset: 0;
+  width: 100%; height: 100%;
+  overflow: visible; pointer-events: none;
+}
+.shard-canvas-shape polygon { fill: var(--card); stroke: var(--border-visible); }
+.shard-canvas-object-decision.is-selected,
+.shard-canvas-object-decision.is-editing,
+.shard-canvas-viewport .react-flow__node:focus-visible .shard-canvas-object-decision { outline: none; }
+.shard-canvas-object-decision.is-selected .shard-canvas-shape polygon,
+.shard-canvas-object-decision.is-editing .shard-canvas-shape polygon,
+.shard-canvas-viewport .react-flow__node:focus-visible .shard-canvas-shape polygon { stroke: var(--primary); }
+.shard-canvas-object-decision .shard-canvas-node-label { min-height: calc(var(--control-height) * 3); padding-inline: var(--space-8); }
+.shard-canvas-object-terminal { border-radius: 50%; }
+.shard-canvas-object-text { box-shadow: none; background: transparent; }
+.shard-canvas-object-text .shard-canvas-node-label { justify-content: flex-start; text-align: left; }
+.shard-canvas-node-editor {
+  position: absolute;
+  display: block;
+  top: 50%; left: var(--space-4);
+  transform: translateY(-50%);
+  width: calc(100% - var(--space-8));
+  max-height: calc(100% - var(--space-8));
+  min-height: 1lh;
+  padding: 0; margin: 0;
+  resize: none; overflow: auto;
+  border: 0; border-radius: 0;
+  outline: none; box-shadow: none;
+  color: var(--foreground); background: transparent;
+  font: inherit; line-height: var(--leading-normal);
+  text-align: center; overflow-wrap: anywhere;
+}
+.shard-canvas-node-editor:focus { outline: none; box-shadow: none; }
+.shard-canvas-object-text .shard-canvas-node-editor { text-align: left; }
+.shard-canvas-object-decision .shard-canvas-node-editor { left: var(--space-8); width: calc(100% - var(--space-8) * 2); }
+.shard-canvas-inspector-editor {
+  display: block;
+  width: 100%;
+  min-height: calc(var(--control-height) * 2);
+  max-height: calc(var(--control-height) * 4);
+  padding: var(--space-2);
+  resize: none;
+  color: var(--foreground);
+  background: var(--card);
+  border: 1px solid var(--input);
+  border-radius: var(--radius-control);
+  font: inherit;
+  font-size: var(--text-body);
+  line-height: var(--leading-normal);
+}
+.shard-canvas-inspector-editor:focus { outline: none; border-color: var(--ring); box-shadow: none; }
+.shard-canvas-reference { display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-4); }
+.shard-canvas-reference strong { font-size: var(--text-section-title); font-weight: 500; overflow-wrap: anywhere; }
+.shard-canvas-reference p { color: var(--muted-foreground); margin: 0; max-height: 9em; white-space: pre-wrap; overflow: hidden; overflow-wrap: anywhere; }
+.shard-canvas-reference > button { align-self: flex-start; }
+.shard-canvas-object-kind { color: var(--muted-foreground); font-size: var(--text-meta); }
+
+.shard-canvas-tree { padding: var(--space-4); }
+.shard-canvas-tree-title { color: var(--muted-foreground); font-size: var(--text-meta); margin-bottom: var(--space-2); }
+.shard-canvas-tree-svg { display: block; overflow: visible; }
+.shard-canvas-tree-edges { fill: none; stroke: var(--border-visible); }
+.shard-canvas-tree-node { cursor: pointer; }
+.shard-canvas-tree-node:focus-visible { outline: none; }
+.shard-canvas-tree-node:focus-visible rect { stroke: var(--ring); }
+.shard-canvas-tree-node rect { fill: var(--card); stroke: var(--border-visible); rx: var(--radius-control); }
+.shard-canvas-tree-node text { fill: var(--foreground); font-family: var(--font-sans); font-size: var(--text-body); }
+.shard-canvas-tree-node[data-tone="accent"] rect { fill: var(--primary-subtle); stroke: var(--primary); }
+.shard-canvas-tree-node[data-tone="success"] rect { fill: var(--success-bg); stroke: var(--success); }
+.shard-canvas-tree-node[data-tone="warning"] rect { fill: var(--warning-bg); stroke: var(--warning); }
+.shard-canvas-tree-node.is-selected rect { fill: var(--primary-subtle); stroke: var(--primary); }
+.shard-canvas-tree-node.is-selected[data-tone="success"] rect { fill: var(--success-bg); }
+.shard-canvas-tree-node.is-selected[data-tone="warning"] rect { fill: var(--warning-bg); }
+.shard-canvas-tree-node .shard-canvas-tree-collapsed { fill: var(--primary); }
+
+.shard-canvas-inspector {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 calc(var(--space-12) * 6);
+  width: calc(var(--space-12) * 6);
+  min-width: 0;
+  min-height: 0;
+  background: var(--card);
+  border-left: 1px solid var(--border);
+  overflow: hidden;
+  overscroll-behavior: contain;
+}
+.shard-canvas-inspector-heading { flex-shrink: 0; justify-content: space-between; padding: var(--space-3); }
+.shard-canvas-inspector-heading strong { font-size: var(--text-section-title); font-weight: 500; }
+.shard-canvas-inspector-tabs { display: flex; flex-shrink: 0; padding-inline: var(--space-3); border-bottom: 1px solid var(--border); }
+.shard-canvas-inspector-tab {
+  position: relative; flex: 1; height: var(--control-height-lg); color: var(--muted-foreground);
+  font-size: var(--text-body); font-weight: 400;
+}
+.shard-canvas-inspector-tab:hover { color: var(--foreground); }
+.shard-canvas-inspector-tab[aria-selected="true"] { color: var(--foreground); font-weight: 500; }
+.shard-canvas-inspector-tab[aria-selected="true"]::after {
+  content: ""; position: absolute; bottom: 0; left: calc(50% - var(--space-4)); width: var(--space-8); height: 2px; background: var(--primary);
+}
+.shard-canvas-inspector-tab:focus-visible { outline: 1px solid var(--ring); outline-offset: -2px; }
+.shard-canvas-inspector-body { flex: 1; min-height: 0; padding: var(--space-3); overflow: auto; overscroll-behavior: contain; }
+.shard-canvas-inspector-body > .shard-canvas-picker-list { padding: 0; margin-top: var(--space-2); }
+.shard-canvas-topic-context { display: flex; flex-direction: column; gap: var(--space-1); margin-bottom: var(--space-4); }
+.shard-canvas-topic-context span { color: var(--muted-foreground); font-size: var(--text-meta); }
+.shard-canvas-topic-context strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.shard-canvas-inspector-section + .shard-canvas-inspector-section { border-top: 1px solid var(--border); margin-top: var(--space-4); padding-top: var(--space-4); }
+.shard-canvas-inspector-section h3 { margin: 0 0 var(--space-3); font-weight: 500; font-size: var(--text-body); }
+.shard-canvas-tone-field { margin: 0; padding: 0; border: 0; min-width: 0; }
+.shard-canvas-tone-field legend { margin-bottom: var(--space-2); font-size: var(--text-meta); color: var(--muted-foreground); }
+.shard-canvas-tone-options { display: flex; gap: var(--space-2); }
+.shard-canvas-tone-option { flex: 1; min-width: 0; padding: var(--space-1); border: 1px solid var(--border); border-radius: var(--radius-control); }
+.shard-canvas-tone-option[aria-pressed="true"] { border-color: var(--primary); background: var(--primary-subtle); }
+.shard-canvas-tone-option:focus-visible { outline: 1px solid var(--ring); outline-offset: 1px; }
+.shard-canvas-tone-option:disabled { opacity: 0.5; }
+.shard-canvas-tone-options span { display: flex; justify-content: center; align-items: center; height: var(--control-height-sm); border: 1px solid var(--border-visible); border-radius: var(--radius-control); background: var(--card); }
+.shard-canvas-tone-options [data-tone="accent"] span { color: var(--primary); border-color: var(--primary); background: var(--primary-subtle); }
+.shard-canvas-tone-options [data-tone="success"] span { color: var(--success); border-color: var(--success); background: var(--success-bg); }
+.shard-canvas-tone-options [data-tone="warning"] span { color: var(--warning); border-color: var(--warning); background: var(--warning-bg); }
+.shard-canvas-tone-options svg { width: var(--shard-icon-size-sm); height: var(--shard-icon-size-sm); }
+.shard-canvas-tone-options small { display: block; margin-top: var(--space-1); font-size: var(--text-meta); }
+.shard-canvas-property-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); margin-top: var(--space-4); font-size: var(--text-meta); }
+.shard-canvas-property-row select:focus-visible { outline: 1px solid var(--ring); }
+.shard-canvas-key-hints { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-6); font-size: var(--text-meta); color: var(--muted-foreground); }
+.shard-canvas-key-hints kbd { font: inherit; color: var(--foreground); }
+.shard-canvas-section-heading { display: flex; justify-content: space-between; gap: var(--space-2); margin-bottom: var(--space-2); color: var(--muted-foreground); font-size: var(--text-meta); }
+.shard-canvas-panel-empty { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-2); padding-block: var(--space-3); }
+.shard-canvas-panel-empty strong { font-weight: 500; overflow-wrap: anywhere; }
+.shard-canvas-panel-empty p, .shard-canvas-reference-detail p { margin: 0; color: var(--muted-foreground); line-height: var(--leading-normal); overflow-wrap: anywhere; }
+.shard-canvas-reference-detail { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-3); }
+.shard-canvas-reference-detail strong { overflow-wrap: anywhere; font-weight: 500; }
+.shard-canvas-picker-list,
+.shard-canvas-outline { min-height: calc(var(--control-height-sm) * 3); padding: var(--space-1); }
+.shard-canvas-picker-item {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  width: 100%;
+  text-align: left;
+  padding: var(--space-3) var(--space-2);
+  border-bottom: 1px solid var(--border);
+}
+.shard-canvas-picker-item:hover,
+.shard-canvas-outline-row:hover { background: var(--muted); }
+.shard-canvas-picker-item:focus-visible,
+.shard-canvas-outline-row:focus-visible { outline: 1px solid var(--ring); outline-offset: -1px; }
+.shard-canvas-picker-item:disabled { opacity: 0.5; cursor: default; }
+.shard-canvas-picker-item strong { font-weight: 400; overflow-wrap: anywhere; }
+.shard-canvas-picker-item span { color: var(--muted-foreground); font-size: var(--text-meta); }
+.shard-canvas-tree-actions { flex-shrink: 0; padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--border); }
+.shard-canvas-tree-actions > button:not([aria-haspopup]) { flex: 1; }
+.shard-canvas-field { display: flex; flex-direction: column; gap: var(--space-2); font-size: var(--text-meta); }
+.shard-canvas-outline-item { display: flex; align-items: center; min-width: 0; }
+.shard-canvas-outline-spacer, .shard-canvas-outline-toggle { display: flex; flex-shrink: 0; width: var(--space-6); height: var(--control-height-sm); align-items: center; justify-content: center; }
+.shard-canvas-outline-toggle { color: var(--muted-foreground); border-radius: var(--radius-control); }
+.shard-canvas-outline-toggle:hover { background: var(--muted); color: var(--foreground); }
+.shard-canvas-outline-toggle:focus-visible { outline: 1px solid var(--ring); outline-offset: -1px; }
+.shard-canvas-outline-toggle svg { width: var(--shard-icon-size-sm); height: var(--shard-icon-size-sm); }
+.shard-canvas-outline-row { display: block; flex: 1; min-width: 0; height: var(--control-height-sm); padding-inline: var(--space-2); text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border-radius: var(--radius-control); }
+.shard-canvas-outline-row.is-selected { color: var(--primary); background: var(--primary-subtle); }
+.shard-canvas-zoom { position: absolute; left: var(--space-3); bottom: var(--space-3); gap: var(--space-1); }
+.shard-canvas-zoom-value { min-width: calc(var(--control-height-sm) * 2); font-variant-numeric: tabular-nums; }
+.shard-canvas-empty { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); color: var(--muted-foreground); text-align: center; pointer-events: none; max-width: 24rem; }
+.shard-canvas-error { flex-shrink: 0; padding: var(--space-2) var(--space-3); color: var(--destructive); background: var(--destructive-bg); overflow-wrap: anywhere; }
+.shard-canvas-error-text { color: var(--destructive) !important; }
+.shard-canvas-recovery { display: flex; flex-shrink: 0; align-items: center; gap: var(--space-3); padding: var(--space-2) var(--space-3); background: var(--card); border-bottom: 1px solid var(--border); }
+.shard-canvas-recovery span { flex: 1; overflow-wrap: anywhere; color: var(--muted-foreground); font-size: var(--text-meta); }
+.shard-canvas-loading { display: flex; flex: 1; min-height: 0; align-items: center; justify-content: center; flex-direction: column; gap: var(--space-3); color: var(--muted-foreground); }
+@container shard-canvas (max-width: 700px) {
+  .shard-canvas-inspector { position: absolute; right: 0; top: 0; bottom: 0; width: min(calc(var(--space-12) * 6), 85%); box-shadow: var(--shadow-popover); z-index: 10; }
+  .shard-canvas-save-status { margin-left: 0; }
+}
+.shard-canvas-legacy {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-4);
+  padding: var(--space-8);
+  overflow: auto;
+  color: var(--foreground);
+  font-size: var(--text-body);
+}
+.shard-canvas-legacy p { max-width: 60ch; color: var(--muted-foreground); }
+.shard-canvas-legacy ul { padding-inline-start: var(--space-5); list-style: disc; }
+
+.shard-canvas-width-select { width: 55%; min-width: 0; }

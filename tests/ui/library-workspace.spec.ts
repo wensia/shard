@@ -153,6 +153,7 @@ async function installLibraryMock(page: Page, includeNotes = true) {
                 : [],
               assets: [],
               trashEntries: [],
+              fragmentTrashEntries: [],
               fragmentStream: { totalCount: 0, years: [] },
             }
           }
@@ -179,6 +180,7 @@ async function installLibraryMock(page: Page, includeNotes = true) {
                   : [],
                 assets: [],
                 trashEntries: [],
+                fragmentTrashEntries: [],
                 fragmentStream: { totalCount: 0, years: [] },
               },
               migratedCount: 0,
@@ -198,6 +200,7 @@ async function installLibraryMock(page: Page, includeNotes = true) {
                 entries: [],
                 assets: [],
                 trashEntries: [],
+                fragmentTrashEntries: [],
                 fragmentStream: { totalCount: 0, years: [] },
               },
               fragment: null,
@@ -241,7 +244,7 @@ async function getUpdateCalls(page: Page) {
 
 async function openRootDirectory(page: Page) {
   await page.getByRole("complementary", { name: "资料库目录" })
-    .getByRole("button", { name: /^全部笔记/ })
+    .getByRole("button", { name: /^文件（/ })
     .click()
   return page.getByRole("region", { name: "notes 目录列表", exact: true })
 }
@@ -259,7 +262,7 @@ test("捕捉门禁：冷启动可输入保存并在时间线看见新条目", as
   await expect(
     page.locator("[data-shard-fragment-id]").getByText("捕捉门禁回归", { exact: true })
   ).toBeVisible()
-  await expect(page.locator("[data-shard-fragment-id]")).toHaveCount(4)
+  await expect(page.locator("[data-shard-fragment-id]")).toHaveCount(2)
   await expect.poll(() => readEditor(page, "composer")).toBe("")
 })
 
@@ -404,10 +407,12 @@ test("空资料库保留入口并展示引导空状态", async ({ page }) => {
   const libraryEntry = page.getByRole("button", { name: "资料库", exact: true })
   await expect(libraryEntry).toBeVisible()
   await libraryEntry.click()
-  await expect(page.getByText("到碎片流把一条内容转为笔记")).toBeVisible()
+  await expect(page.getByText("暂无文件，可从「新建」开始", { exact: true })).toBeVisible()
+  await expect(page.getByRole("button", { name: "文件（0）", exact: true })).toBeVisible()
+  await expect(page.getByRole("button", { name: "图片（0）", exact: true })).toBeVisible()
 })
 
-test("窄屏资料库使用列表与编辑器两级导航", async ({ page }) => {
+test("窄屏资料库默认显示文件，并支持返回目录与打开文档", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 })
   await installLibraryMock(page)
   await page.goto("/")
@@ -415,10 +420,13 @@ test("窄屏资料库使用列表与编辑器两级导航", async ({ page }) => 
 
   const list = page.getByRole("complementary", { name: "资料库目录" })
   const editor = page.getByRole("article", { name: "资料库查看器" })
+  await expect(list).toBeHidden()
+  await expect(editor).toBeVisible()
+  await expect(editor.getByRole("region", { name: "notes 目录列表", exact: true })).toBeVisible()
+  await page.getByRole("button", { name: "返回资料库目录", exact: true }).click()
   await expect(list).toBeVisible()
-  await expect(editor).toBeHidden()
 
-  await list.getByRole("button", { name: /^全部笔记/ }).click()
+  await list.getByRole("button", { name: /^文件（/ }).click()
   await expect(list).toBeHidden()
   await expect(editor).toBeVisible()
   await editor.getByRole("region", { name: "notes 目录列表", exact: true })

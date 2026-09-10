@@ -1,0 +1,158 @@
+{
+  "contract": "../../../docs/dev/multidimensional-tables-contract.md",
+  "invalid": [
+    {
+      "code": "UNSUPPORTED_VERSION",
+      "file": "invalid/unsupported-schema.json",
+      "pointer": "/schemaVersion"
+    },
+    {
+      "code": "INVALID_MODEL",
+      "file": "invalid/unknown-property.json",
+      "pointer": "/title"
+    },
+    {
+      "code": "INVALID_VALUE",
+      "file": "invalid/unsafe-number.json",
+      "pointer": "/records/rec_00000000000000000000000000000001/values/fld_00000000000000000000000000000002"
+    },
+    {
+      "code": "INVALID_VALUE",
+      "file": "invalid/checkbox-string.json",
+      "pointer": "/records/rec_00000000000000000000000000000001/values/fld_00000000000000000000000000000006"
+    },
+    {
+      "code": "INVALID_VALUE",
+      "file": "invalid/invalid-leap-date.json",
+      "pointer": "/records/rec_00000000000000000000000000000001/values/fld_00000000000000000000000000000003"
+    },
+    {
+      "code": "INVALID_VALUE",
+      "file": "invalid/unknown-option.json",
+      "pointer": "/records/rec_00000000000000000000000000000001/values/fld_00000000000000000000000000000004"
+    },
+    {
+      "code": "INVALID_VALUE",
+      "file": "invalid/duplicate-multi-option.json",
+      "pointer": "/records/rec_00000000000000000000000000000001/values/fld_00000000000000000000000000000005"
+    },
+    {
+      "code": "INVALID_MODEL",
+      "file": "invalid/record-order-missing.json",
+      "pointer": "/recordOrder"
+    },
+    {
+      "code": "INVALID_MODEL",
+      "file": "invalid/record-order-duplicate.json",
+      "pointer": "/recordOrder"
+    },
+    {
+      "code": "INVALID_MODEL",
+      "file": "invalid/record-order-unknown.json",
+      "pointer": "/recordOrder"
+    },
+    {
+      "code": "INVALID_MODEL",
+      "file": "invalid/view-field-order-missing.json",
+      "pointer": "/views/view_00000000000000000000000000000001/fieldOrder"
+    },
+    {
+      "code": "INVALID_MODEL",
+      "file": "invalid/entity-id-mismatch.json",
+      "pointer": "/fields/fld_00000000000000000000000000000001/id"
+    },
+    {
+      "code": "INVALID_MODEL",
+      "file": "invalid/primary-not-text.json",
+      "pointer": "/primaryFieldId"
+    },
+    {
+      "code": "INVALID_MODEL",
+      "file": "invalid/primary-hidden.json",
+      "pointer": "/views/view_00000000000000000000000000000001/hiddenFieldIds"
+    },
+    {
+      "code": "INVALID_MODEL",
+      "file": "invalid/unsupported-field-type.json",
+      "pointer": "/fields/fld_00000000000000000000000000000001/type"
+    },
+    {
+      "code": "INVALID_MODEL",
+      "file": "invalid/multiselect-group.json",
+      "pointer": "/views/view_00000000000000000000000000000001/groupBy"
+    },
+    {
+      "code": "INVALID_FILTER",
+      "file": "invalid/invalid-filter-operator.json",
+      "pointer": "/views/view_00000000000000000000000000000001/filters/conditions/0"
+    },
+    {
+      "code": "INVALID_FILTER",
+      "file": "invalid/filter-null-comparison.json",
+      "pointer": "/views/view_00000000000000000000000000000001/filters/conditions/0"
+    },
+    {
+      "code": "INVALID_FILTER",
+      "file": "invalid/filter-range-reversed.json",
+      "pointer": "/views/view_00000000000000000000000000000001/filters/conditions/0"
+    },
+    {
+      "code": "INVALID_MODEL",
+      "file": "invalid/width-out-of-range.json",
+      "pointer": "/views/view_00000000000000000000000000000001/columnWidths/fld_00000000000000000000000000000001"
+    },
+    {
+      "code": "INVALID_MODEL",
+      "file": "invalid/duplicate-option-id.json",
+      "pointer": "/fields/fld_00000000000000000000000000000004/options"
+    },
+    {
+      "code": "INVALID_MODEL",
+      "file": "invalid/mutation-metadata-half-null.json",
+      "pointer": "/lastMutationHash"
+    },
+    {
+      "code": "DUPLICATE_KEY",
+      "file": "invalid/duplicate-root-key.json",
+      "pointer": "/schemaVersion"
+    },
+    {
+      "code": "DUPLICATE_KEY",
+      "file": "invalid/duplicate-nested-key.json",
+      "pointer": "/fields/fld_00000000000000000000000000000001/name"
+    }
+  ],
+  "operations": [
+    {
+      "file": "operations/edit-filtered-record.json"
+    },
+    {
+      "file": "operations/delete-field-cleans-dependent-view.json"
+    },
+    {
+      "file": "operations/remove-option-with-replacement.json"
+    },
+    {
+      "file": "operations/reject-mixed-invalid-batch.json"
+    },
+    {
+      "file": "operations/reject-primary-deletion.json"
+    },
+    {
+      "file": "operations/reject-used-option-removal.json"
+    }
+  ],
+  "projections": "projection-cases.json",
+  "valid": [
+    {
+      "file": "valid/empty.json"
+    },
+    {
+      "file": "valid/six-types.json"
+    },
+    {
+      "file": "valid/independent-views.json"
+    }
+  ],
+  "version": 1
+}

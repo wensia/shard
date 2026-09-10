@@ -60,9 +60,9 @@ export function OrganizeFragmentsDialog({
         showCloseButton={!isRunning}
       >
         <DialogHeader>
-          <DialogTitle>整理为笔记</DialogTitle>
+          <DialogTitle>整理成新文档</DialogTitle>
           <DialogDescription>
-            将已选 {selectedCount} 条公开碎片交给本机 Codex CLI，生成一篇新笔记。
+            将已选 {selectedCount} 条碎片整理后保存到资料库，来源碎片保留。
           </DialogDescription>
         </DialogHeader>
 
@@ -88,7 +88,7 @@ export function OrganizeFragmentsDialog({
           <fieldset className="flex flex-col gap-2" disabled={isRunning}>
             <legend className="text-[var(--text-meta)] font-medium">模板</legend>
             <div
-              aria-label="笔记模板"
+              aria-label="文档模板"
               className="grid grid-cols-3 gap-2"
               role="radiogroup"
             >
@@ -146,7 +146,7 @@ export function OrganizeFragmentsDialog({
               aria-live="polite"
               className="m-0 text-[var(--text-meta)] text-muted-foreground"
             >
-              正在调用本机 Codex CLI 整理所选碎片，请稍候…
+              正在整理所选碎片并保存文档…
             </p>
           ) : null}
         </div>
@@ -165,7 +165,7 @@ export function OrganizeFragmentsDialog({
             onClick={onSubmit}
             type="button"
           >
-            {isRunning ? "正在整理…" : "生成笔记"}
+            {isRunning ? "正在整理…" : "整理并保存文档"}
           </Button>
         </DialogFooter>
       </DialogContent>

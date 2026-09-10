@@ -1,0 +1,134 @@
+{
+  "surface": "mind-map-document-test.html?mock=1",
+  "storage": "browser mock; no native filesystem claim",
+  "before": {
+    "webkit": {
+      "fiveTrailingNewlines": {
+        "clientHeight": 46,
+        "scrollHeight": 136,
+        "scrollTop": 0
+      },
+      "longChineseTenRepetitions": {
+        "clientHeight": 78,
+        "scrollHeight": 582,
+        "scrollTop": 0
+      }
+    },
+    "chromium": {
+      "fiveTrailingNewlines": {
+        "clientHeight": 46,
+        "scrollHeight": 136,
+        "scrollTop": 5
+      },
+      "longChineseTenRepetitions": {
+        "clientHeight": 78,
+        "scrollHeight": 582,
+        "scrollTop": 504
+      }
+    },
+    "causes": [
+      "Layout normalization trims trailing newlines even though the textarea retains them.",
+      "Preview line count is truncated and reused as the textarea height while textarea value is not truncated."
+    ]
+  },
+  "regression": "tests/ui/mind-map-text-overflow.spec.ts",
+  "after": {
+    "viewport": {
+      "width": 1280,
+      "height": 900
+    },
+    "testResult": "8 passed; pnpm exec playwright test tests/ui/mind-map-text-overflow.spec.ts --workers=1",
+    "browsers": {
+      "webkit": {
+        "samples": {
+          "fiveTrailingNewlines": {
+            "clientHeight": 132,
+            "scrollHeight": 132,
+            "scrollTop": 0,
+            "width": 96,
+            "height": 134,
+            "fontSize": "13px"
+          },
+          "longChineseTenRepetitions": {
+            "clientHeight": 582,
+            "scrollHeight": 582,
+            "scrollTop": 0,
+            "width": 190,
+            "height": 584,
+            "fontSize": "13px"
+          },
+          "wideASCII": {
+            "clientHeight": 150,
+            "scrollHeight": 150,
+            "scrollTop": 0,
+            "width": 190,
+            "height": 152,
+            "fontSize": "13px"
+          },
+          "englishWords": {
+            "clientHeight": 258,
+            "scrollHeight": 258,
+            "scrollTop": 0,
+            "width": 190,
+            "height": 260,
+            "fontSize": "13px"
+          },
+          "shortened": {
+            "clientHeight": 46,
+            "scrollHeight": 46,
+            "scrollTop": 0,
+            "width": 121,
+            "height": 48,
+            "fontSize": "13px"
+          }
+        },
+        "screenshot": "tests/evidence/mind-map-text-overflow-webkit.png"
+      },
+      "chromium": {
+        "samples": {
+          "fiveTrailingNewlines": {
+            "clientHeight": 132,
+            "scrollHeight": 132,
+            "scrollTop": 0,
+            "width": 96,
+            "height": 134,
+            "fontSize": "13px"
+          },
+          "longChineseTenRepetitions": {
+            "clientHeight": 582,
+            "scrollHeight": 582,
+            "scrollTop": 0,
+            "width": 190,
+            "height": 584,
+            "fontSize": "13px"
+          },
+          "wideASCII": {
+            "clientHeight": 150,
+            "scrollHeight": 150,
+            "scrollTop": 0,
+            "width": 190,
+            "height": 152,
+            "fontSize": "13px"
+          },
+          "englishWords": {
+            "clientHeight": 258,
+            "scrollHeight": 258,
+            "scrollTop": 0,
+            "width": 190,
+            "height": 260,
+            "fontSize": "13px"
+          },
+          "shortened": {
+            "clientHeight": 46,
+            "scrollHeight": 46,
+            "scrollTop": 0,
+            "width": 121,
+            "height": 48,
+            "fontSize": "13px"
+          }
+        },
+        "screenshot": "tests/evidence/mind-map-text-overflow-chromium.png"
+      }
+    }
+  }
+}

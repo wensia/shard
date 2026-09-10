@@ -1,0 +1,25 @@
+{
+  "checkedAt": "2026-09-08T01:19:04.713508+08:00",
+  "layer": "native Tauri WKWebView, foreground isolated app, CUA AX and screenshots",
+  "app": "/tmp/Shard Multidrag Acceptance.app",
+  "devUrl": "http://127.0.0.1:1420/",
+  "filePath": "/var/folders/jd/9rnt7sl15d7_gkzln2svt9xw0000gn/T/shard-multidrag-native-px2jcycn/notes/多选拖动验收.shardmap.json",
+  "beforeSha256": "3a0c453e47aceef0ac0c14cb3bed6c645796c02189c40aea6f6d17bef7ea8cf0",
+  "afterSha256": "3a0c453e47aceef0ac0c14cb3bed6c645796c02189c40aea6f6d17bef7ea8cf0",
+  "fileBytesUnchanged": true,
+  "revision": 16,
+  "nodeCount": 10,
+  "observed": [
+    "Library full route opens map with default closed inspector and labeled view tabs",
+    "Map selection carries to outline",
+    "Outline text selection 连续 restored after help open and Esc in both normal and Zen modes",
+    "Zen visible exit returns to Library",
+    "After final surface effect fix, entering and leaving Zen focuses 思维导图画布",
+    "After final canvas focus fix, F2 enters textarea; foreground blank click clears editing and selection and focuses canvas container"
+  ],
+  "notTested": [
+    "native IME candidate composition this batch",
+    "native zoom ratio measurements; covered by WebKit and Chromium UI tests"
+  ],
+  "contentMutations": false
+}

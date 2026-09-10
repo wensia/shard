@@ -1,0 +1,13 @@
+{
+  "expected": {
+    "errorCode": "INVALID_MODEL",
+    "unchanged": true
+  },
+  "operations": [
+    {
+      "fieldId": "fld_00000000000000000000000000000001",
+      "type": "deleteField"
+    }
+  ],
+  "source": "valid/six-types.json"
+}

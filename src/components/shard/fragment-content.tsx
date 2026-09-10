@@ -1,5 +1,5 @@
 import {
-  Fragment,
+  useCallback,
   useEffect,
   useRef,
   useState,
@@ -25,15 +25,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 
-import {
-  parseMarkdownTable,
-  type MarkdownTable,
-} from "@/lib/markdown-table"
-import {
-  getTagRanges,
-  isMarkdownHorizontalRuleLine,
-  parseMarkdownImageLine,
-} from "@/lib/editor-format"
+import { MarkdownContent, type MarkdownImageRenderProps } from "@shard/markdown"
 import {
   attachmentHash,
   downloadFragmentImageAttachment,
@@ -44,7 +36,6 @@ import {
   getFragmentImageFilePath,
   revealFragmentImageInDir,
 } from "@/lib/api"
-import { cn } from "@/lib/utils"
 import { CsvInlineLink, CsvPreview } from "@/components/shard/csv-preview"
 import { isCsvWikilinkTarget, parseWikilinks } from "@/lib/wikilink"
 
@@ -66,10 +57,10 @@ interface FragmentContentProps {
   vaultPath?: string
 }
 
-const TASK_MARKER_PATTERN =
-  /^(\s*)((?:[-*+]|\d+[.)])\s+)(\[([ xX])\]\s*)(.*)$/
-// P4 清单要求保留，供只读超长正文的荧光笔回退解析继续演进。
-export const INLINE_HIGHLIGHT_FALLBACK_PATTERN = /==(.+?)==/g
+// Compatibility export for consumers of the historical fallback renderer.
+export { INLINE_HIGHLIGHT_FALLBACK_PATTERN } from "@shard/markdown"
+
+/** Shard integration: the portable renderer does not know about vaults or CSV. */
 export function FragmentContent({
   className,
   content,
@@ -80,190 +71,32 @@ export function FragmentContent({
   renderImages = false,
   vaultPath,
 }: FragmentContentProps) {
-  const lines = content.split("\n")
-  const hasBlockContent = lines.some(
-    (line, lineIndex) =>
-      parseStandaloneCsvEmbed(line) !== null ||
-      parseMarkdownTable(lines, lineIndex) !== null
-  )
-  const displayLines = lines.map((line) => {
-    const isImageLine = renderImages && parseMarkdownImageLine(line) !== null
-    if (!hideTags || isImageLine) {
-      return { display: line, hidden: false, isImageLine }
-    }
-    const stripped = stripTagsFromLine(line)
-    return {
-      display: stripped,
-      hidden: stripped.length === 0 && line.length > 0,
-      isImageLine,
-    }
-  })
-  let lastVisibleIndex = -1
-  displayLines.forEach((entry, index) => {
-    if (!entry.hidden) lastVisibleIndex = index
-  })
-  const nodes: ReactNode[] = []
-  let index = 0
+  const renderImage = useCallback(({ alt, path }: MarkdownImageRenderProps) => (
+    <FragmentImageAttachment
+      alt={alt}
+      downloadable={downloadableImages}
+      path={path}
+      previewable={previewImages}
+      vaultPath={vaultPath}
+    />
+  ), [downloadableImages, previewImages, vaultPath])
 
-  // 表格是唯一的跨行结构，必须先把连续几行聚合成一块再渲染；
-  // 其余内容仍然逐行走内联流，保持"选中即得原文"的行为。
-  while (index < lines.length) {
-    const line = lines[index]
-    if (line === undefined) break
-
-    const entry = displayLines[index]
-    const csvEmbed = parseStandaloneCsvEmbed(line)
-    const table = parseMarkdownTable(lines, index)
-
-    if (csvEmbed) {
-      nodes.push(
-        <Fragment key={`csv-${index}-${csvEmbed.target}`}>
-          <CsvPreview maxRows={10} path={csvEmbed.target} />
-          {index < lastVisibleIndex ? "\n" : null}
-        </Fragment>
-      )
-      index += 1
-      continue
-    }
-
-    if (table) {
-      const consumed = table.lineCount
-      const startLine = index
-      const lastTableIndex = index + consumed - 1
-      nodes.push(
-        <Fragment key={`table-${startLine}`}>
-          <MarkdownTableBlock table={table} />
-          {lastTableIndex < lastVisibleIndex ? "\n" : null}
-        </Fragment>
-      )
-      index += consumed
-      continue
-    }
-
-    index += 1
-
-    if (entry?.hidden) continue
-
-    nodes.push(
-      <Fragment key={`${index - 1}-${line}`}>
-        {renderLine(
-          entry?.display ?? line,
-          index - 1,
-          onTaskToggle,
-          previewImages,
-          renderImages,
-          vaultPath,
-          downloadableImages
-        )}
-        {index - 1 < lastVisibleIndex && !entry?.isImageLine ? "\n" : null}
-      </Fragment>
-    )
-  }
-
-  const Root = hasBlockContent ? "div" : "span"
-  return <Root className={cn("shard-fragment-content", className)}>{nodes}</Root>
-}
-
-function MarkdownTableBlock({ table }: { table: MarkdownTable }) {
   return (
-    <table className="shard-markdown-table">
-      <thead>
-        <tr>
-          {table.header.map((cell, cellIndex) => (
-            <th
-              key={cellIndex}
-              style={{ textAlign: table.align[cellIndex] ?? undefined }}
-            >
-              {renderInlineContent(cell)}
-            </th>
-          ))}
-        </tr>
-      </thead>
-      <tbody>
-        {table.rows.map((row, rowIndex) => (
-          <tr key={rowIndex}>
-            {row.map((cell, cellIndex) => (
-              <td
-                key={cellIndex}
-                style={{ textAlign: table.align[cellIndex] ?? undefined }}
-              >
-                {renderInlineContent(cell)}
-              </td>
-            ))}
-          </tr>
-        ))}
-      </tbody>
-    </table>
+    <MarkdownContent
+      className={className}
+      content={content}
+      hideTags={hideTags}
+      onTaskToggle={onTaskToggle}
+      renderEmbed={renderCsvEmbed}
+      renderInline={renderInlineContent}
+      renderImage={renderImages ? renderImage : undefined}
+    />
   )
 }
 
-function stripTagsFromLine(line: string): string {
-  const ranges = getTagRanges(line)
-  if (ranges.length === 0) return line
-
-  let result = ""
-  let cursor = 0
-  for (const range of ranges) {
-    result += line.slice(cursor, range.start)
-    cursor = range.end
-  }
-  result += line.slice(cursor)
-
-  return result.replace(/[ \t]{2,}/g, " ").replace(/^[ \t]+|[ \t]+$/g, "")
-}
-
-function renderLine(
-  line: string,
-  lineIndex: number,
-  onTaskToggle: ((lineIndex: number) => void) | undefined,
-  previewImages: boolean,
-  renderImages: boolean,
-  vaultPath: string | undefined,
-  downloadableImages: boolean
-): ReactNode {
-  const image = renderImages ? parseMarkdownImageLine(line) : null
-  if (image) {
-    return (
-      <FragmentImageAttachment
-        alt={image.alt}
-        downloadable={downloadableImages}
-        path={image.path}
-        previewable={previewImages}
-        vaultPath={vaultPath}
-      />
-    )
-  }
-
-  if (isMarkdownHorizontalRuleLine(line)) {
-    return <FragmentDivider />
-  }
-
-  const taskMatch = line.match(TASK_MARKER_PATTERN)
-  if (!taskMatch) {
-    return renderInlineContent(line)
-  }
-
-  const [, indentation, listMarker, taskMarker, checkedMarker, body = ""] =
-    taskMatch
-  const checked = checkedMarker.toLowerCase() === "x"
-  const isOrderedTask = /^\d+[.)]\s+$/.test(listMarker)
-  return (
-    <>
-      {indentation}
-      {isOrderedTask ? (
-        <span className="shard-task-list-marker">{listMarker}</span>
-      ) : null}
-      <TaskMarker
-        checked={checked}
-        lineIndex={lineIndex}
-        onTaskToggle={onTaskToggle}
-        rawMarker={isOrderedTask ? taskMarker : `${listMarker}${taskMarker}`}
-      />
-      <span className="shard-task-body">
-        {renderInlineContent(body)}
-      </span>
-    </>
-  )
+function renderCsvEmbed(line: string): ReactNode | undefined {
+  const link = parseStandaloneCsvEmbed(line)
+  return link ? <CsvPreview maxRows={10} path={link.target} /> : undefined
 }
 
 interface FragmentImageAttachmentProps {
@@ -662,84 +495,6 @@ function getLocalImageFilePath(path: string, vaultPath?: string) {
 
 function isAbsolutePath(path: string) {
   return path.startsWith("/") || /^[a-z]:[\\/]/i.test(path)
-}
-
-interface TaskMarkerProps {
-  checked: boolean
-  lineIndex: number
-  onTaskToggle?: (lineIndex: number) => void
-  rawMarker: string
-}
-
-function TaskMarker({
-  checked,
-  lineIndex,
-  onTaskToggle,
-  rawMarker,
-}: TaskMarkerProps) {
-  // 隐藏占位保持只读卡片正文起点不变；checked/unchecked 使用相同宽度。
-  const spacerMarker = rawMarker.replace(/\[[ xX]\]/, "[ ]")
-  const checkbox = (
-    <span
-      className={cn(
-        "shard-task-checkbox",
-        checked && "shard-task-checkbox-checked"
-      )}
-    />
-  )
-  const spacer = (
-    <span className="shard-task-marker-spacer">
-      {spacerMarker}
-    </span>
-  )
-
-  if (!onTaskToggle) {
-    return (
-      <span
-        className="shard-task-marker"
-        aria-hidden="true"
-        data-task-line-index={lineIndex}
-      >
-        {spacer}
-        {checkbox}
-      </span>
-    )
-  }
-
-  function stopEditorSelection(event: MouseEvent<HTMLButtonElement>) {
-    event.preventDefault()
-    event.stopPropagation()
-  }
-
-  return (
-    <span className="shard-task-marker" data-task-line-index={lineIndex}>
-      {spacer}
-      <button
-        aria-label={checked ? "标记为未完成" : "标记为完成"}
-        aria-pressed={checked}
-        className="shard-task-toggle"
-        onClick={(event) => {
-          event.preventDefault()
-          event.stopPropagation()
-          onTaskToggle(lineIndex)
-        }}
-        onMouseDown={stopEditorSelection}
-        type="button"
-      >
-        {checkbox}
-      </button>
-    </span>
-  )
-}
-
-function FragmentDivider() {
-  return (
-    <span
-      aria-label="分割线"
-      className="shard-fragment-divider"
-      role="separator"
-    />
-  )
 }
 
 function renderInlineContent(text: string): ReactNode {

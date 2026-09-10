@@ -76,6 +76,20 @@ export function updateMindMapNodeText(
   return touchFile(next)
 }
 
+export function updateMindMapNodeNote(
+  file: ShardMapFile,
+  nodeId: string,
+  note: string
+): ShardMapFile {
+  const node = file.nodes[nodeId]
+  if (!node || node.note === note) return file
+
+  const next = cloneMindMapFile(file)
+  next.nodes[nodeId].note = note
+  next.nodes[nodeId].updatedAt = new Date().toISOString()
+  return touchFile(next)
+}
+
 export function addMindMapChild(
   file: ShardMapFile,
   parentId: string
@@ -93,7 +107,8 @@ export function addMindMapChild(
 
 export function addMindMapSibling(
   file: ShardMapFile,
-  nodeId: string
+  nodeId: string,
+  placement: "before" | "after" = "after"
 ): { file: ShardMapFile; nodeId: string } {
   const node = file.nodes[nodeId]
   if (!node || node.parentId === null) {
@@ -103,14 +118,49 @@ export function addMindMapSibling(
   const next = cloneMindMapFile(file)
   const siblings = getMindMapChildren(next, node.parentId)
   const index = siblings.findIndex((sibling) => sibling.id === nodeId)
-  const previous = siblings[index]?.sortKey ?? null
-  const nextSibling = siblings[index + 1]?.sortKey ?? null
+  const insertionIndex = placement === "before" ? index : index + 1
+  const previous = siblings[insertionIndex - 1]?.sortKey ?? null
+  const nextSibling = siblings[insertionIndex]?.sortKey ?? null
   const newNode = createMindMapNode(
     node.parentId,
     getSortKeyBetween(previous, nextSibling)
   )
   next.nodes[newNode.id] = newNode
+  // Imported keys can leave no lexical gap (for example before "0").
+  // Re-key this sibling list only when the requested insertion cannot fit.
+  if (
+    placement === "before" &&
+    nextSibling !== null &&
+    compareSortKeys(newNode.sortKey, nextSibling) >= 0
+  ) {
+    siblings.splice(insertionIndex, 0, newNode)
+    let previousSortKey: string | null = null
+    for (const sibling of siblings) {
+      sibling.sortKey = getSortKeyBetween(previousSortKey, null)
+      sibling.updatedAt = newNode.updatedAt
+      previousSortKey = sibling.sortKey
+    }
+  }
   return { file: touchFile(next), nodeId: newNode.id }
+}
+
+export function addMindMapParent(
+  file: ShardMapFile,
+  nodeId: string
+): { file: ShardMapFile; nodeId: string } {
+  const node = file.nodes[nodeId]
+  if (!node || node.id === file.rootId || node.parentId === null) {
+    return { file, nodeId: file.rootId }
+  }
+
+  const next = cloneMindMapFile(file)
+  const parent = createMindMapNode(node.parentId, node.sortKey)
+  const target = next.nodes[nodeId]
+  target.parentId = parent.id
+  target.sortKey = getSortKeyBetween(null, null)
+  target.updatedAt = parent.updatedAt
+  next.nodes[parent.id] = parent
+  return { file: touchFile(next), nodeId: parent.id }
 }
 
 export function deleteMindMapNode(

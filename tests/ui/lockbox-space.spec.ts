@@ -92,6 +92,7 @@ async function installLockboxSpaceMock(page: Page) {
       entries: [],
       assets: [],
       trashEntries: [],
+      fragmentTrashEntries: [],
       fragmentStream: {
         totalCount: 1,
         years: [

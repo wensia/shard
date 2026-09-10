@@ -22,12 +22,18 @@ aes-gcm = "0.10"
 # 表格文档导入：Excel / CSV 等转 Markdown。按文件内容识别格式，
 # 扩展名只在无签名格式（CSV）时兜底。
 anydoc = "0.1.8"
+# Typed native-table exchange, kept separate from Markdown document conversion.
+calamine = "=0.36.1"
+rust_xlsxwriter = "=0.99.0"
+quick-xml = "=0.41.0"
+zip = { version = "=8.6.0", default-features = false, features = ["deflate"] }
 argon2 = "0.5"
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"
 serde = { workspace = true }
-serde_json = { workspace = true }
+# Keep WKWebView's IEEE-754 canvas positions exact across the JSON save boundary.
+serde_json = { workspace = true, features = ["float_roundtrip"] }
 serde_yaml = "0.9"
 chrono = { workspace = true }
 base64 = "0.22"

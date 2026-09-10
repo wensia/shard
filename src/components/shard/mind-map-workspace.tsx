@@ -2,7 +2,9 @@ import {
   forwardRef,
   useCallback,
   useEffect,
+  useId,
   useImperativeHandle,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -13,6 +15,7 @@ import {
   TriangleAlertIcon,
   GitBranchIcon,
   ListTreeIcon,
+  KeyboardIcon,
   Loader2Icon,
   SaveIcon,
   XIcon,
@@ -21,8 +24,10 @@ import {
 import { Button } from "@/components/ui/button"
 import { toast } from "sonner"
 
-import { MindMapCanvasEditor } from "@/components/shard/mind-map-canvas-editor"
-import { MindMapOutlineEditor } from "@/components/shard/mind-map-outline-editor"
+import { MindMapCanvasEditor, type MindMapCanvasSessionState } from "@/components/shard/mind-map-canvas-editor"
+import { MindMapOutlineEditor, type MindMapOutlineSessionState } from "@/components/shard/mind-map-outline-editor"
+import { MindMapDocumentInspector } from "@/components/shard/mind-map-document-inspector"
+import { MindMapShortcuts } from "@/components/shard/mind-map-shortcuts"
 import { ZenSurface } from "@/components/shard/zen-surface"
 import {
   getApiErrorMessage,
@@ -35,7 +40,7 @@ import {
   isMindMapFileContentEqual,
   type MindMapChangeMeta,
 } from "@/lib/mind-map-tree"
-import type { MindMapReadResult, MindMapSummary, ShardMapFile } from "@/types"
+import type { Fragment, MindMapReadResult, MindMapSummary, ShardDocumentLink, ShardMapFile } from "@/types"
 
 import styles from "./mind-map-workspace.module.css"
 
@@ -50,14 +55,20 @@ export interface MindMapCanvasProps {
   onMapsChange?: (maps: MindMapSummary[]) => void
   surface?: (canvas: ReactNode) => ReactNode
   toolbarLeading?: ReactNode
+  fragments?: Fragment[]
+  onOpenLink?: (link: ShardDocumentLink) => Promise<void> | void
+  onSaveStateChange?: (state: "saved" | "dirty" | "saving" | "error") => void
 }
 
 export interface MindMapCanvasHandle {
   requestClose: () => boolean
   save: () => Promise<boolean>
+  isDirty: () => boolean
+  setInteractionBlocked: (blocked: boolean) => void
 }
 
 type MindMapWorkspaceView = "map" | "outline"
+type MindMapSidePanel = "properties" | "shortcuts" | null
 type SaveMode = "manual" | "auto"
 
 type ConflictState = {
@@ -76,6 +87,9 @@ export const MindMapCanvas = forwardRef<
   onMapsChange,
   surface,
   toolbarLeading,
+  fragments = [],
+  onOpenLink,
+  onSaveStateChange,
 }, ref) {
   const [readResult, setReadResult] = useState<MindMapReadResult | null>(null)
   const [draftFile, setDraftFile] = useState<ShardMapFile | null>(null)
@@ -87,6 +101,24 @@ export const MindMapCanvas = forwardRef<
   const [error, setError] = useState<string | null>(null)
   const [autoSaveError, setAutoSaveError] = useState<string | null>(null)
   const [conflict, setConflict] = useState<ConflictState | null>(null)
+  const [interactionBlocked, setInteractionBlocked] = useState(false)
+  const [sidePanel, setSidePanel] = useState<MindMapSidePanel>(null)
+  const inspectorOpen = sidePanel === "properties"
+  const viewId = useId()
+  const mapSessionRef = useRef<MindMapCanvasSessionState | null>(null)
+  const outlineSessionRef = useRef<MindMapOutlineSessionState | null>(null)
+  const editorFocusRef = useRef<{
+    element: HTMLElement
+    start?: number | null
+    end?: number | null
+    direction?: "forward" | "backward" | "none" | null
+  } | null>(null)
+  const restoreEditorFocusRef = useRef(false)
+  const interactionBlockedRef = useRef(false)
+  const readResultRef = useRef<MindMapReadResult | null>(null)
+  const pendingSaveRef = useRef<Promise<boolean> | null>(null)
+  const composingRef = useRef(false)
+  const [isComposing, setIsComposing] = useState(false)
   // 撤销/重做历史：KB 级文件快照栈，上限 UNDO_STACK_LIMIT。
   // 用 ref 管理（无 UI 依赖），避免 setState updater 内的副作用。
   const draftFileRef = useRef<ShardMapFile | null>(null)
@@ -95,7 +127,51 @@ export const MindMapCanvas = forwardRef<
   const lastMergeKeyRef = useRef<string | null>(null)
   const rootRef = useRef<HTMLElement | null>(null)
   draftFileRef.current = draftFile
+  readResultRef.current = readResult
   const isSaving = saveMode !== null
+
+  function rememberEditorFocus(element: Element | null = document.activeElement) {
+    if (!(element instanceof HTMLElement) || !element.closest("[data-mind-map-editor-region]")) return
+    editorFocusRef.current = element instanceof HTMLTextAreaElement || element instanceof HTMLInputElement
+      ? { element, start: element.selectionStart, end: element.selectionEnd, direction: element.selectionDirection }
+      : { element }
+  }
+
+  function closeSidePanel() {
+    restoreEditorFocusRef.current = true
+    setSidePanel(null)
+  }
+
+  function toggleSidePanel(panel: Exclude<MindMapSidePanel, null>) {
+    if (composingRef.current || interactionBlockedRef.current) return
+    rememberEditorFocus()
+    if (sidePanel === panel) closeSidePanel()
+    else setSidePanel(panel)
+  }
+
+  function changeView(nextView: MindMapWorkspaceView) {
+    if (composingRef.current || interactionBlockedRef.current || nextView === view) return
+    setFocusNodeId(null)
+    editorFocusRef.current = null
+    setView(nextView)
+  }
+
+  useLayoutEffect(() => {
+    if (sidePanel) {
+      rootRef.current?.querySelector<HTMLElement>("[data-mind-map-panel-header] button")?.focus({ preventScroll: true })
+      return
+    }
+    if (!restoreEditorFocusRef.current) return
+    restoreEditorFocusRef.current = false
+    const previous = editorFocusRef.current
+    const element = previous?.element.isConnected
+      ? previous.element
+      : rootRef.current?.querySelector<HTMLElement>("[data-mind-map-outline], [data-mind-map-context-menu]")
+    element?.focus({ preventScroll: true })
+    if (previous && element === previous.element && (element instanceof HTMLTextAreaElement || element instanceof HTMLInputElement) && previous.start != null && previous.end != null) {
+      element.setSelectionRange(previous.start, previous.end, previous.direction ?? undefined)
+    }
+  }, [sidePanel])
   // 时间戳归一化比较：撤销回到已保存内容时不算 dirty、不触发写盘。
   const isDirty =
     readResult && draftFile
@@ -114,6 +190,10 @@ export const MindMapCanvas = forwardRef<
           : draftFile
             ? "已自动保存"
             : ""
+
+  useEffect(() => {
+    onSaveStateChange?.(conflict || autoSaveError ? "error" : isSaving ? "saving" : isDirty ? "dirty" : "saved")
+  }, [autoSaveError, conflict, isDirty, isSaving, onSaveStateChange])
 
   const selectedNodeId = useMemo(
     () =>
@@ -136,6 +216,7 @@ export const MindMapCanvas = forwardRef<
       setDraftFile(next.file)
       setSelectedNodeIds([])
       setFocusNodeId(null)
+      editorFocusRef.current = null
       setConflict(null)
       setAutoSaveError(null)
       undoStackRef.current = []
@@ -158,51 +239,57 @@ export const MindMapCanvas = forwardRef<
 
   const save = useCallback(
     async (mode: SaveMode = "manual") => {
-      if (!readResult || !draftFile || isSaving) return false
+      if (composingRef.current) return false
+      while (pendingSaveRef.current) {
+        if (!(await pendingSaveRef.current)) return false
+      }
+      if (!readResultRef.current || !draftFileRef.current) return true
+      if (isMindMapFileContentEqual(readResultRef.current.file, draftFileRef.current)) return true
 
-      const draftSnapshot = JSON.stringify(draftFile)
-      if (isMindMapFileContentEqual(readResult.file, draftFile)) return true
-
-      setSaveMode(mode)
-      setConflict(null)
+      const operation = (async () => {
+        setSaveMode(mode)
+        setConflict(null)
+        try {
+          // Drain the latest draft, including edits made while the previous write was in flight.
+          while (readResultRef.current && draftFileRef.current &&
+            !isMindMapFileContentEqual(readResultRef.current.file, draftFileRef.current)) {
+            if (composingRef.current) return false
+            const baseline = readResultRef.current
+            const draft = draftFileRef.current
+            const saved = await writeMindMap(baseline.file.id, draft, baseline.file.revision, baseline.lastSavedHash)
+            readResultRef.current = saved
+            setReadResult(saved)
+            if (draftFileRef.current === draft) {
+              draftFileRef.current = saved.file
+              setDraftFile(saved.file)
+            }
+            setAutoSaveError(null)
+            lastMergeKeyRef.current = null
+          }
+          if (composingRef.current) return false
+          void refreshSummaries()
+          if (mode === "manual") toast("思维导图已保存", { duration: 5000 })
+          return true
+        } catch (unknownError) {
+          const message = getApiErrorMessage(unknownError)
+          setAutoSaveError(message)
+          if (message.includes("冲突副本") && draftFileRef.current) {
+            setConflict({ draft: draftFileRef.current, message })
+          }
+          if (mode === "manual") toast.error(`保存思维导图失败：${message}`, { duration: Infinity })
+          return false
+        } finally {
+          setSaveMode(null)
+        }
+      })()
+      pendingSaveRef.current = operation
       try {
-        const saved = await writeMindMap(
-          readResult.file.id,
-          draftFile,
-          readResult.file.revision,
-          readResult.lastSavedHash
-        )
-        setReadResult(saved)
-        setDraftFile((currentDraft) => {
-          if (!currentDraft) return saved.file
-          return JSON.stringify(currentDraft) === draftSnapshot ? saved.file : currentDraft
-        })
-        setAutoSaveError(null)
-        // 保存点即撤销合并边界：之后继续打字应作为新的历史步骤，
-        // 这样 ⌘Z 能先回到刚保存的状态（且不触发再次写盘）。
-        lastMergeKeyRef.current = null
-        await refreshSummaries()
-        if (mode === "manual") {
-          toast("思维导图已保存", { duration: 5000 })
-        }
-        return true
-      } catch (unknownError) {
-        const message = getApiErrorMessage(unknownError)
-        setAutoSaveError(message)
-        if (message.includes("冲突副本")) {
-          setConflict({ draft: draftFile, message })
-        }
-        if (mode === "manual") {
-          toast.error(`保存思维导图失败：${message}`, {
-            duration: Infinity,
-          })
-        }
-        return false
+        return await operation
       } finally {
-        setSaveMode(null)
+        if (pendingSaveRef.current === operation) pendingSaveRef.current = null
       }
     },
-    [draftFile, isSaving, readResult, refreshSummaries]
+    [refreshSummaries]
   )
 
   const requestClose = useCallback(() => {
@@ -217,12 +304,18 @@ export const MindMapCanvas = forwardRef<
     () => ({
       requestClose,
       save: () => save("manual"),
+      isDirty: () => Boolean(readResultRef.current && draftFileRef.current && !isMindMapFileContentEqual(readResultRef.current.file, draftFileRef.current)),
+      setInteractionBlocked: (blocked) => {
+        interactionBlockedRef.current = blocked
+        setInteractionBlocked(blocked)
+      },
     }),
     [requestClose, save]
   )
 
   const updateDraft = useCallback(
     (file: ShardMapFile, meta?: MindMapChangeMeta) => {
+      if (interactionBlockedRef.current) return
       const current = draftFileRef.current
       const mergeKey = meta?.mergeKey ?? null
       // mergeKey 相同（同一节点连续打字）只更新 draft 不入栈；
@@ -237,6 +330,7 @@ export const MindMapCanvas = forwardRef<
         redoStackRef.current = []
       }
       lastMergeKeyRef.current = mergeKey
+      draftFileRef.current = file
       setDraftFile(file)
       setConflict(null)
       setAutoSaveError(null)
@@ -245,6 +339,7 @@ export const MindMapCanvas = forwardRef<
   )
 
   const undoDraft = useCallback(() => {
+    if (interactionBlockedRef.current) return
     const current = draftFileRef.current
     const previous = undoStackRef.current.pop()
     if (!current || !previous) return
@@ -255,6 +350,7 @@ export const MindMapCanvas = forwardRef<
   }, [])
 
   const redoDraft = useCallback(() => {
+    if (interactionBlockedRef.current) return
     const current = draftFileRef.current
     const next = redoStackRef.current.pop()
     if (!current || !next) return
@@ -266,7 +362,13 @@ export const MindMapCanvas = forwardRef<
 
   const selectNode = useCallback((nodeId: string) => {
     setSelectedNodeIds([nodeId])
-    setFocusNodeId(nodeId)
+    setFocusNodeId(view === "outline" ? nodeId : null)
+    rootRef.current?.querySelector<HTMLElement>("[data-mind-map-context-menu]")?.focus({ preventScroll: true })
+  }, [view])
+
+  // 大纲中的原生光标定位只改变选中态，不能反过来请求 focus/select 全文。
+  const selectOutlineNode = useCallback((nodeId: string) => {
+    setSelectedNodeIds([nodeId])
   }, [])
 
   const selectNodes = useCallback(
@@ -275,9 +377,9 @@ export const MindMapCanvas = forwardRef<
         ? nodeIds.filter((nodeId) => draftFile.nodes[nodeId])
         : nodeIds
       setSelectedNodeIds([...new Set(nextNodeIds)])
-      setFocusNodeId(nextNodeIds.length === 1 ? primaryNodeId : null)
+      setFocusNodeId(view === "outline" && nextNodeIds.length === 1 ? primaryNodeId : null)
     },
-    [draftFile]
+    [draftFile, view]
   )
 
   const keepDiskVersion = useCallback(async () => {
@@ -337,22 +439,14 @@ export const MindMapCanvas = forwardRef<
         event.isComposing || event.key === "Process" || event.keyCode === 229
       if (isComposing) return
 
-      const target = event.target
-      if (!(target instanceof Node) || !rootRef.current?.contains(target)) return
+      if (!isMindMapWorkspaceTarget(rootRef.current, event.target)) return
+      if (interactionBlockedRef.current) return
 
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
         if (!event.defaultPrevented) {
           event.preventDefault()
           void save()
         }
-        return
-      }
-
-      // 思维导图全屏界面内，Tab 只表达"新增子节点/缩进"语义；
-      // 禁止默认的焦点迁移把焦点甩到底部全局操作区（退出/切换/保存按钮）。
-      // 编辑器自身的 Tab 处理在目标阶段已执行，这里的 preventDefault 不影响它。
-      if (event.key === "Tab") {
-        event.preventDefault()
         return
       }
 
@@ -373,30 +467,38 @@ export const MindMapCanvas = forwardRef<
   }, [redoDraft, save, undoDraft])
 
   useEffect(() => {
-    if (!isDirty || !draftFile || !readResult || isSaving || conflict || autoSaveError) return
+    if (!isDirty || !draftFile || !readResult || isSaving || isComposing || conflict || autoSaveError) return
 
     const timeoutId = window.setTimeout(() => {
       void save("auto")
     }, AUTO_SAVE_DELAY_MS)
 
     return () => window.clearTimeout(timeoutId)
-  }, [autoSaveError, conflict, draftFile, isDirty, isSaving, readResult, save])
+  }, [autoSaveError, conflict, draftFile, isComposing, isDirty, isSaving, readResult, save])
 
-  // 导图就绪后把焦点收进画布根节点：快捷键 handler 以 rootRef.contains(target)
-  // 限定作用域（避免嵌在第三栏时全局劫持 Tab），焦点若留在外部按钮或 body 上，
-  // Tab 拦截不会触发，默认焦点迁移就会把焦点甩到底部全局操作区。
+  // 初次打开及禅模式容器切换后收进工作区；已有内部焦点保持不变。
   useEffect(() => {
     if (!draftFile) return
-    if (rootRef.current?.contains(document.activeElement)) return
+    if (isMindMapWorkspaceTarget(rootRef.current, document.activeElement)) return
     rootRef.current?.focus({ preventScroll: true })
-  }, [draftFile])
+  }, [draftFile, surface])
 
   const canvas = (
     <section
       aria-label="思维导图画布"
       className={styles.canvas}
+      onKeyDownCapture={event => {
+        if (sidePanel && event.key === "Escape" && !event.nativeEvent.isComposing && event.nativeEvent.keyCode !== 229
+          && event.target instanceof Element && rootRef.current?.contains(event.target)
+          && event.target.closest('[data-mind-map-side-panel], [data-mind-map-workspace-toolbar]')
+          && !event.target.closest('[role="listbox"], [role="menu"], [role="dialog"]')) {
+          event.preventDefault()
+          event.stopPropagation()
+          closeSidePanel()
+        }
+      }}
       onPointerDownCapture={() => {
-        if (!rootRef.current?.contains(document.activeElement)) {
+        if (!isMindMapWorkspaceTarget(rootRef.current, document.activeElement)) {
           rootRef.current?.focus({ preventScroll: true })
         }
       }}
@@ -406,13 +508,56 @@ export const MindMapCanvas = forwardRef<
         color: "var(--foreground)",
       }}
       tabIndex={-1}
+      aria-busy={interactionBlocked}
+      onCompositionStartCapture={() => { composingRef.current = true; setIsComposing(true) }}
+      onCompositionEndCapture={() => { composingRef.current = false; setIsComposing(false) }}
     >
+      <div className={styles.toolbar} data-mind-map-workspace-toolbar inert={interactionBlocked}>
+        {toolbarLeading}
+        <div className={styles.viewTabs} role="tablist" aria-label="思维导图视图">
+          {(["outline", "map"] as const).map((mode, index) => <Button
+            key={mode} role="tab" id={`${viewId}-${mode}-tab`} aria-controls={`${viewId}-panel`}
+            aria-selected={view === mode} tabIndex={view === mode ? 0 : -1}
+            className={styles.viewTab} size="sm" variant="ghost"
+            disabled={!draftFile || isLoading || isComposing || interactionBlocked}
+            onClick={() => changeView(mode)} onKeyDown={event => {
+              if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return
+              event.preventDefault()
+              const nextIndex = event.key === "Home" ? 0 : event.key === "End" ? 1 : 1 - index
+              changeView(nextIndex === 0 ? "outline" : "map")
+              event.currentTarget.parentElement?.querySelectorAll<HTMLElement>('[role="tab"]')[nextIndex]?.focus()
+            }}>
+            {mode === "map" ? <GitBranchIcon /> : <ListTreeIcon />}
+            {mode === "map" ? "思维导图" : "大纲"}
+          </Button>)}
+        </div>
+        <div className={styles.toolbarActions}>
+          <Button aria-label={inspectorOpen ? "隐藏检查器" : "显示检查器"} aria-pressed={inspectorOpen}
+            disabled={!draftFile || isLoading || isComposing || interactionBlocked} onClick={() => toggleSidePanel("properties")} size="sm" variant="ghost">主题属性</Button>
+          <Button aria-pressed={sidePanel === "shortcuts"} disabled={!draftFile || isLoading || isComposing || interactionBlocked}
+            onClick={() => toggleSidePanel("shortcuts")} size="sm" variant="ghost"><KeyboardIcon />快捷键</Button>
+        </div>
+        <div className={styles.saveControls}>
+          <span className={styles.saveStatus} role="status">{saveStatusText}</span>
+          <Button aria-label={isSaving ? saveStatusText : "保存思维导图"}
+            disabled={!isDirty || isSaving || !draftFile || isComposing || interactionBlocked}
+            onClick={() => void save("manual")} size="icon-sm" title={isSaving ? saveStatusText : "保存思维导图"} variant="ghost">
+            {isSaving ? <Loader2Icon className={styles.spinner} /> : <SaveIcon />}
+          </Button>
+        </div>
+      </div>
+      <div className={styles.editorBody} inert={interactionBlocked}>
       <main
+        role="tabpanel" id={`${viewId}-panel`} aria-labelledby={`${viewId}-${view}-tab`}
+        data-mind-map-editor-region
+        onBlurCapture={event => rememberEditorFocus(event.target)}
         style={{
           background: "var(--background)",
           flex: "1 1 0%",
           minHeight: 0,
           overflow: "hidden",
+          display: "flex",
+          minWidth: 0,
         }}
       >
         {isLoading ? (
@@ -455,6 +600,8 @@ export const MindMapCanvas = forwardRef<
               onSelectNodes={selectNodes}
               selectedNodeId={selectedNode?.id ?? null}
               selectedNodeIds={selectedNodeIds}
+              inspectorVisible={sidePanel !== null}
+              sessionStateRef={mapSessionRef}
             />
           ) : (
             <MindMapOutlineEditor
@@ -463,12 +610,31 @@ export const MindMapCanvas = forwardRef<
               onChange={updateDraft}
               onFocusHandled={() => setFocusNodeId(null)}
               onSave={save}
-              onSelectNode={selectNode}
+              onSelectNode={selectOutlineNode}
               selectedNodeId={selectedNode?.id ?? null}
+              sessionStateRef={outlineSessionRef}
             />
           )
         ) : null}
       </main>
+      {!isLoading && draftFile && inspectorOpen && <MindMapDocumentInspector
+        file={draftFile} selectedNodeIds={selectedNodeIds} onSelectNode={selectNode}
+        onChange={updateDraft} fragments={fragments} onClose={closeSidePanel}
+        onOpenLink={onOpenLink ? async (link) => {
+          interactionBlockedRef.current = true
+          setInteractionBlocked(true)
+          try {
+            if (await save("auto")) await onOpenLink(link)
+          } catch (unknownError) {
+            toast.error(`打开关联文档失败：${getApiErrorMessage(unknownError)}`)
+          } finally {
+            interactionBlockedRef.current = false
+            setInteractionBlocked(false)
+          }
+        } : undefined}
+      />}
+      {!isLoading && draftFile && sidePanel === "shortcuts" && <MindMapShortcuts view={view} onClose={closeSidePanel} />}
+      </div>
 
       {conflict ? (
         <div
@@ -523,77 +689,18 @@ export const MindMapCanvas = forwardRef<
         </div>
       ) : null}
 
-      <footer
-        className="shard-content-inset"
-        style={{ flexShrink: 0, paddingBottom: "var(--shard-space-4)" }}
-      >
-        <div
-          className="mx-auto flex w-fit max-w-full items-center gap-2 px-3 py-3"
-          style={{
-            background: "var(--card)",
-            borderRadius: "var(--shard-surface-radius)",
-            boxShadow: "var(--shard-composer-shadow)",
-          }}
-        >
-          {toolbarLeading}
-
-          {draftFile ? (
-            <Button
-              aria-label={
-                view === "map" ? "切换到大纲视图" : "切换到思维导图视图"
-              }
-              onClick={() => setView(view === "map" ? "outline" : "map")}
-              size="icon-sm"
-              title={
-                view === "map" ? "切换到大纲视图" : "切换到思维导图视图"
-              }
-              variant="ghost"
-            >
-              {view === "map" ? (
-                <ListTreeIcon aria-hidden="true" />
-              ) : (
-                <GitBranchIcon aria-hidden="true" />
-              )}
-              <span className="sr-only">
-                {view === "map" ? "切换到大纲视图" : "切换到思维导图视图"}
-              </span>
-            </Button>
-          ) : null}
-
-          <span
-            style={{
-              color: "var(--muted-foreground)",
-              fontSize: 12,
-              minWidth: 80,
-              textAlign: "right",
-            }}
-          >
-            {saveStatusText}
-          </span>
-          <Button
-            aria-label={isSaving ? saveStatusText : "保存思维导图"}
-            disabled={!isDirty || isSaving || !draftFile}
-            onClick={() => void save("manual")}
-            size="icon-sm"
-            title={isSaving ? saveStatusText : "保存思维导图"}
-            variant="default"
-          >
-            {isSaving ? (
-              <Loader2Icon aria-hidden="true" className={styles.spinner} />
-            ) : (
-              <SaveIcon aria-hidden="true" />
-            )}
-            <span className="sr-only">
-              {isSaving ? saveStatusText : "保存思维导图"}
-            </span>
-          </Button>
-        </div>
-      </footer>
     </section>
   )
 
   return surface ? surface(canvas) : canvas
 })
+
+function isMindMapWorkspaceTarget(root: HTMLElement | null, target: EventTarget | null) {
+  const menuOwnerId = target instanceof Element
+    ? target.closest<HTMLElement>("[data-mind-map-menu-owner]")?.dataset.mindMapMenuOwner : null
+  const owner = menuOwnerId ? document.getElementById(menuOwnerId) : target
+  return owner instanceof Node && Boolean(root?.contains(owner))
+}
 
 export function MindMapWorkspace({
   mapId,
@@ -634,6 +741,9 @@ export function MindMapWorkspace({
         event.isComposing || event.key === "Process" || event.keyCode === 229
       if (
         isComposing ||
+        event.defaultPrevented ||
+        !(event.target instanceof Element) ||
+        !event.target.closest('[aria-label="思维导图工作区"]') ||
         !(event.metaKey || event.ctrlKey) ||
         event.key !== "Enter"
       ) {

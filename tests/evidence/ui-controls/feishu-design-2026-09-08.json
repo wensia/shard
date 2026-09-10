@@ -1,0 +1,97 @@
+{
+  "date": "2026-09-08",
+  "scope": "Feishu desktop reference and Shard multidimensional-table interaction design",
+  "reference": {
+    "surface": "User-opened native macOS Feishu multidimensional table",
+    "actions": "Read-only menu, popover and existing empty-record inspection; no create/update/confirm",
+    "private_document_identifiers_retained": false
+  },
+  "implementation": "docs/dev/multidimensional-tables-implementation.md",
+  "checks": [
+    {
+      "command": "pnpm build",
+      "result": "passed",
+      "log": "tests/evidence/ui-controls/feishu-design-2026-09-08/build.log",
+      "notes": [
+        "215 tokens verified",
+        "81 TSX application/development files inspected by default-control gate",
+        "existing bundle-size warning retained"
+      ]
+    },
+    {
+      "command": "pnpm exec vitest run src/lib/table-*.test.ts",
+      "passed": 131,
+      "failed": 0,
+      "log": "tests/evidence/ui-controls/feishu-design-2026-09-08/unit.log"
+    },
+    {
+      "command": "pnpm test:ui --output=/tmp/shard-feishu-full-final",
+      "passed": 318,
+      "failed": 0,
+      "log": "tests/evidence/ui-controls/feishu-design-2026-09-08/ui.log"
+    },
+    {
+      "command": "pnpm exec playwright test tests/ui/table-workspace.spec.ts tests/ui/table-unified-design.spec.ts tests/ui/table-bulk-edit.spec.ts tests/ui/table-field-draft-state.spec.ts tests/ui/table-feishu-fields.spec.ts tests/ui/table-feishu-layout.spec.ts tests/ui/table-record-focus.spec.ts --config=/tmp/shard-table-bulk-webkit.config.mjs",
+      "passed": 53,
+      "skipped": 2,
+      "failed": 0,
+      "log": "tests/evidence/ui-controls/feishu-design-2026-09-08/webkit.log",
+      "skip_reason": "Playwright WebKit clipboard permission limitations"
+    },
+    {
+      "command": "git diff --check && git -C vendor/kiln diff --check",
+      "result": "passed"
+    }
+  ],
+  "webkit_config": "import { defineConfig } from \"/Users/panyuhang/projects/coding/products/shard/node_modules/@playwright/test/index.mjs\";\nexport default defineConfig({\n  testDir: \"/Users/panyuhang/projects/coding/products/shard/tests/ui\",\n  fullyParallel: false,\n  forbidOnly: true,\n  reporter: \"line\",\n  timeout: 30000,\n  use: { baseURL: \"http://127.0.0.1:1420\", screenshot: \"only-on-failure\", trace: \"retain-on-failure\" },\n  projects: [{ name: \"webkit\", use: { browserName: \"webkit\", locale: \"zh-CN\", viewport: { width: 1280, height: 720 } } }]\n});\n",
+  "visual_verification": {
+    "viewports": [
+      1280,
+      680,
+      375
+    ],
+    "observed": [
+      "single-line compact toolbar",
+      "anchored settings retain canvas geometry",
+      "popup radius 6px; shared controls 4px",
+      "wide drawer preserves grid; narrow single pane",
+      "Noto Sans SC",
+      "no document horizontal overflow"
+    ],
+    "screenshots": [
+      "tests/evidence/ui-controls/feishu-design-2026-09-08/fields-narrow.png",
+      "tests/evidence/ui-controls/feishu-design-2026-09-08/filter-narrow.png",
+      "tests/evidence/ui-controls/feishu-design-2026-09-08/filter-wide.png",
+      "tests/evidence/ui-controls/feishu-design-2026-09-08/record-narrow.png",
+      "tests/evidence/ui-controls/feishu-design-2026-09-08/record-wide.png",
+      "tests/evidence/ui-controls/feishu-design-2026-09-08/table-wide.png"
+    ]
+  },
+  "source_sha256": {
+    "src/components/icons/index.tsx": "981756ff5d604370b5084017583c165f0c7b1e2ba813a5336f7f380dd7aa8386",
+    "src/features/tables/table-workspace.tsx": "b7d2455458996868f92cd16fd61e26c0c0d9a5fd0c302aae202aaec5971aa24c",
+    "src/features/tables/table-workspace.css": "96e51d991027528fea73650ae2861dcd403f1409d42ae5f68c865484a290d9ab",
+    "src/features/tables/table-record-panel.tsx": "8c115c848c2d0af88f039eb88820f173cadf47607f9e60178f05fcfebd60d67d",
+    "src/features/tables/table-config-panel.tsx": "55f80cb23b75f0499ca2cbc32db1a759cc6325857b6006f099c8e5ccdf0bbbc0",
+    "src/features/tables/table-field-list.tsx": "a970d0a4e7bb9f302bb7ec56c9204a6db4ba04ceb1aa31ead992d3031e2a267b",
+    "src/features/tables/table-field-list.css": "565f7f5809bb7fb05238353d92ac15263a2b8f6af089979112f47f6539306970",
+    "src/features/tables/table-settings-popover.tsx": "fa2272620eccac768b99686d07334a2636a24cac29aecb55c56aa72c633f2705",
+    "src/features/tables/table-settings-popover.css": "52d3efa6c8d98f2c8d9269735c0e4340d183ba5d2b2ad3e299e064e0385d6768",
+    "vendor/kiln/references/components.md": "dc1f98e1f9a615d04f1a84d2e39ee59e8ce44ad1285600b7bd24f9918dee4e6f",
+    "tests/ui/table-field-draft-state.spec.ts": "b0d33446a6a6f1b61056b91cf71e3cebdd695ea457777eef0f541ca4538ff435",
+    "tests/ui/table-exchange.spec.ts": "1e1d397a67f90ea19eba3169694bfbb27fd0b4dcca9aaedec6778245195fb124",
+    "tests/ui/table-workspace.spec.ts": "7ae19ea717fc6c2ab55beec330651fe90b473d8e54119630e6f883aa112789e2",
+    "tests/ui/table-feishu-fields.spec.ts": "39f1d119f4dbbba0ececc4324156515c1473792db2ffab57ba8a77032704803a",
+    "tests/ui/table-worker-recovery.spec.ts": "a5a13b350f00bb46fcd36fa586bbc8eb8dad765e4eb82206a01b0b56c741b36d",
+    "tests/ui/table-feishu-layout.spec.ts": "084e462e01dc935840508a896c44ccfad69604ec322e7bc8bee0e5fb37728a83",
+    "tests/ui/table-record-focus.spec.ts": "cf4ffc5333794a9421ab399ec510b27dcaa5add6f838746179c362b62451f5a8",
+    "tests/ui/table-spike.spec.ts": "5ad3eac1a5a5cc6aa0951d3a5de178fc87c0482c72437809b3e393743a12b5d7",
+    "tests/ui/table-bulk-edit.spec.ts": "062eca2b3710fd485271c5a302f7fbf7e560b6c2904fe1c0e39ac8ec7291501e",
+    "tests/ui/table-unified-design.spec.ts": "d9cf0b0ab3a9f1b05d2a889295a2b2910466a1e13392c99199499dfeb6ccd494"
+  },
+  "boundaries": [
+    "Browser tests use actual React components and Worker with mock Tauri IPC",
+    "No user vault mutation, git commit, push or deployment",
+    "Real Shard WKWebView IME, native scrolling and end-to-end performance acceptance remain separate"
+  ]
+}

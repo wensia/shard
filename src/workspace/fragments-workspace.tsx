@@ -1,7 +1,7 @@
-import type { ComponentProps } from "react"
+import { useCallback, useRef, type ComponentProps, type ComponentPropsWithoutRef, type ReactNode } from "react"
 
 import appStyles from "@/App.module.css"
-import { CaptureBox } from "@/components/shard/capture-box"
+import { CaptureBox, type CaptureBoxHandle } from "@/components/shard/capture-box"
 import {
   FragmentSearchWorkspace,
   SearchContextBar,
@@ -10,13 +10,14 @@ import { FragmentTimeline } from "@/components/shard/fragment-timeline"
 import { MindMapPanel } from "@/components/shard/mind-map-panel"
 
 interface FragmentsWorkspaceProps {
-  capture: ComponentProps<typeof CaptureBox>
+  capture: ComponentPropsWithoutRef<typeof CaptureBox>
   isMindMapViewActive: boolean
   isSearchModeActive: boolean
   mindMapPanel: ComponentProps<typeof MindMapPanel>
   search: ComponentProps<typeof FragmentSearchWorkspace>
   searchContextBar: ComponentProps<typeof SearchContextBar> | null
-  timeline: ComponentProps<typeof FragmentTimeline>
+  timeline: Omit<ComponentProps<typeof FragmentTimeline>, "onScrollDown">
+  filterContext?: ReactNode
 }
 
 export function FragmentsWorkspace({
@@ -27,14 +28,17 @@ export function FragmentsWorkspace({
   search,
   searchContextBar,
   timeline,
+  filterContext,
 }: FragmentsWorkspaceProps) {
   const isInboxView = !isMindMapViewActive
+  const captureRef = useRef<CaptureBoxHandle>(null)
+  const handleScrollDown = useCallback(() => captureRef.current?.collapse(), [])
 
   return (
     <section className={appStyles.workspaceColumn}>
       {isInboxView ? (
         <div className={appStyles.composerPadding} data-tauri-drag-region>
-          <CaptureBox {...capture} />
+          <CaptureBox {...capture} ref={captureRef} />
         </div>
       ) : null}
 
@@ -47,10 +51,11 @@ export function FragmentsWorkspace({
           {searchContextBar && !isMindMapViewActive ? (
             <SearchContextBar {...searchContextBar} />
           ) : null}
+          {!isMindMapViewActive ? filterContext : null}
           {isMindMapViewActive ? (
             <MindMapPanel {...mindMapPanel} />
           ) : (
-            <FragmentTimeline {...timeline} />
+            <FragmentTimeline {...timeline} onScrollDown={handleScrollDown} />
           )}
         </div>
 

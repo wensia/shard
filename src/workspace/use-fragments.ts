@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react"
 
 import { isTypeTag } from "@/lib/content-kind"
+import { isPublicStreamFragment } from "@/lib/fragment-space"
 import { LOCKBOX_TAG, publicFragments } from "@/lib/lockbox"
 import type { Fragment } from "@/types"
 
@@ -39,9 +40,7 @@ export function useFragments() {
   )
   const inboxFragments = useMemo(
     () =>
-      publicActiveFragments.filter((fragment) =>
-        fragment.tags.includes("inbox")
-      ),
+      publicActiveFragments.filter(isPublicStreamFragment),
     [publicActiveFragments]
   )
 

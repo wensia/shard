@@ -1,4 +1,9 @@
 .surface {
+  /* Markdown 正文和附件共用 A4 纸宽；画布等其他禅模式不消费此留白。 */
+  --zen-editor-inline-padding: max(
+    var(--space-6),
+    calc((100% - 210mm) / 2)
+  );
   position: fixed;
   inset: 0;
   z-index: var(--shard-z-zen);

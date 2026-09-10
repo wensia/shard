@@ -1,15 +1,18 @@
-import { useEffect, useMemo, useRef, useState, type UIEvent } from "react"
-import { InboxIcon, SparklesIcon, XIcon, type ShardIcon } from "@/components/icons"
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type UIEvent } from "react"
+import { InboxIcon, XIcon, type ShardIcon } from "@/components/icons"
 
 import { FragmentCard } from "@/components/shard/fragment-card"
+import { FragmentMasonry } from "@/components/shard/fragment-masonry"
 import { OrganizeFragmentsDialog } from "@/components/shard/organize-fragments-dialog"
 import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { getApiErrorMessage, type OrganizeTemplate } from "@/lib/api"
 import { useFragmentRelations } from "@/lib/use-fragment-relations"
 import type { CsvFileSummary, Fragment } from "@/types"
+import styles from "./fragment-timeline.module.css"
 
-const WIDE_TIMELINE_QUERY = "(min-width: 96rem)"
+const RENDER_BATCH = 40
+const timelinePositions = new Map<string, { top: number; count: number }>()
 
 interface FragmentTimelineProps {
   csvFiles?: CsvFileSummary[]
@@ -20,7 +23,9 @@ interface FragmentTimelineProps {
   isLoading: boolean
   knownTags?: string[]
   onArchive?: (fragment: Fragment) => void
+  onBeforeSelection?: () => Promise<boolean>
   onCancelEdit?: () => void
+  onRegisterEditorFlush?: (flush: (() => Promise<boolean>) | null) => void
   onEdit?: (fragment: Fragment) => void
   onExportImage?: (fragment: Fragment) => void
   onLinkFragment?: (
@@ -38,6 +43,7 @@ interface FragmentTimelineProps {
   onNavigateToFragment?: (fragmentId: string) => void
   onScrollDown?: () => void
   onScrollToFragmentComplete?: (fragmentId: string) => void
+  onSelectionModeChange?: (active: boolean) => void
   onSave?: (id: string, content: string, tags: string[]) => Promise<Fragment>
   onToggleKind?: (fragment: Fragment) => void
   onToggleTask?: (fragment: Fragment, lineIndex: number) => void
@@ -51,6 +57,8 @@ interface FragmentTimelineProps {
    */
   relationFragments?: Fragment[]
   scrollToFragmentId?: string | null
+  /** Include vault and active filters; changing scope clears selection. */
+  scopeKey?: string
   /**
    * card：卡片流（默认，容器背景为 --background 时用）。
    * flat：扁平列表，条目透明底、细实线分割（容器背景本身是 --card 时用，如资料库中列）。
@@ -68,7 +76,9 @@ export function FragmentTimeline({
   isLoading,
   knownTags = [],
   onArchive,
+  onBeforeSelection,
   onCancelEdit,
+  onRegisterEditorFlush,
   onEdit,
   onExportImage,
   onLinkFragment,
@@ -79,22 +89,45 @@ export function FragmentTimeline({
   onPin,
   onScrollDown,
   onScrollToFragmentComplete,
+  onSelectionModeChange,
   onSave,
   onToggleKind,
   onToggleTask,
   onUnlinkFragment,
   relationFragments = fragments,
   scrollToFragmentId = null,
+  scopeKey,
   variant = "card",
   vaultPath,
 }: FragmentTimelineProps) {
+  const [renderWindow, setRenderWindow] = useState(() => ({
+    scope: scopeKey,
+    count: scopeKey ? timelinePositions.get(scopeKey)?.count ?? RENDER_BATCH : RENDER_BATCH,
+  }))
+  const renderLimit = renderWindow.scope === scopeKey ? renderWindow.count
+    : scopeKey ? timelinePositions.get(scopeKey)?.count ?? RENDER_BATCH : RENDER_BATCH
+  const savedRenderLimitRef = useRef(renderLimit)
+  const restorePositionRef = useRef<number | null>(null)
   const lastScrollTopRef = useRef(0)
   const highlightFrameRef = useRef<number | null>(null)
   const highlightTimeoutRef = useRef<number | null>(null)
   const programmaticScrollFrameRef = useRef<number | null>(null)
   const programmaticScrollRef = useRef(false)
   const programmaticScrollTimeoutRef = useRef<number | null>(null)
+  const completedScrollTargetRef = useRef<string | null>(null)
   const viewportRef = useRef<HTMLDivElement>(null)
+  const layoutScrollFrameRef = useRef<number | null>(null)
+  const layoutScrollingRef = useRef(false)
+  const suppressLayoutScroll = useCallback(() => {
+    layoutScrollingRef.current = true
+    if (layoutScrollFrameRef.current !== null) {
+      window.cancelAnimationFrame(layoutScrollFrameRef.current)
+    }
+    layoutScrollFrameRef.current = window.requestAnimationFrame(() => {
+      layoutScrollingRef.current = false
+      layoutScrollFrameRef.current = null
+    })
+  }, [])
   // 关系 worker 挂在时间线层级，整条时间线共用一个实例
   const { indexVersion, requestRelated } = useFragmentRelations(relationFragments)
   const [highlightedFragmentId, setHighlightedFragmentId] = useState<
@@ -110,23 +143,64 @@ export function FragmentTimeline({
     useState<OrganizeTemplate>("summary")
   const [isOrganizing, setIsOrganizing] = useState(false)
   const [organizeError, setOrganizeError] = useState<string | null>(null)
-  const [usesWaterfallColumns, setUsesWaterfallColumns] = useState(() =>
-    typeof window === "undefined"
-      ? false
-      : window.matchMedia(WIDE_TIMELINE_QUERY).matches
-  )
-  const timelineItems = useMemo(() => buildTimelineItems(fragments), [fragments])
-  const timelineColumns = useMemo(
-    () => splitIntoColumns(timelineItems, usesWaterfallColumns ? 2 : 1),
-    [timelineItems, usesWaterfallColumns]
-  )
+  const selectionDockRef = useRef<HTMLDivElement>(null)
+  const [selectionDockHeight, setSelectionDockHeight] = useState(0)
+  const timelineItems = useMemo(() => buildTimelineItems(fragments.slice(0, renderLimit)), [fragments, renderLimit])
   const selectableFragments = useMemo(
     () =>
       fragments.filter(
-        (fragment) => !fragment.lockbox && fragment.kind === "fragment"
+        (fragment) => !fragment.lockbox && !fragment.archived && fragment.kind === "fragment"
       ),
     [fragments]
   )
+
+  useLayoutEffect(() => {
+    const saved = scopeKey ? timelinePositions.get(scopeKey) : undefined
+    restorePositionRef.current = saved?.top ?? 0
+    setRenderWindow({ scope: scopeKey, count: saved?.count ?? RENDER_BATCH })
+    setSelectedFragmentIds(new Set())
+    setIsSelectionMode(false)
+    setIsOrganizeDialogOpen(false)
+    setOrganizeError(null)
+    return () => {
+      if (scopeKey) timelinePositions.set(scopeKey, {
+        // StrictMode may clean up before masonry applies the saved position.
+        top: restorePositionRef.current ?? lastScrollTopRef.current,
+        count: savedRenderLimitRef.current,
+      })
+    }
+  }, [scopeKey])
+
+  useLayoutEffect(() => {
+    savedRenderLimitRef.current = renderLimit
+  }, [renderLimit])
+
+  useEffect(() => {
+    onSelectionModeChange?.(isSelectionMode)
+  }, [isSelectionMode, onSelectionModeChange])
+
+  useLayoutEffect(() => {
+    const dock = selectionDockRef.current
+    if (!dock) {
+      setSelectionDockHeight(0)
+      return
+    }
+    const measure = () => setSelectionDockHeight(dock.getBoundingClientRect().height)
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(dock)
+    return () => observer.disconnect()
+  }, [onOrganize, selectableFragments.length > 0])
+
+  useEffect(() => {
+    if (!scrollToFragmentId) return
+    const targetIndex = fragments.findIndex((fragment) => fragment.id === scrollToFragmentId)
+    if (targetIndex < renderLimit) return
+    const frame = window.requestAnimationFrame(() => {
+      setRenderWindow({ scope: scopeKey, count: Math.min(renderLimit + RENDER_BATCH, targetIndex + 1) })
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [fragments, renderLimit, scopeKey, scrollToFragmentId])
   const selectedFragments = useMemo(
     () =>
       selectableFragments.filter((fragment) =>
@@ -139,13 +213,15 @@ export function FragmentTimeline({
     const selectableIds = new Set(
       selectableFragments.map((fragment) => fragment.id)
     )
-    setSelectedFragmentIds((current) => {
-      const next = new Set(
-        Array.from(current).filter((fragmentId) => selectableIds.has(fragmentId))
-      )
-      return next.size === current.size ? current : next
-    })
-  }, [selectableFragments])
+    const next = new Set(Array.from(selectedFragmentIds).filter((id) => selectableIds.has(id)))
+    if (next.size !== selectedFragmentIds.size) {
+      setSelectedFragmentIds(next)
+      if (next.size === 0) {
+        setIsSelectionMode(false)
+        setIsOrganizeDialogOpen(false)
+      }
+    }
+  }, [selectableFragments, selectedFragmentIds])
 
   useEffect(() => {
     if (onOrganize) return
@@ -156,22 +232,14 @@ export function FragmentTimeline({
   }, [onOrganize])
 
   useEffect(() => {
-    const mediaQuery = window.matchMedia(WIDE_TIMELINE_QUERY)
-
-    function handleTimelineWidthChange() {
-      setUsesWaterfallColumns(mediaQuery.matches)
-    }
-
-    handleTimelineWidthChange()
-    mediaQuery.addEventListener("change", handleTimelineWidthChange)
-
-    return () => {
-      mediaQuery.removeEventListener("change", handleTimelineWidthChange)
-    }
-  }, [])
+    completedScrollTargetRef.current = null
+  }, [scrollToFragmentId])
 
   useEffect(() => {
     return () => {
+      if (layoutScrollFrameRef.current !== null) {
+        window.cancelAnimationFrame(layoutScrollFrameRef.current)
+      }
       if (highlightFrameRef.current !== null) {
         window.cancelAnimationFrame(highlightFrameRef.current)
       }
@@ -187,62 +255,39 @@ export function FragmentTimeline({
     }
   }, [])
 
-  useEffect(() => {
-    if (!scrollToFragmentId || isLoading) return
-
-    let retryFrame = 0
-    const frame = window.requestAnimationFrame(() => {
-      const didScroll = scrollFragmentIntoViewport(
-        viewportRef.current,
-        scrollToFragmentId,
-        (targetScrollTop, behavior) => {
-          beginProgrammaticViewportScroll(
-            targetScrollTop,
-            behavior,
-            scrollToFragmentId
-          )
-        }
-      )
-
-      if (didScroll) {
-        onScrollToFragmentComplete?.(scrollToFragmentId)
-        return
+  // Navigation runs after measured geometry is applied. Keep its target until
+  // scrolling settles, so late image/editor resizes can re-align it first.
+  function handleTimelineLayout() {
+    if (!scrollToFragmentId && restorePositionRef.current !== null && !isLoading) {
+      const viewport = viewportRef.current
+      if (viewport) {
+        suppressLayoutScroll()
+        viewport.scrollTop = restorePositionRef.current
+        lastScrollTopRef.current = viewport.scrollTop
+        restorePositionRef.current = null
+        return true
       }
-
-      retryFrame = window.requestAnimationFrame(() => {
-        const didRetryScroll = scrollFragmentIntoViewport(
-          viewportRef.current,
-          scrollToFragmentId,
-          (targetScrollTop, behavior) => {
-            beginProgrammaticViewportScroll(
-              targetScrollTop,
-              behavior,
-              scrollToFragmentId
-            )
-          }
-        )
-
-        if (didRetryScroll) {
-          onScrollToFragmentComplete?.(scrollToFragmentId)
-        }
-      })
-    })
-
-    return () => {
-      window.cancelAnimationFrame(frame)
-      if (retryFrame) window.cancelAnimationFrame(retryFrame)
     }
-  }, [
-    isLoading,
-    onScrollToFragmentComplete,
-    scrollToFragmentId,
-    timelineColumns,
-  ])
+    if (!scrollToFragmentId || isLoading
+      || completedScrollTargetRef.current === scrollToFragmentId) return false
+    return scrollFragmentIntoViewport(
+      viewportRef.current,
+      scrollToFragmentId,
+      (targetScrollTop, behavior) => {
+        beginProgrammaticViewportScroll(targetScrollTop, behavior, scrollToFragmentId)
+      }
+    )
+  }
 
   function handleViewportScroll(event: UIEvent<HTMLDivElement>) {
     const nextScrollTop = event.currentTarget.scrollTop
+    const viewport = event.currentTarget
+    if (!isLoading && renderLimit < fragments.length
+      && viewport.scrollHeight - nextScrollTop - viewport.clientHeight < viewport.clientHeight) {
+      setRenderWindow({ scope: scopeKey, count: renderLimit + RENDER_BATCH })
+    }
 
-    if (programmaticScrollRef.current) {
+    if (programmaticScrollRef.current || layoutScrollingRef.current) {
       lastScrollTopRef.current = nextScrollTop
       return
     }
@@ -293,7 +338,17 @@ export function FragmentTimeline({
       waitForSmoothScrollToSettle
     )
     programmaticScrollTimeoutRef.current = window.setTimeout(
-      () => clearProgrammaticViewportScroll(fragmentId),
+      () => {
+        // A WebView may interrupt a smooth animation when its scroll extent
+        // changes. Finish at the current measured target before acknowledging it.
+        const didScroll = scrollFragmentIntoViewport(
+          viewportRef.current,
+          fragmentId,
+          (top, nextBehavior) => beginProgrammaticViewportScroll(top, nextBehavior, fragmentId),
+          "auto"
+        )
+        if (!didScroll) clearProgrammaticViewportScroll(fragmentId)
+      },
       700
     )
   }
@@ -314,7 +369,10 @@ export function FragmentTimeline({
     programmaticScrollRef.current = false
     programmaticScrollFrameRef.current = null
     programmaticScrollTimeoutRef.current = null
+    completedScrollTargetRef.current = fragmentId
+    restorePositionRef.current = null
     flashFragmentCard(fragmentId)
+    onScrollToFragmentComplete?.(fragmentId)
   }
 
   function flashFragmentCard(fragmentId: string) {
@@ -338,9 +396,11 @@ export function FragmentTimeline({
     }, 1400)
   }
 
-  function enterSelectionMode() {
+  async function enterSelectionMode(fragment: Fragment) {
+    if (!onOrganize || isOrganizing || !selectableFragments.some((item) => item.id === fragment.id)) return
+    if (onBeforeSelection && !(await onBeforeSelection())) return
     onCancelEdit?.()
-    setSelectedFragmentIds(new Set())
+    setSelectedFragmentIds(new Set([fragment.id]))
     setOrganizeError(null)
     setIsSelectionMode(true)
   }
@@ -354,12 +414,11 @@ export function FragmentTimeline({
   }
 
   function handleSelectChange(fragmentId: string, selected: boolean) {
-    setSelectedFragmentIds((current) => {
-      const next = new Set(current)
-      if (selected) next.add(fragmentId)
-      else next.delete(fragmentId)
-      return next
-    })
+    const next = new Set(selectedFragmentIds)
+    if (selected) next.add(fragmentId)
+    else next.delete(fragmentId)
+    setSelectedFragmentIds(next)
+    if (!selected && next.size === 0) exitSelectionMode()
   }
 
   async function submitOrganization() {
@@ -392,56 +451,7 @@ export function FragmentTimeline({
   }
 
   return (
-    <div
-      style={{ display: "flex", minHeight: 0, flex: 1, flexDirection: "column" }}
-    >
-      {onOrganize && selectableFragments.length > 0 ? (
-        <div className="shard-content-inset shrink-0 py-2">
-          <div className="shard-content-measure flex min-h-8 items-center justify-end gap-2">
-            {isSelectionMode ? (
-              <>
-                <span
-                  aria-live="polite"
-                  className="mr-auto text-[var(--text-meta)] font-medium tabular-nums text-muted-foreground"
-                >
-                  已选 {selectedFragments.length} 条
-                </span>
-                <Button
-                  aria-label="退出整理模式"
-                  disabled={isOrganizing}
-                  onClick={exitSelectionMode}
-                  size="icon-sm"
-                  type="button"
-                  variant="outline"
-                >
-                  <XIcon aria-hidden="true" />
-                </Button>
-                <Button
-                  disabled={selectedFragments.length === 0 || isOrganizing}
-                  onClick={() => {
-                    setOrganizeError(null)
-                    setIsOrganizeDialogOpen(true)
-                  }}
-                  size="sm"
-                  type="button"
-                >
-                  整理为笔记
-                </Button>
-              </>
-            ) : (
-              <Button
-                onClick={enterSelectionMode}
-                size="sm"
-                type="button"
-                variant="outline"
-              >
-                <SparklesIcon aria-hidden="true" />
-                整理
-              </Button>
-            )}
-          </div>
-        </div>
-      ) : null}
+    <div className={styles.root}>
       <ScrollArea
         className="min-h-0 flex-1"
         onViewportScroll={handleViewportScroll}
@@ -484,73 +494,97 @@ export function FragmentTimeline({
         ) : (
           <div
             className="shard-content-inset"
-            style={{ paddingBottom: "var(--shard-space-8)" }}
+            style={{ paddingBottom: `calc(var(--shard-space-8) + ${selectionDockHeight}px)` }}
           >
-            <div
-              className="shard-content-measure"
-              style={{
-                display: "grid",
-                gridTemplateColumns: `repeat(${usesWaterfallColumns ? 2 : 1}, minmax(0, 1fr))`,
-                // flat 变体列间距改由列内边距承担、纵向分割线画在列左缘；
-                // 列拉伸到行高，让分割线贯穿到最长一列的底部
-                alignItems: variant === "flat" ? "stretch" : "start",
-                gap: variant === "flat" ? 0 : "var(--shard-space-4)",
-              }}
+            <FragmentMasonry
+              key={scopeKey}
+              layoutKey={JSON.stringify([isLoading, scrollToFragmentId, timelineItems.map((item) => item.id)])}
+              onBeforeScroll={suppressLayoutScroll}
+              onLayout={handleTimelineLayout}
+              variant={variant}
+              viewportRef={viewportRef}
             >
-              {timelineColumns.map((column, columnIndex) => (
+              {timelineItems.map((item) => (
                 <div
-                  className={
-                    variant === "flat" ? "shard-timeline-flat-column" : undefined
-                  }
-                  key={columnIndex}
-                  style={{
-                    display: "flex",
-                    minWidth: 0,
-                    flexDirection: "column",
-                    // flat 变体条目间距由卡片自身 padding 承担，细实线落在其间
-                    gap: variant === "flat" ? 0 : "var(--shard-space-4)",
-                  }}
+                  className="shard-timeline-item"
+                  data-timeline-item-id={item.fragment.id}
+                  key={item.id}
                 >
-                  {column.map((item) => (
-                    <FragmentCard
-                      csvFiles={csvFiles}
-                      fragment={item.fragment}
-                      fragments={relationFragments}
-                      variant={variant}
-                      isHighlighted={highlightedFragmentId === item.fragment.id}
-                      isEditing={editingFragmentId === item.fragment.id}
-                      isSelectable={
-                        !item.fragment.lockbox && item.fragment.kind === "fragment"
-                      }
-                      isSelected={selectedFragmentIds.has(item.fragment.id)}
-                      isSelectionMode={isSelectionMode}
-                      key={item.id}
-                      knownTags={knownTags}
-                      onArchive={onArchive}
-                      onCancelEdit={onCancelEdit}
-                      onEdit={onEdit}
-                      onExportImage={onExportImage}
-                      onLinkFragment={onLinkFragment}
-                      onMoveToLockbox={onMoveToLockbox}
-                      onNavigateToFragment={onNavigateToFragment}
-                      onOpenZen={onOpenZen}
-                      onPin={onPin}
-                      onSave={onSave}
-                      onSelectChange={handleSelectChange}
-                      onToggleKind={onToggleKind}
-                      onToggleTask={onToggleTask}
-                      onUnlinkFragment={onUnlinkFragment}
-                      relationIndexVersion={indexVersion}
-                      requestRelated={requestRelated}
-                      vaultPath={vaultPath}
-                    />
-                  ))}
+                  <FragmentCard
+                    csvFiles={csvFiles}
+                    fragment={item.fragment}
+                    fragments={relationFragments}
+                    variant={variant}
+                    isHighlighted={highlightedFragmentId === item.fragment.id}
+                    isEditing={editingFragmentId === item.fragment.id}
+                    isSelectable={
+                      !item.fragment.lockbox && !item.fragment.archived && item.fragment.kind === "fragment"
+                    }
+                    isSelected={selectedFragmentIds.has(item.fragment.id)}
+                    isSelectionMode={isSelectionMode}
+                    knownTags={knownTags}
+                    onArchive={onArchive}
+                    onCancelEdit={onCancelEdit}
+                    onRegisterEditorFlush={onRegisterEditorFlush}
+                    onEdit={onEdit}
+                    onExportImage={onExportImage}
+                    onLinkFragment={onLinkFragment}
+                    onMoveToLockbox={onMoveToLockbox}
+                    onNavigateToFragment={onNavigateToFragment}
+                    onOpenZen={onOpenZen}
+                    onPin={onPin}
+                    onSave={onSave}
+                    onSelectChange={handleSelectChange}
+                    onStartSelection={onOrganize ? enterSelectionMode : undefined}
+                    onToggleKind={onToggleKind}
+                    onToggleTask={onToggleTask}
+                    onUnlinkFragment={onUnlinkFragment}
+                    relationIndexVersion={indexVersion}
+                    requestRelated={requestRelated}
+                    vaultPath={vaultPath}
+                  />
                 </div>
               ))}
-            </div>
+            </FragmentMasonry>
+            {renderLimit < fragments.length ? (
+              <div className={styles.loadMore}>
+                <Button size="sm" variant="outline" onClick={() => {
+                  setRenderWindow({ scope: scopeKey, count: renderLimit + RENDER_BATCH })
+                }}>显示更多碎片</Button>
+              </div>
+            ) : null}
           </div>
         )}
       </ScrollArea>
+      {onOrganize && selectableFragments.length > 0 ? (
+        <div
+          aria-label="碎片批量操作"
+          aria-busy={isOrganizing || undefined}
+          aria-hidden={!isSelectionMode}
+          className={styles.selectionDock}
+          data-visible={isSelectionMode}
+          inert={!isSelectionMode}
+          ref={selectionDockRef}
+          role="toolbar"
+        >
+          <div className={`shard-content-measure ${styles.selectionActions}`}>
+            <span aria-live="polite" className={styles.selectionCount}>已选 {selectedFragments.length} 条</span>
+            <Button disabled={isOrganizing} onClick={() => {
+              if (selectedFragments.length === selectableFragments.length) exitSelectionMode()
+              else setSelectedFragmentIds(new Set(selectableFragments.map((fragment) => fragment.id)))
+            }} size="sm" variant="outline">
+              {selectedFragments.length === selectableFragments.length ? "取消全选" : "全选当前结果"}
+            </Button>
+            <Button disabled={selectedFragments.length === 0 || isOrganizing} onClick={() => {
+              setOrganizeError(null)
+              setIsOrganizeDialogOpen(true)
+            }} size="sm" variant="primary">整理成新文档…</Button>
+            <Button aria-label="退出多选" disabled={isOrganizing} onClick={exitSelectionMode} size="icon-sm" variant="outline">
+              <XIcon aria-hidden="true" />
+            </Button>
+          </div>
+        </div>
+      ) : null}
       <OrganizeFragmentsDialog
         error={organizeError}
         isOpen={isOrganizeDialogOpen}
@@ -573,7 +607,8 @@ export function FragmentTimeline({
 function scrollFragmentIntoViewport(
   viewport: HTMLDivElement | null,
   fragmentId: string,
-  beforeScroll: (targetScrollTop: number, behavior: ScrollBehavior) => void
+  beforeScroll: (targetScrollTop: number, behavior: ScrollBehavior) => void,
+  behaviorOverride?: ScrollBehavior
 ) {
   if (!viewport) return false
 
@@ -594,11 +629,11 @@ function scrollFragmentIntoViewport(
     0,
     maxScrollTop
   )
-  const behavior: ScrollBehavior = window.matchMedia(
+  const behavior: ScrollBehavior = behaviorOverride ?? (window.matchMedia(
     "(prefers-reduced-motion: reduce)"
   ).matches
     ? "auto"
-    : "smooth"
+    : "smooth")
 
   beforeScroll(nextScrollTop, behavior)
   viewport.scrollTo({
@@ -639,14 +674,4 @@ function buildTimelineItems(fragments: Fragment[]): TimelineItem[] {
       if (a.pinned !== b.pinned) return a.pinned ? -1 : 1
       return b.timestamp.localeCompare(a.timestamp)
     })
-}
-
-function splitIntoColumns(items: TimelineItem[], columnCount: number) {
-  const columns = Array.from({ length: columnCount }, () => [] as TimelineItem[])
-
-  items.forEach((item, index) => {
-    columns[index % columnCount].push(item)
-  })
-
-  return columns
 }

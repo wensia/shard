@@ -5,6 +5,7 @@ import {
   GitBranchIcon,
   PaperclipIcon,
   LinkIcon,
+  ListTodoIcon,
   LockKeyholeIcon,
   MoreHorizontalIcon,
   PencilLineIcon,
@@ -49,6 +50,7 @@ interface FragmentCardProps {
   knownTags?: string[]
   onArchive?: (fragment: Fragment) => void
   onCancelEdit?: () => void
+  onRegisterEditorFlush?: (flush: (() => Promise<boolean>) | null) => void
   onEdit?: (fragment: Fragment) => void
   onExportImage?: (fragment: Fragment) => void
   onMoveToLockbox?: (fragment: Fragment) => void
@@ -61,6 +63,7 @@ interface FragmentCardProps {
   onPin?: (fragment: Fragment) => void
   onSave?: (id: string, content: string, tags: string[]) => Promise<Fragment>
   onSelectChange?: (fragmentId: string, selected: boolean) => void
+  onStartSelection?: (fragment: Fragment) => Promise<void> | void
   onToggleKind?: (fragment: Fragment) => void
   onToggleTask?: (fragment: Fragment, lineIndex: number) => void
   onUnlinkFragment?: (
@@ -93,6 +96,7 @@ export function FragmentCard({
   knownTags = [],
   onArchive,
   onCancelEdit,
+  onRegisterEditorFlush,
   onEdit,
   onExportImage,
   onLinkFragment,
@@ -102,6 +106,7 @@ export function FragmentCard({
   onNavigateToFragment,
   onSave,
   onSelectChange,
+  onStartSelection,
   onToggleKind,
   onToggleTask,
   onUnlinkFragment,
@@ -152,6 +157,7 @@ export function FragmentCard({
           fragments={fragments}
           knownTags={knownTags}
           onClose={() => onCancelEdit?.()}
+          onRegisterFlush={onRegisterEditorFlush}
           onNavigateToFragment={onNavigateToFragment}
           onSave={onSave}
           variant="inline"
@@ -309,7 +315,7 @@ export function FragmentCard({
               {onToggleKind ? (
                 <CardMenuItem
                   icon={<FileTextIcon aria-hidden="true" />}
-                  label={fragment.kind === "note" ? "转回碎片" : "转为笔记"}
+                  label={fragment.kind === "note" ? "转回碎片" : "转为文档…"}
                   onSelect={() => onToggleKind(fragment)}
                 />
               ) : null}
@@ -318,6 +324,15 @@ export function FragmentCard({
                 label="复制"
                 onSelect={() => void copyFragmentContent()}
               />
+              {isSelectable && onStartSelection ? (
+                <CardMenuItem
+                  icon={<ListTodoIcon aria-hidden="true" />}
+                  label="多选"
+                  onSelect={() =>
+                    openNextSurface(() => void onStartSelection(fragment))
+                  }
+                />
+              ) : null}
               {requestRelated ? (
                 <CardMenuItem
                   icon={<LinkIcon aria-hidden="true" />}

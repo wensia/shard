@@ -1,0 +1,44 @@
+.root {
+  position: relative;
+  display: flex;
+  min-height: 0;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+}
+
+.selectionDock {
+  position: absolute;
+  inset: auto 0 0;
+  z-index: 2;
+  padding: var(--space-2) var(--space-4);
+  border-top: 1px solid var(--border);
+  background: var(--card);
+}
+
+/* Hidden docks keep their measured height so selection never shifts cards. */
+.selectionDock[data-visible="false"] {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.selectionActions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.selectionCount {
+  margin-right: auto;
+  color: var(--muted-foreground);
+  font-size: var(--text-meta);
+  font-variant-numeric: tabular-nums;
+}
+
+.loadMore {
+  display: flex;
+  justify-content: center;
+  padding-block: var(--space-4);
+}

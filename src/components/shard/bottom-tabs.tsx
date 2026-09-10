@@ -1,16 +1,14 @@
 import {
   BookOpenIcon,
   GitBranchIcon,
-  RouteIcon,
   HelpCircleIcon,
-  HistoryIcon,
   InboxIcon,
   KeyboardIcon,
   Maximize2Icon,
   MoreHorizontalIcon,
   SearchIcon,
   SettingsIcon,
-  SparklesIcon,
+  Trash2Icon,
 } from "@/components/icons"
 import { useState } from "react"
 
@@ -28,11 +26,10 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
-import { dailyReviewCount, insightReviewCount } from "@/lib/review-workflows"
 import { useAppVersion } from "@/lib/use-app-version"
 import type { Fragment } from "@/types"
 import type {
-  ReviewWorkspaceMode,
+  FragmentsView,
   WorkspaceRoute,
 } from "@/workspace/route"
 
@@ -69,22 +66,15 @@ const SPACE_TABS: Array<{
     icon: BookOpenIcon,
     route: { space: "library", params: {} },
   },
-  {
-    id: "review",
-    label: "回顾",
-    icon: HistoryIcon,
-    route: { space: "review", params: { mode: "dailyReview" } },
-  },
 ]
 
-const REVIEW_TABS: Array<{
-  id: ReviewWorkspaceMode
+const FRAGMENT_TABS: Array<{
+  id: FragmentsView
   label: string
   icon: typeof InboxIcon
 }> = [
-  { id: "dailyReview", label: "每日回顾", icon: HistoryIcon },
-  { id: "insight", label: "洞察", icon: SparklesIcon },
-  { id: "walk", label: "漫步", icon: RouteIcon },
+  { id: "all", label: "全部", icon: InboxIcon },
+  { id: "trash", label: "回收站", icon: Trash2Icon },
 ]
 
 export function BottomTabs({
@@ -101,11 +91,11 @@ export function BottomTabs({
 }: BottomTabsProps) {
   const [isMenuOpen, setIsMenuOpen] = useState(false)
   const appVersion = useAppVersion()
-  const activeFragments = fragments.filter((fragment) => !fragment.archived)
-  const counts: Record<ReviewWorkspaceMode, number> = {
-    dailyReview: dailyReviewCount(fragments),
-    insight: insightReviewCount(fragments),
-    walk: activeFragments.length,
+  const ownedFragments = fragments.filter((fragment) => fragment.kind === "fragment" && !fragment.lockbox)
+  const activeFragments = ownedFragments.filter((fragment) => !fragment.archived)
+  const counts: Record<FragmentsView, number> = {
+    all: activeFragments.length,
+    trash: ownedFragments.length - activeFragments.length,
   }
 
   return (
@@ -201,11 +191,11 @@ export function BottomTabs({
               })}
             </nav>
 
-            {route.space === "review" ? (
-              <nav aria-label="回顾空间" className={styles.secondaryTabs}>
-                {REVIEW_TABS.map((item) => {
+            {route.space === "fragments" ? (
+              <nav aria-label="碎片视图" className={styles.secondaryTabs}>
+                {FRAGMENT_TABS.map((item) => {
                   const Icon = item.icon
-                  const isActive = route.params.mode === item.id
+                  const isActive = (route.params.view ?? "all") === item.id
                   return (
                     <button
                       aria-current={isActive ? "page" : undefined}
@@ -217,8 +207,8 @@ export function BottomTabs({
                       key={item.id}
                       onClick={() =>
                         onRouteChange({
-                          space: "review",
-                          params: { mode: item.id },
+                          space: "fragments",
+                          params: { view: item.id },
                         })
                       }
                       type="button"

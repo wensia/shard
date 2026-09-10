@@ -8,13 +8,11 @@ export type FragmentFilter =
   | "inbox"
   | "tagged"
   | "lockbox"
-  | "dailyReview"
-  | "insight"
-  | "walk"
   | "archive"
 
 export interface FragmentRelation {
   targetId: string
+  /** walk / insight 仅用于读取已有笔记的历史关联来源。 */
   origin: "manual" | "walk" | "insight" | "tag" | "wikilink"
   createdAt: string
   note?: string
@@ -72,6 +70,9 @@ export type LibraryTreeEntryKind =
   | "markdown"
   | "csv"
   | "mindmap"
+  | "flowchart"
+  | "canvas"
+  | "table"
   | "image"
   | "file"
 
@@ -80,6 +81,7 @@ export interface LibraryTreeEntry {
   path: string
   kind: LibraryTreeEntryKind
   size: number
+  createdAt?: string | null
   modifiedAt: string
   mindMapId?: string
   children?: LibraryTreeEntry[]
@@ -113,6 +115,7 @@ export interface LibraryTreeSnapshot {
   entries: LibraryTreeEntry[]
   fragmentStream: LibraryFragmentStream
   trashEntries: LibraryTreeEntry[]
+  fragmentTrashEntries?: LibraryTreeEntry[]
 }
 
 export interface LibraryMutationResult {
@@ -134,38 +137,6 @@ export interface GithubCliInfo {
   error: string | null
 }
 
-export type AiAgentKind = "codex" | "claude" | "kimi" | "opencode"
-
-export interface AiAgentStatus {
-  agent: AiAgentKind
-  installed: boolean
-  version: string | null
-  path: string | null
-  error: string | null
-}
-
-export type CodexReviewTask = "insight" | "walk"
-
-export type CodexInsightLens =
-  | "default"
-  | "values"
-  | "reverse"
-  | "secondOrder"
-  | "cbt"
-  | "mbti"
-
-export interface CodexReviewFragment {
-  id: string
-  content: string
-  createdAt: string
-  tags: string[]
-  path: string
-}
-
-export interface CodexReviewTaskResult {
-  text: string
-}
-
 export interface MindMapSummary {
   id: string
   title: string
@@ -179,6 +150,14 @@ export interface MindMapReadResult {
   file: ShardMapFile
   path: string
   lastSavedHash: string
+}
+
+export interface DiagramDocumentSummary {
+  id: string
+  title: string
+  path: string
+  kind: "mindmap" | "flowchart"
+  nodeCount: number
 }
 
 export interface ShardMapFile {
@@ -223,6 +202,7 @@ export type ShardDocumentLink =
   | ShardFragmentLink
   | ShardMarkdownPathLink
   | ShardMapLink
+  | ShardFlowLink
 
 export interface ShardFragmentLink {
   id: string
@@ -239,6 +219,12 @@ export interface ShardMarkdownPathLink {
 export interface ShardMapLink {
   id: string
   targetType: "map"
+  targetId: string
+}
+
+export interface ShardFlowLink {
+  id: string
+  targetType: "flow"
   targetId: string
 }
 

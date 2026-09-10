@@ -1,0 +1,46 @@
+{
+  "geometry": [
+    {
+      "width": 1280,
+      "titleSize": 34,
+      "bodySize": 16,
+      "lineHeight": 25.6,
+      "rowHeight": 32,
+      "bodyWidth": 756,
+      "firstIndent": 28,
+      "secondIndent": 28,
+      "titleTop": 155,
+      "bodyTop": 230,
+      "bodyBackground": "rgba(0, 0, 0, 0)",
+      "bodyOutline": "none",
+      "fontFamily": "-apple-system, \"Helvetica Neue\", Arial, \"Noto Sans SC\", \"Hiragino Sans GB\", STHeiti, \"Microsoft YaHei\", \"Microsoft JhengHei\", \"Source Han Sans SC\", \"Noto Sans CJK SC\", \"Source Han Sans CN\", \"Source Han Sans TC\", \"Noto Sans CJK TC\", SimSun, sans-serif",
+      "pageOverflow": 0,
+      "windowScroll": 0
+    },
+    {
+      "width": 640,
+      "titleSize": 34,
+      "bodySize": 16,
+      "lineHeight": 25.6,
+      "rowHeight": 32,
+      "bodyWidth": 484,
+      "firstIndent": 28,
+      "secondIndent": 28,
+      "titleTop": 155,
+      "bodyTop": 230,
+      "bodyBackground": "rgba(0, 0, 0, 0)",
+      "bodyOutline": "none",
+      "fontFamily": "-apple-system, \"Helvetica Neue\", Arial, \"Noto Sans SC\", \"Hiragino Sans GB\", STHeiti, \"Microsoft YaHei\", \"Microsoft JhengHei\", \"Source Han Sans SC\", \"Noto Sans CJK SC\", \"Source Han Sans CN\", \"Source Han Sans TC\", \"Noto Sans CJK TC\", SimSun, sans-serif",
+      "pageOverflow": 0,
+      "windowScroll": 0
+    }
+  ],
+  "long": {
+    "height": 262,
+    "clipped": 0,
+    "horizontalOverflow": 0,
+    "viewportOverflow": 0,
+    "windowScroll": 0,
+    "documentScroll": 0
+  }
+}

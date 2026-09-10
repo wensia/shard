@@ -32,6 +32,7 @@ import {
   type FragmentSearchWorkerResponse,
 } from "@/lib/fragment-search"
 import { LOCKBOX_TAG } from "@/lib/lockbox"
+import { deriveKind, isTypeTag } from "@/lib/content-kind"
 import { cn } from "@/lib/utils"
 import type { Fragment } from "@/types"
 
@@ -49,10 +50,12 @@ export interface FragmentSearchSession {
 
 interface FragmentSearchWorkspaceProps {
   focusSignal: number
+  contentType?: "all" | "fragments" | "notes"
   fragments: Fragment[]
   initialSession?: FragmentSearchSession | null
   lockboxSearchAvailable: boolean
   onExit: () => void
+  onFilterFragments?: () => void
   onOpenFragment: (
     fragment: Fragment,
     session: FragmentSearchSession
@@ -61,10 +64,12 @@ interface FragmentSearchWorkspaceProps {
 
 export function FragmentSearchWorkspace({
   focusSignal,
+  contentType = "all",
   fragments,
   initialSession = null,
   lockboxSearchAvailable,
   onExit,
+  onFilterFragments,
   onOpenFragment,
 }: FragmentSearchWorkspaceProps) {
   const inputRef = useRef<HTMLInputElement>(null)
@@ -326,7 +331,7 @@ export function FragmentSearchWorkspace({
                 aria-autocomplete="list"
                 aria-controls={SEARCH_RESULTS_ID}
                 aria-expanded={visibleMatches.length > 0}
-                aria-label="搜索笔记"
+                aria-label="搜索内容"
                 className={styles.input}
                 onChange={(event) => setQuery(event.target.value)}
                 onCompositionEnd={() => {
@@ -336,7 +341,7 @@ export function FragmentSearchWorkspace({
                   isComposingRef.current = true
                 }}
                 onKeyDown={handleKeyDown}
-                placeholder="输入记得的词、标签或一句话"
+                placeholder={contentType === "fragments" ? "搜索碎片正文或标签" : contentType === "notes" ? "搜索文档正文或标签" : "搜索碎片与文档"}
                 ref={inputRef}
                 role="combobox"
                 value={query}
@@ -354,6 +359,7 @@ export function FragmentSearchWorkspace({
                 </Button>
               ) : null}
             </div>
+            <div className={styles.searchActions}>
             <div
               aria-label="搜索范围"
               className={styles.scopeGroup}
@@ -377,11 +383,13 @@ export function FragmentSearchWorkspace({
                 </button>
               ))}
             </div>
+            {onFilterFragments ? <Button size="sm" variant="ghost" onClick={onFilterFragments}>筛选碎片</Button> : null}
+            </div>
           </div>
 
           <div className={styles.statusRow}>
             <div className={styles.statusGroup}>
-              <span>搜索正文与标签</span>
+              <span>{contentType === "fragments" ? "碎片" : contentType === "notes" ? "文档" : "碎片与文档"}</span>
               <span aria-hidden="true">·</span>
               <span>{formatScopeDescription(scope)}</span>
               <span aria-hidden="true">·</span>
@@ -395,7 +403,7 @@ export function FragmentSearchWorkspace({
                 ? isBusy
                   ? "正在搜索"
                   : formatResultCount(searchResponse.total, MAX_RESULTS)
-                : `${fragments.length} 条可见片段`}
+                : `${fragments.length} 条可搜索内容`}
             </span>
           </div>
         </div>
@@ -444,7 +452,7 @@ export function FragmentSearchWorkspace({
 
       <footer className={styles.footer}>
         <span><ArrowUpIcon aria-hidden="true" /><ArrowDownIcon aria-hidden="true" />选择</span>
-        <span><kbd>Enter</kbd>定位到时间线</span>
+        <span><kbd>Enter</kbd>打开所在空间</span>
         <span><kbd>Esc</kbd>返回</span>
       </footer>
     </section>
@@ -535,7 +543,7 @@ function SearchResultRow({
   optionRef: (element: HTMLButtonElement | null) => void
 }) {
   const visibleTags = fragment.tags.filter(
-    (tag) => tag !== "inbox" && tag !== LOCKBOX_TAG
+    (tag) => tag !== "inbox" && tag !== LOCKBOX_TAG && !isTypeTag(tag)
   )
   const date = formatSearchDate(fragment.createdAt)
 
@@ -566,6 +574,7 @@ function SearchResultRow({
           {match.excerptEndsAfter ? "…" : null}
         </p>
         <div className={styles.metadata}>
+          <span className={styles.stateBadge}>{deriveKind(fragment.tags) === "note" ? "文档" : "碎片"}</span>
           {fragment.archived ? (
             <span className={styles.stateBadge}><Trash2Icon aria-hidden="true" />回收站</span>
           ) : fragment.lockbox ? (
@@ -629,12 +638,11 @@ function SearchIntro({ fragmentCount }: { fragmentCount: number }) {
       <span className={styles.introIndex}>RECALL</span>
       <h2>找回你记得的那句话</h2>
       <p>
-        输入正文片段或标签名称。搜索会覆盖 {fragmentCount} 条当前可见片段，
-        不展示文件路径，也不会改变时间线位置。
+        输入正文或标签名称，搜索当前范围中的 {fragmentCount} 条内容。
       </p>
       <div className={styles.introHints}>
         <span><kbd>↑</kbd><kbd>↓</kbd>浏览结果</span>
-        <span><kbd>Enter</kbd>回到原片段</span>
+        <span><kbd>Enter</kbd>打开所在空间</span>
         <span><kbd>Esc</kbd>回到搜索前现场</span>
       </div>
     </div>
@@ -667,8 +675,8 @@ function SearchEmpty({
       <h2>没有找到“{query.trim()}”</h2>
       <p>
         {scope === "all"
-          ? "试试缩短关键词，或换用片段里出现过的标签。"
-          : `当前只搜索${scope === "active" ? "未删除" : "回收站中"}的片段，可切换到“全部”再试。`}
+          ? "试试缩短关键词，或换用内容里出现过的标签。"
+          : `当前只搜索${scope === "active" ? "未删除" : "回收站中"}的内容，可切换到“全部”再试。`}
       </p>
     </div>
   )

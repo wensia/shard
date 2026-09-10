@@ -1,0 +1,28 @@
+{
+  "name": "@shard/markdown",
+  "version": "0.1.0",
+  "description": "Portable Markdown rendering and parsing extracted from Shard",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" },
+    "./core": { "types": "./dist/core/index.d.ts", "import": "./dist/core/index.js" },
+    "./styles.css": "./styles.css"
+  },
+  "files": ["dist", "styles.css", "README.md"],
+  "sideEffects": ["**/*.css"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsc -p tsconfig.json --watch",
+    "prepack": "pnpm build"
+  },
+  "dependencies": { "@lezer/markdown": "^1.7.2" },
+  "peerDependencies": { "react": "^18.0.0 || ^19.0.0" },
+  "peerDependenciesMeta": { "react": { "optional": true } },
+  "devDependencies": {
+    "@types/react": "^19.1.8",
+    "react": "^19.1.0",
+    "typescript": "~5.8.3"
+  }
+}

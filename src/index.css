@@ -2,6 +2,7 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 @import "../vendor/kiln/tokens/index.css";
+@import "@shard/markdown/styles.css";
 @import "./styles/frontend-rules.css";
 
 @custom-variant dark (&:is(.dark *));
@@ -316,6 +317,26 @@
     --shard-chip-bg: oklch(0.269 0 0);
     --shard-chip-fg: oklch(0.985 0 0);
     --shard-chip-hover: oklch(0.32 0 0);
+}
+
+/* Shard uses pointer focus instead of page-wide Tab traversal. Keep control
+   surfaces and selected/invalid states; suppress only focus rings. Zero-length
+   shadows also remain valid in consumers that prepend `inset`. */
+:root,
+.dark {
+  --ring: transparent;
+  --sidebar-ring: transparent;
+  --ring-focus: 0 0 0 0 transparent;
+  --shadow-primary-focus: 0 0 0 0 transparent;
+}
+
+:focus,
+:focus-visible {
+  outline: none !important;
+}
+
+:focus-visible:not([aria-invalid="true"]) {
+  --tw-ring-color: transparent !important;
 }
 
 @layer base {

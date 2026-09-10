@@ -1,0 +1,214 @@
+{
+  "cases": [
+    {
+      "expectedRecordIds": [
+        "rec_00000000000000000000000000000004",
+        "rec_00000000000000000000000000000001"
+      ],
+      "filters": {
+        "conditions": [
+          {
+            "fieldId": "fld_00000000000000000000000000000002",
+            "operator": "gte",
+            "value": 0
+          }
+        ],
+        "operator": "and"
+      },
+      "groupBy": null,
+      "name": "number-gte-stable-desc",
+      "sorts": [
+        {
+          "direction": "desc",
+          "fieldId": "fld_00000000000000000000000000000002"
+        }
+      ],
+      "source": "valid/six-types.json",
+      "viewId": "view_00000000000000000000000000000001"
+    },
+    {
+      "expectedRecordIds": [
+        "rec_00000000000000000000000000000003",
+        "rec_00000000000000000000000000000004"
+      ],
+      "filters": {
+        "conditions": [
+          {
+            "fieldId": "fld_00000000000000000000000000000001",
+            "operator": "isEmpty"
+          }
+        ],
+        "operator": "and"
+      },
+      "groupBy": null,
+      "name": "text-empty-includes-unset",
+      "sorts": [],
+      "source": "valid/six-types.json",
+      "viewId": "view_00000000000000000000000000000001"
+    },
+    {
+      "expectedRecordIds": [
+        "rec_00000000000000000000000000000002",
+        "rec_00000000000000000000000000000004"
+      ],
+      "filters": {
+        "conditions": [
+          {
+            "fieldId": "fld_00000000000000000000000000000002",
+            "operator": "ne",
+            "value": 0
+          }
+        ],
+        "operator": "and"
+      },
+      "groupBy": null,
+      "name": "number-ne-excludes-null",
+      "sorts": [],
+      "source": "valid/six-types.json",
+      "viewId": "view_00000000000000000000000000000001"
+    },
+    {
+      "expectedRecordIds": [
+        "rec_00000000000000000000000000000001",
+        "rec_00000000000000000000000000000003"
+      ],
+      "filters": {
+        "conditions": [
+          {
+            "fieldId": "fld_00000000000000000000000000000006",
+            "operator": "eq",
+            "value": false
+          }
+        ],
+        "operator": "and"
+      },
+      "groupBy": null,
+      "name": "checkbox-false-not-empty",
+      "sorts": [],
+      "source": "valid/six-types.json",
+      "viewId": "view_00000000000000000000000000000001"
+    },
+    {
+      "expectedRecordIds": [
+        "rec_00000000000000000000000000000002",
+        "rec_00000000000000000000000000000003"
+      ],
+      "filters": {
+        "conditions": [
+          {
+            "fieldId": "fld_00000000000000000000000000000005",
+            "operator": "hasNone",
+            "optionIds": [
+              "opt_00000000000000000000000000000003"
+            ]
+          }
+        ],
+        "operator": "and"
+      },
+      "groupBy": null,
+      "name": "multiselect-has-none-empty-array",
+      "sorts": [],
+      "source": "valid/six-types.json",
+      "viewId": "view_00000000000000000000000000000001"
+    },
+    {
+      "expectedRecordIds": [
+        "rec_00000000000000000000000000000002",
+        "rec_00000000000000000000000000000004"
+      ],
+      "filters": {
+        "conditions": [
+          {
+            "fieldId": "fld_00000000000000000000000000000005",
+            "operator": "isEmpty"
+          }
+        ],
+        "operator": "and"
+      },
+      "groupBy": null,
+      "name": "multiselect-empty-array-and-null",
+      "sorts": [],
+      "source": "valid/six-types.json",
+      "viewId": "view_00000000000000000000000000000001"
+    },
+    {
+      "expectedRecordIds": [],
+      "filters": {
+        "conditions": [
+          {
+            "fieldId": "fld_00000000000000000000000000000001",
+            "operator": "contains",
+            "value": "apple"
+          }
+        ],
+        "operator": "and"
+      },
+      "groupBy": null,
+      "name": "case-sensitive-text",
+      "sorts": [],
+      "source": "valid/six-types.json",
+      "viewId": "view_00000000000000000000000000000001"
+    },
+    {
+      "expectedRecordIds": [
+        "rec_00000000000000000000000000000001",
+        "rec_00000000000000000000000000000002",
+        "rec_00000000000000000000000000000003",
+        "rec_00000000000000000000000000000004"
+      ],
+      "filters": {
+        "conditions": [],
+        "operator": "or"
+      },
+      "groupBy": null,
+      "name": "empty-or-matches-all",
+      "sorts": [],
+      "source": "valid/six-types.json",
+      "viewId": "view_00000000000000000000000000000001"
+    },
+    {
+      "expectedRecordIds": [
+        "rec_00000000000000000000000000000004",
+        "rec_00000000000000000000000000000001",
+        "rec_00000000000000000000000000000002",
+        "rec_00000000000000000000000000000003"
+      ],
+      "filters": {
+        "conditions": [],
+        "operator": "and"
+      },
+      "groupBy": null,
+      "name": "null-last-desc",
+      "sorts": [
+        {
+          "direction": "desc",
+          "fieldId": "fld_00000000000000000000000000000002"
+        }
+      ],
+      "source": "valid/six-types.json",
+      "viewId": "view_00000000000000000000000000000001"
+    },
+    {
+      "expectedRecordIds": [
+        "rec_00000000000000000000000000000001",
+        "rec_00000000000000000000000000000002",
+        "rec_00000000000000000000000000000003",
+        "rec_00000000000000000000000000000004"
+      ],
+      "filters": {
+        "conditions": [],
+        "operator": "and"
+      },
+      "groupBy": null,
+      "name": "select-option-order",
+      "sorts": [
+        {
+          "direction": "asc",
+          "fieldId": "fld_00000000000000000000000000000004"
+        }
+      ],
+      "source": "valid/six-types.json",
+      "viewId": "view_00000000000000000000000000000001"
+    }
+  ]
+}

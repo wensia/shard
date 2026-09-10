@@ -80,6 +80,13 @@
   background: color-mix(in srgb, var(--muted) 40%, transparent);
 }
 
+.searchActions {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-2);
+}
+
 .scopeButton {
   height: 26px;
   padding-inline: var(--space-2);
@@ -515,8 +522,9 @@
     grid-template-columns: var(--control-height) minmax(0, 1fr);
   }
 
-  .scopeGroup {
+  .searchActions {
     grid-column: 2;
+    flex-wrap: wrap;
     justify-self: start;
   }
 

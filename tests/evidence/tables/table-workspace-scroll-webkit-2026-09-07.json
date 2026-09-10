@@ -1,0 +1,190 @@
+{
+  "engine": "Playwright WebKit / Desktop Safari",
+  "scope": "Formal TableWorkspace + real Worker + Raw IPC mock; test-only 1000x30 expansion from six-types; no native app or user vault; no performance claim",
+  "initial": {
+    "viewport": [
+      1280,
+      720
+    ],
+    "scroller": {
+      "width": 1280,
+      "height": 582,
+      "scrollWidth": 5796,
+      "scrollHeight": 48040,
+      "left": 0,
+      "top": 0,
+      "overflowX": "scroll",
+      "overflowY": "scroll",
+      "overscroll": "contain"
+    },
+    "grid": {
+      "x": 0,
+      "y": 98,
+      "width": 1280,
+      "height": 582,
+      "top": 98,
+      "right": 1280,
+      "bottom": 680,
+      "left": 0
+    },
+    "toolbarTop": 49,
+    "footerTop": 680,
+    "document": {
+      "width": 1280,
+      "height": 720,
+      "left": 0,
+      "top": 0
+    }
+  },
+  "horizontal": {
+    "viewport": [
+      1280,
+      720
+    ],
+    "scroller": {
+      "width": 1280,
+      "height": 582,
+      "scrollWidth": 5796,
+      "scrollHeight": 48040,
+      "left": 850,
+      "top": 0,
+      "overflowX": "scroll",
+      "overflowY": "scroll",
+      "overscroll": "contain"
+    },
+    "grid": {
+      "x": 0,
+      "y": 98,
+      "width": 1280,
+      "height": 582,
+      "top": 98,
+      "right": 1280,
+      "bottom": 680,
+      "left": 0
+    },
+    "toolbarTop": 49,
+    "footerTop": 680,
+    "document": {
+      "width": 1280,
+      "height": 720,
+      "left": 0,
+      "top": 0
+    }
+  },
+  "vertical": {
+    "viewport": [
+      1280,
+      720
+    ],
+    "scroller": {
+      "width": 1280,
+      "height": 582,
+      "scrollWidth": 5796,
+      "scrollHeight": 48040,
+      "left": 850,
+      "top": 960,
+      "overflowX": "scroll",
+      "overflowY": "scroll",
+      "overscroll": "contain"
+    },
+    "grid": {
+      "x": 0,
+      "y": 98,
+      "width": 1280,
+      "height": 582,
+      "top": 98,
+      "right": 1280,
+      "bottom": 680,
+      "left": 0
+    },
+    "toolbarTop": 49,
+    "footerTop": 680,
+    "document": {
+      "width": 1280,
+      "height": 720,
+      "left": 0,
+      "top": 0
+    }
+  },
+  "keyboard": {
+    "openedSecondStableRecord": true,
+    "dirty": false
+  },
+  "narrow": {
+    "viewport": [
+      560,
+      640
+    ],
+    "scroller": null,
+    "grid": {
+      "x": 0,
+      "y": 0,
+      "width": 0,
+      "height": 0,
+      "top": 0,
+      "right": 0,
+      "bottom": 0,
+      "left": 0
+    },
+    "toolbarTop": 49,
+    "footerTop": 600,
+    "document": {
+      "width": 560,
+      "height": 640,
+      "left": 0,
+      "top": 0
+    }
+  },
+  "panelMetrics": {
+    "bounds": {
+      "x": 0,
+      "y": 98,
+      "width": 560,
+      "height": 502,
+      "top": 98,
+      "right": 560,
+      "bottom": 600,
+      "left": 0
+    },
+    "font": "Noto Sans SC, -apple-system, Helvetica Neue, Arial, Noto Sans SC, Hiragino Sans GB, STHeiti, Microsoft YaHei, Microsoft JhengHei, Source Han Sans SC, Noto Sans CJK SC, Source Han Sans CN, Source Han Sans TC, Noto Sans CJK TC, SimSun, sans-serif"
+  },
+  "narrowGrid": {
+    "viewport": [
+      560,
+      640
+    ],
+    "scroller": {
+      "width": 560,
+      "height": 502,
+      "scrollWidth": 5796,
+      "scrollHeight": 48040,
+      "left": 0,
+      "top": 0,
+      "overflowX": "scroll",
+      "overflowY": "scroll",
+      "overscroll": "contain"
+    },
+    "grid": {
+      "x": 0,
+      "y": 98,
+      "width": 560,
+      "height": 502,
+      "top": 98,
+      "right": 560,
+      "bottom": 600,
+      "left": 0
+    },
+    "toolbarTop": 49,
+    "footerTop": 600,
+    "document": {
+      "width": 560,
+      "height": 640,
+      "left": 0,
+      "top": 0
+    }
+  },
+  "mutationRequests": 0,
+  "nativeAcceptance": false,
+  "transport": "Raw IPC mock in isolated Playwright page; actual production TableWorkerClient and table Worker",
+  "fixture": "1000 rows x 30 fields expanded in memory from tests/fixtures/tables/valid/six-types.json; generation excluded from timing; no vault writes"
+}

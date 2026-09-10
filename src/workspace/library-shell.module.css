@@ -8,6 +8,17 @@
   background: var(--background);
 }
 
+.batchFileList {
+  max-height: calc(var(--space-12) * 4);
+  overflow: auto;
+  padding-right: var(--space-4);
+  scrollbar-gutter: stable;
+  color: var(--foreground);
+  font-size: var(--text-body);
+  line-height: var(--leading-relaxed);
+  overflow-wrap: anywhere;
+}
+
 .workspace {
   display: grid;
   min-height: 0;
@@ -29,6 +40,16 @@
 .editorPane {
   display: flex;
   flex-direction: column;
+}
+
+.directoryWorkspace {
+  position: relative;
+  display: flex;
+  min-height: 0;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .noteListPane[data-mobile-hidden="true"],
@@ -92,6 +113,21 @@
   color: var(--primary);
 }
 
+.editorHeading {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+}
+
+.editorActions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-2);
+  white-space: nowrap;
+}
+
 .updatedAt,
 .saveState {
   color: var(--muted-foreground);
@@ -109,46 +145,57 @@
   gap: var(--space-1);
 }
 
+.navigationButton:focus-visible,
 .treeButton:focus-visible,
+.treeDisclosure:focus-visible,
 .treeMenuButton:focus-visible {
   outline: none;
   box-shadow: var(--ring-focus);
 }
 
-.treeViewportInner {
-  display: flex;
-  min-height: 100%;
-  flex-direction: column;
-  gap: var(--space-2);
-  padding: var(--space-2);
-}
-
-.fragmentStream {
-  border-bottom: 1px solid var(--border);
-  padding-bottom: var(--space-2);
-}
-
-/* 「全部笔记」是笔记树的根，与树连成一组：中间不加分组分隔线，
-   行距沿用树内部的紧凑间距，读起来才是一棵树而不是两块东西。 */
-.notesGroup {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: var(--space-0\.5);
-}
-
-/*
- * 列底常驻出口条：回收站与密匣钉在这里，不随笔记树滚动。
- * flex: none 是关键——.noteListPane 是 flex column，滚动区 flex: 1，
- * 这条就被挤在底边。
- */
+.browseNavigation,
 .paneFooter {
   display: flex;
   flex: none;
   flex-direction: column;
   gap: var(--space-0\.5);
-  border-top: 1px solid var(--border);
   padding: var(--space-2);
+}
+
+.browseNavigation {
+  border-bottom: 1px solid var(--sidebar-border);
+}
+
+.filesSection {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.filesRoot {
+  flex: none;
+  padding: var(--space-2) var(--space-2) var(--space-0\.5);
+}
+
+/* Only the directory tree scrolls; browse routes and utility exits stay reachable. */
+.filesSection > .noteListViewport {
+  padding: var(--space-0\.5) var(--space-2) var(--space-2);
+  scroll-padding-block: var(--space-2);
+}
+
+.paneFooter {
+  margin-top: auto;
+  border-top: 1px solid var(--sidebar-border);
+}
+
+.treeEmptyState {
+  margin: 0;
+  padding: var(--space-2);
+  color: var(--muted-foreground);
+  font-size: var(--text-meta);
+  line-height: var(--leading-relaxed);
 }
 
 .tree,
@@ -162,75 +209,98 @@
 }
 
 .tree ul {
-  padding-left: var(--space-3);
+  padding-left: var(--space-4);
 }
 
+.navigationButton,
 .treeRow {
-  display: flex;
   min-width: 0;
-  align-items: center;
-  border: 1px solid transparent;
+  border: 0;
   border-radius: var(--radius-control);
+  color: var(--sidebar-foreground);
 }
 
-.treeRow:hover,
-.treeButton:hover {
-  background: var(--muted);
-}
-
-.treeRow[data-selected="true"] {
-  border-color: color-mix(
-    in srgb,
-    var(--primary) var(--shard-alpha-21),
-    transparent
-  );
-  background: var(--primary-subtle);
-}
-
-.treeButton[data-selected="true"] {
-  border: 1px solid
-    color-mix(
-      in srgb,
-      var(--primary) var(--shard-alpha-21),
-      transparent
-    );
-  background: var(--primary-subtle);
-}
-
+.navigationButton,
 .treeButton {
   display: flex;
-  /* 按钮在 block 流里 width:auto 会按内容收缩（UA 表单控件特性），
-   * 选中/悬停背景就只包住文字。显式满宽让整行成为命中区，
-   * treeCount 的 margin-left:auto 也才能真正靠右。 */
   width: 100%;
   min-width: 0;
-  min-height: var(--control-height-sm);
-  flex: 1;
   align-items: center;
   gap: var(--space-2);
   border: 0;
   border-radius: var(--radius-control);
   background: transparent;
-  padding: var(--space-1) var(--space-2);
-  color: var(--foreground);
+  color: inherit;
   font-size: var(--text-body);
   line-height: var(--leading-normal);
   text-align: left;
 }
 
+.navigationButton {
+  min-height: var(--nav-item-height);
+  flex: none;
+  padding: var(--space-1) var(--space-2);
+}
+
+.treeRow {
+  display: flex;
+  align-items: center;
+}
+
+/* One surface per row: nested hit targets must never cover its current state. */
+.navigationButton:where(:hover:not(:disabled)),
+.treeRow:hover,
+.treeRow:where(:has(.treeMenuButton[data-popup-open])) {
+  background: var(--sidebar-accent);
+}
+
+.navigationButton[aria-current="page"],
+.treeRow[data-selected="true"] {
+  background: var(--primary-subtle);
+  color: var(--primary);
+}
+
+.treeButton {
+  min-height: var(--nav-item-height);
+  flex: 1;
+  padding: var(--space-1) var(--space-2) var(--space-1) 0;
+}
+
+.navigationButton svg,
 .treeButton svg,
+.treeDisclosure svg,
 .treeIndentIcon {
   width: var(--space-4);
   height: var(--space-4);
   flex: none;
 }
 
-.treeButton[data-depth="1"] {
-  padding-left: var(--space-4);
+.treeDisclosure,
+.treeDisclosureSpacer {
+  width: var(--space-6);
+  flex: none;
 }
 
-.treeButton[data-depth="2"] {
-  padding-left: var(--space-8);
+.treeDisclosure {
+  display: flex;
+  min-height: var(--nav-item-height);
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--muted-foreground);
+}
+
+.treeDisclosure:hover:not(:disabled) {
+  color: var(--foreground);
+}
+
+.navigationButton:disabled,
+.treeButton:disabled,
+.treeDisclosure:disabled {
+  cursor: default;
+  opacity: var(--shard-alpha-55);
 }
 
 .treeLabel {
@@ -241,6 +311,7 @@
 }
 
 .treeCount {
+  flex: none;
   margin-left: auto;
   color: var(--muted-foreground);
   font-size: var(--text-meta);
@@ -249,6 +320,15 @@
 
 .treeMenuButton {
   flex: none;
+  border-color: transparent;
+  background: transparent;
+  color: var(--muted-foreground);
+}
+
+.treeMenuButton:hover:not(:disabled),
+.treeMenuButton[data-popup-open] {
+  background: var(--muted);
+  color: var(--foreground);
 }
 
 /* 行内重命名：树行或编辑器标题原位换成输入框，Enter/失焦提交、Esc 取消 */
@@ -269,6 +349,10 @@
 .renameWrap {
   min-width: 0;
   flex: 1;
+}
+
+.editorHeading > .renameWrap {
+  flex: 0 1 calc(var(--space-12) * 5);
 }
 
 .dialogFooter {
@@ -292,20 +376,6 @@
 
 .mindMapViewport {
   overflow: hidden;
-}
-
-.fragmentsViewport {
-  display: flex;
-  min-height: 0;
-  min-width: 0;
-  flex: 1;
-  flex-direction: column;
-  /* 顶部避让由 editorHeader 承担；这里只补内容与标题栏之间的常规呼吸距。
-     InboxTagBar 在碎片空间靠上方 composer 撑开间距，本容器必须自己给。 */
-  padding-top: var(--space-4);
-  /* 碎片卡片本身是 --card（白），第三栏默认底色也是 --card，白叠白会让卡片
-     完全消失。碎片视图退回页面底色，卡片边界才立得住——与碎片空间一致。 */
-  background: var(--background);
 }
 
 .noteList {
@@ -413,7 +483,8 @@
 
 .zenNoteViewport {
   overflow: auto;
-  padding: var(--space-6);
+  padding-block: var(--space-6);
+  padding-inline: var(--zen-editor-inline-padding);
   overscroll-behavior: contain;
 }
 
@@ -502,4 +573,10 @@
 .backToDirectory {
   flex-shrink: 0;
   margin-right: calc(var(--shard-space-1) * -1);
+}
+
+/* The table owns its record inspector; keep the library note inspector out of this surface. */
+.workspace[data-table-open="true"] .inspectorSlot { display: none; }
+@media (width >= 64rem) {
+  .workspace[data-table-open="true"] { grid-template-columns: var(--shard-sidebar-width) minmax(0, 1fr); }
 }

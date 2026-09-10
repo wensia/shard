@@ -1,0 +1,1596 @@
+{
+  "build": {
+    "debugAssertions": false,
+    "os": "macos",
+    "targetArch": "aarch64"
+  },
+  "datasets": [
+    {
+      "cells": 20000,
+      "columns": 20,
+      "createInVaultMs": 90.26745799999999,
+      "finalFileBytes": 1946446,
+      "fixture": "six field types; Chinese text; null every 17 cells; empty text; 560+ character text every 100 rows; multi-select two of four options",
+      "git": {
+        "commitsAfter": 1,
+        "commitsBefore": 1,
+        "contentWritesRemainUncommitted": true,
+        "realRepository": true,
+        "remotes": ""
+      },
+      "initialFileBytes": 1888352,
+      "pasteRectangle": {
+        "columns": 10,
+        "rows": 1000
+      },
+      "rows": 1000,
+      "samples": [
+        {
+          "gitCheckMs": 34.776459,
+          "kind": "read",
+          "parseValidateMs": 45.654083,
+          "readBytesMs": 0.280208,
+          "readInVaultMs": 50.283709,
+          "responseBytes": 1555186,
+          "sample": 0,
+          "serializeReadMs": 0.903625
+        },
+        {
+          "gitCheckMs": 35.511917,
+          "kind": "read",
+          "parseValidateMs": 45.052667,
+          "readBytesMs": 0.34254100000000004,
+          "readInVaultMs": 48.759666,
+          "responseBytes": 1555186,
+          "sample": 1,
+          "serializeReadMs": 1.1288330000000002
+        },
+        {
+          "gitCheckMs": 33.767625,
+          "kind": "read",
+          "parseValidateMs": 47.161125,
+          "readBytesMs": 0.28058299999999997,
+          "readInVaultMs": 49.788375,
+          "responseBytes": 1555186,
+          "sample": 2,
+          "serializeReadMs": 0.9764590000000001
+        },
+        {
+          "gitCheckMs": 33.850083000000005,
+          "kind": "read",
+          "parseValidateMs": 45.847667,
+          "readBytesMs": 0.36112500000000003,
+          "readInVaultMs": 50.27475,
+          "responseBytes": 1555186,
+          "sample": 3,
+          "serializeReadMs": 1.121333
+        },
+        {
+          "gitCheckMs": 31.835584,
+          "kind": "read",
+          "parseValidateMs": 46.554582999999994,
+          "readBytesMs": 0.374208,
+          "readInVaultMs": 50.838665999999996,
+          "responseBytes": 1555186,
+          "sample": 4,
+          "serializeReadMs": 0.958042
+        },
+        {
+          "gitCheckMs": 32.906625000000005,
+          "kind": "read",
+          "parseValidateMs": 46.261542000000006,
+          "readBytesMs": 0.30525,
+          "readInVaultMs": 51.215417,
+          "responseBytes": 1555186,
+          "sample": 5,
+          "serializeReadMs": 1.1122079999999999
+        },
+        {
+          "gitCheckMs": 31.466542,
+          "kind": "read",
+          "parseValidateMs": 46.747625,
+          "readBytesMs": 0.288459,
+          "readInVaultMs": 50.633167,
+          "responseBytes": 1555186,
+          "sample": 6,
+          "serializeReadMs": 1.039666
+        },
+        {
+          "gitCheckMs": 32.782083,
+          "kind": "read",
+          "parseValidateMs": 45.806416000000006,
+          "readBytesMs": 0.425333,
+          "readInVaultMs": 51.47675,
+          "responseBytes": 1555186,
+          "sample": 7,
+          "serializeReadMs": 1.0102920000000002
+        },
+        {
+          "gitCheckMs": 32.166875,
+          "kind": "read",
+          "parseValidateMs": 46.84525,
+          "readBytesMs": 0.333333,
+          "readInVaultMs": 51.286916000000005,
+          "responseBytes": 1555186,
+          "sample": 8,
+          "serializeReadMs": 0.958625
+        },
+        {
+          "gitCheckMs": 32.201667,
+          "kind": "read",
+          "parseValidateMs": 46.934709,
+          "readBytesMs": 0.317458,
+          "readInVaultMs": 50.523790999999996,
+          "responseBytes": 1555186,
+          "sample": 9,
+          "serializeReadMs": 0.9942079999999999
+        },
+        {
+          "gitCheckMs": 31.660542,
+          "kind": "read",
+          "parseValidateMs": 47.091083,
+          "readBytesMs": 0.310958,
+          "readInVaultMs": 50.525,
+          "responseBytes": 1555186,
+          "sample": 10,
+          "serializeReadMs": 0.9553330000000001
+        },
+        {
+          "gitCheckMs": 31.904208000000004,
+          "kind": "read",
+          "parseValidateMs": 46.480624999999996,
+          "readBytesMs": 0.28141700000000003,
+          "readInVaultMs": 50.170832999999995,
+          "responseBytes": 1555186,
+          "sample": 11,
+          "serializeReadMs": 1.058792
+        },
+        {
+          "gitCheckMs": 32.56275,
+          "kind": "read",
+          "parseValidateMs": 45.355708,
+          "readBytesMs": 0.323542,
+          "readInVaultMs": 50.816333,
+          "responseBytes": 1555186,
+          "sample": 12,
+          "serializeReadMs": 0.955375
+        },
+        {
+          "gitCheckMs": 33.432375,
+          "kind": "read",
+          "parseValidateMs": 46.636041000000006,
+          "readBytesMs": 0.319125,
+          "readInVaultMs": 50.245375,
+          "responseBytes": 1555186,
+          "sample": 13,
+          "serializeReadMs": 0.957792
+        },
+        {
+          "gitCheckMs": 33.850875,
+          "kind": "read",
+          "parseValidateMs": 45.032875,
+          "readBytesMs": 0.286791,
+          "readInVaultMs": 50.473875,
+          "responseBytes": 1555186,
+          "sample": 14,
+          "serializeReadMs": 0.9817910000000001
+        },
+        {
+          "gitCheckMs": 32.619333,
+          "kind": "read",
+          "parseValidateMs": 46.497375,
+          "readBytesMs": 0.306625,
+          "readInVaultMs": 50.486250000000005,
+          "responseBytes": 1555186,
+          "sample": 15,
+          "serializeReadMs": 1.1264580000000002
+        },
+        {
+          "gitCheckMs": 33.529958,
+          "kind": "read",
+          "parseValidateMs": 46.165833000000006,
+          "readBytesMs": 0.31625000000000003,
+          "readInVaultMs": 50.030167,
+          "responseBytes": 1555186,
+          "sample": 16,
+          "serializeReadMs": 0.925334
+        },
+        {
+          "gitCheckMs": 32.452042,
+          "kind": "read",
+          "parseValidateMs": 46.342792,
+          "readBytesMs": 0.298417,
+          "readInVaultMs": 50.229583,
+          "responseBytes": 1555186,
+          "sample": 17,
+          "serializeReadMs": 0.938417
+        },
+        {
+          "gitCheckMs": 32.612500000000004,
+          "kind": "read",
+          "parseValidateMs": 45.68325,
+          "readBytesMs": 0.33075,
+          "readInVaultMs": 49.563333,
+          "responseBytes": 1555186,
+          "sample": 18,
+          "serializeReadMs": 1.147875
+        },
+        {
+          "gitCheckMs": 34.15025,
+          "kind": "read",
+          "parseValidateMs": 46.546542,
+          "readBytesMs": 0.28379099999999996,
+          "readInVaultMs": 49.14375,
+          "responseBytes": 1555186,
+          "sample": 19,
+          "serializeReadMs": 1.169292
+        },
+        {
+          "applyInVaultMs": 122.600916,
+          "cells": 1,
+          "changedRecords": 1,
+          "fileBytes": 1888530,
+          "kind": "edit",
+          "requestBytes": 443,
+          "responseBytes": 1766,
+          "revision": 2,
+          "sample": 0,
+          "serializeAckMs": 0.011667
+        },
+        {
+          "applyInVaultMs": 112.81058300000001,
+          "cells": 1,
+          "changedRecords": 1,
+          "fileBytes": 1888527,
+          "kind": "edit",
+          "requestBytes": 443,
+          "responseBytes": 1867,
+          "revision": 3,
+          "sample": 1,
+          "serializeAckMs": 0.008041
+        },
+        {
+          "applyInVaultMs": 112.06016600000001,
+          "cells": 1,
+          "changedRecords": 1,
+          "fileBytes": 1888524,
+          "kind": "edit",
+          "requestBytes": 443,
+          "responseBytes": 1877,
+          "revision": 4,
+          "sample": 2,
+          "serializeAckMs": 0.005417
+        },
+        {
+          "applyInVaultMs": 110.171917,
+          "cells": 1,
+          "changedRecords": 1,
+          "fileBytes": 1888521,
+          "kind": "edit",
+          "requestBytes": 443,
+          "responseBytes": 1875,
+          "revision": 5,
+          "sample": 3,
+          "serializeAckMs": 0.007
+        },
+        {
+          "applyInVaultMs": 112.22979099999999,
+          "cells": 1,
+          "changedRecords": 1,
+          "fileBytes": 1888518,
+          "kind": "edit",
+          "requestBytes": 443,
+          "responseBytes": 1824,
+          "revision": 6,
+          "sample": 4,
+          "serializeAckMs": 0.006834
+        },
+        {
+          "applyInVaultMs": 109.75037499999999,
+          "cells": 1,
+          "changedRecords": 1,
+          "fileBytes": 1888515,
+          "kind": "edit",
+          "requestBytes": 443,
+          "responseBytes": 1873,
+          "revision": 7,
+          "sample": 5,
+          "serializeAckMs": 0.006916
+        },
+        {
+          "applyInVaultMs": 113.137542,
+          "cells": 1,
+          "changedRecords": 1,
+          "fileBytes": 1888512,
+          "kind": "edit",
+          "requestBytes": 443,
+          "responseBytes": 1803,
+          "revision": 8,
+          "sample": 6,
+          "serializeAckMs": 0.007042
+        },
+        {
+          "applyInVaultMs": 112.21258300000001,
+          "cells": 1,
+          "changedRecords": 1,
+          "fileBytes": 1888509,
+          "kind": "edit",
+          "requestBytes": 443,
+          "responseBytes": 1800,
+          "revision": 9,
+          "sample": 7,
+          "serializeAckMs": 0.00775
+        },
+        {
+          "applyInVaultMs": 103.538833,
+          "cells": 1,
+          "changedRecords": 1,
+          "fileBytes": 1888507,
+          "kind": "edit",
+          "requestBytes": 443,
+          "responseBytes": 1801,
+          "revision": 10,
+          "sample": 8,
+          "serializeAckMs": 0.004583
+        },
+        {
+          "applyInVaultMs": 110.415583,
+          "cells": 1,
+          "changedRecords": 1,
+          "fileBytes": 1888504,
+          "kind": "edit",
+          "requestBytes": 444,
+          "responseBytes": 1845,
+          "revision": 11,
+          "sample": 9,
+          "serializeAckMs": 0.007167
+        },
+        {
+          "applyInVaultMs": 111.82625,
+          "cells": 1,
+          "changedRecords": 1,
+          "fileBytes": 1888502,
+          "kind": "edit",
+          "requestBytes": 445,
+          "responseBytes": 1847,
+          "revision": 12,
+          "sample": 10,
+          "serializeAckMs": 0.011625
+        },
+        {
+          "applyInVaultMs": 110.268083,
+          "cells": 1,
+          "changedRecords": 1,
+          "fileBytes": 1888500,
+          "kind": "edit",
+          "requestBytes": 445,
+          "responseBytes": 1843,
+          "revision": 13,
+          "sample": 11,
+          "serializeAckMs": 0.0043749999999999995
+        },
+        {
+          "applyInVaultMs": 111.598291,
+          "cells": 1,
+          "changedRecords": 1,
+          "fileBytes": 1888583,
+          "kind": "edit",
+          "requestBytes": 445,
+          "responseBytes": 1880,
+          "revision": 14,
+          "sample": 12,
+          "serializeAckMs": 0.005125
+        },
+        {
+          "applyInVaultMs": 111.510167,
+          "cells": 1,
+          "changedRecords": 1,
+          "fileBytes": 1888581,
+          "kind": "edit",
+          "requestBytes": 445,
+          "responseBytes": 1874,
+          "revision": 15,
+          "sample": 13,
+          "serializeAckMs": 0.0051660000000000005
+        },
+        {
+          "applyInVaultMs": 107.434208,
+          "cells": 1,
+          "changedRecords": 1,
+          "fileBytes": 1888579,
+          "kind": "edit",
+          "requestBytes": 445,
+          "responseBytes": 1873,
+          "revision": 16,
+          "sample": 14,
+          "serializeAckMs": 0.0055
+        },
+        {
+          "applyInVaultMs": 109.337083,
+          "cells": 1,
+          "changedRecords": 1,
+          "fileBytes": 1888577,
+          "kind": "edit",
+          "requestBytes": 445,
+          "responseBytes": 1821,
+          "revision": 17,
+          "sample": 15,
+          "serializeAckMs": 0.007666999999999999
+        },
+        {
+          "applyInVaultMs": 111.147583,
+          "cells": 1,
+          "changedRecords": 1,
+          "fileBytes": 1888575,
+          "kind": "edit",
+          "requestBytes": 445,
+          "responseBytes": 1806,
+          "revision": 18,
+          "sample": 16,
+          "serializeAckMs": 0.007375
+        },
+        {
+          "applyInVaultMs": 109.626958,
+          "cells": 1,
+          "changedRecords": 1,
+          "fileBytes": 1888573,
+          "kind": "edit",
+          "requestBytes": 445,
+          "responseBytes": 1799,
+          "revision": 19,
+          "sample": 17,
+          "serializeAckMs": 0.007333
+        },
+        {
+          "applyInVaultMs": 109.35499999999999,
+          "cells": 1,
+          "changedRecords": 1,
+          "fileBytes": 1888571,
+          "kind": "edit",
+          "requestBytes": 445,
+          "responseBytes": 1879,
+          "revision": 20,
+          "sample": 18,
+          "serializeAckMs": 0.012458
+        },
+        {
+          "applyInVaultMs": 113.71050000000001,
+          "cells": 1,
+          "changedRecords": 1,
+          "fileBytes": 1888569,
+          "kind": "edit",
+          "requestBytes": 445,
+          "responseBytes": 1797,
+          "revision": 21,
+          "sample": 19,
+          "serializeAckMs": 0.007083
+        },
+        {
+          "applyInVaultMs": 133.3655,
+          "cells": 10000,
+          "changedRecords": 1000,
+          "fileBytes": 1946436,
+          "kind": "paste1000x10",
+          "requestBytes": 1402418,
+          "responseBytes": 1520976,
+          "revision": 22,
+          "sample": 0,
+          "serializeAckMs": 1.075834
+        },
+        {
+          "applyInVaultMs": 133.16649999999998,
+          "cells": 10000,
+          "changedRecords": 1000,
+          "fileBytes": 1946436,
+          "kind": "paste1000x10",
+          "requestBytes": 1402418,
+          "responseBytes": 1520976,
+          "revision": 23,
+          "sample": 1,
+          "serializeAckMs": 1.0091670000000001
+        },
+        {
+          "applyInVaultMs": 135.370417,
+          "cells": 10000,
+          "changedRecords": 1000,
+          "fileBytes": 1946436,
+          "kind": "paste1000x10",
+          "requestBytes": 1402418,
+          "responseBytes": 1520976,
+          "revision": 24,
+          "sample": 2,
+          "serializeAckMs": 0.86025
+        },
+        {
+          "applyInVaultMs": 134.782125,
+          "cells": 10000,
+          "changedRecords": 1000,
+          "fileBytes": 1946437,
+          "kind": "paste1000x10",
+          "requestBytes": 1402419,
+          "responseBytes": 1520977,
+          "revision": 25,
+          "sample": 3,
+          "serializeAckMs": 0.935791
+        },
+        {
+          "applyInVaultMs": 137.041625,
+          "cells": 10000,
+          "changedRecords": 1000,
+          "fileBytes": 1946438,
+          "kind": "paste1000x10",
+          "requestBytes": 1402420,
+          "responseBytes": 1520978,
+          "revision": 26,
+          "sample": 4,
+          "serializeAckMs": 0.9617910000000001
+        },
+        {
+          "applyInVaultMs": 137.436166,
+          "cells": 10000,
+          "changedRecords": 1000,
+          "fileBytes": 1946438,
+          "kind": "paste1000x10",
+          "requestBytes": 1402420,
+          "responseBytes": 1520978,
+          "revision": 27,
+          "sample": 5,
+          "serializeAckMs": 0.8448340000000001
+        },
+        {
+          "applyInVaultMs": 139.774542,
+          "cells": 10000,
+          "changedRecords": 1000,
+          "fileBytes": 1946438,
+          "kind": "paste1000x10",
+          "requestBytes": 1402420,
+          "responseBytes": 1520978,
+          "revision": 28,
+          "sample": 6,
+          "serializeAckMs": 0.8681249999999999
+        },
+        {
+          "applyInVaultMs": 139.37608300000002,
+          "cells": 10000,
+          "changedRecords": 1000,
+          "fileBytes": 1946440,
+          "kind": "paste1000x10",
+          "requestBytes": 1402422,
+          "responseBytes": 1520980,
+          "revision": 29,
+          "sample": 7,
+          "serializeAckMs": 1.1192909999999998
+        },
+        {
+          "applyInVaultMs": 137.203417,
+          "cells": 10000,
+          "changedRecords": 1000,
+          "fileBytes": 1946440,
+          "kind": "paste1000x10",
+          "requestBytes": 1402422,
+          "responseBytes": 1520980,
+          "revision": 30,
+          "sample": 8,
+          "serializeAckMs": 0.871
+        },
+        {
+          "applyInVaultMs": 138.031959,
+          "cells": 10000,
+          "changedRecords": 1000,
+          "fileBytes": 1946440,
+          "kind": "paste1000x10",
+          "requestBytes": 1402422,
+          "responseBytes": 1520980,
+          "revision": 31,
+          "sample": 9,
+          "serializeAckMs": 0.924541
+        },
+        {
+          "applyInVaultMs": 141.294166,
+          "cells": 10000,
+          "changedRecords": 1000,
+          "fileBytes": 1946440,
+          "kind": "paste1000x10",
+          "requestBytes": 1402422,
+          "responseBytes": 1520980,
+          "revision": 32,
+          "sample": 10,
+          "serializeAckMs": 0.905958
+        },
+        {
+          "applyInVaultMs": 134.94025000000002,
+          "cells": 10000,
+          "changedRecords": 1000,
+          "fileBytes": 1946442,
+          "kind": "paste1000x10",
+          "requestBytes": 1402424,
+          "responseBytes": 1520982,
+          "revision": 33,
+          "sample": 11,
+          "serializeAckMs": 0.9741249999999999
+        },
+        {
+          "applyInVaultMs": 131.35495799999998,
+          "cells": 10000,
+          "changedRecords": 1000,
+          "fileBytes": 1946442,
+          "kind": "paste1000x10",
+          "requestBytes": 1402424,
+          "responseBytes": 1520982,
+          "revision": 34,
+          "sample": 12,
+          "serializeAckMs": 0.913375
+        },
+        {
+          "applyInVaultMs": 131.975792,
+          "cells": 10000,
+          "changedRecords": 1000,
+          "fileBytes": 1946442,
+          "kind": "paste1000x10",
+          "requestBytes": 1402424,
+          "responseBytes": 1520982,
+          "revision": 35,
+          "sample": 13,
+          "serializeAckMs": 0.871166
+        },
+        {
+          "applyInVaultMs": 136.408083,
+          "cells": 10000,
+          "changedRecords": 1000,
+          "fileBytes": 1946443,
+          "kind": "paste1000x10",
+          "requestBytes": 1402425,
+          "responseBytes": 1520983,
+          "revision": 36,
+          "sample": 14,
+          "serializeAckMs": 0.843959
+        },
+        {
+          "applyInVaultMs": 132.229916,
+          "cells": 10000,
+          "changedRecords": 1000,
+          "fileBytes": 1946444,
+          "kind": "paste1000x10",
+          "requestBytes": 1402426,
+          "responseBytes": 1520984,
+          "revision": 37,
+          "sample": 15,
+          "serializeAckMs": 1.035084
+        },
+        {
+          "applyInVaultMs": 134.218125,
+          "cells": 10000,
+          "changedRecords": 1000,
+          "fileBytes": 1946444,
+          "kind": "paste1000x10",
+          "requestBytes": 1402426,
+          "responseBytes": 1520984,
+          "revision": 38,
+          "sample": 16,
+          "serializeAckMs": 1.131791
+        },
+        {
+          "applyInVaultMs": 133.3105,
+          "cells": 10000,
+          "changedRecords": 1000,
+          "fileBytes": 1946444,
+          "kind": "paste1000x10",
+          "requestBytes": 1402426,
+          "responseBytes": 1520984,
+          "revision": 39,
+          "sample": 17,
+          "serializeAckMs": 1.0586659999999999
+        },
+        {
+          "applyInVaultMs": 133.69916700000002,
+          "cells": 10000,
+          "changedRecords": 1000,
+          "fileBytes": 1946445,
+          "kind": "paste1000x10",
+          "requestBytes": 1402427,
+          "responseBytes": 1520985,
+          "revision": 40,
+          "sample": 18,
+          "serializeAckMs": 0.978042
+        },
+        {
+          "applyInVaultMs": 132.93562500000002,
+          "cells": 10000,
+          "changedRecords": 1000,
+          "fileBytes": 1946446,
+          "kind": "paste1000x10",
+          "requestBytes": 1402428,
+          "responseBytes": 1520986,
+          "revision": 41,
+          "sample": 19,
+          "serializeAckMs": 0.946959
+        }
+      ],
+      "summary": {
+        "edit": {
+          "applyInVaultMs": {
+            "maxMs": 122.600916,
+            "minMs": 103.538833,
+            "n": 20,
+            "p50Ms": 111.147583,
+            "p95Ms": 113.71050000000001
+          },
+          "serializeAckMs": {
+            "maxMs": 0.012458,
+            "minMs": 0.0043749999999999995,
+            "n": 20,
+            "p50Ms": 0.007042,
+            "p95Ms": 0.011667
+          }
+        },
+        "paste1000x10": {
+          "applyInVaultMs": {
+            "maxMs": 141.294166,
+            "minMs": 131.35495799999998,
+            "n": 20,
+            "p50Ms": 134.782125,
+            "p95Ms": 139.774542
+          },
+          "serializeAckMs": {
+            "maxMs": 1.131791,
+            "minMs": 0.843959,
+            "n": 20,
+            "p50Ms": 0.935791,
+            "p95Ms": 1.1192909999999998
+          }
+        },
+        "read": {
+          "gitCheckMs": {
+            "maxMs": 35.511917,
+            "minMs": 31.466542,
+            "n": 20,
+            "p50Ms": 32.619333,
+            "p95Ms": 34.776459
+          },
+          "parseValidateMs": {
+            "maxMs": 47.161125,
+            "minMs": 45.032875,
+            "n": 20,
+            "p50Ms": 46.342792,
+            "p95Ms": 47.091083
+          },
+          "readBytesMs": {
+            "maxMs": 0.425333,
+            "minMs": 0.280208,
+            "n": 20,
+            "p50Ms": 0.310958,
+            "p95Ms": 0.374208
+          },
+          "readInVaultMs": {
+            "maxMs": 51.47675,
+            "minMs": 48.759666,
+            "n": 20,
+            "p50Ms": 50.283709,
+            "p95Ms": 51.286916000000005
+          },
+          "serializeReadMs": {
+            "maxMs": 1.169292,
+            "minMs": 0.903625,
+            "n": 20,
+            "p50Ms": 0.9817910000000001,
+            "p95Ms": 1.147875
+          }
+        }
+      },
+      "vaultTableFiles": 1
+    },
+    {
+      "cells": 300000,
+      "columns": 30,
+      "createInVaultMs": 578.310458,
+      "finalFileBytes": 27302050,
+      "fixture": "six field types; Chinese text; null every 17 cells; empty text; 560+ character text every 100 rows; multi-select two of four options",
+      "git": {
+        "commitsAfter": 1,
+        "commitsBefore": 1,
+        "contentWritesRemainUncommitted": true,
+        "realRepository": true,
+        "remotes": ""
+      },
+      "initialFileBytes": 27243928,
+      "pasteRectangle": {
+        "columns": 10,
+        "rows": 1000
+      },
+      "rows": 10000,
+      "samples": [
+        {
+          "gitCheckMs": 38.414292,
+          "kind": "read",
+          "parseValidateMs": 651.050125,
+          "readBytesMs": 3.7175,
+          "readInVaultMs": 709.318417,
+          "responseBytes": 22407734,
+          "sample": 0,
+          "serializeReadMs": 16.276916999999997
+        },
+        {
+          "gitCheckMs": 34.534875,
+          "kind": "read",
+          "parseValidateMs": 640.62725,
+          "readBytesMs": 3.653208,
+          "readInVaultMs": 693.541666,
+          "responseBytes": 22407734,
+          "sample": 1,
+          "serializeReadMs": 15.453084
+        },
+        {
+          "gitCheckMs": 37.067125,
+          "kind": "read",
+          "parseValidateMs": 636.8144159999999,
+          "readBytesMs": 3.689542,
+          "readInVaultMs": 693.1163329999999,
+          "responseBytes": 22407734,
+          "sample": 2,
+          "serializeReadMs": 15.158667000000001
+        },
+        {
+          "gitCheckMs": 36.276666999999996,
+          "kind": "read",
+          "parseValidateMs": 639.2128329999999,
+          "readBytesMs": 3.6245000000000003,
+          "readInVaultMs": 694.8044580000001,
+          "responseBytes": 22407734,
+          "sample": 3,
+          "serializeReadMs": 15.148
+        },
+        {
+          "gitCheckMs": 32.008916,
+          "kind": "read",
+          "parseValidateMs": 637.8327919999999,
+          "readBytesMs": 3.758875,
+          "readInVaultMs": 697.569334,
+          "responseBytes": 22407734,
+          "sample": 4,
+          "serializeReadMs": 15.911374999999998
+        },
+        {
+          "gitCheckMs": 33.962875,
+          "kind": "read",
+          "parseValidateMs": 636.109791,
+          "readBytesMs": 3.618542,
+          "readInVaultMs": 692.3386660000001,
+          "responseBytes": 22407734,
+          "sample": 5,
+          "serializeReadMs": 15.554042
+        },
+        {
+          "gitCheckMs": 38.054042,
+          "kind": "read",
+          "parseValidateMs": 645.116042,
+          "readBytesMs": 3.797791,
+          "readInVaultMs": 696.670458,
+          "responseBytes": 22407734,
+          "sample": 6,
+          "serializeReadMs": 15.50725
+        },
+        {
+          "gitCheckMs": 33.7485,
+          "kind": "read",
+          "parseValidateMs": 638.287375,
+          "readBytesMs": 3.808709,
+          "readInVaultMs": 695.086084,
+          "responseBytes": 22407734,
+          "sample": 7,
+          "serializeReadMs": 15.764417
+        },
+        {
+          "gitCheckMs": 33.578959,
+          "kind": "read",
+          "parseValidateMs": 649.530167,
+          "readBytesMs": 3.708875,
+          "readInVaultMs": 702.717291,
+          "responseBytes": 22407734,
+          "sample": 8,
+          "serializeReadMs": 15.974709
+        },
+        {
+          "gitCheckMs": 35.134917,
+          "kind": "read",
+          "parseValidateMs": 641.094958,
+          "readBytesMs": 3.7134590000000003,
+          "readInVaultMs": 693.0877909999999,
+          "responseBytes": 22407734,
+          "sample": 9,
+          "serializeReadMs": 15.452499999999999
+        },
+        {
+          "gitCheckMs": 34.584833,
+          "kind": "read",
+          "parseValidateMs": 639.103292,
+          "readBytesMs": 3.5865419999999997,
+          "readInVaultMs": 693.083667,
+          "responseBytes": 22407734,
+          "sample": 10,
+          "serializeReadMs": 15.133083000000001
+        },
+        {
+          "gitCheckMs": 34.834375,
+          "kind": "read",
+          "parseValidateMs": 638.5753749999999,
+          "readBytesMs": 3.583583,
+          "readInVaultMs": 683.9275,
+          "responseBytes": 22407734,
+          "sample": 11,
+          "serializeReadMs": 15.54725
+        },
+        {
+          "gitCheckMs": 33.79475,
+          "kind": "read",
+          "parseValidateMs": 637.826542,
+          "readBytesMs": 3.5977919999999997,
+          "readInVaultMs": 693.8575000000001,
+          "responseBytes": 22407734,
+          "sample": 12,
+          "serializeReadMs": 15.792708999999999
+        },
+        {
+          "gitCheckMs": 35.094209,
+          "kind": "read",
+          "parseValidateMs": 639.126084,
+          "readBytesMs": 3.654542,
+          "readInVaultMs": 694.406292,
+          "responseBytes": 22407734,
+          "sample": 13,
+          "serializeReadMs": 15.813291999999999
+        },
+        {
+          "gitCheckMs": 33.769375,
+          "kind": "read",
+          "parseValidateMs": 649.716625,
+          "readBytesMs": 3.536417,
+          "readInVaultMs": 697.4240000000001,
+          "responseBytes": 22407734,
+          "sample": 14,
+          "serializeReadMs": 15.746875000000001
+        },
+        {
+          "gitCheckMs": 34.835291,
+          "kind": "read",
+          "parseValidateMs": 638.6510840000001,
+          "readBytesMs": 3.7421249999999997,
+          "readInVaultMs": 689.9817499999999,
+          "responseBytes": 22407734,
+          "sample": 15,
+          "serializeReadMs": 15.9405
+        },
+        {
+          "gitCheckMs": 35.16225,
+          "kind": "read",
+          "parseValidateMs": 638.893459,
+          "readBytesMs": 3.73025,
+          "readInVaultMs": 692.5949999999999,
+          "responseBytes": 22407734,
+          "sample": 16,
+          "serializeReadMs": 15.587167
+        },
+        {
+          "gitCheckMs": 33.370540999999996,
+          "kind": "read",
+          "parseValidateMs": 633.2972500000001,
+          "readBytesMs": 3.755958,
+          "readInVaultMs": 693.204833,
+          "responseBytes": 22407734,
+          "sample": 17,
+          "serializeReadMs": 16.350041
+        },
+        {
+          "gitCheckMs": 32.342959,
+          "kind": "read",
+          "parseValidateMs": 645.4765,
+          "readBytesMs": 3.556958,
+          "readInVaultMs": 699.636166,
+          "responseBytes": 22407734,
+          "sample": 18,
+          "serializeReadMs": 15.578584
+        },
+        {
+          "gitCheckMs": 34.722708999999995,
+          "kind": "read",
+          "parseValidateMs": 642.540833,
+          "readBytesMs": 3.635292,
+          "readInVaultMs": 705.973375,
+          "responseBytes": 22407734,
+          "sample": 19,
+          "serializeReadMs": 16.942124999999997
+        },
+        {
+          "applyInVaultMs": 1004.803042,
+          "cells": 1,
+          "changedRecords": 1,
+          "fileBytes": 27244106,
+          "kind": "edit",
+          "requestBytes": 444,
+          "responseBytes": 2441,
+          "revision": 2,
+          "sample": 0,
+          "serializeAckMs": 0.00975
+        },
+        {
+          "applyInVaultMs": 1006.618625,
+          "cells": 1,
+          "changedRecords": 1,
+          "fileBytes": 27244103,
+          "kind": "edit",
+          "requestBytes": 444,
+          "responseBytes": 2576,
+          "revision": 3,
+          "sample": 1,
+          "serializeAckMs": 0.010667
+        },
+        {
+          "applyInVaultMs": 998.682208,
+          "cells": 1,
+          "changedRecords": 1,
+          "fileBytes": 27244100,
+          "kind": "edit",
+          "requestBytes": 444,
+          "responseBytes": 2469,
+          "revision": 4,
+          "sample": 2,
+          "serializeAckMs": 0.009958
+        },
+        {
+          "applyInVaultMs": 993.505041,
+          "cells": 1,
+          "changedRecords": 1,
+          "fileBytes": 27244096,
+          "kind": "edit",
+          "requestBytes": 444,
+          "responseBytes": 2534,
+          "revision": 5,
+          "sample": 3,
+          "serializeAckMs": 0.010375
+        },
+        {
+          "applyInVaultMs": 999.902416,
+          "cells": 1,
+          "changedRecords": 1,
+          "fileBytes": 27244092,
+          "kind": "edit",
+          "requestBytes": 444,
+          "responseBytes": 2473,
+          "revision": 6,
+          "sample": 4,
+          "serializeAckMs": 0.009708999999999999
+        },
+        {
+          "applyInVaultMs": 1008.327,
+          "cells": 1,
+          "changedRecords": 1,
+          "fileBytes": 27244088,
+          "kind": "edit",
+          "requestBytes": 444,
+          "responseBytes": 2534,
+          "revision": 7,
+          "sample": 5,
+          "serializeAckMs": 0.00925
+        },
+        {
+          "applyInVaultMs": 1009.019791,
+          "cells": 1,
+          "changedRecords": 1,
+          "fileBytes": 27244084,
+          "kind": "edit",
+          "requestBytes": 444,
+          "responseBytes": 2513,
+          "revision": 8,
+          "sample": 6,
+          "serializeAckMs": 0.010542
+        },
+        {
+          "applyInVaultMs": 997.1755410000001,
+          "cells": 1,
+          "changedRecords": 1,
+          "fileBytes": 27244080,
+          "kind": "edit",
+          "requestBytes": 444,
+          "responseBytes": 2586,
+          "revision": 9,
+          "sample": 7,
+          "serializeAckMs": 0.009875
+        },
+        {
+          "applyInVaultMs": 995.4223330000001,
+          "cells": 1,
+          "changedRecords": 1,
+          "fileBytes": 27244077,
+          "kind": "edit",
+          "requestBytes": 444,
+          "responseBytes": 2441,
+          "revision": 10,
+          "sample": 8,
+          "serializeAckMs": 0.00925
+        },
+        {
+          "applyInVaultMs": 994.871458,
+          "cells": 1,
+          "changedRecords": 1,
+          "fileBytes": 27244073,
+          "kind": "edit",
+          "requestBytes": 445,
+          "responseBytes": 2511,
+          "revision": 11,
+          "sample": 9,
+          "serializeAckMs": 0.009167
+        },
+        {
+          "applyInVaultMs": 1003.984708,
+          "cells": 1,
+          "changedRecords": 1,
+          "fileBytes": 27244070,
+          "kind": "edit",
+          "requestBytes": 446,
+          "responseBytes": 2443,
+          "revision": 12,
+          "sample": 10,
+          "serializeAckMs": 0.008459
+        },
+        {
+          "applyInVaultMs": 1003.343834,
+          "cells": 1,
+          "changedRecords": 1,
+          "fileBytes": 27244067,
+          "kind": "edit",
+          "requestBytes": 446,
+          "responseBytes": 2512,
+          "revision": 13,
+          "sample": 11,
+          "serializeAckMs": 0.009583
+        },
+        {
+          "applyInVaultMs": 998.033916,
+          "cells": 1,
+          "changedRecords": 1,
+          "fileBytes": 27244064,
+          "kind": "edit",
+          "requestBytes": 446,
+          "responseBytes": 2562,
+          "revision": 14,
+          "sample": 12,
+          "serializeAckMs": 0.009958
+        },
+        {
+          "applyInVaultMs": 1004.9512080000001,
+          "cells": 1,
+          "changedRecords": 1,
+          "fileBytes": 27244061,
+          "kind": "edit",
+          "requestBytes": 446,
+          "responseBytes": 2514,
+          "revision": 15,
+          "sample": 13,
+          "serializeAckMs": 0.009458
+        },
+        {
+          "applyInVaultMs": 1006.1555419999999,
+          "cells": 1,
+          "changedRecords": 1,
+          "fileBytes": 27244058,
+          "kind": "edit",
+          "requestBytes": 446,
+          "responseBytes": 2510,
+          "revision": 16,
+          "sample": 14,
+          "serializeAckMs": 0.009041
+        },
+        {
+          "applyInVaultMs": 996.529792,
+          "cells": 1,
+          "changedRecords": 1,
+          "fileBytes": 27244055,
+          "kind": "edit",
+          "requestBytes": 446,
+          "responseBytes": 2515,
+          "revision": 17,
+          "sample": 15,
+          "serializeAckMs": 0.008457999999999999
+        },
+        {
+          "applyInVaultMs": 994.759375,
+          "cells": 1,
+          "changedRecords": 1,
+          "fileBytes": 27244052,
+          "kind": "edit",
+          "requestBytes": 446,
+          "responseBytes": 2510,
+          "revision": 18,
+          "sample": 16,
+          "serializeAckMs": 0.011250000000000001
+        },
+        {
+          "applyInVaultMs": 998.348,
+          "cells": 1,
+          "changedRecords": 1,
+          "fileBytes": 27244135,
+          "kind": "edit",
+          "requestBytes": 446,
+          "responseBytes": 2586,
+          "revision": 19,
+          "sample": 17,
+          "serializeAckMs": 0.009917
+        },
+        {
+          "applyInVaultMs": 1007.1119170000001,
+          "cells": 1,
+          "changedRecords": 1,
+          "fileBytes": 27244132,
+          "kind": "edit",
+          "requestBytes": 446,
+          "responseBytes": 2588,
+          "revision": 20,
+          "sample": 18,
+          "serializeAckMs": 0.010958
+        },
+        {
+          "applyInVaultMs": 1020.0598329999999,
+          "cells": 1,
+          "changedRecords": 1,
+          "fileBytes": 27244129,
+          "kind": "edit",
+          "requestBytes": 446,
+          "responseBytes": 2472,
+          "revision": 21,
+          "sample": 19,
+          "serializeAckMs": 0.009082999999999999
+        },
+        {
+          "applyInVaultMs": 1039.9523749999998,
+          "cells": 10000,
+          "changedRecords": 1000,
+          "fileBytes": 27302040,
+          "kind": "paste1000x10",
+          "requestBytes": 1402419,
+          "responseBytes": 2201707,
+          "revision": 22,
+          "sample": 0,
+          "serializeAckMs": 1.4063750000000002
+        },
+        {
+          "applyInVaultMs": 1032.5237920000002,
+          "cells": 10000,
+          "changedRecords": 1000,
+          "fileBytes": 27302040,
+          "kind": "paste1000x10",
+          "requestBytes": 1402419,
+          "responseBytes": 2201707,
+          "revision": 23,
+          "sample": 1,
+          "serializeAckMs": 1.53075
+        },
+        {
+          "applyInVaultMs": 1020.9662500000001,
+          "cells": 10000,
+          "changedRecords": 1000,
+          "fileBytes": 27302040,
+          "kind": "paste1000x10",
+          "requestBytes": 1402419,
+          "responseBytes": 2201707,
+          "revision": 24,
+          "sample": 2,
+          "serializeAckMs": 1.5493329999999998
+        },
+        {
+          "applyInVaultMs": 1023.872292,
+          "cells": 10000,
+          "changedRecords": 1000,
+          "fileBytes": 27302041,
+          "kind": "paste1000x10",
+          "requestBytes": 1402420,
+          "responseBytes": 2201708,
+          "revision": 25,
+          "sample": 3,
+          "serializeAckMs": 1.450625
+        },
+        {
+          "applyInVaultMs": 1041.816834,
+          "cells": 10000,
+          "changedRecords": 1000,
+          "fileBytes": 27302042,
+          "kind": "paste1000x10",
+          "requestBytes": 1402421,
+          "responseBytes": 2201709,
+          "revision": 26,
+          "sample": 4,
+          "serializeAckMs": 1.47525
+        },
+        {
+          "applyInVaultMs": 1044.938208,
+          "cells": 10000,
+          "changedRecords": 1000,
+          "fileBytes": 27302042,
+          "kind": "paste1000x10",
+          "requestBytes": 1402421,
+          "responseBytes": 2201709,
+          "revision": 27,
+          "sample": 5,
+          "serializeAckMs": 2.0599160000000003
+        },
+        {
+          "applyInVaultMs": 1038.301667,
+          "cells": 10000,
+          "changedRecords": 1000,
+          "fileBytes": 27302042,
+          "kind": "paste1000x10",
+          "requestBytes": 1402421,
+          "responseBytes": 2201709,
+          "revision": 28,
+          "sample": 6,
+          "serializeAckMs": 1.803125
+        },
+        {
+          "applyInVaultMs": 1049.6704160000002,
+          "cells": 10000,
+          "changedRecords": 1000,
+          "fileBytes": 27302044,
+          "kind": "paste1000x10",
+          "requestBytes": 1402423,
+          "responseBytes": 2201711,
+          "revision": 29,
+          "sample": 7,
+          "serializeAckMs": 1.8165419999999999
+        },
+        {
+          "applyInVaultMs": 1037.49125,
+          "cells": 10000,
+          "changedRecords": 1000,
+          "fileBytes": 27302044,
+          "kind": "paste1000x10",
+          "requestBytes": 1402423,
+          "responseBytes": 2201711,
+          "revision": 30,
+          "sample": 8,
+          "serializeAckMs": 2.0932500000000003
+        },
+        {
+          "applyInVaultMs": 1047.229959,
+          "cells": 10000,
+          "changedRecords": 1000,
+          "fileBytes": 27302044,
+          "kind": "paste1000x10",
+          "requestBytes": 1402423,
+          "responseBytes": 2201711,
+          "revision": 31,
+          "sample": 9,
+          "serializeAckMs": 1.840583
+        },
+        {
+          "applyInVaultMs": 1058.95075,
+          "cells": 10000,
+          "changedRecords": 1000,
+          "fileBytes": 27302044,
+          "kind": "paste1000x10",
+          "requestBytes": 1402423,
+          "responseBytes": 2201711,
+          "revision": 32,
+          "sample": 10,
+          "serializeAckMs": 1.886791
+        },
+        {
+          "applyInVaultMs": 1074.935,
+          "cells": 10000,
+          "changedRecords": 1000,
+          "fileBytes": 27302046,
+          "kind": "paste1000x10",
+          "requestBytes": 1402425,
+          "responseBytes": 2201713,
+          "revision": 33,
+          "sample": 11,
+          "serializeAckMs": 2.3552500000000003
+        },
+        {
+          "applyInVaultMs": 1075.205459,
+          "cells": 10000,
+          "changedRecords": 1000,
+          "fileBytes": 27302046,
+          "kind": "paste1000x10",
+          "requestBytes": 1402425,
+          "responseBytes": 2201713,
+          "revision": 34,
+          "sample": 12,
+          "serializeAckMs": 1.9295
+        },
+        {
+          "applyInVaultMs": 1050.0795409999998,
+          "cells": 10000,
+          "changedRecords": 1000,
+          "fileBytes": 27302046,
+          "kind": "paste1000x10",
+          "requestBytes": 1402425,
+          "responseBytes": 2201713,
+          "revision": 35,
+          "sample": 13,
+          "serializeAckMs": 1.7867499999999998
+        },
+        {
+          "applyInVaultMs": 1049.356667,
+          "cells": 10000,
+          "changedRecords": 1000,
+          "fileBytes": 27302047,
+          "kind": "paste1000x10",
+          "requestBytes": 1402426,
+          "responseBytes": 2201714,
+          "revision": 36,
+          "sample": 14,
+          "serializeAckMs": 1.920959
+        },
+        {
+          "applyInVaultMs": 1040.180167,
+          "cells": 10000,
+          "changedRecords": 1000,
+          "fileBytes": 27302048,
+          "kind": "paste1000x10",
+          "requestBytes": 1402427,
+          "responseBytes": 2201715,
+          "revision": 37,
+          "sample": 15,
+          "serializeAckMs": 1.748208
+        },
+        {
+          "applyInVaultMs": 1053.269208,
+          "cells": 10000,
+          "changedRecords": 1000,
+          "fileBytes": 27302048,
+          "kind": "paste1000x10",
+          "requestBytes": 1402427,
+          "responseBytes": 2201715,
+          "revision": 38,
+          "sample": 16,
+          "serializeAckMs": 1.881125
+        },
+        {
+          "applyInVaultMs": 1036.3246669999999,
+          "cells": 10000,
+          "changedRecords": 1000,
+          "fileBytes": 27302048,
+          "kind": "paste1000x10",
+          "requestBytes": 1402427,
+          "responseBytes": 2201715,
+          "revision": 39,
+          "sample": 17,
+          "serializeAckMs": 1.973875
+        },
+        {
+          "applyInVaultMs": 1045.562084,
+          "cells": 10000,
+          "changedRecords": 1000,
+          "fileBytes": 27302049,
+          "kind": "paste1000x10",
+          "requestBytes": 1402428,
+          "responseBytes": 2201716,
+          "revision": 40,
+          "sample": 18,
+          "serializeAckMs": 1.735041
+        },
+        {
+          "applyInVaultMs": 1034.4621249999998,
+          "cells": 10000,
+          "changedRecords": 1000,
+          "fileBytes": 27302050,
+          "kind": "paste1000x10",
+          "requestBytes": 1402429,
+          "responseBytes": 2201717,
+          "revision": 41,
+          "sample": 19,
+          "serializeAckMs": 1.76075
+        }
+      ],
+      "summary": {
+        "edit": {
+          "applyInVaultMs": {
+            "maxMs": 1020.0598329999999,
+            "minMs": 993.505041,
+            "n": 20,
+            "p50Ms": 999.902416,
+            "p95Ms": 1009.019791
+          },
+          "serializeAckMs": {
+            "maxMs": 0.011250000000000001,
+            "minMs": 0.008457999999999999,
+            "n": 20,
+            "p50Ms": 0.009708999999999999,
+            "p95Ms": 0.010958
+          }
+        },
+        "paste1000x10": {
+          "applyInVaultMs": {
+            "maxMs": 1075.205459,
+            "minMs": 1020.9662500000001,
+            "n": 20,
+            "p50Ms": 1041.816834,
+            "p95Ms": 1074.935
+          },
+          "serializeAckMs": {
+            "maxMs": 2.3552500000000003,
+            "minMs": 1.4063750000000002,
+            "n": 20,
+            "p50Ms": 1.803125,
+            "p95Ms": 2.0932500000000003
+          }
+        },
+        "read": {
+          "gitCheckMs": {
+            "maxMs": 38.414292,
+            "minMs": 32.008916,
+            "n": 20,
+            "p50Ms": 34.584833,
+            "p95Ms": 38.054042
+          },
+          "parseValidateMs": {
+            "maxMs": 651.050125,
+            "minMs": 633.2972500000001,
+            "n": 20,
+            "p50Ms": 639.103292,
+            "p95Ms": 649.716625
+          },
+          "readBytesMs": {
+            "maxMs": 3.808709,
+            "minMs": 3.536417,
+            "n": 20,
+            "p50Ms": 3.654542,
+            "p95Ms": 3.797791
+          },
+          "readInVaultMs": {
+            "maxMs": 709.318417,
+            "minMs": 683.9275,
+            "n": 20,
+            "p50Ms": 693.8575000000001,
+            "p95Ms": 705.973375
+          },
+          "serializeReadMs": {
+            "maxMs": 16.942124999999997,
+            "minMs": 15.133083000000001,
+            "n": 20,
+            "p50Ms": 15.587167,
+            "p95Ms": 16.350041
+          }
+        }
+      },
+      "vaultTableFiles": 1
+    }
+  ],
+  "finishedAt": "2026-09-06T20:52:47.503287+00:00",
+  "machine": {
+    "cpu": "Apple M3 Max",
+    "git": "git version 2.54.0",
+    "os": "ProductName:\t\tmacOS\nProductVersion:\t\t26.7\nBuildVersion:\t\t25G227",
+    "rustc": "rustc 1.93.1 (01f6ddf75 2026-02-11)"
+  },
+  "method": "Warm-cache sequential Rust command bodies, fresh temporary vault + real local Git per dataset, real file sync_all and atomic installation. Each create/apply holds the actual vault gate. No AppHandle/configured vault/UI/IPC/remote. No timer includes fixture generation, Git initialization/checkpoint, output-report writes, or post-write verification. All 20 samples retained; nearest-rank percentiles.",
+  "sources": [
+    {
+      "path": "src-tauri/src/lib.rs",
+      "sha256": "cd749c29de384b36f398356abdd6946860d57c6827739d0cb784579643e17535"
+    },
+    {
+      "path": "src-tauri/src/table_commands.rs",
+      "sha256": "5fb391991dd4381eceb85f3766519a419475a1b08295fb95b6cd1f5ea825983d"
+    },
+    {
+      "path": "src-tauri/src/table/model.rs",
+      "sha256": "89bc47f2a939167e5bd9d855034c92af88df0b0cbf4defe5b45f7d676410979a"
+    },
+    {
+      "path": "src-tauri/src/table/mutations.rs",
+      "sha256": "54f58e3bcbb4cf131edb2975ca8a89c3ae5425e16a8eabfd3876fddeb32bf953"
+    },
+    {
+      "path": "src-tauri/src/table/storage.rs",
+      "sha256": "0283d0befe596d784a1cbfbab5005a9c631e65f70419d928f750b78dac52e4b6"
+    },
+    {
+      "path": "src-tauri/src/table/validation.rs",
+      "sha256": "3b9419908f60e49a31877f85774500b6604e04d05cf7c04444c235280f50e502"
+    },
+    {
+      "path": "src-tauri/src/table/performance.rs",
+      "sha256": "4eca9921eef278a117f2698ad74b764dd1790ac0d2a602725cee846dd4636076"
+    }
+  ],
+  "startedAt": "2026-09-06T20:51:25.727817+00:00"
+}

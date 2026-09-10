@@ -1,0 +1,3422 @@
+[
+  {
+    "engine": "chromium",
+    "width": 1280,
+    "states": [
+      {
+        "label": "rest",
+        "bar": {
+          "background": "color(srgb 0.948392 0.937333 0.918902)",
+          "color": "rgb(47, 47, 47)",
+          "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+          "outlineOffset": "0px",
+          "shadow": "none",
+          "focusVisible": false,
+          "expanded": null,
+          "x": 0,
+          "y": 48,
+          "width": 1280,
+          "height": 37
+        },
+        "groups": [
+          {
+            "active": "false",
+            "name": "全部记录",
+            "group": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "color(srgb 0.396392 0.390118 0.381333)",
+              "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 12,
+              "y": 48,
+              "width": 93,
+              "height": 36
+            },
+            "tab": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "color(srgb 0.396392 0.390118 0.381333)",
+              "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 12,
+              "y": 48,
+              "width": 92,
+              "height": 36
+            },
+            "more": null
+          },
+          {
+            "active": "true",
+            "name": "新视图",
+            "group": {
+              "background": "rgb(255, 255, 255)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 105,
+              "y": 48,
+              "width": 108,
+              "height": 36
+            },
+            "tab": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 105,
+              "y": 48,
+              "width": 79,
+              "height": 36
+            },
+            "more": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": "false",
+              "x": 184,
+              "y": 48,
+              "width": 28,
+              "height": 36
+            }
+          }
+        ],
+        "viewportWidth": 1280,
+        "documentWidth": 1280
+      },
+      {
+        "label": "active-name-hover",
+        "bar": {
+          "background": "color(srgb 0.948392 0.937333 0.918902)",
+          "color": "rgb(47, 47, 47)",
+          "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+          "outlineOffset": "0px",
+          "shadow": "none",
+          "focusVisible": false,
+          "expanded": null,
+          "x": 0,
+          "y": 48,
+          "width": 1280,
+          "height": 37
+        },
+        "groups": [
+          {
+            "active": "false",
+            "name": "全部记录",
+            "group": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "color(srgb 0.396392 0.390118 0.381333)",
+              "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 12,
+              "y": 48,
+              "width": 93,
+              "height": 36
+            },
+            "tab": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "color(srgb 0.396392 0.390118 0.381333)",
+              "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 12,
+              "y": 48,
+              "width": 92,
+              "height": 36
+            },
+            "more": null
+          },
+          {
+            "active": "true",
+            "name": "新视图",
+            "group": {
+              "background": "rgb(255, 255, 255)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 105,
+              "y": 48,
+              "width": 108,
+              "height": 36
+            },
+            "tab": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 105,
+              "y": 48,
+              "width": 79,
+              "height": 36
+            },
+            "more": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": "false",
+              "x": 184,
+              "y": 48,
+              "width": 28,
+              "height": 36
+            }
+          }
+        ],
+        "viewportWidth": 1280,
+        "documentWidth": 1280
+      },
+      {
+        "label": "active-more-hover",
+        "bar": {
+          "background": "color(srgb 0.948392 0.937333 0.918902)",
+          "color": "rgb(47, 47, 47)",
+          "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+          "outlineOffset": "0px",
+          "shadow": "none",
+          "focusVisible": false,
+          "expanded": null,
+          "x": 0,
+          "y": 48,
+          "width": 1280,
+          "height": 37
+        },
+        "groups": [
+          {
+            "active": "false",
+            "name": "全部记录",
+            "group": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "color(srgb 0.396392 0.390118 0.381333)",
+              "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 12,
+              "y": 48,
+              "width": 93,
+              "height": 36
+            },
+            "tab": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "color(srgb 0.396392 0.390118 0.381333)",
+              "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 12,
+              "y": 48,
+              "width": 92,
+              "height": 36
+            },
+            "more": null
+          },
+          {
+            "active": "true",
+            "name": "新视图",
+            "group": {
+              "background": "rgb(255, 255, 255)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 105,
+              "y": 48,
+              "width": 108,
+              "height": 36
+            },
+            "tab": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 105,
+              "y": 48,
+              "width": 79,
+              "height": 36
+            },
+            "more": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": "false",
+              "x": 184,
+              "y": 48,
+              "width": 28,
+              "height": 36
+            }
+          }
+        ],
+        "viewportWidth": 1280,
+        "documentWidth": 1280
+      },
+      {
+        "label": "inactive-name-hover",
+        "bar": {
+          "background": "color(srgb 0.948392 0.937333 0.918902)",
+          "color": "rgb(47, 47, 47)",
+          "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+          "outlineOffset": "0px",
+          "shadow": "none",
+          "focusVisible": false,
+          "expanded": null,
+          "x": 0,
+          "y": 48,
+          "width": 1280,
+          "height": 37
+        },
+        "groups": [
+          {
+            "active": "false",
+            "name": "全部记录",
+            "group": {
+              "background": "color(srgb 0.960471 0.952 0.937882)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 12,
+              "y": 48,
+              "width": 93,
+              "height": 36
+            },
+            "tab": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 12,
+              "y": 48,
+              "width": 92,
+              "height": 36
+            },
+            "more": null
+          },
+          {
+            "active": "true",
+            "name": "新视图",
+            "group": {
+              "background": "rgb(255, 255, 255)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 105,
+              "y": 48,
+              "width": 108,
+              "height": 36
+            },
+            "tab": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 105,
+              "y": 48,
+              "width": 79,
+              "height": 36
+            },
+            "more": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": "false",
+              "x": 184,
+              "y": 48,
+              "width": 28,
+              "height": 36
+            }
+          }
+        ],
+        "viewportWidth": 1280,
+        "documentWidth": 1280
+      },
+      {
+        "label": "menu-open-pointer-away",
+        "bar": {
+          "background": "color(srgb 0.948392 0.937333 0.918902)",
+          "color": "rgb(47, 47, 47)",
+          "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+          "outlineOffset": "0px",
+          "shadow": "none",
+          "focusVisible": false,
+          "expanded": null,
+          "x": 0,
+          "y": 48,
+          "width": 1280,
+          "height": 37
+        },
+        "groups": [
+          {
+            "active": "false",
+            "name": "全部记录",
+            "group": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "color(srgb 0.396392 0.390118 0.381333)",
+              "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 12,
+              "y": 48,
+              "width": 93,
+              "height": 36
+            },
+            "tab": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "color(srgb 0.396392 0.390118 0.381333)",
+              "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 12,
+              "y": 48,
+              "width": 92,
+              "height": 36
+            },
+            "more": null
+          },
+          {
+            "active": "true",
+            "name": "新视图",
+            "group": {
+              "background": "rgb(255, 255, 255)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 105,
+              "y": 48,
+              "width": 108,
+              "height": 36
+            },
+            "tab": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 105,
+              "y": 48,
+              "width": 79,
+              "height": 36
+            },
+            "more": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": "true",
+              "x": 184,
+              "y": 48,
+              "width": 28,
+              "height": 36
+            }
+          }
+        ],
+        "viewportWidth": 1280,
+        "documentWidth": 1280
+      },
+      {
+        "label": "switched-active",
+        "bar": {
+          "background": "color(srgb 0.948392 0.937333 0.918902)",
+          "color": "rgb(47, 47, 47)",
+          "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+          "outlineOffset": "0px",
+          "shadow": "none",
+          "focusVisible": false,
+          "expanded": null,
+          "x": 0,
+          "y": 48,
+          "width": 1280,
+          "height": 37
+        },
+        "groups": [
+          {
+            "active": "true",
+            "name": "全部记录",
+            "group": {
+              "background": "rgb(255, 255, 255)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 12,
+              "y": 48,
+              "width": 121,
+              "height": 36
+            },
+            "tab": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 12,
+              "y": 48,
+              "width": 92,
+              "height": 36
+            },
+            "more": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": "false",
+              "x": 104,
+              "y": 48,
+              "width": 28,
+              "height": 36
+            }
+          },
+          {
+            "active": "false",
+            "name": "新视图",
+            "group": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "color(srgb 0.396392 0.390118 0.381333)",
+              "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 133,
+              "y": 48,
+              "width": 80,
+              "height": 36
+            },
+            "tab": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "color(srgb 0.396392 0.390118 0.381333)",
+              "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 133,
+              "y": 48,
+              "width": 79,
+              "height": 36
+            },
+            "more": null
+          }
+        ],
+        "viewportWidth": 1280,
+        "documentWidth": 1280
+      }
+    ]
+  },
+  {
+    "engine": "chromium",
+    "width": 680,
+    "states": [
+      {
+        "label": "rest",
+        "bar": {
+          "background": "color(srgb 0.948392 0.937333 0.918902)",
+          "color": "rgb(47, 47, 47)",
+          "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+          "outlineOffset": "0px",
+          "shadow": "none",
+          "focusVisible": false,
+          "expanded": null,
+          "x": 0,
+          "y": 48,
+          "width": 680,
+          "height": 37
+        },
+        "groups": [
+          {
+            "active": "false",
+            "name": "全部记录",
+            "group": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "color(srgb 0.396392 0.390118 0.381333)",
+              "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 12,
+              "y": 48,
+              "width": 93,
+              "height": 36
+            },
+            "tab": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "color(srgb 0.396392 0.390118 0.381333)",
+              "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 12,
+              "y": 48,
+              "width": 92,
+              "height": 36
+            },
+            "more": null
+          },
+          {
+            "active": "true",
+            "name": "新视图",
+            "group": {
+              "background": "rgb(255, 255, 255)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 105,
+              "y": 48,
+              "width": 108,
+              "height": 36
+            },
+            "tab": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 105,
+              "y": 48,
+              "width": 79,
+              "height": 36
+            },
+            "more": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": "false",
+              "x": 184,
+              "y": 48,
+              "width": 28,
+              "height": 36
+            }
+          }
+        ],
+        "viewportWidth": 680,
+        "documentWidth": 680
+      },
+      {
+        "label": "active-name-hover",
+        "bar": {
+          "background": "color(srgb 0.948392 0.937333 0.918902)",
+          "color": "rgb(47, 47, 47)",
+          "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+          "outlineOffset": "0px",
+          "shadow": "none",
+          "focusVisible": false,
+          "expanded": null,
+          "x": 0,
+          "y": 48,
+          "width": 680,
+          "height": 37
+        },
+        "groups": [
+          {
+            "active": "false",
+            "name": "全部记录",
+            "group": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "color(srgb 0.396392 0.390118 0.381333)",
+              "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 12,
+              "y": 48,
+              "width": 93,
+              "height": 36
+            },
+            "tab": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "color(srgb 0.396392 0.390118 0.381333)",
+              "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 12,
+              "y": 48,
+              "width": 92,
+              "height": 36
+            },
+            "more": null
+          },
+          {
+            "active": "true",
+            "name": "新视图",
+            "group": {
+              "background": "rgb(255, 255, 255)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 105,
+              "y": 48,
+              "width": 108,
+              "height": 36
+            },
+            "tab": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 105,
+              "y": 48,
+              "width": 79,
+              "height": 36
+            },
+            "more": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": "false",
+              "x": 184,
+              "y": 48,
+              "width": 28,
+              "height": 36
+            }
+          }
+        ],
+        "viewportWidth": 680,
+        "documentWidth": 680
+      },
+      {
+        "label": "active-more-hover",
+        "bar": {
+          "background": "color(srgb 0.948392 0.937333 0.918902)",
+          "color": "rgb(47, 47, 47)",
+          "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+          "outlineOffset": "0px",
+          "shadow": "none",
+          "focusVisible": false,
+          "expanded": null,
+          "x": 0,
+          "y": 48,
+          "width": 680,
+          "height": 37
+        },
+        "groups": [
+          {
+            "active": "false",
+            "name": "全部记录",
+            "group": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "color(srgb 0.396392 0.390118 0.381333)",
+              "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 12,
+              "y": 48,
+              "width": 93,
+              "height": 36
+            },
+            "tab": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "color(srgb 0.396392 0.390118 0.381333)",
+              "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 12,
+              "y": 48,
+              "width": 92,
+              "height": 36
+            },
+            "more": null
+          },
+          {
+            "active": "true",
+            "name": "新视图",
+            "group": {
+              "background": "rgb(255, 255, 255)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 105,
+              "y": 48,
+              "width": 108,
+              "height": 36
+            },
+            "tab": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 105,
+              "y": 48,
+              "width": 79,
+              "height": 36
+            },
+            "more": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": "false",
+              "x": 184,
+              "y": 48,
+              "width": 28,
+              "height": 36
+            }
+          }
+        ],
+        "viewportWidth": 680,
+        "documentWidth": 680
+      },
+      {
+        "label": "inactive-name-hover",
+        "bar": {
+          "background": "color(srgb 0.948392 0.937333 0.918902)",
+          "color": "rgb(47, 47, 47)",
+          "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+          "outlineOffset": "0px",
+          "shadow": "none",
+          "focusVisible": false,
+          "expanded": null,
+          "x": 0,
+          "y": 48,
+          "width": 680,
+          "height": 37
+        },
+        "groups": [
+          {
+            "active": "false",
+            "name": "全部记录",
+            "group": {
+              "background": "color(srgb 0.960471 0.952 0.937882)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 12,
+              "y": 48,
+              "width": 93,
+              "height": 36
+            },
+            "tab": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 12,
+              "y": 48,
+              "width": 92,
+              "height": 36
+            },
+            "more": null
+          },
+          {
+            "active": "true",
+            "name": "新视图",
+            "group": {
+              "background": "rgb(255, 255, 255)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 105,
+              "y": 48,
+              "width": 108,
+              "height": 36
+            },
+            "tab": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 105,
+              "y": 48,
+              "width": 79,
+              "height": 36
+            },
+            "more": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": "false",
+              "x": 184,
+              "y": 48,
+              "width": 28,
+              "height": 36
+            }
+          }
+        ],
+        "viewportWidth": 680,
+        "documentWidth": 680
+      },
+      {
+        "label": "menu-open-pointer-away",
+        "bar": {
+          "background": "color(srgb 0.948392 0.937333 0.918902)",
+          "color": "rgb(47, 47, 47)",
+          "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+          "outlineOffset": "0px",
+          "shadow": "none",
+          "focusVisible": false,
+          "expanded": null,
+          "x": 0,
+          "y": 48,
+          "width": 680,
+          "height": 37
+        },
+        "groups": [
+          {
+            "active": "false",
+            "name": "全部记录",
+            "group": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "color(srgb 0.396392 0.390118 0.381333)",
+              "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 12,
+              "y": 48,
+              "width": 93,
+              "height": 36
+            },
+            "tab": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "color(srgb 0.396392 0.390118 0.381333)",
+              "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 12,
+              "y": 48,
+              "width": 92,
+              "height": 36
+            },
+            "more": null
+          },
+          {
+            "active": "true",
+            "name": "新视图",
+            "group": {
+              "background": "rgb(255, 255, 255)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 105,
+              "y": 48,
+              "width": 108,
+              "height": 36
+            },
+            "tab": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 105,
+              "y": 48,
+              "width": 79,
+              "height": 36
+            },
+            "more": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": "true",
+              "x": 184,
+              "y": 48,
+              "width": 28,
+              "height": 36
+            }
+          }
+        ],
+        "viewportWidth": 680,
+        "documentWidth": 680
+      },
+      {
+        "label": "switched-active",
+        "bar": {
+          "background": "color(srgb 0.948392 0.937333 0.918902)",
+          "color": "rgb(47, 47, 47)",
+          "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+          "outlineOffset": "0px",
+          "shadow": "none",
+          "focusVisible": false,
+          "expanded": null,
+          "x": 0,
+          "y": 48,
+          "width": 680,
+          "height": 37
+        },
+        "groups": [
+          {
+            "active": "true",
+            "name": "全部记录",
+            "group": {
+              "background": "rgb(255, 255, 255)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 12,
+              "y": 48,
+              "width": 121,
+              "height": 36
+            },
+            "tab": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 12,
+              "y": 48,
+              "width": 92,
+              "height": 36
+            },
+            "more": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": "false",
+              "x": 104,
+              "y": 48,
+              "width": 28,
+              "height": 36
+            }
+          },
+          {
+            "active": "false",
+            "name": "新视图",
+            "group": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "color(srgb 0.396392 0.390118 0.381333)",
+              "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 133,
+              "y": 48,
+              "width": 80,
+              "height": 36
+            },
+            "tab": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "color(srgb 0.396392 0.390118 0.381333)",
+              "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 133,
+              "y": 48,
+              "width": 79,
+              "height": 36
+            },
+            "more": null
+          }
+        ],
+        "viewportWidth": 680,
+        "documentWidth": 680
+      }
+    ]
+  },
+  {
+    "engine": "chromium",
+    "width": 375,
+    "states": [
+      {
+        "label": "rest",
+        "bar": {
+          "background": "color(srgb 0.948392 0.937333 0.918902)",
+          "color": "rgb(47, 47, 47)",
+          "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+          "outlineOffset": "0px",
+          "shadow": "none",
+          "focusVisible": false,
+          "expanded": null,
+          "x": 0,
+          "y": 48,
+          "width": 375,
+          "height": 37
+        },
+        "groups": [
+          {
+            "active": "false",
+            "name": "全部记录",
+            "group": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "color(srgb 0.396392 0.390118 0.381333)",
+              "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 12,
+              "y": 48,
+              "width": 93,
+              "height": 36
+            },
+            "tab": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "color(srgb 0.396392 0.390118 0.381333)",
+              "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 12,
+              "y": 48,
+              "width": 92,
+              "height": 36
+            },
+            "more": null
+          },
+          {
+            "active": "true",
+            "name": "新视图",
+            "group": {
+              "background": "rgb(255, 255, 255)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 105,
+              "y": 48,
+              "width": 108,
+              "height": 36
+            },
+            "tab": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 105,
+              "y": 48,
+              "width": 79,
+              "height": 36
+            },
+            "more": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": "false",
+              "x": 184,
+              "y": 48,
+              "width": 28,
+              "height": 36
+            }
+          }
+        ],
+        "viewportWidth": 375,
+        "documentWidth": 375
+      },
+      {
+        "label": "active-name-hover",
+        "bar": {
+          "background": "color(srgb 0.948392 0.937333 0.918902)",
+          "color": "rgb(47, 47, 47)",
+          "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+          "outlineOffset": "0px",
+          "shadow": "none",
+          "focusVisible": false,
+          "expanded": null,
+          "x": 0,
+          "y": 48,
+          "width": 375,
+          "height": 37
+        },
+        "groups": [
+          {
+            "active": "false",
+            "name": "全部记录",
+            "group": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "color(srgb 0.396392 0.390118 0.381333)",
+              "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 12,
+              "y": 48,
+              "width": 93,
+              "height": 36
+            },
+            "tab": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "color(srgb 0.396392 0.390118 0.381333)",
+              "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 12,
+              "y": 48,
+              "width": 92,
+              "height": 36
+            },
+            "more": null
+          },
+          {
+            "active": "true",
+            "name": "新视图",
+            "group": {
+              "background": "rgb(255, 255, 255)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 105,
+              "y": 48,
+              "width": 108,
+              "height": 36
+            },
+            "tab": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 105,
+              "y": 48,
+              "width": 79,
+              "height": 36
+            },
+            "more": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": "false",
+              "x": 184,
+              "y": 48,
+              "width": 28,
+              "height": 36
+            }
+          }
+        ],
+        "viewportWidth": 375,
+        "documentWidth": 375
+      },
+      {
+        "label": "active-more-hover",
+        "bar": {
+          "background": "color(srgb 0.948392 0.937333 0.918902)",
+          "color": "rgb(47, 47, 47)",
+          "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+          "outlineOffset": "0px",
+          "shadow": "none",
+          "focusVisible": false,
+          "expanded": null,
+          "x": 0,
+          "y": 48,
+          "width": 375,
+          "height": 37
+        },
+        "groups": [
+          {
+            "active": "false",
+            "name": "全部记录",
+            "group": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "color(srgb 0.396392 0.390118 0.381333)",
+              "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 12,
+              "y": 48,
+              "width": 93,
+              "height": 36
+            },
+            "tab": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "color(srgb 0.396392 0.390118 0.381333)",
+              "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 12,
+              "y": 48,
+              "width": 92,
+              "height": 36
+            },
+            "more": null
+          },
+          {
+            "active": "true",
+            "name": "新视图",
+            "group": {
+              "background": "rgb(255, 255, 255)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 105,
+              "y": 48,
+              "width": 108,
+              "height": 36
+            },
+            "tab": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 105,
+              "y": 48,
+              "width": 79,
+              "height": 36
+            },
+            "more": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": "false",
+              "x": 184,
+              "y": 48,
+              "width": 28,
+              "height": 36
+            }
+          }
+        ],
+        "viewportWidth": 375,
+        "documentWidth": 375
+      },
+      {
+        "label": "inactive-name-hover",
+        "bar": {
+          "background": "color(srgb 0.948392 0.937333 0.918902)",
+          "color": "rgb(47, 47, 47)",
+          "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+          "outlineOffset": "0px",
+          "shadow": "none",
+          "focusVisible": false,
+          "expanded": null,
+          "x": 0,
+          "y": 48,
+          "width": 375,
+          "height": 37
+        },
+        "groups": [
+          {
+            "active": "false",
+            "name": "全部记录",
+            "group": {
+              "background": "color(srgb 0.960471 0.952 0.937882)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 12,
+              "y": 48,
+              "width": 93,
+              "height": 36
+            },
+            "tab": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 12,
+              "y": 48,
+              "width": 92,
+              "height": 36
+            },
+            "more": null
+          },
+          {
+            "active": "true",
+            "name": "新视图",
+            "group": {
+              "background": "rgb(255, 255, 255)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 105,
+              "y": 48,
+              "width": 108,
+              "height": 36
+            },
+            "tab": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 105,
+              "y": 48,
+              "width": 79,
+              "height": 36
+            },
+            "more": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": "false",
+              "x": 184,
+              "y": 48,
+              "width": 28,
+              "height": 36
+            }
+          }
+        ],
+        "viewportWidth": 375,
+        "documentWidth": 375
+      },
+      {
+        "label": "menu-open-pointer-away",
+        "bar": {
+          "background": "color(srgb 0.948392 0.937333 0.918902)",
+          "color": "rgb(47, 47, 47)",
+          "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+          "outlineOffset": "0px",
+          "shadow": "none",
+          "focusVisible": false,
+          "expanded": null,
+          "x": 0,
+          "y": 48,
+          "width": 375,
+          "height": 37
+        },
+        "groups": [
+          {
+            "active": "false",
+            "name": "全部记录",
+            "group": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "color(srgb 0.396392 0.390118 0.381333)",
+              "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 12,
+              "y": 48,
+              "width": 93,
+              "height": 36
+            },
+            "tab": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "color(srgb 0.396392 0.390118 0.381333)",
+              "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 12,
+              "y": 48,
+              "width": 92,
+              "height": 36
+            },
+            "more": null
+          },
+          {
+            "active": "true",
+            "name": "新视图",
+            "group": {
+              "background": "rgb(255, 255, 255)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 105,
+              "y": 48,
+              "width": 108,
+              "height": 36
+            },
+            "tab": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 105,
+              "y": 48,
+              "width": 79,
+              "height": 36
+            },
+            "more": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": "true",
+              "x": 184,
+              "y": 48,
+              "width": 28,
+              "height": 36
+            }
+          }
+        ],
+        "viewportWidth": 375,
+        "documentWidth": 375
+      },
+      {
+        "label": "switched-active",
+        "bar": {
+          "background": "color(srgb 0.948392 0.937333 0.918902)",
+          "color": "rgb(47, 47, 47)",
+          "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+          "outlineOffset": "0px",
+          "shadow": "none",
+          "focusVisible": false,
+          "expanded": null,
+          "x": 0,
+          "y": 48,
+          "width": 375,
+          "height": 37
+        },
+        "groups": [
+          {
+            "active": "true",
+            "name": "全部记录",
+            "group": {
+              "background": "rgb(255, 255, 255)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 12,
+              "y": 48,
+              "width": 121,
+              "height": 36
+            },
+            "tab": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 12,
+              "y": 48,
+              "width": 92,
+              "height": 36
+            },
+            "more": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": "false",
+              "x": 104,
+              "y": 48,
+              "width": 28,
+              "height": 36
+            }
+          },
+          {
+            "active": "false",
+            "name": "新视图",
+            "group": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "color(srgb 0.396392 0.390118 0.381333)",
+              "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 133,
+              "y": 48,
+              "width": 80,
+              "height": 36
+            },
+            "tab": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "color(srgb 0.396392 0.390118 0.381333)",
+              "outline": "oklab(0.501505 -0.0575898 -0.0338991 / 0.55) none 3px",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 133,
+              "y": 48,
+              "width": 79,
+              "height": 36
+            },
+            "more": null
+          }
+        ],
+        "viewportWidth": 375,
+        "documentWidth": 375
+      }
+    ]
+  },
+  {
+    "engine": "webkit",
+    "width": 1280,
+    "states": [
+      {
+        "label": "rest",
+        "bar": {
+          "background": "color(srgb 0.948392 0.937333 0.918902)",
+          "color": "rgb(47, 47, 47)",
+          "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+          "outlineOffset": "0px",
+          "shadow": "none",
+          "focusVisible": false,
+          "expanded": null,
+          "x": 0,
+          "y": 48,
+          "width": 1280,
+          "height": 37
+        },
+        "groups": [
+          {
+            "active": "false",
+            "name": "全部记录",
+            "group": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "color(srgb 0.396392 0.390118 0.381333)",
+              "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 12,
+              "y": 48,
+              "width": 93,
+              "height": 36
+            },
+            "tab": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "color(srgb 0.396392 0.390118 0.381333)",
+              "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 12,
+              "y": 48,
+              "width": 92,
+              "height": 36
+            },
+            "more": null
+          },
+          {
+            "active": "true",
+            "name": "新视图",
+            "group": {
+              "background": "rgb(255, 255, 255)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 105,
+              "y": 48,
+              "width": 108,
+              "height": 36
+            },
+            "tab": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 105,
+              "y": 48,
+              "width": 79,
+              "height": 36
+            },
+            "more": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": "false",
+              "x": 184,
+              "y": 48,
+              "width": 28,
+              "height": 36
+            }
+          }
+        ],
+        "viewportWidth": 1280,
+        "documentWidth": 1280
+      },
+      {
+        "label": "active-name-hover",
+        "bar": {
+          "background": "color(srgb 0.948392 0.937333 0.918902)",
+          "color": "rgb(47, 47, 47)",
+          "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+          "outlineOffset": "0px",
+          "shadow": "none",
+          "focusVisible": false,
+          "expanded": null,
+          "x": 0,
+          "y": 48,
+          "width": 1280,
+          "height": 37
+        },
+        "groups": [
+          {
+            "active": "false",
+            "name": "全部记录",
+            "group": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "color(srgb 0.396392 0.390118 0.381333)",
+              "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 12,
+              "y": 48,
+              "width": 93,
+              "height": 36
+            },
+            "tab": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "color(srgb 0.396392 0.390118 0.381333)",
+              "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 12,
+              "y": 48,
+              "width": 92,
+              "height": 36
+            },
+            "more": null
+          },
+          {
+            "active": "true",
+            "name": "新视图",
+            "group": {
+              "background": "rgb(255, 255, 255)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 105,
+              "y": 48,
+              "width": 108,
+              "height": 36
+            },
+            "tab": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 105,
+              "y": 48,
+              "width": 79,
+              "height": 36
+            },
+            "more": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": "false",
+              "x": 184,
+              "y": 48,
+              "width": 28,
+              "height": 36
+            }
+          }
+        ],
+        "viewportWidth": 1280,
+        "documentWidth": 1280
+      },
+      {
+        "label": "active-more-hover",
+        "bar": {
+          "background": "color(srgb 0.948392 0.937333 0.918902)",
+          "color": "rgb(47, 47, 47)",
+          "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+          "outlineOffset": "0px",
+          "shadow": "none",
+          "focusVisible": false,
+          "expanded": null,
+          "x": 0,
+          "y": 48,
+          "width": 1280,
+          "height": 37
+        },
+        "groups": [
+          {
+            "active": "false",
+            "name": "全部记录",
+            "group": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "color(srgb 0.396392 0.390118 0.381333)",
+              "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 12,
+              "y": 48,
+              "width": 93,
+              "height": 36
+            },
+            "tab": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "color(srgb 0.396392 0.390118 0.381333)",
+              "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 12,
+              "y": 48,
+              "width": 92,
+              "height": 36
+            },
+            "more": null
+          },
+          {
+            "active": "true",
+            "name": "新视图",
+            "group": {
+              "background": "rgb(255, 255, 255)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 105,
+              "y": 48,
+              "width": 108,
+              "height": 36
+            },
+            "tab": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 105,
+              "y": 48,
+              "width": 79,
+              "height": 36
+            },
+            "more": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": "false",
+              "x": 184,
+              "y": 48,
+              "width": 28,
+              "height": 36
+            }
+          }
+        ],
+        "viewportWidth": 1280,
+        "documentWidth": 1280
+      },
+      {
+        "label": "inactive-name-hover",
+        "bar": {
+          "background": "color(srgb 0.948392 0.937333 0.918902)",
+          "color": "rgb(47, 47, 47)",
+          "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+          "outlineOffset": "0px",
+          "shadow": "none",
+          "focusVisible": false,
+          "expanded": null,
+          "x": 0,
+          "y": 48,
+          "width": 1280,
+          "height": 37
+        },
+        "groups": [
+          {
+            "active": "false",
+            "name": "全部记录",
+            "group": {
+              "background": "color(srgb 0.960471 0.952 0.937882)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 12,
+              "y": 48,
+              "width": 93,
+              "height": 36
+            },
+            "tab": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 12,
+              "y": 48,
+              "width": 92,
+              "height": 36
+            },
+            "more": null
+          },
+          {
+            "active": "true",
+            "name": "新视图",
+            "group": {
+              "background": "rgb(255, 255, 255)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 105,
+              "y": 48,
+              "width": 108,
+              "height": 36
+            },
+            "tab": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 105,
+              "y": 48,
+              "width": 79,
+              "height": 36
+            },
+            "more": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": "false",
+              "x": 184,
+              "y": 48,
+              "width": 28,
+              "height": 36
+            }
+          }
+        ],
+        "viewportWidth": 1280,
+        "documentWidth": 1280
+      },
+      {
+        "label": "menu-open-pointer-away",
+        "bar": {
+          "background": "color(srgb 0.948392 0.937333 0.918902)",
+          "color": "rgb(47, 47, 47)",
+          "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+          "outlineOffset": "0px",
+          "shadow": "none",
+          "focusVisible": false,
+          "expanded": null,
+          "x": 0,
+          "y": 48,
+          "width": 1280,
+          "height": 37
+        },
+        "groups": [
+          {
+            "active": "false",
+            "name": "全部记录",
+            "group": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "color(srgb 0.396392 0.390118 0.381333)",
+              "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 12,
+              "y": 48,
+              "width": 93,
+              "height": 36
+            },
+            "tab": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "color(srgb 0.396392 0.390118 0.381333)",
+              "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 12,
+              "y": 48,
+              "width": 92,
+              "height": 36
+            },
+            "more": null
+          },
+          {
+            "active": "true",
+            "name": "新视图",
+            "group": {
+              "background": "rgb(255, 255, 255)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 105,
+              "y": 48,
+              "width": 108,
+              "height": 36
+            },
+            "tab": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 105,
+              "y": 48,
+              "width": 79,
+              "height": 36
+            },
+            "more": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": "true",
+              "x": 184,
+              "y": 48,
+              "width": 28,
+              "height": 36
+            }
+          }
+        ],
+        "viewportWidth": 1280,
+        "documentWidth": 1280
+      },
+      {
+        "label": "switched-active",
+        "bar": {
+          "background": "color(srgb 0.948392 0.937333 0.918902)",
+          "color": "rgb(47, 47, 47)",
+          "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+          "outlineOffset": "0px",
+          "shadow": "none",
+          "focusVisible": false,
+          "expanded": null,
+          "x": 0,
+          "y": 48,
+          "width": 1280,
+          "height": 37
+        },
+        "groups": [
+          {
+            "active": "true",
+            "name": "全部记录",
+            "group": {
+              "background": "rgb(255, 255, 255)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 12,
+              "y": 48,
+              "width": 121,
+              "height": 36
+            },
+            "tab": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 12,
+              "y": 48,
+              "width": 92,
+              "height": 36
+            },
+            "more": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": "false",
+              "x": 104,
+              "y": 48,
+              "width": 28,
+              "height": 36
+            }
+          },
+          {
+            "active": "false",
+            "name": "新视图",
+            "group": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "color(srgb 0.396392 0.390118 0.381333)",
+              "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 133,
+              "y": 48,
+              "width": 80,
+              "height": 36
+            },
+            "tab": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "color(srgb 0.396392 0.390118 0.381333)",
+              "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 133,
+              "y": 48,
+              "width": 79,
+              "height": 36
+            },
+            "more": null
+          }
+        ],
+        "viewportWidth": 1280,
+        "documentWidth": 1280
+      }
+    ]
+  },
+  {
+    "engine": "webkit",
+    "width": 680,
+    "states": [
+      {
+        "label": "rest",
+        "bar": {
+          "background": "color(srgb 0.948392 0.937333 0.918902)",
+          "color": "rgb(47, 47, 47)",
+          "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+          "outlineOffset": "0px",
+          "shadow": "none",
+          "focusVisible": false,
+          "expanded": null,
+          "x": 0,
+          "y": 48,
+          "width": 680,
+          "height": 37
+        },
+        "groups": [
+          {
+            "active": "false",
+            "name": "全部记录",
+            "group": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "color(srgb 0.396392 0.390118 0.381333)",
+              "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 12,
+              "y": 48,
+              "width": 93,
+              "height": 36
+            },
+            "tab": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "color(srgb 0.396392 0.390118 0.381333)",
+              "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 12,
+              "y": 48,
+              "width": 92,
+              "height": 36
+            },
+            "more": null
+          },
+          {
+            "active": "true",
+            "name": "新视图",
+            "group": {
+              "background": "rgb(255, 255, 255)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 105,
+              "y": 48,
+              "width": 108,
+              "height": 36
+            },
+            "tab": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 105,
+              "y": 48,
+              "width": 79,
+              "height": 36
+            },
+            "more": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": "false",
+              "x": 184,
+              "y": 48,
+              "width": 28,
+              "height": 36
+            }
+          }
+        ],
+        "viewportWidth": 680,
+        "documentWidth": 680
+      },
+      {
+        "label": "active-name-hover",
+        "bar": {
+          "background": "color(srgb 0.948392 0.937333 0.918902)",
+          "color": "rgb(47, 47, 47)",
+          "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+          "outlineOffset": "0px",
+          "shadow": "none",
+          "focusVisible": false,
+          "expanded": null,
+          "x": 0,
+          "y": 48,
+          "width": 680,
+          "height": 37
+        },
+        "groups": [
+          {
+            "active": "false",
+            "name": "全部记录",
+            "group": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "color(srgb 0.396392 0.390118 0.381333)",
+              "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 12,
+              "y": 48,
+              "width": 93,
+              "height": 36
+            },
+            "tab": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "color(srgb 0.396392 0.390118 0.381333)",
+              "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 12,
+              "y": 48,
+              "width": 92,
+              "height": 36
+            },
+            "more": null
+          },
+          {
+            "active": "true",
+            "name": "新视图",
+            "group": {
+              "background": "rgb(255, 255, 255)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 105,
+              "y": 48,
+              "width": 108,
+              "height": 36
+            },
+            "tab": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 105,
+              "y": 48,
+              "width": 79,
+              "height": 36
+            },
+            "more": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": "false",
+              "x": 184,
+              "y": 48,
+              "width": 28,
+              "height": 36
+            }
+          }
+        ],
+        "viewportWidth": 680,
+        "documentWidth": 680
+      },
+      {
+        "label": "active-more-hover",
+        "bar": {
+          "background": "color(srgb 0.948392 0.937333 0.918902)",
+          "color": "rgb(47, 47, 47)",
+          "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+          "outlineOffset": "0px",
+          "shadow": "none",
+          "focusVisible": false,
+          "expanded": null,
+          "x": 0,
+          "y": 48,
+          "width": 680,
+          "height": 37
+        },
+        "groups": [
+          {
+            "active": "false",
+            "name": "全部记录",
+            "group": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "color(srgb 0.396392 0.390118 0.381333)",
+              "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 12,
+              "y": 48,
+              "width": 93,
+              "height": 36
+            },
+            "tab": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "color(srgb 0.396392 0.390118 0.381333)",
+              "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 12,
+              "y": 48,
+              "width": 92,
+              "height": 36
+            },
+            "more": null
+          },
+          {
+            "active": "true",
+            "name": "新视图",
+            "group": {
+              "background": "rgb(255, 255, 255)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 105,
+              "y": 48,
+              "width": 108,
+              "height": 36
+            },
+            "tab": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 105,
+              "y": 48,
+              "width": 79,
+              "height": 36
+            },
+            "more": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": "false",
+              "x": 184,
+              "y": 48,
+              "width": 28,
+              "height": 36
+            }
+          }
+        ],
+        "viewportWidth": 680,
+        "documentWidth": 680
+      },
+      {
+        "label": "inactive-name-hover",
+        "bar": {
+          "background": "color(srgb 0.948392 0.937333 0.918902)",
+          "color": "rgb(47, 47, 47)",
+          "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+          "outlineOffset": "0px",
+          "shadow": "none",
+          "focusVisible": false,
+          "expanded": null,
+          "x": 0,
+          "y": 48,
+          "width": 680,
+          "height": 37
+        },
+        "groups": [
+          {
+            "active": "false",
+            "name": "全部记录",
+            "group": {
+              "background": "color(srgb 0.960471 0.952 0.937882)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 12,
+              "y": 48,
+              "width": 93,
+              "height": 36
+            },
+            "tab": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 12,
+              "y": 48,
+              "width": 92,
+              "height": 36
+            },
+            "more": null
+          },
+          {
+            "active": "true",
+            "name": "新视图",
+            "group": {
+              "background": "rgb(255, 255, 255)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 105,
+              "y": 48,
+              "width": 108,
+              "height": 36
+            },
+            "tab": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 105,
+              "y": 48,
+              "width": 79,
+              "height": 36
+            },
+            "more": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": "false",
+              "x": 184,
+              "y": 48,
+              "width": 28,
+              "height": 36
+            }
+          }
+        ],
+        "viewportWidth": 680,
+        "documentWidth": 680
+      },
+      {
+        "label": "menu-open-pointer-away",
+        "bar": {
+          "background": "color(srgb 0.948392 0.937333 0.918902)",
+          "color": "rgb(47, 47, 47)",
+          "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+          "outlineOffset": "0px",
+          "shadow": "none",
+          "focusVisible": false,
+          "expanded": null,
+          "x": 0,
+          "y": 48,
+          "width": 680,
+          "height": 37
+        },
+        "groups": [
+          {
+            "active": "false",
+            "name": "全部记录",
+            "group": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "color(srgb 0.396392 0.390118 0.381333)",
+              "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 12,
+              "y": 48,
+              "width": 93,
+              "height": 36
+            },
+            "tab": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "color(srgb 0.396392 0.390118 0.381333)",
+              "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 12,
+              "y": 48,
+              "width": 92,
+              "height": 36
+            },
+            "more": null
+          },
+          {
+            "active": "true",
+            "name": "新视图",
+            "group": {
+              "background": "rgb(255, 255, 255)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 105,
+              "y": 48,
+              "width": 108,
+              "height": 36
+            },
+            "tab": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 105,
+              "y": 48,
+              "width": 79,
+              "height": 36
+            },
+            "more": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": "true",
+              "x": 184,
+              "y": 48,
+              "width": 28,
+              "height": 36
+            }
+          }
+        ],
+        "viewportWidth": 680,
+        "documentWidth": 680
+      },
+      {
+        "label": "switched-active",
+        "bar": {
+          "background": "color(srgb 0.948392 0.937333 0.918902)",
+          "color": "rgb(47, 47, 47)",
+          "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+          "outlineOffset": "0px",
+          "shadow": "none",
+          "focusVisible": false,
+          "expanded": null,
+          "x": 0,
+          "y": 48,
+          "width": 680,
+          "height": 37
+        },
+        "groups": [
+          {
+            "active": "true",
+            "name": "全部记录",
+            "group": {
+              "background": "rgb(255, 255, 255)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 12,
+              "y": 48,
+              "width": 121,
+              "height": 36
+            },
+            "tab": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 12,
+              "y": 48,
+              "width": 92,
+              "height": 36
+            },
+            "more": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": "false",
+              "x": 104,
+              "y": 48,
+              "width": 28,
+              "height": 36
+            }
+          },
+          {
+            "active": "false",
+            "name": "新视图",
+            "group": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "color(srgb 0.396392 0.390118 0.381333)",
+              "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 133,
+              "y": 48,
+              "width": 80,
+              "height": 36
+            },
+            "tab": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "color(srgb 0.396392 0.390118 0.381333)",
+              "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 133,
+              "y": 48,
+              "width": 79,
+              "height": 36
+            },
+            "more": null
+          }
+        ],
+        "viewportWidth": 680,
+        "documentWidth": 680
+      }
+    ]
+  },
+  {
+    "engine": "webkit",
+    "width": 375,
+    "states": [
+      {
+        "label": "rest",
+        "bar": {
+          "background": "color(srgb 0.948392 0.937333 0.918902)",
+          "color": "rgb(47, 47, 47)",
+          "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+          "outlineOffset": "0px",
+          "shadow": "none",
+          "focusVisible": false,
+          "expanded": null,
+          "x": 0,
+          "y": 48,
+          "width": 375,
+          "height": 37
+        },
+        "groups": [
+          {
+            "active": "false",
+            "name": "全部记录",
+            "group": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "color(srgb 0.396392 0.390118 0.381333)",
+              "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 12,
+              "y": 48,
+              "width": 93,
+              "height": 36
+            },
+            "tab": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "color(srgb 0.396392 0.390118 0.381333)",
+              "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 12,
+              "y": 48,
+              "width": 92,
+              "height": 36
+            },
+            "more": null
+          },
+          {
+            "active": "true",
+            "name": "新视图",
+            "group": {
+              "background": "rgb(255, 255, 255)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 105,
+              "y": 48,
+              "width": 108,
+              "height": 36
+            },
+            "tab": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 105,
+              "y": 48,
+              "width": 79,
+              "height": 36
+            },
+            "more": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": "false",
+              "x": 184,
+              "y": 48,
+              "width": 28,
+              "height": 36
+            }
+          }
+        ],
+        "viewportWidth": 375,
+        "documentWidth": 375
+      },
+      {
+        "label": "active-name-hover",
+        "bar": {
+          "background": "color(srgb 0.948392 0.937333 0.918902)",
+          "color": "rgb(47, 47, 47)",
+          "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+          "outlineOffset": "0px",
+          "shadow": "none",
+          "focusVisible": false,
+          "expanded": null,
+          "x": 0,
+          "y": 48,
+          "width": 375,
+          "height": 37
+        },
+        "groups": [
+          {
+            "active": "false",
+            "name": "全部记录",
+            "group": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "color(srgb 0.396392 0.390118 0.381333)",
+              "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 12,
+              "y": 48,
+              "width": 93,
+              "height": 36
+            },
+            "tab": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "color(srgb 0.396392 0.390118 0.381333)",
+              "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 12,
+              "y": 48,
+              "width": 92,
+              "height": 36
+            },
+            "more": null
+          },
+          {
+            "active": "true",
+            "name": "新视图",
+            "group": {
+              "background": "rgb(255, 255, 255)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 105,
+              "y": 48,
+              "width": 108,
+              "height": 36
+            },
+            "tab": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 105,
+              "y": 48,
+              "width": 79,
+              "height": 36
+            },
+            "more": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": "false",
+              "x": 184,
+              "y": 48,
+              "width": 28,
+              "height": 36
+            }
+          }
+        ],
+        "viewportWidth": 375,
+        "documentWidth": 375
+      },
+      {
+        "label": "active-more-hover",
+        "bar": {
+          "background": "color(srgb 0.948392 0.937333 0.918902)",
+          "color": "rgb(47, 47, 47)",
+          "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+          "outlineOffset": "0px",
+          "shadow": "none",
+          "focusVisible": false,
+          "expanded": null,
+          "x": 0,
+          "y": 48,
+          "width": 375,
+          "height": 37
+        },
+        "groups": [
+          {
+            "active": "false",
+            "name": "全部记录",
+            "group": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "color(srgb 0.396392 0.390118 0.381333)",
+              "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 12,
+              "y": 48,
+              "width": 93,
+              "height": 36
+            },
+            "tab": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "color(srgb 0.396392 0.390118 0.381333)",
+              "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 12,
+              "y": 48,
+              "width": 92,
+              "height": 36
+            },
+            "more": null
+          },
+          {
+            "active": "true",
+            "name": "新视图",
+            "group": {
+              "background": "rgb(255, 255, 255)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 105,
+              "y": 48,
+              "width": 108,
+              "height": 36
+            },
+            "tab": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 105,
+              "y": 48,
+              "width": 79,
+              "height": 36
+            },
+            "more": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": "false",
+              "x": 184,
+              "y": 48,
+              "width": 28,
+              "height": 36
+            }
+          }
+        ],
+        "viewportWidth": 375,
+        "documentWidth": 375
+      },
+      {
+        "label": "inactive-name-hover",
+        "bar": {
+          "background": "color(srgb 0.948392 0.937333 0.918902)",
+          "color": "rgb(47, 47, 47)",
+          "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+          "outlineOffset": "0px",
+          "shadow": "none",
+          "focusVisible": false,
+          "expanded": null,
+          "x": 0,
+          "y": 48,
+          "width": 375,
+          "height": 37
+        },
+        "groups": [
+          {
+            "active": "false",
+            "name": "全部记录",
+            "group": {
+              "background": "color(srgb 0.960471 0.952 0.937882)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 12,
+              "y": 48,
+              "width": 93,
+              "height": 36
+            },
+            "tab": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 12,
+              "y": 48,
+              "width": 92,
+              "height": 36
+            },
+            "more": null
+          },
+          {
+            "active": "true",
+            "name": "新视图",
+            "group": {
+              "background": "rgb(255, 255, 255)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 105,
+              "y": 48,
+              "width": 108,
+              "height": 36
+            },
+            "tab": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 105,
+              "y": 48,
+              "width": 79,
+              "height": 36
+            },
+            "more": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": "false",
+              "x": 184,
+              "y": 48,
+              "width": 28,
+              "height": 36
+            }
+          }
+        ],
+        "viewportWidth": 375,
+        "documentWidth": 375
+      },
+      {
+        "label": "menu-open-pointer-away",
+        "bar": {
+          "background": "color(srgb 0.948392 0.937333 0.918902)",
+          "color": "rgb(47, 47, 47)",
+          "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+          "outlineOffset": "0px",
+          "shadow": "none",
+          "focusVisible": false,
+          "expanded": null,
+          "x": 0,
+          "y": 48,
+          "width": 375,
+          "height": 37
+        },
+        "groups": [
+          {
+            "active": "false",
+            "name": "全部记录",
+            "group": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "color(srgb 0.396392 0.390118 0.381333)",
+              "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 12,
+              "y": 48,
+              "width": 93,
+              "height": 36
+            },
+            "tab": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "color(srgb 0.396392 0.390118 0.381333)",
+              "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 12,
+              "y": 48,
+              "width": 92,
+              "height": 36
+            },
+            "more": null
+          },
+          {
+            "active": "true",
+            "name": "新视图",
+            "group": {
+              "background": "rgb(255, 255, 255)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 105,
+              "y": 48,
+              "width": 108,
+              "height": 36
+            },
+            "tab": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 105,
+              "y": 48,
+              "width": 79,
+              "height": 36
+            },
+            "more": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": "true",
+              "x": 184,
+              "y": 48,
+              "width": 28,
+              "height": 36
+            }
+          }
+        ],
+        "viewportWidth": 375,
+        "documentWidth": 375
+      },
+      {
+        "label": "switched-active",
+        "bar": {
+          "background": "color(srgb 0.948392 0.937333 0.918902)",
+          "color": "rgb(47, 47, 47)",
+          "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+          "outlineOffset": "0px",
+          "shadow": "none",
+          "focusVisible": false,
+          "expanded": null,
+          "x": 0,
+          "y": 48,
+          "width": 375,
+          "height": 37
+        },
+        "groups": [
+          {
+            "active": "true",
+            "name": "全部记录",
+            "group": {
+              "background": "rgb(255, 255, 255)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 12,
+              "y": 48,
+              "width": 121,
+              "height": 36
+            },
+            "tab": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 12,
+              "y": 48,
+              "width": 92,
+              "height": 36
+            },
+            "more": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "rgb(47, 47, 47)",
+              "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": "false",
+              "x": 104,
+              "y": 48,
+              "width": 28,
+              "height": 36
+            }
+          },
+          {
+            "active": "false",
+            "name": "新视图",
+            "group": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "color(srgb 0.396392 0.390118 0.381333)",
+              "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 133,
+              "y": 48,
+              "width": 80,
+              "height": 36
+            },
+            "tab": {
+              "background": "rgba(0, 0, 0, 0)",
+              "color": "color(srgb 0.396392 0.390118 0.381333)",
+              "outline": "3px none oklab(0.501512 -0.057612 -0.033909 / 0.55)",
+              "outlineOffset": "0px",
+              "shadow": "none",
+              "focusVisible": false,
+              "expanded": null,
+              "x": 133,
+              "y": 48,
+              "width": 79,
+              "height": 36
+            },
+            "more": null
+          }
+        ],
+        "viewportWidth": 375,
+        "documentWidth": 375
+      }
+    ]
+  }
+]

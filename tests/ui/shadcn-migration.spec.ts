@@ -14,7 +14,6 @@ async function installTauriMock(
   options: {
     imageSrc?: string
     relations?: Record<string, { targetId: string; note?: string }[]>
-    walkResult?: string
   } = {}
 ) {
   await page.addInitScript((injected: typeof options) => {
@@ -290,21 +289,6 @@ async function installTauriMock(
                 protocol: "https",
                 error: null,
               }
-            case "ai_agent_statuses":
-              return [
-                { agent: "codex", installed: true, version: "codex-cli 0.146.0", path: "/tmp/codex", error: null },
-                { agent: "claude", installed: true, version: "2.1.221", path: "/tmp/claude", error: null },
-                { agent: "kimi", installed: true, version: "0.32.0", path: "/tmp/kimi", error: null },
-                { agent: "opencode", installed: true, version: "1.18.0", path: "/tmp/opencode", error: null },
-              ]
-            case "run_ai_review_task":
-              return {
-                text:
-                  (args.request as { task?: string } | undefined)?.task === "walk" &&
-                  injected.walkResult
-                    ? injected.walkResult
-                    : "测试洞察结果",
-              }
             case "list_csv_files":
               return []
             case "list_library_tree":
@@ -312,6 +296,7 @@ async function installTauriMock(
                 entries: [],
                 assets: [],
                 trashEntries: [],
+                fragmentTrashEntries: [],
                 fragmentStream: { totalCount: 0, years: [] },
               }
             case "migrate_legacy_notes":
@@ -320,6 +305,7 @@ async function installTauriMock(
                   entries: [],
                   assets: [],
                   trashEntries: [],
+                  fragmentTrashEntries: [],
                   fragmentStream: { totalCount: 0, years: [] },
                 },
                 migratedCount: 0,
@@ -336,6 +322,7 @@ async function installTauriMock(
                   entries: [],
                   assets: [],
                   trashEntries: [],
+                  fragmentTrashEntries: [],
                   fragmentStream: { totalCount: 0, years: [] },
                 },
                 fragment: null,
@@ -381,13 +368,18 @@ async function installTauriMock(
   }, options)
 }
 
+async function openMindMaps(page: Page) {
+  await page.locator("[data-shard-utility-menu-trigger]:visible").click()
+  await page.getByRole("menuitem", { name: "思维导图", exact: true }).click()
+}
+
 test.beforeEach(async ({ page }) => {
   await installTauriMock(page)
   await page.goto("/")
   await expect(
     page.locator('[data-shard-editor="composer"] .cm-content')
   ).toBeFocused()
-  await expect(page.locator("[data-shard-fragment-id]")).toHaveCount(5)
+  await expect(page.locator("[data-shard-fragment-id]")).toHaveCount(24)
 })
 
 test("editor toolbars expose visible labels through the shared icon button", async ({
@@ -558,7 +550,7 @@ test("图片行使用 read_fragment_image 结果渲染并在进光标时揭示",
     "data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs="
   await installTauriMock(page, { imageSrc })
   await page.reload()
-  await expect(page.locator("[data-shard-fragment-id]")).toHaveCount(5)
+  await expect(page.locator("[data-shard-fragment-id]")).toHaveCount(24)
 
   const content = "![测试图](assets/test.png)\n正文"
   const editor = page.locator('[data-shard-editor="composer"]')
@@ -791,10 +783,10 @@ test("capture, card menu, and share dialog remain functional", async ({
   await focusEditor(page, "composer")
   await page.keyboard.press("Control+Enter")
 
-  await expect(page.locator("[data-shard-fragment-id]")).toHaveCount(5)
+  await expect(page.locator("[data-shard-fragment-id]")).toHaveCount(25)
   await expect(page.getByText("迁移后的新片段")).toBeVisible()
   await expect(page.getByText("#work").first()).toBeVisible()
-  await expect(page.getByText("片段已保存")).toBeVisible()
+  await expect(page.getByText("碎片已保存")).toBeVisible()
 
   const copiedCard = page
     .locator("[data-shard-fragment-id]")
@@ -957,7 +949,7 @@ test("search recall mode preserves context, focus, and timeline scrolling", asyn
   )
 
   await page.keyboard.press("Control+k")
-  const search = page.getByRole("combobox", { name: "搜索笔记" })
+  const search = page.getByRole("combobox", { name: "搜索内容" })
   await expect(search).toBeFocused()
   await search.fill("密匣中的")
   await expect(page.getByText("没有找到“密匣中的”")).toBeVisible()
@@ -1025,9 +1017,8 @@ test("search recall mode preserves context, focus, and timeline scrolling", asyn
   await expect(selectedOption).toHaveAttribute("aria-selected", "true")
   await search.press("Enter")
 
-  await expect(
-    page.getByRole("complementary", { name: "资料库目录" })
-  ).toBeVisible()
+  await expect(page.getByRole("button", { name: "碎片", exact: true })).toHaveAttribute("aria-current", "page")
+  await expect(page.getByRole("complementary", { name: "资料库目录" })).toHaveCount(0)
   await expect(
     page.getByRole("button", { name: "返回搜索结果" })
   ).toBeVisible()
@@ -1155,10 +1146,14 @@ test("lockbox and mind map editing preserve adaptive node geometry", async ({
   ).toBeVisible()
   await expect(page.getByRole("dialog")).toHaveCount(0)
 
-  await page.getByRole("button", { name: /思维导图 1/ }).click()
+  await openMindMaps(page)
   await page.getByLabel("打开思维导图：测试导图").click()
   await expect(page.getByLabel("思维导图编辑器")).toBeVisible()
   await page.setViewportSize({ height: 720, width: 900 })
+  // Workspace resize preserves the chosen zoom; explicitly zoom out to exercise scaled editing.
+  await page.getByLabel("思维导图编辑器").dispatchEvent("wheel", {
+    deltaY: 160, ctrlKey: true, clientX: 450, clientY: 360, bubbles: true,
+  })
 
   const childNode = page.locator('[data-mind-map-node="child"]')
   await childNode.dblclick()
@@ -1178,6 +1173,10 @@ test("lockbox and mind map editing preserve adaptive node geometry", async ({
 
   const initialBox = await nodeEditor.boundingBox()
   expect(initialBox).not.toBeNull()
+  const canvasScale = await page.getByLabel("思维导图编辑器").evaluate(element => {
+    const svg = element as SVGSVGElement
+    return svg.getBoundingClientRect().width / svg.viewBox.baseVal.width
+  })
   const moveHandle = page.getByRole("button", { name: "拖拽移动节点" })
   const initialTypography = await nodeEditor.evaluate((element) => {
     const style = getComputedStyle(element)
@@ -1216,7 +1215,7 @@ test("lockbox and mind map editing preserve adaptive node geometry", async ({
   await nodeEditor.fill("自动扩展节点".repeat(12))
   await expect
     .poll(async () => (await nodeEditor.boundingBox())?.height ?? 0)
-    .toBeGreaterThan((initialBox?.height ?? 0) + 8)
+    .toBeGreaterThan((initialBox?.height ?? 0) + 8 * canvasScale)
   const longTextOverflow = await nodeEditor.evaluate((element) => ({
     horizontal: element.scrollWidth - element.clientWidth,
     vertical: element.scrollHeight - element.clientHeight,
@@ -1224,13 +1223,17 @@ test("lockbox and mind map editing preserve adaptive node geometry", async ({
   expect(longTextOverflow.horizontal).toBeLessThanOrEqual(1)
   expect(longTextOverflow.vertical).toBeLessThanOrEqual(1)
   const longNodeText = await nodeEditor.inputValue()
+  await nodeEditor.press("End")
   await nodeEditor.press("Shift+Enter")
-  await expect(nodeEditor).toHaveValue(longNodeText)
+  await page.keyboard.insertText("手动换行")
+  await expect(nodeEditor).toHaveValue(`${longNodeText}\n手动换行`)
 
   await page.getByLabel("思维导图编辑器").click({
     position: { x: 12, y: 12 },
   })
   await expect(nodeEditor).toBeHidden()
+  expect(await page.getByRole("region", { name: "思维导图画布", exact: true })
+    .evaluate(element => element.contains(document.activeElement))).toBe(true)
   expect(await childNode.locator("tspan").count()).toBeGreaterThan(1)
   const childRect = childNode.locator("rect").last()
   const grandchildRect = page
@@ -1278,7 +1281,7 @@ test("lockbox and mind map editing preserve adaptive node geometry", async ({
 })
 
 test("mind map canvas deletes nodes from selected state", async ({ page }) => {
-  await page.getByRole("button", { name: /思维导图 1/ }).click()
+  await openMindMaps(page)
   await page.getByLabel("打开思维导图：测试导图").click()
   await expect(page.getByLabel("思维导图编辑器")).toBeVisible()
 
@@ -1304,7 +1307,7 @@ test("mind map canvas deletes nodes from selected state", async ({ page }) => {
 test("mind map canvas context menu acts on nodes and multi-selection", async ({
   page,
 }) => {
-  await page.getByRole("button", { name: /思维导图 1/ }).click()
+  await openMindMaps(page)
   await page.getByLabel("打开思维导图：测试导图").click()
   await expect(page.getByLabel("思维导图编辑器")).toBeVisible()
 
@@ -1354,7 +1357,7 @@ test("mind map canvas context menu acts on nodes and multi-selection", async ({
 test("mind map canvas marquee selects nodes and space-drag pans", async ({
   page,
 }) => {
-  await page.getByRole("button", { name: /思维导图 1/ }).click()
+  await openMindMaps(page)
   await page.getByLabel("打开思维导图：测试导图").click()
   const svg = page.getByLabel("思维导图编辑器")
   await expect(svg).toBeVisible()
@@ -1420,7 +1423,7 @@ test("mind map canvas marquee selects nodes and space-drag pans", async ({
 })
 
 test("mind map canvas collapses and expands subtrees", async ({ page }) => {
-  await page.getByRole("button", { name: /思维导图 1/ }).click()
+  await openMindMaps(page)
   await page.getByLabel("打开思维导图：测试导图").click()
   await expect(page.getByLabel("思维导图编辑器")).toBeVisible()
 
@@ -1453,7 +1456,7 @@ test("mind map canvas collapses and expands subtrees", async ({ page }) => {
 test("mind map workspace undo/redo restores deletions and merges typing", async ({
   page,
 }) => {
-  await page.getByRole("button", { name: /思维导图 1/ }).click()
+  await openMindMaps(page)
   await page.getByLabel("打开思维导图：测试导图").click()
   await expect(page.getByLabel("思维导图编辑器")).toBeVisible()
 
@@ -1507,7 +1510,7 @@ test("mind map workspace undo/redo restores deletions and merges typing", async 
 })
 
 test("mind map canvas arrow keys navigate the tree", async ({ page }) => {
-  await page.getByRole("button", { name: /思维导图 1/ }).click()
+  await openMindMaps(page)
   await page.getByLabel("打开思维导图：测试导图").click()
   await expect(page.getByLabel("思维导图编辑器")).toBeVisible()
 
@@ -1551,7 +1554,7 @@ test("mind map canvas arrow keys navigate the tree", async ({ page }) => {
 })
 
 test("mind map canvas type-to-edit replaces node text", async ({ page }) => {
-  await page.getByRole("button", { name: /思维导图 1/ }).click()
+  await openMindMaps(page)
   await page.getByLabel("打开思维导图：测试导图").click()
   await expect(page.getByLabel("思维导图编辑器")).toBeVisible()
 
@@ -1566,83 +1569,72 @@ test("mind map canvas type-to-edit replaces node text", async ({ page }) => {
   await page.keyboard.type("bc")
   await expect(editor).toHaveValue("abc")
 
-  // 空格是抓手语义，不能触发 type-to-edit。
+  // 单选主题时空格保留原文进入编辑；空白画布才使用空格抓手。
   await page.keyboard.press("Escape")
   await page.keyboard.press(" ")
-  await expect(editor).toBeHidden()
+  await expect(editor).toBeFocused()
+  await expect(editor).toHaveValue("abc")
 })
 
-test("mind map workspace keeps Tab focus out of global actions", async ({
+test("mind map workspace suppresses default Tab traversal without creating topics", async ({
   page,
 }) => {
-  await page.getByRole("button", { name: /思维导图 1/ }).click()
+  await openMindMaps(page)
   await page.getByLabel("打开思维导图：测试导图").click()
   await expect(page.getByLabel("思维导图编辑器")).toBeVisible()
 
-  // 未选中任何节点时按 Tab：焦点不得迁移到底部全局操作区按钮。
+  const initialCount = await page.locator("[data-mind-map-node]").count()
+  // 无节点选择时不再通过 Tab 轮转全局工作区控件。
+  const exitButton = page.getByRole("button", { name: "退出思维导图", exact: true })
+  await exitButton.focus()
   await page.keyboard.press("Tab")
-  const focusedTag = await page.evaluate(
-    () => document.activeElement?.tagName ?? ""
-  )
-  expect(focusedTag).not.toBe("BUTTON")
+  await expect(exitButton).toBeFocused()
+  await page.keyboard.press("Shift+Tab")
+  await expect(exitButton).toBeFocused()
+  await expect(page.locator("[data-mind-map-node]")).toHaveCount(initialCount)
 
-  // 选中再取消选中后同样成立。
+  // 选中再取消后 Tab 保持画布焦点，不新建主题。
   await page.locator('[data-mind-map-node="child"]').click()
   await page.keyboard.press("Escape")
+  const canvasFocus = await page.evaluateHandle(() => document.activeElement)
+  expect(await page.getByRole("region", { name: "思维导图画布", exact: true })
+    .evaluate(element => element.contains(document.activeElement))).toBe(true)
   await page.keyboard.press("Tab")
-  const focusedTagAfter = await page.evaluate(
-    () => document.activeElement?.tagName ?? ""
-  )
-  expect(focusedTagAfter).not.toBe("BUTTON")
+  expect(await canvasFocus.evaluate(element => element === document.activeElement)).toBe(true)
+  await canvasFocus.dispose()
+  await expect(page.locator("[data-mind-map-node]")).toHaveCount(initialCount)
 })
 
-test("insight workspace selects lenses and AI runners", async ({
-  page,
-}) => {
-  await page.getByRole("button", { name: "回顾", exact: true }).click()
-  await page.getByRole("button", { name: "洞察视角", exact: true }).click()
+test("fragment navigation only exposes all fragments and trash", async ({ page }) => {
+  const navigation = page.getByRole("navigation", { name: "工作台导航" })
+  await expect(navigation.getByRole("button", { name: /^全部碎片 24$/u })).toBeVisible()
+  await expect(navigation.getByRole("button", { name: /^回收站 1$/u })).toBeVisible()
+  await expect(page.getByRole("button", { name: /每日回顾|洞察视角|随机漫步/u })).toHaveCount(0)
 
-  // 设置面板：分组单选列表，默认选中"默认洞察"；结果区标题常显。
-  const defaultLens = page.getByRole("radio", { name: "默认洞察" })
-  await expect(defaultLens).toHaveAttribute("aria-checked", "true")
-  await expect(
-    page.getByRole("heading", { name: "分析设置" })
-  ).toBeVisible()
-  await expect(
-    page.getByRole("heading", { name: "洞察结果 · 默认洞察" })
-  ).toBeVisible()
-  await expect(page.getByText("尚未生成洞察")).toBeVisible()
-  const runnerSelect = page.getByRole("combobox", { name: "AI 运行器" })
-  await expect(runnerSelect).toHaveValue("codex")
-  await expect(page.getByText("已识别 4/4")).toBeVisible()
-
-  // 切换视角：摘要行跟随，已生成结果的来源标题不被牵连。
-  const reverseLens = page.getByRole("radio", { name: "逆向思考" })
-  await reverseLens.click()
-  await expect(reverseLens).toHaveAttribute("aria-checked", "true")
-  await expect(defaultLens).toHaveAttribute("aria-checked", "false")
-  await expect(page.getByText(/反过来审视笔记中的默认假设/)).toBeVisible()
-  await runnerSelect.selectOption("kimi")
-  await expect(page.getByText("已就绪 · 0.32.0")).toBeVisible()
-
-  // 运行洞察：结果区标题记录来源视角，文档渲染，保存入口在结果末尾。
-  await page.getByRole("button", { name: "开始洞察" }).click()
-  await expect(
-    page.getByRole("heading", { name: "洞察结果 · 逆向思考 · Kimi Code" })
-  ).toBeVisible()
-  await expect(page.getByText("测试洞察结果")).toBeVisible()
-  await expect(page.getByRole("button", { name: "保存为片段" })).toBeVisible()
-
-  const request = await page.evaluate(() => {
-    const calls = (globalThis as typeof globalThis & {
-      __SHARD_TEST_CALLS__: Array<{ args: Record<string, unknown>; command: string }>
-    }).__SHARD_TEST_CALLS__
-    return calls.find((call) => call.command === "run_ai_review_task")
-  })
-  expect(request?.args).toMatchObject({
-    request: { agent: "kimi", lens: "reverse", task: "insight" },
-  })
+  await navigation.getByRole("button", { name: /^回收站 1$/u }).click()
+  await expect(page.getByRole("region", { name: "碎片回收站", exact: true })).toBeVisible()
+  await navigation.getByRole("button", { name: /^全部碎片 24$/u }).click()
+  await expect(page.locator("[data-shard-fragment-id]")).toHaveCount(24)
+  await expect(page.locator('[data-shard-editor="composer"] .cm-content')).toBeVisible()
 })
+
+for (const mode of ["dailyReview", "insight", "walk"]) {
+  for (const route of [
+    { space: "review", params: { mode } },
+    { space: "fragments", params: { view: mode } },
+  ]) {
+    test(`removed ${route.space} ${mode} route restores the fragment stream`, async ({ page }) => {
+      await page.evaluate((savedRoute) => {
+        localStorage.setItem("shard.workspace-route", JSON.stringify(savedRoute))
+      }, route)
+      await page.reload()
+      await expect(page.locator("[data-shard-fragment-id]")).toHaveCount(24)
+      await expect(page.locator('[data-shard-editor="composer"] .cm-content')).toBeVisible()
+      await expect(page.getByRole("button", { name: /^全部碎片 24$/u })).toHaveAttribute("aria-current", "page")
+      await expect(page.getByRole("button", { name: /每日回顾|洞察视角|随机漫步/u })).toHaveCount(0)
+    })
+  }
+}
 
 test("small windows use bottom tabs without document scrolling", async ({
   page,
@@ -1651,9 +1643,12 @@ test("small windows use bottom tabs without document scrolling", async ({
 
   await expect(page.getByRole("navigation", { name: "工作台" }))
     .toBeVisible()
-  // 碎片空间已无二级 filter，底栏不再渲染碎片二级导航
-  await expect(page.getByRole("navigation", { name: "碎片空间" }))
-    .toHaveCount(0)
+  const views = page.getByRole("navigation", { name: "碎片视图" })
+  await expect(views).toBeVisible()
+  await expect(views.getByRole("button")).toHaveCount(2)
+  await expect(views.getByRole("button", { name: /^全部 24$/u })).toBeVisible()
+  await expect(views.getByRole("button", { name: /^回收站 1$/u })).toBeVisible()
+  await expect(page.getByRole("button", { name: /每日回顾|洞察|漫步/u })).toHaveCount(0)
   await expect(page.locator("aside").first()).toBeHidden()
 
   const overflow = await page.evaluate(() => ({
@@ -1668,23 +1663,12 @@ test.describe("片段关系层", () => {
     await installTauriMock(page, {
       relations: {
         "fragment-1": [
-          { targetId: "fragment-3", note: "同一次漫步里被连起来" },
+          { targetId: "fragment-3", note: "同一主题的补充资料" },
         ],
       },
-      walkResult: [
-        "## 漫步路径",
-        "测试漫步正文。",
-        "",
-        "## 意外连接",
-        "两条片段可以互相补充。",
-        "",
-        "```json",
-        '{"edges":[{"from":1,"to":3,"reason":"共同指向同一个后续行动"}]}',
-        "```",
-      ].join("\n"),
     })
     await page.goto("/")
-    await expect(page.locator("[data-shard-fragment-id]")).toHaveCount(5)
+    await expect(page.locator("[data-shard-fragment-id]")).toHaveCount(24)
   })
 
   test("有关联的卡片显示折叠入口，展开后可跳转到目标片段", async ({
@@ -1701,20 +1685,15 @@ test.describe("片段关系层", () => {
     await expect(toggle).toHaveAttribute("aria-expanded", "true")
 
     // 已确认的边排在最前，并带上建边理由
-    const linkedRow = card.locator('button[title="同一次漫步里被连起来"]')
+    const linkedRow = card.locator('button[title="同一主题的补充资料"]')
     await expect(linkedRow).toBeVisible()
     await expect(linkedRow).toContainText("第 3 条回归片段")
 
     // 点击跳转后目标卡片进入高亮
     await linkedRow.click()
-    await expect(
-      page.getByRole("complementary", { name: "资料库目录" })
-    ).toBeVisible()
-    await expect(
-      page
-        .getByRole("article", { name: "资料库查看器" })
-        .locator('[data-shard-fragment-id="fragment-3"]')
-    ).toHaveClass(/shard-fragment-card-highlight/)
+    await expect(page.getByRole("button", { name: "碎片", exact: true })).toHaveAttribute("aria-current", "page")
+    await expect(page.getByRole("complementary", { name: "资料库目录" })).toHaveCount(0)
+    await expect(page.locator('[data-shard-fragment-id="fragment-3"]')).toHaveClass(/shard-fragment-card-highlight/)
   })
 
   test("没有关联的卡片不占用垂直空间，可从菜单显式打开", async ({ page }) => {
@@ -1767,6 +1746,71 @@ test.describe("片段关系层", () => {
     })
   })
 
+  test("关闭的关联弹窗不计算候选，按需打开后保留搜索与焦点恢复", async ({ page }) => {
+    await page.addInitScript(() => {
+      const work = { indexNormalizations: 0, candidateDates: 0 }
+      Object.assign(globalThis, { __SHARD_LINK_DIALOG_WORK__: work })
+      // Count the actual normalization/formatting work without a production test hook.
+      const fromLinkDialog = () => new Error().stack?.includes("/fragment-link-dialog.tsx")
+      const normalize = String.prototype.toLocaleLowerCase
+      String.prototype.toLocaleLowerCase = function (...args) {
+        if (fromLinkDialog()) work.indexNormalizations += 1
+        return normalize.apply(this, args)
+      }
+      const formatDate = Date.prototype.toLocaleString
+      Date.prototype.toLocaleString = function (...args) {
+        if (fromLinkDialog()) work.candidateDates += 1
+        return formatDate.apply(this, args)
+      }
+    })
+    await page.reload()
+    await expect(page.locator("[data-shard-fragment-id]")).toHaveCount(24)
+    const readWork = () => page.evaluate(() => (
+      globalThis as typeof globalThis & {
+        __SHARD_LINK_DIALOG_WORK__: { indexNormalizations: number; candidateDates: number }
+      }
+    ).__SHARD_LINK_DIALOG_WORK__)
+    expect(await readWork()).toEqual({ indexNormalizations: 0, candidateDates: 0 })
+
+    const card = page.locator('[data-shard-fragment-id="fragment-5"]')
+    const trigger = card.getByRole("button", { name: "片段操作" })
+    const openLinkDialog = async () => {
+      await trigger.click()
+      await page.getByRole("menuitem", { name: "关联到片段…" }).click()
+    }
+    await openLinkDialog()
+    const dialog = page.getByRole("dialog", { name: "关联到片段" })
+    const search = dialog.getByRole("textbox", { name: "搜索片段" })
+    await expect(search).toBeFocused()
+    await expect(dialog.getByRole("option")).toHaveCount(20)
+    const openedWork = await readWork()
+    expect(openedWork.indexNormalizations).toBeGreaterThan(0)
+    expect(openedWork.candidateDates).toBeGreaterThan(0)
+    await search.fill("第 24 条")
+    await expect(dialog.getByRole("option")).toHaveCount(1)
+    await search.press("Escape")
+    await expect(page.locator('[data-slot="dialog-content"]')).toHaveCount(0)
+    await expect(trigger).toBeFocused()
+
+    const afterClose = await readWork()
+    // A later card render must not retain the closed dialog's expensive body.
+    await trigger.click()
+    await page.getByRole("menuitem", { name: "编辑", exact: true }).press("Escape")
+    await expect(trigger).toBeFocused()
+    expect(await readWork()).toEqual(afterClose)
+
+    await openLinkDialog()
+    await expect(search).toBeFocused()
+    await expect(search).toHaveValue("")
+    await expect(dialog.getByRole("option")).toHaveCount(20)
+    await search.fill("第 24 条")
+    await expect(dialog.getByRole("option")).toHaveCount(1)
+    await search.press("Enter")
+    await expect(page.locator('[data-slot="dialog-content"]')).toHaveCount(0)
+    await expect(trigger).toBeFocused()
+    await expect(card.getByRole("button", { name: "1 条关联" })).toBeVisible()
+  })
+
   test("移除反向关联使用真实边 owner，且不会触发卡片跳转", async ({ page }) => {
     const card = page.locator('[data-shard-fragment-id="fragment-3"]')
     await card.getByRole("button", { name: "片段操作" }).click()
@@ -1796,37 +1840,7 @@ test.describe("片段关系层", () => {
     })
   })
 
-  test("随机漫步建议边可逐条保留并持久化为 walk 关联", async ({ page }) => {
-    await page.getByRole("button", { name: "回顾", exact: true }).click()
-    await page.getByRole("button", { name: "随机漫步", exact: true }).click()
-    await page.getByRole("button", { name: "生成连接理由" }).click()
 
-    const suggestions = page.getByRole("region", { name: "建议的关联" })
-    await expect(suggestions).toBeVisible()
-    await expect(suggestions).toContainText("共同指向同一个后续行动")
-
-    await suggestions.getByRole("button", { name: "保留" }).click()
-    await expect(suggestions.getByText("已保留")).toBeVisible()
-
-    const linkCall = await page.evaluate(() => {
-      const calls = (globalThis as typeof globalThis & {
-        __SHARD_TEST_CALLS__: Array<{
-          args: Record<string, unknown>
-          command: string
-        }>
-      }).__SHARD_TEST_CALLS__
-      return calls.find(
-        (call) =>
-          call.command === "link_fragments" && call.args.origin === "walk"
-      )
-    })
-    expect(linkCall?.args).toMatchObject({
-      note: "共同指向同一个后续行动",
-      origin: "walk",
-    })
-    expect(linkCall?.args.sourceId).toMatch(/^fragment-/)
-    expect(linkCall?.args.targetId).toMatch(/^fragment-/)
-  })
 })
 
 test("插入标签按需补空格，汉字后不粘连", async ({ page }) => {
@@ -2326,15 +2340,14 @@ test.describe("正文表格", () => {
     ).toHaveText("—")
   })
 
-  test("编辑态给出可编辑表格，但源文本仍逐字符保留", async ({ page }) => {
+  test("编辑态保留旧表格源码，不再提供另一套单元格编辑器", async ({ page }) => {
     await fillEditor(page, "composer", TABLE)
-    await page.getByRole("button", { name: "插入表格" }).focus()
+    await page.getByRole("button", { name: "粗体", exact: true }).focus()
 
-    // 编辑态的表格是 EditorTable，不是只读的展示态表格
     await expect(page.locator("table.shard-markdown-table")).toHaveCount(0)
-    await expect(page.locator("table.shard-editor-table")).toHaveCount(1)
-
-    // widget 只替换渲染，不改 CM 文档；源文本必须逐字符保留。
+    await expect(page.locator("table.shard-editor-table")).toHaveCount(0)
+    await expect(page.getByRole("button", { name: "插入表格", exact: true })).toHaveCount(0)
+    await expect(page.locator('[data-shard-editor="composer"] .cm-content')).toContainText("行知中学")
     await expect.poll(() => readEditor(page, "composer")).toBe(TABLE)
   })
 })

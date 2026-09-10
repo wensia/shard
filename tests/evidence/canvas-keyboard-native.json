@@ -1,0 +1,40 @@
+{
+  "environment": "Isolated native Tauri WKWebView with current Vite frontend",
+  "appIdentifier": "dev.shard.multidrag-acceptance-20260907",
+  "file": "/var/folders/jd/9rnt7sl15d7_gkzln2svt9xw0000gn/T/shard-multidrag-native-px2jcycn/notes/原生画布验收.shardcanvas.json",
+  "revision": 15,
+  "topLevelNodes": 4,
+  "treeNodes": [
+    {
+      "id": "16cbaed8-6f6b-4b12-bce7-91183482fac6",
+      "text": "多选拖动验收",
+      "parentId": null
+    },
+    {
+      "id": "node-mtr3smv1-x7i90i",
+      "text": "子主题保持可见",
+      "parentId": "16cbaed8-6f6b-4b12-bce7-91183482fac6"
+    },
+    {
+      "id": "node-mtr59s31-pepsch",
+      "text": "一次回车创建同级",
+      "parentId": "16cbaed8-6f6b-4b12-bce7-91183482fac6"
+    },
+    {
+      "id": "node-mtr5alun-4xeh4y",
+      "text": "Tab创建子节点",
+      "parentId": "node-mtr3smv1-x7i90i"
+    }
+  ],
+  "verified": [
+    "Single native click selected the existing child and focused the canvas, not the text editor",
+    "One Return key inserted exactly one sibling and focused the new text editor",
+    "Escape preserved selection and returned focus to the canvas",
+    "Up selected the previous sibling without moving the canvas object",
+    "Space entered existing topic text editing",
+    "Tab from selection inserted one child and focused its editor",
+    "Save and reopen retained both new topics and exact parent relations",
+    "All top-level object coordinates match the prior isolated fixture"
+  ],
+  "limits": "Chinese text entered using accessibility setValue. Does not validate physical IME candidate behavior or trackpad gestures."
+}

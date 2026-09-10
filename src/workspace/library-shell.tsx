@@ -1,8 +1,9 @@
 import {
   type Dispatch,
-  type ComponentProps,
   type ReactNode,
   type SetStateAction,
+  lazy,
+  Suspense,
   useCallback,
   useEffect,
   useMemo,
@@ -10,22 +11,26 @@ import {
   useState,
 } from "react"
 import {
-  InboxIcon,
+  GitBranchIcon,
   ChevronDownIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
   FilePlus2Icon,
+  FileSpreadsheetIcon,
   FolderIcon,
   FolderPlusIcon,
   ImageIcon,
   LockKeyholeIcon,
   Maximize2Icon,
+  PlusIcon,
   Trash2Icon,
 } from "@/components/icons"
 import { toast } from "sonner"
 
 import { FragmentBacklinksPanel } from "@/components/shard/fragment-related"
 import { AssetGrid, AssetViewer } from "@/components/shard/asset-grid"
+import { DirectorySelectionToolbar } from "@/components/shard/directory-selection-toolbar"
+import { TrashEntryContextMenu } from "@/components/shard/library-entry-menu"
 import {
   DirectoryView,
   DirectoryViewToolbar,
@@ -34,12 +39,11 @@ import {
   type DirectoryViewMode,
   libraryEntryDestinations,
   readDirectoryViewPreference,
+  readDirectorySortPreference,
   writeDirectoryViewPreference,
+  writeDirectorySortPreference,
 } from "@/components/shard/directory-view"
-import { FragmentTimeline } from "@/components/shard/fragment-timeline"
-import { InboxTagBar } from "@/components/shard/inbox-tag-bar"
-import { SearchContextBar } from "@/components/shard/fragment-search-workspace"
-import { MindMapCanvas } from "@/components/shard/mind-map-workspace"
+import { MindMapCanvas, type MindMapCanvasHandle } from "@/components/shard/mind-map-workspace"
 import { ZenSurface } from "@/components/shard/zen-surface"
 import { Button } from "@/components/ui/button"
 import {
@@ -51,7 +55,15 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
-import { ShardEditor } from "@/editor/shard-editor"
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
+import type { CanvasWorkspaceHandle } from "@/features/canvas/canvas-workspace"
+import { createCanvas } from "@/features/canvas/api"
+import { createCanvasFile, type CanvasFile } from "@/features/canvas/model"
+import { TableWorkspace, type TableWorkspaceHandle } from "@/features/tables/table-workspace"
+import { TableImportDialog } from "@/features/tables/exchange-dialog"
+import { createTable, type CreateTableRequest } from "@/features/tables/api"
+import { createTableId, type TableContent, type TableReadResult } from "@/features/tables/model"
+import { ShardEditor, type ShardEditorHandle } from "@/editor/shard-editor"
 import { createShardTagAutocomplete } from "@/editor/extensions/tag-autocomplete"
 import {
   createShardWikilinkCompletionSource,
@@ -60,6 +72,10 @@ import {
 import {
   createLibraryDirectory,
   createLibraryNote,
+  createMindMap,
+  listDiagramDocuments,
+  listLibraryTree,
+  listFragments,
   convertNoteToFragment,
   deleteLibraryEntry,
   emptyTrash,
@@ -70,9 +86,11 @@ import {
   renameLibraryEntry,
   restoreFromTrash,
 } from "@/lib/api"
+import { createShardDocumentLinkExtension } from "@/editor/extensions/document-link"
 import { deriveKind } from "@/lib/content-kind"
 import { extractTags, normalizeTagList } from "@/lib/editor-format"
-import { isFragmentInMonth } from "@/lib/fragment-month"
+import { libraryEntryName, libraryNameError, type LibrarySort } from "@/lib/library-entry"
+import { useLibraryFileSelection } from "@/lib/use-library-file-selection"
 import { useImageUpload } from "@/hooks/use-image-upload"
 import { useFragmentRelations } from "@/lib/use-fragment-relations"
 import {
@@ -81,6 +99,8 @@ import {
   buildWikilinkCandidates,
 } from "@/lib/wikilink"
 import type {
+  ShardDocumentLink,
+  DiagramDocumentSummary,
   CsvFileSummary,
   Fragment,
   LibraryAssetEntry,
@@ -91,42 +111,38 @@ import type {
 
 import styles from "./library-shell.module.css"
 
+const CanvasWorkspace = lazy(() => import("@/features/canvas/canvas-workspace").then(module => ({ default: module.CanvasWorkspace })))
+
 export type LibrarySaveHandler = () => Promise<boolean>
 
 /** 工作台用来编排「保存门禁」的句柄：flush 排空草稿，isDirty 报告是否有未落盘内容或在飞保存。 */
 export interface LibraryDraftHandle {
   flush: LibrarySaveHandler
   isDirty: () => boolean
+  setInteractionBlocked: (blocked: boolean) => void
 }
 
 export type LibraryNavigationTarget =
-  | { kind: "note"; id: string; requestId: number }
-  | { kind: "fragments"; requestId: number }
+  | { kind: "note"; id: string; requestId: number; edit?: boolean }
   | { kind: "trash"; requestId: number }
 
 interface LibraryShellProps {
+  vaultPath: string
   csvFiles?: CsvFileSummary[]
   fragments: Fragment[]
-  fragmentsTimeline: Omit<
-    ComponentProps<typeof FragmentTimeline>,
-    "fragments" | "scrollToFragmentId"
-  >
-  fragmentsTagBar: Omit<
-    ComponentProps<typeof InboxTagBar>,
-    "selectedTag" | "onSelectTag" | "totalCount"
-  >
   isLoading: boolean
   libraryTree: LibraryTreeSnapshot | null
   knownTags: string[]
   navigateTo?: LibraryNavigationTarget | null
   onNavigateToFragment?: (fragmentId: string) => void
+  onConvertedToFragment?: (fragment: Fragment) => void
   onLibraryMutation: (result: LibraryMutationResult) => void
   onMoveToLockbox: (fragment: Fragment) => Promise<void>
   /** 点击树上的密匣挂载点：解锁并进入密匣一级空间（传送门）。 */
   onOpenLockbox: () => void
-  pendingScrollFragmentId?: string | null
-  searchContextBar?: ComponentProps<typeof SearchContextBar> | null
   onRegisterSaveHandler: (handle: LibraryDraftHandle | null) => void
+  onRefreshLibrary?: () => Promise<void>
+  onTableSaved?: () => void
   onSave: (
     id: string,
     content: string,
@@ -136,23 +152,38 @@ interface LibraryShellProps {
   /** 冲突后「载入磁盘版本」需要父级重新拉取 fragments 才能拿到最新内容。 */
   onRefreshFragments?: () => Promise<unknown> | void
   relationFragments?: Fragment[]
-  /** 向工作台状态栏上报保存态；没有打开笔记时报 null。 */
+  /** 向工作台状态栏上报保存态；没有打开文档时报 null。 */
   onSaveStateChange: (state: SaveState | null) => void
 }
 
 export type SaveState = "dirty" | "error" | "saved" | "saving"
 type TreeDialogState =
   | { kind: "delete"; entry: LibraryTreeEntry }
+  | { kind: "batchDelete"; entries: LibraryTreeEntry[] }
   | { kind: "purge"; entry: LibraryTreeEntry }
   | { kind: "emptyTrash" }
 type LibrarySelection =
   | { kind: "note"; id: string }
   | { kind: "mindmap"; path: string }
-  | { kind: "fragments"; month?: string }
+  | { kind: "table"; path: string }
+  | { kind: "canvas" | "flowchart"; path: string }
   | { kind: "trash" }
   | { kind: "assets"; path?: string }
   | { kind: "directory"; path: string }
   | null
+
+function readLibrarySelection(vaultPath: string): LibrarySelection {
+  try {
+    const value = JSON.parse(sessionStorage.getItem(`shard.library-selection:${vaultPath}`) ?? "null")
+    if (value?.kind === "note" && typeof value.id === "string") return { kind: "note", id: value.id }
+    if (["directory", "mindmap", "table", "canvas", "flowchart"].includes(value?.kind) &&
+      typeof value.path === "string" && (value.path === "notes" || value.path.startsWith("notes/"))) {
+      return { kind: value.kind, path: value.path }
+    }
+    if (value?.kind === "assets") return { kind: "assets", ...(typeof value.path === "string" ? { path: value.path } : {}) }
+  } catch { /* A missing or stale session preference falls back to the root directory. */ }
+  return { kind: "directory", path: "notes" }
+}
 
 interface RenameState {
   path: string
@@ -167,26 +198,32 @@ function countTreeEntries(entries: LibraryTreeEntry[]): number {
   )
 }
 
+function countLibraryFiles(entries: LibraryTreeEntry[]): number {
+  return entries.reduce((total, entry) => total + (
+    entry.kind === "directory" ? countLibraryFiles(entry.children ?? []) : 1
+  ), 0)
+}
+
 export function LibraryShell({
+  vaultPath,
   csvFiles = [],
   fragments,
-  fragmentsTimeline,
-  fragmentsTagBar,
   isLoading,
   libraryTree,
   knownTags,
   navigateTo = null,
   onNavigateToFragment,
+  onConvertedToFragment,
   onLibraryMutation,
   onMoveToLockbox,
   onOpenLockbox,
-  pendingScrollFragmentId = null,
   onRegisterSaveHandler,
+  onRefreshLibrary,
+  onTableSaved,
   onSaveStateChange,
   onRefreshFragments,
   onSave,
   relationFragments = fragments,
-  searchContextBar = null,
 }: LibraryShellProps) {
   const notes = useMemo(
     () => fragments.filter((fragment) => deriveKind(fragment.tags) === "note"),
@@ -196,33 +233,72 @@ export function LibraryShell({
     () => new Map(notes.map((note) => [note.path, note.content])),
     [notes]
   )
-  const inboxTimelineFragments = useMemo(
-    () =>
-      fragments.filter(
-        (fragment) =>
-          deriveKind(fragment.tags) === "fragment" &&
-          fragment.tags.includes("inbox")
-      ),
-    [fragments]
-  )
-  const [selection, setSelection] = useState<LibrarySelection>(null)
+  const [selection, setSelection] = useState<LibrarySelection>(() => readLibrarySelection(vaultPath))
+  const [pendingIndexPath, setPendingIndexPath] = useState<string | null>(null)
+  const noteEditor = useRef<ShardEditorHandle>(null)
+  const tableHandle = useRef<TableWorkspaceHandle>(null)
+  const canvasHandle = useRef<CanvasWorkspaceHandle>(null)
+  const mindMapHandle = useRef<MindMapCanvasHandle>(null)
+  const selectedCanvasPath = selection?.kind === "canvas" || selection?.kind === "flowchart" ? selection.path : null
+  const [canvasSaveState, setCanvasSaveState] = useState<SaveState>("saved")
+  const [mindMapSaveState, setMindMapSaveState] = useState<SaveState>("saved")
+  const pendingCanvasCreate = useRef<{ parent: string; file: CanvasFile } | null>(null)
+  const [importTableParent, setImportTableParent] = useState<string | null>(null)
+  const [importTableSource, setImportTableSource] = useState<string | undefined>()
+  const pendingTableCreate = useRef<CreateTableRequest | null>(null)
+  const selectedTablePath = selection?.kind === "table" ? selection.path : null
+  const [tableSaveState, setTableSaveState] = useState<SaveState>("saved")
+  const tableStructurePending = useRef(false)
+  const [tableStructureBusy, setTableStructureBusy] = useState(false)
+  const [interactionBlocked, setInteractionBlocked] = useState(false)
   const [directoryViewMode, setDirectoryViewMode] =
     useState<DirectoryViewMode>(readDirectoryViewPreference)
+  const [directorySort, setDirectorySort] = useState<LibrarySort>(readDirectorySortPreference)
+  function changeDirectorySort(sort: LibrarySort) {
+    setDirectorySort(sort)
+    writeDirectorySortPreference(sort)
+  }
   const [trashDirectoryPath, setTrashDirectoryPath] = useState(".trash")
-  const [fragmentsTag, setFragmentsTag] = useState<string | null>(null)
   const [selectedTreePath, setSelectedTreePath] = useState("notes")
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(
     () => new Set(["notes"])
   )
   const [busyAction, setBusyAction] = useState<string | null>(null)
+  const pendingCreateAction = useRef<(() => void) | null>(null)
+  const restoreCreateMenuFocus = useRef(true)
+
+  function queueCreateAction(action: () => void) {
+    restoreCreateMenuFocus.current = false
+    pendingCreateAction.current = action
+  }
+  const batchPending = useRef(false)
+  const [batchError, setBatchError] = useState<string | null>(null)
   const [treeDialog, setTreeDialog] = useState<TreeDialogState | null>(null)
   const [renaming, setRenaming] = useState<RenameState | null>(null)
+  const titleRenameInput = useRef<HTMLInputElement>(null)
+  const renamePromiseRef = useRef<Promise<LibraryMutationResult | null> | null>(null)
+  useEffect(() => {
+    if (renaming?.source !== "editor") return
+    const blurTitle = () => titleRenameInput.current?.blur()
+    const handlePointerDown = (event: PointerEvent) => {
+      const input = titleRenameInput.current
+      if (input && !event.composedPath().includes(input)) input.blur()
+    }
+    // Tauri drag regions cancel the normal mousedown focus transfer.
+    // End title editing before that happens, using the same onBlur save path.
+    document.addEventListener("pointerdown", handlePointerDown, true)
+    window.addEventListener("blur", blurTitle)
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown, true)
+      window.removeEventListener("blur", blurTitle)
+    }
+  }, [renaming?.source])
   const [creatingDirectory, setCreatingDirectory] = useState<{
     parent: string
     value: string
   } | null>(null)
   const [draft, setDraft] = useState("")
-  const [mobilePane, setMobilePane] = useState<"editor" | "list">("list")
+  const [mobilePane, setMobilePane] = useState<"editor" | "list">("editor")
   const [saveState, setSaveState] = useState<SaveState>("saved")
   const [isZen, setIsZen] = useState(false)
   const selectedNoteId = selection?.kind === "note" ? selection.id : null
@@ -262,6 +338,29 @@ export function LibraryShell({
       ),
     [markdownContentByPath, selectedDirectoryEntries]
   )
+  const directoryScope = selection?.kind === "directory" ? selection.path : null
+  const fileSelection = useLibraryFileSelection(
+    directoryScope, selectedDirectoryEntries, directorySort, busyAction !== null || renaming !== null || treeDialog !== null,
+  )
+  useEffect(() => { setBatchError(null) }, [directoryScope])
+  useEffect(() => {
+    if (!fileSelection.active && !batchPending.current) setBatchError(null)
+  }, [fileSelection.active])
+  const [selectionDockSize, setSelectionDockSize] = useState({ width: 0, height: 0 })
+  const directoryWorkspaceRef = useRef<HTMLDivElement>(null)
+  function clearFileSelectionFromDock() {
+    directoryWorkspaceRef.current?.querySelector<HTMLElement>('[data-selection-active="true"]')?.focus({ preventScroll: true })
+    fileSelection.onClear()
+    setBatchError(null)
+  }
+  const measureSelectionDock = useCallback(({ width, height }: { width: number; height: number }) => {
+    if (width === 0) return
+    setSelectionDockSize(current => {
+      // Retain clearance when selection/error text disappears, including at the scroll end.
+      const nextHeight = Math.ceil(current.width === width ? Math.max(current.height, height) : height)
+      return current.width === width && current.height === nextHeight ? current : { width, height: nextHeight }
+    })
+  }, [])
   const selectedTrashEntries = useMemo(() => {
     if (selection?.kind !== "trash") return []
     if (trashDirectoryPath === ".trash") return libraryTree?.trashEntries ?? []
@@ -325,16 +424,19 @@ export function LibraryShell({
         getCandidates: () => wikilinkCandidatesRef.current,
         maxCsvRows: 50,
         onMissingTarget: (target) =>
-          toast(`待建链接「${target}」尚不存在，可在资料库新建笔记`),
+          toast(`待建链接「${target}」尚不存在，可在资料库新建文档`),
         onNavigate: (fragmentId) =>
           wikilinkNavigateRef.current?.(fragmentId),
         onNavigateToMindMap: (path) => void selectMindMap(path),
       }),
     [wikilinkCandidates]
   )
+  const documentNavigateRef = useRef(openCanvasLink)
+  documentNavigateRef.current = openCanvasLink
+  const documentLinkExtension = useMemo(() => createShardDocumentLinkExtension(link => void documentNavigateRef.current(link)), [])
   const editorExtensions = useMemo(
-    () => [tagAutocompleteExtension, wikilinkExtension],
-    [tagAutocompleteExtension, wikilinkExtension]
+    () => [tagAutocompleteExtension, wikilinkExtension, documentLinkExtension],
+    [tagAutocompleteExtension, wikilinkExtension, documentLinkExtension]
   )
 
   draftRef.current = draft
@@ -358,37 +460,32 @@ export function LibraryShell({
   })
 
   useEffect(() => {
-    if (notes.length === 0) {
-      if (selection?.kind === "note") {
-        setSelection(null)
+    if (isLoading || !libraryTree) return
+    const missingNote = selection?.kind === "note" && !notes.some((note) => note.id === selection.id)
+    const missingFile = selection && ["directory", "mindmap", "table", "canvas", "flowchart"].includes(selection.kind) &&
+      "path" in selection && selection.path !== "notes" && !findTreeEntry(libraryTree.entries, selection.path!)
+    if (!selection || missingNote || missingFile) {
+      setSelection({ kind: "directory", path: "notes" })
+      setSelectedTreePath("notes")
+      if (missingNote) {
         setDraft("")
         draftRef.current = ""
         lastSavedContentRef.current = ""
         setSaveState("saved")
-        setIsZen(false)
-        setMobilePane("list")
       }
+      setIsZen(false)
+      setMobilePane("editor")
       return
     }
-
-    if (selectedNoteId && !notes.some((note) => note.id === selectedNoteId)) {
-      setSelection(null)
-      setSelectedTreePath("notes")
-      setIsZen(false)
+    if (selection.kind === "assets" && selection.path && !libraryTree.assets.some(asset => asset.path === selection.path)) {
+      setSelection({ kind: "assets" })
+      return
     }
-  }, [notes, selectedNoteId, selection?.kind])
-
-  useEffect(() => {
-    if (
-      selection?.kind === "mindmap" &&
-      !libraryMindMaps.some((map) => map.path === selection.path)
-    ) {
-      setSelection(null)
-      setSelectedTreePath("notes")
-      setIsZen(false)
-      setMobilePane("list")
-    }
-  }, [libraryMindMaps, selection])
+    if (selection.kind === "trash") return
+    if (selection.kind !== "note") setSelectedTreePath(selection.kind === "assets" ? "::assets" : selection.path)
+    try { sessionStorage.setItem(`shard.library-selection:${vaultPath}`, JSON.stringify(selection)) }
+    catch { /* Browsing remains available when session storage is unavailable. */ }
+  }, [isLoading, libraryTree, notes, selection, vaultPath])
 
   useEffect(() => {
     if (!selectedNote) return
@@ -441,6 +538,10 @@ export function LibraryShell({
   }, [selectedNote?.path])
 
   const saveCurrentNote = useCallback<LibrarySaveHandler>(async () => {
+    if (tableStructurePending.current) return false
+    if (canvasHandle.current && !(await canvasHandle.current.flush())) return false
+    if (mindMapHandle.current && !(await mindMapHandle.current.save())) return false
+    if (tableHandle.current && !(await tableHandle.current.flush())) return false
     // 排空式保存：在飞的保存只覆盖它启动瞬间的快照。等它结束后必须回头重查
     // 草稿是否又变了，直到「无在飞 && 草稿==已落盘」才算 flush 完成，
     // 否则慢保存期间的尾随输入会被吞掉（自动保存 800ms 与切换/同步都依赖这里）。
@@ -466,7 +567,7 @@ export function LibraryShell({
       const savePromise = (async () => {
       if (content.trim().length === 0) {
         setSaveState("error")
-        toast.error("笔记内容不能为空", { duration: Infinity })
+        toast.error("文档内容不能为空", { duration: Infinity })
         return false
       }
 
@@ -508,7 +609,7 @@ export function LibraryShell({
         const message = getApiErrorMessage(error)
         if (message.includes("STALE_BASE")) {
           const keepMine = window.confirm(
-            "这篇笔记的磁盘内容已被修改（可能来自同步或外部编辑）。\n\n「确定」：用当前草稿覆盖磁盘版本\n「取消」：放弃当前草稿，载入磁盘最新版本"
+            "这篇文档的磁盘内容已被修改（可能来自同步或外部编辑）。\n\n「确定」：用当前草稿覆盖磁盘版本\n「取消」：放弃当前草稿，载入磁盘最新版本"
           )
           if (keepMine) {
             // 清掉基线哈希放行一次强制保存；外层排空循环会立即重存
@@ -546,16 +647,22 @@ export function LibraryShell({
 
   // 状态栏要的是能触发重渲染的值，saveHandlerRef 那条通道是 ref，拿不到
   useEffect(() => {
-    onSaveStateChange(selectedNote ? saveState : null)
+    onSaveStateChange(selectedCanvasPath ? canvasSaveState : selectedTablePath ? tableSaveState : selectedMindMap ? mindMapSaveState : selectedNote ? saveState : null)
     return () => onSaveStateChange(null)
-  }, [onSaveStateChange, saveState, selectedNote])
+  }, [onSaveStateChange, saveState, selectedNote, selectedTablePath, tableSaveState, selectedCanvasPath, canvasSaveState, selectedMindMap, mindMapSaveState])
 
   useEffect(() => {
     onRegisterSaveHandler({
       flush: saveCurrentNote,
+      setInteractionBlocked: blocked => {
+        setInteractionBlocked(blocked)
+        tableHandle.current?.setInteractionBlocked(blocked)
+        canvasHandle.current?.setInteractionBlocked(blocked)
+        mindMapHandle.current?.setInteractionBlocked(blocked)
+      },
       // error 也算 dirty：内容仍未落盘，检查点与同步都必须等它解决
       isDirty: () =>
-        saveStateRef.current !== "saved" || savePromiseRef.current !== null,
+        tableStructurePending.current || Boolean(canvasHandle.current?.isDirty()) || Boolean(mindMapHandle.current?.isDirty()) || Boolean(tableHandle.current?.isDirty()) || saveStateRef.current !== "saved" || savePromiseRef.current !== null,
     })
     return () => onRegisterSaveHandler(null)
   }, [onRegisterSaveHandler, saveCurrentNote])
@@ -578,13 +685,13 @@ export function LibraryShell({
       if (event.shiftKey || event.altKey) return
       if (event.key.toLowerCase() !== "s") return
       event.preventDefault()
-      if (selectedNoteRef.current) void saveCurrentNote()
+      if (selectedNoteRef.current || tableHandle.current || canvasHandle.current || mindMapHandle.current) void saveCurrentNote()
     }
     window.addEventListener("keydown", onKeyDown)
     return () => window.removeEventListener("keydown", onKeyDown)
   }, [saveCurrentNote])
 
-  async function selectNote(noteId: string) {
+  async function selectNote(noteId: string, edit = false) {
     if (noteId !== selectedNoteRef.current?.id) {
       const saved = await saveCurrentNote()
       if (!saved) return
@@ -594,7 +701,18 @@ export function LibraryShell({
     }
     setIsZen(false)
     setMobilePane("editor")
+    if (edit) window.requestAnimationFrame(() => {
+      if (selectedNoteRef.current?.id === noteId) noteEditor.current?.focus()
+    })
   }
+
+  useEffect(() => {
+    if (!pendingIndexPath) return
+    const note = notes.find(item => item.path === pendingIndexPath)
+    if (!note) return
+    setPendingIndexPath(null)
+    void selectNote(note.id)
+  }, [notes, pendingIndexPath])
 
   async function selectMindMap(path: string) {
     const map = libraryMindMaps.find((candidate) => candidate.path === path)
@@ -611,13 +729,44 @@ export function LibraryShell({
     setMobilePane("editor")
   }
 
-  async function selectFragmentsView({ month }: { month?: string }) {
-    if (!(await saveCurrentNote())) return
-    setSelection({ kind: "fragments", month })
-    setFragmentsTag(null)
-    setSelectedTreePath("::fragments")
+  async function selectCanvas(path: string, kind: "canvas" | "flowchart" = path.endsWith(".shardflow.json") ? "flowchart" : "canvas") {
+    if (selectedCanvasPath !== path) {
+      if (!(await saveCurrentNote())) return false
+      setSelection({ kind, path })
+      setSelectedTreePath(path)
+    }
     setIsZen(false)
     setMobilePane("editor")
+    return true
+  }
+
+  async function openCanvasLink(link: ShardDocumentLink) {
+    if (!(await saveCurrentNote())) return
+    if (link.targetType === "map" || link.targetType === "flow") {
+      try {
+        const documents = await listDiagramDocuments()
+        const document = documents.find(item => item.id === link.targetId && item.kind === (link.targetType === "map" ? "mindmap" : "flowchart"))
+        if (!document) { toast.error("引用的图文档已不存在"); return }
+        if (document.kind === "mindmap") await selectMindMap(document.path)
+        else await selectCanvas(document.path, "flowchart")
+      } catch (error) { toast.error(`打开图文档失败：${getApiErrorMessage(error)}`) }
+      return
+    }
+    const source = relationFragments.find(fragment => link.targetType === "fragment" ? fragment.id === link.targetId : fragment.path === link.path)
+    if (!source) { toast.error("引用的资料已不存在或已移动"); return }
+    if (deriveKind(source.tags) === "note") await selectNote(source.id)
+    else onNavigateToFragment?.(source.id)
+  }
+
+  async function selectTable(path: string) {
+    if (selectedTablePath !== path) {
+      if (!(await saveCurrentNote())) return false
+      setSelection({ kind: "table", path })
+      setSelectedTreePath(path)
+    }
+    setIsZen(false)
+    setMobilePane("editor")
+    return true
   }
 
   async function selectAssetsView(path?: string) {
@@ -650,56 +799,32 @@ export function LibraryShell({
       return
     }
     if (navigateTo.kind === "note") {
-      if (navigateTo.id === selectedNoteRef.current?.id) {
-        consumedNavigationRef.current = navigateTo.requestId
-        return
-      }
-      // 目标笔记可能还没进列表（刚整理生成、刷新在途）：不消费，等 notes 更新重试
+      // 目标文档可能还没进列表（刚整理生成、刷新在途）：不消费，等 notes 更新重试
       if (!notes.some((note) => note.id === navigateTo.id)) return
       consumedNavigationRef.current = navigateTo.requestId
-      void selectNote(navigateTo.id)
+      void selectNote(navigateTo.id, navigateTo.edit)
       return
     }
     consumedNavigationRef.current = navigateTo.requestId
     if (navigateTo.kind === "trash") {
       void selectTrashView()
-    } else {
-      void selectFragmentsView({})
     }
   }, [navigateTo, notes])
 
-  const visibleTimelineFragments = useMemo(() => {
-    if (selection?.kind !== "fragments") return []
-    return inboxTimelineFragments.filter(
-      (fragment) =>
-        (!selection.month || isFragmentInMonth(fragment, selection.month)) &&
-        (!fragmentsTag || fragment.tags.includes(fragmentsTag))
-    )
-  }, [
-    fragmentsTag,
-    inboxTimelineFragments,
-    selection,
-  ])
-  const fragmentsScrollTargetId = pendingScrollFragmentId &&
-    visibleTimelineFragments.some((fragment) => fragment.id === pendingScrollFragmentId)
-    ? pendingScrollFragmentId
-    : null
-
   // 树只剩目录后，第三栏打开文件就没有回到列表的路了——给出所在目录的返回口，
   // 与图片单张视图的「返回图片列表」同一个模式。
+  const selectedFilePath = selectedNote?.path ?? selectedMindMap?.path ?? selectedTablePath ?? selectedCanvasPath
+  const canEnterZen = selection?.kind === "note" || selection?.kind === "mindmap" ||
+    (selection?.kind === "assets" && Boolean(selection.path))
   const openedFileParentPath = (() => {
-    const path = selectedNote?.path ?? selectedMindMap?.path
+    const path = selectedFilePath
     if (!path) return null
     const separator = path.lastIndexOf("/")
     return separator > 0 ? path.slice(0, separator) : "notes"
   })()
 
   const selectedTitle =
-    selection?.kind === "fragments"
-      ? selection.month
-          ? `${selection.month.slice(0, 4)}年${selection.month.slice(5)}月`
-          : "碎片流"
-      : selection?.kind === "trash"
+    selection?.kind === "trash"
         ? "回收站"
       : selection?.kind === "assets"
         ? "图片"
@@ -707,8 +832,12 @@ export function LibraryShell({
         ? selection.path === "notes"
           ? "资料库"
           : selection.path.split("/").pop() || "资料库"
+      : selectedCanvasPath
+        ? selectedCanvasPath.split("/").pop()?.replace(/\.shard(?:canvas|flow)\.json$/iu, "") || "未命名流程图"
+      : selectedTablePath
+        ? selectedTablePath.split("/").pop()?.replace(/\.shardtable\.json$/iu, "") || "未命名多维表格"
       : selectedNote
-        ? selectedNote.path.split("/").pop()?.replace(/\.md$/iu, "") || "无标题笔记"
+        ? selectedNote.path.split("/").pop()?.replace(/\.md$/iu, "") || "无标题文档"
       : selectedMindMap
         ? stripMindMapExtension(selectedMindMap.name)
         : "选择内容"
@@ -717,6 +846,9 @@ export function LibraryShell({
     () => ["notes", ...collectDirectoryPaths(libraryTree?.entries ?? [])],
     [libraryTree]
   )
+  const batchDestinations = useMemo(() => fileSelection.selectedEntries.reduce(
+    (available, entry) => libraryEntryDestinations(entry, available), directories,
+  ), [directories, fileSelection.selectedEntries])
   const selectedDirectory = useMemo(() => {
     if (selectedTreePath === "notes") return "notes"
     const selectedEntry = findTreeEntry(libraryTree?.entries ?? [], selectedTreePath)
@@ -724,18 +856,31 @@ export function LibraryShell({
     const separator = selectedTreePath.lastIndexOf("/")
     return separator > 0 ? selectedTreePath.slice(0, separator) : "notes"
   }, [libraryTree, selectedTreePath])
+  const activeFileDirectory = selection && !["assets", "trash"].includes(selection.kind)
+    ? selectedDirectory : null
+  const fileCount = useMemo(() => countLibraryFiles(libraryTree?.entries ?? []), [libraryTree])
+
+  useEffect(() => {
+    if (!activeFileDirectory || activeFileDirectory === "notes") return
+    setExpandedPaths((current) => {
+      const ancestors = activeFileDirectory.split("/").slice(0, -1)
+        .map((_, index, parts) => parts.slice(0, index + 1).join("/"))
+      if (ancestors.every(path => current.has(path))) return current
+      return new Set([...current, ...ancestors])
+    })
+  }, [activeFileDirectory])
 
   async function runMutation(
     label: string,
     mutation: () => Promise<LibraryMutationResult>,
-    { revealNote = true }: { revealNote?: boolean } = {}
+    { revealNote = true, reportError = true, onSuccess }: { revealNote?: boolean; reportError?: boolean; onSuccess?(result: LibraryMutationResult): void } = {}
   ) {
     if (busyAction) return null
     setBusyAction(label)
     try {
       const result = await mutation()
       onLibraryMutation(result)
-      if (result.fragment) {
+      if (result.fragment && deriveKind(result.fragment.tags) === "note") {
         if (revealNote) {
           setSelection({ kind: "note", id: result.fragment.id })
           setMobilePane("editor")
@@ -745,11 +890,11 @@ export function LibraryShell({
       if (result.updatedLinks > 0) {
         toast(`已更新 ${result.updatedLinks} 处双链引用`)
       }
+      // Keep path selection and the new tree in one update, before a missing-file effect can clear the viewer.
+      onSuccess?.(result)
       return result
     } catch (error) {
-      toast.error(`${label}失败：${getApiErrorMessage(error)}`, {
-        duration: Infinity,
-      })
+      if (reportError) toast.error(`${label}失败：${getApiErrorMessage(error)}`, { duration: Infinity })
       return null
     } finally {
       setBusyAction(null)
@@ -759,10 +904,24 @@ export function LibraryShell({
   async function runSavedMutation(
     label: string,
     mutation: () => Promise<LibraryMutationResult>,
-    options?: { revealNote?: boolean }
+    options?: { revealNote?: boolean; reportError?: boolean; onSuccess?(result: LibraryMutationResult): void }
   ) {
-    if (!(await saveCurrentNote())) return null
-    return runMutation(label, mutation, options)
+    if (busyAction || tableStructurePending.current) return null
+    const table = tableHandle.current ?? canvasHandle.current ?? mindMapHandle.current
+    table?.setInteractionBlocked(true)
+    setTableStructureBusy(true)
+    // Begin the existing flush before closing navigation's gate. The table's
+    // synchronous input gate spans that flush, the filesystem work and remap.
+    const saving = saveCurrentNote()
+    tableStructurePending.current = true
+    try {
+      if (!(await saving)) return null
+      return await runMutation(label, mutation, options)
+    } finally {
+      tableStructurePending.current = false
+      table?.setInteractionBlocked(false)
+      setTableStructureBusy(false)
+    }
   }
 
   function requestDelete(entry: LibraryTreeEntry) {
@@ -773,23 +932,139 @@ export function LibraryShell({
     setTreeDialog({ kind: "purge", entry })
   }
 
+  function remapSelectedTable(oldPath: string, newPath: string) {
+    setSelection(current => {
+      if ((current?.kind !== "table" && current?.kind !== "canvas" && current?.kind !== "flowchart" && current?.kind !== "mindmap") || !(current.path === oldPath || current.path.startsWith(`${oldPath}/`))) return current
+      const path = newPath + current.path.slice(oldPath.length)
+      setSelectedTreePath(path)
+      return { kind: current.kind, path }
+    })
+  }
+
   function moveEntry(entry: LibraryTreeEntry, destinationDirectory: string) {
     void runSavedMutation("移动", () =>
-      moveLibraryEntry(entry.path, destinationDirectory)
+      moveLibraryEntry(entry.path, destinationDirectory),
+      { onSuccess: () => remapSelectedTable(entry.path, `${destinationDirectory}/${entry.name}`) }
     )
+  }
+
+  async function runBatchMutation(entries: LibraryTreeEntry[], destination?: string) {
+    if (batchPending.current || busyAction || tableStructurePending.current || entries.length === 0) return
+    batchPending.current = true
+    const label = destination ? "移动" : "删除"
+    const completed: string[] = []
+    let latest: LibraryMutationResult | null = null
+    let updatedLinks = 0
+    setBatchError(null)
+    setBusyAction(`${label}中（0/${entries.length}）`)
+    const saving = saveCurrentNote()
+    tableStructurePending.current = true
+    try {
+      if (!(await saving)) return
+      for (const entry of entries) {
+        setBusyAction(`${label}中（${completed.length + 1}/${entries.length}）`)
+        try {
+          latest = destination
+            ? await moveLibraryEntry(entry.path, destination)
+            : await deleteLibraryEntry(entry.path)
+          updatedLinks += latest.updatedLinks
+          completed.push(entry.path)
+        } catch (error) {
+          let message = `已完成 ${completed.length}/${entries.length} 项；「${entry.name}」操作失败：${getApiErrorMessage(error)}，已停止后续操作。`
+          let hasRemainingFiles = true
+          // A command can fail while building its result after the file has moved.
+          // Read the actual tree before offering another attempt; never retry writes.
+          if (latest) onLibraryMutation({ ...latest, updatedLinks })
+          try {
+            const tree = await listLibraryTree()
+            hasRemainingFiles = entries.some(entry => findTreeEntry(tree.entries, entry.path) !== null)
+            onLibraryMutation({ tree, updatedLinks: 0 })
+          } catch {
+            message += " 目录刷新失败，请重新打开资料库核对结果。"
+          }
+          setBatchError(message)
+          if (!hasRemainingFiles) {
+            toast.error(`批量${label}返回错误，目录已刷新，请核对文件位置。`, { duration: Infinity })
+          }
+          fileSelection.finish(completed, false)
+          setTreeDialog(null)
+          return
+        }
+      }
+      if (latest) onLibraryMutation({ ...latest, updatedLinks })
+      fileSelection.finish(completed, true)
+      setTreeDialog(null)
+      toast.success(`已${label} ${completed.length} 项${updatedLinks ? `，更新 ${updatedLinks} 处双链引用` : ""}`)
+    } finally {
+      tableStructurePending.current = false
+      batchPending.current = false
+      setBusyAction(null)
+    }
   }
 
   function convertEntryToFragment(entry: LibraryTreeEntry) {
     const note = notes.find((candidate) => candidate.path === entry.path)
     if (!note) return
-    void runSavedMutation("转回碎片", () =>
-      convertNoteToFragment(note.id)
-    ).then((result) => {
-      if (!result) return
-      setSelection(null)
-      setSelectedTreePath("notes")
+    const parent = note.path.slice(0, note.path.lastIndexOf("/")) || "notes"
+    let attempted = false
+    let failure: unknown
+    function closeConvertedDocument() {
+      setSelection({ kind: "directory", path: parent })
+      setSelectedTreePath(parent)
+      selectedNoteRef.current = null
       setIsZen(false)
-      setMobilePane("list")
+      setMobilePane("editor")
+      try { sessionStorage.setItem(`shard.library-selection:${vaultPath}`, JSON.stringify({ kind: "directory", path: parent })) }
+      catch { /* The conversion does not depend on restoring the previous directory. */ }
+    }
+    function openConvertedFragment(fragment: Fragment) {
+      closeConvertedDocument()
+      setInteractionBlocked(false)
+      if (onConvertedToFragment) onConvertedToFragment(fragment)
+      else onNavigateToFragment?.(fragment.id)
+    }
+    async function verifyConversion() {
+      // A failed response does not prove that the file stayed in notes. Freeze
+      // the old editor until a read confirms the current identity and type.
+      setInteractionBlocked(true)
+      try {
+        const state = await listFragments()
+        const current = state.fragments.find(fragment => fragment.id === note!.id)
+        if (current && deriveKind(current.tags) === "fragment") {
+          try {
+            const tree = await listLibraryTree()
+            onLibraryMutation({ tree, fragment: current, updatedLinks: 0 })
+          } catch {
+            // The object is already verified. A tree refresh failure must not
+            // leave its previous document editor available for another save.
+            void onRefreshLibrary?.().catch(() => undefined)
+          }
+          openConvertedFragment(current)
+          toast("已核对：内容已转回碎片")
+        } else if (current) {
+          setInteractionBlocked(false)
+          toast.error(`转回碎片失败：${getApiErrorMessage(failure)}`, { duration: Infinity })
+        } else {
+          closeConvertedDocument()
+          setInteractionBlocked(false)
+          toast.error("文档当前不可访问，已关闭编辑器并刷新资料库。", { duration: Infinity })
+          void onRefreshLibrary?.().catch(() => undefined)
+        }
+        void Promise.resolve(onRefreshFragments?.()).catch(() => undefined)
+      } catch {
+        toast.error("暂时无法核对转换结果，已暂停原文档编辑。", {
+          duration: Infinity,
+          action: { label: "重新核对", onClick: () => void verifyConversion() },
+        })
+      }
+    }
+    void runSavedMutation("转回碎片", async () => {
+      attempted = true
+      try { return await convertNoteToFragment(note.id) }
+      catch (error) { failure = error; throw error }
+    }, { revealNote: false, reportError: false }).then((result) => {
+      if (result?.fragment) openConvertedFragment(result.fragment)
+      else if (attempted) void verifyConversion()
     })
   }
 
@@ -812,42 +1087,136 @@ export function LibraryShell({
     setRenaming({
       path,
       source,
-      value: fileName.replace(/\.(?:shardmap\.json|md|csv)$/iu, ""),
+      value: fileName.replace(/\.(?:shardflow\.json|shardcanvas\.json|shardtable\.json|shardmap\.json|md|csv)$/iu, ""),
     })
   }
 
   async function submitRename() {
+    if (renamePromiseRef.current) return renamePromiseRef.current
     if (!renaming || busyAction) return
     const value = renaming.value.trim()
     const currentName = (renaming.path.split("/").pop() ?? "").replace(
-      /\.(?:shardmap\.json|md|csv)$/iu,
+      /\.(?:shardflow\.json|shardcanvas\.json|shardtable\.json|shardmap\.json|md|csv)$/iu,
       ""
     )
     if (!value || value === currentName) {
       setRenaming(null)
       return
     }
-    const result = await runSavedMutation("重命名", () =>
-      renameLibraryEntry(renaming.path, value)
-    )
-    if (result) setRenaming(null)
+    const entry = findTreeEntry(libraryTree?.entries ?? [], renaming.path)
+    const extension = entry ? entry.name.slice(libraryEntryName(entry).length) : ""
+    const nameError = libraryNameError(value, extension)
+    if (nameError) {
+      toast.error(nameError)
+      return
+    }
+    const oldPath = renaming.path
+    const promise = runSavedMutation("重命名", () => renameLibraryEntry(oldPath, value), {
+      onSuccess: () => {
+        const extension = oldPath.endsWith(".shardflow.json") ? ".shardflow.json" : oldPath.endsWith(".shardmap.json") ? ".shardmap.json" : oldPath.endsWith(".shardcanvas.json") ? ".shardcanvas.json" : oldPath.endsWith(".shardtable.json") ? ".shardtable.json" : ""
+        const name = extension && !value.endsWith(extension) ? `${value}${extension}` : value
+        remapSelectedTable(oldPath, `${oldPath.slice(0, oldPath.lastIndexOf("/"))}/${name}`)
+        setRenaming(null)
+      },
+    })
+    renamePromiseRef.current = promise
+    try {
+      return await promise
+    } finally {
+      renamePromiseRef.current = null
+    }
   }
 
-  async function createNoteAndRename() {
+  async function tableCreated(result: TableReadResult) {
+    onTableSaved?.()
+    await onRefreshLibrary?.()
+    if (!(await selectTable(result.path))) throw new Error("多维表格已创建；当前内容尚未保存，暂未打开")
+  }
+
+  async function importLibraryTable(entry: LibraryTreeEntry) {
+    if (busyAction || !(await saveCurrentNote())) return
+    setImportTableSource(`${vaultPath.replace(/\/$/u, "")}/${entry.path}`)
+    setImportTableParent(entry.path.slice(0, entry.path.lastIndexOf("/")))
+  }
+
+  async function createNativeMindMap() {
+    if (busyAction || !(await saveCurrentNote())) return
+    setBusyAction("新建思维导图")
+    try {
+      const result = await createMindMap("未命名思维导图", undefined, selectedDirectory)
+      onTableSaved?.()
+      await onRefreshLibrary?.()
+      setSelection({ kind: "mindmap", path: result.path })
+      setSelectedTreePath(result.path)
+      setIsZen(false)
+      setMobilePane("editor")
+    } catch (error) { toast.error(`新建思维导图失败：${getApiErrorMessage(error)}`, { duration: Infinity }) }
+    finally { setBusyAction(null) }
+  }
+
+  async function copyDiagramLink(entry: LibraryTreeEntry) {
+    try {
+      const documents = await listDiagramDocuments()
+      const document = documents.find(item => item.path === entry.path)
+      if (!document) throw new Error("图文档已不存在")
+      const label = document.title.replace(/[\[\]\\]/gu, "\\$&")
+      await navigator.clipboard.writeText(`[${label}](shard://${document.kind === "mindmap" ? "map" : "flow"}/${encodeURIComponent(document.id)})`)
+      toast.success("已复制文档链接，可粘贴到文档")
+    } catch (error) { toast.error(`复制文档链接失败：${getApiErrorMessage(error)}`) }
+  }
+
+  async function onCanvasSplit(result: { documents: DiagramDocumentSummary[]; indexPath: string }) {
+    onTableSaved?.()
+    await onRefreshLibrary?.()
+    await onRefreshFragments?.()
+    setSelection({ kind: "directory", path: result.indexPath.slice(0, result.indexPath.lastIndexOf("/")) })
+    setSelectedTreePath(result.indexPath)
+    setPendingIndexPath(result.indexPath)
+  }
+
+  async function createNativeFlowchart() {
+    if (busyAction || !(await saveCurrentNote())) return
+    setBusyAction("新建流程图")
+    try {
+      pendingCanvasCreate.current ??= { parent: selectedDirectory, file: createCanvasFile("未命名流程图") }
+      const request = pendingCanvasCreate.current
+      const result = await createCanvas(request.parent, request.file.title, request.file)
+      onTableSaved?.()
+      await onRefreshLibrary?.()
+      if (await selectCanvas(result.path)) pendingCanvasCreate.current = null
+    } catch (error) {
+      toast.error(`新建流程图失败：${getApiErrorMessage(error)}`, { duration: Infinity })
+    } finally { setBusyAction(null) }
+  }
+
+  async function createNativeTable() {
+    if (busyAction || !(await saveCurrentNote())) return
+    setBusyAction("新建多维表格")
+    try {
+      if (!pendingTableCreate.current) {
+        const primary = createTableId("fld"); const viewId = createTableId("view")
+        const content: TableContent = { primaryFieldId: primary, fields: { [primary]: { id: primary, name: "名称", type: "text" } }, fieldOrder: [primary], records: {}, recordOrder: [],
+          views: { [viewId]: { id: viewId, name: "全部记录", type: "table", filters: { operator: "and", conditions: [] }, sorts: [], groupBy: null, fieldOrder: [primary], hiddenFieldIds: [], columnWidths: {} } }, viewOrder: [viewId] }
+        pendingTableCreate.current = { requestId: createTableId("req"), tableId: createTableId("tbl"), parentPath: selectedDirectory, suggestedName: "未命名", content }
+      }
+      const result = await createTable(pendingTableCreate.current)
+      await tableCreated(result)
+      pendingTableCreate.current = null
+    } catch (error) { toast.error(`新建多维表格失败：${getApiErrorMessage(error)}`, { duration: Infinity }) }
+    finally { setBusyAction(null) }
+  }
+
+  async function createNoteAndEdit() {
     const parent = selectedDirectory
     const result = await runSavedMutation(
-      "新建笔记",
-      () => createLibraryNote(parent, "未命名"),
-      { revealNote: false }
+      "新建文档",
+      () => createLibraryNote(parent, "未命名")
     )
     if (!result?.fragment) return
     if (parent !== "notes") {
       setExpandedPaths((current) => new Set(current).add(parent))
     }
-    setSelection({ kind: "directory", path: parent })
-    setSelectedTreePath(parent)
-    setMobilePane("list")
-    startRename(result.fragment.path, "directory")
+    setIsZen(false)
   }
 
   function startCreateDirectory() {
@@ -866,6 +1235,11 @@ export function LibraryShell({
       setCreatingDirectory(null)
       return
     }
+    const nameError = libraryNameError(value)
+    if (nameError) {
+      toast.error(nameError)
+      return
+    }
     const result = await runMutation("新建目录", () =>
       createLibraryDirectory(creatingDirectory.parent, value)
     )
@@ -874,6 +1248,10 @@ export function LibraryShell({
 
   async function submitTreeDialog() {
     if (!treeDialog || busyAction) return
+    if (treeDialog.kind === "batchDelete") {
+      await runBatchMutation(treeDialog.entries)
+      return
+    }
     if (treeDialog.kind === "emptyTrash") {
       const result = await runMutation("清空回收站", emptyTrash)
       if (!result) return
@@ -894,7 +1272,7 @@ export function LibraryShell({
       (selectedTreePath === deletedPath ||
         selectedTreePath.startsWith(`${deletedPath}/`))
     ) {
-      setSelection(null)
+      setSelection({ kind: "directory", path: "notes" })
       setSelectedTreePath("notes")
       setIsZen(false)
       setMobilePane("list")
@@ -907,9 +1285,17 @@ export function LibraryShell({
   }
 
   function handleTreeEntryClick(entry: LibraryTreeEntry) {
+    if (busyAction || batchPending.current) return
     if (entry.kind === "directory") {
-      toggleSetValue(setExpandedPaths, entry.path)
       void selectDirectoryView(entry.path)
+      return
+    }
+    if (entry.kind === "canvas" || entry.kind === "flowchart") {
+      void selectCanvas(entry.path)
+      return
+    }
+    if (entry.kind === "table") {
+      void selectTable(entry.path)
       return
     }
     if (entry.kind === "mindmap") {
@@ -929,18 +1315,12 @@ export function LibraryShell({
     if (note) {
       void selectNote(note.id)
     } else {
-      toast.error("笔记索引尚未刷新，请稍后重试", { duration: Infinity })
+      toast.error("文档索引尚未刷新，请稍后重试", { duration: Infinity })
     }
   }
 
   function handleDirectoryEntryClick(entry: LibraryTreeEntry) {
     if (entry.kind === "directory") {
-      setExpandedPaths((current) => {
-        if (current.has(entry.path)) return current
-        const next = new Set(current)
-        next.add(entry.path)
-        return next
-      })
       void selectDirectoryView(entry.path)
       return
     }
@@ -998,27 +1378,54 @@ export function LibraryShell({
   function renderSelectedViewer(zen: boolean) {
     if (selection?.kind === "directory") {
       return (
-        <DirectoryView
-          busy={busyAction !== null}
-          destinations={directories}
-          entries={selectedDirectoryViewEntries}
-          onConvertToFragment={convertEntryToFragment}
-          onDelete={requestDelete}
-          onMove={moveEntry}
-          onMoveToLockbox={moveEntryToLockbox}
-          onOpenEntry={handleDirectoryEntryClick}
-          onRename={(entry) => startRename(entry.path, "directory")}
-          onRenameCancel={() => setRenaming(null)}
-          onRenameChange={(value) =>
-            setRenaming((current) =>
-              current ? { ...current, value } : null
-            )
-          }
-          onRenameSubmit={() => void submitRename()}
-          path={selection.path}
-          renaming={renaming?.source === "directory" ? renaming : null}
-          viewMode={directoryViewMode}
-        />
+        <div ref={directoryWorkspaceRef} className={styles.directoryWorkspace}>
+          <DirectoryView
+            bottomInset={selectionDockSize.height}
+            busy={busyAction !== null}
+            destinations={directories}
+            entries={selectedDirectoryViewEntries}
+            sort={directorySort}
+            onSortChange={changeDirectorySort}
+            onConvertToFragment={convertEntryToFragment}
+            onCreateNote={() => void createNoteAndEdit()}
+            onCreateDirectory={startCreateDirectory}
+            onBatchDelete={entries => setTreeDialog({ kind: "batchDelete", entries })}
+            onBatchMove={(entries, destination) => void runBatchMutation(entries, destination)}
+            onCopyDocumentLink={copyDiagramLink}
+            onDelete={requestDelete}
+            onImportTable={(entry) => void importLibraryTable(entry)}
+            onMove={moveEntry}
+            onMoveToLockbox={moveEntryToLockbox}
+            onOpenEntry={handleDirectoryEntryClick}
+            onRename={(entry) => startRename(entry.path, "directory")}
+            onRenameCancel={() => setRenaming(null)}
+            onRenameChange={(value) =>
+              setRenaming((current) =>
+                current ? { ...current, value } : null
+              )
+            }
+            onRenameSubmit={() => void submitRename()}
+            path={selection.path}
+            renaming={renaming?.source === "directory" ? renaming : null}
+            selection={fileSelection}
+            viewMode={directoryViewMode}
+          />
+          <DirectorySelectionToolbar
+            visible={fileSelection.paths.size > 0 || batchPending.current}
+            onSizeChange={measureSelectionDock}
+            busy={busyAction !== null}
+            count={fileSelection.paths.size}
+            total={selectedDirectoryEntries.length}
+            destinations={batchDestinations}
+            progress={batchPending.current ? busyAction : null}
+            error={batchError}
+            onSelectAll={fileSelection.onSelectAll}
+            onDeselectAll={clearFileSelectionFromDock}
+            onMove={destination => void runBatchMutation([...fileSelection.selectedEntries], destination)}
+            onDelete={() => setTreeDialog({ kind: "batchDelete", entries: [...fileSelection.selectedEntries] })}
+            onDone={clearFileSelectionFromDock}
+          />
+        </div>
       )
     }
 
@@ -1030,6 +1437,8 @@ export function LibraryShell({
           destinations={[]}
           emptyMessage="回收站是空的"
           entries={selectedTrashEntries}
+          sort={directorySort}
+          onSortChange={changeDirectorySort}
           isEntryOpenable={(entry) => entry.kind === "directory"}
           onConvertToFragment={() => undefined}
           onDelete={() => undefined}
@@ -1052,39 +1461,13 @@ export function LibraryShell({
               onRestore={restoreTrashEntry}
             />
           )}
+          renderEntryContextMenu={(entry, element) => (
+            <TrashEntryContextMenu key={entry.path} busy={busyAction !== null} entry={entry} onPurge={requestPurge} onRestore={restoreTrashEntry}>
+              {element}
+            </TrashEntryContextMenu>
+          )}
           viewMode={directoryViewMode}
         />
-      )
-    }
-
-    if (selection?.kind === "fragments") {
-      const emptyMessage = selection.month
-          ? "这个月还没有碎片。"
-          : fragmentsTag
-            ? `#${fragmentsTag} 下还没有片段。写片段时输入 #${fragmentsTag} 即可归入。`
-            : undefined
-      return (
-        <div className={styles.fragmentsViewport}>
-          <InboxTagBar
-            {...fragmentsTagBar}
-            onSelectTag={setFragmentsTag}
-            selectedTag={fragmentsTag}
-            totalCount={
-              selection.month
-                ? inboxTimelineFragments.filter((fragment) =>
-                    isFragmentInMonth(fragment, selection.month!)
-                  ).length
-                : inboxTimelineFragments.length
-            }
-          />
-          {searchContextBar ? <SearchContextBar {...searchContextBar} /> : null}
-          <FragmentTimeline
-            {...fragmentsTimeline}
-            emptyMessage={emptyMessage}
-            fragments={visibleTimelineFragments}
-            scrollToFragmentId={fragmentsScrollTargetId}
-          />
-        </div>
       )
     }
 
@@ -1105,11 +1488,31 @@ export function LibraryShell({
       )
     }
 
+    if (selectedCanvasPath) {
+      return <Suspense fallback={<LibraryEmptyState message={selection?.kind === "flowchart" ? "正在载入流程图…" : "正在载入旧画布…"} />}>
+        <CanvasWorkspace key={selectedCanvasPath} ref={canvasHandle} path={selectedCanvasPath} fragments={relationFragments}
+          onOpenLink={openCanvasLink} onSplit={onCanvasSplit} onSaved={onTableSaved} onSaveStateChange={setCanvasSaveState}
+          onRecovered={async (path) => {
+            setSelection({ kind: path.endsWith(".shardflow.json") ? "flowchart" : "canvas", path })
+            setSelectedTreePath(path)
+            setCanvasSaveState("saved")
+            try { await onRefreshLibrary?.() }
+            catch (error) { toast.error(`画布副本已保存，刷新资料库失败：${getApiErrorMessage(error)}`, { duration: Infinity }) }
+          }} />
+      </Suspense>
+    }
+
+    if (selectedTablePath) {
+      return <TableWorkspace key={selectedTablePath} ref={tableHandle} embedded disabled={tableStructureBusy || !!busyAction} path={selectedTablePath} title={selectedTitle} refreshToken={libraryTree}
+        onSaveStateChange={setTableSaveState} onSaved={onTableSaved} onClose={() => void selectDirectoryView(openedFileParentPath ?? "notes")} />
+    }
+
     if (selectedNote) {
       return (
         <div className={zen ? styles.zenNoteViewport : styles.editorViewport}>
           <ShardEditor
-            ariaLabel="资料库笔记编辑器"
+            ref={noteEditor}
+            ariaLabel="资料库文档编辑器"
             autoFocus={zen || mobilePane === "editor"}
             documentKey={selectedNote.id}
             editorId={`library:${selectedNote.id}`}
@@ -1124,7 +1527,8 @@ export function LibraryShell({
             onDropFiles={(files) => void uploadPastedImages(files)}
             onPasteFiles={(files) => void uploadPastedImages(files)}
             onSubmit={() => void saveCurrentNote()}
-            placeholder="开始写笔记…"
+            placeholder="开始写文档…"
+            readOnly={interactionBlocked || tableStructureBusy || busyAction !== null}
             value={draft}
             variant={zen ? "zen" : "inline"}
           />
@@ -1140,27 +1544,36 @@ export function LibraryShell({
           }
         >
           <MindMapCanvas
+            ref={mindMapHandle}
             mapId={selectedMindMap.mindMapId!}
+            fragments={relationFragments}
+            onOpenLink={openCanvasLink}
+            onSaveStateChange={setMindMapSaveState}
+            onMapsChange={() => onTableSaved?.()}
             surface={zen ? renderMindMapZenSurface : undefined}
+            toolbarLeading={zen ? <Button aria-label="退出禅模式" title="退出禅模式（Esc）"
+              onClick={() => setIsZen(false)} size="icon-sm" variant="ghost"><ChevronLeftIcon /></Button> : undefined}
           />
         </div>
       )
     }
 
-    return <LibraryEmptyState message="从资料库目录选择碎片流、图片、目录、笔记或思维导图" />
+    return <LibraryEmptyState message="从资料库选择文档、图片、目录、多维表格、思维导图或流程图" />
   }
 
   const dialogTitle =
     treeDialog?.kind === "emptyTrash"
-      ? "确认清空回收站"
+      ? "确认清空资料库回收站"
       : treeDialog?.kind === "purge"
         ? "确认彻底删除"
         : "确认删除"
   const dialogDescription =
     treeDialog?.kind === "emptyTrash"
-      ? "回收站中的全部内容将被永久删除，此操作不可恢复。"
+      ? "资料库回收站中的文档和文件将被永久删除，此操作不可恢复。"
       : treeDialog?.kind === "purge"
         ? `「${treeDialog.entry.name}」将被永久删除，此操作不可恢复。`
+        : treeDialog?.kind === "batchDelete"
+          ? `选中的 ${treeDialog.entries.length} 项及所选目录中的内容将移入回收站，之后仍可恢复。`
         : treeDialog?.kind === "delete"
           ? `「${treeDialog.entry.name}」将移入回收站，之后仍可恢复。`
           : ""
@@ -1169,11 +1582,13 @@ export function LibraryShell({
       ? "清空回收站"
       : treeDialog?.kind === "purge"
         ? "彻底删除"
+        : treeDialog?.kind === "batchDelete"
+          ? `删除 ${treeDialog.entries.length} 项`
         : "删除"
 
   return (
     <section aria-label="资料库" className={styles.shell}>
-      <div className={styles.workspace}>
+      <div className={styles.workspace} data-table-open={selectedTablePath || selectedCanvasPath || selectedMindMap ? "true" : undefined}>
         <aside
           aria-busy={busyAction !== null || isLoading ? true : undefined}
           aria-label="资料库目录"
@@ -1184,137 +1599,124 @@ export function LibraryShell({
           <div className={styles.paneHeader} data-tauri-drag-region>
             <h2 className={styles.paneTitle}>资料库</h2>
             <div className={styles.paneActions}>
-              <Button
-                aria-label="新建笔记"
-                disabled={busyAction !== null}
-                onClick={() => void createNoteAndRename()}
-                size="icon-sm"
-                title="新建笔记"
-                type="button"
-                variant="ghost"
-              >
-                <FilePlus2Icon aria-hidden="true" />
-              </Button>
-              <Button
-                aria-label="新建目录"
-                disabled={busyAction !== null}
-                onClick={() => startCreateDirectory()}
-                size="icon-sm"
-                title="新建目录"
-                type="button"
-                variant="ghost"
-              >
-                <FolderPlusIcon aria-hidden="true" />
-              </Button>
+              <DropdownMenu onOpenChange={(open) => {
+                if (open) restoreCreateMenuFocus.current = true
+              }} onOpenChangeComplete={(open) => {
+                if (open) return
+                const action = pendingCreateAction.current
+                pendingCreateAction.current = null
+                action?.()
+              }}>
+                <DropdownMenuTrigger disabled={busyAction !== null || isLoading} render={
+                  <Button aria-label="新建" size="sm" variant="outline" />
+                }>
+                  <PlusIcon aria-hidden="true" />新建
+                  <ChevronDownIcon aria-hidden="true" />
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" finalFocus={() => restoreCreateMenuFocus.current}>
+                  <DropdownMenuItem onClick={() => queueCreateAction(() => void createNoteAndEdit())}>
+                    <FilePlus2Icon aria-hidden="true" />新建文档
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => queueCreateAction(() => void createNativeTable())}>
+                    <FileSpreadsheetIcon aria-hidden="true" />新建多维表格
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => queueCreateAction(() => void createNativeMindMap())}>
+                    <GitBranchIcon aria-hidden="true" />新建思维导图
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => queueCreateAction(() => void createNativeFlowchart())}>
+                    <GitBranchIcon aria-hidden="true" />新建流程图
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={() => queueCreateAction(startCreateDirectory)}>
+                    <FolderPlusIcon aria-hidden="true" />新建目录
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={() => queueCreateAction(() => void (async () => {
+                    if (await saveCurrentNote()) { setImportTableSource(undefined); setImportTableParent(selectedDirectory) }
+                  })())}>从 CSV / Excel 导入…</DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
           </div>
 
-          <div className={styles.noteListViewport}>
-            {isLoading || !libraryTree ? (
-              <LibraryEmptyState message="正在读取资料库…" />
-            ) : (
-              <div className={styles.treeViewportInner}>
-                <div className={styles.fragmentStream}>
-                  <button
-                    aria-label={`碎片流（${libraryTree.fragmentStream.totalCount}）`}
-                    className={styles.treeButton}
-                    data-selected={
-                      selection?.kind === "fragments" &&
-                      !selection.month
-                        ? "true"
-                        : undefined
-                    }
-                    onClick={() => void selectFragmentsView({})}
-                    type="button"
-                  >
-                    <InboxIcon aria-hidden="true" />
-                    <span>碎片流</span>
-                    <span className={styles.treeCount}>
-                      {libraryTree.fragmentStream.totalCount}
-                    </span>
-                  </button>
-                </div>
+          {isLoading || !libraryTree ? (
+            <LibraryEmptyState message="正在读取资料库…" />
+          ) : (
+            <>
+              <nav aria-label="资料库浏览" className={styles.browseNavigation}>
+                <button
+                  aria-current={selection?.kind === "assets" ? "page" : undefined}
+                  aria-label={`图片（${libraryTree.assets.length}）`}
+                  className={styles.navigationButton}
+                  disabled={busyAction !== null}
+                  onClick={() => void selectAssetsView()}
+                  type="button"
+                >
+                  <ImageIcon aria-hidden="true" />
+                  <span className={styles.treeLabel}>图片</span>
+                  <span className={styles.treeCount}>{libraryTree.assets.length}</span>
+                </button>
+              </nav>
 
-                {libraryTree.assets.length > 0 ? (
-                  <div className={styles.fragmentStream}>
-                    <button
-                      aria-label={`图片（${libraryTree.assets.length}）`}
-                      className={styles.treeButton}
-                      data-selected={
-                        selection?.kind === "assets" ? "true" : undefined
-                      }
-                      onClick={() => void selectAssetsView()}
-                      type="button"
-                    >
-                      <ImageIcon aria-hidden="true" />
-                      <span>图片</span>
-                      <span className={styles.treeCount}>
-                        {libraryTree.assets.length}
-                      </span>
-                    </button>
-                  </div>
-                ) : null}
-
-                <div className={styles.notesGroup}>
+              <div className={styles.filesSection}>
+                <div className={styles.filesRoot}>
                   <button
-                    aria-label={`全部笔记（${notes.length}）`}
-                    className={styles.treeButton}
-                    data-selected={
-                      selectedTreePath === "notes" ? "true" : undefined
-                    }
+                    aria-current={activeFileDirectory === "notes" ? "page" : undefined}
+                    aria-label={`文件（${fileCount}）`}
+                    className={styles.navigationButton}
+                    disabled={busyAction !== null}
                     onClick={() => void selectDirectoryView("notes")}
                     type="button"
                   >
                     <FolderIcon aria-hidden="true" />
-                    <span>全部笔记</span>
-                    <span className={styles.treeCount}>{notes.length}</span>
+                    <span className={styles.treeLabel}>文件</span>
+                    <span className={styles.treeCount}>{fileCount}</span>
                   </button>
-
+                </div>
+                <div className={styles.noteListViewport} data-library-tree-viewport="true">
                   {libraryTree.entries.length === 0 && !creatingDirectory ? (
-                    <LibraryEmptyState message="到碎片流把一条内容转为笔记" />
+                    <p className={styles.treeEmptyState}>暂无文件，可从「新建」开始</p>
                   ) : (
-                  <ul aria-label="笔记和数据文件" className={styles.tree} role="tree">
-                    {renderCreateDirectoryRow("notes")}
-                    <TreeEntries
-                      busy={busyAction !== null}
-                      directories={directories}
-                      entries={libraryTree.entries}
-                      expandedPaths={expandedPaths}
-                      onDelete={requestDelete}
-                      onConvertToFragment={convertEntryToFragment}
-                      onEntryClick={handleTreeEntryClick}
-                      onMove={moveEntry}
-                      onMoveToLockbox={moveEntryToLockbox}
-                      onRename={(entry) => startRename(entry.path, "tree")}
-                      onRenameCancel={() => setRenaming(null)}
-                      onRenameChange={(value) =>
-                        setRenaming((current) =>
-                          current ? { ...current, value } : null
-                        )
-                      }
-                      onRenameSubmit={() => void submitRename()}
-                      renaming={renaming?.source === "tree" ? renaming : null}
-                      renderCreateRow={renderCreateDirectoryRow}
-                      selectedPath={selectedTreePath}
-                    />
-                  </ul>
+                    <ul aria-label="文件夹" className={styles.tree} role="tree">
+                      {renderCreateDirectoryRow("notes")}
+                      <TreeEntries
+                        busy={busyAction !== null}
+                        directories={directories}
+                        entries={libraryTree.entries}
+                        expandedPaths={expandedPaths}
+                        onToggleExpand={(path) => toggleSetValue(setExpandedPaths, path)}
+                        onDelete={requestDelete}
+                        onConvertToFragment={convertEntryToFragment}
+                        onEntryClick={handleTreeEntryClick}
+                        onMove={moveEntry}
+                        onMoveToLockbox={moveEntryToLockbox}
+                        onRename={(entry) => startRename(entry.path, "tree")}
+                        onRenameCancel={() => setRenaming(null)}
+                        onRenameChange={(value) => setRenaming((current) => current ? { ...current, value } : null)}
+                        onRenameSubmit={() => void submitRename()}
+                        renaming={renaming?.source === "tree" ? renaming : null}
+                        renderCreateRow={renderCreateDirectoryRow}
+                        selectedPath={activeFileDirectory ?? ""}
+                      />
+                    </ul>
                   )}
                 </div>
               </div>
-            )}
-          </div>
+            </>
+          )}
 
           {/*
            * 回收站与密匣不是内容目录，是这一列的两个常驻出口：钉在底部不随
-           * 笔记树滚动，否则树一长就被推出视野。密匣刻意不显示条目数——上锁
+           * 文档树滚动，否则树一长就被推出视野。密匣刻意不显示条目数——上锁
            * 时连数量都不该泄露。
            */}
           {libraryTree ? (
             <div className={styles.paneFooter} data-library-footer="true">
               <button
                 aria-label={`回收站（${countTreeEntries(libraryTree.trashEntries)}）`}
-                className={styles.treeButton}
-                data-selected={selection?.kind === "trash" ? "true" : undefined}
+                className={styles.navigationButton}
+                aria-current={selection?.kind === "trash" ? "page" : undefined}
+                disabled={busyAction !== null}
                 onClick={() => void selectTrashView()}
                 type="button"
               >
@@ -1326,7 +1728,8 @@ export function LibraryShell({
               </button>
               <button
                 aria-label="密匣（上锁空间）"
-                className={styles.treeButton}
+                className={styles.navigationButton}
+                disabled={busyAction !== null}
                 onClick={() => {
                   void (async () => {
                     if (!(await saveCurrentNote())) return
@@ -1344,9 +1747,10 @@ export function LibraryShell({
 
         <article
           aria-label="资料库查看器"
-          aria-busy={saveState === "saving" ? true : undefined}
+          aria-busy={saveState === "saving" || busyAction !== null ? true : undefined}
           className={styles.editorPane}
           data-mobile-hidden={mobilePane === "list" ? "true" : undefined}
+          onKeyDown={directoryScope ? fileSelection.onKeyDown : undefined}
         >
           <div className={styles.editorHeader} data-tauri-drag-region>
             <Button
@@ -1361,8 +1765,24 @@ export function LibraryShell({
             </Button>
             {selection?.kind === "directory" ? (
               <DirectoryViewToolbar
+                action={
+                  <Button
+                    aria-label="多选文件"
+                    aria-pressed={fileSelection.active}
+                    disabled={busyAction !== null || renaming !== null || selectedDirectoryEntries.length === 0}
+                    onClick={() => {
+                      setBatchError(null)
+                      if (fileSelection.active) fileSelection.onClear()
+                      else fileSelection.enter()
+                    }}
+                    size="sm"
+                    variant="outline"
+                  >多选</Button>
+                }
                 onSelectDirectory={(path) => void selectDirectoryView(path)}
-                rootLabel="全部笔记"
+                sort={directorySort}
+                onSortChange={changeDirectorySort}
+                rootLabel="文件"
                 onViewModeChange={(mode) => {
                   setDirectoryViewMode(mode)
                   writeDirectoryViewPreference(mode)
@@ -1388,6 +1808,8 @@ export function LibraryShell({
                   </Button>
                 }
                 onSelectDirectory={(path) => void selectTrashView(path)}
+                sort={directorySort}
+                onSortChange={changeDirectorySort}
                 onViewModeChange={(mode) => {
                   setDirectoryViewMode(mode)
                   writeDirectoryViewPreference(mode)
@@ -1396,41 +1818,19 @@ export function LibraryShell({
                 rootLabel="回收站"
                 viewMode={directoryViewMode}
               />
-            ) : selectedNote &&
-            renaming?.source === "editor" &&
-            renaming.path === selectedNote.path ? (
-              <div className={styles.renameWrap}>
-                <Input
-                  aria-label="重命名名称"
-                  autoFocus
-                  disabled={busyAction !== null}
-                  onBlur={() => void submitRename()}
-                  onChange={(event) =>
-                    setRenaming((current) =>
-                      current ? { ...current, value: event.target.value } : null
-                    )
-                  }
-                  onFocus={(event) => event.target.select()}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") {
-                      event.preventDefault()
-                      void submitRename()
-                    } else if (event.key === "Escape") {
-                      event.stopPropagation()
-                      setRenaming(null)
-                    }
-                  }}
-                  value={renaming.value}
-                />
-              </div>
             ) : (
               <>
                 {openedFileParentPath ? (
                   <Button
                     aria-label="返回所在目录"
                     className={styles.backToDirectory}
-                    disabled={busyAction !== null}
-                    onClick={() => void selectDirectoryView(openedFileParentPath)}
+                    disabled={busyAction !== null && busyAction !== "重命名"}
+                    onClick={async () => {
+                      // A fast blur failure may finish before click; keep its editable draft visible.
+                      if (renaming?.source === "editor" && !renamePromiseRef.current) return
+                      if (renamePromiseRef.current && !(await renamePromiseRef.current)) return
+                      await selectDirectoryView(openedFileParentPath)
+                    }}
                     size="icon-sm"
                     title="返回所在目录"
                     variant="ghost"
@@ -1438,50 +1838,77 @@ export function LibraryShell({
                     <ChevronLeftIcon aria-hidden="true" />
                   </Button>
                 ) : null}
-                <h2 className={styles.editorTitle} data-tauri-drag-region>
-                {selectedNote ? (
-                  <button
-                    aria-label="重命名文件"
-                    className={styles.editorTitleButton}
-                    disabled={busyAction !== null}
-                    onClick={() => startRename(selectedNote.path, "editor")}
-                    title="重命名文件"
-                    type="button"
-                  >
-                    {selectedTitle}
-                  </button>
-                ) : selection ? (
-                  selectedTitle
-                ) : (
-                  "选择内容"
-                )}
-                </h2>
+                <div className={styles.editorHeading} data-tauri-drag-region>
+                  {selectedFilePath && renaming?.source === "editor" && renaming.path === selectedFilePath ? (
+                    <div className={styles.renameWrap} aria-busy={busyAction !== null || tableStructureBusy}>
+                      <Input
+                        aria-label="重命名名称"
+                        autoFocus
+                        ref={titleRenameInput}
+                        disabled={busyAction !== null || tableStructureBusy}
+                        onBlur={() => void submitRename()}
+                        onChange={(event) =>
+                          setRenaming((current) =>
+                            current ? { ...current, value: event.target.value } : null
+                          )
+                        }
+                        onFocus={(event) => event.target.select()}
+                        onKeyDown={(event) => {
+                          if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return
+                          if (event.key === "Enter") {
+                            event.preventDefault()
+                            void submitRename()
+                          } else if (event.key === "Escape") {
+                            event.stopPropagation()
+                            setRenaming(null)
+                          }
+                        }}
+                        value={renaming.value}
+                      />
+                    </div>
+                  ) : (
+                    <h2 className={styles.editorTitle} data-tauri-drag-region>
+                      {selectedFilePath ? (
+                        <button
+                          aria-label="重命名文件"
+                          className={styles.editorTitleButton}
+                          disabled={busyAction !== null || tableStructureBusy}
+                          onClick={() => startRename(selectedFilePath, "editor")}
+                          title="重命名文件"
+                          type="button"
+                        >
+                          {selectedTitle}
+                        </button>
+                      ) : selectedTitle}
+                    </h2>
+                  )}
+                </div>
               </>
             )}
-            {selectedNote ? (
-              <span
-                className={styles.saveState}
-                data-state={saveState}
-                data-tauri-drag-region
-              >
-                {formatSaveState(saveState)}
-              </span>
-            ) : null}
-            {selection &&
-            selection.kind !== "fragments" &&
-            selection.kind !== "directory" &&
-            selection.kind !== "trash" &&
-            (selection.kind !== "assets" || selection.path) ? (
-              <Button
-                aria-label="进入禅模式"
-                onClick={() => setIsZen(true)}
-                size="icon-sm"
-                title="进入禅模式"
-                type="button"
-                variant="outline"
-              >
-                <Maximize2Icon aria-hidden="true" />
-              </Button>
+            {selectedNote || canEnterZen ? (
+              <div className={styles.editorActions}>
+                {selectedNote ? (
+                  <span
+                    className={styles.saveState}
+                    data-state={saveState}
+                    data-tauri-drag-region
+                  >
+                    {formatSaveState(saveState)}
+                  </span>
+                ) : null}
+                {canEnterZen ? (
+                  <Button
+                    aria-label="进入禅模式"
+                    onClick={() => setIsZen(true)}
+                    size="icon-sm"
+                    title="进入禅模式"
+                    type="button"
+                    variant="outline"
+                  >
+                    <Maximize2Icon aria-hidden="true" />
+                  </Button>
+                ) : null}
+              </div>
             ) : null}
           </div>
 
@@ -1493,7 +1920,7 @@ export function LibraryShell({
         </article>
 
         <aside
-          aria-label="笔记检查器"
+          aria-label="文档检查器"
           className={styles.inspectorSlot}
           data-library-inspector-slot
         >
@@ -1515,7 +1942,7 @@ export function LibraryShell({
 
       {isZen && selection?.kind === "note" ? (
         <ZenSurface
-          ariaLabel="资料库笔记禅模式"
+          ariaLabel="资料库文档禅模式"
           onRequestClose={() => setIsZen(false)}
         >
           {renderSelectedViewer(true)}
@@ -1531,6 +1958,8 @@ export function LibraryShell({
         </ZenSurface>
       ) : null}
 
+      {importTableParent !== null ? <TableImportDialog parentPath={importTableParent} initialPath={importTableSource} onCreated={tableCreated} onClose={() => { setImportTableParent(null); setImportTableSource(undefined) }} /> : null}
+
       <Dialog
         open={treeDialog !== null}
         onOpenChange={(open) => {
@@ -1545,6 +1974,12 @@ export function LibraryShell({
             <DialogTitle>{dialogTitle}</DialogTitle>
             <DialogDescription>{dialogDescription}</DialogDescription>
           </DialogHeader>
+
+          {treeDialog?.kind === "batchDelete" ? (
+            <ul aria-label="待删除文件" className={styles.batchFileList}>
+              {treeDialog.entries.map(entry => <li key={entry.path}>{entry.name}</li>)}
+            </ul>
+          ) : null}
 
           <DialogFooter className={styles.dialogFooter}>
             <Button
@@ -1575,6 +2010,7 @@ interface TreeEntriesProps {
   directories: string[]
   entries: LibraryTreeEntry[]
   expandedPaths: Set<string>
+  onToggleExpand: (path: string) => void
   onConvertToFragment: (entry: LibraryTreeEntry) => void
   onDelete: (entry: LibraryTreeEntry) => void
   onEntryClick: (entry: LibraryTreeEntry) => void
@@ -1594,6 +2030,7 @@ function TreeEntries({
   directories,
   entries,
   expandedPaths,
+  onToggleExpand,
   onConvertToFragment,
   onDelete,
   onEntryClick,
@@ -1652,22 +2089,26 @@ function TreeEntries({
             className={styles.treeRow}
             data-selected={selectedPath === entry.path ? "true" : undefined}
           >
+            {canExpand ? (
+              <button
+                aria-label={`${expanded ? "折叠" : "展开"} ${entry.name}`}
+                aria-expanded={expanded}
+                className={styles.treeDisclosure}
+                disabled={busy}
+                onClick={() => onToggleExpand(entry.path)}
+                type="button"
+              >
+                {expanded ? <ChevronDownIcon aria-hidden="true" /> : <ChevronRightIcon aria-hidden="true" />}
+              </button>
+            ) : <span className={styles.treeDisclosureSpacer} />}
             <button
               aria-current={selectedPath === entry.path ? "page" : undefined}
               className={styles.treeButton}
               disabled={busy}
               onClick={() => onEntryClick(entry)}
+              title={entry.name}
               type="button"
             >
-              {canExpand ? (
-                expanded ? (
-                  <ChevronDownIcon aria-hidden="true" />
-                ) : (
-                  <ChevronRightIcon aria-hidden="true" />
-                )
-              ) : (
-                <span className={styles.treeIndentIcon} />
-              )}
               <FolderIcon aria-hidden="true" />
               <span className={styles.treeLabel}>{entry.name}</span>
             </button>
@@ -1692,6 +2133,7 @@ function TreeEntries({
               directories={directories}
               entries={childDirectories}
               expandedPaths={expandedPaths}
+              onToggleExpand={onToggleExpand}
               onConvertToFragment={onConvertToFragment}
               onDelete={onDelete}
               onEntryClick={onEntryClick}

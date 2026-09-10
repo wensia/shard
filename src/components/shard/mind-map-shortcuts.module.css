@@ -1,0 +1,114 @@
+.panel {
+  display: flex;
+  flex: 0 0 min(45%, calc(var(--space-12) * 7));
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--card);
+  color: var(--foreground);
+  border-inline-start: 1px solid var(--border);
+  font-family: var(--font-sans);
+  font-size: var(--text-body);
+  line-height: var(--leading-normal);
+}
+
+.header {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+}
+
+.header h2 {
+  margin: 0;
+  font-size: var(--text-section-title);
+  font-weight: 500;
+}
+
+.body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 0 var(--space-4) var(--space-4);
+  scrollbar-gutter: stable;
+}
+
+.context {
+  margin: 0 0 var(--space-4);
+  color: var(--muted-foreground);
+  font-size: var(--text-meta);
+}
+
+.group + .group,
+.note + .group {
+  margin-block-start: var(--space-6);
+}
+
+.group h3 {
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-body);
+  font-weight: 500;
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin: 0;
+}
+
+.row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-3);
+}
+
+.row dt {
+  flex: 1 1 50%;
+  min-width: 0;
+}
+
+.row dt small {
+  display: block;
+  margin-block-start: var(--space-1);
+  color: var(--muted-foreground);
+  font-size: var(--text-meta);
+  line-height: var(--leading-normal);
+}
+
+.row dd {
+  margin: 0;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.key {
+  color: var(--muted-foreground);
+  font-family: inherit;
+  font-size: var(--text-meta);
+  overflow-wrap: anywhere;
+}
+
+.note {
+  margin: var(--space-4) 0 0;
+  color: var(--muted-foreground);
+  font-size: var(--text-meta);
+  line-height: var(--leading-relaxed);
+}
+
+@container mind-map-body (max-width: 480px) {
+  .panel {
+    position: absolute;
+    inset: 0 0 0 auto;
+    z-index: 40;
+    width: min(calc(var(--space-12) * 6), calc(100% - var(--space-12)));
+    max-width: none;
+    box-shadow: var(--shadow-popover);
+  }
+}

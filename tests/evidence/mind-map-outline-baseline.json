@@ -1,0 +1,50 @@
+[
+  {
+    "engine": "webkit",
+    "selection": {
+      "value": "主题甲",
+      "start": 0,
+      "end": 3,
+      "tag": "INPUT"
+    },
+    "afterClickTyping": "补充",
+    "countBefore": 3,
+    "afterShiftEnter": [
+      "第一行",
+      "",
+      "主题乙",
+      "主题丙"
+    ],
+    "afterImeTabCount": 4,
+    "geometry": {
+      "inputWidth": 146,
+      "rowWidth": 432,
+      "scrollWidth": 760,
+      "viewportWidth": 760
+    }
+  },
+  {
+    "engine": "chromium",
+    "selection": {
+      "value": "主题甲",
+      "start": 0,
+      "end": 3,
+      "tag": "INPUT"
+    },
+    "afterClickTyping": "补充",
+    "countBefore": 3,
+    "afterShiftEnter": [
+      "第一行",
+      "",
+      "主题乙",
+      "主题丙"
+    ],
+    "afterImeTabCount": 4,
+    "geometry": {
+      "inputWidth": 146,
+      "rowWidth": 432,
+      "scrollWidth": 760,
+      "viewportWidth": 760
+    }
+  }
+]

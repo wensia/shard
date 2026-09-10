@@ -1,0 +1,69 @@
+{
+  "recordedAt": "2026-09-07T15:30:19.325954+00:00",
+  "scope": "Kiln default-control prohibition and shared DOM-rendered controls",
+  "validation": {
+    "build": {
+      "command": "pnpm build",
+      "result": "passed",
+      "warning": "Existing large chunks"
+    },
+    "ast": {
+      "command": "pnpm verify:ui-controls",
+      "tsxFiles": 76,
+      "violations": 0,
+      "baselineExemptions": 0
+    },
+    "contract": {
+      "command": "pnpm test:ui-controls",
+      "passed": 9
+    },
+    "chromium": {
+      "command": "pnpm test:ui --output=/tmp/shard-kiln-full-ui",
+      "passed": 235
+    },
+    "webkit": {
+      "sharedControlsPassed": 5,
+      "tableWorkspacePassed": 19,
+      "skipped": 1,
+      "skipReason": "existing clipboard permission limitation"
+    },
+    "kilnSelfCheck": {
+      "command": "node scripts/verify.mjs (cwd vendor/kiln)",
+      "result": "passed"
+    },
+    "diffCheck": "passed"
+  },
+  "evidenceLayer": "Actual components, DOM popups, Worker and mock Tauri IPC; not native Tauri acceptance",
+  "screenshots": [
+    "kiln-select-narrow-2026-09-07.png",
+    "kiln-date-narrow-2026-09-07.png"
+  ],
+  "behavior": [
+    "Native OS popup types rejected even under Input wrapper or conditional type",
+    "Unstyled visible raw controls rejected; hidden upload bridges permitted",
+    "Shared popup stays inside viewport, uses Kiln tokens and keyboard focus",
+    "Portal selections do not trigger premature grid save",
+    "Select popup Enter/Escape affects only popup; closed trigger Tab commits grid",
+    "Date year bounds, leap date, null and false values preserved"
+  ],
+  "preservation": {
+    "priorUnownedKilnDiffsPreserved": true,
+    "realVaultWrites": false,
+    "committedOrPublished": false
+  },
+  "sourceSha256": {
+    "src/components/ui/select.tsx": "88bc857cce1fde710c96ddec4729022941da832789f26a4f9dbd0bd05dccf379",
+    "src/components/ui/date-picker.tsx": "da1360f25dbd8581f7ab3d3a5c3367e2254dee92db0d2e66ad348f7211d9cb42",
+    "src/components/ui/form-controls.css": "b308b059ecdb15942ef36e1eccdee425997228ce145e337bae25d6f84276903f",
+    "src/components/ui/input.tsx": "d951856b7a72fffdc171df5dd4172d0fa21ddf8ce419692fe190e6b015b4bf2e",
+    "src/features/tables/table-config-panel.tsx": "c0879ff2be210d602cf8fca134d9aa644ddaf2fabd8cfb9de7b5902b53ee17e4",
+    "src/features/tables/table-value-editor.tsx": "150a6cb7ddd21c4046275cb1d841b488599e6d5e4333afb326042eb65f8bcb80",
+    "src/features/tables/table-workspace.tsx": "6b0978337591ab54796fa24173b563e6a45870af895115ee0baef55b918f291a",
+    "src/features/tables/exchange-dialog.tsx": "0d958d4a1c035321d5210ce5513908f8fa1a581399c725b9da7fe11c20ca70ad",
+    "scripts/verify-ui-controls.mjs": "c7ef64eab54ca6e4f822f83a368ddbef32023f1ea18dc23817d6a955ef881886",
+    "scripts/verify-ui-controls.test.mjs": "f4a1dbad24752cacd8f55880d62b5e6f2e95ad07dfa03275bc3ebee0643f8d1a",
+    "vendor/kiln/SKILL.md": "ff7217a4dada6ca504c8cff0678255c338ceda6e150f0bc8660cc20a3d69f348",
+    "vendor/kiln/references/components.md": "290ecd0fc9f4cae918e307af80ea40026841cf2b02c381d972e14018f4e25d14",
+    "vendor/kiln/references/platform-mapping.md": "08fc4f31171dc1618b3059272ecc9ddf2436e18421126ddee39ad6561a89c170"
+  }
+}

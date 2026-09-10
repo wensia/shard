@@ -1,0 +1,34 @@
+{
+  "recordedAt": "2026-09-07T16:06:32.243659+00:00",
+  "layer": "Real Tauri WKWebView with isolated native filesystem vault",
+  "app": "/tmp/Shard Multidrag Acceptance.app",
+  "vault": "/var/folders/jd/9rnt7sl15d7_gkzln2svt9xw0000gn/T/shard-multidrag-native-px2jcycn",
+  "file": "/var/folders/jd/9rnt7sl15d7_gkzln2svt9xw0000gn/T/shard-multidrag-native-px2jcycn/notes/多选拖动验收.shardmap.json",
+  "revision": 16,
+  "observed": [
+    "Library main outline view, not inspector outline tab, renders existing multiline topics fully.",
+    "Enter creates a sibling and transfers input focus immediately; existing text is preserved.",
+    "Native composition of b/c consumes Tab while composing and Return commits bc without a new node; a subsequent Tab creates a child.",
+    "Child textarea receives multiline text; Shift+Tab outdents while retaining focus.",
+    "Two Shift+Enter presses append blank lines and grow the focused textarea.",
+    "Clicking the existing topic and typing 1 at the end preserves its original text.",
+    "Automatic save agrees with native file readback.",
+    "After application quit/relaunch, map view and main outline both show saved topics and the full multiline value."
+  ],
+  "savedSample": {
+    "id": "node-mtrfk83o-izfp6y",
+    "parentId": "16cbaed8-6f6b-4b12-bce7-91183482fac6",
+    "sortKey": "y",
+    "text": "大纲子主题\n第二行保留\n\n",
+    "createdAt": "2026-09-07T16:03:42.468Z",
+    "updatedAt": "2026-09-07T16:04:09.824Z"
+  },
+  "validation": {
+    "outlineBrowserTests": 22,
+    "existingRelatedBrowserTests": 18,
+    "treeUnitTests": 12,
+    "build": "passed",
+    "gitDiffCheck": "passed"
+  },
+  "scope": "No production vault writes; test records retained only in isolated acceptance vault."
+}

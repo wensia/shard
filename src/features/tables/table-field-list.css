@@ -1,0 +1,25 @@
+.table-field-list { display: flex; flex-direction: column; width: 100%; min-width: 0; min-height: 0; color: var(--foreground); font-size: var(--text-body); }
+.table-field-list-search { position: relative; margin: var(--space-3); }
+.table-field-list-search > svg { position: absolute; width: var(--shard-icon-size-md); height: var(--shard-icon-size-md); inset-inline-start: var(--space-3); top: 50%; transform: translateY(-50%); color: var(--muted-foreground); pointer-events: none; }
+.table-field-list-search > input { padding-inline-start: calc(var(--space-3) * 2 + var(--shard-icon-size-md)); }
+.table-field-list-scroll { flex: 1; min-height: 0; max-height: calc(var(--control-height) * 8); overflow-y: auto; overscroll-behavior: contain; padding: var(--space-1) var(--space-2) var(--space-3); }
+.table-field-list-row { display: flex; align-items: center; min-width: 0; gap: var(--space-2); min-height: var(--control-height-lg); padding: var(--space-1) var(--space-2); border-radius: var(--radius-control); }
+.table-field-list-row:hover, .table-field-list-row:focus-within, .table-field-list-row:has([aria-expanded="true"]) { background: var(--muted); }
+.table-field-list-row > [data-slot="checkbox"]::after { inset: 0; }
+.table-field-list-edit { flex: 1; min-width: 0; justify-content: flex-start; padding-inline: var(--space-1); font-weight: var(--weight-normal); }
+.table-field-list-edit > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.table-field-list-row[data-hidden="true"] .table-field-list-edit { color: var(--muted-foreground); }
+.table-field-type-icon { width: var(--shard-icon-size-md); height: var(--shard-icon-size-md); flex-shrink: 0; color: var(--muted-foreground); stroke-width: var(--shard-icon-stroke-sm); }
+.table-field-list-lock { display: inline-flex; flex-shrink: 0; color: var(--muted-foreground); }
+.table-field-list-lock > svg { width: var(--shard-icon-size-sm); height: var(--shard-icon-size-sm); }
+.table-field-list-more { background: color-mix(in oklch, var(--muted), transparent 60%); color: var(--muted-foreground); cursor: pointer; }
+.table-field-list-more:hover, .table-field-list-more[aria-expanded="true"] { background: var(--border); color: var(--foreground); }
+.table-field-list-more:focus-visible { outline: calc(var(--space-1) / 2) solid var(--ring); outline-offset: calc(var(--space-1) / 2); }
+.table-field-list-empty { padding: var(--space-6) var(--space-3); color: var(--muted-foreground); text-align: center; }
+.table-field-list-footer { padding: var(--space-2) var(--space-3) var(--space-3); border-top: 1px solid var(--border); }
+.table-field-list-footer > button { width: 100%; justify-content: flex-start; }
+.table-field-editor-compact.table-config-panel { flex: 1; width: 100%; min-width: 0; border-left: 0; max-height: calc(var(--space-12) * 12); }
+.table-field-editor-compact .table-panel-header { padding: var(--space-3) var(--space-4); border-bottom: 0; }
+.table-field-editor-compact .table-panel-scroll { padding-top: 0; scrollbar-gutter: auto; }
+.table-field-editor-compact .table-panel-footer { padding: var(--space-3) var(--space-4); }
+.table-field-editor-compact .table-option-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }

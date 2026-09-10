@@ -1,0 +1,63 @@
+{
+  "date": "2026-09-07",
+  "layer": "native Tauri/WKWebView and filesystem",
+  "appIdentifier": "dev.shard.multidrag-acceptance-20260907",
+  "appPath": "/tmp/Shard Multidrag Acceptance.app",
+  "binaryBuild": {
+    "command": "cargo build --manifest-path src-tauri/Cargo.toml --bin shard",
+    "TAURI_CONFIG": "JSON contents of /tmp/shard-diagram-separation-config.json",
+    "output": "target/debug/shard"
+  },
+  "frontend": "Full Library UI at http://127.0.0.1:1420/",
+  "originalFile": "/var/folders/jd/9rnt7sl15d7_gkzln2svt9xw0000gn/T/shard-multidrag-native-px2jcycn/notes/原生画布验收.shardcanvas.json",
+  "originalRevision": 17,
+  "originalHash": "4422c759ca89f9c5615cbf320825ab0c62c0dccbc68ddaac62ae5b4c5b047849",
+  "originalUnchanged": true,
+  "outputs": [
+    {
+      "file": "/var/folders/jd/9rnt7sl15d7_gkzln2svt9xw0000gn/T/shard-multidrag-native-px2jcycn/notes/多选拖动验收.shardmap.json",
+      "kind": "shard.map",
+      "id": "map-dff6fb94-9278-47ba-b2c9-ed901bb981d4",
+      "revision": 5,
+      "nodes": 6
+    },
+    {
+      "file": "/var/folders/jd/9rnt7sl15d7_gkzln2svt9xw0000gn/T/shard-multidrag-native-px2jcycn/notes/原生画布验收 · 流程图.shardflow.json",
+      "kind": "shard.flow",
+      "id": "flow-39c20fe8-36b0-4d1a-829c-4bfd59bfa8bd",
+      "revision": 3,
+      "nodes": 4
+    }
+  ],
+  "observed": [
+    "Legacy file exposes a read-only split page and no editable mixed canvas.",
+    "Split opens an indexed Library note containing working map and flow document links.",
+    "Single Return on selected map child creates one sibling; Chinese text saved.",
+    "Map node stores stable Flow document ID; opening reference flushes map and opens independent flow editor.",
+    "Flow menu contains process, decision, terminal, text and document reference only.",
+    "Saved new flow node and verified process restart/reopen retains text.",
+    "Process restart/reopen retained new mind map topic and Flow reference.",
+    "Narrow Library workspace selects and creates a topic outside the inspector occlusion; confirmed in native screenshot.",
+    "All original flow coordinates/text/shape fields and original mindmap topic data retained."
+  ],
+  "limits": [
+    "Chinese entered through native accessibility paste; physical IME candidates and physical trackpad gestures not tested.",
+    "Only the isolated temporary vault was split."
+  ],
+  "automatedVerification": {
+    "unit": {
+      "passed": 273
+    },
+    "ui": {
+      "passed": 227,
+      "duration": "1.5m"
+    },
+    "rustDiagramTests": {
+      "passed": 24
+    },
+    "build": "passed",
+    "cargoCheck": "passed",
+    "isolatedNativeBuild": "passed",
+    "gitDiffCheck": "passed"
+  }
+}

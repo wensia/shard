@@ -9,6 +9,7 @@ export interface MindMapLayoutOptions {
   nodeHeight?: number
   nodeHorizontalPadding?: number
   nodeLineHeight?: number
+  nodeMinHeights?: ReadonlyMap<string, number>
   nodeVerticalPadding?: number
   nodeWidth?: number
   rootMinNodeWidth?: number
@@ -135,6 +136,9 @@ export function layoutMindMap(
       nodeLineHeight,
       nodeVerticalPadding,
     })
+    // 浏览器编辑框的实际换行可能受字体、英文单词和中文标点禁则影响。
+    // 将测得的高度纳入整棵树，保证相邻节点和连线同步避让。
+    measured.height = Math.max(measured.height, options.nodeMinHeights?.get(node.id) ?? 0)
 
     return {
       children,
@@ -293,7 +297,7 @@ function measureMindMapNode(
       CUSTOM_WIDTH_MAX
     )
     const desiredWidth = Math.ceil(
-      estimateMindMapTextWidth(text) +
+      Math.max(...text.split("\n").map(estimateMindMapTextWidth)) +
         options.nodeHorizontalPadding * 2 +
         NODE_TEXT_MEASURE_TOLERANCE
     )
@@ -310,8 +314,8 @@ function measureMindMapNode(
     )
     const textLines =
       desiredWidth > CUSTOM_WIDTH_MAX
-        ? wrapMindMapText(text, maxTextWidth, CUSTOM_WIDTH_MAX_LINES)
-        : [text]
+        ? wrapMindMapText(text, maxTextWidth, Math.max(CUSTOM_WIDTH_MAX_LINES, options.maxNodeLines))
+        : text.split("\n")
     const height = Math.max(
       options.nodeHeight,
       options.nodeVerticalPadding * 2 +
@@ -328,7 +332,7 @@ function measureMindMapNode(
       NODE_TEXT_MEASURE_TOLERANCE
   )
   const desiredWidth = Math.ceil(
-    estimateMindMapTextWidth(text) +
+    Math.max(...text.split("\n").map(estimateMindMapTextWidth)) +
       options.nodeHorizontalPadding * 2 +
       NODE_TEXT_MEASURE_TOLERANCE
   )
@@ -340,7 +344,7 @@ function measureMindMapNode(
   const textLines =
     desiredWidth > options.maxNodeWidth
       ? wrapMindMapText(text, maxTextWidth, options.maxNodeLines)
-      : [text]
+      : text.split("\n")
   const height = Math.max(
     options.nodeHeight,
     options.nodeVerticalPadding * 2 +
@@ -355,7 +359,8 @@ function measureMindMapNode(
 }
 
 function normalizeMindMapNodeText(value: string) {
-  return value.trim().replace(/\s+/g, " ") || "未命名"
+  // 编辑框保留的空格和尾随空行也占据空间，布局必须使用同一份正文。
+  return value.replace(/\r\n?/g, "\n") || "未命名"
 }
 
 function wrapMindMapText(text: string, maxTextWidth: number, maxLines: number) {
@@ -363,6 +368,11 @@ function wrapMindMapText(text: string, maxTextWidth: number, maxLines: number) {
   let currentLine = ""
 
   for (const char of Array.from(text)) {
+    if (char === "\n") {
+      lines.push(currentLine)
+      currentLine = ""
+      continue
+    }
     const nextLine = currentLine + char
     if (
       currentLine &&
@@ -375,9 +385,7 @@ function wrapMindMapText(text: string, maxTextWidth: number, maxLines: number) {
     }
   }
 
-  if (currentLine) {
-    lines.push(currentLine)
-  }
+  lines.push(currentLine)
 
   if (lines.length <= maxLines) {
     return lines

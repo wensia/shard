@@ -8,8 +8,11 @@ import { StatusBar } from "@/components/shard/status-bar"
 import { FragmentEditor } from "@/components/shard/fragment-editor"
 import { FragmentImageExporter } from "@/components/shard/fragment-image-exporter"
 import {
+  SearchContextBar,
   type FragmentSearchSession,
 } from "@/components/shard/fragment-search-workspace"
+import { ConvertFragmentDialog, FragmentFilterContext, FragmentFilterDialog, FragmentTrashWorkspace } from "@/components/shard/fragment-workspace-controls"
+import { conversionTitle, EMPTY_FRAGMENT_FILTERS, libraryDirectoryOptions, matchesFragmentFilters, type FragmentFilters } from "@/lib/fragment-space"
 import {
   LockboxDialog,
 } from "@/components/shard/lockbox-dialog"
@@ -99,7 +102,6 @@ import {
   writeWorkspaceRoute,
   type WorkspaceRoute,
 } from "@/workspace/route"
-import { ReviewWorkspaceShell } from "@/workspace/review-workspace-shell"
 import { useFragments } from "@/workspace/use-fragments"
 import {
   useLockbox,
@@ -150,8 +152,6 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     setIsLoading,
   } = useFragments()
   const {
-    insightIncludeLockbox,
-    insightUnlockIntentRef,
     isArchivingLockboxFragment,
     lockbox,
     lockboxDialogMode,
@@ -159,7 +159,6 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     pendingLockboxMoveId,
     recoveryKey,
     selectedLockboxTag,
-    setInsightIncludeLockbox,
     setIsArchivingLockboxFragment,
     setLockbox,
     setLockboxDialogMode,
@@ -167,7 +166,6 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     setPendingLockboxMoveId,
     setRecoveryKey,
     setSelectedLockboxTag,
-    unlockedForInsightRef,
   } = useLockbox()
   const {
     autoSyncFailureNotifiedRef,
@@ -181,11 +179,11 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
   } = useVaultSync()
   const [librarySaveState, setLibrarySaveState] =
     useState<SaveState | null>(null)
+  const [isClosing, setIsClosing] = useState(false)
   const [vaultPath, setVaultPath] = useState("")
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(
     readSidebarCollapsed
   )
-  const [composerCollapseSignal, setComposerCollapseSignal] = useState(0)
   const [editingFragmentId, setEditingFragmentId] = useState<string | null>(null)
   const [editingVariant, setEditingVariant] =
     useState<EditingVariant>("inline")
@@ -208,8 +206,22 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
   const [mindMaps, setMindMaps] = useState<MindMapSummary[]>([])
   const [csvFiles, setCsvFiles] = useState<CsvFileSummary[]>([])
   const [libraryTree, setLibraryTree] = useState<LibraryTreeSnapshot | null>(null)
+  const [fragmentFilters, setFragmentFilters] = useState<FragmentFilters>(EMPTY_FRAGMENT_FILTERS)
+  const [isFragmentFilterOpen, setIsFragmentFilterOpen] = useState(false)
+  const [searchType, setSearchType] = useState<"all" | "fragments" | "notes">("all")
+  const [navigationOrigin, setNavigationOrigin] = useState<{ route: WorkspaceRoute; filters: FragmentFilters } | null>(null)
+  const [convertingFragment, setConvertingFragment] = useState<Fragment | null>(null)
+  const [conversionDraft, setConversionDraft] = useState({ title: "", directory: "notes" })
+  const [conversionBusy, setConversionBusy] = useState(false)
+  const [conversionNeedsVerification, setConversionNeedsVerification] = useState(false)
+  const conversionActionRef = useRef(false)
+  const [conversionError, setConversionError] = useState<string | null>(null)
+  const [fragmentSelectionActive, setFragmentSelectionActive] = useState(false)
+  const fragmentsView = route.space === "fragments" ? route.params.view ?? "all" : "all"
   const searchReturnFocusRef = useRef<HTMLElement | null>(null)
   const librarySaveHandlerRef = useRef<LibraryDraftHandle | null>(null)
+  const fragmentFlushRef = useRef<(() => Promise<boolean>) | null>(null)
+  const registerFragmentFlush = useCallback((flush: (() => Promise<boolean>) | null) => { fragmentFlushRef.current = flush }, [])
   const [pendingLibraryTarget, setPendingLibraryTarget] =
     useState<LibraryNavigationTarget | null>(null)
   const nextLibraryNavigationIdRef = useRef(0)
@@ -238,9 +250,9 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
   }, [isSidebarCollapsed])
 
   useEffect(() => {
-    if (route.space !== "library" || !vaultPath) return
+    if (!vaultPath || (route.space !== "library" && fragmentsView !== "trash")) return
     void prepareLibraryTree(vaultPath)
-  }, [route.space, vaultPath])
+  }, [route.space, fragmentsView, vaultPath])
 
   const registerLibrarySaveHandler = useCallback(
     (handle: LibraryDraftHandle | null) => {
@@ -250,6 +262,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
   )
 
   const saveLibraryDraftBeforeNavigation = useCallback(async () => {
+    if (fragmentFlushRef.current && !(await fragmentFlushRef.current())) return false
     if (routeRef.current.space !== "library") return true
     return (await librarySaveHandlerRef.current?.flush()) ?? true
   }, [])
@@ -258,12 +271,8 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     autoLock: (options) => {
       void autoLockLockbox(options)
     },
-    insightIncludeLockbox,
-    insightUnlockIntentRef,
     lockbox,
     route,
-    setInsightIncludeLockbox,
-    unlockedForInsightRef,
   })
 
   async function refreshFragments() {
@@ -489,7 +498,9 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
           }`
         )
       } else {
-        toast("片段已保存")
+        if (!matchesFragmentFilters(created, fragmentFilters)) {
+          toast("已记录，当前筛选下不可见", { action: { label: "查看碎片", onClick: () => showFragmentTarget(created) } })
+        } else toast("碎片已保存")
       }
       void refreshFragments()
     } catch (error) {
@@ -795,6 +806,25 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
   }
 
   async function handleToggleFragmentKind(fragment: Fragment) {
+    if (deriveKind(fragment.tags) === "fragment" && !fragment.lockbox) {
+      if (!(await saveLibraryDraftBeforeNavigation())) return
+      setConversionError(null)
+      setConversionNeedsVerification(false)
+      setConversionDraft({ title: conversionTitle(fragment), directory: "notes" })
+      setConvertingFragment(fragment)
+      setConversionBusy(true)
+      try {
+        const tree = await listLibraryTree()
+        setLibraryTree(tree)
+        let directory = "notes"
+        try { directory = localStorage.getItem(`shard.convert-directory:${vaultPath}`) ?? "notes" } catch { /* unavailable storage */ }
+        if (!libraryDirectoryOptions(tree.entries).some(option => option.value === directory)) directory = "notes"
+        setConversionDraft({ title: conversionTitle(fragment), directory })
+      } catch (error) {
+        setConversionError(`目录读取失败：${getApiErrorMessage(error)}`)
+      } finally { setConversionBusy(false) }
+      return
+    }
     recordContentActivity()
     const nextKind = fragment.kind === "note" ? "fragment" : "note"
 
@@ -804,12 +834,69 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
           ? await convertFragmentToNote(fragment.id)
           : await convertNoteToFragment(fragment.id)
       handleLibraryMutation(result)
-      toast(nextKind === "note" ? "已转为笔记" : "已转回碎片")
+      toast(nextKind === "note" ? "已转为文档" : "已转回碎片")
     } catch (error) {
       toast.error(
-        `${nextKind === "note" ? "转为笔记失败" : "转回碎片失败"}：${getApiErrorMessage(error)}`,
+        `${nextKind === "note" ? "转为文档失败" : "转回碎片失败"}：${getApiErrorMessage(error)}`,
         { duration: Infinity }
       )
+    }
+  }
+
+  function openConvertedDocument(fragment: Fragment) {
+    setNavigationOrigin({ route, filters: fragmentFilters })
+    setConvertingFragment(null)
+    setConversionNeedsVerification(false)
+    closeEditor()
+    requestLibraryTarget({ kind: "note", id: fragment.id, edit: true })
+  }
+
+  async function verifyFragmentConversion(id: string, failureMessage: string) {
+    try {
+      const state = await listFragments()
+      const current = state.fragments.find(fragment => fragment.id === id)
+      if (!current || current.archived || current.lockbox) {
+        setConversionError("暂时无法确认内容所在位置，请重新核对后继续。")
+        return
+      }
+      if (deriveKind(current.tags) === "note") {
+        applyVaultState(state)
+        openConvertedDocument(current)
+        toast("已核对：内容已转为文档")
+      } else {
+        setConversionNeedsVerification(false)
+        setConversionError(`${failureMessage} 已核对：内容仍在碎片中，可以重试。`)
+      }
+    } catch (error) {
+      setConversionError(`暂时无法核对转换结果：${getApiErrorMessage(error)}。请重新核对后继续。`)
+    }
+  }
+
+  async function submitFragmentConversion() {
+    if (!convertingFragment || conversionBusy || conversionActionRef.current) return
+    conversionActionRef.current = true
+    try {
+      if (conversionNeedsVerification) {
+        setConversionBusy(true)
+        await verifyFragmentConversion(convertingFragment.id, "转换尚未完成。")
+        return
+      }
+      if (!(await saveLibraryDraftBeforeNavigation())) return
+      setConversionBusy(true)
+      setConversionError(null)
+      const result = await convertFragmentToNote(convertingFragment.id, conversionDraft.directory, conversionDraft.title.trim())
+      if (!result.fragment) throw new Error("转换结果缺少文档，请刷新后核对。")
+      handleLibraryMutation(result)
+      try { localStorage.setItem(`shard.convert-directory:${vaultPath}`, conversionDraft.directory) } catch { /* unavailable storage */ }
+      openConvertedDocument(result.fragment)
+      toast("已转为文档")
+    } catch (error) {
+      // A failed transport can follow a successful disk mutation; never retry until its state is known.
+      setConversionNeedsVerification(true)
+      await verifyFragmentConversion(convertingFragment.id, `转换失败：${getApiErrorMessage(error)}。`)
+    } finally {
+      conversionActionRef.current = false
+      setConversionBusy(false)
     }
   }
 
@@ -1004,42 +1091,9 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
       return
     }
 
-    // 洞察勾选发起的解锁：后端已校验密码，直接并入候选，不跳转密匣视图
-    if (insightUnlockIntentRef.current) {
-      insightUnlockIntentRef.current = false
-      unlockedForInsightRef.current = true
-      setInsightIncludeLockbox(true)
-      toast("密匣已解锁，将包含在洞察中")
-      return
-    }
-
     setSelectedLockboxTag(null)
     setRoute({ space: "lockbox", params: {} })
     toast("密匣已解锁")
-  }
-
-  // 勾选「包含密匣内容」一律要求重新输入密码：即使当前已解锁也先上锁，
-  // 保证这次合入经过后端真实校验，而不是放行既有会话
-  async function handleInsightIncludeLockboxChange(next: boolean) {
-    if (next) {
-      insightUnlockIntentRef.current = true
-      if (lockbox?.unlocked) {
-        try {
-          const state = await lockLockbox()
-          applyVaultState(state)
-        } catch {
-          // 上锁失败仍弹解锁窗，由后端 unlock 校验兜底
-        }
-      }
-      setLockboxDialogMode(lockbox?.configured ? "unlock" : "setup")
-      return
-    }
-
-    setInsightIncludeLockbox(false)
-    if (unlockedForInsightRef.current) {
-      unlockedForInsightRef.current = false
-      void autoLockLockbox()
-    }
   }
 
   async function handleLockLockbox() {
@@ -1093,7 +1147,6 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     const result = await resetLockboxPassword(nextRecoveryKey, newPassword)
     applyVaultState(result.vault)
     setRecoveryKey(result.recoveryKey)
-    insightUnlockIntentRef.current = false
 
     if (pendingLockboxMoveId) {
       const fragmentId = pendingLockboxMoveId
@@ -1109,13 +1162,35 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     setPendingLockboxMoveId(null)
     setLockboxDialogMode(null)
     setRecoveryKey(null)
-    insightUnlockIntentRef.current = false
   }
 
-  function handleOpenSearchResult(
+  function showFragmentTarget(fragment: Fragment) {
+    setPendingLibraryTarget(null)
+    if (route.space !== "fragments" || fragmentsView !== "all" || !matchesFragmentFilters(fragment, fragmentFilters)) {
+      setNavigationOrigin(current => current ?? { route, filters: fragmentFilters })
+      setFragmentFilters(EMPTY_FRAGMENT_FILTERS)
+    }
+    setRoute({ space: "fragments", params: { view: fragment.archived ? "trash" : "all" } })
+    setPendingScrollFragmentId(fragment.id)
+  }
+
+  async function returnToOrigin() {
+    if (!navigationOrigin || !(await saveLibraryDraftBeforeNavigation())) return
+    setFragmentFilters(navigationOrigin.filters)
+    setRoute(navigationOrigin.route)
+    setPendingScrollFragmentId(null)
+    setNavigationOrigin(null)
+    setPendingLibraryTarget(null)
+    setIsSearchModeActive(false)
+  }
+
+  async function handleOpenSearchResult(
     fragment: Fragment,
     session?: FragmentSearchSession
   ) {
+    if (!(await saveLibraryDraftBeforeNavigation())) return
+    // Search sessions may outlive a conversion. Resolve the current object by identity.
+    fragment = fragments.find(current => current.id === fragment.id) ?? fragment
     setEditingVariant("inline")
     setEditingFragmentId(null)
     setSelectedLockboxTag(null)
@@ -1139,30 +1214,27 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
       }
     } else if (deriveKind(fragment.tags) === "note" && !fragment.archived) {
       // 公开笔记进资料库编辑器；笔记不在碎片流里，不设滚动目标
+      if (route.space !== "library") setNavigationOrigin(current => current ?? { route, filters: fragmentFilters })
       requestLibraryTarget({ kind: "note", id: fragment.id })
       setIsSearchModeActive(false)
       if (session) setSearchSession(session)
       searchReturnFocusRef.current = null
       return
-    } else if (fragment.archived) {
+    } else if (fragment.archived && deriveKind(fragment.tags) === "note") {
       requestLibraryTarget({ kind: "trash" })
-    } else if (fragment.tags.includes("inbox")) {
-      requestLibraryTarget({ kind: "fragments" })
     } else {
-      toast("这条笔记当前不在时间线列表中")
-      return
+      showFragmentTarget(fragment)
     }
 
     setIsSearchModeActive(false)
     if (session) setSearchSession(session)
     searchReturnFocusRef.current = null
-    setPendingScrollFragmentId(fragment.archived ? null : fragment.id)
+    setPendingScrollFragmentId(fragment.id)
   }
 
   function requestLibraryTarget(
     target:
-      | { kind: "note"; id: string }
-      | { kind: "fragments" }
+      | { kind: "note"; id: string; edit?: boolean }
       | { kind: "trash" }
   ) {
     nextLibraryNavigationIdRef.current += 1
@@ -1184,14 +1256,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
       return
     }
 
-    if (deriveKind(target.tags) === "note" && !target.archived) {
-      if (!(await saveLibraryDraftBeforeNavigation())) return
-      requestLibraryTarget({ kind: "note", id: target.id })
-      return
-    }
-
-    if (!(await saveLibraryDraftBeforeNavigation())) return
-    handleOpenSearchResult(target)
+    await handleOpenSearchResult(target)
   }
 
   async function handleOrganizeFragments(
@@ -1211,22 +1276,29 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
         ...current.filter((fragment) => fragment.id !== created.id),
       ])
     )
-    requestLibraryTarget({ kind: "note", id: created.id })
-    toast("笔记已生成")
+    setNavigationOrigin({ route, filters: fragmentFilters })
+    requestLibraryTarget({ kind: "note", id: created.id, edit: true })
+    toast("文档已保存，来源碎片已保留")
     void refreshFragments()
     void refreshLibraryTree()
   }
 
   async function openSearch() {
+    await openScopedSearch("all")
+  }
+
+  async function openScopedSearch(type: "all" | "fragments" | "notes") {
     if (!(await saveLibraryDraftBeforeNavigation())) return
 
     if (!isSearchModeActive && document.activeElement instanceof HTMLElement) {
       searchReturnFocusRef.current = document.activeElement
     }
     // 密匣空间自带搜索覆盖层：留在空间内搜索，避免离开安全区触发上锁
-    if (route.space !== "fragments" && route.space !== "lockbox") {
+    if (route.space !== "lockbox") {
+      if (!isSearchModeActive) setNavigationOrigin(current => current ?? { route, filters: fragmentFilters })
       setRoute({ space: "fragments", params: {} })
     }
+    setSearchType(type)
     setIsSearchModeActive(true)
     setSearchFocusSignal((current) => current + 1)
   }
@@ -1235,9 +1307,28 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     setIsSearchModeActive(false)
     if (searchSession) return
 
+    if (navigationOrigin) {
+      setRoute(navigationOrigin.route)
+      setFragmentFilters(navigationOrigin.filters)
+      setNavigationOrigin(null)
+    }
+
     const returnFocus = searchReturnFocusRef.current
     searchReturnFocusRef.current = null
     window.requestAnimationFrame(() => returnFocus?.focus())
+  }
+
+  async function applyFragmentFilters(filters: FragmentFilters) {
+    if (!(await saveLibraryDraftBeforeNavigation())) return
+    setFragmentFilters(filters)
+    setIsFragmentFilterOpen(false)
+    setIsSearchModeActive(false)
+    setSearchSession(null)
+    setNavigationOrigin(null)
+    setPendingLibraryTarget(null)
+    setPendingScrollFragmentId(null)
+    searchReturnFocusRef.current = null
+    setRoute({ space: "fragments", params: {} })
   }
 
   function endSearchSession() {
@@ -1257,39 +1348,6 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
 
     const nextSession = { ...searchSession, activeIndex: nextIndex }
     handleOpenSearchResult(fragment, nextSession)
-  }
-
-  function handleCreateInboxTag(rawTag: string) {
-    const tag = rawTag.trim().replace(/^#+/, "")
-    if (!tag) return null
-
-    if (/\s/.test(tag)) {
-      toast.error("标签不能包含空格", { duration: Infinity })
-      return null
-    }
-
-    if (tag === "inbox" || tag === LOCKBOX_TAG || isTypeTag(tag)) {
-      if (isTypeTag(tag)) {
-        toast.error(
-          `#${tag} 是内容类型保留标签，请使用卡片菜单“转为笔记”`,
-          { duration: Infinity }
-        )
-        return null
-      }
-      toast.error(`#${tag} 是保留标签，不能新建`, { duration: Infinity })
-      return null
-    }
-
-    if (inboxTagSummaries.some((summary) => summary.tag === tag)) {
-      toast(`标签 #${tag} 已存在`)
-      return tag
-    }
-
-    updateAppSettings({
-      customTags: [...appSettings.customTags, tag],
-    })
-    toast(`${`标签 #${tag} 已创建`}：${`写片段时输入 #${tag} 即可归入这个标签。`}`)
-    return tag
   }
 
   async function openMindMap(map?: MindMapSummary) {
@@ -1316,6 +1374,10 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     setSearchSession(null)
     searchReturnFocusRef.current = null
     setIsMindMapViewActive(false)
+    setNavigationOrigin(null)
+    setPendingLibraryTarget(null)
+    setPendingScrollFragmentId(null)
+    setFragmentSelectionActive(false)
 
     if (nextRoute.space === "lockbox" && !lockbox?.configured) {
       setLockboxDialogMode("setup")
@@ -1337,11 +1399,6 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
         (fragment) => deriveKind(fragment.tags) === "note"
       ),
     [lockboxFragments]
-  )
-
-  const inboxTagSummaries = useMemo(
-    () => buildTagSummaries(inboxFragments, appSettings.customTags),
-    [appSettings.customTags, inboxFragments]
   )
 
   useEffect(() => {
@@ -1369,13 +1426,8 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
       : lockboxStream
   }, [lockbox?.unlocked, lockboxFragments, selectedLockboxTag])
 
-  const recentCaptureFragments = useMemo(
-    () =>
-      [...inboxFragments]
-        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-        .slice(0, 5),
-    [inboxFragments]
-  )
+  const visibleStreamFragments = useMemo(() => inboxFragments.filter(fragment => matchesFragmentFilters(fragment, fragmentFilters)), [inboxFragments, fragmentFilters])
+  const searchableFragments = useMemo(() => searchType === "all" ? fragments : fragments.filter(fragment => !fragment.lockbox && (searchType === "notes" ? deriveKind(fragment.tags) === "note" : deriveKind(fragment.tags) === "fragment")), [fragments, searchType])
 
   const knownTags = useMemo(
     () =>
@@ -1409,8 +1461,8 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     // 内联重置发起时没有弹窗 mode，恢复密钥步骤仍会独立弹出
     recoveryKey !== null ||
     isExportSheetOpen ||
-    isLockboxArchiveConfirmOpen
-  const isBlockingDialogOpen = isModalBusy
+    isLockboxArchiveConfirmOpen || convertingFragment !== null || isFragmentFilterOpen
+  const isBlockingDialogOpen = isModalBusy || isClosing
 
   const lockboxScrollTargetId =
     pendingScrollFragmentId &&
@@ -1447,7 +1499,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     return () => {
       window.removeEventListener("keydown", handleGlobalSearchShortcut)
     }
-  }, [isModalBusy, isSearchModeActive, route])
+  }, [isModalBusy, isSearchModeActive, route, fragmentFilters, navigationOrigin, searchType])
 
   useEffect(() => {
     function handleGlobalCaptureShortcut(event: KeyboardEvent) {
@@ -1625,18 +1677,21 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
         const { getCurrentWindow } = await import("@tauri-apps/api/window")
         const currentWindow = getCurrentWindow()
         const stop = await currentWindow.onCloseRequested(async (event) => {
-          if (closing) return
           event.preventDefault()
+          if (closing) return
           closing = true
+          setIsClosing(true)
+          const drafts = librarySaveHandlerRef.current
+          drafts?.setInteractionBlocked(true)
+          toast.loading("正在保存并退出…", { id: "window-close" })
           try {
             const flushed =
-              (await librarySaveHandlerRef.current?.flush()) ?? true
+              (await drafts?.flush()) ?? true
             if (!flushed) {
               const leaveAnyway = window.confirm(
                 "还有草稿没能保存成功。仍要退出吗？（退出将丢失未保存的修改）"
               )
               if (!leaveAnyway) {
-                closing = false
                 return
               }
             }
@@ -1645,8 +1700,14 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
               checkpointVault("退出前").catch(() => null),
               new Promise((resolve) => window.setTimeout(resolve, 5_000)),
             ])
+            await currentWindow.destroy()
+          } catch (error) {
+            toast.error(`退出未完成，当前窗口已保留：${getApiErrorMessage(error)}`)
           } finally {
-            void currentWindow.destroy()
+            closing = false
+            drafts?.setInteractionBlocked(false)
+            setIsClosing(false)
+            toast.dismiss("window-close")
           }
         })
         if (disposed) stop()
@@ -1673,6 +1734,8 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     knownTags,
     onArchive: handleArchiveFragment,
     onCancelEdit: closeEditor,
+    onRegisterEditorFlush: registerFragmentFlush,
+    onBeforeSelection: saveLibraryDraftBeforeNavigation,
     onEdit: openInlineEditor,
     onExportImage: setExportingFragment,
     onLinkFragment: handleLinkFragment,
@@ -1689,24 +1752,25 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
       void handleToggleFragmentTask(fragment, lineIndex)
     },
     onUnlinkFragment: handleUnlinkFragment,
-    // 展示列表可以是切片（捕捉页最近 5 条、资料库月份 scope），
-    // 但关联候选与反链索引必须覆盖全量公开内容
+    // 展示范围只含当前碎片；关联候选与反链索引覆盖全部公开内容。
     relationFragments: publicOnlyFragments,
     vaultPath,
   }
 
   const searchProps = {
     focusSignal: searchFocusSignal,
-    fragments,
+    fragments: searchableFragments,
+    contentType: searchType,
     initialSession: searchSession,
     lockboxSearchAvailable: Boolean(lockbox?.unlocked),
     onExit: exitSearchMode,
+    onFilterFragments: route.space === "lockbox" ? undefined : () => setIsFragmentFilterOpen(true),
     onOpenFragment: handleOpenSearchResult,
   }
 
   const searchContextBarProps = searchSession
     ? {
-        onBack: openSearch,
+        onBack: () => openScopedSearch(searchType),
         onClose: endSearchSession,
         onNavigate: navigateSearchResult,
         session: searchSession,
@@ -1727,6 +1791,8 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     <>
       <main
         aria-hidden={isBlockingDialogOpen ? true : undefined}
+        aria-busy={isClosing || undefined}
+        inert={isClosing || undefined}
         className={styles.appShell}
         data-sidebar-collapsed={isSidebarCollapsed}
       >
@@ -1735,9 +1801,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
             <SidebarNav
               fragments={publicOnlyFragments}
               isCollapsed={false}
-              mindMapCount={mindMaps.length}
               mindMapViewActive={isMindMapViewActive}
-              onOpenMindMaps={() => openMindMap()}
               onOpenSearch={openSearch}
               onRouteChange={handleRouteChange}
               onToggleCollapsed={() => {
@@ -1763,10 +1827,18 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
             </div>
           ) : null}
           <div className={styles.workspaceContent}>
-            {route.space === "fragments" ? (
+            <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
+            {navigationOrigin && !isSearchModeActive && !searchSession ? (
+              <div className="shard-content-inset shrink-0 py-1">
+                <Button size="sm" variant="ghost" onClick={() => void returnToOrigin()}>
+                  {navigationOrigin.route.space === "library" ? "返回资料库" : "返回碎片"}
+                </Button>
+              </div>
+            ) : null}
+            {route.space === "fragments" && (isSearchModeActive || fragmentsView !== "trash") ? (
               <FragmentsWorkspace
             capture={{
-              collapseSignal: composerCollapseSignal,
+              secondarySubmit: fragmentSelectionActive,
               csvFiles,
               fragments: publicOnlyFragments,
               isCreating,
@@ -1787,13 +1859,29 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
             }}
             search={searchProps}
             searchContextBar={searchContextBarProps}
+            filterContext={<FragmentFilterContext filters={fragmentFilters} onClear={() => void applyFragmentFilters(EMPTY_FRAGMENT_FILTERS)} />}
             timeline={{
               ...timelineHandlers,
-              fragments: recentCaptureFragments,
-              onScrollDown: () => {
-                setComposerCollapseSignal((current) => current + 1)
-              },
+              fragments: visibleStreamFragments,
+              scopeKey: `${vaultPath}:${JSON.stringify(fragmentFilters)}`,
+              scrollToFragmentId: pendingScrollFragmentId,
+              onOrganize: handleOrganizeFragments,
+              onSelectionModeChange: setFragmentSelectionActive,
+              emptyMessage: fragmentFilters.tag || fragmentFilters.month || fragmentFilters.pinned ? "没有符合条件的碎片，可清除筛选后查看。" : "还没有碎片，记下一点什么吧。",
             }}
+              />
+            ) : route.space === "fragments" && fragmentsView === "trash" ? (
+              <FragmentTrashWorkspace
+                entries={libraryTree?.fragmentTrashEntries ?? []}
+                fragments={publicOnlyFragments}
+                loading={isLoading || !libraryTree}
+                targetId={pendingScrollFragmentId}
+                onMutation={handleLibraryMutation}
+                onRestored={id => {
+                  setFragmentFilters(EMPTY_FRAGMENT_FILTERS)
+                  setRoute({ space: "fragments", params: {} })
+                  setPendingScrollFragmentId(id ?? null)
+                }}
               />
             ) : route.space === "lockbox" ? (
               <LockboxShell
@@ -1822,74 +1910,39 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
             }}
             totalCount={lockboxFragments.length}
               />
-            ) : route.space === "review" ? (
-              <ReviewWorkspaceShell
-            csvFiles={csvFiles}
-            editingFragmentId={
-              editingVariant === "inline" ? editingFragmentId : null
-            }
-            fragments={
-              route.params.mode === "insight" &&
-              insightIncludeLockbox &&
-              lockbox?.unlocked
-                ? fragments
-                : publicOnlyFragments
-            }
-            insightIncludeLockbox={insightIncludeLockbox}
-            isLoading={isLoading}
-            knownTags={knownTags}
-            lockboxConfigured={Boolean(lockbox?.configured)}
-            mode={route.params.mode}
-            onArchive={handleArchiveFragment}
-            onCancelEdit={closeEditor}
-            onCreate={handleCreate}
-            onEdit={openInlineEditor}
-            onExportImage={setExportingFragment}
-            onInsightIncludeLockboxChange={handleInsightIncludeLockboxChange}
-            onModeChange={(mode) =>
-              handleRouteChange({ space: "review", params: { mode } })
-            }
-            onMoveToLockbox={handleMoveFragmentToLockbox}
-            onOpenZen={openZenEditor}
-            onPin={handlePinFragment}
-            onSave={handleUpdateFragment}
-            onToggleKind={handleToggleFragmentKind}
-            onToggleTask={(fragment, lineIndex) => {
-              void handleToggleFragmentTask(fragment, lineIndex)
-            }}
-            vaultPath={vaultPath}
-              />
             ) : (
-              <LibraryShell
+              <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+                {searchContextBarProps ? <SearchContextBar {...searchContextBarProps} /> : null}
+                <LibraryShell
+                key={vaultPath}
+                vaultPath={vaultPath}
             csvFiles={csvFiles}
             fragments={publicActiveFragments}
             isLoading={isLoading}
             libraryTree={libraryTree}
             knownTags={knownTags}
-            fragmentsTimeline={{
-              ...timelineHandlers,
-              onOrganize: handleOrganizeFragments,
-            }}
-            fragmentsTagBar={{
-              onCreateTag: handleCreateInboxTag,
-              summaries: inboxTagSummaries,
-            }}
             navigateTo={pendingLibraryTarget}
             onNavigateToFragment={(fragmentId) => {
               void handleNavigateToFragment(fragmentId)
             }}
             onLibraryMutation={handleLibraryMutation}
+            onConvertedToFragment={fragment => {
+              setFragments(current => sortFragmentsForDisplay([fragment, ...current.filter(item => item.id !== fragment.id)]))
+              showFragmentTarget(fragment)
+            }}
+            onRefreshLibrary={refreshLibraryTree}
+            onTableSaved={recordContentActivity}
             onMoveToLockbox={handleMoveFragmentToLockbox}
             onOpenLockbox={enterLockboxSpace}
             onRefreshFragments={refreshFragments}
             onRegisterSaveHandler={registerLibrarySaveHandler}
             onSaveStateChange={setLibrarySaveState}
             onSave={handleUpdateFragment}
-            pendingScrollFragmentId={pendingScrollFragmentId}
             relationFragments={publicOnlyFragments}
-            searchContextBar={searchContextBarProps}
               />
+              </div>
             )}
+            </div>
           </div>
         </div>
         <div className={styles.bottomTabsSlot}>
@@ -1916,6 +1969,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
             onCheckpoint={() => void handleCheckpoint()}
             onHelp={showHelp}
             onOpenGitSettings={() => openSettings("git")}
+            onOpenMindMaps={() => openMindMap()}
             onOpenSettings={() => openSettings("vault")}
             onRestoreWindow={handleRestoreWindow}
             onShortcuts={showShortcuts}
@@ -1931,6 +1985,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
         fragments={publicOnlyFragments}
         knownTags={knownTags}
         onClose={closeEditor}
+        onRegisterFlush={registerFragmentFlush}
         onCreate={handleCreate}
         onNavigateToFragment={(fragmentId) => {
           void handleNavigateToFragment(fragmentId)
@@ -1938,6 +1993,13 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
         onSave={handleUpdateFragment}
         vaultPath={vaultPath}
       />
+      <FragmentFilterDialog open={isFragmentFilterOpen} fragments={inboxFragments} filters={fragmentFilters}
+        onClose={() => setIsFragmentFilterOpen(false)} onApply={filters => void applyFragmentFilters(filters)} />
+      <ConvertFragmentDialog open={convertingFragment !== null} title={conversionDraft.title} directory={conversionDraft.directory}
+        entries={libraryTree?.entries ?? []} busy={conversionBusy} needsVerification={conversionNeedsVerification} error={conversionError}
+        onTitleChange={title => setConversionDraft(current => ({ ...current, title }))}
+        onDirectoryChange={directory => setConversionDraft(current => ({ ...current, directory }))}
+        onClose={() => setConvertingFragment(null)} onSubmit={() => void submitFragmentConversion()} />
       <FragmentImageExporter
         fragment={exportingFragment}
         onClose={() => setExportingFragment(null)}

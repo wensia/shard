@@ -54,17 +54,17 @@
 - **一个概念一个字形**：
   - 警告双字形模型：`TriangleAlert` = 毁灭性确认；`CircleAlert` = 行内提示 / 错误 toast（`OctagonX` 废除）。
   - `Link` = 相关片段（废除 `Link2`）；`Paperclip` = 关联到片段的动作；`Maximize2`（废除 `Maximize`）。
-  - `GitBranch` 专属导图；漫步一律 `Route`（此前 bottom-tabs 误用 GitBranch）。
+  - `GitBranch` 专属导图。
 
 ### 签名图标
 
-Shard 核心概念用手绘签名图标（唯一允许的自绘 SVG）：碎片、禅、密匣、传送门、漫步。
+Shard 核心概念用手绘签名图标（唯一允许的自绘 SVG）：碎片、禅、密匣、传送门。
 
 - 规范：24 viewBox、`stroke-width: 1.5`（走同一 CSS token 管道）、round caps/joins、
   整数网格吸附、最少路径、纯 `currentColor`。
 - 位置：`src/components/icons/signature/`，经注册表导出，与库图标同 prop 面。
 - 现 `ShardZenIcon`（双色 + 半透明填充 + 1.4/1.6 混合描边）按上述规范重绘。
-- 其余四枚（碎片/密匣/传送门/漫步）待禅图标落地效果确认后按同规范补齐。
+- 其余三枚（碎片/密匣/传送门）待禅图标落地效果确认后按同规范补齐。
 
 ## 落地架构
 

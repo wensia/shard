@@ -35,8 +35,60 @@ export function FragmentLinkDialog({
   fragments,
   onConfirm,
 }: FragmentLinkDialogProps) {
-  const [highlightedIndex, setHighlightedIndex] = useState(0)
   const [isConfirming, setIsConfirming] = useState(false)
+
+  async function confirm(targetId: string) {
+    if (isConfirming) return
+
+    setIsConfirming(true)
+    try {
+      await onConfirm(targetId)
+      onOpenChange(false)
+    } catch {
+      // App 层统一展示 API 错误；失败时保留对话框，方便用户重试。
+    } finally {
+      setIsConfirming(false)
+    }
+  }
+
+  return (
+    <Dialog
+      open={isOpen}
+      onOpenChange={(open) => {
+        if (!isConfirming) onOpenChange(open)
+      }}
+    >
+      <DialogContent
+        aria-busy={isConfirming}
+        className="h-[min(calc(var(--shard-space-8)*15),calc(100svh-var(--shard-space-8)))] gap-0 overflow-hidden p-0 sm:max-w-lg"
+        showCloseButton={!isConfirming}
+      >
+        <DialogHeader className="border-b border-border px-4 py-3">
+          <DialogTitle>关联到片段</DialogTitle>
+        </DialogHeader>
+        <FragmentLinkDialogBody
+          fragments={fragments}
+          isConfirming={isConfirming}
+          isOpen={isOpen}
+          onConfirm={confirm}
+          onOpenChange={onOpenChange}
+          source={source}
+        />
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+// The shared Dialog portal mounts this work only while open or exiting.
+function FragmentLinkDialogBody({
+  fragments,
+  isConfirming,
+  isOpen,
+  onConfirm,
+  onOpenChange,
+  source,
+}: FragmentLinkDialogProps & { isConfirming: boolean }) {
+  const [highlightedIndex, setHighlightedIndex] = useState(0)
   const [query, setQuery] = useState("")
   const candidates = useMemo(() => {
     const relatedIds = new Set(
@@ -91,7 +143,6 @@ export function FragmentLinkDialog({
   useEffect(() => {
     if (!isOpen) return
     setHighlightedIndex(0)
-    setIsConfirming(false)
     setQuery("")
   }, [isOpen, source.id])
 
@@ -100,20 +151,6 @@ export function FragmentLinkDialog({
       Math.min(current, Math.max(visibleCandidates.length - 1, 0))
     )
   }, [visibleCandidates.length])
-
-  async function confirm(targetId: string) {
-    if (isConfirming) return
-
-    setIsConfirming(true)
-    try {
-      await onConfirm(targetId)
-      onOpenChange(false)
-    } catch {
-      // App 层统一展示 API 错误；失败时保留对话框，方便用户重试。
-    } finally {
-      setIsConfirming(false)
-    }
-  }
 
   function handleKeyDown(event: KeyboardEvent<HTMLInputElement>) {
     if (event.key === "Escape") {
@@ -140,79 +177,63 @@ export function FragmentLinkDialog({
 
     if (event.key === "Enter" && !isConfirming) {
       event.preventDefault()
-      void confirm(visibleCandidates[highlightedIndex].id)
+      void onConfirm(visibleCandidates[highlightedIndex].id)
     }
   }
 
   return (
-    <Dialog
-      open={isOpen}
-      onOpenChange={(open) => {
-        if (!isConfirming) onOpenChange(open)
-      }}
-    >
-      <DialogContent
-        aria-busy={isConfirming}
-        className="h-[min(calc(var(--shard-space-8)*15),calc(100svh-var(--shard-space-8)))] gap-0 overflow-hidden p-0 sm:max-w-lg"
-        showCloseButton={!isConfirming}
-      >
-        <DialogHeader className="border-b border-border px-4 py-3">
-          <DialogTitle>关联到片段</DialogTitle>
-        </DialogHeader>
-        <div className="flex min-h-0 flex-1 flex-col gap-3 p-4">
-          <label className="sr-only" htmlFor={`fragment-link-search-${source.id}`}>
-            搜索片段
-          </label>
-          <Input
-            aria-controls={`fragment-link-options-${source.id}`}
-            autoFocus
-            disabled={isConfirming}
-            id={`fragment-link-search-${source.id}`}
-            onChange={(event) => setQuery(event.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="搜索片段"
-            value={query}
-          />
+    <div className="flex min-h-0 flex-1 flex-col gap-3 p-4">
+      <label className="sr-only" htmlFor={`fragment-link-search-${source.id}`}>
+        搜索片段
+      </label>
+      <Input
+        aria-controls={`fragment-link-options-${source.id}`}
+        autoFocus
+        disabled={isConfirming}
+        id={`fragment-link-search-${source.id}`}
+        onChange={(event) => setQuery(event.target.value)}
+        onKeyDown={handleKeyDown}
+        placeholder="搜索片段"
+        value={query}
+      />
 
-          <div
-            aria-label="可关联的片段"
-            className="-mr-4 flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto pr-4 [scrollbar-gutter:stable]"
-            id={`fragment-link-options-${source.id}`}
-            role="listbox"
-          >
-            {visibleCandidates.length === 0 ? (
-              <div className="flex min-h-0 flex-1 items-center justify-center text-sm text-muted-foreground">
-                {query.trim() ? "没有匹配的片段" : "暂无可关联的片段"}
-              </div>
-            ) : (
-              visibleCandidates.map((fragment, index) => (
-                <Button
-                  aria-selected={index === highlightedIndex}
-                  className="h-auto w-full justify-start gap-3 px-3 py-2 text-left font-normal whitespace-normal aria-selected:bg-muted"
-                  disabled={isConfirming}
-                  key={fragment.id}
-                  onClick={() => void confirm(fragment.id)}
-                  onMouseEnter={() => setHighlightedIndex(index)}
-                  role="option"
-                  type="button"
-                  variant="ghost"
-                >
-                  <time
-                    className="shrink-0 text-xs text-muted-foreground tabular-nums"
-                    dateTime={fragment.createdAt}
-                  >
-                    {formatCreatedTime(fragment.createdAt)}
-                  </time>
-                  <span className="min-w-0 flex-1 truncate text-[13px] text-foreground">
-                    {toExcerpt(fragment.content)}
-                  </span>
-                </Button>
-              ))
-            )}
+      <div
+        aria-label="可关联的片段"
+        className="-mr-4 flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto pr-4 [scrollbar-gutter:stable]"
+        id={`fragment-link-options-${source.id}`}
+        role="listbox"
+      >
+        {visibleCandidates.length === 0 ? (
+          <div className="flex min-h-0 flex-1 items-center justify-center text-sm text-muted-foreground">
+            {query.trim() ? "没有匹配的片段" : "暂无可关联的片段"}
           </div>
-        </div>
-      </DialogContent>
-    </Dialog>
+        ) : (
+          visibleCandidates.map((fragment, index) => (
+            <Button
+              aria-selected={index === highlightedIndex}
+              className="h-auto w-full justify-start gap-3 px-3 py-2 text-left font-normal whitespace-normal aria-selected:bg-muted"
+              disabled={isConfirming}
+              key={fragment.id}
+              onClick={() => void onConfirm(fragment.id)}
+              onMouseEnter={() => setHighlightedIndex(index)}
+              role="option"
+              type="button"
+              variant="ghost"
+            >
+              <time
+                className="shrink-0 text-xs text-muted-foreground tabular-nums"
+                dateTime={fragment.createdAt}
+              >
+                {formatCreatedTime(fragment.createdAt)}
+              </time>
+              <span className="min-w-0 flex-1 truncate text-[13px] text-foreground">
+                {toExcerpt(fragment.content)}
+              </span>
+            </Button>
+          ))
+        )}
+      </div>
+    </div>
   )
 }
 

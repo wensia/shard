@@ -1,0 +1,95 @@
+{
+  "date": "2026-09-08",
+  "scope": "M1 unified table interactions: field menu, draft creation, inline groups, bulk field edits",
+  "layers": {
+    "unit": {
+      "command": "pnpm exec vitest run src/lib/table-*.test.ts",
+      "passed": 131,
+      "log": "/tmp/shard-table-unified-unit-final.log"
+    },
+    "tableChromium": {
+      "specs": [
+        "table-workspace.spec.ts",
+        "table-unified-design.spec.ts",
+        "table-bulk-edit.spec.ts",
+        "table-field-draft-state.spec.ts"
+      ],
+      "passed": 35,
+      "evidence": "All passed in full UI run; targeted reruns also passed."
+    },
+    "tableWebKit": {
+      "passed": 33,
+      "skipped": 2,
+      "skipReason": "Playwright WebKit clipboard permission unsupported",
+      "log": "/tmp/shard-table-unified-webkit.log"
+    },
+    "fullUI": {
+      "passed": 292,
+      "failed": 6,
+      "log": "/tmp/shard-table-unified-full.log",
+      "rerun": {
+        "passed": 6,
+        "failed": 1,
+        "log": "/tmp/shard-table-unified-recheck.log",
+        "remaining": "shadcn-migration.spec.ts: lockbox and mind map editing preserve adaptive node geometry; focus after Escape not inside mind-map region",
+        "note": "Mind-map and canvas test files changed concurrently; those files were not edited by this table task."
+      }
+    },
+    "build": {
+      "passed": true,
+      "log": "/tmp/shard-table-unified-build-final.log",
+      "includes": [
+        "215-token contract",
+        "79-TSX shared control contract",
+        "TypeScript",
+        "Vite"
+      ],
+      "warnings": [
+        "existing large chunk warning",
+        "third-party PURE annotation warnings"
+      ]
+    },
+    "diffCheck": {
+      "passed": true,
+      "commands": [
+        "git diff --check",
+        "git -C vendor/kiln diff --check"
+      ]
+    }
+  },
+  "renderedChecks": [
+    "680px menu and grouped grid, 560px bulk panel, wide bulk panel",
+    "Noto Sans SC, shared control 4px radius and popup 6px radius",
+    "group headers have no record checkbox; Enter toggles folding",
+    "menu filter shortcut retains panel focus",
+    "record panel invalid draft survives background grid clicks"
+  ],
+  "screenshots": [
+    "table-bulk-narrow-2026-09-08.png",
+    "table-groups-narrow-2026-09-08.png",
+    "table-column-menu-narrow-2026-09-08.png",
+    "table-bulk-wide-2026-09-08.png"
+  ],
+  "boundaries": [
+    "real browser DOM and real table Worker with mock Tauri storage IPC",
+    "no real user vault writes, no Rust persistence contract changes",
+    "native system IME, native horizontal scroll and full M1 desktop performance gates remain pending"
+  ],
+  "sourceHashes": {
+    "src/features/tables/table-workspace.tsx": "0a9d42f9beca465692910ca06d3f8740a459ded2e0b8d8dfdd517965a32c0741",
+    "src/features/tables/table-workspace.css": "e6164dce8d8d0490cae6ed63c55afc6867aaa3c04415a949eb3e1fcd33fa796c",
+    "src/features/tables/table-field-menu.tsx": "716e6a819e1d02fb8c66867e7199f0bd562e6ee423c2e844f071a465124795b6",
+    "src/features/tables/table-field-actions.ts": "bbb9b5b605b883ab860799ce8e32fac7ec0640161bc6691b34c71433f3b677b5",
+    "src/features/tables/table-config-panel.tsx": "d87d149aefd31757bb37919e03621f0f96de8155c7a8b7bb7e0d594a4fff610f",
+    "src/features/tables/table-bulk-edit-panel.tsx": "98576b0735d05dc41c5722b8db48b00763a16f2427f11cfdf6238f70e7ceb548",
+    "src/features/tables/views.ts": "ec7249344211d8e80ce8644a996a8a4dcebeeb8bbad60f2c5bf1a8ca4937e518",
+    "src/features/tables/worker-protocol.ts": "5b569ec80a15bf832b9869264bd40960090823f4c470e3976ae9ddeb212561bc",
+    "src/features/tables/worker-client.ts": "25be91db6620f074561c821206b377e0c417046cb0a88a6c41d332d06d88f175",
+    "src/workers/table.worker.ts": "e6ed73f8780b12412aeb6c1ed0ece13289f9ea4c2c01ef3101e451352887fcb3",
+    "src/components/ui/dropdown-menu.tsx": "3c99bc1f7346c65624690e6cd02312f0b6c10684e6414131e39b65e5beb3dd51",
+    "tests/ui/table-unified-design.spec.ts": "46f55c0a72d0e367f16ca8fed598c092e08c68e458be3fa4ed8725b6970ee1fb",
+    "tests/ui/table-bulk-edit.spec.ts": "062eca2b3710fd485271c5a302f7fbf7e560b6c2904fe1c0e39ac8ec7291501e",
+    "tests/ui/table-field-draft-state.spec.ts": "04dbaf72ecb817f781bbf83080a980ce1ae4027af7f9c115c279c9585769e60b",
+    "tests/ui/table-workspace.spec.ts": "be9a9a6fe16dc2bf22c5fe0b1d2635f0e3f1fcd35fee7ee88e8d3cb1d980fccb"
+  }
+}

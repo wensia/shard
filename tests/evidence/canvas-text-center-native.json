@@ -1,0 +1,15 @@
+{
+  "environment": "Isolated native Tauri WKWebView with current Vite frontend",
+  "appIdentifier": "dev.shard.multidrag-acceptance-20260907",
+  "file": "/var/folders/jd/9rnt7sl15d7_gkzln2svt9xw0000gn/T/shard-multidrag-native-px2jcycn/notes/原生画布验收.shardcanvas.json",
+  "revision": 15,
+  "topLevelNodes": 4,
+  "verificationLayer": "Native screenshot visual inspection via accessibility automation; not pixel measurement",
+  "verified": [
+    "Existing Chinese root and child topic text visually centered at 100% zoom",
+    "Mixed Chinese and Latin topic Tab创建子节点 visually centered at 100% zoom",
+    "Repeated visual inspection at 173% zoom retained centered Chinese and mixed text",
+    "Restored zoom to 100% and closed isolated application; application inventory confirmed it exited"
+  ],
+  "limits": "Read-only inspection of existing isolated fixture. Multiline and exact ink bounds measured separately in browser tests. No real user vault or production main-window navigation exercised."
+}

@@ -11,6 +11,12 @@ import "@fontsource/noto-sans-sc/600.css";
 
 initAccentTheme();
 
+// Let editors handle Tab (indentation / cell navigation) before suppressing
+// the browser's default page-wide focus traversal, including Shift+Tab.
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Tab") event.preventDefault();
+});
+
 function suppressEvent(event: Event) {
   event.preventDefault();
   event.stopPropagation();
@@ -22,7 +28,7 @@ function allowsCustomContextMenu(event: Event) {
     target instanceof Element &&
     Boolean(
       target.closest(
-        "[data-image-attachment-context-menu], [data-mind-map-context-menu]",
+        "[data-image-attachment-context-menu], [data-mind-map-context-menu], [data-library-context-menu]",
       )
     )
   );

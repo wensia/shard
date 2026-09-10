@@ -1,13 +1,13 @@
 import { expect, test, type Page } from "@playwright/test"
 
-import { readEditor } from "./editor-helpers"
+import { fillEditor, readEditor } from "./editor-helpers"
 
 interface OrganizeCall {
   args: Record<string, unknown>
   command: string
 }
 
-type OrganizeMockMode = "deferred-success" | "fail-once"
+type OrganizeMockMode = "deferred-success" | "fail-once" | "save-failure" | "deferred-save-failure"
 
 async function installOrganizeMock(page: Page, mode: OrganizeMockMode) {
   await page.addInitScript((mockMode: OrganizeMockMode) => {
@@ -33,7 +33,7 @@ async function installOrganizeMock(page: Page, mode: OrganizeMockMode) {
         content: "第二条公开碎片：后续需要整理为行动建议。",
         createdAt: "2026-08-30T11:00:00.000Z",
         updatedAt: "2026-08-30T11:00:00.000Z",
-        tags: ["inbox", "research"],
+        tags: ["inbox", "planning"],
         category: null,
         path: "fragments/2026/08/fragment-second.md",
         gitStatus: "committed",
@@ -63,6 +63,7 @@ async function installOrganizeMock(page: Page, mode: OrganizeMockMode) {
     const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T
     let organizeAttempts = 0
     let resolveDeferred: (() => void) | null = null
+    let resolveDeferredSave: (() => void) | null = null
 
     const generatedNote = () => {
       const note = {
@@ -100,6 +101,7 @@ async function installOrganizeMock(page: Page, mode: OrganizeMockMode) {
       isTauri: true,
       __SHARD_ORGANIZE_CALLS__: calls,
       __SHARD_RESOLVE_ORGANIZE__: () => resolveDeferred?.(),
+      __SHARD_RESOLVE_FRAGMENT_SAVE__: () => resolveDeferredSave?.(),
       __TAURI_INTERNALS__: {
         invoke: async (command: string, args: Record<string, unknown> = {}) => {
           calls.push({ command, args: clone(args) })
@@ -150,6 +152,21 @@ async function installOrganizeMock(page: Page, mode: OrganizeMockMode) {
             }
             return generatedNote()
           }
+          if (command === "update_fragment") {
+            if (mockMode === "deferred-save-failure") {
+              await new Promise<void>((resolve) => {
+                resolveDeferredSave = resolve
+              })
+            }
+            if (mockMode === "save-failure" || mockMode === "deferred-save-failure") {
+              throw new Error("模拟碎片正文写入失败")
+            }
+            const fragment = fragments.find((item) => item.id === args.id)
+            if (!fragment) throw new Error("片段不存在")
+            fragment.content = String(args.content)
+            fragment.tags = args.tags as string[]
+            return clone(fragment)
+          }
 
           if (command === "list_csv_files") return []
           if (command === "list_library_tree") {
@@ -165,6 +182,7 @@ async function installOrganizeMock(page: Page, mode: OrganizeMockMode) {
                 })),
               assets: [],
               trashEntries: [],
+              fragmentTrashEntries: [],
               fragmentStream: { totalCount: 0, years: [] },
             }
           }
@@ -182,6 +200,7 @@ async function installOrganizeMock(page: Page, mode: OrganizeMockMode) {
                   })),
                 assets: [],
                 trashEntries: [],
+                fragmentTrashEntries: [],
                 fragmentStream: { totalCount: 0, years: [] },
               },
               migratedCount: 0,
@@ -201,6 +220,7 @@ async function installOrganizeMock(page: Page, mode: OrganizeMockMode) {
                 entries: [],
                 assets: [],
                 trashEntries: [],
+                fragmentTrashEntries: [],
                 fragmentStream: { totalCount: 0, years: [] },
               },
               fragment: null,
@@ -215,16 +235,15 @@ async function installOrganizeMock(page: Page, mode: OrganizeMockMode) {
 }
 
 async function enterOrganizeModeAndSelectTwo(page: Page) {
-  await page.getByRole("button", { name: "资料库", exact: true }).click()
-  await page
-    .getByRole("complementary", { name: "资料库目录" })
-    .getByRole("button", { name: /^碎片流（/ })
-    .click()
-  await page.getByRole("button", { name: "整理", exact: true }).click()
+  await page.getByRole("button", { name: "碎片", exact: true }).click()
+  await expect(page.getByRole("button", { name: "多选", exact: true })).toHaveCount(0)
+  await page.locator('[data-shard-fragment-id="fragment-first"]')
+    .getByRole("button", { name: "片段操作", exact: true }).click()
+  await page.getByRole("menuitem", { name: "多选", exact: true }).click()
 
-  await page
-    .getByRole("checkbox", { name: /选择片段：第一条公开碎片/u })
-    .check()
+  await expect(page.getByRole("checkbox", { name: /选择片段：第一条公开碎片/u })).toBeChecked()
+  await expect(page.getByRole("checkbox", { name: /选择片段：第二条公开碎片/u })).not.toBeChecked()
+  await expect(page.getByText("已选 1 条", { exact: true })).toBeVisible()
   await page
     .getByRole("checkbox", { name: /选择片段：第二条公开碎片/u })
     .check()
@@ -233,8 +252,8 @@ async function enterOrganizeModeAndSelectTwo(page: Page) {
 }
 
 async function openOrganizeDialog(page: Page) {
-  await page.getByRole("button", { name: "整理为笔记", exact: true }).click()
-  return page.getByRole("dialog", { name: "整理为笔记" })
+  await page.getByRole("button", { name: "整理成新文档…", exact: true }).click()
+  return page.getByRole("dialog", { name: "整理成新文档" })
 }
 
 test("多选公开碎片并以模板生成笔记，生成中保持局部进度态，完成后在资料库打开", async ({
@@ -259,7 +278,7 @@ test("多选公开碎片并以模板生成笔记，生成中保持局部进度�
   const articleTemplate = dialog.getByRole("radio", { name: /文章/u })
   await articleTemplate.click()
   await expect(articleTemplate).toHaveAttribute("aria-checked", "true")
-  await dialog.getByRole("button", { name: "生成笔记" }).click()
+  await dialog.getByRole("button", { name: "整理并保存文档" }).click()
 
   await expect(dialog).toHaveAttribute("aria-busy", "true")
   await expect(dialog.getByRole("button", { name: "正在整理…" })).toBeDisabled()
@@ -297,7 +316,7 @@ test("多选公开碎片并以模板生成笔记，生成中保持局部进度�
   await expect(
     page
       .getByRole("complementary", { name: "资料库目录" })
-      .getByRole("button", { name: /^全部笔记/ })
+      .getByRole("button", { name: /^文件（/ })
   ).toBeVisible()
   await expect(
     page
@@ -313,6 +332,11 @@ test("多选公开碎片并以模板生成笔记，生成中保持局部进度�
   await expect.poll(() => readEditor(page, "library:note-organized")).toContain(
     "## 来源\n\n- [[fragment-first]]\n- [[fragment-second]]"
   )
+  await page.getByRole("button", { name: "碎片", exact: true }).click()
+  await expect(page.locator(".shard-timeline-item")).toHaveCount(2)
+  await expect(page.locator('[data-shard-fragment-id="fragment-first"]')).toBeVisible()
+  await expect(page.locator('[data-shard-fragment-id="fragment-second"]')).toBeVisible()
+  await expect(page.locator('[data-shard-fragment-id="note-organized"]')).toHaveCount(0)
 })
 
 test("Codex CLI 失败后保留可重试错误条并能成功重试", async ({ page }) => {
@@ -322,7 +346,7 @@ test("Codex CLI 失败后保留可重试错误条并能成功重试", async ({ p
   await enterOrganizeModeAndSelectTwo(page)
   const dialog = await openOrganizeDialog(page)
   await dialog.getByLabel("目标描述").fill("整理失败后重试")
-  await dialog.getByRole("button", { name: "生成笔记" }).click()
+  await dialog.getByRole("button", { name: "整理并保存文档" }).click()
 
   const error = page.getByRole("alert")
   await expect(error).toContainText("Codex CLI 暂时不可用")
@@ -345,3 +369,94 @@ test("Codex CLI 失败后保留可重试错误条并能成功重试", async ({ p
     )
     .toBe(2)
 })
+
+test("碎片多选底栏固定且不改变卡片位置，最后取消即退出", async ({ page }) => {
+  await installOrganizeMock(page, "fail-once")
+  await page.goto("/")
+  const card = page.locator('[data-shard-fragment-id="fragment-first"]')
+  await expect(card).toBeVisible()
+  const before = await card.boundingBox()
+  await enterOrganizeModeAndSelectTwo(page)
+  const dock = page.getByRole("toolbar", { name: "碎片批量操作" })
+  await expect(dock).toBeVisible()
+  expect((await card.boundingBox())!.y).toBe(before!.y)
+  const viewport = card.locator('xpath=ancestor::*[@data-slot="scroll-area-viewport"]')
+  const viewportBox = (await viewport.boundingBox())!
+  const dockBox = (await dock.boundingBox())!
+  expect(Math.abs(dockBox.y + dockBox.height - viewportBox.y - viewportBox.height)).toBeLessThanOrEqual(1)
+  const primaryStyles = await dock.getByRole("button", { name: "整理成新文档…" }).evaluate(element => {
+    const style = getComputedStyle(element)
+    const probe = document.createElement("div")
+    probe.style.background = "var(--primary)"
+    element.append(probe)
+    const expected = getComputedStyle(probe).backgroundColor
+    probe.remove()
+    return { actual: style.backgroundColor, expected }
+  })
+  expect(primaryStyles.actual).toBe(primaryStyles.expected)
+  await page.getByRole("checkbox", { name: /选择片段：第一条公开碎片/u }).uncheck()
+  await expect(dock.getByText("已选 1 条", { exact: true })).toBeVisible()
+  await page.getByRole("checkbox", { name: /选择片段：第二条公开碎片/u }).click()
+  await expect(dock).toBeHidden()
+  await expect(card.getByRole("button", { name: "片段操作", exact: true })).toBeVisible()
+  await expect(card).not.toHaveAttribute("aria-selected")
+  await expect(page.getByRole("checkbox", { name: /选择片段：/u })).toHaveCount(0)
+  expect((await card.boundingBox())!.y).toBe(before!.y)
+})
+
+test("筛选变化清空多选，恢复全部结果不会带回隐藏选择", async ({ page }) => {
+  await installOrganizeMock(page, "fail-once")
+  await page.goto("/")
+  await enterOrganizeModeAndSelectTwo(page)
+  await page.getByRole("button", { name: "搜索内容", exact: true }).click()
+  await page.getByRole("button", { name: "筛选碎片", exact: true }).click()
+  const filters = page.getByRole("dialog", { name: "筛选碎片", exact: true })
+  await filters.getByRole("combobox", { name: "标签", exact: true }).click()
+  await page.getByRole("option", { name: "#research", exact: true }).click()
+  await filters.getByRole("button", { name: "查看碎片", exact: true }).click()
+  await expect(page.locator(".shard-timeline-item")).toHaveCount(1)
+  await expect(page.getByRole("toolbar", { name: "碎片批量操作" })).toBeHidden()
+  await expect(page.getByRole("checkbox", { name: /选择片段：/u })).toHaveCount(0)
+  await page.getByRole("button", { name: "清除筛选", exact: true }).click()
+  await expect(page.locator(".shard-timeline-item")).toHaveCount(2)
+  await page.locator('[data-shard-fragment-id="fragment-first"]')
+    .getByRole("button", { name: "片段操作", exact: true }).click()
+  await page.getByRole("menuitem", { name: "多选", exact: true }).click()
+  await expect(page.getByRole("checkbox", { name: /选择片段：第一条公开碎片/u })).toBeChecked()
+  await expect(page.getByRole("checkbox", { name: /选择片段：第二条公开碎片/u })).not.toBeChecked()
+  await expect(page.getByText("已选 1 条", { exact: true })).toBeVisible()
+})
+
+for (const mode of ["save-failure", "deferred-save-failure"] as const) {
+  test(`A 碎片 ${mode} 时从 B 菜单进入多选须保留 A 草稿`, async ({ page }) => {
+    await installOrganizeMock(page, mode)
+    await page.goto("/")
+    await page.locator('[data-shard-fragment-id="fragment-first"]')
+      .getByRole("button", { name: "片段操作", exact: true }).click()
+    await page.getByRole("menuitem", { name: "编辑", exact: true }).click()
+    const draft = "第一条尚未保存的修改，进入多选前必须保留。"
+    await fillEditor(page, "fragment:fragment-first", draft)
+    await page.locator('[data-shard-fragment-id="fragment-second"]')
+      .getByRole("button", { name: "片段操作", exact: true }).click()
+    const readCalls = () => page.evaluate(() => (
+      globalThis as typeof globalThis & { __SHARD_ORGANIZE_CALLS__: OrganizeCall[] }
+    ).__SHARD_ORGANIZE_CALLS__)
+    await expect.poll(async () => (await readCalls()).filter(call => call.command === "update_fragment").length).toBe(1)
+    await page.getByRole("menuitem", { name: "多选", exact: true }).click()
+    if (mode === "deferred-save-failure") {
+      await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
+      await expect(page.getByRole("toolbar", { name: "碎片批量操作" })).toBeHidden()
+      expect(await readEditor(page, "fragment:fragment-first")).toBe(draft)
+      expect((await readCalls()).filter(call => call.command === "update_fragment")).toHaveLength(1)
+      await page.evaluate(() => (
+        globalThis as typeof globalThis & { __SHARD_RESOLVE_FRAGMENT_SAVE__: () => void }
+      ).__SHARD_RESOLVE_FRAGMENT_SAVE__())
+    }
+    await expect(page.getByText(/自动保存失败：.*模拟碎片正文写入失败/u).first()).toBeVisible()
+    await expect(page.getByRole("toolbar", { name: "碎片批量操作" })).toBeHidden()
+    await expect(page.getByRole("checkbox", { name: /选择片段：/u })).toHaveCount(0)
+    await expect(page.locator('[data-shard-editor="fragment:fragment-first"]')).toBeVisible()
+    expect(await readEditor(page, "fragment:fragment-first")).toBe(draft)
+    expect((await readCalls()).filter(call => call.command === "organize_fragments")).toEqual([])
+  })
+}

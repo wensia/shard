@@ -1,12 +1,9 @@
 import {
   BookOpenIcon,
-  GitBranchIcon,
-  HistoryIcon,
   InboxIcon,
   PanelLeftIcon,
   SearchIcon,
-  RouteIcon,
-  SparklesIcon,
+  Trash2Icon,
   type LucideIcon,
 } from "@/components/icons"
 import {
@@ -20,10 +17,9 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
-import { dailyReviewCount, insightReviewCount } from "@/lib/review-workflows"
-import type { Fragment, FragmentFilter } from "@/types"
+import type { Fragment } from "@/types"
 import type {
-  ReviewWorkspaceMode,
+  FragmentsView,
   WorkspaceRoute,
 } from "@/workspace/route"
 
@@ -32,9 +28,7 @@ import styles from "./sidebar-nav.module.css"
 interface SidebarNavProps {
   fragments: Fragment[]
   isCollapsed: boolean
-  mindMapCount: number
   mindMapViewActive: boolean
-  onOpenMindMaps: () => void
   onOpenSearch: () => void
   onRouteChange: (route: WorkspaceRoute) => void
   onToggleCollapsed: () => void
@@ -52,20 +46,14 @@ const SPACE_ITEMS: Array<{
     route: { space: "fragments", params: {} },
   },
   { id: "library", icon: BookOpenIcon, route: { space: "library", params: {} } },
-  {
-    id: "review",
-    icon: HistoryIcon,
-    route: { space: "review", params: { mode: "dailyReview" } },
-  },
 ]
 
-const REVIEW_ITEMS: Array<{
-  id: ReviewWorkspaceMode
+const FRAGMENT_ITEMS: Array<{
+  id: FragmentsView
   icon: typeof InboxIcon
 }> = [
-  { id: "dailyReview", icon: HistoryIcon },
-  { id: "insight", icon: SparklesIcon },
-  { id: "walk", icon: RouteIcon },
+  { id: "all", icon: InboxIcon },
+  { id: "trash", icon: Trash2Icon },
 ]
 
 type SidebarLanguage = "en" | "zh"
@@ -82,12 +70,9 @@ const SIDEBAR_COPY: Record<
     }
     groups: {
       fragments: string
-      review: string
-      tools: string
       workbench: string
     }
-    mindMaps: string
-    nav: Record<FragmentFilter, string>
+    nav: Record<FragmentsView, string>
     spaces: Record<WorkspaceRoute["space"], string>
     search: string
     searchPlaceholder: string
@@ -105,37 +90,28 @@ const SIDEBAR_COPY: Record<
       collapse: "折叠侧边栏",
       expand: "展开侧边栏",
       navigation: "工作台导航",
-      heatmap: "片段热力图",
-      stats: "资料库统计",
+      heatmap: "碎片热力图",
+      stats: "碎片统计",
     },
     groups: {
       fragments: "碎片",
-      review: "回顾",
-      tools: "工具",
       workbench: "工作台",
     },
-    mindMaps: "思维导图",
     nav: {
-      archive: "回收站",
-      dailyReview: "每日回顾",
-      inbox: "收件箱",
-      insight: "洞察视角",
-      lockbox: "密匣",
-      tagged: "标签",
-      walk: "随机漫步",
+      all: "全部碎片",
+      trash: "回收站",
     },
     spaces: {
       fragments: "碎片",
       library: "资料库",
       lockbox: "密匣",
-      review: "回顾",
     },
-    search: "搜索笔记",
+    search: "搜索内容",
     searchPlaceholder: "搜索正文或标签",
     searchShortcut: "⌘K",
     stats: {
       days: "天",
-      fragments: "片段",
+      fragments: "碎片",
       tags: "标签",
     },
     vaultNotLoaded: "资料库未加载",
@@ -150,25 +126,16 @@ const SIDEBAR_COPY: Record<
     },
     groups: {
       fragments: "Items",
-      review: "Review",
-      tools: "Tools",
       workbench: "Main",
     },
-    mindMaps: "Mind maps",
     nav: {
-      archive: "Trash",
-      dailyReview: "Daily Review",
-      inbox: "Inbox",
-      insight: "Insight Lenses",
-      lockbox: "Lockbox",
-      tagged: "Tagged",
-      walk: "Random Walk",
+      all: "All fragments",
+      trash: "Trash",
     },
     spaces: {
       fragments: "Fragments",
       library: "Library",
       lockbox: "Lockbox",
-      review: "Review",
     },
     search: "Search notes",
     searchPlaceholder: "Search body or tags",
@@ -224,9 +191,7 @@ const NAV_LABEL_STYLE: CSSProperties = {
 export function SidebarNav({
   fragments,
   isCollapsed,
-  mindMapCount,
   mindMapViewActive,
-  onOpenMindMaps,
   onOpenSearch,
   onRouteChange,
   onToggleCollapsed,
@@ -234,11 +199,11 @@ export function SidebarNav({
 }: SidebarNavProps) {
   const language = getSidebarLanguage()
   const copy = SIDEBAR_COPY[language]
-  const activeFragments = fragments.filter((fragment) => !fragment.archived)
-  const counts: Record<ReviewWorkspaceMode, number> = {
-    dailyReview: dailyReviewCount(fragments),
-    insight: insightReviewCount(fragments),
-    walk: activeFragments.length,
+  const ownedFragments = fragments.filter((fragment) => fragment.kind === "fragment" && !fragment.lockbox)
+  const activeFragments = ownedFragments.filter((fragment) => !fragment.archived)
+  const counts: Record<FragmentsView, number> = {
+    all: activeFragments.length,
+    trash: ownedFragments.length - activeFragments.length,
   }
   const heatmap = buildSidebarHeatmap(activeFragments, language)
 
@@ -408,18 +373,18 @@ export function SidebarNav({
                 onClick={() => onRouteChange(item.route)}
               />
 
-              {item.id === "review" && route.space === "review" ? (
+              {item.id === "fragments" && route.space === "fragments" && !mindMapViewActive ? (
                 <>
                   {isCollapsed ? (
-                    <CollapsedGroupMarker label={copy.groups.review} />
+                    <CollapsedGroupMarker label={copy.groups.fragments} />
                   ) : null}
                   <div
                     className={styles.navSubGroup}
-                    data-sidebar-subgroup="review"
+                    data-sidebar-subgroup="fragments"
                   >
-                    {REVIEW_ITEMS.map((subItem) => {
+                    {FRAGMENT_ITEMS.map((subItem) => {
                       const SubIcon = subItem.icon
-                      const isSubItemActive = route.params.mode === subItem.id
+                      const isSubItemActive = (route.params.view ?? "all") === subItem.id
                       return (
                         <SidebarNavigationButton
                           className={`${styles.navSubItem} ${
@@ -427,7 +392,7 @@ export function SidebarNav({
                               ? styles.navSubItemActive
                               : styles.navSubItemInactive
                           }`}
-                          group={copy.groups.review}
+                          group={copy.groups.fragments}
                           icon={SubIcon}
                           isActive={isSubItemActive}
                           isCollapsed={isCollapsed}
@@ -436,8 +401,8 @@ export function SidebarNav({
                           level="secondary"
                           onClick={() =>
                             onRouteChange({
-                              space: "review",
-                              params: { mode: subItem.id },
+                              space: "fragments",
+                              params: { view: subItem.id },
                             })
                           }
                           trailing={
@@ -454,25 +419,6 @@ export function SidebarNav({
             </div>
           )
         })}
-
-        <div className={styles.navActionBoundary}>
-          {isCollapsed ? (
-            <CollapsedGroupMarker label={copy.groups.tools} />
-          ) : null}
-          <SidebarNavigationButton
-            ariaPressed={mindMapViewActive}
-            className={`${styles.navItem} ${
-              mindMapViewActive ? styles.navItemActive : styles.navItemInactive
-            }`}
-            group={copy.groups.tools}
-            icon={GitBranchIcon}
-            isActive={mindMapViewActive}
-            isCollapsed={isCollapsed}
-            label={copy.mindMaps}
-            onClick={onOpenMindMaps}
-            trailing={<span className={styles.navCount}>{mindMapCount}</span>}
-          />
-        </div>
       </nav>
     </aside>
   )
@@ -506,7 +452,6 @@ export function SidebarToggleButton({
 }
 
 function SidebarNavigationButton({
-  ariaPressed,
   className,
   group,
   icon: Icon,
@@ -517,7 +462,6 @@ function SidebarNavigationButton({
   onClick,
   trailing,
 }: {
-  ariaPressed?: boolean
   className: string
   group?: string
   icon: LucideIcon
@@ -549,7 +493,6 @@ function SidebarNavigationButton({
       aria-label={
         isCollapsed ? formatNavAccessibleName(group, label) : undefined
       }
-      aria-pressed={ariaPressed}
       className={className}
       data-sidebar-level={level}
       onClick={onClick}
@@ -791,7 +734,7 @@ function formatHeatmapCellLabel(
   language: SidebarLanguage
 ) {
   if (language === "zh") {
-    return `${cell.label}: ${cell.count} 条片段`
+    return `${cell.label}: ${cell.count} 条碎片`
   }
 
   const unit = cell.count === 1 ? "fragment" : "fragments"

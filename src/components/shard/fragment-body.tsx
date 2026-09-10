@@ -1,7 +1,7 @@
 import type { CSSProperties } from "react"
 
 import { FragmentContent } from "@/components/shard/fragment-content"
-import { parseMarkdownTable } from "@/lib/markdown-table"
+import { containsMarkdownBlocks } from "@shard/markdown"
 import { cn } from "@/lib/utils"
 import { parseWikilinks } from "@/lib/wikilink"
 
@@ -48,14 +48,13 @@ export function FragmentBody({
   const bodyStyle: CSSProperties = { whiteSpace: "pre-wrap" }
   // <table> 不能合法嵌在 <p> 里，含表格时容器降级为 div；
   // 其余情况保持原有的段落语义。
-  const hasTable = containsMarkdownTable(content)
-  const hasCsvEmbed = content.split("\n").some((line) => {
+  const hasBlockContent = containsMarkdownBlocks(content, (line) => {
     const trimmed = line.trim()
     const links = parseWikilinks(trimmed)
-    return links.length === 1 && links[0].embed && links[0].to === trimmed.length
+    return links.length === 1 && Boolean(links[0].embed) && links[0].to === trimmed.length
   })
 
-  if (as === "div" || hasTable || hasCsvEmbed) {
+  if (as === "div" || hasBlockContent) {
     return (
       <div className={bodyClassName} style={bodyStyle}>
         {body}
@@ -68,11 +67,4 @@ export function FragmentBody({
       {body}
     </p>
   )
-}
-
-function containsMarkdownTable(content: string) {
-  if (!content.includes("|")) return false
-
-  const lines = content.split("\n")
-  return lines.some((_, index) => parseMarkdownTable(lines, index) !== null)
 }

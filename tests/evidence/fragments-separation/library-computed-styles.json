@@ -1,0 +1,10 @@
+{
+  "createControl": {
+    "radius": "4px",
+    "height": 28,
+    "computedHeight": "28px",
+    "fontFamily": "-apple-system, \"Helvetica Neue\", Arial, \"Noto Sans SC\", \"Hiragino Sans GB\", STHeiti, \"Microsoft YaHei\", \"Microsoft JhengHei\", \"Source Han Sans SC\", \"Noto Sans CJK SC\", \"Source Han Sans CN\", \"Source Han Sans TC\", \"Noto Sans CJK TC\", SimSun, sans-serif",
+    "fontToken": "-apple-system, \"Helvetica Neue\", Arial, \"Noto Sans SC\", \"Hiragino Sans GB\", STHeiti, \"Microsoft YaHei\", \"Microsoft JhengHei\", \"Source Han Sans SC\", \"Noto Sans CJK SC\", \"Source Han Sans CN\", \"Source Han Sans TC\", \"Noto Sans CJK TC\", SimSun, sans-serif",
+    "notoLoaded": true
+  }
+}

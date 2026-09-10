@@ -1,0 +1,49 @@
+{
+  "runtime": "Tauri debug / WKWebView, isolated development harness; real Rust IPC and temporary vault",
+  "identifier": "dev.shard.canvas-acceptance-20260907",
+  "vault": "/var/folders/jd/9rnt7sl15d7_gkzln2svt9xw0000gn/T/shard-canvas-native-ybp3ux0x",
+  "filePath": "/var/folders/jd/9rnt7sl15d7_gkzln2svt9xw0000gn/T/shard-canvas-native-ybp3ux0x/notes/原生画布验收.shardcanvas.json",
+  "revision": 9,
+  "nodes": [
+    {
+      "kind": "process",
+      "text": "原生中文验收",
+      "x": 500.0,
+      "y": 298.5
+    },
+    {
+      "kind": "mindmap",
+      "text": "原生结构化导图",
+      "x": 423.1632926829268,
+      "y": 218.41609756097557
+    },
+    {
+      "kind": "reference",
+      "text": "# 原生引用笔记",
+      "x": 528.7039430894309,
+      "y": 249.4580487804878
+    }
+  ],
+  "treeNodeCount": 2,
+  "referenceLink": {
+    "targetType": "fragment",
+    "id": "4bf1abad-9ced-46ca-bd68-c8f957070cdc",
+    "targetId": "native-canvas-note"
+  },
+  "gitCommitCount": 1,
+  "observedNativeActions": [
+    "create",
+    "Chinese text edit via accessibility API",
+    "tree child edit",
+    "reference preview",
+    "save",
+    "process restart and reopen",
+    "drag after float_roundtrip fix",
+    "zoom button"
+  ],
+  "pendingManualAcceptance": [
+    "physical IME candidate window",
+    "physical trackpad gestures",
+    "native large-canvas performance"
+  ]
+}

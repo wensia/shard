@@ -1,0 +1,126 @@
+{
+  "dialog": {
+    "bounds": {
+      "left": 644,
+      "right": 1156,
+      "top": 263.15625,
+      "bottom": 636.84375,
+      "height": 373.6875
+    },
+    "viewport": {
+      "width": 1800,
+      "height": 900
+    },
+    "radius": "6px",
+    "font": "-apple-system, \"Helvetica Neue\", Arial, \"Noto Sans SC\", \"Hiragino Sans GB\", STHeiti, \"Microsoft YaHei\", \"Microsoft JhengHei\", \"Source Han Sans SC\", \"Noto Sans CJK SC\", \"Source Han Sans CN\", \"Source Han Sans TC\", \"Noto Sans CJK TC\", SimSun, sans-serif",
+    "fontToken": "-apple-system, \"Helvetica Neue\", Arial, \"Noto Sans SC\", \"Hiragino Sans GB\", STHeiti, \"Microsoft YaHei\", \"Microsoft JhengHei\", \"Source Han Sans SC\", \"Noto Sans CJK SC\", \"Source Han Sans CN\", \"Source Han Sans TC\", \"Noto Sans CJK TC\", SimSun, sans-serif",
+    "notoLoaded": true,
+    "controls": [
+      {
+        "label": "标签",
+        "kind": "select",
+        "left": 669,
+        "right": 1131,
+        "top": 390.71875,
+        "bottom": 418.71875,
+        "height": 28,
+        "width": 462,
+        "radius": "4px",
+        "font": "-apple-system, \"Helvetica Neue\", Arial, \"Noto Sans SC\", \"Hiragino Sans GB\", STHeiti, \"Microsoft YaHei\", \"Microsoft JhengHei\", \"Source Han Sans SC\", \"Noto Sans CJK SC\", \"Source Han Sans CN\", \"Source Han Sans TC\", \"Noto Sans CJK TC\", SimSun, sans-serif"
+      },
+      {
+        "label": "时间",
+        "kind": "select",
+        "left": 669,
+        "right": 1131,
+        "top": 457.28125,
+        "bottom": 485.28125,
+        "height": 28,
+        "width": 462,
+        "radius": "4px",
+        "font": "-apple-system, \"Helvetica Neue\", Arial, \"Noto Sans SC\", \"Hiragino Sans GB\", STHeiti, \"Microsoft YaHei\", \"Microsoft JhengHei\", \"Source Han Sans SC\", \"Noto Sans CJK SC\", \"Source Han Sans CN\", \"Source Han Sans TC\", \"Noto Sans CJK TC\", SimSun, sans-serif"
+      },
+      {
+        "label": "取消",
+        "kind": "button",
+        "left": 669,
+        "right": 1131,
+        "top": 539.84375,
+        "bottom": 571.84375,
+        "height": 32,
+        "width": 462,
+        "radius": "4px",
+        "font": "-apple-system, \"Helvetica Neue\", Arial, \"Noto Sans SC\", \"Hiragino Sans GB\", STHeiti, \"Microsoft YaHei\", \"Microsoft JhengHei\", \"Source Han Sans SC\", \"Noto Sans CJK SC\", \"Source Han Sans CN\", \"Source Han Sans TC\", \"Noto Sans CJK TC\", SimSun, sans-serif"
+      },
+      {
+        "label": "查看碎片",
+        "kind": "button",
+        "left": 669,
+        "right": 1131,
+        "top": 579.84375,
+        "bottom": 611.84375,
+        "height": 32,
+        "width": 462,
+        "radius": "4px",
+        "font": "-apple-system, \"Helvetica Neue\", Arial, \"Noto Sans SC\", \"Hiragino Sans GB\", STHeiti, \"Microsoft YaHei\", \"Microsoft JhengHei\", \"Source Han Sans SC\", \"Noto Sans CJK SC\", \"Source Han Sans CN\", \"Source Han Sans TC\", \"Noto Sans CJK TC\", SimSun, sans-serif"
+      }
+    ]
+  },
+  "before": {
+    "composer": {
+      "top": 32,
+      "bottom": 223,
+      "left": 574,
+      "right": 1474
+    },
+    "firstCard": {
+      "top": 239,
+      "left": 574,
+      "right": 1016
+    },
+    "gap": 16,
+    "composerBottomPadding": 16,
+    "viewportScroll": 0,
+    "documentScroll": 0,
+    "documentWidth": 1800,
+    "viewportWidth": 1800
+  },
+  "active": {
+    "composer": {
+      "top": 32,
+      "bottom": 223,
+      "left": 574,
+      "right": 1474
+    },
+    "firstCard": {
+      "top": 275,
+      "left": 574,
+      "right": 1016
+    },
+    "gap": 52,
+    "composerBottomPadding": 16,
+    "viewportScroll": 0,
+    "documentScroll": 0,
+    "documentWidth": 1800,
+    "viewportWidth": 1800
+  },
+  "cleared": {
+    "composer": {
+      "top": 32,
+      "bottom": 223,
+      "left": 574,
+      "right": 1474
+    },
+    "firstCard": {
+      "top": 239,
+      "left": 574,
+      "right": 1016
+    },
+    "gap": 16,
+    "composerBottomPadding": 16,
+    "viewportScroll": 0,
+    "documentScroll": 0,
+    "documentWidth": 1800,
+    "viewportWidth": 1800
+  }
+}

@@ -1,0 +1,115 @@
+{
+  "valid": [
+    {
+      "fieldType": "text",
+      "value": null
+    },
+    {
+      "fieldType": "checkbox",
+      "value": false
+    },
+    {
+      "fieldType": "checkbox",
+      "value": true
+    },
+    {
+      "fieldType": "number",
+      "value": 0
+    },
+    {
+      "fieldType": "number",
+      "value": -0.0
+    },
+    {
+      "fieldType": "number",
+      "value": 17.25
+    },
+    {
+      "fieldType": "text",
+      "value": ""
+    },
+    {
+      "fieldType": "text",
+      "value": "00123"
+    },
+    {
+      "fieldType": "text",
+      "value": "98765432101234567890"
+    },
+    {
+      "fieldType": "text",
+      "value": "=SUM(A1:A2)"
+    },
+    {
+      "fieldType": "date",
+      "value": "2026-09-07"
+    },
+    {
+      "fieldType": "multiSelect",
+      "value": []
+    },
+    {
+      "fieldType": "multiSelect",
+      "value": [
+        "opt_00000000000000000000000000000003",
+        "opt_00000000000000000000000000000004"
+      ]
+    }
+  ],
+  "invalid": [
+    {
+      "fieldType": "multiSelect",
+      "value": [
+        null
+      ]
+    },
+    {
+      "fieldType": "multiSelect",
+      "value": [
+        "opt_00000000000000000000000000000003",
+        null
+      ]
+    },
+    {
+      "fieldType": "multiSelect",
+      "value": [
+        "opt_00000000000000000000000000000003",
+        true
+      ]
+    },
+    {
+      "fieldType": "multiSelect",
+      "value": [
+        "opt_00000000000000000000000000000003",
+        0
+      ]
+    },
+    {
+      "fieldType": "multiSelect",
+      "value": [
+        "opt_00000000000000000000000000000003",
+        {}
+      ]
+    },
+    {
+      "fieldType": "multiSelect",
+      "value": [
+        []
+      ]
+    },
+    {
+      "fieldType": "multiSelect",
+      "value": [
+        {
+          "id": "opt_00000000000000000000000000000003"
+        }
+      ]
+    },
+    {
+      "fieldType": "multiSelect",
+      "value": {
+        "id": "opt_00000000000000000000000000000003"
+      }
+    }
+  ]
+}

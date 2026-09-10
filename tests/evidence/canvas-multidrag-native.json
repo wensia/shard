@@ -1,0 +1,31 @@
+{
+  "runtime": "Isolated Tauri / WKWebView with real Rust IPC and temporary vault",
+  "filePath": "/var/folders/jd/9rnt7sl15d7_gkzln2svt9xw0000gn/T/shard-multidrag-native-px2jcycn/notes/原生画布验收.shardcanvas.json",
+  "revision": 8,
+  "nodes": [
+    {
+      "id": "6c4ca2ac-fbc5-4033-a8d6-abb061939b99",
+      "kind": "mindmap",
+      "text": "多选拖动验收",
+      "x": 510.0,
+      "y": 298.5
+    },
+    {
+      "id": "1a12a128-e807-4730-9d0a-b72d5b2e9e05",
+      "kind": "process",
+      "text": "流程保持可见",
+      "x": 610.0,
+      "y": 291.0
+    }
+  ],
+  "treeNodeCount": 2,
+  "runtimeMeasurementsPersisted": false,
+  "nativeVerified": [
+    "new mindmap and process",
+    "marquee multi-selection",
+    "repeated keyboard movement of both objects",
+    "save and reopen with both objects visible"
+  ],
+  "nativePointerDrag": "CUA drag attempts did not yield confirmed pointer displacement; do not count these as native drag acceptance",
+  "browserPointerDrag": "Two explicit WebKit regressions passed: marquee selection drag and dragging selected node, repeated movement, visibility, undo/redo, pending-save edits; no page errors"
+}

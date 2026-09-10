@@ -1,0 +1,48 @@
+{
+  "layer": "Browser component with mock storage; actual WebKit and Chromium layout and keyboard events. Physical IME and native filesystem acceptance are separate.",
+  "regressions": 22,
+  "results": [
+    {
+      "engine": "webkit",
+      "selection": {
+        "start": 3,
+        "end": 3,
+        "value": "主题甲"
+      },
+      "geometry": {
+        "width": 344,
+        "height": 121,
+        "rowWidth": 448,
+        "scrollHeight": 121,
+        "clientHeight": 121,
+        "scrollTop": 0,
+        "lineHeight": 18.85,
+        "windowScroll": 0,
+        "documentScroll": 0
+      },
+      "saveSucceeded": true,
+      "contentPreserved": true
+    },
+    {
+      "engine": "chromium",
+      "selection": {
+        "start": 3,
+        "end": 3,
+        "value": "主题甲"
+      },
+      "geometry": {
+        "width": 344,
+        "height": 121,
+        "rowWidth": 448,
+        "scrollHeight": 121,
+        "clientHeight": 121,
+        "scrollTop": 0,
+        "lineHeight": 18.85,
+        "windowScroll": 0,
+        "documentScroll": 0
+      },
+      "saveSucceeded": true,
+      "contentPreserved": true
+    }
+  ]
+}

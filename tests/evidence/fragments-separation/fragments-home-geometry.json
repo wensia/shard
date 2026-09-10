@@ -1,0 +1,19 @@
+{
+  "composer": {
+    "top": 32,
+    "bottom": 223,
+    "left": 574,
+    "right": 1474
+  },
+  "firstCard": {
+    "top": 239,
+    "left": 574,
+    "right": 1016
+  },
+  "gap": 16,
+  "composerBottomPadding": 16,
+  "viewportScroll": 0,
+  "documentScroll": 0,
+  "documentWidth": 1800,
+  "viewportWidth": 1800
+}

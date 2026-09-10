@@ -19,7 +19,14 @@
   width: 100%;
   overflow: hidden;
   border-radius: var(--shard-surface-radius) var(--shard-surface-radius) 0 0;
-  transition: height 0.2s ease-in-out;
+  /* The focus minimum must follow height instead of clamping it immediately. */
+  transition: height 200ms ease-out, min-height 200ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .codeMirrorViewport {
+    transition: none;
+  }
 }
 
 @keyframes spin {

@@ -1,6 +1,8 @@
 import {
+  forwardRef,
   useCallback,
   useEffect,
+  useImperativeHandle,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -8,8 +10,6 @@ import {
 } from "react"
 import { Loader2Icon, LockKeyholeIcon, SendHorizontalIcon } from "@/components/icons"
 import { startCompletion } from "@codemirror/autocomplete"
-import { isTauri } from "@tauri-apps/api/core"
-import { open } from "@tauri-apps/plugin-dialog"
 import { toast } from "sonner"
 
 import { EditorToolbar } from "@/components/shard/editor-toolbar"
@@ -30,8 +30,6 @@ import {
   extractTags,
   getMarkdownImageAlt,
   insertHorizontalRule,
-  insertMarkdownBlock,
-  insertMarkdownTable,
   insertTagMarker,
   normalizeTagList,
   type InlineFormat,
@@ -39,20 +37,11 @@ import {
   type TextEdit,
 } from "@/lib/editor-format"
 import {
-  convertTableDocumentToMarkdown,
   getApiErrorMessage,
   saveFragmentImage,
 } from "@/lib/api"
 import { wantsLockbox } from "@/lib/lockbox"
-import {
-  getFirstEditableTableOffset,
-  hasOversizedTable,
-  MAX_EDITABLE_TABLE_CELLS,
-} from "@/lib/markdown-table"
-import {
-  TABLE_DOCUMENT_FILTER,
-  useTableDocumentDrop,
-} from "@/lib/use-table-document-drop"
+import { useTableDocumentDrop } from "@/lib/use-table-document-drop"
 import {
   buildCsvWikilinkCandidates,
   buildMindMapWikilinkCandidates,
@@ -62,8 +51,12 @@ import type { CsvFileSummary, Fragment, MindMapSummary } from "@/types"
 
 import styles from "./capture-box.module.css"
 
+export interface CaptureBoxHandle {
+  collapse: () => void
+}
+
 interface CaptureBoxProps {
-  collapseSignal: number
+  secondarySubmit?: boolean
   csvFiles?: CsvFileSummary[]
   fragments: Fragment[]
   isCreating: boolean
@@ -83,8 +76,8 @@ interface PendingImage {
   previewUrl: string
 }
 
-export function CaptureBox({
-  collapseSignal,
+export const CaptureBox = forwardRef<CaptureBoxHandle, CaptureBoxProps>(function CaptureBox({
+  secondarySubmit = false,
   csvFiles = [],
   fragments,
   isCreating,
@@ -94,7 +87,7 @@ export function CaptureBox({
   onNavigateToFragment,
   onOpenMindMap,
   onOpenZen,
-}: CaptureBoxProps) {
+}, ref) {
   const [content, setContent] = useState("")
   const [isEditorExpanded, setIsEditorExpanded] = useState(false)
   const [pendingImages, setPendingImages] = useState<PendingImage[]>([])
@@ -104,7 +97,6 @@ export function CaptureBox({
   const editorFrameRef = useRef<HTMLDivElement>(null)
   const codeMirrorViewportRef = useRef<HTMLDivElement>(null)
   const codeMirrorContentHeightRef = useRef(0)
-  const [isImportingTable, setIsImportingTable] = useState(false)
   const shardEditorRef = useRef<ShardEditorHandle>(null)
   const hasSkippedInitialFocusRef = useRef(false)
   const pendingImagesRef = useRef<PendingImage[]>([])
@@ -226,11 +218,12 @@ export function CaptureBox({
     }
   }, [])
 
-  useEffect(() => {
-    if (collapseSignal === 0) return
-
-    setIsEditorExpanded(false)
-  }, [collapseSignal])
+  // Natural timeline scrolling only changes the composer, never the workbench.
+  useImperativeHandle(ref, () => ({
+    collapse() {
+      if (isEditorExpanded) setIsEditorExpanded(false)
+    },
+  }), [isEditorExpanded])
 
   useLayoutEffect(() => {
     syncCodeMirrorGeometry()
@@ -347,101 +340,9 @@ export function CaptureBox({
     )
   }
 
-  function insertTable(columns: number, rows: number) {
-    const selection = getCurrentSelection()
-
-    setIsEditorExpanded(true)
-    const nextEdit = insertMarkdownTable(
-      content,
-      selection.start,
-      selection.end,
-      columns,
-      rows
-    )
-    applyTextEdit(nextEdit)
-    focusInsertedTable(nextEdit.content, nextEdit.selectionStart)
-  }
-
-  /** 插完表格直接进第一个表头格，省得用户再点一下。 */
-  function focusInsertedTable(nextContent: string, cursor: number) {
-    const tableStart = nextContent.lastIndexOf("\n", cursor - 1) + 1
-
-    requestAnimationFrame(() => {
-      shardEditorRef.current?.focusTableCell(tableStart, "-1:0")
-    })
-  }
-
-  /**
-   * 表格文档导入：转成 Markdown 表格插进正文，原文件不进 vault。
-   * 数据留在正文里，搜索、标签、git diff 才都还能用上。
-   */
   const { isDropTarget: isTableDropTarget } = useTableDocumentDrop({
     frameRef: editorFrameRef,
-    onDrop: (paths) => insertTableDocuments(paths),
   })
-
-  async function insertTableDocuments(paths: string[]) {
-    if (paths.length === 0 || isImportingTable) return
-
-    setIsEditorExpanded(true)
-    setIsImportingTable(true)
-    try {
-      const blocks: string[] = []
-      for (const path of paths) {
-        blocks.push(await convertTableDocumentToMarkdown(path))
-      }
-
-      const markdown = blocks.join("\n\n")
-      if (hasOversizedTable(markdown)) {
-        toast.info(
-          `表格较大，已作为纯文本插入：超过 ${MAX_EDITABLE_TABLE_CELLS} 个单元格不提供可视化编辑，源码照常可改。`
-        )
-      }
-
-      const body = markdown.trim()
-      const selection = getCurrentSelection()
-      const nextEdit = insertMarkdownBlock(
-        getCurrentEditorValue(),
-        selection.start,
-        selection.end,
-        markdown
-      )
-      applyTextEdit(nextEdit)
-
-      const relativeTableStart = getFirstEditableTableOffset(body)
-      if (relativeTableStart !== null) {
-        const bodyStart = nextEdit.selectionStart - body.length
-        shardEditorRef.current?.focusTableCell(
-          bodyStart + relativeTableStart,
-          "-1:0",
-        )
-      }
-    } catch (error) {
-      toast.error(`导入表格失败：${getApiErrorMessage(error)}`, {
-        duration: Infinity,
-      })
-    } finally {
-      setIsImportingTable(false)
-    }
-  }
-
-  async function pickTableDocument() {
-    try {
-      const selected = await open({
-        filters: [TABLE_DOCUMENT_FILTER],
-        multiple: false,
-        title: "选择表格文件",
-      })
-      const path = Array.isArray(selected) ? selected[0] : selected
-      if (!path) return
-
-      await insertTableDocuments([path])
-    } catch (error) {
-      toast.error(`选择文件失败：${getApiErrorMessage(error)}`, {
-        duration: Infinity,
-      })
-    }
-  }
 
   function openZenEditor() {
     if (!onOpenZen) return
@@ -524,8 +425,10 @@ export function CaptureBox({
           className={styles.codeMirrorViewport}
           data-expanded={isEditorExpanded ? "true" : undefined}
           onMouseDown={(event) => {
+            // Scrolling can collapse an editor that still owns focus. Clicking
+            // its text must reopen it even when no new focus event is emitted.
+            setIsEditorExpanded(true)
             if (event.target === event.currentTarget) {
-              setIsEditorExpanded(true)
               shardEditorRef.current?.focus()
             }
           }}
@@ -557,9 +460,9 @@ export function CaptureBox({
             variant="composer"
           />
         </div>
-        {isTableDropTarget || isImportingTable ? (
+        {isTableDropTarget ? (
           <div className="shard-editor-drop-hint">
-            {isImportingTable ? "正在导入表格…" : "松手导入为表格"}
+            请在资料库中导入为多维表格
           </div>
         ) : null}
       </div>
@@ -596,10 +499,8 @@ export function CaptureBox({
           <EditorToolbar
             disabled={isCreating}
             onImageUpload={uploadImage}
-            onImportTable={isTauri() ? pickTableDocument : undefined}
             onInlineFormat={formatInline}
             onInsertHorizontalRule={insertDivider}
-            onInsertTable={insertTable}
             onInsertTag={insertTag}
             onLineFormat={formatLines}
             onOpenZen={onOpenZen ? openZenEditor : undefined}
@@ -620,7 +521,7 @@ export function CaptureBox({
                   label={isCreating ? "保存中" : "保存片段"}
                   onClick={() => void submit()}
                   type="button"
-                  variant="primary"
+                  variant={secondarySubmit ? "default" : "primary"}
                 >
                   {isCreating ? (
                     <Loader2Icon className={styles.spin} />
@@ -654,7 +555,7 @@ export function CaptureBox({
       ) : null}
     </div>
   )
-}
+})
 
 const CAPTURE_COLLAPSED_ROWS = 2
 const CAPTURE_EXPANDED_ROWS = 4

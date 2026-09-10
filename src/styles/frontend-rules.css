@@ -51,6 +51,28 @@
     --shard-z-zen: 40;
   }
 
+  /* Desktop chrome must not create browser text selections on double-click
+     or drag. Keep selection local to editable fields and readable documents;
+     the WebKit prefix is required by the macOS webview. */
+  body,
+  button {
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  input,
+  textarea,
+  [contenteditable=""],
+  [contenteditable="true"],
+  [contenteditable="plaintext-only"],
+  .cm-content,
+  .shard-fragment-content,
+  .shard-markdown-document,
+  [data-csv-path] table {
+    -webkit-user-select: text;
+    user-select: text;
+  }
+
   textarea,
   input,
   [contenteditable="true"] {
@@ -538,8 +560,24 @@
     line-height: var(--shard-memo-meta-line-height);
   }
 
-  .shard-fragment-content {
-    white-space: inherit;
+  /* Portable Markdown styles inherit Shard's existing Kiln tokens. */
+  .md-content,
+  .md-document,
+  .shard-editor {
+    --md-space-2: var(--shard-space-2);
+    --md-space-3: var(--shard-space-3);
+    --md-radius: var(--shard-radius-control);
+    --md-font-size: var(--shard-memo-font-size);
+    --md-border: var(--border);
+    --md-border-visible: var(--border-visible);
+    --md-foreground: var(--foreground);
+    --md-muted: var(--muted);
+    --md-muted-foreground: var(--muted-foreground);
+    --md-accent: var(--shard-sapphire);
+    --md-on-accent: var(--primary-foreground);
+    --md-divider-opacity: var(--shard-alpha-55);
+    --md-focus-shadow: 0 0 0 2px rgb(var(--shard-primary-rgb) / var(--shard-alpha-21));
+    --md-divider-extension: var(--shard-fragment-divider-extension, 0px);
   }
 
   .shard-fragment-card-content {
@@ -548,69 +586,47 @@
     );
   }
 
-  /* 时间线 flat 变体（资料库中列）：容器背景即 --card，卡片透明底靠不出
-     色差，条目分割改由细实线承担；横线落在上下卡片各自的内边距之间。 */
-  .shard-timeline-flat-column > [data-shard-fragment-id]:not(:last-child) {
+  /* Columns follow the available reading area, including Library split panes. */
+  .shard-timeline-container {
+    container-type: inline-size;
+  }
+
+  .shard-timeline-layout {
+    --shard-timeline-columns: 1;
+    position: relative;
+    display: grid;
+    grid-template-columns: repeat(var(--shard-timeline-columns), minmax(0, 1fr));
+    align-items: start;
+    align-content: start;
+    gap: var(--shard-card-gap);
+    overflow-anchor: none;
+  }
+
+  @container (min-width: 48rem) {
+    .shard-timeline-layout[data-variant="card"] {
+      --shard-timeline-columns: 2;
+    }
+  }
+
+  .shard-timeline-item {
+    min-width: 0;
+    display: flow-root;
+  }
+
+  /* Until the first measurement, CSS Grid is a usable in-flow fallback. */
+  .shard-timeline-layout[data-columns="2"] > .shard-timeline-item {
+    position: absolute;
+    /* CSS applies the destination width before ResizeObserver measures it,
+       including the frame that switches from two columns to normal flow. */
+    width: calc((100% + var(--shard-card-gap)) / var(--shard-timeline-columns) - var(--shard-card-gap));
+  }
+
+  .shard-timeline-layout[data-variant="flat"] {
+    gap: 0;
+  }
+
+  .shard-timeline-layout[data-variant="flat"] > .shard-timeline-item:not(:last-child) {
     border-bottom: 1px solid var(--border);
-  }
-
-  /* 双列瀑布流的纵向分割：grid 间距归零后由列内边距均分，线画在
-     非首列左缘，正好居于两列内容之间；单列时首末规则互相抵消为无。 */
-  .shard-timeline-flat-column {
-    padding-inline: calc(var(--shard-space-4) / 2);
-  }
-
-  .shard-timeline-flat-column:first-child {
-    padding-left: 0;
-  }
-
-  .shard-timeline-flat-column:last-child {
-    padding-right: 0;
-  }
-
-  .shard-timeline-flat-column + .shard-timeline-flat-column {
-    border-left: 1px solid var(--border);
-  }
-
-  /* 正文里的 GFM 表格。内容是内联文本流（white-space: pre-wrap），
-     表格必须自己关掉换行保留，否则单元格里会多出源文本的缩进空白。
-     过宽时在自己的容器里横向滚动，不撑破卡片。 */
-  .shard-markdown-table {
-    display: block;
-    width: fit-content;
-    max-width: 100%;
-    margin-block: var(--shard-space-3);
-    overflow-x: auto;
-    border-collapse: collapse;
-    border: 1px solid var(--border);
-    border-radius: var(--shard-radius-control);
-    white-space: normal;
-    font-size: var(--shard-memo-font-size);
-    font-variant-numeric: tabular-nums;
-  }
-
-  .shard-markdown-table th,
-  .shard-markdown-table td {
-    padding: var(--shard-space-2) var(--shard-space-3);
-    border-bottom: 1px solid var(--border);
-    text-align: left;
-    vertical-align: top;
-  }
-
-  .shard-markdown-table th {
-    background: var(--muted);
-    color: var(--foreground);
-    font-weight: 600;
-    white-space: nowrap;
-  }
-
-  .shard-markdown-table tr:last-child td {
-    border-bottom: none;
-  }
-
-  .shard-markdown-table th + th,
-  .shard-markdown-table td + td {
-    border-left: 1px solid var(--border);
   }
 
   /* CM6 widget 内的可编辑表格。 */
@@ -839,16 +855,6 @@
     text-align: center;
   }
 
-  .shard-fragment-divider {
-    display: block;
-    width: calc(100% + var(--shard-fragment-divider-extension, 0px));
-    height: 1px;
-    margin-block: var(--shard-space-3);
-    border-radius: 999px;
-    background: var(--border-visible);
-    opacity: var(--shard-alpha-55);
-  }
-
   .shard-fragment-card-highlight {
     animation: shard-fragment-card-glow 1200ms cubic-bezier(0.2, 0, 0, 1)
       both;
@@ -1027,84 +1033,29 @@
     outline-color: rgb(255 255 255 / 0.1);
   }
 
-  .shard-task-marker {
-    position: relative;
-    display: inline-block;
-    padding: 0;
-    border: 0;
-    margin: 0;
-    background: transparent;
-    color: inherit;
-    font: inherit;
-    line-height: inherit;
-    text-align: left;
-    vertical-align: baseline;
+  .shard-editor .shard-cm-task-checkbox {
+    vertical-align: text-bottom;
+    vertical-align: calc(0.5cap - 0.5em);
   }
 
-  .shard-task-toggle {
-    position: absolute;
-    top: 50%;
-    left: 0;
-    display: block;
-    width: 1em;
-    height: 1em;
-    padding: 0;
-    border: 0;
-    margin: 0;
-    background: transparent;
-    color: inherit;
-    cursor: pointer;
-    font: inherit;
-    line-height: 1;
-    pointer-events: auto;
-    transform: translateY(-50%);
+  /* 编辑器中的 checkbox 留在文本流中，不能借用卡片的绝对定位。
+   * 即使运行中的旧 widget 尚未换成包裹结构，也不能锚到输入框边缘。 */
+  .shard-editor .shard-cm-task-marker {
+    display: inline-flex;
+    align-items: center;
   }
 
-  .shard-task-toggle:focus-visible {
-    outline: none;
-  }
-
-  .shard-task-toggle:focus-visible .shard-task-checkbox {
-    box-shadow: 0 0 0 2px rgb(var(--shard-primary-rgb) / var(--shard-alpha-21));
-  }
-
-  .shard-task-marker-spacer {
-    display: inline-block;
-    visibility: hidden;
-    white-space: pre;
-    line-height: inherit;
-    vertical-align: baseline;
-  }
-
-  .shard-task-list-marker {
-    white-space: pre;
-  }
-
-  .shard-task-checkbox {
-    position: absolute;
-    top: 50%;
-    left: 0;
-    display: inline-block;
-    width: 1em;
-    height: 1em;
-    border: 1.4px solid var(--muted-foreground);
-    border-radius: calc(var(--shard-radius-control) - 2px);
-    background: transparent;
-    transform: translateY(-50%);
-  }
-
-  /* CM6 widget 直接复用卡片 checkbox；这里仅覆盖编辑器内联几何。 */
   .shard-editor .shard-cm-task-checkbox {
     position: relative;
     top: auto;
     left: auto;
-    cursor: pointer;
+    flex-shrink: 0;
     transform: none;
-    vertical-align: text-bottom;
+    cursor: pointer;
   }
 
-  .shard-editor .shard-cm-task-checkbox.shard-task-checkbox-checked {
-    transform: scale(1.06);
+  .shard-editor .shard-cm-task-checkbox[aria-readonly="true"] {
+    cursor: default;
   }
 
   /* 编辑器里的分割线是行内 widget：卡片版是 block + 上下 margin，塞进
@@ -1132,39 +1083,6 @@
     font-size: var(--text-tiny);
     line-height: var(--leading-normal);
     text-align: center;
-  }
-
-  .shard-task-toggle .shard-task-checkbox {
-    position: static;
-    width: 100%;
-    height: 100%;
-    transform: none;
-  }
-
-  .shard-task-checkbox-checked {
-    border-color: var(--shard-sapphire);
-    background: var(--shard-sapphire);
-    /* Optical compensation: a solid square reads smaller than a hollow one of
-       the same size (irradiation), so nudge the checked box up ~6%. */
-    transform: translateY(-50%) scale(1.06);
-  }
-
-  .shard-task-toggle .shard-task-checkbox-checked {
-    transform: scale(1.06);
-  }
-
-  .shard-task-checkbox-checked::after {
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    box-sizing: border-box;
-    width: 0.32em;
-    height: 0.56em;
-    border: solid white;
-    border-width: 0 0.12em 0.12em 0;
-    content: "";
-    transform: translate(-50%, -58%) rotate(45deg);
-    transform-origin: center;
   }
 
   .shard-tag-remove {

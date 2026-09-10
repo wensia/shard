@@ -1,14 +1,10 @@
-import { useEffect, useRef, useState, type RefObject } from "react"
+import { useEffect, useState, type RefObject } from "react"
 import { isTauri } from "@tauri-apps/api/core"
 import { getCurrentWebview } from "@tauri-apps/api/webview"
+import { toast } from "sonner"
 
-/** 和 Rust 侧 TABLE_DOCUMENT_EXTENSIONS 保持一致 */
+/** 旧 Excel 格式也拦截并提示另存，不再转换为正文表格。 */
 const TABLE_DOCUMENT_EXTENSIONS = ["csv", "xls", "xlsb", "xlsm", "xlsx"]
-
-export const TABLE_DOCUMENT_FILTER = {
-  extensions: TABLE_DOCUMENT_EXTENSIONS,
-  name: "表格文档",
-}
 
 export function isTableDocumentPath(path: string) {
   const extension = path.split(".").pop()?.toLowerCase() ?? ""
@@ -25,11 +21,10 @@ interface TableDocumentDropOptions {
   enabled?: boolean
   /** 拖到这个元素范围内才算数 */
   frameRef: RefObject<HTMLElement | null>
-  onDrop: (paths: string[]) => void | Promise<void>
 }
 
 /**
- * 表格文档拖进编辑器。
+ * 正文不再创建另一套表格；拖入表格文件时引导到唯一的多维表格导入入口。
  *
  * Tauri 默认接管了 webview 的 HTML5 拖放，所以这里收的是窗口级的
  * drag-drop 事件——好处是直接给到文件路径，不用把整个文件塞过 IPC；
@@ -38,22 +33,22 @@ interface TableDocumentDropOptions {
 export function useTableDocumentDrop({
   enabled = true,
   frameRef,
-  onDrop,
 }: TableDocumentDropOptions) {
   const [isDropTarget, setIsDropTarget] = useState(false)
-  const onDropRef = useRef(onDrop)
-  onDropRef.current = onDrop
 
   useEffect(() => {
     if (!enabled || !isTauri()) return
 
     let disposed = false
     let unlisten: (() => void) | null = null
+    let containsTableDocument = false
 
     function handleEvent(event: { payload: DragDropPayload }) {
+      if (disposed) return
       const payload = event.payload
 
       if (payload.type === "leave") {
+        containsTableDocument = false
         setIsDropTarget(false)
         return
       }
@@ -63,20 +58,24 @@ export function useTableDocumentDrop({
 
       if (payload.type === "enter" || payload.type === "over") {
         // over 不带 paths，enter 时才知道拖的是什么；两者都要求落点命中
-        const paths = "paths" in payload ? payload.paths : []
-        const acceptable =
-          payload.type === "over" || paths.some(isTableDocumentPath)
-        setIsDropTarget(acceptable && isInsideFrame(frame, payload.position))
+        if (payload.type === "enter") {
+          containsTableDocument = payload.paths.some(isTableDocumentPath)
+        }
+        setIsDropTarget(containsTableDocument && isInsideFrame(frame, payload.position))
         return
       }
 
       setIsDropTarget(false)
+      containsTableDocument = false
       if (!isInsideFrame(frame, payload.position)) return
 
       const paths = payload.paths.filter(isTableDocumentPath)
       if (paths.length === 0) return
 
-      void onDropRef.current(paths)
+      const hasLegacyFormat = paths.some(path => !/\.(?:csv|xlsx)$/iu.test(path))
+      toast.info(hasLegacyFormat
+        ? "请先将旧 Excel 文件另存为 XLSX，再到资料库的“多维表格”菜单中选择“从 CSV / Excel 导入…”。"
+        : "请在资料库的“多维表格”菜单中选择“从 CSV / Excel 导入…”，导入 CSV 或 XLSX 文件。")
     }
 
     // 订阅失败不能拖垮编辑器：webview API 在非桌面宿主（浏览器预览、
@@ -110,5 +109,7 @@ function isInsideFrame(frame: HTMLElement, position: { x: number; y: number }) {
 
   return (
     x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom
+    // 禅模式等覆盖层打开时，不能让背后的编辑器同时响应同一拖放。
+    && frame.contains(document.elementFromPoint(x, y))
   )
 }

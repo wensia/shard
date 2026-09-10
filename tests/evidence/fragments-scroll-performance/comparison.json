@@ -1,0 +1,87 @@
+{
+  "date": "2026-09-10",
+  "environment": "Chromium headless, local Vite development build with React StrictMode, synthetic Tauri IPC; not native Tauri acceptance",
+  "data": {
+    "fragments": 80,
+    "renderedCards": 40,
+    "width": 1800,
+    "height": 900
+  },
+  "method": "Real page.mouse.wheel after initial downward scrolling, composer collapsed, no batch appended. Test-response counters do not change product behavior. Absolute frame timings are environment-dependent.",
+  "beforeFix": {
+    "wheelEvents": 24,
+    "wheelDelta": 100,
+    "before": {
+      "top": 1200,
+      "scrollHeight": 6404,
+      "clientHeight": 675,
+      "cardCount": 40,
+      "composerHeight": 141,
+      "expanded": "false",
+      "documentTop": 0
+    },
+    "after": {
+      "top": 3600,
+      "scrollHeight": 6404,
+      "clientHeight": 675,
+      "cardCount": 40,
+      "composerHeight": 141,
+      "expanded": "false",
+      "documentTop": 0
+    },
+    "workbenchRenders": 48,
+    "masonryRenders": 48,
+    "masonryEffectSetups": 24,
+    "masonryMeasurements": 48,
+    "cardMeasurements": 1920,
+    "dateFormats": 40320,
+    "longTaskCount": 24,
+    "frameSummary": {
+      "count": 129,
+      "p50": 8.399999999999636,
+      "p95": 83.30000000000018,
+      "max": 133.09999999999945,
+      "over20": 24,
+      "over33": 24,
+      "over50": 24
+    }
+  },
+  "afterFix": {
+    "wheelEvents": 24,
+    "wheelDelta": 100,
+    "before": {
+      "top": 1200,
+      "scrollHeight": 6404,
+      "clientHeight": 675,
+      "cardCount": 40,
+      "composerHeight": 141,
+      "expanded": "false",
+      "documentTop": 0
+    },
+    "after": {
+      "top": 3600,
+      "scrollHeight": 6404,
+      "clientHeight": 675,
+      "cardCount": 40,
+      "composerHeight": 141,
+      "expanded": "false",
+      "documentTop": 0
+    },
+    "workbenchRenders": 0,
+    "masonryRenders": 0,
+    "masonryEffectSetups": 0,
+    "masonryMeasurements": 0,
+    "cardMeasurements": 0,
+    "dateFormats": 0,
+    "longTaskCount": 0,
+    "frameSummary": {
+      "count": 96,
+      "p50": 8.300000000000182,
+      "p95": 9.200000000000273,
+      "max": 9.399999999999636,
+      "over20": 0,
+      "over33": 0,
+      "over50": 0
+    }
+  }
+}

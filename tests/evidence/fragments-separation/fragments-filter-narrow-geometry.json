@@ -1,0 +1,94 @@
+{
+  "before": {
+    "composer": {
+      "top": 32,
+      "bottom": 223,
+      "left": 16,
+      "right": 624
+    },
+    "firstCard": {
+      "top": 239,
+      "left": 16,
+      "right": 624
+    },
+    "gap": 16,
+    "composerBottomPadding": 16,
+    "viewportScroll": 0,
+    "documentScroll": 0,
+    "documentWidth": 640,
+    "viewportWidth": 640
+  },
+  "dialog": {
+    "bounds": {
+      "left": 64,
+      "right": 576,
+      "top": 73.15625,
+      "bottom": 446.84375,
+      "height": 373.6875
+    },
+    "viewport": {
+      "width": 640,
+      "height": 520
+    },
+    "radius": "6px",
+    "font": "-apple-system, \"Helvetica Neue\", Arial, \"Noto Sans SC\", \"Hiragino Sans GB\", STHeiti, \"Microsoft YaHei\", \"Microsoft JhengHei\", \"Source Han Sans SC\", \"Noto Sans CJK SC\", \"Source Han Sans CN\", \"Source Han Sans TC\", \"Noto Sans CJK TC\", SimSun, sans-serif",
+    "fontToken": "-apple-system, \"Helvetica Neue\", Arial, \"Noto Sans SC\", \"Hiragino Sans GB\", STHeiti, \"Microsoft YaHei\", \"Microsoft JhengHei\", \"Source Han Sans SC\", \"Noto Sans CJK SC\", \"Source Han Sans CN\", \"Source Han Sans TC\", \"Noto Sans CJK TC\", SimSun, sans-serif",
+    "notoLoaded": true,
+    "controls": [
+      {
+        "label": "标签",
+        "kind": "select",
+        "left": 89,
+        "right": 551,
+        "top": 200.71875,
+        "bottom": 228.71875,
+        "height": 28,
+        "width": 462,
+        "radius": "4px",
+        "font": "-apple-system, \"Helvetica Neue\", Arial, \"Noto Sans SC\", \"Hiragino Sans GB\", STHeiti, \"Microsoft YaHei\", \"Microsoft JhengHei\", \"Source Han Sans SC\", \"Noto Sans CJK SC\", \"Source Han Sans CN\", \"Source Han Sans TC\", \"Noto Sans CJK TC\", SimSun, sans-serif"
+      },
+      {
+        "label": "时间",
+        "kind": "select",
+        "left": 89,
+        "right": 551,
+        "top": 267.28125,
+        "bottom": 295.28125,
+        "height": 28,
+        "width": 462,
+        "radius": "4px",
+        "font": "-apple-system, \"Helvetica Neue\", Arial, \"Noto Sans SC\", \"Hiragino Sans GB\", STHeiti, \"Microsoft YaHei\", \"Microsoft JhengHei\", \"Source Han Sans SC\", \"Noto Sans CJK SC\", \"Source Han Sans CN\", \"Source Han Sans TC\", \"Noto Sans CJK TC\", SimSun, sans-serif"
+      },
+      {
+        "label": "取消",
+        "kind": "button",
+        "left": 89,
+        "right": 551,
+        "top": 349.84375,
+        "bottom": 381.84375,
+        "height": 32,
+        "width": 462,
+        "radius": "4px",
+        "font": "-apple-system, \"Helvetica Neue\", Arial, \"Noto Sans SC\", \"Hiragino Sans GB\", STHeiti, \"Microsoft YaHei\", \"Microsoft JhengHei\", \"Source Han Sans SC\", \"Noto Sans CJK SC\", \"Source Han Sans CN\", \"Source Han Sans TC\", \"Noto Sans CJK TC\", SimSun, sans-serif"
+      },
+      {
+        "label": "查看碎片",
+        "kind": "button",
+        "left": 89,
+        "right": 551,
+        "top": 389.84375,
+        "bottom": 421.84375,
+        "height": 32,
+        "width": 462,
+        "radius": "4px",
+        "font": "-apple-system, \"Helvetica Neue\", Arial, \"Noto Sans SC\", \"Hiragino Sans GB\", STHeiti, \"Microsoft YaHei\", \"Microsoft JhengHei\", \"Source Han Sans SC\", \"Noto Sans CJK SC\", \"Source Han Sans CN\", \"Source Han Sans TC\", \"Noto Sans CJK TC\", SimSun, sans-serif"
+      }
+    ]
+  },
+  "popup": {
+    "x": 89,
+    "y": 233,
+    "width": 462,
+    "height": 92
+  }
+}
