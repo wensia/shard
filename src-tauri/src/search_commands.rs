@@ -430,6 +430,7 @@ mod tests {
                     source_stamp: "source-1".into(),
                     documents: vec![document.clone()],
                     metadata: by_key,
+                    sources: HashMap::new(),
                     skipped_files: 0,
                     authorization: None,
                 })

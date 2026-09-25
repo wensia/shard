@@ -152,6 +152,36 @@ pub struct SearchProjection {
     pub version: u32,
 }
 
+impl SearchProjection {
+    pub fn from_blocks(blocks: Vec<SearchProjectionBlock>) -> Self {
+        let revealable_text = blocks
+            .iter()
+            .filter(|block| block.is_revealable())
+            .map(SearchProjectionBlock::text)
+            .collect::<Vec<_>>()
+            .join("\n");
+        let document_only_text = blocks
+            .iter()
+            .filter(|block| !block.is_revealable())
+            .map(SearchProjectionBlock::text)
+            .collect::<Vec<_>>()
+            .join("\n");
+        let searchable_text = blocks
+            .iter()
+            .map(SearchProjectionBlock::text)
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        Self {
+            blocks,
+            document_only_text,
+            revealable_text,
+            searchable_text,
+            version: 1,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProjectedDocument {
     pub stable_key: String,
@@ -162,6 +192,30 @@ pub struct ProjectedDocument {
     pub(crate) normalized_title: String,
     pub(crate) normalized_tags: Vec<String>,
     pub(crate) normalized_blocks: Vec<String>,
+}
+
+impl ProjectedDocument {
+    pub fn from_projection(input: &SourceDocument, projection: SearchProjection) -> Self {
+        let normalized_blocks = projection
+            .blocks
+            .iter()
+            .map(|block| normalize_search_text(block.text()))
+            .collect();
+        Self {
+            stable_key: input.stable_key.clone(),
+            title: input.title.clone(),
+            tags: input.tags.clone(),
+            modified_at: input.modified_at,
+            normalized_title: normalize_search_text(&input.title),
+            normalized_tags: input
+                .tags
+                .iter()
+                .map(|tag| normalize_search_text(tag))
+                .collect(),
+            normalized_blocks,
+            projection,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -335,6 +389,34 @@ mod tests {
                     .collect::<Vec<_>>(),
                 "{}",
                 case.id
+            );
+        }
+    }
+
+    #[test]
+    fn search_projection_from_blocks_matches_project_markdown() {
+        for case in projection_fixture().cases {
+            let markdown_projection = project_markdown(&case.markdown);
+            assert_eq!(
+                SearchProjection::from_blocks(markdown_projection.blocks.clone()),
+                markdown_projection,
+                "{}",
+                case.id
+            );
+            assert_eq!(markdown_projection, case.expected, "{}", case.id);
+        }
+
+        for document in query_fixture().documents {
+            let source = SourceDocument {
+                stable_key: document.key,
+                title: document.title,
+                tags: document.tags,
+                body: document.body,
+                modified_at: document.modified_at,
+            };
+            assert_eq!(
+                ProjectedDocument::from_projection(&source, project_markdown(&source.body)),
+                project_document(&source)
             );
         }
     }

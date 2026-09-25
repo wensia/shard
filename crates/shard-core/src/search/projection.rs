@@ -1,6 +1,5 @@
 use super::{
-    normalize_search_text, DocumentOnlyReason, ProjectedDocument, SearchProjection,
-    SearchProjectionBlock, SourceDocument,
+    DocumentOnlyReason, ProjectedDocument, SearchProjection, SearchProjectionBlock, SourceDocument,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -16,26 +15,7 @@ struct InlineProjection {
 }
 
 pub fn project_document(input: &SourceDocument) -> ProjectedDocument {
-    let projection = project_markdown(&input.body);
-    let normalized_blocks = projection
-        .blocks
-        .iter()
-        .map(|block| normalize_search_text(block.text()))
-        .collect();
-    ProjectedDocument {
-        stable_key: input.stable_key.clone(),
-        title: input.title.clone(),
-        tags: input.tags.clone(),
-        modified_at: input.modified_at,
-        normalized_title: normalize_search_text(&input.title),
-        normalized_tags: input
-            .tags
-            .iter()
-            .map(|tag| normalize_search_text(tag))
-            .collect(),
-        normalized_blocks,
-        projection,
-    }
+    ProjectedDocument::from_projection(input, project_markdown(&input.body))
 }
 
 pub fn project_markdown(markdown: &str) -> SearchProjection {
@@ -144,31 +124,7 @@ pub fn project_markdown(markdown: &str) -> SearchProjection {
         );
     }
 
-    let revealable_text = blocks
-        .iter()
-        .filter(|block| block.is_revealable())
-        .map(SearchProjectionBlock::text)
-        .collect::<Vec<_>>()
-        .join("\n");
-    let document_only_text = blocks
-        .iter()
-        .filter(|block| !block.is_revealable())
-        .map(SearchProjectionBlock::text)
-        .collect::<Vec<_>>()
-        .join("\n");
-    let searchable_text = blocks
-        .iter()
-        .map(SearchProjectionBlock::text)
-        .collect::<Vec<_>>()
-        .join("\n");
-
-    SearchProjection {
-        blocks,
-        document_only_text,
-        revealable_text,
-        searchable_text,
-        version: 1,
-    }
+    SearchProjection::from_blocks(blocks)
 }
 
 fn normalize_newlines(text: &str) -> String {
@@ -613,6 +569,7 @@ fn trim_blank_lines(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::search::normalize_search_text;
 
     #[test]
     fn search_projection_preserves_inline_code_underscores() {

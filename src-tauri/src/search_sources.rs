@@ -6,6 +6,9 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+#[cfg(unix)]
+use std::os::unix::fs::MetadataExt;
+
 use chrono::{DateTime, Utc};
 use shard_core::{
     search::{project_document, ProjectedDocument, SourceDocument},
@@ -24,6 +27,65 @@ use crate::{
 
 const CSV_HEADER_MAX_BYTES: u64 = 1024 * 1024;
 const SEARCH_SCAN_MAX_ENTRIES: usize = 100_000;
+const RACY_WINDOW_NS: i128 = 2_000_000_000;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PublicSourceKind {
+    Markdown,
+    MindMap,
+    Canvas,
+    Table,
+    Csv,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct FileStamp {
+    mtime_ns: i128,
+    size: u64,
+    ino: u64,
+    ctime_ns: i128,
+}
+
+impl FileStamp {
+    fn from_metadata(metadata: &fs::Metadata) -> Self {
+        #[cfg(unix)]
+        {
+            Self {
+                mtime_ns: i128::from(metadata.mtime()) * 1_000_000_000
+                    + i128::from(metadata.mtime_nsec()),
+                size: metadata.len(),
+                ino: metadata.ino(),
+                ctime_ns: i128::from(metadata.ctime()) * 1_000_000_000
+                    + i128::from(metadata.ctime_nsec()),
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            Self {
+                mtime_ns: system_time_nanos(metadata.modified().ok()) as i128,
+                size: metadata.len(),
+                ino: 0,
+                ctime_ns: 0,
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct SourceRecord {
+    kind: PublicSourceKind,
+    stamp: FileStamp,
+    indexed_at_ns: i128,
+    revision: String,
+    parse_error: bool,
+}
+
+struct PublicSource {
+    path: PathBuf,
+    relative: String,
+    kind: PublicSourceKind,
+    stamp: FileStamp,
+}
 
 #[derive(Debug, Clone)]
 pub(crate) struct SearchDocumentMetadata {
@@ -54,25 +116,17 @@ fn build_snapshot(
     if !vault.is_dir() {
         return Err(SearchError::Io { retryable: false });
     }
-    // T05 connects the real sources. Incremental reuse remains owned by the runtime's
-    // source-stamp publication path; source parsing itself is intentionally deterministic.
-    let _ = (
-        &request.refresh,
-        request.force_read_all,
-        request.previous.as_ref(),
-    );
-
-    let (mut loaded, skipped_files, authorization) = match request.scope {
+    let (mut loaded, skipped_files, authorization, sources) = match request.scope {
         SearchScope::Public => {
-            let (loaded, skipped) = load_public_documents(&vault)?;
-            (loaded, skipped, None)
+            let (loaded, skipped, sources) = load_public_documents(&vault, &request)?;
+            (loaded, skipped, None, sources)
         }
         SearchScope::Lockbox => {
             let lease = peek_lockbox_read_lease(&vault, lockbox_runtime)?;
             lease.validate(&request.context)?;
             let (loaded, skipped) = load_lockbox_documents(&vault, &lease)?;
             lease.validate(&request.context)?;
-            (loaded, skipped, Some(lease.authorization()))
+            (loaded, skipped, Some(lease.authorization()), HashMap::new())
         }
     };
     loaded.sort_by(|left, right| left.metadata.target.key.cmp(&right.metadata.target.key));
@@ -105,13 +159,154 @@ fn build_snapshot(
         source_stamp,
         documents,
         metadata,
+        sources,
         skipped_files,
         authorization,
     })
 }
 
-fn load_public_documents(vault: &Path) -> Result<(Vec<LoadedSearchDocument>, u32), SearchError> {
-    let mut documents = Vec::new();
+fn load_public_documents(
+    vault: &Path,
+    request: &SearchBuildRequest,
+) -> Result<
+    (
+        Vec<LoadedSearchDocument>,
+        u32,
+        HashMap<String, SourceRecord>,
+    ),
+    SearchError,
+> {
+    let (enumerated, mut skipped) = enumerate_public_sources(vault)?;
+    let mut documents = Vec::with_capacity(enumerated.len());
+    let mut sources = HashMap::with_capacity(enumerated.len());
+    let previous = request.previous.as_deref();
+    let previous_documents: HashMap<&str, &ProjectedDocument> = previous
+        .map(|snapshot| {
+            snapshot
+                .documents
+                .iter()
+                .map(|document| (document.stable_key.as_str(), document))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    for source in enumerated {
+        let old = previous.and_then(|snapshot| snapshot.sources.get(&source.relative));
+        let same_source =
+            old.is_some_and(|record| record.kind == source.kind && record.stamp == source.stamp);
+        let trusted = !request.force_read_all
+            && same_source
+            && old.is_some_and(|record| {
+                source.stamp.mtime_ns.saturating_add(RACY_WINDOW_NS) < record.indexed_at_ns
+            });
+        let old_document = || {
+            let key = target_key(
+                &request.context.vault_path,
+                &SearchScope::Public,
+                &source.relative,
+            );
+            let metadata = previous?.metadata.get(&key)?;
+            let projected = previous_documents.get(key.as_str())?;
+            (old?.revision == metadata.revision).then(|| LoadedSearchDocument {
+                projected: (*projected).clone(),
+                metadata: metadata.clone(),
+                fragment: None,
+            })
+        };
+        if trusted {
+            if old.is_some_and(|record| record.parse_error) {
+                skipped = skipped.saturating_add(1);
+                sources.insert(source.relative, old.unwrap().clone());
+                continue;
+            }
+            if let Some(document) = old_document() {
+                documents.push(document);
+                sources.insert(source.relative, old.unwrap().clone());
+                continue;
+            }
+        }
+
+        let loaded = if !request.force_read_all && source.kind == PublicSourceKind::Markdown {
+            // A file in the racy window must be read, but unchanged bytes need no projection.
+            read_public_markdown_text(vault, &source.path).and_then(|(text, revision)| {
+                if old.is_some_and(|record| !record.parse_error && record.revision == revision) {
+                    if let Some(document) = old_document() {
+                        return Ok(document);
+                    }
+                }
+                load_public_markdown_text(vault, &source.path, &text, revision)
+            })
+        } else {
+            load_public_source(vault, &source)
+        };
+        let indexed_at_ns = now_ns();
+        let (revision, parse_error) = match loaded {
+            Ok(document) => {
+                let revision = document.metadata.revision.clone();
+                documents.push(document);
+                (revision, false)
+            }
+            Err(_) => {
+                skipped = skipped.saturating_add(1);
+                (String::new(), true)
+            }
+        };
+        sources.insert(
+            source.relative,
+            SourceRecord {
+                kind: source.kind,
+                stamp: source.stamp,
+                indexed_at_ns,
+                revision,
+                parse_error,
+            },
+        );
+    }
+    Ok((documents, skipped, sources))
+}
+
+fn now_ns() -> i128 {
+    system_time_nanos(Some(SystemTime::now())) as i128
+}
+
+fn load_public_source(
+    vault: &Path,
+    source: &PublicSource,
+) -> Result<LoadedSearchDocument, SearchError> {
+    match source.kind {
+        PublicSourceKind::Markdown => load_public_markdown(vault, &source.path),
+        PublicSourceKind::MindMap => {
+            note_source_read();
+            load_mind_map(vault, &source.path)
+        }
+        PublicSourceKind::Canvas => {
+            note_source_read();
+            load_canvas(vault, &source.relative)
+        }
+        PublicSourceKind::Table => {
+            note_source_read();
+            load_table(vault, &source.relative)
+        }
+        PublicSourceKind::Csv => {
+            note_source_read();
+            load_csv(vault, &source.path)
+        }
+    }
+}
+
+#[cfg(test)]
+thread_local! { static SOURCE_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
+
+#[cfg(test)]
+fn note_source_read() {
+    SOURCE_READS.with(|reads| reads.set(reads.get() + 1));
+}
+
+#[cfg(not(test))]
+fn note_source_read() {}
+
+fn enumerate_public_sources(vault: &Path) -> Result<(Vec<PublicSource>, u32), SearchError> {
+    let mut sources = Vec::new();
     let mut skipped = 0u32;
 
     for relative_root in ["fragments", "notes", ".trash/fragments", ".trash/notes"] {
@@ -125,10 +320,13 @@ fn load_public_documents(vault: &Path) -> Result<(Vec<LoadedSearchDocument>, u32
         let mut files = Vec::new();
         crate::collect_markdown_files(&root, &mut files).map_err(io_error)?;
         for path in files {
-            match load_public_markdown(vault, &path) {
-                Ok(document) => documents.push(document),
-                Err(_) => skipped = skipped.saturating_add(1),
-            }
+            push_public_source(
+                vault,
+                path,
+                PublicSourceKind::Markdown,
+                &mut sources,
+                &mut skipped,
+            )?;
         }
     }
 
@@ -150,10 +348,13 @@ fn load_public_documents(vault: &Path) -> Result<(Vec<LoadedSearchDocument>, u32
             .map_err(io_error)?;
     }
     for path in mind_maps {
-        match load_mind_map(vault, &path) {
-            Ok(document) => documents.push(document),
-            Err(_) => skipped = skipped.saturating_add(1),
-        }
+        push_public_source(
+            vault,
+            path,
+            PublicSourceKind::MindMap,
+            &mut sources,
+            &mut skipped,
+        )?;
     }
 
     for suffix in [".shardcanvas.json", ".shardflow.json"] {
@@ -163,11 +364,13 @@ fn load_public_documents(vault: &Path) -> Result<(Vec<LoadedSearchDocument>, u32
                 .map_err(io_error)?;
         }
         for path in files {
-            let relative = crate::relative_path(vault, &path).map_err(io_error)?;
-            match load_canvas(vault, &relative) {
-                Ok(document) => documents.push(document),
-                Err(_) => skipped = skipped.saturating_add(1),
-            }
+            push_public_source(
+                vault,
+                path,
+                PublicSourceKind::Canvas,
+                &mut sources,
+                &mut skipped,
+            )?;
         }
     }
 
@@ -177,24 +380,51 @@ fn load_public_documents(vault: &Path) -> Result<(Vec<LoadedSearchDocument>, u32
             .map_err(io_error)?;
     }
     for path in tables {
-        let relative = crate::relative_path(vault, &path).map_err(io_error)?;
-        match load_table(vault, &relative) {
-            Ok(document) => documents.push(document),
-            Err(_) => skipped = skipped.saturating_add(1),
-        }
+        push_public_source(
+            vault,
+            path,
+            PublicSourceKind::Table,
+            &mut sources,
+            &mut skipped,
+        )?;
     }
 
     let mut csv_files = Vec::new();
     collect_public_csv_files(vault, vault, &mut csv_files, &mut visited, &mut skipped)?;
     for path in csv_files {
-        match load_csv(vault, &path) {
-            Ok(document) => documents.push(document),
-            Err(_) => skipped = skipped.saturating_add(1),
-        }
+        push_public_source(
+            vault,
+            path,
+            PublicSourceKind::Csv,
+            &mut sources,
+            &mut skipped,
+        )?;
     }
 
     skipped = skipped.saturating_add(count_structured_trash(vault)?);
-    Ok((documents, skipped))
+    Ok((sources, skipped))
+}
+
+fn push_public_source(
+    vault: &Path,
+    path: PathBuf,
+    kind: PublicSourceKind,
+    sources: &mut Vec<PublicSource>,
+    skipped: &mut u32,
+) -> Result<(), SearchError> {
+    let relative = crate::relative_path(vault, &path).map_err(io_error)?;
+    match fs::symlink_metadata(&path) {
+        Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() => {
+            sources.push(PublicSource {
+                path,
+                relative,
+                kind,
+                stamp: FileStamp::from_metadata(&metadata),
+            });
+        }
+        _ => *skipped = skipped.saturating_add(1),
+    }
+    Ok(())
 }
 
 fn load_lockbox_documents(
@@ -298,11 +528,28 @@ fn validate_loaded_identity(
 }
 
 fn load_public_markdown(vault: &Path, path: &Path) -> Result<LoadedSearchDocument, SearchError> {
+    let (text, revision) = read_public_markdown_text(vault, path)?;
+    load_public_markdown_text(vault, path, &text, revision)
+}
+
+fn read_public_markdown_text(vault: &Path, path: &Path) -> Result<(String, String), SearchError> {
     let relative = crate::relative_path(vault, path).map_err(io_error)?;
     let safe_path = resolve_target_file(vault, &relative, &SearchScope::Public)?;
+    note_source_read();
     let text = fs::read_to_string(safe_path).map_err(fs_error)?;
+    let revision = crate::hash_text(&text);
+    Ok((text, revision))
+}
+
+fn load_public_markdown_text(
+    vault: &Path,
+    path: &Path,
+    text: &str,
+    revision: String,
+) -> Result<LoadedSearchDocument, SearchError> {
+    let relative = crate::relative_path(vault, path).map_err(io_error)?;
     let (frontmatter, body) =
-        crate::parse_fragment_text(&text).map_err(|_| SearchError::UnsupportedTarget)?;
+        crate::parse_fragment_text(text).map_err(|_| SearchError::UnsupportedTarget)?;
     let archived =
         relative.starts_with(".trash/fragments/") || relative.starts_with(".trash/notes/");
     Ok(markdown_document(
@@ -312,7 +559,7 @@ fn load_public_markdown(vault: &Path, path: &Path) -> Result<LoadedSearchDocumen
         archived,
         frontmatter,
         body,
-        crate::hash_text(&text),
+        revision,
     ))
 }
 
@@ -1035,7 +1282,7 @@ fn fs_error(error: std::io::Error) -> SearchError {
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
+    use std::{fs, time::Instant};
 
     use serde_json::json;
 
@@ -1064,6 +1311,285 @@ mod tests {
             vault_epoch: "1".to_string(),
             privacy_epoch: "0".to_string(),
         }
+    }
+
+    fn public_draft(
+        vault: &Path,
+        previous: Option<crate::search_runtime::SearchSnapshot>,
+        rebuild: bool,
+    ) -> SearchSnapshotDraft {
+        build_snapshot(
+            SearchBuildRequest {
+                context: context(vault),
+                scope: SearchScope::Public,
+                refresh: if rebuild {
+                    crate::search_contract::SearchRefresh::Rebuild
+                } else {
+                    crate::search_contract::SearchRefresh::Auto
+                },
+                start_generation: 0,
+                force_read_all: rebuild,
+                previous: previous.map(std::sync::Arc::new),
+            },
+            &LockboxRuntime::default(),
+        )
+        .unwrap()
+    }
+
+    fn previous(
+        mut draft: SearchSnapshotDraft,
+        trusted: bool,
+    ) -> crate::search_runtime::SearchSnapshot {
+        if trusted {
+            for source in draft.sources.values_mut() {
+                source.indexed_at_ns = source.stamp.mtime_ns + RACY_WINDOW_NS + 1;
+            }
+        }
+        crate::search_runtime::SearchSnapshot::from_draft(draft, SearchScope::Public, 0)
+    }
+
+    fn read_count() -> usize {
+        SOURCE_READS.with(|reads| reads.get())
+    }
+
+    fn reset_reads() {
+        SOURCE_READS.with(|reads| reads.set(0));
+    }
+
+    fn assert_same_draft(left: &SearchSnapshotDraft, right: &SearchSnapshotDraft) {
+        assert_eq!(left.documents, right.documents);
+        assert_eq!(left.skipped_files, right.skipped_files);
+        assert_eq!(left.source_stamp, right.source_stamp);
+        let metadata = |draft: &SearchSnapshotDraft| {
+            let mut entries = draft
+                .metadata
+                .iter()
+                .map(|(key, value)| {
+                    (
+                        key.clone(),
+                        serde_json::to_value(&value.target).unwrap(),
+                        value.updated_at.clone(),
+                        value.revision.clone(),
+                        format!("{:?}", value.reveal_hint),
+                        value.read_only,
+                    )
+                })
+                .collect::<Vec<_>>();
+            entries.sort_by(|a, b| a.0.cmp(&b.0));
+            entries
+        };
+        assert_eq!(metadata(left), metadata(right));
+    }
+
+    #[test]
+    fn search_incremental_unchanged_vault_reads_no_files() {
+        let directory = tempfile::tempdir().unwrap();
+        let vault = directory.path();
+        write_markdown(&vault.join("notes/a.md"), "a", &["note"], "# Alpha");
+        fs::write(vault.join("headers.csv"), "Name,Value\n1,2").unwrap();
+        let first = public_draft(vault, None, true);
+        reset_reads();
+        let next = public_draft(vault, Some(previous(first, true)), false);
+        assert_eq!(read_count(), 0);
+        assert_eq!(next.documents.len(), 2);
+    }
+
+    #[test]
+    fn search_incremental_build_equals_full_read() {
+        let directory = tempfile::tempdir().unwrap();
+        let vault = directory.path();
+        let mut seed = 0x5a17_u64;
+        for index in 0..24 {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            let root = if index % 5 == 0 {
+                ".trash/notes"
+            } else {
+                "notes"
+            };
+            write_markdown(
+                &vault.join(format!("{root}/{index}.md")),
+                &format!("id-{index}"),
+                &["note"],
+                &format!("# Topic {seed:x}"),
+            );
+        }
+        fs::write(vault.join("notes/broken.md"), "ordinary markdown").unwrap();
+        fs::write(vault.join("notes/data.csv"), "first,second\nA,B\n").unwrap();
+        fs::write(vault.join(".trash/notes/archived.shardtable.json"), "{}").unwrap();
+        fs::write(vault.join("notes/map.shardmap.json"), json!({
+            "kind":"shard.map", "schemaVersion":1, "id":"map-1", "title":"Map",
+            "createdAt":"2026-09-25T00:00:00Z", "updatedAt":"2026-09-25T00:00:00Z",
+            "savedWithAppVersion":"test", "revision":1, "rootId":"root", "hasProtectedLinks":false,
+            "nodes":{"root":{"id":"root","parentId":null,"sortKey":"a","text":"Visible",
+                "createdAt":"2026-09-25T00:00:00Z","updatedAt":"2026-09-25T00:00:00Z"}}
+        }).to_string()).unwrap();
+        fs::write(
+            vault.join("notes/canvas.shardcanvas.json"),
+            json!({
+                "kind":"shard.canvas", "schemaVersion":1, "id":"canvas-1", "title":"Canvas",
+                "createdAt":"2026-09-25T00:00:00Z", "updatedAt":"2026-09-25T00:00:00Z",
+                "revision":1, "nodes":[], "edges":[]
+            })
+            .to_string(),
+        )
+        .unwrap();
+        fs::write(
+            vault.join("notes/table.shardtable.json"),
+            include_str!("../../tests/fixtures/tables/valid/empty.json"),
+        )
+        .unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(vault.join("notes"), vault.join("maps")).unwrap();
+        let first = public_draft(vault, None, true);
+        write_markdown(&vault.join("notes/1.md"), "id-1", &["note"], "# Revised");
+        fs::remove_file(vault.join("notes/2.md")).unwrap();
+        fs::write(vault.join("notes/data.csv"), "first,third\nA,B\n").unwrap();
+        write_markdown(
+            &vault.join("notes/broken.md"),
+            "recovered",
+            &["note"],
+            "# Recovered",
+        );
+        let incremental = public_draft(vault, Some(previous(first, true)), false);
+        let full = public_draft(vault, None, true);
+        assert_same_draft(&incremental, &full);
+        assert!(full.skipped_files >= 2);
+        assert!(full
+            .documents
+            .iter()
+            .any(|doc| doc.stable_key.contains("map.shardmap.json")));
+        assert!(full
+            .documents
+            .iter()
+            .any(|doc| doc.stable_key.contains("canvas.shardcanvas.json")));
+        assert!(full
+            .documents
+            .iter()
+            .any(|doc| doc.stable_key.contains("table.shardtable.json")));
+    }
+
+    #[test]
+    fn search_incremental_detects_same_size_edit() {
+        let directory = tempfile::tempdir().unwrap();
+        let vault = directory.path();
+        let path = vault.join("notes/a.md");
+        write_markdown(&path, "a", &["note"], "# Alpha");
+        let size = fs::metadata(&path).unwrap().len();
+        let first = public_draft(vault, None, true);
+        write_markdown(&path, "a", &["note"], "# Bravo");
+        assert_eq!(fs::metadata(&path).unwrap().len(), size);
+        let next = public_draft(vault, Some(previous(first, true)), false);
+        assert!(next.documents[0]
+            .projection
+            .searchable_text
+            .contains("Bravo"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn search_incremental_detects_restored_mtime_rewrite() {
+        let directory = tempfile::tempdir().unwrap();
+        let vault = directory.path();
+        let path = vault.join("notes/a.md");
+        write_markdown(&path, "a", &["note"], "# Alpha");
+        let modified = fs::metadata(&path).unwrap().modified().unwrap();
+        let first = public_draft(vault, None, true);
+        let original_ino = first.sources["notes/a.md"].stamp.ino;
+        let replacement = vault.join("notes/replacement.tmp");
+        write_markdown(&replacement, "a", &["note"], "# Bravo");
+        fs::File::open(&replacement)
+            .unwrap()
+            .set_times(fs::FileTimes::new().set_modified(modified))
+            .unwrap();
+        fs::rename(&replacement, &path).unwrap();
+        assert_eq!(fs::metadata(&path).unwrap().modified().unwrap(), modified);
+        assert_ne!(fs::metadata(&path).unwrap().ino(), original_ino);
+        let next = public_draft(vault, Some(previous(first, true)), false);
+        assert!(next.documents[0]
+            .projection
+            .searchable_text
+            .contains("Bravo"));
+    }
+
+    #[test]
+    fn search_incremental_racy_recent_file_is_reread() {
+        let directory = tempfile::tempdir().unwrap();
+        let vault = directory.path();
+        write_markdown(&vault.join("notes/a.md"), "a", &["note"], "# Alpha");
+        let first = public_draft(vault, None, true);
+        reset_reads();
+        let next = public_draft(vault, Some(previous(first, false)), false);
+        assert_eq!(read_count(), 1);
+        assert_eq!(next.documents.len(), 1);
+    }
+
+    #[test]
+    fn search_incremental_deleted_file_disappears() {
+        let directory = tempfile::tempdir().unwrap();
+        let vault = directory.path();
+        let path = vault.join("notes/a.md");
+        write_markdown(&path, "a", &["note"], "# Alpha");
+        let first = public_draft(vault, None, true);
+        fs::remove_file(path).unwrap();
+        let next = public_draft(vault, Some(previous(first, true)), false);
+        assert!(next.documents.is_empty());
+        assert!(next.sources.is_empty());
+    }
+
+    #[test]
+    fn search_rebuild_reads_all_files() {
+        let directory = tempfile::tempdir().unwrap();
+        let vault = directory.path();
+        write_markdown(&vault.join("notes/a.md"), "a", &["note"], "# Alpha");
+        let first = public_draft(vault, None, true);
+        reset_reads();
+        let next = public_draft(vault, Some(previous(first, true)), true);
+        assert_eq!(read_count(), 1);
+        assert_eq!(next.documents.len(), 1);
+    }
+
+    #[test]
+    fn search_set_vault_path_uses_reconcile() {
+        let source = include_str!("lib.rs");
+        let function = source
+            .split("async fn set_vault_path(")
+            .nth(1)
+            .unwrap()
+            .split("#[tauri::command]")
+            .next()
+            .unwrap();
+        assert!(function.contains("search_contract::SearchRefresh::Reconcile"));
+        assert!(!function.contains("search_contract::SearchRefresh::Rebuild"));
+    }
+
+    #[test]
+    #[ignore = "release-only 5k Auto reconcile benchmark"]
+    fn search_5k_auto_reconcile_unchanged() {
+        let directory = tempfile::tempdir().unwrap();
+        let vault = directory.path();
+        for index in 0..5_000 {
+            write_markdown(
+                &vault.join(format!("notes/{index:05}.md")),
+                &format!("id-{index}"),
+                &["note"],
+                &format!("# Search item {index}"),
+            );
+        }
+        std::thread::sleep(std::time::Duration::from_millis(2_100));
+        let first = public_draft(vault, None, true);
+        let previous = previous(first, false);
+        reset_reads();
+        let started = Instant::now();
+        let next = public_draft(vault, Some(previous), false);
+        eprintln!(
+            "search_5k_auto_reconcile_unchanged elapsed={:?} source_reads={}",
+            started.elapsed(),
+            read_count()
+        );
+        assert_eq!(next.documents.len(), 5_000);
+        assert_eq!(read_count(), 0);
     }
 
     #[test]

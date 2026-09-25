@@ -14,12 +14,12 @@ use std::{
 use shard_core::search::ProjectedDocument;
 
 use crate::{
-    search_lockbox::LockboxLeaseAuthorization,
     search_contract::{SearchContext, SearchError, SearchRefresh, SearchScope},
+    search_lockbox::LockboxLeaseAuthorization,
     search_reconcile::{
         ReconcileAction, ReconcileCoordinator, ReconcileKey, RefreshKind, ScopeKey,
     },
-    search_sources::SearchDocumentMetadata,
+    search_sources::{SearchDocumentMetadata, SourceRecord},
 };
 
 #[derive(Debug)]
@@ -30,11 +30,43 @@ pub(crate) struct SearchSnapshot {
     pub(crate) source_stamp: String,
     pub(crate) documents: Vec<ProjectedDocument>,
     pub(crate) metadata: HashMap<String, SearchDocumentMetadata>,
+    pub(crate) sources: HashMap<String, SourceRecord>,
     pub(crate) skipped_files: u32,
     authorization: Option<LockboxLeaseAuthorization>,
 }
 
 impl SearchSnapshot {
+    pub(crate) fn from_draft(
+        draft: SearchSnapshotDraft,
+        scope: SearchScope,
+        generation: u64,
+    ) -> Self {
+        let SearchSnapshotDraft {
+            snapshot_id,
+            source_stamp,
+            documents,
+            metadata,
+            sources,
+            skipped_files,
+            authorization,
+        } = draft;
+        Self {
+            snapshot_id,
+            scope: scope.clone(),
+            generation,
+            source_stamp,
+            documents,
+            metadata,
+            sources,
+            skipped_files,
+            authorization: if matches!(scope, SearchScope::Lockbox) {
+                authorization
+            } else {
+                None
+            },
+        }
+    }
+
     pub(crate) fn validate_authorization(
         &self,
         context: &SearchContext,
@@ -52,6 +84,7 @@ pub(crate) struct SearchSnapshotDraft {
     pub(crate) source_stamp: String,
     pub(crate) documents: Vec<ProjectedDocument>,
     pub(crate) metadata: HashMap<String, SearchDocumentMetadata>,
+    pub(crate) sources: HashMap<String, SourceRecord>,
     pub(crate) skipped_files: u32,
     pub(crate) authorization: Option<LockboxLeaseAuthorization>,
 }
@@ -221,7 +254,10 @@ impl VaultWriteGuard {
             let index = scope_index(&SearchScope::Public);
             publication.refreshing[index] = false;
             publication.warnings[index] = None;
-            (publication.context.clone(), publication.snapshots[index].take())
+            (
+                publication.context.clone(),
+                publication.snapshots[index].take(),
+            )
         };
         drop(retired);
         if let (Some(inner), Some(context)) = (self.runtime.upgrade(), context) {
@@ -930,35 +966,32 @@ impl SearchRuntime {
                     && previous.source_stamp == draft.source_stamp
             });
         if reuse {
+            // The public documents are unchanged, but a read inside the two-second
+            // racy window must advance its indexed time. Otherwise Auto would
+            // reread that file forever while keeping the old immutable snapshot.
+            let retired = if matches!(scope, SearchScope::Public) {
+                let mut draft = draft;
+                draft.snapshot_id = slot.as_ref().unwrap().snapshot_id.clone();
+                slot.replace(Arc::new(SearchSnapshot::from_draft(
+                    draft,
+                    scope,
+                    start_generation,
+                )))
+            } else {
+                drop(draft);
+                None
+            };
             drop(publication);
             drop(_publication_gate);
-            drop(draft);
+            drop(retired);
             return PublishOutcome::Reused;
         }
 
-        let SearchSnapshotDraft {
-            snapshot_id,
-            source_stamp,
-            documents,
-            metadata,
-            skipped_files,
-            authorization,
-        } = draft;
-        let authorization = if matches!(scope, SearchScope::Lockbox) {
-            authorization
-        } else {
-            None
-        };
-        let previous = slot.replace(Arc::new(SearchSnapshot {
-            snapshot_id,
+        let previous = slot.replace(Arc::new(SearchSnapshot::from_draft(
+            draft,
             scope,
-            generation: start_generation,
-            source_stamp,
-            documents,
-            metadata,
-            skipped_files,
-            authorization,
-        }));
+            start_generation,
+        )));
         drop(publication);
         drop(_publication_gate);
         drop(previous);
@@ -1004,9 +1037,7 @@ impl SearchRuntime {
             .fetch_add(1, Ordering::SeqCst)
             .wrapping_add(1);
         if epoch == 0 {
-            self.inner
-                .next_privacy_epoch
-                .store(1, Ordering::SeqCst);
+            self.inner.next_privacy_epoch.store(1, Ordering::SeqCst);
             1
         } else {
             epoch
@@ -1145,15 +1176,13 @@ mod tests {
             source_stamp: stamp.into(),
             documents: Vec::new(),
             metadata: HashMap::new(),
+            sources: HashMap::new(),
             skipped_files: 0,
             authorization: None,
         }
     }
 
-    fn lockbox_draft(
-        id: &str,
-        authorization: LockboxLeaseAuthorization,
-    ) -> SearchSnapshotDraft {
+    fn lockbox_draft(id: &str, authorization: LockboxLeaseAuthorization) -> SearchSnapshotDraft {
         let mut draft = draft(id, id);
         draft.authorization = Some(authorization);
         draft

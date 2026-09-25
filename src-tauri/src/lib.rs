@@ -896,7 +896,7 @@ async fn set_vault_path(
         search_runtime::request_reconcile(
             search_context,
             search_contract::SearchScope::Public,
-            search_contract::SearchRefresh::Rebuild,
+            search_contract::SearchRefresh::Reconcile,
         );
 
         list_fragments_in_vault(&vault, &lockbox_runtime)
