@@ -510,7 +510,8 @@ mod tests {
             seed ^= seed << 17;
             let topic = ["研究", "设计", "工程", "阅读"][(seed as usize) % 4];
             let kind = index % 4;
-            let path = vault.join(if kind == 0 { "fragments" } else { "notes" })
+            let path = vault
+                .join(if kind == 0 { "fragments" } else { "notes" })
                 .join(format!("search-{index:05}.md"));
             let body = format!(
                 "# {topic}计划 {index:05}\n\n检索 archive 文档常见词，记录 searchable pipeline 与中文资料。\n\n| 字段 | 内容 |\n| --- | --- |\n| 项目 | {topic} work {index:05} |\n\n行内 `search_key_{index:05}` 保留原字符。\n\n```text\ncode token {index:05}\n```"
@@ -540,7 +541,11 @@ mod tests {
 
         let runtime = SearchRuntime::default();
         let lockbox_runtime = LockboxRuntime::default();
-        crate::search_sources::install_snapshot_builder(&runtime, &lockbox_runtime);
+        crate::search_sources::install_snapshot_builder(
+            &runtime,
+            &lockbox_runtime,
+            std::sync::Arc::new(crate::search_index::IndexRegistry::default()),
+        );
         let context = runtime.activate_vault(&vault);
         let vault_path = vault.display().to_string();
         let make_request = |query: &str, refresh| SearchVaultRequest {

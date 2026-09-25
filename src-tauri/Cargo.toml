@@ -40,6 +40,7 @@ base64 = "0.22"
 rand = "0.8"
 rsa = { version = "0.9", features = ["sha2"] }
 sha2 = { workspace = true }
+rusqlite = { version = "=0.40.2", features = ["bundled"] }
 shard-core = { path = "../crates/shard-core" }
 
 [target.'cfg(target_os = "macos")'.dependencies]

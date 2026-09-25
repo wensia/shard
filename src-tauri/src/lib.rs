@@ -42,6 +42,7 @@ mod window_frame;
 mod reminder_badge;
 mod search_commands;
 mod search_contract;
+mod search_index;
 #[allow(dead_code)] // Lifecycle test probes remain available for later search tasks.
 mod search_reconcile;
 #[allow(dead_code)] // Snapshot diagnostics remain available for later search tasks.
@@ -1560,6 +1561,10 @@ async fn update_fragment_tags(
     tags: Vec<String>,
 ) -> Result<Fragment, String> {
     let lockbox_runtime = lockbox_runtime.inner().clone();
+    let index_registry = app
+        .state::<Arc<search_index::IndexRegistry>>()
+        .inner()
+        .clone();
     run_blocking(move || {
         let vault = ensure_vault_dirs(&app)?;
         let gate = lock_vault_gate(&vault);
@@ -1580,12 +1585,11 @@ async fn update_fragment_tags(
         let (mut frontmatter, body) = parse_fragment_text(&text)?;
 
         if contains_lockbox_tag(&normalized_tags) {
-            return move_public_fragment_to_lockbox_in_vault(
-                &vault,
-                &lockbox_runtime,
-                &gate,
-                &path,
-            );
+            let result =
+                move_public_fragment_to_lockbox_in_vault(&vault, &lockbox_runtime, &gate, &path);
+            drop(gate);
+            forget_moved_public_index(&index_registry, &vault, &path);
+            return result;
         }
 
         let mut next_tags = normalized_tags;
@@ -1617,6 +1621,10 @@ async fn update_fragment(
     expected_sha: Option<String>,
 ) -> Result<Fragment, String> {
     let lockbox_runtime = lockbox_runtime.inner().clone();
+    let index_registry = app
+        .state::<Arc<search_index::IndexRegistry>>()
+        .inner()
+        .clone();
     run_blocking(move || {
         if content.trim().is_empty() {
             return Err("片段内容不能为空".to_string());
@@ -1648,7 +1656,7 @@ async fn update_fragment(
         )?;
 
         if contains_lockbox_tag(&normalized_tags) {
-            return move_public_fragment_content_to_lockbox_in_vault(
+            let result = move_public_fragment_content_to_lockbox_in_vault(
                 &vault,
                 &lockbox_runtime,
                 &gate,
@@ -1656,6 +1664,9 @@ async fn update_fragment(
                 content.trim(),
                 normalized_tags,
             );
+            drop(gate);
+            forget_moved_public_index(&index_registry, &vault, &path);
+            return result;
         }
 
         let mut next_tags = normalized_tags;
@@ -1750,15 +1761,40 @@ async fn move_fragment_to_lockbox(
     id: String,
 ) -> Result<VaultState, String> {
     let lockbox_runtime = lockbox_runtime.inner().clone();
+    let index_registry = app
+        .state::<Arc<search_index::IndexRegistry>>()
+        .inner()
+        .clone();
     run_blocking(move || {
         let vault = ensure_vault_dirs(&app)?;
         let gate = lock_vault_gate(&vault);
         checkpoint_before_structural_locked(&vault);
         let path = find_fragment_path(&vault, &id)?.ok_or_else(|| format!("找不到片段 {}", id))?;
-        move_public_fragment_to_lockbox_in_vault(&vault, &lockbox_runtime, &gate, &path)?;
-        list_fragments_in_vault(&vault, &lockbox_runtime)
+        let result = move_public_fragment_to_lockbox_in_vault(&vault, &lockbox_runtime, &gate, &path)
+            .and_then(|_| list_fragments_in_vault(&vault, &lockbox_runtime));
+        drop(gate);
+        forget_moved_public_index(&index_registry, &vault, &path);
+        result
     })
     .await
+}
+
+fn forget_moved_public_index(
+    index_registry: &search_index::IndexRegistry,
+    vault: &Path,
+    public_path: &Path,
+) {
+    if !matches!(
+        fs::symlink_metadata(public_path),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound
+    ) {
+        return;
+    }
+    if let (Some(index), Ok(relative)) =
+        (index_registry.open(vault), relative_path(vault, public_path))
+    {
+        let _ = index.forget(&[relative]);
+    }
 }
 
 /// 表格文档能有多大——25MB 的 xlsx 已经远超"能塞进一条笔记"的范畴了。
@@ -6410,15 +6446,24 @@ fn relative_path(vault: &Path, path: &Path) -> Result<String, String> {
 pub fn run() {
     let search_runtime = search_runtime::managed_runtime();
     let lockbox_runtime = LockboxRuntime::default();
+    let index_registry = Arc::new(search_index::IndexRegistry::default());
     search_lockbox::bind_search_runtime(&lockbox_runtime, search_runtime.clone());
-    search_sources::install_snapshot_builder(&search_runtime, &lockbox_runtime);
+    search_sources::install_snapshot_builder(
+        &search_runtime,
+        &lockbox_runtime,
+        index_registry.clone(),
+    );
     tauri::Builder::default()
         .manage(lockbox_runtime)
         .manage(search_runtime)
+        .manage(index_registry)
         .manage(reminder_badge::ReminderSchedule::default())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
+            if let Ok(root) = app.path().app_cache_dir() {
+                app.state::<Arc<search_index::IndexRegistry>>().set_root(root);
+            }
             for window in app.webview_windows().values() {
                 window_frame::set_startup_minimum(window)?;
             }

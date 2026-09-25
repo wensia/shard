@@ -1111,7 +1111,7 @@ fn should_force_read_all(
         || previous.is_none_or(|snapshot| snapshot.generation != start_generation)
 }
 
-fn normalized_vault_key(vault: &Path) -> PathBuf {
+pub(crate) fn normalized_vault_key(vault: &Path) -> PathBuf {
     if let Ok(canonical) = vault.canonicalize() {
         return canonical;
     }
@@ -1356,6 +1356,66 @@ mod tests {
                 .snapshot_freshness(&context, SearchScope::Public)
                 .unwrap(),
             SnapshotFreshness::Missing
+        );
+    }
+
+    #[test]
+    fn search_index_rows_survive_rejected_publish() {
+        let directory = tempfile::tempdir().unwrap();
+        let vault = directory.path().join("vault");
+        fs::create_dir_all(vault.join("notes")).unwrap();
+        let frontmatter = shard_core::FragmentFrontmatter {
+            id: "indexed-note".into(),
+            created_at: "2026-09-25T00:00:00Z".into(),
+            updated_at: "2026-09-25T01:00:00Z".into(),
+            tags: vec!["note".into()],
+            category: None,
+            ai_status: None,
+            pinned: false,
+            source: "test".into(),
+            conflict_of: None,
+            related: Vec::new(),
+        };
+        shard_core::write_fragment_file(&vault.join("notes/one.md"), &frontmatter, "# One")
+            .unwrap();
+        let registry = crate::search_index::IndexRegistry::default();
+        registry.set_root(directory.path().join("cache"));
+        let runtime = SearchRuntime::default();
+        let context = runtime.activate_vault(&vault);
+        let captured = runtime
+            .capture_build(&context, &SearchScope::Public)
+            .unwrap();
+        let draft = crate::search_sources::build_snapshot_with_index(
+            SearchBuildRequest {
+                context: context.clone(),
+                scope: SearchScope::Public,
+                refresh: SearchRefresh::Rebuild,
+                start_generation: captured.start_generation,
+                force_read_all: true,
+                previous: None,
+            },
+            &crate::LockboxRuntime::default(),
+            Some(&registry),
+        )
+        .unwrap();
+        assert_eq!(
+            registry.open(&vault).unwrap().load_files().unwrap().len(),
+            1
+        );
+        drop(runtime.acquire_write_guard(&vault).unwrap());
+        assert_eq!(
+            runtime.publish_draft(
+                &context,
+                SearchScope::Public,
+                captured.start_generation,
+                RefreshKind::Rebuild,
+                draft,
+            ),
+            PublishOutcome::RejectedGeneration
+        );
+        assert_eq!(
+            registry.open(&vault).unwrap().load_files().unwrap().len(),
+            1
         );
     }
 

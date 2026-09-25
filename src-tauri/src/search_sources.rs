@@ -3,6 +3,7 @@ use std::{
     fs::{self, File},
     io::{BufRead, BufReader, Read},
     path::{Path, PathBuf},
+    sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -11,15 +12,17 @@ use std::os::unix::fs::MetadataExt;
 
 use chrono::{DateTime, Utc};
 use shard_core::{
-    search::{project_document, ProjectedDocument, SourceDocument},
+    search::{project_document, ProjectedDocument, SearchProjection, SourceDocument},
     FragmentFrontmatter,
 };
 
 use crate::{
     canvas_commands,
     search_contract::{
-        SearchContext, SearchError, SearchKind, SearchRevealHint, SearchScope, SearchTarget,
+        SearchContext, SearchError, SearchKind, SearchRefresh, SearchRevealHint, SearchScope,
+        SearchTarget,
     },
+    search_index::{CachedDoc, CachedFile, IndexEntry, IndexRegistry, IndexStore},
     search_lockbox::{peek_lockbox_read_lease, LockboxReadLease},
     search_runtime::{SearchBuildRequest, SearchRuntime, SearchSnapshotDraft},
     table_commands, Fragment, LockboxRuntime, ShardMapFile,
@@ -103,14 +106,45 @@ pub(crate) struct LoadedSearchDocument {
     pub(crate) fragment: Option<Fragment>,
 }
 
-pub(crate) fn install_snapshot_builder(runtime: &SearchRuntime, lockbox_runtime: &LockboxRuntime) {
-    let lockbox_runtime = lockbox_runtime.clone();
-    runtime.install_snapshot_builder(move |request| build_snapshot(request, &lockbox_runtime));
+pub(crate) struct PublicIndexBatch(Vec<IndexEntry>);
+
+impl PublicIndexBatch {
+    fn new() -> Self {
+        Self(Vec::new())
+    }
+
+    fn push(&mut self, entry: IndexEntry) {
+        self.0.push(entry);
+    }
+
+    pub(crate) fn entries(&self) -> &[IndexEntry] {
+        &self.0
+    }
 }
 
+pub(crate) fn install_snapshot_builder(
+    runtime: &SearchRuntime,
+    lockbox_runtime: &LockboxRuntime,
+    index_registry: Arc<IndexRegistry>,
+) {
+    let lockbox_runtime = lockbox_runtime.clone();
+    runtime.install_snapshot_builder(move |request| {
+        build_snapshot_with_index(request, &lockbox_runtime, Some(&index_registry))
+    });
+}
+
+#[allow(dead_code)] // Existing direct-builder tests keep the no-index entry point.
 fn build_snapshot(
     request: SearchBuildRequest,
     lockbox_runtime: &LockboxRuntime,
+) -> Result<SearchSnapshotDraft, SearchError> {
+    build_snapshot_with_index(request, lockbox_runtime, None)
+}
+
+pub(crate) fn build_snapshot_with_index(
+    request: SearchBuildRequest,
+    lockbox_runtime: &LockboxRuntime,
+    index_registry: Option<&IndexRegistry>,
 ) -> Result<SearchSnapshotDraft, SearchError> {
     let vault = PathBuf::from(&request.context.vault_path);
     if !vault.is_dir() {
@@ -118,7 +152,9 @@ fn build_snapshot(
     }
     let (mut loaded, skipped_files, authorization, sources) = match request.scope {
         SearchScope::Public => {
-            let (loaded, skipped, sources) = load_public_documents(&vault, &request)?;
+            let index = index_registry.and_then(|registry| registry.open(&vault));
+            let (loaded, skipped, sources) =
+                load_public_documents(&vault, &request, index.as_deref())?;
             (loaded, skipped, None, sources)
         }
         SearchScope::Lockbox => {
@@ -168,6 +204,7 @@ fn build_snapshot(
 fn load_public_documents(
     vault: &Path,
     request: &SearchBuildRequest,
+    index: Option<&IndexStore>,
 ) -> Result<
     (
         Vec<LoadedSearchDocument>,
@@ -180,6 +217,17 @@ fn load_public_documents(
     let mut documents = Vec::with_capacity(enumerated.len());
     let mut sources = HashMap::with_capacity(enumerated.len());
     let previous = request.previous.as_deref();
+    let cached = index.and_then(|store| match store.load_files() {
+        Ok(files) => Some(files),
+        Err(error) => {
+            store.discard_if_corrupt(&error);
+            None
+        }
+    });
+    let force_read_all = matches!(request.refresh, SearchRefresh::Rebuild)
+        || (request.force_read_all && cached.is_none());
+    let mut index_batch = PublicIndexBatch::new();
+    let mut current_paths = std::collections::HashSet::with_capacity(enumerated.len());
     let previous_documents: HashMap<&str, &ProjectedDocument> = previous
         .map(|snapshot| {
             snapshot
@@ -191,10 +239,20 @@ fn load_public_documents(
         .unwrap_or_default();
 
     for source in enumerated {
-        let old = previous.and_then(|snapshot| snapshot.sources.get(&source.relative));
+        current_paths.insert(source.relative.clone());
+        let cached_file = cached
+            .as_ref()
+            .and_then(|files| files.get(&source.relative));
+        let cached_record = cached_file.and_then(cached_source_record);
+        let old = previous
+            .and_then(|snapshot| snapshot.sources.get(&source.relative))
+            .or(cached_record.as_ref());
+        let cached_current = cached_record
+            .as_ref()
+            .is_some_and(|record| record.kind == source.kind && record.stamp == source.stamp);
         let same_source =
             old.is_some_and(|record| record.kind == source.kind && record.stamp == source.stamp);
-        let trusted = !request.force_read_all
+        let trusted = !force_read_all
             && same_source
             && old.is_some_and(|record| {
                 source.stamp.mtime_ns.saturating_add(RACY_WINDOW_NS) < record.indexed_at_ns
@@ -205,28 +263,48 @@ fn load_public_documents(
                 &SearchScope::Public,
                 &source.relative,
             );
-            let metadata = previous?.metadata.get(&key)?;
-            let projected = previous_documents.get(key.as_str())?;
-            (old?.revision == metadata.revision).then(|| LoadedSearchDocument {
-                projected: (*projected).clone(),
-                metadata: metadata.clone(),
-                fragment: None,
-            })
+            if let (Some(metadata), Some(projected)) = (
+                previous.and_then(|snapshot| snapshot.metadata.get(&key)),
+                previous_documents.get(key.as_str()),
+            ) {
+                if old?.revision == metadata.revision {
+                    return Some(LoadedSearchDocument {
+                        projected: (*projected).clone(),
+                        metadata: metadata.clone(),
+                        fragment: None,
+                    });
+                }
+            }
+            cached_file
+                .filter(|_| cached_current)
+                .and_then(|row| decode_cached_document(vault, row))
         };
         if trusted {
             if old.is_some_and(|record| record.parse_error) {
                 skipped = skipped.saturating_add(1);
+                if index.is_some() && !cached_current {
+                    index_batch.push(index_entry(&source.relative, old.unwrap(), None));
+                }
                 sources.insert(source.relative, old.unwrap().clone());
                 continue;
             }
             if let Some(document) = old_document() {
+                if index.is_some()
+                    && (!cached_current || cached_file.is_some_and(|row| row.doc.is_none()))
+                {
+                    index_batch.push(index_entry(
+                        &source.relative,
+                        old.unwrap(),
+                        Some(encode_cached_document(&document)),
+                    ));
+                }
                 documents.push(document);
                 sources.insert(source.relative, old.unwrap().clone());
                 continue;
             }
         }
 
-        let loaded = if !request.force_read_all && source.kind == PublicSourceKind::Markdown {
+        let loaded = if !force_read_all && source.kind == PublicSourceKind::Markdown {
             // A file in the racy window must be read, but unchanged bytes need no projection.
             read_public_markdown_text(vault, &source.path).and_then(|(text, revision)| {
                 if old.is_some_and(|record| !record.parse_error && record.revision == revision) {
@@ -240,29 +318,166 @@ fn load_public_documents(
             load_public_source(vault, &source)
         };
         let indexed_at_ns = now_ns();
-        let (revision, parse_error) = match loaded {
+        let (revision, parse_error, cached_doc) = match loaded {
             Ok(document) => {
                 let revision = document.metadata.revision.clone();
+                let cached_doc = encode_cached_document(&document);
                 documents.push(document);
-                (revision, false)
+                (revision, false, Some(cached_doc))
             }
             Err(_) => {
                 skipped = skipped.saturating_add(1);
-                (String::new(), true)
+                (String::new(), true, None)
             }
         };
-        sources.insert(
-            source.relative,
-            SourceRecord {
-                kind: source.kind,
-                stamp: source.stamp,
-                indexed_at_ns,
-                revision,
-                parse_error,
-            },
-        );
+        let record = SourceRecord {
+            kind: source.kind,
+            stamp: source.stamp,
+            indexed_at_ns,
+            revision,
+            parse_error,
+        };
+        if index.is_some() {
+            index_batch.push(index_entry(&source.relative, &record, cached_doc));
+        }
+        sources.insert(source.relative, record);
+    }
+    if let Some(index) = index {
+        let stale = cached
+            .as_ref()
+            .map(|files| {
+                files
+                    .keys()
+                    .filter(|path| !current_paths.contains(*path))
+                    .cloned()
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        if let Err(error) = index.apply(&index_batch, &stale) {
+            index.discard_if_corrupt(&error);
+        }
     }
     Ok((documents, skipped, sources))
+}
+
+fn source_kind_name(kind: PublicSourceKind) -> &'static str {
+    match kind {
+        PublicSourceKind::Markdown => "markdown",
+        PublicSourceKind::MindMap => "mindMap",
+        PublicSourceKind::Canvas => "canvas",
+        PublicSourceKind::Table => "table",
+        PublicSourceKind::Csv => "csv",
+    }
+}
+
+fn cached_source_record(file: &CachedFile) -> Option<SourceRecord> {
+    let kind = match file.source_kind.as_str() {
+        "markdown" => PublicSourceKind::Markdown,
+        "mindMap" => PublicSourceKind::MindMap,
+        "canvas" => PublicSourceKind::Canvas,
+        "table" => PublicSourceKind::Table,
+        "csv" => PublicSourceKind::Csv,
+        _ => return None,
+    };
+    Some(SourceRecord {
+        kind,
+        stamp: FileStamp {
+            mtime_ns: file.mtime_ns,
+            size: file.size,
+            ino: file.ino,
+            ctime_ns: file.ctime_ns,
+        },
+        indexed_at_ns: file.indexed_at_ns,
+        revision: file.content_hash.clone(),
+        parse_error: file.parse_error,
+    })
+}
+
+fn encode_cached_document(document: &LoadedSearchDocument) -> CachedDoc {
+    let kind = serde_json::to_value(&document.metadata.target.kind)
+        .ok()
+        .and_then(|value| value.as_str().map(str::to_string))
+        .unwrap_or_default();
+    CachedDoc {
+        search_kind: kind,
+        object_id: document.metadata.target.object_id.clone(),
+        archived: document.metadata.target.archived,
+        title: document.projected.title.clone(),
+        tags: document.projected.tags.clone(),
+        updated_at: document.metadata.updated_at.clone(),
+        revision: document.metadata.revision.clone(),
+        projection_version: document.projected.projection.version,
+        blocks: document.projected.projection.blocks.clone(),
+    }
+}
+
+fn decode_cached_document(vault: &Path, file: &CachedFile) -> Option<LoadedSearchDocument> {
+    if file.parse_error {
+        return None;
+    }
+    let doc = file.doc.as_ref()?;
+    if doc.projection_version != 1 || doc.revision != file.content_hash {
+        return None;
+    }
+    let kind: SearchKind =
+        serde_json::from_value(serde_json::Value::String(doc.search_kind.clone())).ok()?;
+    let archived =
+        file.path.starts_with(".trash/fragments/") || file.path.starts_with(".trash/notes/");
+    let target = make_target(
+        vault,
+        SearchScope::Public,
+        file.path.clone(),
+        kind,
+        doc.object_id.clone(),
+        archived,
+    );
+    let reveal_hint = match target.kind {
+        SearchKind::Fragment | SearchKind::Note | SearchKind::Outline | SearchKind::Document => {
+            SearchRevealHint::Text
+        }
+        SearchKind::Csv => SearchRevealHint::External,
+        _ => SearchRevealHint::DocumentOnly,
+    };
+    let projected = ProjectedDocument::from_projection(
+        &SourceDocument {
+            stable_key: target.key.clone(),
+            title: doc.title.clone(),
+            tags: doc.tags.clone(),
+            body: String::new(),
+            modified_at: doc
+                .updated_at
+                .as_deref()
+                .map(parse_modified_at)
+                .unwrap_or(0),
+        },
+        SearchProjection::from_blocks(doc.blocks.clone()),
+    );
+    Some(LoadedSearchDocument {
+        projected,
+        metadata: SearchDocumentMetadata {
+            target,
+            updated_at: doc.updated_at.clone(),
+            revision: doc.revision.clone(),
+            reveal_hint,
+            read_only: true,
+        },
+        fragment: None,
+    })
+}
+
+fn index_entry(relative: &str, record: &SourceRecord, doc: Option<CachedDoc>) -> IndexEntry {
+    IndexEntry {
+        path: relative.to_string(),
+        source_kind: source_kind_name(record.kind).to_string(),
+        mtime_ns: record.stamp.mtime_ns,
+        size: record.stamp.size,
+        ino: record.stamp.ino,
+        ctime_ns: record.stamp.ctime_ns,
+        indexed_at_ns: record.indexed_at_ns,
+        content_hash: record.revision.clone(),
+        parse_error: record.parse_error,
+        doc,
+    }
 }
 
 fn now_ns() -> i128 {
@@ -1336,6 +1551,48 @@ mod tests {
         .unwrap()
     }
 
+    fn indexed_draft(
+        vault: &Path,
+        registry: &IndexRegistry,
+        previous: Option<crate::search_runtime::SearchSnapshot>,
+        rebuild: bool,
+    ) -> SearchSnapshotDraft {
+        build_snapshot_with_index(
+            SearchBuildRequest {
+                context: context(vault),
+                scope: SearchScope::Public,
+                refresh: if rebuild {
+                    SearchRefresh::Rebuild
+                } else {
+                    SearchRefresh::Auto
+                },
+                start_generation: 0,
+                force_read_all: rebuild || previous.is_none(),
+                previous: previous.map(Arc::new),
+            },
+            &LockboxRuntime::default(),
+            Some(registry),
+        )
+        .unwrap()
+    }
+
+    fn index_registry(root: &Path) -> IndexRegistry {
+        let registry = IndexRegistry::default();
+        registry.set_root(root.to_path_buf());
+        registry
+    }
+
+    fn trust_cached_rows(registry: &IndexRegistry, vault: &Path) {
+        let index = registry.open(vault).unwrap();
+        let connection = rusqlite::Connection::open(index.path()).unwrap();
+        connection
+            .execute(
+                "UPDATE files SET indexed_at_ns = mtime_ns + ?1",
+                [i64::try_from(RACY_WINDOW_NS + 1).unwrap()],
+            )
+            .unwrap();
+    }
+
     fn previous(
         mut draft: SearchSnapshotDraft,
         trusted: bool,
@@ -1354,6 +1611,166 @@ mod tests {
 
     fn reset_reads() {
         SOURCE_READS.with(|reads| reads.set(0));
+    }
+
+    #[test]
+    fn search_index_warm_start_decodes_without_reading_files() {
+        let directory = tempfile::tempdir().unwrap();
+        let vault = &directory.path().join("vault");
+        let root = &directory.path().join("cache");
+        write_markdown(
+            &vault.join("notes/one.md"),
+            "one",
+            &["note"],
+            "# Warm document",
+        );
+        let registry = index_registry(root);
+        let first = indexed_draft(vault, &registry, None, true);
+        trust_cached_rows(&registry, vault);
+        drop(registry);
+
+        reset_reads();
+        let warm = indexed_draft(vault, &index_registry(root), None, false);
+        assert_eq!(read_count(), 0);
+        assert_same_draft(&first, &warm);
+    }
+
+    #[test]
+    fn search_index_warm_build_equals_full_read() {
+        let directory = tempfile::tempdir().unwrap();
+        let vault = &directory.path().join("vault");
+        let root = &directory.path().join("cache");
+        write_markdown(&vault.join("fragments/one.md"), "one", &[], "中文正文");
+        write_markdown(
+            &vault.join("notes/two.md"),
+            "two",
+            &["document"],
+            "# 文档标题",
+        );
+        let registry = index_registry(root);
+        let full = indexed_draft(vault, &registry, None, true);
+        trust_cached_rows(&registry, vault);
+        let warm = indexed_draft(vault, &index_registry(root), None, false);
+        assert_same_draft(&full, &warm);
+    }
+
+    #[test]
+    fn search_index_corrupt_file_is_discarded_and_search_succeeds() {
+        let directory = tempfile::tempdir().unwrap();
+        let vault = &directory.path().join("vault");
+        let root = &directory.path().join("cache");
+        write_markdown(&vault.join("notes/one.md"), "one", &["note"], "# Durable");
+        let registry = index_registry(root);
+        let expected = indexed_draft(vault, &registry, None, true);
+        let path = registry.open(vault).unwrap().path().to_path_buf();
+        drop(registry);
+        for suffix in ["-wal", "-shm"] {
+            let _ = fs::remove_file(format!("{}{suffix}", path.display()));
+        }
+        fs::write(&path, b"not a sqlite database").unwrap();
+        reset_reads();
+        let actual = indexed_draft(vault, &index_registry(root), None, false);
+        assert!(read_count() > 0);
+        assert_same_draft(&expected, &actual);
+    }
+
+    #[test]
+    fn search_index_unavailable_root_falls_back_to_full_read() {
+        let directory = tempfile::tempdir().unwrap();
+        let vault = &directory.path().join("vault");
+        write_markdown(&vault.join("notes/one.md"), "one", &["note"], "# Fallback");
+        let root = directory.path().join("not-a-directory");
+        fs::write(&root, "file").unwrap();
+        reset_reads();
+        let draft = indexed_draft(vault, &index_registry(&root), None, false);
+        assert_eq!(draft.documents.len(), 1);
+        assert!(read_count() > 0);
+    }
+
+    #[test]
+    fn search_index_never_stores_lockbox() {
+        let directory = tempfile::tempdir().unwrap();
+        let vault = &directory.path().join("vault");
+        let root = &directory.path().join("cache");
+        write_markdown(&vault.join("notes/one.md"), "one", &["note"], "# Public");
+        fs::create_dir_all(vault.join("lockbox/fragments")).unwrap();
+        fs::write(
+            vault.join("lockbox/fragments/secret.shard"),
+            "PRIVATE_MARKER_7b18",
+        )
+        .unwrap();
+        let registry = index_registry(root);
+        indexed_draft(vault, &registry, None, true);
+        let path = registry.open(vault).unwrap().path().to_path_buf();
+        for candidate in [
+            path.clone(),
+            PathBuf::from(format!("{}-wal", path.display())),
+        ] {
+            if let Ok(bytes) = fs::read(candidate) {
+                assert!(!bytes
+                    .windows(b"PRIVATE_MARKER_7b18".len())
+                    .any(|window| window == b"PRIVATE_MARKER_7b18"));
+                assert!(!bytes
+                    .windows(b"lockbox/".len())
+                    .any(|window| window == b"lockbox/"));
+            }
+        }
+    }
+
+    #[test]
+    fn search_index_forgets_public_doc_moved_to_lockbox() {
+        let directory = tempfile::tempdir().unwrap();
+        let vault = &directory.path().join("vault");
+        let root = &directory.path().join("cache");
+        let public_path = vault.join("notes/one.md");
+        write_markdown(&public_path, "one", &["note"], "# SENSITIVE_BEFORE_MOVE");
+        let registry = index_registry(root);
+        indexed_draft(vault, &registry, None, true);
+        let index = registry.open(vault).unwrap();
+        fs::remove_file(&public_path).unwrap();
+        index.forget(&["notes/one.md".to_string()]).unwrap();
+        assert!(index.load_files().unwrap().is_empty());
+        for candidate in [
+            index.path().to_path_buf(),
+            PathBuf::from(format!("{}-wal", index.path().display())),
+        ] {
+            if let Ok(bytes) = fs::read(candidate) {
+                assert!(!bytes
+                    .windows(b"SENSITIVE_BEFORE_MOVE".len())
+                    .any(|window| window == b"SENSITIVE_BEFORE_MOVE"));
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "release-only 5k cold versus warm start benchmark"]
+    fn search_5k_warm_start() {
+        let directory = tempfile::tempdir().unwrap();
+        let vault = &directory.path().join("vault");
+        let root = &directory.path().join("cache");
+        for index in 0..5_000 {
+            write_markdown(
+                &vault.join(format!("notes/{index:05}.md")),
+                &format!("id-{index}"),
+                &["note"],
+                &format!("# Search item {index}"),
+            );
+        }
+        std::thread::sleep(std::time::Duration::from_millis(2_100));
+        let registry = index_registry(root);
+        let full_started = Instant::now();
+        let full = indexed_draft(vault, &registry, None, true);
+        let full_elapsed = full_started.elapsed();
+        reset_reads();
+        let warm_started = Instant::now();
+        let warm = indexed_draft(vault, &index_registry(root), None, false);
+        eprintln!(
+            "search_5k_warm_start full={full_elapsed:?} warm={:?} source_reads={}",
+            warm_started.elapsed(),
+            read_count()
+        );
+        assert_eq!(read_count(), 0);
+        assert_same_draft(&full, &warm);
     }
 
     fn assert_same_draft(left: &SearchSnapshotDraft, right: &SearchSnapshotDraft) {
