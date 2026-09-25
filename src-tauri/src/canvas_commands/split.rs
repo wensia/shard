@@ -756,7 +756,7 @@ mod tests {
         let (metadata, body) = crate::parse_fragment_text(&index).unwrap();
         assert_eq!(metadata.tags, vec!["note"]);
         assert!(body.trim_start().starts_with("# 中文画布 · 关联说明"));
-        let runtime = std::sync::Arc::new(std::sync::Mutex::new(crate::LockboxSession::default()));
+        let runtime = crate::LockboxRuntime::default();
         let state = crate::list_fragments_in_vault(vault, &runtime).unwrap();
         let note = state
             .fragments

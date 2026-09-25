@@ -14,28 +14,46 @@ use std::{
 use shard_core::search::ProjectedDocument;
 
 use crate::{
+    search_lockbox::LockboxLeaseAuthorization,
     search_contract::{SearchContext, SearchError, SearchRefresh, SearchScope},
     search_reconcile::{
         ReconcileAction, ReconcileCoordinator, ReconcileKey, RefreshKind, ScopeKey,
     },
+    search_sources::SearchDocumentMetadata,
 };
 
 #[derive(Debug)]
 pub(crate) struct SearchSnapshot {
     pub(crate) snapshot_id: String,
-    pub(crate) context: SearchContext,
     pub(crate) scope: SearchScope,
     pub(crate) generation: u64,
     pub(crate) source_stamp: String,
     pub(crate) documents: Vec<ProjectedDocument>,
+    pub(crate) metadata: HashMap<String, SearchDocumentMetadata>,
     pub(crate) skipped_files: u32,
+    authorization: Option<LockboxLeaseAuthorization>,
+}
+
+impl SearchSnapshot {
+    pub(crate) fn validate_authorization(
+        &self,
+        context: &SearchContext,
+    ) -> Result<(), SearchError> {
+        match (&self.scope, &self.authorization) {
+            (SearchScope::Public, _) => Ok(()),
+            (SearchScope::Lockbox, Some(authorization)) => authorization.validate(context),
+            (SearchScope::Lockbox, None) => Err(SearchError::ContextExpired),
+        }
+    }
 }
 
 pub(crate) struct SearchSnapshotDraft {
     pub(crate) snapshot_id: String,
     pub(crate) source_stamp: String,
     pub(crate) documents: Vec<ProjectedDocument>,
+    pub(crate) metadata: HashMap<String, SearchDocumentMetadata>,
     pub(crate) skipped_files: u32,
+    pub(crate) authorization: Option<LockboxLeaseAuthorization>,
 }
 
 pub(crate) struct SearchBuildRequest {
@@ -156,6 +174,7 @@ struct SearchRuntimeInner {
     entries: Mutex<HashMap<PathBuf, Arc<VaultEntry>>>,
     active: Mutex<Option<ActiveVault>>,
     next_vault_epoch: AtomicU64,
+    next_privacy_epoch: AtomicU64,
     builder: Mutex<Option<Arc<SnapshotBuilder>>>,
     reconciler: ReconcileCoordinator,
 }
@@ -166,6 +185,7 @@ impl Default for SearchRuntimeInner {
             entries: Mutex::new(HashMap::new()),
             active: Mutex::new(None),
             next_vault_epoch: AtomicU64::new(0),
+            next_privacy_epoch: AtomicU64::new(0),
             builder: Mutex::new(None),
             reconciler: ReconcileCoordinator::default(),
         }
@@ -184,6 +204,32 @@ pub(crate) struct VaultWriteGuard {
     // std mutex guards are intentionally not carried across await. Keep the replacement
     // guard !Send as well, so a command cannot accidentally hold the vault gate over await.
     _not_send: PhantomData<Rc<()>>,
+}
+
+impl VaultWriteGuard {
+    /// A public document that is about to cross the privacy boundary must disappear
+    /// immediately. The caller already owns this entry's physical write gate, so no
+    /// second gate acquisition is allowed here.
+    pub(crate) fn invalidate_public_snapshot(&self) {
+        let (context, retired) = {
+            let mut publication = self
+                .entry
+                .publication
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            debug_assert_eq!(publication.generation % 2, 1);
+            let index = scope_index(&SearchScope::Public);
+            publication.refreshing[index] = false;
+            publication.warnings[index] = None;
+            (publication.context.clone(), publication.snapshots[index].take())
+        };
+        drop(retired);
+        if let (Some(inner), Some(context)) = (self.runtime.upgrade(), context) {
+            inner
+                .reconciler
+                .cancel(&ReconcileKey::new(&context, &SearchScope::Public));
+        }
+    }
 }
 
 impl Drop for VaultWriteGuard {
@@ -226,6 +272,7 @@ enum PublishOutcome {
     Reused,
     RejectedGeneration,
     RejectedContext,
+    RejectedAuthorization,
 }
 
 impl SearchRuntime {
@@ -381,24 +428,82 @@ impl SearchRuntime {
         Some(context)
     }
 
+    pub(crate) fn revoke_lockbox(&self, vault: &Path) -> Option<SearchContext> {
+        let key = normalized_vault_key(vault);
+        let (previous, next, retired) = {
+            let mut active = self
+                .inner
+                .active
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let active = active.as_mut()?;
+            if active.key != key {
+                return None;
+            }
+
+            let previous = active.context.clone();
+            let entry = self.entry(&key);
+            let mut publication = entry
+                .publication
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if !publication
+                .context
+                .as_ref()
+                .is_some_and(|current| contexts_equal(current, &previous))
+            {
+                return None;
+            }
+
+            let mut next = previous.clone();
+            next.privacy_epoch = self.next_privacy_epoch().to_string();
+            active.context = next.clone();
+            publication.context = Some(next.clone());
+            let index = scope_index(&SearchScope::Lockbox);
+            let retired = publication.snapshots[index].take();
+            // The context identity includes privacy_epoch, so every in-flight build for
+            // the previous context is cancelled even though the public snapshot is kept.
+            publication.refreshing = [false, false];
+            publication.warnings[index] = None;
+            (previous, next, retired)
+        };
+        drop(retired);
+        self.cancel_context(&previous);
+        Some(next)
+    }
+
+    pub(crate) fn validate_context(&self, context: &SearchContext) -> Result<(), SearchError> {
+        if self.context_is_current(context) {
+            Ok(())
+        } else {
+            Err(SearchError::ContextExpired)
+        }
+    }
+
     pub(crate) fn clone_snapshot(
         &self,
         context: &SearchContext,
         scope: SearchScope,
     ) -> Result<Option<Arc<SearchSnapshot>>, SearchError> {
         let entry = self.entry(Path::new(&context.vault_path));
-        let publication = entry
-            .publication
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if !publication
-            .context
-            .as_ref()
-            .is_some_and(|current| contexts_equal(current, context))
-        {
-            return Err(SearchError::ContextExpired);
+        let snapshot = {
+            let publication = entry
+                .publication
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if !publication
+                .context
+                .as_ref()
+                .is_some_and(|current| contexts_equal(current, context))
+            {
+                return Err(SearchError::ContextExpired);
+            }
+            publication.snapshots[scope_index(&scope)].clone()
+        };
+        if let Some(snapshot) = &snapshot {
+            snapshot.validate_authorization(context)?;
         }
-        Ok(publication.snapshots[scope_index(&scope)].clone())
+        Ok(snapshot)
     }
 
     pub(crate) fn snapshot_freshness(
@@ -407,29 +512,34 @@ impl SearchRuntime {
         scope: SearchScope,
     ) -> Result<SnapshotFreshness, SearchError> {
         let entry = self.entry(Path::new(&context.vault_path));
-        let publication = entry
-            .publication
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if !publication
-            .context
-            .as_ref()
-            .is_some_and(|current| contexts_equal(current, context))
-        {
-            return Err(SearchError::ContextExpired);
-        }
-        let Some(snapshot) = publication.snapshots[scope_index(&scope)].as_ref() else {
-            return Ok(SnapshotFreshness::Missing);
+        let (snapshot, freshness) = {
+            let publication = entry
+                .publication
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if !publication
+                .context
+                .as_ref()
+                .is_some_and(|current| contexts_equal(current, context))
+            {
+                return Err(SearchError::ContextExpired);
+            }
+            let Some(snapshot) = publication.snapshots[scope_index(&scope)].clone() else {
+                return Ok(SnapshotFreshness::Missing);
+            };
+            let freshness = if publication.generation % 2 == 0
+                && snapshot.generation == publication.generation
+                && !publication.refreshing[scope_index(&scope)]
+                && publication.warnings[scope_index(&scope)].is_none()
+            {
+                SnapshotFreshness::Fresh
+            } else {
+                SnapshotFreshness::Stale
+            };
+            (snapshot, freshness)
         };
-        if publication.generation % 2 == 0
-            && snapshot.generation == publication.generation
-            && !publication.refreshing[scope_index(&scope)]
-            && publication.warnings[scope_index(&scope)].is_none()
-        {
-            Ok(SnapshotFreshness::Fresh)
-        } else {
-            Ok(SnapshotFreshness::Stale)
-        }
+        snapshot.validate_authorization(context)?;
+        Ok(freshness)
     }
 
     pub(crate) fn snapshot_view(
@@ -438,37 +548,43 @@ impl SearchRuntime {
         scope: SearchScope,
     ) -> Result<SearchSnapshotView, SearchError> {
         let entry = self.entry(Path::new(&context.vault_path));
-        let publication = entry
-            .publication
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if !publication
-            .context
-            .as_ref()
-            .is_some_and(|current| contexts_equal(current, context))
-        {
-            return Err(SearchError::ContextExpired);
-        }
-        let index = scope_index(&scope);
-        let snapshot = publication.snapshots[index].clone();
-        let freshness = match snapshot.as_ref() {
-            None => SnapshotFreshness::Missing,
-            Some(snapshot)
-                if publication.generation % 2 == 0
-                    && snapshot.generation == publication.generation
-                    && !publication.refreshing[index]
-                    && publication.warnings[index].is_none() =>
+        let view = {
+            let publication = entry
+                .publication
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if !publication
+                .context
+                .as_ref()
+                .is_some_and(|current| contexts_equal(current, context))
             {
-                SnapshotFreshness::Fresh
+                return Err(SearchError::ContextExpired);
             }
-            Some(_) => SnapshotFreshness::Stale,
+            let index = scope_index(&scope);
+            let snapshot = publication.snapshots[index].clone();
+            let freshness = match snapshot.as_ref() {
+                None => SnapshotFreshness::Missing,
+                Some(snapshot)
+                    if publication.generation % 2 == 0
+                        && snapshot.generation == publication.generation
+                        && !publication.refreshing[index]
+                        && publication.warnings[index].is_none() =>
+                {
+                    SnapshotFreshness::Fresh
+                }
+                Some(_) => SnapshotFreshness::Stale,
+            };
+            SearchSnapshotView {
+                snapshot,
+                freshness,
+                indexing: publication.refreshing[index],
+                warning: publication.warnings[index].clone(),
+            }
         };
-        Ok(SearchSnapshotView {
-            snapshot,
-            freshness,
-            indexing: publication.refreshing[index],
-            warning: publication.warnings[index].clone(),
-        })
+        if let Some(snapshot) = &view.snapshot {
+            snapshot.validate_authorization(context)?;
+        }
+        Ok(view)
     }
 
     pub(crate) fn generation(&self, vault: &Path) -> u64 {
@@ -637,16 +753,18 @@ impl SearchRuntime {
         .unwrap_or(Err(SearchError::Internal { retryable: true }));
 
         let (outcome, error) = match result {
-            Ok(draft) => (
-                Some(self.publish_draft(
+            Ok(draft) => {
+                let outcome = self.publish_draft(
                     &context,
                     key.scope(),
                     captured.start_generation,
                     refresh,
                     draft,
-                )),
-                None,
-            ),
+                );
+                let error = matches!(outcome, PublishOutcome::RejectedAuthorization)
+                    .then_some(SearchError::ContextExpired);
+                (Some(outcome), error)
+            }
             Err(error) => (None, Some(error)),
         };
         let next = self.finish_build_state(&key, token, captured.start_generation, outcome, error);
@@ -758,6 +876,16 @@ impl SearchRuntime {
     where
         F: FnOnce(),
     {
+        if matches!(scope, SearchScope::Lockbox)
+            && draft
+                .authorization
+                .as_ref()
+                .is_none_or(|authorization| authorization.validate(context).is_err())
+        {
+            drop(draft);
+            return PublishOutcome::RejectedAuthorization;
+        }
+
         let entry = self.entry(Path::new(&context.vault_path));
         // Publication takes the physical gate without changing generation. This makes the
         // snapshot swap and a writer's odd transition one ordered gate -> state sequence.
@@ -783,6 +911,17 @@ impl SearchRuntime {
             return PublishOutcome::RejectedGeneration;
         }
         before_swap();
+        if matches!(scope, SearchScope::Lockbox)
+            && draft
+                .authorization
+                .as_ref()
+                .is_none_or(|authorization| authorization.validate_session().is_err())
+        {
+            drop(publication);
+            drop(_publication_gate);
+            drop(draft);
+            return PublishOutcome::RejectedAuthorization;
+        }
 
         let slot = &mut publication.snapshots[scope_index(&scope)];
         let reuse = refresh != RefreshKind::Rebuild
@@ -797,14 +936,28 @@ impl SearchRuntime {
             return PublishOutcome::Reused;
         }
 
+        let SearchSnapshotDraft {
+            snapshot_id,
+            source_stamp,
+            documents,
+            metadata,
+            skipped_files,
+            authorization,
+        } = draft;
+        let authorization = if matches!(scope, SearchScope::Lockbox) {
+            authorization
+        } else {
+            None
+        };
         let previous = slot.replace(Arc::new(SearchSnapshot {
-            snapshot_id: draft.snapshot_id,
-            context: context.clone(),
+            snapshot_id,
             scope,
             generation: start_generation,
-            source_stamp: draft.source_stamp,
-            documents: draft.documents,
-            skipped_files: draft.skipped_files,
+            source_stamp,
+            documents,
+            metadata,
+            skipped_files,
+            authorization,
         }));
         drop(publication);
         drop(_publication_gate);
@@ -838,6 +991,22 @@ impl SearchRuntime {
             .wrapping_add(1);
         if epoch == 0 {
             self.inner.next_vault_epoch.store(1, Ordering::SeqCst);
+            1
+        } else {
+            epoch
+        }
+    }
+
+    fn next_privacy_epoch(&self) -> u64 {
+        let epoch = self
+            .inner
+            .next_privacy_epoch
+            .fetch_add(1, Ordering::SeqCst)
+            .wrapping_add(1);
+        if epoch == 0 {
+            self.inner
+                .next_privacy_epoch
+                .store(1, Ordering::SeqCst);
             1
         } else {
             epoch
@@ -883,6 +1052,10 @@ pub(crate) fn active_context(vault: &Path) -> Option<SearchContext> {
 
 pub(crate) fn write_generation(vault: &Path) -> u64 {
     app_runtime().generation(vault)
+}
+
+pub(crate) fn validate_context(context: &SearchContext) -> Result<(), SearchError> {
+    app_runtime().validate_context(context)
 }
 
 fn scope_index(scope: &SearchScope) -> usize {
@@ -961,7 +1134,7 @@ mod tests {
             atomic::{AtomicUsize, Ordering},
             mpsc, Barrier, Condvar,
         },
-        time::Duration,
+        time::{Duration, Instant, SystemTime},
     };
 
     use super::*;
@@ -971,8 +1144,121 @@ mod tests {
             snapshot_id: id.into(),
             source_stamp: stamp.into(),
             documents: Vec::new(),
+            metadata: HashMap::new(),
             skipped_files: 0,
+            authorization: None,
         }
+    }
+
+    fn lockbox_draft(
+        id: &str,
+        authorization: LockboxLeaseAuthorization,
+    ) -> SearchSnapshotDraft {
+        let mut draft = draft(id, id);
+        draft.authorization = Some(authorization);
+        draft
+    }
+
+    #[test]
+    fn search_expiry_revokes_idle_snapshot() {
+        let runtime = SearchRuntime::default();
+        let lockbox = crate::LockboxRuntime::default();
+        let directory = tempfile::tempdir().unwrap();
+        runtime.activate_vault(directory.path());
+        crate::search_lockbox::bind_search_runtime(&lockbox, runtime.clone());
+        crate::search_lockbox::unlock_runtime(&lockbox, directory.path(), &[7; 32]);
+        let context = runtime.active_context(directory.path()).unwrap();
+        let authorization =
+            crate::search_lockbox::authorization_for_test(&lockbox, directory.path());
+        assert_eq!(
+            runtime.publish_draft(
+                &context,
+                SearchScope::Lockbox,
+                runtime.generation(directory.path()),
+                RefreshKind::Rebuild,
+                lockbox_draft("private", authorization),
+            ),
+            PublishOutcome::Published
+        );
+
+        crate::search_lockbox::set_expiry_for_test(
+            &lockbox,
+            SystemTime::now() + Duration::from_millis(30),
+        );
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while runtime
+            .active_context(directory.path())
+            .is_some_and(|current| contexts_equal(&current, &context))
+            && Instant::now() < deadline
+        {
+            thread::sleep(Duration::from_millis(5));
+        }
+
+        let next = runtime.active_context(directory.path()).unwrap();
+        assert_ne!(next.privacy_epoch, context.privacy_epoch);
+        assert!(matches!(
+            runtime.clone_snapshot(&context, SearchScope::Lockbox),
+            Err(SearchError::ContextExpired)
+        ));
+        assert!(runtime
+            .clone_snapshot(&next, SearchScope::Lockbox)
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn search_old_lease_cannot_publish_after_reunlock() {
+        let runtime = SearchRuntime::default();
+        let lockbox = crate::LockboxRuntime::default();
+        let directory = tempfile::tempdir().unwrap();
+        runtime.activate_vault(directory.path());
+        crate::search_lockbox::bind_search_runtime(&lockbox, runtime.clone());
+        crate::search_lockbox::unlock_runtime(&lockbox, directory.path(), &[3; 32]);
+        let old_authorization =
+            crate::search_lockbox::authorization_for_test(&lockbox, directory.path());
+
+        crate::search_lockbox::unlock_runtime(&lockbox, directory.path(), &[4; 32]);
+        let current = runtime.active_context(directory.path()).unwrap();
+        assert_eq!(
+            runtime.publish_draft(
+                &current,
+                SearchScope::Lockbox,
+                runtime.generation(directory.path()),
+                RefreshKind::Rebuild,
+                lockbox_draft("stale-private", old_authorization),
+            ),
+            PublishOutcome::RejectedAuthorization
+        );
+        assert!(runtime
+            .clone_snapshot(&current, SearchScope::Lockbox)
+            .unwrap()
+            .is_none());
+        crate::search_lockbox::lock_runtime(&lockbox);
+    }
+
+    #[test]
+    fn search_public_to_lockbox_revokes_old_public_snapshot() {
+        let runtime = SearchRuntime::default();
+        let directory = tempfile::tempdir().unwrap();
+        let context = runtime.activate_vault(directory.path());
+        assert_eq!(
+            runtime.publish_draft(
+                &context,
+                SearchScope::Public,
+                0,
+                RefreshKind::Rebuild,
+                draft("public-before-move", "public-before-move"),
+            ),
+            PublishOutcome::Published
+        );
+
+        let gate = runtime.acquire_write_guard(directory.path()).unwrap();
+        gate.invalidate_public_snapshot();
+        assert!(runtime
+            .clone_snapshot(&context, SearchScope::Public)
+            .unwrap()
+            .is_none());
+        drop(gate);
     }
 
     #[test]

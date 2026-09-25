@@ -5,6 +5,15 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
+#[derive(Debug, Clone)]
+pub(crate) struct TableSearchDocument {
+    pub id: String,
+    pub title: String,
+    pub updated_at: String,
+    pub revision: String,
+    pub body: String,
+}
+
 fn error(code: &str, message: impl Into<String>) -> TableError {
     TableError::new(code, message, "")
 }
@@ -225,6 +234,21 @@ pub(crate) fn read_in_vault(
     )?;
     identity_matches(vault, &result.file.id, None, Some(&path))?;
     relative_result(vault, &path, result)
+}
+
+pub(crate) fn read_search_document(
+    vault: &Path,
+    relative: &str,
+) -> TableResult<TableSearchDocument> {
+    let path = public_path(vault, relative, false)?;
+    let result = read_table_file(&path, None, &TableLimits::default())?;
+    Ok(TableSearchDocument {
+        id: result.file.id.clone(),
+        title: result.title,
+        updated_at: result.file.updated_at.clone(),
+        revision: result.content_hash,
+        body: result.file.search_text(),
+    })
 }
 
 pub(crate) fn apply_in_vault(

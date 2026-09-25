@@ -1,0 +1,1297 @@
+use std::{
+    collections::HashMap,
+    fs::{self, File},
+    io::{BufRead, BufReader, Read},
+    path::{Path, PathBuf},
+    time::{SystemTime, UNIX_EPOCH},
+};
+
+use chrono::{DateTime, Utc};
+use shard_core::{
+    search::{project_document, ProjectedDocument, SourceDocument},
+    FragmentFrontmatter,
+};
+
+use crate::{
+    canvas_commands,
+    search_contract::{
+        SearchContext, SearchError, SearchKind, SearchRevealHint, SearchScope, SearchTarget,
+    },
+    search_lockbox::{peek_lockbox_read_lease, LockboxReadLease},
+    search_runtime::{SearchBuildRequest, SearchRuntime, SearchSnapshotDraft},
+    table_commands, Fragment, LockboxRuntime, ShardMapFile,
+};
+
+const CSV_HEADER_MAX_BYTES: u64 = 1024 * 1024;
+const SEARCH_SCAN_MAX_ENTRIES: usize = 100_000;
+
+#[derive(Debug, Clone)]
+pub(crate) struct SearchDocumentMetadata {
+    pub(crate) target: SearchTarget,
+    pub(crate) updated_at: Option<String>,
+    pub(crate) revision: String,
+    pub(crate) reveal_hint: SearchRevealHint,
+    pub(crate) read_only: bool,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct LoadedSearchDocument {
+    pub(crate) projected: ProjectedDocument,
+    pub(crate) metadata: SearchDocumentMetadata,
+    pub(crate) fragment: Option<Fragment>,
+}
+
+pub(crate) fn install_snapshot_builder(runtime: &SearchRuntime, lockbox_runtime: &LockboxRuntime) {
+    let lockbox_runtime = lockbox_runtime.clone();
+    runtime.install_snapshot_builder(move |request| build_snapshot(request, &lockbox_runtime));
+}
+
+fn build_snapshot(
+    request: SearchBuildRequest,
+    lockbox_runtime: &LockboxRuntime,
+) -> Result<SearchSnapshotDraft, SearchError> {
+    let vault = PathBuf::from(&request.context.vault_path);
+    if !vault.is_dir() {
+        return Err(SearchError::Io { retryable: false });
+    }
+    // T05 connects the real sources. Incremental reuse remains owned by the runtime's
+    // source-stamp publication path; source parsing itself is intentionally deterministic.
+    let _ = (
+        &request.refresh,
+        request.force_read_all,
+        request.previous.as_ref(),
+    );
+
+    let (mut loaded, skipped_files, authorization) = match request.scope {
+        SearchScope::Public => {
+            let (loaded, skipped) = load_public_documents(&vault)?;
+            (loaded, skipped, None)
+        }
+        SearchScope::Lockbox => {
+            let lease = peek_lockbox_read_lease(&vault, lockbox_runtime)?;
+            lease.validate(&request.context)?;
+            let (loaded, skipped) = load_lockbox_documents(&vault, &lease)?;
+            lease.validate(&request.context)?;
+            (loaded, skipped, Some(lease.authorization()))
+        }
+    };
+    loaded.sort_by(|left, right| left.metadata.target.key.cmp(&right.metadata.target.key));
+
+    let mut stamp_input = String::new();
+    let mut documents = Vec::with_capacity(loaded.len());
+    let mut metadata = HashMap::with_capacity(loaded.len());
+    for document in loaded {
+        stamp_input.push_str(&document.metadata.target.key);
+        stamp_input.push('\0');
+        stamp_input.push_str(&document.metadata.revision);
+        stamp_input.push('\n');
+        metadata.insert(document.projected.stable_key.clone(), document.metadata);
+        documents.push(document.projected);
+    }
+    stamp_input.push_str(&format!("skipped:{skipped_files}"));
+    let source_stamp = crate::hash_text(&stamp_input);
+    let scope = scope_wire(&request.scope);
+    let snapshot_id = crate::hash_text(&format!(
+        "{}\0{}\0{}\0{}\0{}",
+        request.context.vault_path,
+        request.context.vault_epoch,
+        request.context.privacy_epoch,
+        scope,
+        source_stamp
+    ));
+
+    Ok(SearchSnapshotDraft {
+        snapshot_id,
+        source_stamp,
+        documents,
+        metadata,
+        skipped_files,
+        authorization,
+    })
+}
+
+fn load_public_documents(vault: &Path) -> Result<(Vec<LoadedSearchDocument>, u32), SearchError> {
+    let mut documents = Vec::new();
+    let mut skipped = 0u32;
+
+    for relative_root in ["fragments", "notes", ".trash/fragments", ".trash/notes"] {
+        let (root, unsafe_root) = safe_scan_root(vault, relative_root)?;
+        if unsafe_root {
+            skipped = skipped.saturating_add(1);
+        }
+        let Some(root) = root else {
+            continue;
+        };
+        let mut files = Vec::new();
+        crate::collect_markdown_files(&root, &mut files).map_err(io_error)?;
+        for path in files {
+            match load_public_markdown(vault, &path) {
+                Ok(document) => documents.push(document),
+                Err(_) => skipped = skipped.saturating_add(1),
+            }
+        }
+    }
+
+    let mut visited = 0usize;
+    let (notes_root, _) = safe_scan_root(vault, "notes")?;
+    let (maps_root, maps_unsafe) = safe_scan_root(vault, "maps")?;
+    if maps_unsafe {
+        skipped = skipped.saturating_add(1);
+    }
+    let mut mind_maps = Vec::new();
+    if let Some(notes_root) = &notes_root {
+        canvas_commands::scan_files(notes_root, ".shardmap.json", &mut mind_maps, &mut visited)
+            .map_err(io_error)?;
+    }
+    // Legacy maps can exist before the existing migration runs. Hidden recovery folders
+    // are already excluded by the shared typed scanner.
+    if let Some(maps_root) = &maps_root {
+        canvas_commands::scan_files(maps_root, ".shardmap.json", &mut mind_maps, &mut visited)
+            .map_err(io_error)?;
+    }
+    for path in mind_maps {
+        match load_mind_map(vault, &path) {
+            Ok(document) => documents.push(document),
+            Err(_) => skipped = skipped.saturating_add(1),
+        }
+    }
+
+    for suffix in [".shardcanvas.json", ".shardflow.json"] {
+        let mut files = Vec::new();
+        if let Some(notes_root) = &notes_root {
+            canvas_commands::scan_files(notes_root, suffix, &mut files, &mut visited)
+                .map_err(io_error)?;
+        }
+        for path in files {
+            let relative = crate::relative_path(vault, &path).map_err(io_error)?;
+            match load_canvas(vault, &relative) {
+                Ok(document) => documents.push(document),
+                Err(_) => skipped = skipped.saturating_add(1),
+            }
+        }
+    }
+
+    let mut tables = Vec::new();
+    if let Some(notes_root) = &notes_root {
+        canvas_commands::scan_files(notes_root, ".shardtable.json", &mut tables, &mut visited)
+            .map_err(io_error)?;
+    }
+    for path in tables {
+        let relative = crate::relative_path(vault, &path).map_err(io_error)?;
+        match load_table(vault, &relative) {
+            Ok(document) => documents.push(document),
+            Err(_) => skipped = skipped.saturating_add(1),
+        }
+    }
+
+    let mut csv_files = Vec::new();
+    collect_public_csv_files(vault, vault, &mut csv_files, &mut visited, &mut skipped)?;
+    for path in csv_files {
+        match load_csv(vault, &path) {
+            Ok(document) => documents.push(document),
+            Err(_) => skipped = skipped.saturating_add(1),
+        }
+    }
+
+    skipped = skipped.saturating_add(count_structured_trash(vault)?);
+    Ok((documents, skipped))
+}
+
+fn load_lockbox_documents(
+    vault: &Path,
+    lease: &LockboxReadLease,
+) -> Result<(Vec<LoadedSearchDocument>, u32), SearchError> {
+    let mut files = Vec::new();
+    let mut skipped = 0u32;
+    let mut visited = 0usize;
+    for relative_root in ["lockbox/fragments", "lockbox/archive", "lockbox/notes"] {
+        let (root, unsafe_root) = safe_scan_root(vault, relative_root)?;
+        if unsafe_root {
+            skipped = skipped.saturating_add(1);
+        }
+        let Some(root) = root else {
+            continue;
+        };
+        collect_lockbox_files(&root, &mut files, &mut visited, &mut skipped)?;
+    }
+
+    let mut documents = Vec::new();
+    for path in files {
+        match load_lockbox_markdown(vault, &path, lease) {
+            Ok(document) => documents.push(document),
+            Err(_) => skipped = skipped.saturating_add(1),
+        }
+    }
+    lease.validate_session()?;
+    Ok((documents, skipped))
+}
+
+/// Read exactly one saved Markdown object. Callers use a renewed lease only for an
+/// explicit result selection; background indexing passes a non-renewing lease instead.
+pub(crate) fn read_search_document(
+    context: &SearchContext,
+    target: &SearchTarget,
+    lease: Option<&LockboxReadLease>,
+) -> Result<LoadedSearchDocument, SearchError> {
+    validate_target_context(context, target)?;
+    crate::search_runtime::validate_context(context)?;
+    let document = read_search_document_from_disk(context, target, lease)?;
+    if let Some(lease) = lease {
+        lease.validate(context)?;
+    }
+    crate::search_runtime::validate_context(context)?;
+    Ok(document)
+}
+
+fn read_search_document_from_disk(
+    context: &SearchContext,
+    target: &SearchTarget,
+    lease: Option<&LockboxReadLease>,
+) -> Result<LoadedSearchDocument, SearchError> {
+    let vault = Path::new(&context.vault_path);
+    if !matches!(
+        target.kind,
+        SearchKind::Fragment | SearchKind::Note | SearchKind::Outline | SearchKind::Document
+    ) {
+        return Err(SearchError::UnsupportedTarget);
+    }
+
+    let path = resolve_target_file(vault, &target.path, &target.scope)?;
+    let document = match target.scope {
+        SearchScope::Public => load_public_markdown(vault, &path)?,
+        SearchScope::Lockbox => {
+            let lease = lease.ok_or(SearchError::Locked)?;
+            lease.validate(context)?;
+            load_lockbox_markdown(vault, &path, lease)?
+        }
+    };
+    validate_loaded_identity(target, &document.metadata.target)?;
+    Ok(document)
+}
+
+fn validate_target_context(
+    context: &SearchContext,
+    target: &SearchTarget,
+) -> Result<(), SearchError> {
+    if context.vault_path != target.vault_path {
+        return Err(SearchError::VaultChanged);
+    }
+    if target.key != target_key(&target.vault_path, &target.scope, &target.path) {
+        return Err(SearchError::TargetChanged);
+    }
+    Ok(())
+}
+
+fn validate_loaded_identity(
+    requested: &SearchTarget,
+    actual: &SearchTarget,
+) -> Result<(), SearchError> {
+    if requested.key != actual.key
+        || scope_wire(&requested.scope) != scope_wire(&actual.scope)
+        || requested.path != actual.path
+        || std::mem::discriminant(&requested.kind) != std::mem::discriminant(&actual.kind)
+        || requested.object_id != actual.object_id
+    {
+        return Err(SearchError::TargetChanged);
+    }
+    Ok(())
+}
+
+fn load_public_markdown(vault: &Path, path: &Path) -> Result<LoadedSearchDocument, SearchError> {
+    let relative = crate::relative_path(vault, path).map_err(io_error)?;
+    let safe_path = resolve_target_file(vault, &relative, &SearchScope::Public)?;
+    let text = fs::read_to_string(safe_path).map_err(fs_error)?;
+    let (frontmatter, body) =
+        crate::parse_fragment_text(&text).map_err(|_| SearchError::UnsupportedTarget)?;
+    let archived =
+        relative.starts_with(".trash/fragments/") || relative.starts_with(".trash/notes/");
+    Ok(markdown_document(
+        vault,
+        SearchScope::Public,
+        relative,
+        archived,
+        frontmatter,
+        body,
+        crate::hash_text(&text),
+    ))
+}
+
+fn load_lockbox_markdown(
+    vault: &Path,
+    path: &Path,
+    lease: &LockboxReadLease,
+) -> Result<LoadedSearchDocument, SearchError> {
+    lease.validate_session()?;
+    let relative = crate::relative_path(vault, path).map_err(io_error)?;
+    let safe_path = resolve_target_file(vault, &relative, &SearchScope::Lockbox)?;
+    let payload = crate::read_lockbox_payload(&safe_path, lease.read_keys())
+        .map_err(|_| SearchError::Io { retryable: false })?;
+    let revision = serde_json::to_vec(&payload)
+        .map(|bytes| crate::hash_bytes(&bytes))
+        .map_err(|_| SearchError::Internal { retryable: false })?;
+    lease.validate_session()?;
+    Ok(markdown_document(
+        vault,
+        SearchScope::Lockbox,
+        relative.clone(),
+        relative.starts_with("lockbox/archive/"),
+        payload.frontmatter,
+        &payload.body,
+        revision,
+    ))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn markdown_document(
+    vault: &Path,
+    scope: SearchScope,
+    relative: String,
+    archived: bool,
+    frontmatter: FragmentFrontmatter,
+    body: &str,
+    revision: String,
+) -> LoadedSearchDocument {
+    let content = body.trim_start_matches('\n').to_string();
+    let kind = markdown_kind(&frontmatter.tags);
+    let title = markdown_title(&kind, &content);
+    let tags = if frontmatter.tags.is_empty() {
+        vec!["inbox".to_string()]
+    } else {
+        frontmatter.tags.clone()
+    };
+    let target = make_target(
+        vault,
+        scope.clone(),
+        relative.clone(),
+        kind,
+        Some(frontmatter.id.clone()),
+        archived,
+    );
+    let metadata = SearchDocumentMetadata {
+        target: target.clone(),
+        updated_at: Some(frontmatter.updated_at.clone()),
+        revision,
+        reveal_hint: SearchRevealHint::Text,
+        read_only: true,
+    };
+    let projected = project_document(&SourceDocument {
+        stable_key: target.key.clone(),
+        title,
+        tags: tags.clone(),
+        body: content.clone(),
+        modified_at: parse_modified_at(&frontmatter.updated_at),
+    });
+    let fragment = Fragment {
+        id: frontmatter.id,
+        content,
+        created_at: frontmatter.created_at,
+        updated_at: frontmatter.updated_at,
+        tags,
+        category: frontmatter.category,
+        path: relative,
+        git_status: "saved".to_string(),
+        error: None,
+        ai_status: frontmatter.ai_status.unwrap_or_else(|| "none".to_string()),
+        archived,
+        lockbox: matches!(scope, SearchScope::Lockbox),
+        pinned: frontmatter.pinned,
+        related: frontmatter.related,
+        conflict_of: frontmatter.conflict_of,
+    };
+    LoadedSearchDocument {
+        projected,
+        metadata,
+        fragment: Some(fragment),
+    }
+}
+
+fn load_mind_map(vault: &Path, path: &Path) -> Result<LoadedSearchDocument, SearchError> {
+    let relative = crate::relative_path(vault, path).map_err(io_error)?;
+    let (file, text) = crate::read_mind_map_file(path).map_err(io_error)?;
+    crate::validate_mind_map_file(vault, &file).map_err(io_error)?;
+    let body = mind_map_search_text(&file);
+    Ok(structured_document(
+        vault,
+        relative,
+        SearchKind::Mindmap,
+        Some(file.id),
+        file.title,
+        file.updated_at,
+        crate::hash_text(&text),
+        body,
+        SearchRevealHint::DocumentOnly,
+    ))
+}
+
+fn mind_map_search_text(file: &ShardMapFile) -> String {
+    file.nodes
+        .values()
+        .map(|node| node.text.trim())
+        .filter(|text| !text.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn load_canvas(vault: &Path, relative: &str) -> Result<LoadedSearchDocument, SearchError> {
+    let document = canvas_commands::read_search_document(vault, relative).map_err(io_error)?;
+    let kind = if document.kind == "shard.flow" {
+        SearchKind::Flowchart
+    } else {
+        SearchKind::Canvas
+    };
+    Ok(structured_document(
+        vault,
+        relative.to_string(),
+        kind,
+        Some(document.id),
+        document.title,
+        document.updated_at,
+        document.revision,
+        document.body,
+        SearchRevealHint::DocumentOnly,
+    ))
+}
+
+fn load_table(vault: &Path, relative: &str) -> Result<LoadedSearchDocument, SearchError> {
+    let document = table_commands::read_search_document(vault, relative)
+        .map_err(|_| SearchError::Io { retryable: false })?;
+    Ok(structured_document(
+        vault,
+        relative.to_string(),
+        SearchKind::Table,
+        Some(document.id),
+        document.title,
+        document.updated_at,
+        document.revision,
+        document.body,
+        SearchRevealHint::DocumentOnly,
+    ))
+}
+
+fn load_csv(vault: &Path, path: &Path) -> Result<LoadedSearchDocument, SearchError> {
+    let relative = crate::relative_path(vault, path).map_err(io_error)?;
+    let safe_path = resolve_csv_file(vault, &relative)?;
+    let metadata = fs::metadata(&safe_path).map_err(fs_error)?;
+    let bytes = read_csv_header_bytes(&safe_path)?;
+    let headers = parse_csv_header(&bytes).map_err(|_| SearchError::UnsupportedTarget)?;
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or(SearchError::UnsupportedTarget)?;
+    let title = file_name
+        .get(..file_name.len().saturating_sub(4))
+        .filter(|_| file_name.to_ascii_lowercase().ends_with(".csv"))
+        .ok_or(SearchError::UnsupportedTarget)?
+        .to_string();
+    let modified = metadata.modified().ok();
+    let revision = crate::hash_text(&format!(
+        "{}:{}:{}",
+        crate::hash_bytes(&bytes),
+        metadata.len(),
+        system_time_nanos(modified)
+    ));
+    let updated_at = modified.map(system_time_rfc3339).unwrap_or_default();
+    Ok(structured_document(
+        vault,
+        relative,
+        SearchKind::Csv,
+        None,
+        title,
+        updated_at,
+        revision,
+        headers.join("\n"),
+        SearchRevealHint::External,
+    ))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn structured_document(
+    vault: &Path,
+    relative: String,
+    kind: SearchKind,
+    object_id: Option<String>,
+    title: String,
+    updated_at: String,
+    revision: String,
+    body: String,
+    reveal_hint: SearchRevealHint,
+) -> LoadedSearchDocument {
+    let target = make_target(vault, SearchScope::Public, relative, kind, object_id, false);
+    let projected = project_document(&SourceDocument {
+        stable_key: target.key.clone(),
+        title,
+        tags: Vec::new(),
+        body,
+        modified_at: parse_modified_at(&updated_at),
+    });
+    LoadedSearchDocument {
+        projected,
+        metadata: SearchDocumentMetadata {
+            target,
+            updated_at: (!updated_at.is_empty()).then_some(updated_at),
+            revision,
+            reveal_hint,
+            read_only: true,
+        },
+        fragment: None,
+    }
+}
+
+fn make_target(
+    vault: &Path,
+    scope: SearchScope,
+    path: String,
+    kind: SearchKind,
+    object_id: Option<String>,
+    archived: bool,
+) -> SearchTarget {
+    let vault_path = vault.display().to_string();
+    SearchTarget {
+        key: target_key(&vault_path, &scope, &path),
+        vault_path,
+        scope,
+        path,
+        kind,
+        object_id,
+        archived,
+    }
+}
+
+fn target_key(vault_path: &str, scope: &SearchScope, path: &str) -> String {
+    serde_json::to_string(&(vault_path, scope_wire(scope), path))
+        .expect("search target key is serializable")
+}
+
+fn scope_wire(scope: &SearchScope) -> &'static str {
+    match scope {
+        SearchScope::Public => "public",
+        SearchScope::Lockbox => "lockbox",
+    }
+}
+
+fn markdown_kind(tags: &[String]) -> SearchKind {
+    if tags.iter().any(|tag| tag == "note") {
+        SearchKind::Note
+    } else if tags.iter().any(|tag| tag == "outline") {
+        SearchKind::Outline
+    } else if tags.iter().any(|tag| tag == "document") {
+        SearchKind::Document
+    } else {
+        SearchKind::Fragment
+    }
+}
+
+fn markdown_title(kind: &SearchKind, body: &str) -> String {
+    match kind {
+        SearchKind::Document => body
+            .lines()
+            .find_map(markdown_heading)
+            .or_else(|| first_nonempty_line(body))
+            .map(|title| truncate_chars(title, 40))
+            .unwrap_or_else(|| "未命名文档".to_string()),
+        SearchKind::Outline => first_nonempty_line(body)
+            .map(strip_outline_marker)
+            .filter(|title| !title.is_empty())
+            .unwrap_or_else(|| "未命名大纲".to_string()),
+        SearchKind::Note => level_one_heading(body)
+            .or_else(|| first_nonempty_line(body))
+            .map(|title| truncate_chars(title, 48))
+            .unwrap_or_else(|| "未命名笔记".to_string()),
+        _ => first_nonempty_line(body).unwrap_or_else(|| "未命名碎片".to_string()),
+    }
+}
+
+fn level_one_heading(body: &str) -> Option<String> {
+    body.lines().find_map(|line| {
+        line.trim()
+            .strip_prefix("# ")
+            .map(trim_heading_suffix)
+            .filter(|line| !line.is_empty())
+    })
+}
+
+fn markdown_heading(line: &str) -> Option<String> {
+    let line = line.trim_start();
+    let hashes = line
+        .chars()
+        .take_while(|character| *character == '#')
+        .count();
+    if !(1..=6).contains(&hashes) || !line[hashes..].starts_with(' ') {
+        return None;
+    }
+    let heading = trim_heading_suffix(&line[(hashes + 1)..]);
+    (!heading.is_empty()).then_some(heading)
+}
+
+fn trim_heading_suffix(line: &str) -> String {
+    line.trim().trim_end_matches('#').trim_end().to_string()
+}
+
+fn first_nonempty_line(body: &str) -> Option<String> {
+    body.lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .map(ToString::to_string)
+}
+
+fn strip_outline_marker(line: String) -> String {
+    let trimmed = line.trim_start();
+    for marker in ["- ", "* ", "+ "] {
+        if let Some(value) = trimmed.strip_prefix(marker) {
+            return value.trim().to_string();
+        }
+    }
+    if let Some((number, value)) = trimmed.split_once(". ") {
+        if number.chars().all(|character| character.is_ascii_digit()) {
+            return value.trim().to_string();
+        }
+    }
+    trimmed.to_string()
+}
+
+fn truncate_chars(value: String, maximum: usize) -> String {
+    if value.chars().count() <= maximum {
+        return value;
+    }
+    let mut result = value.chars().take(maximum).collect::<String>();
+    result = result.trim_end().to_string();
+    result.push('…');
+    result
+}
+
+fn parse_modified_at(value: &str) -> i64 {
+    DateTime::parse_from_rfc3339(value)
+        .map(|value| value.timestamp_millis())
+        .unwrap_or_default()
+}
+
+fn system_time_rfc3339(value: SystemTime) -> String {
+    DateTime::<Utc>::from(value).to_rfc3339()
+}
+
+fn system_time_nanos(value: Option<SystemTime>) -> u128 {
+    value
+        .and_then(|value| value.duration_since(UNIX_EPOCH).ok())
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default()
+}
+
+fn resolve_target_file(
+    vault: &Path,
+    relative: &str,
+    scope: &SearchScope,
+) -> Result<PathBuf, SearchError> {
+    let parts = validate_relative_parts(relative)?;
+    let contains_hidden_component = parts
+        .iter()
+        .enumerate()
+        .any(|(index, part)| part.starts_with('.') && !(index == 0 && *part == ".trash"));
+    let valid_root = match scope {
+        SearchScope::Public => match parts.as_slice() {
+            [root, ..] if *root == "fragments" || *root == "notes" => true,
+            [trash, root, ..]
+                if *trash == ".trash" && (*root == "fragments" || *root == "notes") =>
+            {
+                true
+            }
+            _ => false,
+        },
+        SearchScope::Lockbox => matches!(
+            parts.as_slice(),
+            ["lockbox", root, ..] if matches!(*root, "fragments" | "archive" | "notes")
+        ),
+    };
+    let extension_valid = match scope {
+        SearchScope::Public => relative.ends_with(".md"),
+        SearchScope::Lockbox => relative.ends_with(".shard"),
+    };
+    if contains_hidden_component || !valid_root || !extension_valid {
+        return Err(SearchError::InvalidRequest {
+            reason: "invalidTargetPath".to_string(),
+        });
+    }
+    resolve_regular_file(vault, &parts)
+}
+
+fn resolve_csv_file(vault: &Path, relative: &str) -> Result<PathBuf, SearchError> {
+    let parts = validate_relative_parts(relative)?;
+    if parts
+        .iter()
+        .any(|part| part.starts_with('.') || part.eq_ignore_ascii_case("lockbox"))
+        || !relative.to_ascii_lowercase().ends_with(".csv")
+    {
+        return Err(SearchError::InvalidRequest {
+            reason: "invalidTargetPath".to_string(),
+        });
+    }
+    resolve_regular_file(vault, &parts)
+}
+
+fn validate_relative_parts(relative: &str) -> Result<Vec<&str>, SearchError> {
+    if relative.is_empty() || relative.contains('\\') || Path::new(relative).is_absolute() {
+        return Err(SearchError::InvalidRequest {
+            reason: "invalidTargetPath".to_string(),
+        });
+    }
+    let parts = relative.split('/').collect::<Vec<_>>();
+    if parts
+        .iter()
+        .any(|part| part.is_empty() || *part == "." || *part == "..")
+    {
+        return Err(SearchError::InvalidRequest {
+            reason: "invalidTargetPath".to_string(),
+        });
+    }
+    Ok(parts)
+}
+
+fn resolve_regular_file(vault: &Path, parts: &[&str]) -> Result<PathBuf, SearchError> {
+    let mut target = vault.to_path_buf();
+    for part in parts {
+        target.push(part);
+        let metadata = fs::symlink_metadata(&target).map_err(fs_error)?;
+        if metadata.file_type().is_symlink() {
+            return Err(SearchError::InvalidRequest {
+                reason: "symlinkTarget".to_string(),
+            });
+        }
+    }
+    if !target.is_file() {
+        return Err(SearchError::NotFound);
+    }
+    let canonical_vault = vault.canonicalize().map_err(fs_error)?;
+    let canonical_target = target.canonicalize().map_err(fs_error)?;
+    if !canonical_target.starts_with(canonical_vault) {
+        return Err(SearchError::InvalidRequest {
+            reason: "pathEscape".to_string(),
+        });
+    }
+    Ok(target)
+}
+
+/// Resolve a fixed source root without following any component symlink. Missing roots
+/// are normal for partially initialized vaults; unsafe roots are reported to skipped_files.
+fn safe_scan_root(vault: &Path, relative: &str) -> Result<(Option<PathBuf>, bool), SearchError> {
+    let mut root = vault.to_path_buf();
+    for part in relative.split('/') {
+        root.push(part);
+        match fs::symlink_metadata(&root) {
+            Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
+                return Ok((None, true));
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok((None, false));
+            }
+            Err(error) => return Err(fs_error(error)),
+        }
+    }
+    Ok((Some(root), false))
+}
+
+fn collect_lockbox_files(
+    root: &Path,
+    files: &mut Vec<PathBuf>,
+    visited: &mut usize,
+    skipped: &mut u32,
+) -> Result<(), SearchError> {
+    let metadata = match fs::symlink_metadata(root) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(fs_error(error)),
+    };
+    if metadata.file_type().is_symlink() {
+        *skipped = skipped.saturating_add(1);
+        return Ok(());
+    }
+    for entry in fs::read_dir(root).map_err(fs_error)? {
+        let entry = entry.map_err(fs_error)?;
+        *visited += 1;
+        if *visited > SEARCH_SCAN_MAX_ENTRIES {
+            return Err(SearchError::Io { retryable: false });
+        }
+        let kind = entry.file_type().map_err(fs_error)?;
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if kind.is_symlink() || name.starts_with('.') {
+            if name.ends_with(".shard") {
+                *skipped = skipped.saturating_add(1);
+            }
+            continue;
+        }
+        if kind.is_dir() {
+            collect_lockbox_files(&entry.path(), files, visited, skipped)?;
+        } else if kind.is_file() && name.ends_with(".shard") {
+            files.push(entry.path());
+        }
+    }
+    Ok(())
+}
+
+fn collect_public_csv_files(
+    vault: &Path,
+    root: &Path,
+    files: &mut Vec<PathBuf>,
+    visited: &mut usize,
+    skipped: &mut u32,
+) -> Result<(), SearchError> {
+    for entry in fs::read_dir(root).map_err(fs_error)? {
+        let entry = entry.map_err(fs_error)?;
+        *visited += 1;
+        if *visited > SEARCH_SCAN_MAX_ENTRIES {
+            return Err(SearchError::Io { retryable: false });
+        }
+        let kind = entry.file_type().map_err(fs_error)?;
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if kind.is_symlink() {
+            if name.to_ascii_lowercase().ends_with(".csv") {
+                *skipped = skipped.saturating_add(1);
+            }
+            continue;
+        }
+        if kind.is_dir() {
+            if name.starts_with('.') || name.eq_ignore_ascii_case("lockbox") {
+                continue;
+            }
+            collect_public_csv_files(vault, &entry.path(), files, visited, skipped)?;
+        } else if kind.is_file()
+            && !name.starts_with('.')
+            && name.to_ascii_lowercase().ends_with(".csv")
+            && entry.path().starts_with(vault)
+        {
+            files.push(entry.path());
+        }
+    }
+    Ok(())
+}
+
+fn count_structured_trash(vault: &Path) -> Result<u32, SearchError> {
+    let (root, unsafe_root) = safe_scan_root(vault, ".trash/notes")?;
+    let Some(root) = root else {
+        let _ = unsafe_root; // Markdown root validation already accounted for this path.
+        return Ok(0);
+    };
+    let mut visited = 0usize;
+    count_structured_files(&root, &mut visited)
+}
+
+fn count_structured_files(root: &Path, visited: &mut usize) -> Result<u32, SearchError> {
+    let entries = match fs::read_dir(root) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        Err(error) => return Err(fs_error(error)),
+    };
+    let mut count = 0u32;
+    for entry in entries {
+        let entry = entry.map_err(fs_error)?;
+        *visited += 1;
+        if *visited > SEARCH_SCAN_MAX_ENTRIES {
+            return Err(SearchError::Io { retryable: false });
+        }
+        let kind = entry.file_type().map_err(fs_error)?;
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if kind.is_symlink() || name.starts_with('.') {
+            continue;
+        }
+        if kind.is_dir() {
+            count = count.saturating_add(count_structured_files(&entry.path(), visited)?);
+        } else if kind.is_file()
+            && [
+                ".shardmap.json",
+                ".shardcanvas.json",
+                ".shardflow.json",
+                ".shardtable.json",
+                ".csv",
+            ]
+            .iter()
+            .any(|suffix| name.to_ascii_lowercase().ends_with(suffix))
+        {
+            count = count.saturating_add(1);
+        }
+    }
+    Ok(count)
+}
+
+fn parse_csv_header(bytes: &[u8]) -> Result<Vec<String>, ()> {
+    let text = std::str::from_utf8(bytes).map_err(|_| ())?;
+    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
+    let mut fields = Vec::new();
+    let mut field = String::new();
+    let mut characters = text.chars().peekable();
+    let mut quoted = false;
+    let mut started = false;
+
+    while let Some(character) = characters.next() {
+        if quoted {
+            if character == '"' {
+                if characters.peek() == Some(&'"') {
+                    characters.next();
+                    field.push('"');
+                } else {
+                    quoted = false;
+                }
+            } else {
+                field.push(character);
+            }
+            continue;
+        }
+
+        match character {
+            '"' if !started && field.is_empty() => {
+                quoted = true;
+                started = true;
+            }
+            ',' => {
+                fields.push(std::mem::take(&mut field));
+                started = false;
+            }
+            '\r' | '\n' => {
+                fields.push(field);
+                return Ok(fields);
+            }
+            _ => {
+                field.push(character);
+                started = true;
+            }
+        }
+    }
+    if quoted {
+        return Err(());
+    }
+    fields.push(field);
+    Ok(fields)
+}
+
+fn read_csv_header_bytes(path: &Path) -> Result<Vec<u8>, SearchError> {
+    let mut reader = BufReader::new(File::open(path).map_err(fs_error)?);
+    let mut bytes = Vec::new();
+    let mut quoted = false;
+    let mut field_start = true;
+
+    if reader
+        .fill_buf()
+        .map_err(fs_error)?
+        .starts_with(&[0xef, 0xbb, 0xbf])
+    {
+        bytes.extend_from_slice(&[0xef, 0xbb, 0xbf]);
+        reader.consume(3);
+    }
+
+    loop {
+        if bytes.len() as u64 >= CSV_HEADER_MAX_BYTES {
+            return Err(SearchError::UnsupportedTarget);
+        }
+        let mut byte = [0u8; 1];
+        if reader.read(&mut byte).map_err(fs_error)? == 0 {
+            return if quoted {
+                Err(SearchError::UnsupportedTarget)
+            } else {
+                Ok(bytes)
+            };
+        }
+        bytes.push(byte[0]);
+
+        if quoted {
+            if byte[0] == b'"' {
+                let next = reader.fill_buf().map_err(fs_error)?;
+                if next.first() == Some(&b'"') {
+                    if bytes.len() as u64 >= CSV_HEADER_MAX_BYTES {
+                        return Err(SearchError::UnsupportedTarget);
+                    }
+                    bytes.push(b'"');
+                    reader.consume(1);
+                } else {
+                    quoted = false;
+                }
+            }
+            continue;
+        }
+
+        match byte[0] {
+            b'"' if field_start => {
+                quoted = true;
+                field_start = false;
+            }
+            b',' => field_start = true,
+            b'\r' | b'\n' => return Ok(bytes),
+            _ => field_start = false,
+        }
+    }
+}
+
+fn io_error(_: impl ToString) -> SearchError {
+    SearchError::Io { retryable: false }
+}
+
+fn fs_error(error: std::io::Error) -> SearchError {
+    if error.kind() == std::io::ErrorKind::NotFound {
+        SearchError::NotFound
+    } else {
+        SearchError::Io { retryable: true }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use serde_json::json;
+
+    use super::*;
+
+    fn write_markdown(path: &Path, id: &str, tags: &[&str], body: &str) {
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let frontmatter = FragmentFrontmatter {
+            id: id.to_string(),
+            created_at: "2026-09-25T00:00:00Z".to_string(),
+            updated_at: "2026-09-25T01:00:00Z".to_string(),
+            tags: tags.iter().map(|tag| (*tag).to_string()).collect(),
+            category: None,
+            ai_status: Some("none".to_string()),
+            pinned: false,
+            source: "test".to_string(),
+            conflict_of: None,
+            related: Vec::new(),
+        };
+        shard_core::write_fragment_file(path, &frontmatter, body).unwrap();
+    }
+
+    fn context(vault: &Path) -> SearchContext {
+        SearchContext {
+            vault_path: vault.display().to_string(),
+            vault_epoch: "1".to_string(),
+            privacy_epoch: "0".to_string(),
+        }
+    }
+
+    #[test]
+    fn search_real_snapshot_builder_reads_saved_sources() {
+        let directory = tempfile::tempdir().unwrap();
+        let vault = directory.path();
+        fs::create_dir_all(vault.join("notes")).unwrap();
+        fs::create_dir_all(vault.join(".trash/notes")).unwrap();
+        write_markdown(
+            &vault.join("notes/计划.md"),
+            "saved-note",
+            &["note"],
+            "# 已保存计划\n\n正文",
+        );
+        fs::write(vault.join("数据.csv"), "姓名,进度\n小夏,完成\n").unwrap();
+        fs::write(vault.join(".trash/notes/不可打开.shardmap.json"), "{}").unwrap();
+
+        let draft = build_snapshot(
+            SearchBuildRequest {
+                context: context(vault),
+                scope: SearchScope::Public,
+                refresh: crate::search_contract::SearchRefresh::Rebuild,
+                start_generation: 0,
+                force_read_all: true,
+                previous: None,
+            },
+            &LockboxRuntime::default(),
+        )
+        .unwrap();
+
+        assert_eq!(draft.documents.len(), 2);
+        assert_eq!(draft.metadata.len(), 2);
+        assert_eq!(draft.skipped_files, 1);
+        assert!(draft
+            .metadata
+            .values()
+            .any(|metadata| metadata.target.path == "notes/计划.md"));
+        assert!(draft
+            .metadata
+            .values()
+            .any(|metadata| metadata.target.path == "数据.csv"));
+    }
+
+    #[test]
+    fn search_markdown_trash_note_is_archived_and_read_only() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join(".trash/notes/旧笔记.md");
+        write_markdown(&path, "trash-note", &["note"], "# 已归档\n\n正文");
+
+        let loaded = load_public_markdown(directory.path(), &path).unwrap();
+        assert!(loaded.metadata.target.archived);
+        assert!(loaded.metadata.read_only);
+        let fragment = loaded.fragment.unwrap();
+        assert!(fragment.archived);
+        assert_eq!(fragment.path, ".trash/notes/旧笔记.md");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn search_read_rejects_path_escape_and_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let directory = tempfile::tempdir().unwrap();
+        let vault = directory.path().join("vault");
+        fs::create_dir_all(vault.join("notes")).unwrap();
+        let outside = directory.path().join("outside.md");
+        write_markdown(&outside, "outside", &["note"], "# 外部");
+
+        let escaped = make_target(
+            &vault,
+            SearchScope::Public,
+            "../outside.md".to_string(),
+            SearchKind::Note,
+            Some("outside".to_string()),
+            false,
+        );
+        assert!(matches!(
+            read_search_document_from_disk(&context(&vault), &escaped, None),
+            Err(SearchError::InvalidRequest { .. })
+        ));
+
+        symlink(&outside, vault.join("notes/alias.md")).unwrap();
+        let alias = make_target(
+            &vault,
+            SearchScope::Public,
+            "notes/alias.md".to_string(),
+            SearchKind::Note,
+            Some("outside".to_string()),
+            false,
+        );
+        assert!(matches!(
+            read_search_document_from_disk(&context(&vault), &alias, None),
+            Err(SearchError::InvalidRequest { .. })
+        ));
+    }
+
+    #[test]
+    fn search_read_detects_replaced_object_at_same_path() {
+        let directory = tempfile::tempdir().unwrap();
+        let vault = directory.path();
+        let path = vault.join("notes/替换.md");
+        write_markdown(&path, "original", &["note"], "# 原对象");
+        let original = load_public_markdown(vault, &path).unwrap();
+
+        write_markdown(&path, "replacement", &["note"], "# 新对象");
+        assert!(matches!(
+            read_search_document_from_disk(&context(vault), &original.metadata.target, None),
+            Err(SearchError::TargetChanged)
+        ));
+    }
+
+    #[test]
+    fn search_structured_extractors_ignore_internal_metadata() {
+        let mind_map: ShardMapFile = serde_json::from_value(json!({
+            "kind": "shard.map",
+            "schemaVersion": 1,
+            "id": "secret-map-id",
+            "title": "路线图",
+            "createdAt": "2026-09-25T00:00:00Z",
+            "updatedAt": "2026-09-25T00:00:00Z",
+            "savedWithAppVersion": "internal-version",
+            "revision": 1,
+            "rootId": "secret-root-id",
+            "hasProtectedLinks": false,
+            "nodes": {
+                "secret-root-id": {
+                    "id": "secret-root-id",
+                    "parentId": null,
+                    "sortKey": "secret-sort-key",
+                    "text": "用户节点文本",
+                    "createdAt": "2026-09-25T00:00:00Z",
+                    "updatedAt": "2026-09-25T00:00:00Z"
+                }
+            }
+        }))
+        .unwrap();
+        let map_text = mind_map_search_text(&mind_map);
+        assert!(map_text.contains("用户节点文本"));
+        assert!(!map_text.contains("secret-root-id"));
+        assert!(!map_text.contains("secret-sort-key"));
+
+        let canvas: canvas_commands::CanvasFile = serde_json::from_value(json!({
+            "kind": "shard.flow",
+            "schemaVersion": 1,
+            "id": "secret-canvas-id",
+            "title": "流程",
+            "createdAt": "2026-09-25T00:00:00Z",
+            "updatedAt": "2026-09-25T00:00:00Z",
+            "revision": 1,
+            "nodes": [{
+                "id": "secret-node-id",
+                "kind": "text",
+                "x": 987654,
+                "y": 123456,
+                "text": "用户画布文本"
+            }],
+            "edges": [{
+                "id": "secret-edge-id",
+                "source": "secret-node-id",
+                "target": "secret-node-id",
+                "label": "用户边标签"
+            }]
+        }))
+        .unwrap();
+        let canvas_text = canvas_commands::search_text(&canvas);
+        assert!(canvas_text.contains("用户画布文本"));
+        assert!(canvas_text.contains("用户边标签"));
+        assert!(!canvas_text.contains("secret-node-id"));
+        assert!(!canvas_text.contains("987654"));
+
+        let table: crate::table::TableFile = serde_json::from_value(json!({
+            "kind": "shard.table",
+            "schemaVersion": 1,
+            "id": "secret-table-id",
+            "revision": 1,
+            "creation": {"requestId": "secret-request", "payloadHash": "secret-hash"},
+            "lastMutationId": null,
+            "lastMutationHash": null,
+            "createdAt": "2026-09-25T00:00:00Z",
+            "updatedAt": "2026-09-25T00:00:00Z",
+            "primaryFieldId": "secret-title-field",
+            "fields": {
+                "secret-title-field": {"id": "secret-title-field", "name": "任务", "type": "text"},
+                "secret-status-field": {
+                    "id": "secret-status-field",
+                    "name": "状态",
+                    "type": "select",
+                    "options": [{"id": "secret-option-id", "label": "进行中", "color": "blue"}]
+                }
+            },
+            "fieldOrder": ["secret-title-field", "secret-status-field"],
+            "records": {
+                "secret-record-id": {
+                    "id": "secret-record-id",
+                    "createdAt": "2026-09-25T00:00:00Z",
+                    "updatedAt": "2026-09-25T00:00:00Z",
+                    "values": {"secret-title-field": "用户表格文本", "secret-status-field": "secret-option-id"}
+                }
+            },
+            "recordOrder": ["secret-record-id"],
+            "views": {},
+            "viewOrder": []
+        }))
+        .unwrap();
+        let table_text = table.search_text();
+        assert!(table_text.contains("用户表格文本"));
+        assert!(table_text.contains("进行中"));
+        assert!(!table_text.contains("secret-option-id"));
+        assert!(!table_text.contains("secret-record-id"));
+        assert!(!table_text.contains("secret-request"));
+    }
+
+    #[test]
+    fn search_csv_header_supports_quotes_bom_and_newlines() {
+        let header = parse_csv_header(
+            "\u{feff}姓名,\"说明\n续行\",\"他说 \"\"你好\"\"\"\r\n张三,ignored,ignored".as_bytes(),
+        )
+        .unwrap();
+        assert_eq!(header, vec!["姓名", "说明\n续行", "他说 \"你好\""]);
+
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("quoted.csv");
+        fs::write(
+            &path,
+            "\u{feff}\"首列\n续行\",第二列\r\n正文不应读取到表头".as_bytes(),
+        )
+        .unwrap();
+        let header = parse_csv_header(&read_csv_header_bytes(&path).unwrap()).unwrap();
+        assert_eq!(header, vec!["首列\n续行", "第二列"]);
+    }
+}

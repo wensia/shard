@@ -379,6 +379,49 @@ pub struct TableFile {
     pub view_order: Vec<String>,
 }
 impl TableFile {
+    /// Flatten only text a user can see in the table surface. Internal identities,
+    /// view/filter configuration and unselected option definitions are excluded.
+    pub fn search_text(&self) -> String {
+        let mut lines = Vec::new();
+        for field_id in &self.field_order {
+            if let Some(field) = self.fields.get(field_id) {
+                push_search_value(&mut lines, &field.name);
+            }
+        }
+
+        for record_id in &self.record_order {
+            let Some(record) = self.records.get(record_id) else {
+                continue;
+            };
+            for field_id in &self.field_order {
+                let (Some(field), Some(value)) =
+                    (self.fields.get(field_id), record.values.get(field_id))
+                else {
+                    continue;
+                };
+                match (field.field_type, value) {
+                    (FieldType::Select, CellValue::Text(option_id)) => {
+                        if let Some(label) = option_label(field, option_id) {
+                            push_search_value(&mut lines, label);
+                        }
+                    }
+                    (FieldType::MultiSelect, CellValue::OptionIds(option_ids)) => {
+                        for option_id in option_ids {
+                            if let Some(label) = option_label(field, option_id) {
+                                push_search_value(&mut lines, label);
+                            }
+                        }
+                    }
+                    (_, CellValue::Text(text)) => push_search_value(&mut lines, text),
+                    (_, CellValue::Number(number)) => lines.push(number.to_string()),
+                    (_, CellValue::Checkbox(checked)) => lines.push(checked.to_string()),
+                    (_, CellValue::Null | CellValue::OptionIds(_)) => {}
+                }
+            }
+        }
+        lines.join("\n")
+    }
+
     #[cfg(test)]
     pub fn content(&self) -> TableContent {
         TableContent {
@@ -390,6 +433,22 @@ impl TableFile {
             views: self.views.clone(),
             view_order: self.view_order.clone(),
         }
+    }
+}
+
+fn option_label<'a>(field: &'a TableField, option_id: &str) -> Option<&'a str> {
+    field
+        .options
+        .as_deref()?
+        .iter()
+        .find(|option| option.id == option_id)
+        .map(|option| option.label.as_str())
+}
+
+fn push_search_value(lines: &mut Vec<String>, value: &str) {
+    let value = value.trim();
+    if !value.is_empty() {
+        lines.push(value.to_string());
     }
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

@@ -70,6 +70,16 @@ pub(crate) struct CanvasReadResult {
     pub last_saved_hash: String,
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct CanvasSearchDocument {
+    pub id: String,
+    pub kind: String,
+    pub title: String,
+    pub updated_at: String,
+    pub revision: String,
+    pub body: String,
+}
+
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct CreationReceipt {
@@ -491,6 +501,48 @@ fn read_file(vault: &Path, path: &Path) -> CanvasResult<CanvasReadResult> {
         path: crate::relative_path(vault, path)?,
         last_saved_hash: crate::hash_bytes(&bytes),
     })
+}
+
+/// Search only receives explicitly user-authored text from the typed canvas model.
+/// IDs, geometry, links, handles and recovery metadata never enter the projection.
+pub(crate) fn read_search_document(
+    vault: &Path,
+    relative: &str,
+) -> CanvasResult<CanvasSearchDocument> {
+    let path = public_path(vault, relative, false)?;
+    let read = read_file(vault, &path)?;
+    Ok(CanvasSearchDocument {
+        id: read.file.id.clone(),
+        kind: read.file.kind.clone(),
+        title: read.file.title.clone(),
+        updated_at: read.file.updated_at.clone(),
+        revision: read.last_saved_hash,
+        body: search_text(&read.file),
+    })
+}
+
+pub(crate) fn search_text(file: &CanvasFile) -> String {
+    let mut lines = Vec::new();
+    for node in &file.nodes {
+        push_search_line(&mut lines, &node.text);
+        if let Some(map) = &node.mind_map {
+            push_search_line(&mut lines, &map.title);
+            for map_node in map.nodes.values() {
+                push_search_line(&mut lines, &map_node.text);
+            }
+        }
+    }
+    for edge in &file.edges {
+        push_search_line(&mut lines, &edge.label);
+    }
+    lines.join("\n")
+}
+
+fn push_search_line(lines: &mut Vec<String>, value: &str) {
+    let value = value.trim();
+    if !value.is_empty() {
+        lines.push(value.to_string());
+    }
 }
 
 fn identity_paths(vault: &Path, id: &str) -> CanvasResult<Vec<PathBuf>> {

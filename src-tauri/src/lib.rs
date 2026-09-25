@@ -26,7 +26,10 @@ use std::{
     io::{BufRead, BufReader, Read, Write},
     path::{Component, Path, PathBuf},
     process::{Command, Stdio},
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::AtomicBool,
+        Arc, Condvar, LockResult, Mutex, MutexGuard,
+    },
     time::{Duration, SystemTime},
 };
 use tauri::Manager;
@@ -42,6 +45,10 @@ mod search_contract;
 mod search_reconcile;
 #[allow(dead_code)] // T05/T06 接入真实来源与 command 后移除。
 mod search_runtime;
+#[allow(dead_code)] // T06 consumes lease expiry and the single-target reader through IPC.
+mod search_lockbox;
+#[allow(dead_code)] // T06 maps snapshot metadata and LoadedSearchDocument into wire responses.
+mod search_sources;
 
 const DEFAULT_WINDOW_TITLE: &str = "Shard";
 const LOCKBOX_TTL: Duration = Duration::from_secs(15 * 60);
@@ -439,15 +446,54 @@ struct LockboxSession {
     expires_at: Option<SystemTime>,
     master_key: Option<Vec<u8>>,
     vault_path: Option<PathBuf>,
+    lease_epoch: u64,
 }
 
-type LockboxRuntime = Arc<Mutex<LockboxSession>>;
+struct LockboxRuntimeInner {
+    session: Mutex<LockboxSession>,
+    deadline_changed: Condvar,
+    expiry_worker_started: AtomicBool,
+    search_runtime: Mutex<Option<search_runtime::SearchRuntime>>,
+}
+
+#[derive(Clone)]
+struct LockboxRuntime(Arc<LockboxRuntimeInner>);
+
+impl Default for LockboxRuntime {
+    fn default() -> Self {
+        Self(Arc::new(LockboxRuntimeInner {
+            session: Mutex::new(LockboxSession::default()),
+            deadline_changed: Condvar::new(),
+            expiry_worker_started: AtomicBool::new(false),
+            search_runtime: Mutex::new(None),
+        }))
+    }
+}
+
+impl LockboxRuntime {
+    fn lock(&self) -> LockResult<MutexGuard<'_, LockboxSession>> {
+        self.0.session.lock()
+    }
+
+    fn notify_deadline_changed(&self) {
+        self.0.deadline_changed.notify_all();
+    }
+
+    fn bound_search_runtime(&self) -> Option<search_runtime::SearchRuntime> {
+        self.0
+            .search_runtime
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
+}
 
 enum LockboxWriteKey {
     Master(Vec<u8>),
     Public(RsaPublicKey),
 }
 
+#[derive(Clone)]
 struct LockboxReadKeys {
     master_key: Vec<u8>,
     write_private_key: Option<RsaPrivateKey>,
@@ -1253,15 +1299,19 @@ fn list_fragments_in_vault(
         .filter_map(|path| read_fragment(path, &vault, &dirty_paths, None).ok())
         .collect::<Vec<_>>();
 
-    if let Some(read_keys) = unlocked_lockbox_read_keys(vault, lockbox_runtime) {
+    if let Ok(lease) = search_lockbox::peek_lockbox_read_lease(vault, lockbox_runtime) {
+        let public_count = fragments.len();
         let mut lockbox_files = Vec::new();
         collect_lockbox_files(&vault.join("lockbox").join("fragments"), &mut lockbox_files)?;
         collect_lockbox_files(&vault.join("lockbox").join("archive"), &mut lockbox_files)?;
         collect_lockbox_files(&vault.join("lockbox").join("notes"), &mut lockbox_files)?;
 
         fragments.extend(lockbox_files.iter().filter_map(|path| {
-            read_lockbox_fragment(path, vault, &dirty_paths, &read_keys, None).ok()
+            read_lockbox_fragment(path, vault, &dirty_paths, lease.read_keys(), None).ok()
         }));
+        if lease.validate_session().is_err() {
+            fragments.truncate(public_count);
+        }
     }
 
     fragments.sort_by(|a, b| {
@@ -1491,7 +1541,7 @@ async fn update_fragment_tags(
     let lockbox_runtime = lockbox_runtime.inner().clone();
     run_blocking(move || {
         let vault = ensure_vault_dirs(&app)?;
-        let _gate = lock_vault_gate(&vault);
+        let gate = lock_vault_gate(&vault);
         let normalized_tags = normalize_tags(tags, false);
 
         if let Some(lockbox_path) = find_lockbox_fragment_path(&vault, &id)? {
@@ -1509,7 +1559,12 @@ async fn update_fragment_tags(
         let (mut frontmatter, body) = parse_fragment_text(&text)?;
 
         if contains_lockbox_tag(&normalized_tags) {
-            return move_public_fragment_to_lockbox_in_vault(&vault, &lockbox_runtime, &path);
+            return move_public_fragment_to_lockbox_in_vault(
+                &vault,
+                &lockbox_runtime,
+                &gate,
+                &path,
+            );
         }
 
         let mut next_tags = normalized_tags;
@@ -1547,7 +1602,7 @@ async fn update_fragment(
         }
 
         let vault = ensure_vault_dirs(&app)?;
-        let _gate = lock_vault_gate(&vault);
+        let gate = lock_vault_gate(&vault);
         let normalized_tags = normalize_tags(tags.unwrap_or_default(), false);
 
         if let Some(lockbox_path) = find_lockbox_fragment_path(&vault, &id)? {
@@ -1575,6 +1630,7 @@ async fn update_fragment(
             return move_public_fragment_content_to_lockbox_in_vault(
                 &vault,
                 &lockbox_runtime,
+                &gate,
                 &path,
                 content.trim(),
                 normalized_tags,
@@ -1675,10 +1731,10 @@ async fn move_fragment_to_lockbox(
     let lockbox_runtime = lockbox_runtime.inner().clone();
     run_blocking(move || {
         let vault = ensure_vault_dirs(&app)?;
-        let _gate = lock_vault_gate(&vault);
+        let gate = lock_vault_gate(&vault);
         checkpoint_before_structural_locked(&vault);
         let path = find_fragment_path(&vault, &id)?.ok_or_else(|| format!("找不到片段 {}", id))?;
-        move_public_fragment_to_lockbox_in_vault(&vault, &lockbox_runtime, &path)?;
+        move_public_fragment_to_lockbox_in_vault(&vault, &lockbox_runtime, &gate, &path)?;
         list_fragments_in_vault(&vault, &lockbox_runtime)
     })
     .await
@@ -4650,6 +4706,7 @@ fn set_lockbox_fragment_pinned_in_vault(
 fn move_public_fragment_to_lockbox_in_vault(
     vault: &Path,
     lockbox_runtime: &LockboxRuntime,
+    gate: &search_runtime::VaultWriteGuard,
     path: &Path,
 ) -> Result<Fragment, String> {
     let text = fs::read_to_string(path).map_err(|error| error.to_string())?;
@@ -4657,6 +4714,7 @@ fn move_public_fragment_to_lockbox_in_vault(
     move_public_fragment_payload_to_lockbox_in_vault(
         vault,
         lockbox_runtime,
+        gate,
         path,
         body.trim_start_matches('\n'),
         frontmatter.tags.clone(),
@@ -4667,6 +4725,7 @@ fn move_public_fragment_to_lockbox_in_vault(
 fn move_public_fragment_content_to_lockbox_in_vault(
     vault: &Path,
     lockbox_runtime: &LockboxRuntime,
+    gate: &search_runtime::VaultWriteGuard,
     path: &Path,
     content: &str,
     tags: Vec<String>,
@@ -4676,6 +4735,7 @@ fn move_public_fragment_content_to_lockbox_in_vault(
     move_public_fragment_payload_to_lockbox_in_vault(
         vault,
         lockbox_runtime,
+        gate,
         path,
         content,
         tags,
@@ -4686,6 +4746,7 @@ fn move_public_fragment_content_to_lockbox_in_vault(
 fn move_public_fragment_payload_to_lockbox_in_vault(
     vault: &Path,
     lockbox_runtime: &LockboxRuntime,
+    gate: &search_runtime::VaultWriteGuard,
     public_path: &Path,
     content: &str,
     tags: Vec<String>,
@@ -4717,6 +4778,7 @@ fn move_public_fragment_payload_to_lockbox_in_vault(
     if let Some(parent) = lockbox_path.parent() {
         fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
+    gate.invalidate_public_snapshot();
     write_lockbox_fragment_file(&lockbox_path, &write_key, &frontmatter, content)?;
     fs::remove_file(public_path).map_err(|error| error.to_string())?;
 
@@ -5338,20 +5400,9 @@ fn lockbox_state(vault: &Path, lockbox_runtime: &LockboxRuntime) -> LockboxState
 }
 
 fn unlocked_lockbox_master_key(vault: &Path, lockbox_runtime: &LockboxRuntime) -> Option<Vec<u8>> {
-    let mut session = lockbox_runtime.lock().ok()?;
-    if session.vault_path.as_deref() != Some(vault) {
-        *session = LockboxSession::default();
-        return None;
-    }
-
-    let expires_at = session.expires_at?;
-    if SystemTime::now() >= expires_at {
-        *session = LockboxSession::default();
-        return None;
-    }
-
-    session.expires_at = Some(SystemTime::now() + LOCKBOX_TTL);
-    session.master_key.clone()
+    search_lockbox::renew_lockbox_read_lease(vault, lockbox_runtime)
+        .ok()
+        .map(|lease| lease.read_keys().master_key.clone())
 }
 
 fn require_unlocked_lockbox_master_key(
@@ -5368,15 +5419,7 @@ fn unlocked_lockbox_read_keys(
     vault: &Path,
     lockbox_runtime: &LockboxRuntime,
 ) -> Option<LockboxReadKeys> {
-    let master_key = unlocked_lockbox_master_key(vault, lockbox_runtime)?;
-    let write_private_key = read_lockbox_manifest(vault)
-        .ok()
-        .and_then(|manifest| decrypt_lockbox_write_private_key(&manifest, &master_key).ok())
-        .flatten();
-    Some(LockboxReadKeys {
-        master_key,
-        write_private_key,
-    })
+    search_lockbox::renew_lockbox_read_keys(vault, lockbox_runtime)
 }
 
 fn require_unlocked_lockbox_read_keys(
@@ -5417,31 +5460,15 @@ fn lockbox_write_key(
 }
 
 fn lockbox_expires_at(vault: &Path, lockbox_runtime: &LockboxRuntime) -> Option<SystemTime> {
-    let mut session = lockbox_runtime.lock().ok()?;
-    if session.vault_path.as_deref() != Some(vault) {
-        *session = LockboxSession::default();
-        return None;
-    }
-    let expires_at = session.expires_at?;
-    if SystemTime::now() >= expires_at {
-        *session = LockboxSession::default();
-        return None;
-    }
-    Some(expires_at)
+    search_lockbox::current_expires_at(vault, lockbox_runtime)
 }
 
 fn unlock_lockbox_runtime(lockbox_runtime: &LockboxRuntime, vault: &Path, master_key: &[u8]) {
-    if let Ok(mut session) = lockbox_runtime.lock() {
-        session.vault_path = Some(vault.to_path_buf());
-        session.master_key = Some(master_key.to_vec());
-        session.expires_at = Some(SystemTime::now() + LOCKBOX_TTL);
-    }
+    search_lockbox::unlock_runtime(lockbox_runtime, vault, master_key);
 }
 
 fn lock_lockbox_runtime(lockbox_runtime: &LockboxRuntime) {
-    if let Ok(mut session) = lockbox_runtime.lock() {
-        *session = LockboxSession::default();
-    }
+    search_lockbox::lock_runtime(lockbox_runtime);
 }
 
 fn system_time_to_rfc3339(value: SystemTime) -> String {
@@ -6327,9 +6354,13 @@ fn relative_path(vault: &Path, path: &Path) -> Result<String, String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let search_runtime = search_runtime::managed_runtime();
+    let lockbox_runtime = LockboxRuntime::default();
+    search_lockbox::bind_search_runtime(&lockbox_runtime, search_runtime.clone());
+    search_sources::install_snapshot_builder(&search_runtime, &lockbox_runtime);
     tauri::Builder::default()
-        .manage(Arc::new(Mutex::new(LockboxSession::default())))
-        .manage(search_runtime::managed_runtime())
+        .manage(lockbox_runtime)
+        .manage(search_runtime)
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
@@ -6870,7 +6901,7 @@ mod tests {
     fn rejects_lockbox_fragment_links_in_plain_mind_maps() {
         let tempdir = tempfile::tempdir().unwrap();
         let vault = tempdir.path();
-        let runtime = Arc::new(Mutex::new(LockboxSession::default()));
+        let runtime = LockboxRuntime::default();
 
         ensure_vault_layout(vault).unwrap();
         setup_lockbox_in_vault(vault, &runtime, "correct horse").unwrap();
@@ -6915,7 +6946,7 @@ mod tests {
     fn lockbox_filters_private_fragments_until_unlocked() {
         let tempdir = tempfile::tempdir().unwrap();
         let vault = tempdir.path();
-        let runtime = Arc::new(Mutex::new(LockboxSession::default()));
+        let runtime = LockboxRuntime::default();
 
         ensure_vault_layout(vault).unwrap();
         setup_lockbox_in_vault(vault, &runtime, "correct horse").unwrap();
@@ -6951,10 +6982,31 @@ mod tests {
     }
 
     #[test]
+    fn search_peek_and_background_list_do_not_extend_ttl() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let vault = tempdir.path();
+        let runtime = LockboxRuntime::default();
+        ensure_vault_layout(vault).unwrap();
+        setup_lockbox_in_vault(vault, &runtime, "correct horse").unwrap();
+        create_lockbox_fragment_in_vault(vault, &runtime, "private note", vec![]).unwrap();
+
+        let expected_expiry = SystemTime::now() + Duration::from_secs(60);
+        search_lockbox::set_expiry_for_test(&runtime, expected_expiry);
+        let lease = search_lockbox::peek_lockbox_read_lease(vault, &runtime).unwrap();
+        assert_eq!(lease.expires_at(), expected_expiry);
+        assert_eq!(lockbox_expires_at(vault, &runtime), Some(expected_expiry));
+
+        let state = list_fragments_in_vault(vault, &runtime).unwrap();
+        assert_eq!(state.fragments.len(), 1);
+        assert_eq!(lockbox_expires_at(vault, &runtime), Some(expected_expiry));
+        lock_lockbox_runtime(&runtime);
+    }
+
+    #[test]
     fn lockbox_accepts_writes_while_locked_but_requires_unlock_to_read() {
         let tempdir = tempfile::tempdir().unwrap();
         let vault = tempdir.path();
-        let runtime = Arc::new(Mutex::new(LockboxSession::default()));
+        let runtime = LockboxRuntime::default();
 
         ensure_vault_layout(vault).unwrap();
         setup_lockbox_in_vault(vault, &runtime, "correct horse").unwrap();
@@ -6986,7 +7038,7 @@ mod tests {
     fn recovery_key_resets_lockbox_password_and_rotates_recovery() {
         let tempdir = tempfile::tempdir().unwrap();
         let vault = tempdir.path();
-        let runtime = Arc::new(Mutex::new(LockboxSession::default()));
+        let runtime = LockboxRuntime::default();
 
         ensure_vault_layout(vault).unwrap();
         let recovery_key = setup_lockbox_in_vault(vault, &runtime, "old password").unwrap();
@@ -7090,7 +7142,7 @@ mod tests {
     fn test_link_fragments_rejects_lockbox() {
         let tempdir = tempfile::tempdir().unwrap();
         let vault = tempdir.path();
-        let runtime = Arc::new(Mutex::new(LockboxSession::default()));
+        let runtime = LockboxRuntime::default();
         ensure_vault_layout(vault).unwrap();
         setup_lockbox_in_vault(vault, &runtime, "correct horse").unwrap();
         let public_id = write_public_test_fragment(vault, "public note");
@@ -7333,13 +7385,15 @@ mod tests {
     fn moves_note_to_lockbox_notes_and_lists_it_when_unlocked() {
         let tempdir = tempfile::tempdir().unwrap();
         let vault = tempdir.path();
-        let runtime = Arc::new(Mutex::new(LockboxSession::default()));
+        let runtime = LockboxRuntime::default();
         ensure_vault_layout(vault).unwrap();
         setup_lockbox_in_vault(vault, &runtime, "correct horse").unwrap();
         let source = vault.join("notes/笔记.md");
         write_t6_fragment(&source, "note-root", vec!["note", "inbox"], "笔记正文");
 
-        let moved = move_public_fragment_to_lockbox_in_vault(vault, &runtime, &source).unwrap();
+        let gate = lock_vault_gate(vault);
+        let moved =
+            move_public_fragment_to_lockbox_in_vault(vault, &runtime, &gate, &source).unwrap();
 
         let target = vault.join("lockbox/notes/笔记.shard");
         assert!(!source.exists());
@@ -7354,14 +7408,15 @@ mod tests {
     fn preserves_note_subdirectories_when_moving_to_lockbox() {
         let tempdir = tempfile::tempdir().unwrap();
         let vault = tempdir.path();
-        let runtime = Arc::new(Mutex::new(LockboxSession::default()));
+        let runtime = LockboxRuntime::default();
         ensure_vault_layout(vault).unwrap();
         setup_lockbox_in_vault(vault, &runtime, "correct horse").unwrap();
         let source = vault.join("notes/子目录/x.md");
         fs::create_dir_all(source.parent().unwrap()).unwrap();
         write_t6_fragment(&source, "note-nested", vec!["note"], "子目录笔记");
 
-        move_public_fragment_to_lockbox_in_vault(vault, &runtime, &source).unwrap();
+        let gate = lock_vault_gate(vault);
+        move_public_fragment_to_lockbox_in_vault(vault, &runtime, &gate, &source).unwrap();
 
         assert!(!source.exists());
         assert!(vault.join("lockbox/notes/子目录/x.shard").is_file());
@@ -7371,14 +7426,21 @@ mod tests {
     fn preserves_fragment_lockbox_destination() {
         let tempdir = tempfile::tempdir().unwrap();
         let vault = tempdir.path();
-        let runtime = Arc::new(Mutex::new(LockboxSession::default()));
+        let runtime = LockboxRuntime::default();
         ensure_vault_layout(vault).unwrap();
         setup_lockbox_in_vault(vault, &runtime, "correct horse").unwrap();
         let fragment_source = vault.join("fragments/2026/08/fragment.md");
         fs::create_dir_all(fragment_source.parent().unwrap()).unwrap();
         write_t6_fragment(&fragment_source, "fragment-source", vec!["inbox"], "碎片");
 
-        move_public_fragment_to_lockbox_in_vault(vault, &runtime, &fragment_source).unwrap();
+        let gate = lock_vault_gate(vault);
+        move_public_fragment_to_lockbox_in_vault(
+            vault,
+            &runtime,
+            &gate,
+            &fragment_source,
+        )
+        .unwrap();
 
         assert!(vault.join("lockbox/fragments/2026/08/fragment.shard").is_file());
     }
@@ -7387,7 +7449,7 @@ mod tests {
     fn lockbox_delete_stays_encrypted_inside_lockbox() {
         let tempdir = tempfile::tempdir().unwrap();
         let vault = tempdir.path();
-        let runtime = Arc::new(Mutex::new(LockboxSession::default()));
+        let runtime = LockboxRuntime::default();
         ensure_vault_layout(vault).unwrap();
         setup_lockbox_in_vault(vault, &runtime, "correct horse").unwrap();
         let fragment =
@@ -7410,13 +7472,14 @@ mod tests {
     fn rejects_moving_public_document_outside_supported_roots_to_lockbox() {
         let tempdir = tempfile::tempdir().unwrap();
         let vault = tempdir.path();
-        let runtime = Arc::new(Mutex::new(LockboxSession::default()));
+        let runtime = LockboxRuntime::default();
         ensure_vault_layout(vault).unwrap();
         setup_lockbox_in_vault(vault, &runtime, "correct horse").unwrap();
         let source = vault.join("maps/outside.md");
         write_t6_fragment(&source, "outside-root", vec!["inbox"], "其他文档");
 
-        let error = move_public_fragment_to_lockbox_in_vault(vault, &runtime, &source)
+        let gate = lock_vault_gate(vault);
+        let error = move_public_fragment_to_lockbox_in_vault(vault, &runtime, &gate, &source)
             .unwrap_err();
 
         assert_eq!(
