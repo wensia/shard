@@ -1,5 +1,6 @@
 import type { Editor } from "@tiptap/core"
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model"
+import type { EditorState, Transaction } from "@tiptap/pm/state"
 
 import { getTagMarker } from "@/lib/editor-format"
 import type { SlashCommandId } from "@/lib/slash-commands"
@@ -138,6 +139,111 @@ export function insertRichMemoCard(editor: Editor) {
   if (pos === null) return
   // taskItem 起点 +1 进入任务项、+1 进入标题段落，正好是标题正文的起点。
   editor.chain().focus().setTextSelection(pos + 2).run()
+}
+
+/** 任务项标题段里已有的提醒芯片（按文档顺序）。 */
+export function findTaskReminders(task: ProseMirrorNode, taskPos: number) {
+  const title = task.firstChild
+  const found: { pos: number; at: string }[] = []
+  if (!title?.isTextblock) return found
+  title.forEach((child, offset) => {
+    if (child.type.name === "reminder") found.push({ pos: taskPos + 2 + offset, at: String(child.attrs.at ?? "") })
+  })
+  return found
+}
+
+const LEAF_PLACEHOLDER = "\ufffc"
+
+function charAt(doc: ProseMirrorNode, from: number, to: number) {
+  return doc.textBetween(from, to, "\n", LEAF_PLACEHOLDER)
+}
+
+/**
+ * 删除 `pos` 处的提醒芯片，连带它和正文之间的那一个分隔空格：
+ * 芯片在行尾时吃掉前面的空格，在句中时吃掉后面的空格，文件里不留多余空白。
+ */
+function deleteReminder(tr: Transaction, pos: number) {
+  const node = tr.doc.nodeAt(pos)
+  if (!node || node.type.name !== "reminder") return
+  const $pos = tr.doc.resolve(pos)
+  const start = $pos.start()
+  const end = $pos.end()
+  let from = pos
+  let to = pos + node.nodeSize
+  const after = to < end ? charAt(tr.doc, to, to + 1) : ""
+  const before = from > start ? charAt(tr.doc, from - 1, from) : ""
+  if ((after === "" || after === "\n" || after === LEAF_PLACEHOLDER) && before === " ") from -= 1
+  else if (after === " ") to += 1
+  tr.delete(from, to)
+}
+
+/**
+ * 设置 / 替换 / 清除一张任务卡片的提醒（`at` 为 `YYYY-MM-DD HH:mm`，null 表示清除）。
+ *
+ * 提醒写在标题段第一行的末尾（Tasks 兼容写法要求与任务同一行），
+ * 一张卡片只保留一个：已有就改第一个的时间、删掉多余的。返回 null 表示位置不是任务项。
+ */
+export function taskReminderTransaction(
+  state: EditorState,
+  taskPos: number,
+  at: string | null
+): Transaction | null {
+  const task = state.doc.nodeAt(taskPos)
+  const title = task?.firstChild
+  if (!task || task.type.name !== "taskItem" || !title?.isTextblock) return null
+
+  const existing = findTaskReminders(task, taskPos)
+  const tr = state.tr
+  const keep = at === null ? null : existing[0] ?? null
+  // 从后往前删，前面的位置不受影响。
+  for (const reminder of [...existing].reverse()) {
+    if (reminder !== keep) deleteReminder(tr, reminder.pos)
+  }
+  if (at === null) return tr
+
+  if (keep) {
+    tr.setNodeMarkup(keep.pos, undefined, { at })
+    return tr
+  }
+
+  const titleStart = taskPos + 2
+  let insertAt = titleStart + title.content.size
+  let found = false
+  title.forEach((child, offset) => {
+    if (found) return
+    if (child.type.name === "hardBreak") {
+      insertAt = titleStart + offset
+      found = true
+    } else if (child.isText) {
+      const index = (child.text ?? "").indexOf("\n")
+      if (index >= 0) {
+        insertAt = titleStart + offset + index
+        found = true
+      }
+    }
+  })
+
+  const reminder = state.schema.nodes.reminder.create({ at })
+  const before = insertAt > titleStart ? charAt(tr.doc, insertAt - 1, insertAt) : ""
+  const needsSpace = before !== "" && !/\s/u.test(before)
+  tr.insert(insertAt, needsSpace ? [state.schema.text(" "), reminder] : [reminder])
+  return tr
+}
+
+export function setTaskReminder(editor: Editor, taskPos: number, at: string | null) {
+  const tr = taskReminderTransaction(editor.state, taskPos, at)
+  if (!tr) return false
+  editor.view.dispatch(tr)
+  return true
+}
+
+/** 删除单个提醒芯片（芯片自己的弹层里「清除提醒」用）。 */
+export function removeReminder(editor: Editor, pos: number) {
+  const tr = editor.state.tr
+  deleteReminder(tr, pos)
+  if (!tr.docChanged) return false
+  editor.view.dispatch(tr)
+  return true
 }
 
 /**

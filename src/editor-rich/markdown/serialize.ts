@@ -296,6 +296,14 @@ function writeInlineNode(
     const following = next?.type === "text" ? (next.text ?? "") : ""
     const head = following.charAt(0)
     if (head && head !== "#" && !isTagBoundary(head)) writer.raw(" ")
+    // 标签一直吃到空白为止，紧跟的提醒不隔开就会被读成标签的一部分。
+    else if (next?.type === "reminder") writer.raw(" ")
+    return
+  }
+
+  if (node.type === "reminder") {
+    // 原样写回 `⏰ YYYY-MM-DD HH:mm`；前后空白属于相邻文本节点，这里不增不减，保证往返字节不变。
+    writer.raw(`⏰ ${String(node.attrs?.at ?? "")}`)
     return
   }
 

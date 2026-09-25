@@ -14,6 +14,7 @@ import { CsvEmbed } from "./csv-embed"
 import { ImageNodeView } from "./image-view"
 import { ISOLATED_NODE_VIEW_OPTIONS } from "./node-view-utils"
 import { RawBlock } from "./raw-block"
+import { Reminder } from "./reminder"
 import { ShardBlock } from "./shard-block"
 import { Tag } from "./tag"
 import { TASK_ITEM_CONTROL_ATTRIBUTE, TaskItemNodeView } from "./task-item-view"
@@ -21,11 +22,13 @@ import { Wikilink } from "./wikilink"
 
 export { CsvEmbed } from "./csv-embed"
 export { RawBlock } from "./raw-block"
+export { Reminder } from "./reminder"
 export { ShardBlock } from "./shard-block"
 export { Tag } from "./tag"
 export { Wikilink } from "./wikilink"
 export type { CsvEmbedAttributes } from "./csv-embed"
 export type { RawBlockAttributes } from "./raw-block"
+export type { ReminderAttributes } from "./reminder"
 export type { ShardBlockAttributes } from "./shard-block"
 export type { TagAttributes } from "./tag"
 export type { WikilinkAttributes } from "./wikilink"
@@ -96,6 +99,7 @@ export const shardEditorExtensions: AnyExtension[] = [
   TableCell,
   Tag,
   Wikilink,
+  Reminder,
   CsvEmbed,
   ShardBlock,
   RawBlock,

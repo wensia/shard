@@ -1,6 +1,6 @@
 import type { JSONContent } from "@tiptap/core"
 import { markdownParser } from "@shard/markdown/core"
-import { getTagRanges, normalizeTag } from "@shard/markdown/core"
+import { findReminderRanges, getTagRanges, normalizeTag } from "@shard/markdown/core"
 
 import { isShardBlockLanguage, normalizeShardBlockLanguage } from "@/editor-rich/blocks/registry"
 import { isCsvWikilinkTarget, parseWikilinks } from "@/lib/wikilink"
@@ -416,6 +416,15 @@ function scanAtoms(
       const name = normalizeTag(range.text)
       if (!name) continue
       atoms.push({ from: absoluteFrom, to: absoluteTo, embed: false, node: { type: "tag", attrs: { name } } })
+    }
+
+    // `⏰ YYYY-MM-DD HH:mm` 提醒；与双链、标签重叠时让位给它们（`[[⏰ …]]`、`#x⏰ …`）。
+    for (const range of findReminderRanges(segment)) {
+      if (range.start < offset) continue
+      const absoluteFrom = start - offset + range.start
+      const absoluteTo = start - offset + range.end
+      if (atoms.some((atom) => absoluteFrom < atom.to && atom.from < absoluteTo)) continue
+      atoms.push({ from: absoluteFrom, to: absoluteTo, embed: false, node: { type: "reminder", attrs: { at: range.at } } })
     }
   }
 

@@ -223,6 +223,7 @@ function atomSearchText(node: ProseMirrorNode) {
   if (node.type.name === "wikilink") {
     return String(node.attrs.alias ?? node.attrs.target ?? "")
   }
+  if (node.type.name === "reminder") return `⏰ ${String(node.attrs.at ?? "")}`
   if (node.type.name === "csvEmbed") return String(node.attrs.path ?? "")
   if (node.type.name === "image") return String(node.attrs.alt ?? node.attrs.src ?? "")
   return String(node.attrs.source ?? node.textContent ?? "")

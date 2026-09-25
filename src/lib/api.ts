@@ -329,6 +329,15 @@ export function setCanvasGrabCursor(active: boolean) {
   return desktopInvoke<void>("set_canvas_grab_cursor", { active })
 }
 
+/**
+ * 推送全部未勾选备忘的提醒时间（毫秒时间戳），由 Rust 后台线程计算 Dock 角标。
+ * 浏览器预览没有 Dock，静默跳过。
+ */
+export function setReminderSchedule(dueAt: number[]) {
+  if (!isTauri()) return Promise.resolve()
+  return desktopInvoke<void>("set_reminder_schedule", { dueAt })
+}
+
 export function setVaultPath(path: string, initializeGit: boolean) {
   return invokeVaultState("set_vault_path", { path, initializeGit })
 }

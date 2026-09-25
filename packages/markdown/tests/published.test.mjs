@@ -26,6 +26,15 @@ test("the published core works without a DOM or a Shard runtime", () => {
   ])
 })
 
+test("the published core collects task reminders", () => {
+  const reminders = core.collectTaskReminders("- [ ] 买菜 ⏰ 2026-10-01 09:00\n- [x] 完成 ⏰ 2026-10-02 10:00")
+  assert.deepEqual(reminders.map(item => [item.at, item.checked]), [
+    ["2026-10-01 09:00", false],
+    ["2026-10-02 10:00", true],
+  ])
+  assert.equal(reminders[0].dueAt, new Date(2026, 9, 1, 9, 0).getTime())
+})
+
 test("a closed fence becomes one block while its lines stay addressable", async () => {
   const { parseMarkdownContent } = await import("../dist/parser.js")
   const { blocks, lastVisibleIndex } = parseMarkdownContent("前言\n```mindmap\n- 根\n  - 甲\n```\n结尾")

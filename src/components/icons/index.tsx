@@ -23,6 +23,7 @@ import {
   ArrowRightIcon as LArrowRight,
   ArrowUpIcon as LArrowUp,
   ArrowUpDownIcon as LArrowUpDown,
+  BellIcon as LBell,
   BoldIcon as LBold,
   BookOpenIcon as LBookOpen,
   CalendarDaysIcon as LCalendarDays,
@@ -32,6 +33,7 @@ import {
   ChevronRightIcon as LChevronRight,
   CircleAlertIcon as LCircleAlert,
   CircleCheckIcon as LCircleCheck,
+  ClockIcon as LClock,
   CopyIcon as LCopy,
   CornerUpLeftIcon as LCornerUpLeft,
   DownloadIcon as LDownload,
@@ -113,6 +115,7 @@ export const ArrowLeftIcon = /*#__PURE__*/ withIconDefaults(LArrowLeft)
 export const ArrowRightIcon = /*#__PURE__*/ withIconDefaults(LArrowRight)
 export const ArrowUpIcon = /*#__PURE__*/ withIconDefaults(LArrowUp)
 export const ArrowUpDownIcon = /*#__PURE__*/ withIconDefaults(LArrowUpDown)
+export const BellIcon = /*#__PURE__*/ withIconDefaults(LBell)
 export const BoldIcon = /*#__PURE__*/ withIconDefaults(LBold)
 export const BookOpenIcon = /*#__PURE__*/ withIconDefaults(LBookOpen)
 export const CalendarDaysIcon = /*#__PURE__*/ withIconDefaults(LCalendarDays)
@@ -122,6 +125,7 @@ export const ChevronLeftIcon = /*#__PURE__*/ withIconDefaults(LChevronLeft)
 export const ChevronRightIcon = /*#__PURE__*/ withIconDefaults(LChevronRight)
 export const CircleAlertIcon = /*#__PURE__*/ withIconDefaults(LCircleAlert)
 export const CircleCheckIcon = /*#__PURE__*/ withIconDefaults(LCircleCheck)
+export const ClockIcon = /*#__PURE__*/ withIconDefaults(LClock)
 export const CopyIcon = /*#__PURE__*/ withIconDefaults(LCopy)
 export const CornerUpLeftIcon = /*#__PURE__*/ withIconDefaults(LCornerUpLeft)
 export const DownloadIcon = /*#__PURE__*/ withIconDefaults(LDownload)

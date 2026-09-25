@@ -226,6 +226,57 @@
   text-decoration-color: var(--muted-foreground);
 }
 
+/* 提醒芯片（`⏰ YYYY-MM-DD HH:mm`）：独立的行内原子，不走标签「只着色」的规则，
+ * 画成一枚安静的 muted 芯片；图标跟随 1em（design.md：标签内图标优先跟随字号）。 */
+.shard-rich-editor .ProseMirror .shard-rich-reminder {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0 var(--space-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--muted);
+  color: var(--muted-foreground);
+  font: inherit;
+  font-size: var(--text-meta);
+  font-variant-numeric: tabular-nums;
+  line-height: inherit;
+  vertical-align: baseline;
+  white-space: nowrap;
+  --shard-icon-stroke: var(--shard-icon-stroke-sm);
+}
+
+.shard-rich-editor .ProseMirror button.shard-rich-reminder {
+  cursor: pointer;
+}
+
+.shard-rich-editor .ProseMirror button.shard-rich-reminder:hover,
+.shard-rich-editor .ProseMirror button.shard-rich-reminder[data-popup-open] {
+  border-color: var(--border-visible);
+  color: var(--foreground);
+}
+
+.shard-rich-editor .ProseMirror .shard-rich-reminder svg {
+  width: 1em;
+  height: 1em;
+}
+
+/* 已到点且所在任务项未勾选：kiln 警示色。只认任务标题段里的芯片，
+ * 与 Dock 角标「已到点且未勾选」的计数口径一致；勾选后自动退回安静态。 */
+.shard-rich-editor
+  .ProseMirror
+  li[data-checked="false"]
+  > .shard-rich-task
+  > .shard-rich-task-body
+  > *
+  > p:first-child
+  .shard-rich-reminder[data-due="true"] {
+  border-color: color-mix(in srgb, var(--warning) 35%, transparent);
+  background: var(--warning-bg);
+  color: var(--warning);
+}
+
 /* 正在输入的 `[[查询`：与已落地的双链同色。 */
 .shard-rich-editor .ProseMirror .shard-rich-suggestion-mark--wikilink {
   color: var(--info);
@@ -431,6 +482,59 @@
 .shard-rich-editor .ProseMirror .shard-rich-memo-toggle {
   flex-shrink: 0;
   color: var(--muted-foreground);
+}
+
+/* 备忘卡片的提醒钮：与折叠钮同一档；已设提醒时提到正文色，一眼可见。 */
+.shard-rich-editor .ProseMirror .shard-rich-memo-reminder {
+  flex-shrink: 0;
+  color: var(--muted-foreground);
+}
+
+.shard-rich-editor .ProseMirror .shard-rich-memo-reminder[data-active="true"] {
+  color: var(--foreground);
+}
+
+/* 提醒弹层：挂在 body 上，表面沿用 kiln 日期浮层（--popover + --shadow-popover），
+ * 宽度与日历浮层一致，内层 DatePicker / TimePicker 并排。 */
+.shard-reminder-popup {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  width: calc(var(--control-height) * 7 + var(--space-1) * 6 + var(--space-3) * 2);
+  max-width: var(--available-width);
+  max-height: var(--available-height);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: var(--space-3);
+  border-radius: var(--radius-card);
+  background: var(--popover);
+  color: var(--popover-foreground);
+  box-shadow: var(--shadow-popover);
+  outline: none;
+}
+
+.shard-reminder-popup-title {
+  margin: 0;
+  font-size: var(--text-body);
+  font-weight: 500;
+}
+
+.shard-reminder-popup-quick {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.shard-reminder-popup-custom {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  gap: var(--space-2);
+}
+
+.shard-reminder-popup-footer {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-2);
 }
 
 /* 浮层：标签建议与命令菜单共用。挂 document.body + fixed 定位，

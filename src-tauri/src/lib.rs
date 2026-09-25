@@ -39,6 +39,7 @@ mod canvas_commands;
 mod table_commands;
 mod table_exchange_commands;
 mod window_frame;
+mod reminder_badge;
 mod search_commands;
 mod search_contract;
 #[allow(dead_code)] // Lifecycle test probes remain available for later search tasks.
@@ -6359,12 +6360,14 @@ pub fn run() {
     tauri::Builder::default()
         .manage(lockbox_runtime)
         .manage(search_runtime)
+        .manage(reminder_badge::ReminderSchedule::default())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             for window in app.webview_windows().values() {
                 window_frame::set_startup_minimum(window)?;
             }
+            reminder_badge::spawn_badge_worker(app.handle().clone())?;
 
             Ok(())
         })
@@ -6436,6 +6439,7 @@ pub fn run() {
             copy_exported_image,
             set_window_controls_hidden,
             set_canvas_grab_cursor,
+            reminder_badge::set_reminder_schedule,
             sync_vault
         ])
         .run(tauri::generate_context!())

@@ -31,7 +31,8 @@
 .kiln-select-indicator svg { width: var(--shard-icon-size-sm); height: var(--shard-icon-size-sm); }
 .kiln-control-positioner { z-index: 50; outline: none; }
 .kiln-select-popup,
-.kiln-date-popup { border-radius: var(--radius-card); background: var(--popover); color: var(--popover-foreground); box-shadow: var(--shadow-popover); outline: none; }
+.kiln-date-popup,
+.kiln-time-popup { border-radius: var(--radius-card); background: var(--popover); color: var(--popover-foreground); box-shadow: var(--shadow-popover); outline: none; }
 .kiln-select-popup { width: var(--anchor-width); max-width: min(var(--available-width), calc(100vw - var(--space-4))); overflow: hidden; }
 .kiln-select-list { max-height: min(var(--available-height), calc(var(--control-height) * 8)); overflow-y: auto; overscroll-behavior: contain; padding: var(--space-1); }
 .kiln-select-item { position: relative; display: flex; align-items: center; min-height: var(--control-height-sm); padding: var(--space-1) var(--space-2) var(--space-1) var(--space-8); border-radius: var(--radius-control); font-size: var(--text-body); line-height: var(--leading-normal); cursor: pointer; outline: none; overflow-wrap: anywhere; }
@@ -50,3 +51,9 @@
 .kiln-date-day[aria-pressed="true"] { background: var(--primary); color: var(--primary-foreground); }
 .kiln-date-footer { display: flex; justify-content: space-between; gap: var(--space-2); margin-top: var(--space-3); }
 .kiln-date-error { color: var(--destructive); font-size: var(--text-meta); margin-bottom: var(--space-2); }
+.kiln-time-popup { width: calc(var(--control-height) * 4 + var(--space-2) + var(--space-3) * 2); max-width: var(--available-width); max-height: var(--available-height); overflow-y: auto; overscroll-behavior: contain; padding: var(--space-3); }
+.kiln-time-input { font-variant-numeric: tabular-nums; }
+.kiln-time-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-2); margin-top: var(--space-3); }
+.kiln-time-column { position: relative; display: flex; flex-direction: column; gap: var(--space-1); max-height: calc(var(--control-height-sm) * 6 + var(--space-1) * 5); overflow-y: auto; overscroll-behavior: contain; }
+.kiln-time-option { width: 100%; font-weight: 400; font-variant-numeric: tabular-nums; }
+.kiln-time-option[aria-pressed="true"] { background: var(--primary); color: var(--primary-foreground); }

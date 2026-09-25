@@ -19,7 +19,7 @@ export interface ShardRichHostOptions {
 }
 
 /** Backspace 在这些行内原子节点之后整体删除，不退化成「先选中再删」两步。 */
-const ATOMIC_CHIPS = new Set(["tag", "wikilink"])
+const ATOMIC_CHIPS = new Set(["tag", "wikilink", "reminder"])
 
 function droppedImageFiles(event: DragEvent) {
   const dataTransfer = event.dataTransfer

@@ -144,6 +144,7 @@ import {
   useVaultSyncSchedule,
 } from "@/workspace/use-vault-sync"
 import { useAutoCheckpoint } from "@/workspace/use-auto-checkpoint"
+import { useReminderBadge } from "@/workspace/use-reminder-badge"
 import { useSearchController } from "@/workspace/use-search-controller"
 
 const AUTO_SYNC_FAILURE_TOAST_ID = "auto-sync-failure"
@@ -2241,6 +2242,9 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     },
     tickRef: autoSyncTickRef,
   })
+
+  // 备忘提醒 → Dock 角标：碎片加载完成后推送一次（已过期的立即计入），之后随内容变化去抖推送
+  useReminderBadge(fragments, !isLoading)
 
   // 自动检查点（合并保存）：内容保存只落盘，git 提交由 idle/失焦触发的检查点聚合
   const { recordContentActivity } = useAutoCheckpoint({
