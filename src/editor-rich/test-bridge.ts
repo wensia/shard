@@ -1,3 +1,5 @@
+import type { RevealPlan, RevealResult } from "@/lib/search-contract"
+
 /**
  * 编辑器测试桥：`window.__shardEditorTest`，只在开发构建或注入了
  * `__SHARD_TEST_COMMANDS__` 的测试环境里挂载。
@@ -24,6 +26,21 @@ export interface ShardEditorTestBridge {
   type(id: string, text: string): void
   focus(id: string): void
   snapshot(id: string): { composing: boolean; value: string }
+  reveal(id: string, plan: RevealPlan): Promise<RevealResult>
+  stepHit(id: string, direction: 1 | -1): Promise<RevealResult>
+  clearHits(id: string): void
+  diagnostics(id: string): ShardEditorRevealDiagnostics
+}
+
+export interface ShardEditorRevealDiagnostics {
+  activeIndex: number
+  dirty: boolean
+  hitCount: number
+  selection: { from: number; to: number }
+  undoDepth: number
+  value: string
+  viewportScrollTop: number | null
+  windowScrollY: number
 }
 
 /** 富文本编辑器注册进测试桥时提供的最小能力面。 */
@@ -36,6 +53,10 @@ export interface ShardRichEditorTestTarget {
   setMarkdown(value: string): void
   setSelection(from: number, to: number): void
   typeText(text: string): void
+  revealTerms(plan: RevealPlan): Promise<RevealResult>
+  stepHit(direction: 1 | -1): Promise<RevealResult>
+  clearHits(reason: "exit" | "edit" | "revoke" | "unmount"): void
+  diagnostics(): ShardEditorRevealDiagnostics
 }
 
 type ShardEditorTestGlobal = typeof globalThis & {
@@ -90,6 +111,18 @@ function ensureTestBridge() {
     snapshot(id) {
       const editor = getEditor(id)
       return { composing: editor.isComposing(), value: editor.getMarkdown() }
+    },
+    reveal(id, plan) {
+      return getEditor(id).revealTerms(plan)
+    },
+    stepHit(id, direction) {
+      return getEditor(id).stepHit(direction)
+    },
+    clearHits(id) {
+      getEditor(id).clearHits("exit")
+    },
+    diagnostics(id) {
+      return getEditor(id).diagnostics()
     },
   }
   return true

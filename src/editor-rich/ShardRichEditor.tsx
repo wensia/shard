@@ -1,6 +1,7 @@
 import Placeholder from "@tiptap/extension-placeholder"
 import { EditorContent, useEditor } from "@tiptap/react"
 import type { AnyExtension, Editor, JSONContent } from "@tiptap/core"
+import { undoDepth } from "@tiptap/pm/history"
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model"
 import {
   forwardRef,
@@ -12,6 +13,7 @@ import {
 } from "react"
 
 import type { SlashCommandId } from "@/lib/slash-commands"
+import type { SearchRevealHandle } from "@/lib/search-contract"
 import type { WikilinkCandidate } from "@/lib/wikilink"
 import type { ShardDocumentLink } from "@/types"
 import { registerShardRichEditorTest } from "./test-bridge"
@@ -37,6 +39,11 @@ import {
 } from "./extensions/inline-converge"
 import { ShardCaret } from "./extensions/shard-caret"
 import { ShardMemoGuard } from "./extensions/memo-guard"
+import {
+  createSearchRevealHandle,
+  getSearchHighlightState,
+  ShardSearchHighlight,
+} from "./extensions/search-highlight"
 import { ShardRichHost } from "./extensions/shard-host"
 import { ShardSlashSuggestion } from "./extensions/slash-suggestion"
 import { ShardTagSuggestion } from "./extensions/tag-suggestion"
@@ -102,7 +109,7 @@ export interface ShardRichEditorProps {
   onOpenDocumentLink?: (link: ShardDocumentLink) => void
 }
 
-export interface ShardRichEditorHandle {
+export interface ShardRichEditorHandle extends SearchRevealHandle {
   focus(): void
   getMarkdown(): string
   /**
@@ -228,6 +235,15 @@ export const ShardRichEditor = forwardRef<ShardRichEditorHandle, ShardRichEditor
     }
 
     const editorRef = useRef<Editor | null>(null)
+    const editorElementRef = useRef<HTMLDivElement>(null)
+    const searchRevealHandle = useMemo(
+      () =>
+        createSearchRevealHandle(
+          () => editorRef.current,
+          () => findEditorScrollViewport(editorElementRef.current)
+        ),
+      []
+    )
     /** 最近一次与宿主同步过的 Markdown，进出两个方向都以它为准。 */
     const lastMarkdownRef = useRef(value)
     // useEditor 每次渲染都会比较 options 的引用；content / editorProps 不稳定
@@ -345,6 +361,7 @@ export const ShardRichEditor = forwardRef<ShardRichEditorHandle, ShardRichEditor
         // 排在建议扩展之后：收敛要读它们的插件状态，菜单占着的一段先不动。
         ShardInlineConverge,
         ShardMemoGuard,
+        ShardSearchHighlight,
         ShardCaret,
       ],
       // 扩展集一次成型：回调全部经 callbacks ref 取最新值。
@@ -433,6 +450,24 @@ export const ShardRichEditor = forwardRef<ShardRichEditorHandle, ShardRichEditor
           editor.chain().focus().setTextSelection({ from, to }).run()
         },
         typeText: (text) => typeThroughInputRules(editor, text),
+        revealTerms: searchRevealHandle.revealTerms,
+        stepHit: searchRevealHandle.stepHit,
+        clearHits: searchRevealHandle.clearHits,
+        diagnostics: () => {
+          const search = getSearchHighlightState(editor)
+          const viewport = findEditorScrollViewport(editorElementRef.current)
+          const { from, to } = editor.state.selection
+          return {
+            activeIndex: search.activeIndex,
+            dirty: editor.state.doc !== loadedRef.current.doc,
+            hitCount: search.matches.length,
+            selection: { from, to },
+            undoDepth: undoDepth(editor.state),
+            value: serializeDoc(editor.state.doc),
+            viewportScrollTop: viewport?.scrollTop ?? null,
+            windowScrollY: window.scrollY,
+          }
+        },
       })
       // replaceMarkdown 只读 editorRef，无需进依赖表。
       // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -537,7 +572,10 @@ export const ShardRichEditor = forwardRef<ShardRichEditorHandle, ShardRichEditor
         isComposing() {
           return editorRef.current?.view.composing ?? false
         },
+        clearHits: searchRevealHandle.clearHits,
+        revealTerms: searchRevealHandle.revealTerms,
         setMarkdown: replaceMarkdown,
+        stepHit: searchRevealHandle.stepHit,
       }),
       // 句柄方法全部从 editorRef 取实例，创建一次即可。
       // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -547,6 +585,7 @@ export const ShardRichEditor = forwardRef<ShardRichEditorHandle, ShardRichEditor
     return (
       <>
         <div
+          ref={editorElementRef}
           className={`shard-editor shard-rich-editor shard-rich-editor--${variant}`}
           data-shard-editor={editorId}
           data-shard-editor-tier={tier}
@@ -589,6 +628,17 @@ function pasteShardMarkdown(editor: Editor, event: ClipboardEvent) {
     .setMeta(SKIP_INLINE_CONVERGE, true)
     .run()
   return true
+}
+
+function findEditorScrollViewport(editorElement: HTMLElement | null) {
+  for (let current = editorElement?.parentElement ?? null; current; current = current.parentElement) {
+    if (current === document.body || current === document.documentElement) return null
+    const overflow = getComputedStyle(current).overflowY
+    if ((overflow === "auto" || overflow === "scroll") && current.scrollHeight > current.clientHeight) {
+      return current
+    }
+  }
+  return null
 }
 
 /**

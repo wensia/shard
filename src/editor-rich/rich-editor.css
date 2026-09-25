@@ -146,6 +146,28 @@
   -webkit-box-decoration-break: clone;
 }
 
+/* 搜索定位只画临时 decoration，不复用可持久化的 Highlight mark。普通命中保持
+ * 低噪声，当前命中用同一语义色加一圈，切换 active 不改变文字几何。 */
+.shard-rich-editor .ProseMirror .shard-rich-search-hit {
+  border-radius: calc(var(--shard-radius-control) / 2);
+  background: rgb(var(--shard-warning-rgb) / var(--shard-alpha-13));
+  box-shadow: 0 0 0 1px transparent;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+
+.shard-rich-editor .ProseMirror .shard-rich-search-hit--active {
+  background: rgb(var(--shard-warning-rgb) / var(--shard-alpha-21));
+  box-shadow: 0 0 0 1px rgb(var(--shard-warning-rgb) / var(--shard-alpha-34));
+}
+
+/* WebKit/Chromium 在原生 composition 期间会暂缓 decoration DOM 重绘；状态已经失效时
+ * 先隐藏旧背景，避免拼音候选还在变化却显示旧坐标。 */
+.shard-rich-editor .ProseMirror.shard-rich-search-composing .shard-rich-search-hit {
+  background: transparent;
+  box-shadow: none;
+}
+
 .shard-rich-editor .ProseMirror strong {
   font-weight: var(--weight-semibold);
 }
