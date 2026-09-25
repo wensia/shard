@@ -560,11 +560,14 @@ async fn list_library_tree(app: tauri::AppHandle) -> Result<LibraryTreeSnapshot,
 async fn migrate_legacy_notes(app: tauri::AppHandle) -> Result<LegacyNoteMigrationResult, String> {
     run_blocking(move || {
         let vault = ensure_vault_dirs(&app)?;
-        let _gate = lock_vault_gate(&vault);
-        checkpoint_before_structural_locked(&vault);
-        migrate_archive_to_trash_in_vault(&vault);
-        let migrated_count = migrate_legacy_notes_in_vault(&vault)?;
-        migrate_legacy_mind_maps_in_vault(&vault)?;
+        let migrated_count = {
+            let _gate = lock_vault_gate(&vault);
+            checkpoint_before_structural_locked(&vault);
+            migrate_archive_to_trash_in_vault(&vault);
+            let migrated_count = migrate_legacy_notes_in_vault(&vault)?;
+            migrate_legacy_mind_maps_in_vault(&vault)?;
+            migrated_count
+        };
         Ok(LegacyNoteMigrationResult {
             tree: build_library_tree(&vault)?,
             migrated_count,
@@ -581,8 +584,10 @@ async fn create_library_note(
 ) -> Result<LibraryMutationResult, String> {
     run_blocking(move || {
         let vault = ensure_vault_dirs(&app)?;
-        let _gate = lock_vault_gate(&vault);
-        let fragment = create_library_note_in_vault(&vault, &title, parent_path.as_deref())?;
+        let fragment = {
+            let _gate = lock_vault_gate(&vault);
+            create_library_note_in_vault(&vault, &title, parent_path.as_deref())?
+        };
         library_mutation_result(&vault, Some(fragment), 0)
     })
     .await
@@ -596,8 +601,10 @@ async fn create_library_directory(
 ) -> Result<LibraryMutationResult, String> {
     run_blocking(move || {
         let vault = ensure_vault_dirs(&app)?;
-        let _gate = lock_vault_gate(&vault);
-        create_library_directory_in_vault(&vault, &name, parent_path.as_deref())?;
+        {
+            let _gate = lock_vault_gate(&vault);
+            create_library_directory_in_vault(&vault, &name, parent_path.as_deref())?;
+        }
         library_mutation_result(&vault, None, 0)
     })
     .await
@@ -611,9 +618,11 @@ async fn rename_library_entry(
 ) -> Result<LibraryMutationResult, String> {
     run_blocking(move || {
         let vault = ensure_vault_dirs(&app)?;
-        let _gate = lock_vault_gate(&vault);
-        checkpoint_before_structural_locked(&vault);
-        let updated_links = rename_library_entry_in_vault(&vault, &path, &new_name)?;
+        let updated_links = {
+            let _gate = lock_vault_gate(&vault);
+            checkpoint_before_structural_locked(&vault);
+            rename_library_entry_in_vault(&vault, &path, &new_name)?
+        };
         library_mutation_result(&vault, None, updated_links)
     })
     .await
@@ -627,9 +636,11 @@ async fn move_library_entry(
 ) -> Result<LibraryMutationResult, String> {
     run_blocking(move || {
         let vault = ensure_vault_dirs(&app)?;
-        let _gate = lock_vault_gate(&vault);
-        checkpoint_before_structural_locked(&vault);
-        move_library_entry_in_vault(&vault, &path, destination_directory.as_deref())?;
+        {
+            let _gate = lock_vault_gate(&vault);
+            checkpoint_before_structural_locked(&vault);
+            move_library_entry_in_vault(&vault, &path, destination_directory.as_deref())?;
+        }
         library_mutation_result(&vault, None, 0)
     })
     .await
@@ -642,9 +653,11 @@ async fn delete_library_entry(
 ) -> Result<LibraryMutationResult, String> {
     run_blocking(move || {
         let vault = ensure_vault_dirs(&app)?;
-        let _gate = lock_vault_gate(&vault);
-        checkpoint_before_structural_locked(&vault);
-        move_to_trash_in_vault(&vault, &path)?;
+        {
+            let _gate = lock_vault_gate(&vault);
+            checkpoint_before_structural_locked(&vault);
+            move_to_trash_in_vault(&vault, &path)?;
+        }
         library_mutation_result(&vault, None, 0)
     })
     .await
@@ -657,9 +670,11 @@ async fn restore_from_trash(
 ) -> Result<LibraryMutationResult, String> {
     run_blocking(move || {
         let vault = ensure_vault_dirs(&app)?;
-        let _gate = lock_vault_gate(&vault);
-        checkpoint_before_structural_locked(&vault);
-        restore_from_trash_in_vault(&vault, &path)?;
+        {
+            let _gate = lock_vault_gate(&vault);
+            checkpoint_before_structural_locked(&vault);
+            restore_from_trash_in_vault(&vault, &path)?;
+        }
         library_mutation_result(&vault, None, 0)
     })
     .await
@@ -672,9 +687,11 @@ async fn purge_from_trash(
 ) -> Result<LibraryMutationResult, String> {
     run_blocking(move || {
         let vault = ensure_vault_dirs(&app)?;
-        let _gate = lock_vault_gate(&vault);
-        checkpoint_before_structural_locked(&vault);
-        purge_from_trash_in_vault(&vault, &path)?;
+        {
+            let _gate = lock_vault_gate(&vault);
+            checkpoint_before_structural_locked(&vault);
+            purge_from_trash_in_vault(&vault, &path)?;
+        }
         library_mutation_result(&vault, None, 0)
     })
     .await
@@ -687,9 +704,11 @@ async fn empty_trash(
 ) -> Result<LibraryMutationResult, String> {
     run_blocking(move || {
         let vault = ensure_vault_dirs(&app)?;
-        let _gate = lock_vault_gate(&vault);
-        checkpoint_before_structural_locked(&vault);
-        empty_trash_in_vault(&vault, scope.unwrap_or_default())?;
+        {
+            let _gate = lock_vault_gate(&vault);
+            checkpoint_before_structural_locked(&vault);
+            empty_trash_in_vault(&vault, scope.unwrap_or_default())?;
+        }
         library_mutation_result(&vault, None, 0)
     })
     .await
@@ -704,12 +723,13 @@ async fn convert_fragment_to_note(
 ) -> Result<LibraryMutationResult, String> {
     run_blocking(move || {
         let vault = ensure_vault_dirs(&app)?;
-        let _gate = lock_vault_gate(&vault);
-        checkpoint_before_structural_locked(&vault);
-        let (fragment, updated_links) =
+        let (fragment, updated_links) = {
+            let _gate = lock_vault_gate(&vault);
+            checkpoint_before_structural_locked(&vault);
             convert_fragment_to_note_in_vault(
                 &vault, &id, destination_directory.as_deref(), title.as_deref(),
-            )?;
+            )?
+        };
         library_mutation_result(&vault, Some(fragment), updated_links)
     })
     .await
@@ -722,9 +742,11 @@ async fn convert_note_to_fragment(
 ) -> Result<LibraryMutationResult, String> {
     run_blocking(move || {
         let vault = ensure_vault_dirs(&app)?;
-        let _gate = lock_vault_gate(&vault);
-        checkpoint_before_structural_locked(&vault);
-        let (fragment, updated_links) = convert_note_to_fragment_in_vault(&vault, &id)?;
+        let (fragment, updated_links) = {
+            let _gate = lock_vault_gate(&vault);
+            checkpoint_before_structural_locked(&vault);
+            convert_note_to_fragment_in_vault(&vault, &id)?
+        };
         library_mutation_result(&vault, Some(fragment), updated_links)
     })
     .await
@@ -2587,8 +2609,7 @@ fn collect_library_assets(vault: &Path) -> Vec<LibraryAssetEntry> {
                 continue;
             }
             let Some(asset) = (|| {
-                let bytes = fs::read(&path).ok()?;
-                let mime_type = sniff_image_mime_type(&bytes).ok()?;
+                let mime_type = sniff_library_asset_mime_type(&path)?;
                 let metadata = entry.metadata().ok()?;
                 let modified_at = metadata.modified().ok()?;
                 Some(LibraryAssetEntry {
@@ -2616,6 +2637,40 @@ fn collect_library_assets(vault: &Path) -> Vec<LibraryAssetEntry> {
             .then_with(|| left.path.cmp(&right.path))
     });
     assets
+}
+
+fn sniff_library_asset_mime_type(path: &Path) -> Option<&'static str> {
+    let mut file = File::open(path).ok()?;
+    let mut header = Vec::new();
+    (&mut file).take(4 * 1024).read_to_end(&mut header).ok()?;
+    if let Ok(mime_type) = sniff_image_mime_type(&header) {
+        return Some(mime_type);
+    }
+    if !path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("svg"))
+    {
+        return None;
+    }
+    if header.windows(4).any(|window| window == b"<svg") {
+        return Some("image/svg+xml");
+    }
+
+    while header.len() < 64 * 1024 {
+        let previous_len = header.len();
+        (&mut file).take(4 * 1024).read_to_end(&mut header).ok()?;
+        if header[previous_len.saturating_sub(3)..]
+            .windows(4)
+            .any(|window| window == b"<svg")
+        {
+            return Some("image/svg+xml");
+        }
+        if header.len() == previous_len {
+            break;
+        }
+    }
+    None
 }
 
 fn collect_library_entries(
@@ -7759,6 +7814,46 @@ mod tests {
         let serialized = serde_json::to_value(&tree).unwrap();
         assert_eq!(serialized["assets"][0]["modifiedAt"], asset.modified_at);
         assert_eq!(serialized["assets"][0]["mimeType"], "image/png");
+    }
+
+    #[test]
+    fn library_mutation_builds_tree_after_gate_release() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let vault = tempdir.path();
+        ensure_vault_layout(vault).unwrap();
+
+        let fragment = {
+            let _gate = lock_vault_gate(vault);
+            assert_eq!(search_runtime::write_generation(vault) % 2, 1);
+            create_library_note_in_vault(vault, "门外建树", None).unwrap()
+        };
+        let tree = {
+            assert_eq!(search_runtime::write_generation(vault) % 2, 0);
+            build_library_tree(vault).unwrap()
+        };
+        assert_eq!(tree.entries.len(), 1);
+        let result = library_mutation_result(vault, Some(fragment), 0).unwrap();
+        assert_eq!(result.tree.entries.len(), 1);
+    }
+
+    #[test]
+    fn library_asset_svg_with_long_prolog_is_listed() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let vault = tempdir.path();
+        ensure_vault_layout(vault).unwrap();
+        fs::write(
+            vault.join("notes/svg.md"),
+            "![图](assets/long-prolog.svg)",
+        )
+        .unwrap();
+        let mut svg = b"<?xml version=\"1.0\"?>\n<!--".to_vec();
+        svg.extend(vec![b' '; 8 * 1024]);
+        svg.extend(b"-->\n<svg xmlns=\"http://www.w3.org/2000/svg\"></svg>");
+        fs::write(vault.join("assets/long-prolog.svg"), svg).unwrap();
+
+        let assets = collect_library_assets(vault);
+        assert_eq!(assets.len(), 1);
+        assert_eq!(assets[0].mime_type, "image/svg+xml");
     }
 
     #[test]
