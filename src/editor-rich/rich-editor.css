@@ -510,47 +510,65 @@
   color: var(--foreground);
 }
 
-/* 提醒弹层：挂在 body 上，表面沿用 kiln 日期浮层（--popover + --shadow-popover），
- * 宽度与日历浮层一致，内层 DatePicker / TimePicker 并排。 */
-.shard-reminder-popup {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-  width: calc(var(--control-height) * 7 + var(--space-1) * 6 + var(--space-3) * 2);
-  max-width: var(--available-width);
-  max-height: var(--available-height);
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  padding: var(--space-3);
-  border-radius: var(--radius-card);
-  background: var(--popover);
-  color: var(--popover-foreground);
-  box-shadow: var(--shadow-popover);
-  outline: none;
-}
-
-.shard-reminder-popup-title {
-  margin: 0;
-  font-size: var(--text-body);
-  font-weight: 500;
-}
-
-.shard-reminder-popup-quick {
+/* 提醒对话框：PickerDialogContent 的两栏版。左边月历，右边「时间」两列；
+ * 时间栏绝对定位铺满，行高只由月历决定，时间列在里面滚动、与月历底边对齐。 */
+.shard-reminder-dialog-quick {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-2);
 }
 
-.shard-reminder-popup-custom {
+.shard-reminder-dialog-body {
   display: grid;
-  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
-  gap: var(--space-2);
+  grid-template-columns: minmax(calc(var(--control-height) * 7 + var(--space-1) * 6), 1fr) calc(var(--control-height) * 3 + var(--space-2));
+  gap: var(--space-4);
 }
 
-.shard-reminder-popup-footer {
+.shard-reminder-dialog-time {
+  position: relative;
+  min-width: 0;
+}
+
+.shard-reminder-dialog-time-inner {
+  position: absolute;
+  inset: 0;
   display: flex;
-  justify-content: space-between;
-  gap: var(--space-2);
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+/* 与月份导航同高，时间列顶边落在星期行上。 */
+.shard-reminder-dialog-time-heading {
+  display: flex;
+  flex: none;
+  align-items: center;
+  height: var(--control-height);
+  font-size: var(--text-section-title);
+  font-weight: var(--weight-medium);
+}
+
+.shard-reminder-dialog-time-columns {
+  flex: 1;
+  min-height: 0;
+}
+
+.shard-reminder-dialog-clear {
+  margin-inline-end: auto;
+}
+
+/* 窄屏上下堆叠：时间栏回到文档流，列给固定可视高度。 */
+@media (max-width: 639.98px) {
+  .shard-reminder-dialog-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .shard-reminder-dialog-time-inner {
+    position: static;
+  }
+
+  .shard-reminder-dialog-time-columns .kiln-time-column {
+    max-height: calc(var(--control-height-sm) * 4 + var(--space-1) * 3);
+  }
 }
 
 /* 浮层：标签建议与命令菜单共用。挂 document.body + fixed 定位，

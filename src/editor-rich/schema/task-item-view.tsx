@@ -11,7 +11,7 @@ import {
 } from "@/lib/slash-commands"
 import { formatReminderLabel } from "@/lib/reminders"
 
-import { ReminderPopover } from "../blocks/reminder-popover"
+import { ReminderDialog } from "../blocks/reminder-dialog"
 import { setTaskReminder, taskReminderOf } from "../commands"
 import { useNodeViewEditable } from "./node-view-utils"
 import { useReminderDue } from "./reminder-view"
@@ -125,7 +125,7 @@ export function TaskItemNodeView({
               <span>{formatReminderLabel(pinned)}</span>
             </span>
           ) : (
-            <ReminderPopover
+            <ReminderDialog
               disabled={!editable}
               onChange={(at) => {
                 const pos = getPos()
@@ -138,7 +138,7 @@ export function TaskItemNodeView({
                     className="shard-rich-reminder"
                     data-due={due && !checked ? "true" : undefined}
                     data-shard-reminder={pinned}
-                    // 指针优先：按下不把光标从正文里抢走，弹层打开后再接管焦点。
+                    // 指针优先：按下不把光标从正文里抢走，对话框打开后再接管焦点。
                     onMouseDown={(event) => event.preventDefault()}
                     title={`提醒：${pinned}`}
                     type="button"
@@ -165,7 +165,7 @@ export function TaskItemNodeView({
               ) : (
                 <BellIcon />
               )}
-            </ReminderPopover>
+            </ReminderDialog>
           )}
         </span>
       ) : null}

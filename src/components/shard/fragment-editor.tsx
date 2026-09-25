@@ -108,7 +108,7 @@ export function setFragmentEditorBlurCommitPaused(paused: boolean) {
 
 /**
  * 焦点仍算在编辑器里：编辑器本身，或共享控件的浮层（kiln-control-positioner）。
- * 正文里的提醒弹层与其中的 DatePicker / TimePicker 挂在 body 上，
+ * 正文里的提醒对话框与共享 DatePicker / TimePicker 对话框挂在 body 上，
  * 焦点进去不是离开编辑，不能触发失焦提交把卡片收起来。
  */
 function isInsideEditorSurface(editorElement: HTMLElement, target: EventTarget | null) {

@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 import { selectOption } from "./select-helpers";
 
 type Harness = { __tableWorkspaceTest: { flush(): Promise<boolean>; dirty(): boolean; refresh(): void; setDisabled(disabled: boolean): void; setInteractionBlocked(blocked: boolean): void; closed: number; saved: number }; __tableWorkspaceMock: { disk: { file: { revision: number; records: Record<string, { values: Record<string, unknown> }>; recordOrder: string[]; fields: Record<string, { name: string; options?: { id: string; label: string }[] }>; views: Record<string, unknown>; viewOrder: string[] }; revision: number; contentHash: string }; failSave: boolean; missing: boolean; hold: boolean; release(): void; copies: unknown[]; calls: { command: string; request: { expectedHash?: string; operations?: unknown[] } }[] } };
@@ -15,6 +15,17 @@ async function cell(page: Page, column: number, row: number, edit = true) {
   await expect.poll(async () => (await canvas.boundingBox())?.height ?? 0).toBeGreaterThan(position.y);
   const box = await canvas.boundingBox(); if (!box) throw new Error("Grid canvas not visible");
   if (edit) await page.mouse.dblclick(box.x + position.x, box.y + position.y); else { await page.mouse.click(box.x + position.x, box.y + position.y); await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))); if (await page.getByRole("textbox", { name: "编辑单元格" }).isVisible()) await page.keyboard.press("Escape"); await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => resolve()))); }
+}
+/** 日期对话框只有翻月按钮：按月份标签算出差值，逐月翻到目标月。 */
+async function browseMonth(calendar: Locator, year: number, month: number) {
+  const label = calendar.locator(".kiln-calendar-month");
+  for (;;) {
+    const [shownYear, shownMonth] = ((await label.textContent()) ?? "").match(/\d+/g)!.map(Number);
+    const diff = (year - shownYear) * 12 + month - shownMonth;
+    if (diff === 0) return;
+    await calendar.getByRole("button", { name: diff < 0 ? "上个月" : "下个月", exact: true }).click();
+    await expect(label).not.toHaveText(`${String(shownYear).padStart(4, "0")} 年 ${shownMonth} 月`);
+  }
 }
 async function flush(page: Page) { return page.evaluate(() => (window as unknown as Harness).__tableWorkspaceTest.flush()); }
 async function values(page: Page, row = 1) { return page.evaluate(id => (window as unknown as Harness).__tableWorkspaceMock.disk.file.records[id]?.values, record(row)); }
@@ -83,8 +94,7 @@ test("record form edits six stable-ID types and keeps zero, false and empty text
   await panel.getByRole("textbox", { name: "数值", exact: true }).fill("0");
   await panel.getByRole("button", { name: "日期", exact: true }).click();
   const calendar = page.getByRole("dialog", { name: "日期", exact: true });
-  await calendar.getByRole("textbox", { name: "年份", exact: true }).fill("2025");
-  await selectOption(calendar.getByRole("combobox", { name: "月份", exact: true }), "3");
+  await browseMonth(calendar, 2025, 3);
   await calendar.getByRole("button", { name: "2025-03-08", exact: true }).click();
   await selectOption(panel.getByRole("combobox", { name: "状态", exact: true }), "opt_00000000000000000000000000000002");
   await panel.getByRole("checkbox", { name: "中文", exact: true }).uncheck(); await panel.getByRole("checkbox", { name: "长文本", exact: true }).uncheck();
@@ -411,15 +421,18 @@ test("cell select and date portals isolate keyboard and retain values when switc
   await expect(calendar).toBeVisible();
   await page.keyboard.press("Escape"); await expect(overlay).toBeVisible();
   await date.click();
-  await calendar.getByRole("textbox", { name: "年份", exact: true }).fill("1");
-  await selectOption(calendar.getByRole("combobox", { name: "月份", exact: true }), "1");
-  await calendar.getByRole("button", { name: "0001-01-01", exact: true }).click();
-  await expect(overlay).toBeVisible(); await expect(date).toContainText("0001-01-01");
+  await calendar.getByRole("button", { name: "2024-02-01", exact: true }).click();
+  await expect(overlay).toBeVisible(); await expect(date).toContainText("2024-02-01");
+  // 对话框是模态的：点遮罩只关日历，单元格编辑器保留、不提前提交。
   await date.click(); await expect(calendar).toBeVisible();
+  const saves = await page.evaluate(() => (window as unknown as Harness).__tableWorkspaceMock.calls.filter(call => call.command === "apply_table_mutations").length);
+  await page.mouse.click(4, 4);
+  await expect(calendar).toHaveCount(0); await expect(overlay).toBeVisible(); await expect(date).toContainText("2024-02-01");
+  expect(await page.evaluate(() => (window as unknown as Harness).__tableWorkspaceMock.calls.filter(call => call.command === "apply_table_mutations").length)).toBe(saves);
   const other = page.getByRole("tab").filter({ hasNotText: "全部记录" });
   await other.click(); await expect(other).toHaveAttribute("aria-selected", "true");
-  await expect(calendar).toHaveCount(0); expect(await flush(page)).toBe(true);
-  expect((await values(page))[field(3)]).toBe("0001-01-01");
+  expect(await flush(page)).toBe(true);
+  expect((await values(page))[field(3)]).toBe("2024-02-01");
   await cell(page, 2, 0); await overlay.getByRole("button", { name: "日期", exact: true }).click();
   await calendar.getByRole("button", { name: "清空", exact: true }).click();
   expect(await flush(page)).toBe(true); expect((await values(page))[field(3)] ?? null).toBeNull();

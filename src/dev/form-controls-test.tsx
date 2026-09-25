@@ -15,6 +15,8 @@ function Harness() {
   const [selected, setSelected] = useState("")
   const [date, setDate] = useState("")
   const [time, setTime] = useState("")
+  const [earliest, setEarliest] = useState("0001-01-15")
+  const [latest, setLatest] = useState("9999-12-15")
   const [outerKeys, setOuterKeys] = useState<string[]>([])
   const [open, setOpen] = useState(false)
   const options = [ { value: "", label: "未填写" }, { value: "field-name", label: "名称（主字段）" }, { value: "field-disabled", label: "不可用字段", disabled: true },
@@ -24,6 +26,8 @@ function Harness() {
     <div className="flex gap-2 min-w-0"><Input aria-label="参考输入框" /><SelectControl aria-label="字段" name="field" value={selected} onValueChange={setSelected} options={options} /></div>
     <DatePicker aria-label="日期" value={date} onValueChange={setDate} />
     <TimePicker aria-label="时间" value={time} onValueChange={setTime} />
+    <DatePicker aria-label="最早日期" value={earliest} onValueChange={setEarliest} />
+    <DatePicker aria-label="最晚日期" value={latest} onValueChange={setLatest} />
     <SelectControl aria-label="禁用字段" value="field-name" onValueChange={setSelected} options={options} disabled />
     <DatePicker aria-label="禁用日期" value="2024-02-29" onValueChange={setDate} disabled />
     <TimePicker aria-label="禁用时间" value="09:30" onValueChange={setTime} disabled />

@@ -30,9 +30,7 @@
 .kiln-control-icon svg,
 .kiln-select-indicator svg { width: var(--shard-icon-size-sm); height: var(--shard-icon-size-sm); }
 .kiln-control-positioner { z-index: 50; outline: none; }
-.kiln-select-popup,
-.kiln-date-popup,
-.kiln-time-popup { border-radius: var(--radius-card); background: var(--popover); color: var(--popover-foreground); box-shadow: var(--shadow-popover); outline: none; }
+.kiln-select-popup { border-radius: var(--radius-card); background: var(--popover); color: var(--popover-foreground); box-shadow: var(--shadow-popover); outline: none; }
 .kiln-select-popup { width: var(--anchor-width); max-width: min(var(--available-width), calc(100vw - var(--space-4))); overflow: hidden; }
 .kiln-select-list { max-height: min(var(--available-height), calc(var(--control-height) * 8)); overflow-y: auto; overscroll-behavior: contain; padding: var(--space-1); }
 .kiln-select-item { position: relative; display: flex; align-items: center; min-height: var(--control-height-sm); padding: var(--space-1) var(--space-2) var(--space-1) var(--space-8); border-radius: var(--radius-control); font-size: var(--text-body); line-height: var(--leading-normal); cursor: pointer; outline: none; overflow-wrap: anywhere; }
@@ -40,20 +38,28 @@
 .kiln-select-item[data-selected] { color: var(--primary); font-weight: 500; }
 .kiln-select-item[data-disabled] { color: var(--muted-foreground); cursor: not-allowed; opacity: var(--shard-alpha-55); }
 .kiln-select-indicator { position: absolute; left: var(--space-2); display: inline-flex; align-items: center; }
-.kiln-date-popup { width: calc(var(--control-height) * 7 + var(--space-1) * 6 + var(--space-3) * 2); max-width: var(--available-width); max-height: var(--available-height); overflow-y: auto; overscroll-behavior: contain; padding: var(--space-3); }
-.kiln-date-heading { display: flex; align-items: center; gap: var(--space-2); margin-bottom: var(--space-3); }
-.kiln-date-year { flex: 1; min-width: 0; }
-.kiln-date-month { flex: 1; min-width: 0; }
-.kiln-date-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: var(--space-1); }
-.kiln-date-weekday { text-align: center; font-size: var(--text-meta); color: var(--muted-foreground); padding-bottom: var(--space-2); }
-.kiln-date-day { padding: 0; width: 100%; height: var(--control-height); font-variant-numeric: tabular-nums; }
-.kiln-date-day[data-outside="true"] { color: var(--muted-foreground); }
-.kiln-date-day[aria-pressed="true"] { background: var(--primary); color: var(--primary-foreground); }
-.kiln-date-footer { display: flex; justify-content: space-between; gap: var(--space-2); margin-top: var(--space-3); }
-.kiln-date-error { color: var(--destructive); font-size: var(--text-meta); margin-bottom: var(--space-2); }
-.kiln-time-popup { width: calc(var(--control-height) * 4 + var(--space-2) + var(--space-3) * 2); max-width: var(--available-width); max-height: var(--available-height); overflow-y: auto; overscroll-behavior: contain; padding: var(--space-3); }
+/* 选择器对话框（kiln Date / Time Picker 的 Dialog 形态）：DialogContent 的紧凑版。 */
+.kiln-picker-dialog { gap: var(--space-4); overflow-y: auto; overscroll-behavior: contain; }
+.kiln-picker-title { padding-right: var(--control-height); }
+.kiln-picker-summary { display: flex; flex-direction: column; min-width: 0; padding: var(--space-2) var(--space-3); border: 1px solid color-mix(in srgb, var(--border) 70%, transparent); border-radius: var(--radius-panel); background: color-mix(in srgb, var(--muted) 30%, transparent); }
+.kiln-picker-summary-label { font-size: var(--text-tiny); line-height: var(--space-4); color: var(--muted-foreground); }
+/* 14px / 500：kiln 摘要值字号，与 --text-section-title 同档。 */
+.kiln-picker-summary-value { font-size: var(--text-section-title); font-weight: var(--weight-medium); line-height: var(--leading-normal); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.kiln-picker-summary-value[data-placeholder] { color: var(--muted-foreground); font-weight: var(--weight-regular); }
+.kiln-picker-footer { flex-direction: row; flex-wrap: wrap; justify-content: flex-end; }
+/* 内联月历：月份导航一行 + 7 列星期 + 6 周日期，列间距 4px。 */
+.kiln-calendar { display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; }
+.kiln-calendar-nav { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
+.kiln-calendar-month { font-size: var(--text-section-title); font-weight: var(--weight-medium); font-variant-numeric: tabular-nums; }
+.kiln-calendar-grid { display: flex; flex-direction: column; gap: var(--space-1); }
+.kiln-calendar-row { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: var(--space-1); }
+.kiln-calendar-weekday { text-align: center; font-size: var(--text-meta); color: var(--muted-foreground); }
+.kiln-calendar-day { padding: 0; width: 100%; height: var(--control-height); font-size: var(--text-section-title); font-weight: var(--weight-regular); font-variant-numeric: tabular-nums; }
+.kiln-calendar-day[data-outside="true"]:not([aria-pressed="true"]) { color: color-mix(in srgb, var(--muted-foreground) 45%, transparent); }
+.kiln-calendar-day[aria-pressed="true"] { background: var(--primary); color: var(--primary-foreground); }
 .kiln-time-input { font-variant-numeric: tabular-nums; }
-.kiln-time-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-2); margin-top: var(--space-3); }
-.kiln-time-column { position: relative; display: flex; flex-direction: column; gap: var(--space-1); max-height: calc(var(--control-height-sm) * 6 + var(--space-1) * 5); overflow-y: auto; overscroll-behavior: contain; }
-.kiln-time-option { width: 100%; font-weight: 400; font-variant-numeric: tabular-nums; }
+.kiln-time-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-2); }
+.kiln-time-column { position: relative; display: flex; flex-direction: column; gap: var(--space-1); min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.kiln-time-dialog-columns .kiln-time-column { max-height: calc(var(--control-height-sm) * 6 + var(--space-1) * 5); }
+.kiln-time-option { flex: none; width: 100%; font-weight: var(--weight-regular); font-variant-numeric: tabular-nums; }
 .kiln-time-option[aria-pressed="true"] { background: var(--primary); color: var(--primary-foreground); }

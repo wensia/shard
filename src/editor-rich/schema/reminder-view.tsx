@@ -5,7 +5,7 @@ import { useEffect, useState } from "react"
 import { ClockIcon } from "@/components/icons"
 import { formatReminderLabel } from "@/lib/reminders"
 
-import { ReminderPopover } from "../blocks/reminder-popover"
+import { ReminderDialog } from "../blocks/reminder-dialog"
 import { removeReminder } from "../commands"
 import { useNodeViewEditable } from "./node-view-utils"
 
@@ -32,7 +32,7 @@ export function useReminderDue(at: string | null) {
  *
  * 已到点时挂 `data-due`；只有它所在任务项未勾选时 CSS 才上警示色
  * （勾选态由外层 `li[data-checked]` 决定，与 Dock 角标「已到点且未勾选」口径一致）。
- * 可编辑时点开弹层改时间或清除；只读时只是一枚带完整时间 `title` 的标记。
+ * 可编辑时点开对话框改时间或清除；只读时只是一枚带完整时间 `title` 的标记。
  */
 export function ReminderNodeView({ editor, getPos, node, updateAttributes }: ReactNodeViewProps) {
   const editable = useNodeViewEditable(editor)
@@ -51,7 +51,7 @@ export function ReminderNodeView({ editor, getPos, node, updateAttributes }: Rea
   return (
     <NodeViewWrapper as="span" className="shard-rich-reminder-wrapper" contentEditable={false}>
       {editable ? (
-        <ReminderPopover
+        <ReminderDialog
           onChange={(next) => {
             if (next) {
               updateAttributes({ at: next })
@@ -60,7 +60,7 @@ export function ReminderNodeView({ editor, getPos, node, updateAttributes }: Rea
             const pos = getPos()
             if (typeof pos !== "number") return
             removeReminder(editor, pos)
-            // 芯片（弹层的触发器）已被删掉，焦点交回正文，免得落到 body 上触发失焦提交。
+            // 芯片（对话框的触发器）已被删掉，焦点交回正文，免得落到 body 上触发失焦提交。
             editor.commands.focus()
           }}
           trigger={
@@ -69,7 +69,7 @@ export function ReminderNodeView({ editor, getPos, node, updateAttributes }: Rea
               className="shard-rich-reminder"
               data-due={due ? "true" : undefined}
               data-shard-reminder={at}
-              // 指针优先：按下芯片不把光标从正文里抢走，弹层打开后再接管焦点。
+              // 指针优先：按下芯片不把光标从正文里抢走，对话框打开后再接管焦点。
               onMouseDown={(event) => event.preventDefault()}
               title={title}
               type="button"
@@ -78,7 +78,7 @@ export function ReminderNodeView({ editor, getPos, node, updateAttributes }: Rea
           value={at}
         >
           {chip}
-        </ReminderPopover>
+        </ReminderDialog>
       ) : (
         <span
           className="shard-rich-reminder"
