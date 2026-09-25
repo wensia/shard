@@ -4,6 +4,7 @@ export {
   type MarkdownContentProps,
   type MarkdownFenceRenderProps,
   type MarkdownImageRenderProps,
+  type MarkdownTaskReminderRenderProps,
 } from "./markdown-content.js"
 export { MarkdownDocument, type MarkdownDocumentProps } from "./markdown-document.js"
 export {

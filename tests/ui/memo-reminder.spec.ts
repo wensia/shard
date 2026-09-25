@@ -134,7 +134,7 @@ test.describe("备忘卡片提醒", () => {
     await expect.poll(() => readEditor(page, "composer")).toBe("- [ ] 买菜 ⏰ 2026-09-26 09:00\n  番茄")
 
     const chip = composer.locator(".shard-rich-reminder")
-    await expect(chip).toHaveText("9月26日 09:00")
+    await expect(chip).toHaveText("明天 09:00")
     await expect(chip).toHaveAttribute("title", "提醒：2026-09-26 09:00")
     await expect(chip).not.toHaveAttribute("data-due", "true")
     // 芯片替换铃铛占据右侧控件位，标题正文里不再有芯片。

@@ -97,8 +97,51 @@
   .shard-task-memo + .shard-task-group,
   .shard-task-memo + .shard-task-memo { margin-top: var(--md-space-2, 0.5rem); }
 
+  /* Task containers stack their lines as rows. A flex container drops the
+     whitespace-only "\n" runs between lines, so rows keep their own rhythm
+     while the text content (and search) still sees one line per task. */
+  .shard-task-group,
+  .shard-task-memo,
   .shard-task-memo-detail {
-    display: block;
+    display: flex;
+    flex-direction: column;
+    gap: var(--md-task-row-gap, 0);
+  }
+
+  /* One task per row: marker, body, and an optional trailing reminder that
+     stays on the first line's baseline while the body wraps beside it. */
+  .shard-task-line {
+    display: flex;
+    align-items: baseline;
+    min-width: 0;
+  }
+
+  .shard-task-indent {
+    flex: none;
+    white-space: pre;
+  }
+
+  /* A flex item ignores vertical-align. The marker has no in-flow text, so its
+     baseline is its bottom edge; nudge it down so the box centres on half the
+     capital height, the same optical line the inline marker uses. */
+  .shard-task-line > .shard-task-marker {
+    flex: none;
+    top: calc(0.5em - 0.5cap);
+  }
+
+  .shard-task-body {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .shard-task-reminder {
+    flex: none;
+    margin-inline-start: auto;
+    padding-inline-start: var(--md-space-3, 0.75rem);
+    white-space: nowrap;
+  }
+
+  .shard-task-memo-detail {
     margin-top: calc(var(--md-space-2, 0.5rem) / 2);
     padding-inline-start: calc(1em + 2 * var(--md-space-2, 0.5rem));
     color: var(--md-muted-foreground, inherit);

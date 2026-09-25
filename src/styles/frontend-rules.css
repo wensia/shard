@@ -561,6 +561,65 @@
     --md-divider-extension: var(--shard-fragment-divider-extension, 0px);
   }
 
+  /* 碎片卡片里的任务与备忘：卡片本身就是容器，任务直接排在卡片面上、占满宽度，
+   * 不再套一层只包住文字宽度的描边小盒子（kiln：白色表面靠留白分隔，边框最后才用）。
+   * 行与行之间留一个 space-1 的呼吸，相邻的任务块之间留 space-3。 */
+  .shard-fragment-content {
+    --md-task-row-gap: var(--shard-space-1);
+  }
+
+  .shard-fragment-content .shard-task-group,
+  .shard-fragment-content .shard-task-memo {
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+  }
+
+  .shard-fragment-content .shard-task-group + .shard-task-group,
+  .shard-fragment-content .shard-task-group + .shard-task-memo,
+  .shard-fragment-content .shard-task-memo + .shard-task-group,
+  .shard-fragment-content .shard-task-memo + .shard-task-memo {
+    margin-top: var(--shard-space-3);
+  }
+
+  /* 备注行之间不加行距，读作一段；缩进沿用包内默认，落在标题文字下面。 */
+  .shard-fragment-content .shard-task-memo-detail {
+    gap: 0;
+  }
+
+  /* 已完成：正文退到 muted 并划掉，读的时候一眼跳过；复选框本身仍是实心勾。 */
+  .shard-fragment-content .shard-task-line[data-task-checked] > .shard-task-body {
+    color: var(--muted-foreground);
+    text-decoration-line: line-through;
+    text-decoration-color: color-mix(in srgb, var(--muted-foreground) 60%, transparent);
+  }
+
+  /* 任务行尾的提醒标记：注册表时钟图标 + 相对日期，meta 字号、等宽数字，
+   * 与卡片头的创建时间同一档，不做底色芯片。只有「到点未完成」换 kiln 警示色。 */
+  /* inline-block 而非 inline-flex：基线取自标签文字（inline-flex 会取图标底边，整枚标记被抬高），
+   * 行尾标记因此与任务正文同一条基线；图标按半个大写字高居中。 */
+  .shard-task-reminder-mark {
+    display: inline-block;
+    color: var(--muted-foreground);
+    font-size: var(--text-meta);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    --shard-icon-stroke: var(--shard-icon-stroke-sm);
+  }
+
+  .shard-task-reminder-mark svg {
+    display: inline-block;
+    width: var(--shard-icon-size-sm);
+    height: var(--shard-icon-size-sm);
+    margin-inline-end: var(--shard-space-1);
+    vertical-align: calc(0.5cap - var(--shard-icon-size-sm) / 2);
+  }
+
+  .shard-task-reminder-mark[data-state="due"] {
+    color: var(--warning);
+  }
+
   .shard-fragment-card-content {
     --shard-fragment-divider-extension: calc(
       var(--shard-card-gap) + var(--shard-space-8)

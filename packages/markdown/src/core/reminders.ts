@@ -146,3 +146,26 @@ export function collectTaskReminders(markdown: string): TaskReminder[] {
   })
   return reminders
 }
+
+/**
+ * 从任务正文里拆出提醒：只读渲染把它画成行尾的时间标记，正文不再露出 `⏰` 原文。
+ *
+ * 取第一个合法、不在行内代码里的写法（与 `collectTaskReminders`「每个任务只取第一个」一致），
+ * 连同它和正文之间的一个分隔空格一起去掉。没有提醒返回 null。
+ */
+export function splitTaskReminder(body: string): { body: string; at: string } | null {
+  for (const match of body.matchAll(REMINDER_GLOBAL_PATTERN)) {
+    const at = `${match[1]} ${match[2]}`
+    const start = match.index ?? 0
+    if (parseReminderAt(at) === null) continue
+    if ((body.slice(0, start).match(/`/gu)?.length ?? 0) % 2 === 1) continue
+    const end = start + match[0].length
+    const before = body.slice(0, start)
+    const after = body.slice(end)
+    const joined = before.endsWith(" ") && (after === "" || after.startsWith(" "))
+      ? before.slice(0, -1) + after
+      : before + after.replace(/^ /u, "")
+    return { body: joined.replace(/\s+$/u, ""), at }
+  }
+  return null
+}

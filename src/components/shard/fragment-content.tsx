@@ -8,6 +8,7 @@ import {
 } from "react"
 import { createPortal } from "react-dom"
 import {
+  ClockIcon,
   CopyIcon,
   DownloadIcon,
   FolderOpenIcon,
@@ -29,6 +30,7 @@ import {
   MarkdownContent,
   type MarkdownFenceRenderProps,
   type MarkdownImageRenderProps,
+  type MarkdownTaskReminderRenderProps,
 } from "@shard/markdown"
 import {
   attachmentHash,
@@ -43,6 +45,8 @@ import {
 import { CsvInlineLink, CsvPreview } from "@/components/shard/csv-preview"
 // 副作用导入：卡片渲染同样按围栏语言查 UI 注册表，启动时先让块完成注册。
 import { getBlockUI } from "@/editor-rich/blocks/registry-ui"
+import { formatReminderLabel } from "@/lib/reminders"
+import { useReminderDue } from "@/lib/use-reminder-due"
 import { isCsvWikilinkTarget, parseWikilinks } from "@/lib/wikilink"
 
 import styles from "./fragment-content.module.css"
@@ -97,7 +101,31 @@ export function FragmentContent({
       renderFence={renderRegisteredFence}
       renderInline={renderInlineContent}
       renderImage={renderImages ? renderImage : undefined}
+      renderTaskReminder={renderTaskReminder}
     />
+  )
+}
+
+function renderTaskReminder({ at, checked }: MarkdownTaskReminderRenderProps) {
+  return <TaskReminderMark at={at} checked={checked} />
+}
+
+/**
+ * 任务行尾的提醒标记：时钟图标 + 「明天 10:30」，替代正文里的 `⏰ YYYY-MM-DD HH:mm` 原文。
+ * 未到点是 muted，已到点且未完成转 kiln 警示色（与 Dock 角标同一口径），完成后退回 muted。
+ */
+function TaskReminderMark({ at, checked }: MarkdownTaskReminderRenderProps) {
+  const due = useReminderDue(at)
+  const state = checked ? "done" : due ? "due" : "upcoming"
+  return (
+    <span
+      className="shard-task-reminder-mark"
+      data-state={state}
+      title={state === "due" ? `提醒已到点：${at}` : `提醒：${at}`}
+    >
+      <ClockIcon />
+      <span>{formatReminderLabel(at)}</span>
+    </span>
   )
 }
 

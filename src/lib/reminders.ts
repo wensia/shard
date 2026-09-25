@@ -2,11 +2,22 @@ import { collectTaskReminders, formatReminder, parseReminderAt } from "@shard/ma
 
 import type { Fragment } from "@/types"
 
-/** 芯片上的简写：今年省略年份，`10月1日 09:00`；跨年带上年份。 */
+const RELATIVE_DAY_LABELS = new Map([[-1, "昨天"], [0, "今天"], [1, "明天"]])
+
+/**
+ * 提醒的简写：昨天 / 今天 / 明天直接说，其余今年省略年份（`10月1日 09:00`），跨年带上年份。
+ * 编辑区芯片与时间线卡片共用，同一个提醒在两处读法一致。
+ */
 export function formatReminderLabel(at: string, now: Date = new Date()): string {
   const match = /^(\d{4})-(\d{2})-(\d{2}) (\d{2}:\d{2})$/u.exec(at)
   if (!match) return at
   const [, year, month, day, time] = match
+  const dayOffset = Math.round(
+    (Date.UTC(Number(year), Number(month) - 1, Number(day)) -
+      Date.UTC(now.getFullYear(), now.getMonth(), now.getDate())) / 86_400_000
+  )
+  const relative = RELATIVE_DAY_LABELS.get(dayOffset)
+  if (relative) return `${relative} ${time}`
   const date = `${Number(month)}月${Number(day)}日`
   return Number(year) === now.getFullYear() ? `${date} ${time}` : `${Number(year)}年${date} ${time}`
 }

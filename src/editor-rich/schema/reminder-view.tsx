@@ -1,31 +1,12 @@
 import { NodeViewWrapper, type ReactNodeViewProps } from "@tiptap/react"
-import { parseReminderAt } from "@shard/markdown/core"
-import { useEffect, useState } from "react"
 
 import { ClockIcon } from "@/components/icons"
 import { formatReminderLabel } from "@/lib/reminders"
+import { useReminderDue } from "@/lib/use-reminder-due"
 
 import { ReminderDialog } from "../blocks/reminder-dialog"
 import { removeReminder } from "../commands"
 import { useNodeViewEditable } from "./node-view-utils"
-
-/** setTimeout 的上限（约 24.8 天）；更远的提醒不挂定时器，重开页面时再判定。 */
-const MAX_TIMER_DELAY = 2_147_483_647
-
-/** 到点前挂一个定时器，到点后芯片自己切到警示态，不依赖外部重渲染。 */
-export function useReminderDue(at: string | null) {
-  const dueAt = at ? parseReminderAt(at) : null
-  const [now, setNow] = useState(() => Date.now())
-  useEffect(() => {
-    setNow(Date.now())
-    if (dueAt === null) return
-    const delay = dueAt - Date.now()
-    if (delay <= 0 || delay > MAX_TIMER_DELAY) return
-    const timer = window.setTimeout(() => setNow(Date.now()), delay + 50)
-    return () => window.clearTimeout(timer)
-  }, [dueAt])
-  return dueAt !== null && dueAt <= now
-}
 
 /**
  * 提醒芯片：`⏰ YYYY-MM-DD HH:mm` 在编辑区的样子，显示成「时钟 10月1日 09:00」。

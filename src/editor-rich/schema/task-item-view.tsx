@@ -10,11 +10,11 @@ import {
   MEMO_CARD_TITLE_PLACEHOLDER,
 } from "@/lib/slash-commands"
 import { formatReminderLabel } from "@/lib/reminders"
+import { useReminderDue } from "@/lib/use-reminder-due"
 
 import { ReminderDialog } from "../blocks/reminder-dialog"
 import { setTaskReminder, taskReminderOf } from "../commands"
 import { useNodeViewEditable } from "./node-view-utils"
-import { useReminderDue } from "./reminder-view"
 
 /** NodeView 里不属于正文的装饰（复选框、提醒钮、折叠钮），事件不交给 ProseMirror。 */
 export const TASK_ITEM_CONTROL_ATTRIBUTE = "data-shard-task-control"

@@ -34,6 +34,10 @@ describe("提醒展示辅助", () => {
   it("今年省略年份，跨年带年份", () => {
     const now = new Date(2026, 8, 25)
     expect(formatReminderLabel("2026-10-01 09:00", now)).toBe("10月1日 09:00")
+    expect(formatReminderLabel("2026-09-25 18:00", now)).toBe("今天 18:00")
+    expect(formatReminderLabel("2026-09-26 09:00", now)).toBe("明天 09:00")
+    expect(formatReminderLabel("2026-09-24 09:00", now)).toBe("昨天 09:00")
+    expect(formatReminderLabel("2026-09-27 09:00", now)).toBe("9月27日 09:00")
     expect(formatReminderLabel("2027-01-02 18:30", now)).toBe("2027年1月2日 18:30")
   })
 

@@ -6,6 +6,7 @@ import {
   formatReminder,
   parseReminderAt,
   REMINDER_PATTERN,
+  splitTaskReminder,
 } from "@shard/markdown/core"
 
 const local = (year: number, month: number, day: number, hour: number, minute: number) =>
@@ -115,5 +116,22 @@ describe("collectTaskReminders", () => {
 
   it("没有 ⏰ 时不解析", () => {
     expect(collectTaskReminders("- [ ] 普通任务")).toEqual([])
+  })
+})
+
+describe("splitTaskReminder", () => {
+  it("拆出行尾提醒，连同分隔空格一起去掉", () => {
+    expect(splitTaskReminder("去银行 ⏰ 2026-09-28 10:30")).toEqual({ body: "去银行", at: "2026-09-28 10:30" })
+    expect(splitTaskReminder("⏰ 2026-09-28 10:30")).toEqual({ body: "", at: "2026-09-28 10:30" })
+  })
+
+  it("句中的提醒只留一个空格", () => {
+    expect(splitTaskReminder("甲 ⏰ 2026-09-28 10:30 乙")).toEqual({ body: "甲 乙", at: "2026-09-28 10:30" })
+  })
+
+  it("非法日期、行内代码里的写法不拆", () => {
+    expect(splitTaskReminder("非法 ⏰ 2026-02-30 09:00")).toBeNull()
+    expect(splitTaskReminder("代码 `⏰ 2026-09-28 10:30`")).toBeNull()
+    expect(splitTaskReminder("没有提醒")).toBeNull()
   })
 })
