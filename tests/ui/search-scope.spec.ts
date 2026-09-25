@@ -49,7 +49,7 @@ async function installSearchScopeMock(
       configured: true,
       unlocked: Boolean(mockOptions.initialUnlocked),
       expiresAt: mockOptions.initialUnlocked
-        ? "2026-09-25T12:00:00.000Z"
+        ? new Date(Date.now() + 60 * 60_000).toISOString()
         : null,
       ttlSeconds: 180,
     }
@@ -118,7 +118,7 @@ async function installSearchScopeMock(
           if (command === "unlock_lockbox") {
             await unlockGate
             lockbox.unlocked = true
-            lockbox.expiresAt = "2026-09-25T12:00:00.000Z"
+            lockbox.expiresAt = new Date(Date.now() + 60 * 60_000).toISOString()
             return state()
           }
           if (command === "lock_lockbox") {

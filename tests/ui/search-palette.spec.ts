@@ -60,7 +60,7 @@ async function installSearchPaletteFixture(
       configured: true,
       unlocked: Boolean(fixtureOptions.initialUnlocked),
       expiresAt: fixtureOptions.initialUnlocked
-        ? "2026-09-25T12:00:00.000Z"
+        ? new Date(Date.now() + 60 * 60_000).toISOString()
         : null,
       ttlSeconds: 180,
     };
@@ -197,7 +197,7 @@ async function installSearchPaletteFixture(
             }
             case "unlock_lockbox":
               lockbox.unlocked = true;
-              lockbox.expiresAt = "2026-09-25T12:00:00.000Z";
+              lockbox.expiresAt = new Date(Date.now() + 60 * 60_000).toISOString();
               return state();
             case "lock_lockbox":
               lockbox.unlocked = false;

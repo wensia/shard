@@ -197,7 +197,7 @@ test("new search commands work in mutable fixtures", async ({ page }) => {
       }
     ).__SHARD_MUTABLE_SEARCH_FIXTURE__
     state.lockbox.unlocked = true
-    state.lockbox.expiresAt = "2026-09-25T12:00:00.000Z"
+    state.lockbox.expiresAt = new Date(Date.now() + 60 * 60_000).toISOString()
   })
   await updateSearchIpcMock(page, { indexState: "ready", delayMs: 0 })
   const lockbox = await invokeSearch(page, "search_vault", {
