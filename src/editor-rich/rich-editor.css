@@ -520,18 +520,24 @@
 
 .shard-reminder-dialog-body {
   display: grid;
-  grid-template-columns: minmax(calc(var(--control-height) * 7 + var(--space-1) * 6), 1fr) calc(var(--control-height) * 3 + var(--space-2));
+  grid-template-columns:
+    minmax(calc(var(--control-height) * 7 + var(--space-1) * 6), 1fr)
+    calc(var(--control-height) * 3 + var(--space-2) + var(--space-4) + 1px);
   gap: var(--space-4);
 }
 
+/* 日期与时间之间一条 1px --border 竖线（kiln 的相邻分隔：线挂在后一项上），
+ * 两块各自成组，不再连成一片数字。 */
 .shard-reminder-dialog-time {
   position: relative;
   min-width: 0;
+  border-inline-start: 1px solid var(--border);
 }
 
 .shard-reminder-dialog-time-inner {
   position: absolute;
   inset: 0;
+  inset-inline-start: var(--space-4);
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
@@ -547,6 +553,16 @@
   font-weight: var(--weight-medium);
 }
 
+.shard-reminder-dialog-time-labels {
+  display: grid;
+  flex: none;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-2);
+  color: var(--muted-foreground);
+  font-size: var(--text-meta);
+  text-align: center;
+}
+
 .shard-reminder-dialog-time-columns {
   flex: 1;
   min-height: 0;
@@ -560,6 +576,13 @@
 @media (max-width: 639.98px) {
   .shard-reminder-dialog-body {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  /* 堆叠后分隔线换到上边。 */
+  .shard-reminder-dialog-time {
+    border-inline-start: 0;
+    border-top: 1px solid var(--border);
+    padding-top: var(--space-3);
   }
 
   .shard-reminder-dialog-time-inner {

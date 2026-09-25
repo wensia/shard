@@ -126,6 +126,11 @@ export function ReminderDialog({ value, onChange, trigger, children, disabled, f
           <div className="shard-reminder-dialog-time">
             <div className="shard-reminder-dialog-time-inner">
               <span className="shard-reminder-dialog-time-heading">时间</span>
+              {/* 列头与日历的星期行同一档；两列都从 00 起，没有列头分不清哪列是分。 */}
+              <div aria-hidden="true" className="shard-reminder-dialog-time-labels">
+                <span>时</span>
+                <span>分</span>
+              </div>
               <TimeColumns
                 className="shard-reminder-dialog-time-columns"
                 hour={draft.hour}
