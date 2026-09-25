@@ -290,7 +290,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
   const searchNavigationStartedRef = useRef<string | null>(null)
   const searchNavigationWaitersRef = useRef(new Map<string, {
     reject: (error: unknown) => void
-    resolve: () => void
+    resolve: (result: { reveal: SearchRevealHandle | null }) => void
   }>())
   const activeSearchRevealRef = useRef<{
     handle: SearchRevealHandle
@@ -1856,7 +1856,11 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
       if (!current) return
 
       if (result.status === "ready") {
-        activeSearchRevealRef.current?.handle.clearHits("revoke")
+        if (
+          activeSearchRevealRef.current?.handle !== result.revealHandle
+        ) {
+          activeSearchRevealRef.current?.handle.clearHits("revoke")
+        }
         activeSearchRevealRef.current = result.revealHandle
           ? {
               handle: result.revealHandle,
@@ -1879,6 +1883,8 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
       }
 
       if (result.status === "saveFailed") {
+        replaceSearchSession({ ...current, pendingNavigation: null })
+      } else if (result.status === "cancelled") {
         replaceSearchSession({ ...current, pendingNavigation: null })
       } else if (result.status === "failed") {
         replaceSearchSession({
@@ -1929,8 +1935,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
         setPendingScrollNavigationId(requestId)
         setPendingScrollFragmentId(fragment.id)
       }
-      await waitForSearchHost(requestId, signal)
-      return { reveal: null }
+      return waitForSearchHost(requestId, signal)
     }
 
     if (target.kind === "note") {
@@ -1944,8 +1949,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
         target,
       })
       setRoute({ space: "library", params: {} })
-      await waitForSearchHost(requestId, signal)
-      return { reveal: null }
+      return waitForSearchHost(requestId, signal)
     }
 
     if (target.archived) {
@@ -1958,8 +1962,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
         readOnly: true,
         requestId,
       })
-      await waitForSearchHost(requestId, signal)
-      return { reveal: null }
+      return waitForSearchHost(requestId, signal)
     }
 
     setSearchEditorNavigation(null)
@@ -1971,12 +1974,11 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     setRoute({ space: "fragments", params: {} })
     setPendingScrollNavigationId(requestId)
     setPendingScrollFragmentId(fragment.id)
-    await waitForSearchHost(requestId, signal)
-    return { reveal: null }
+    return waitForSearchHost(requestId, signal)
   }
 
   function waitForSearchHost(requestId: string, signal: AbortSignal) {
-    return new Promise<void>((resolve, reject) => {
+    return new Promise<{ reveal: SearchRevealHandle | null }>((resolve, reject) => {
       const abort = () => {
         searchNavigationWaitersRef.current.delete(requestId)
         reject(new DOMException("Navigation aborted", "AbortError"))
@@ -1991,20 +1993,24 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
           signal.removeEventListener("abort", abort)
           reject(error)
         },
-        resolve: () => {
+        resolve: (result) => {
           signal.removeEventListener("abort", abort)
-          resolve()
+          resolve(result)
         },
       })
     })
   }
 
-  function settleSearchHost(requestId: string, error?: unknown) {
+  function settleSearchHost(
+    requestId: string,
+    error?: unknown,
+    reveal: SearchRevealHandle | null = null
+  ) {
     const waiter = searchNavigationWaitersRef.current.get(requestId)
     if (!waiter) return
     searchNavigationWaitersRef.current.delete(requestId)
     if (error) waiter.reject(error)
-    else waiter.resolve()
+    else waiter.resolve({ reveal })
   }
 
   const knownTags = useMemo(
@@ -2051,8 +2057,12 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
       ? pendingScrollFragmentId
       : null
 
-  const handleTimelineScrollComplete = useCallback((fragmentId: string, navigationId?: string) => {
-    if (navigationId) settleSearchHost(navigationId)
+  const handleTimelineScrollComplete = useCallback((
+    fragmentId: string,
+    navigationId?: string,
+    reveal?: SearchRevealHandle | null
+  ) => {
+    if (navigationId) settleSearchHost(navigationId, undefined, reveal ?? null)
     setPendingScrollFragmentId((current) =>
       current === fragmentId ? null : current
     )

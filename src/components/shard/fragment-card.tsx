@@ -157,6 +157,7 @@ export function FragmentCard({
     return (
       <div
         className={cn(isHighlighted && "shard-fragment-card-highlight")}
+        data-search-reveal-host="editor"
         data-shard-fragment-id={fragment.id}
       >
         <FragmentEditor
@@ -182,6 +183,7 @@ export function FragmentCard({
     <article
       aria-selected={isSelectionMode ? isSelected : undefined}
       className={cn(isHighlighted && "shard-fragment-card-highlight")}
+      data-search-reveal-host={fragment.kind === "fragment" ? "dom" : "documentOnly"}
       data-shard-fragment-id={fragment.id}
       style={{
         display: "flex",

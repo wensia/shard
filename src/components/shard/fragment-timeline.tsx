@@ -7,6 +7,8 @@ import { OrganizeFragmentsDialog } from "@/components/shard/organize-fragments-d
 import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { getApiErrorMessage, type OrganizeTemplate } from "@/lib/api"
+import { createDomSearchRevealHandle } from "@/lib/search-dom-highlight"
+import type { SearchRevealHandle } from "@/lib/search-contract"
 import { useFragmentRelations } from "@/lib/use-fragment-relations"
 import type { CsvFileSummary, Fragment } from "@/types"
 import styles from "./fragment-timeline.module.css"
@@ -42,7 +44,11 @@ interface FragmentTimelineProps {
   onPin?: (fragment: Fragment) => void
   onNavigateToFragment?: (fragmentId: string) => void
   onScrollDown?: () => void
-  onScrollToFragmentComplete?: (fragmentId: string, navigationId?: string) => void
+  onScrollToFragmentComplete?: (
+    fragmentId: string,
+    navigationId?: string,
+    reveal?: SearchRevealHandle | null
+  ) => void
   onSelectionModeChange?: (active: boolean) => void
   onSave?: (id: string, content: string, tags: string[]) => Promise<Fragment>
   onToggleKind?: (fragment: Fragment) => void
@@ -147,6 +153,28 @@ export function FragmentTimeline({
   const [organizeError, setOrganizeError] = useState<string | null>(null)
   const selectionDockRef = useRef<HTMLDivElement>(null)
   const [selectionDockHeight, setSelectionDockHeight] = useState(0)
+  const searchRevealHandle = useMemo(
+    () =>
+      createDomSearchRevealHandle({
+        getCard(target) {
+          if (!target.objectId) return null
+          return findFragmentCard(viewportRef.current, target.objectId)
+        },
+        getRoot(_target, card) {
+          return card.querySelector<HTMLElement>("[data-markdown-search-root='true']")
+        },
+        getViewport() {
+          return viewportRef.current
+        },
+        scrollRange(range, viewport) {
+          return scrollSearchRangeIntoViewport(range, viewport)
+        },
+        showCardOutline(target) {
+          if (target.objectId) flashFragmentCard(target.objectId)
+        },
+      }),
+    []
+  )
   const timelineItems = useMemo(() => buildTimelineItems(fragments.slice(0, renderLimit)), [fragments, renderLimit])
   const selectableFragments = useMemo(
     () =>
@@ -258,8 +286,9 @@ export function FragmentTimeline({
       if (programmaticScrollTimeoutRef.current !== null) {
         window.clearTimeout(programmaticScrollTimeoutRef.current)
       }
+      searchRevealHandle.clearHits("unmount")
     }
-  }, [])
+  }, [searchRevealHandle])
 
   // Navigation runs after measured geometry is applied. Keep its target until
   // scrolling settles, so late image/editor resizes can re-align it first.
@@ -380,7 +409,39 @@ export function FragmentTimeline({
     completedScrollTargetRef.current = `${scrollNavigationId ?? "browse"}:${fragmentId}`
     restorePositionRef.current = null
     flashFragmentCard(fragmentId)
-    onScrollToFragmentComplete?.(fragmentId, scrollNavigationId ?? undefined)
+    const target = fragments.find((fragment) => fragment.id === fragmentId)
+    const reveal = target?.kind === "fragment" && editingFragmentId !== fragmentId
+      ? searchRevealHandle
+      : null
+    onScrollToFragmentComplete?.(
+      fragmentId,
+      scrollNavigationId ?? undefined,
+      reveal
+    )
+  }
+
+  function scrollSearchRangeIntoViewport(range: Range, viewport: HTMLElement) {
+    const rangeRect = range.getBoundingClientRect()
+    const viewportRect = viewport.getBoundingClientRect()
+    const inset = getCssPx(viewport, "--shard-card-gap", 16)
+    let delta = 0
+    if (rangeRect.top < viewportRect.top + inset) {
+      delta = rangeRect.top - viewportRect.top - inset
+    } else if (rangeRect.bottom > viewportRect.bottom - inset) {
+      delta = rangeRect.bottom - viewportRect.bottom + inset
+    }
+    if (Math.abs(delta) <= 1) return
+
+    programmaticScrollRef.current = true
+    const maxScrollTop = Math.max(0, viewport.scrollHeight - viewport.clientHeight)
+    viewport.scrollTop = clamp(viewport.scrollTop + delta, 0, maxScrollTop)
+    return new Promise<void>((resolve) => {
+      window.requestAnimationFrame(() => {
+        lastScrollTopRef.current = viewport.scrollTop
+        programmaticScrollRef.current = false
+        resolve()
+      })
+    })
   }
 
   function flashFragmentCard(fragmentId: string) {
@@ -654,6 +715,18 @@ function scrollFragmentIntoViewport(
   })
 
   return true
+}
+
+function findFragmentCard(
+  viewport: HTMLElement | null,
+  fragmentId: string
+) {
+  if (!viewport) return null
+  return Array.from(
+    viewport.querySelectorAll<HTMLElement>("[data-shard-fragment-id]")
+  ).find(
+    (element) => element.getAttribute("data-shard-fragment-id") === fragmentId
+  ) ?? null
 }
 
 function getCssPx(element: Element, property: string, fallback: number) {

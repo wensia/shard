@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useRef, type MouseEvent, type ReactNode } from "react"
+import { Fragment, useCallback, useEffect, useMemo, useRef, type MouseEvent, type ReactNode } from "react"
 import type { MarkdownContentBlock, MarkdownContentLine, MarkdownContentTable } from "./parser.js"
 import { useMarkdown, useRenderedBlocks } from "./use-markdown.js"
 
@@ -49,6 +49,16 @@ export function MarkdownContent({
   const result = parsed.result?.kind === "content" ? parsed.result : undefined
   const blocks = result?.blocks
   const lastVisibleIndex = result?.lastVisibleIndex ?? -1
+  const fenceLineIndexes = useMemo(() => {
+    const indexes = new Set<number>()
+    for (const block of blocks ?? []) {
+      if (block.type !== "fence") continue
+      for (let offset = 0; offset < block.lineCount; offset += 1) {
+        indexes.add(block.lineIndex + offset)
+      }
+    }
+    return indexes
+  }, [blocks])
   const inline = renderInline ?? renderLiteralInline
   const taskToggleRef = useRef(onTaskToggle)
   useEffect(() => { taskToggleRef.current = onTaskToggle }, [onTaskToggle])
@@ -57,10 +67,16 @@ export function MarkdownContent({
   const renderContentLine = useCallback((line: MarkdownContentLine): RenderedContentBlock => {
     if (line.hidden) return { block: false, node: null }
     return { block: false, node: <Fragment key={`line-${line.lineIndex}`}>
-      {renderLine(line, inline, renderImage, taskToggle)}
+      {renderSearchableLine(
+        line,
+        inline,
+        renderImage,
+        taskToggle,
+        fenceLineIndexes.has(line.lineIndex) ? "codeBlock" : undefined
+      )}
       {line.lineIndex < lastVisibleIndex && !line.image ? "\n" : null}
     </Fragment> }
-  }, [inline, lastVisibleIndex, taskToggle, renderImage])
+  }, [fenceLineIndexes, inline, lastVisibleIndex, taskToggle, renderImage])
   const render = useCallback((block: MarkdownContentBlock, index: number): RenderedContentBlock => {
     // Cards are block boxes that already end their line, so no trailing
     // newline: one would render as an extra blank line below the card.
@@ -70,10 +86,12 @@ export function MarkdownContent({
       const details = rest.filter((line) => !line.hidden && line.source.trim() !== "")
       return { block: true, skipCount: memo.length - 1, node: <div
         className="md-task-memo shard-task-memo" data-task-memo="true" key={`memo-${block.lineIndex}`}>
-        {renderLine(title, inline, renderImage, taskToggle)}
+        {renderSearchableLine(title, inline, renderImage, taskToggle)}
         <div className="md-task-memo-detail shard-task-memo-detail">
           {details.map((line, position) => <Fragment key={line.lineIndex}>
-            {line.task ? renderLine(line, inline, renderImage, taskToggle) : inline(line.display.replace(/^\s+/u, ""))}
+            {line.task
+              ? renderSearchableLine(line, inline, renderImage, taskToggle)
+              : <span data-markdown-search-block="text">{inline(line.display.replace(/^\s+/u, ""))}</span>}
             {position < details.length - 1 ? "\n" : null}
           </Fragment>)}
         </div>
@@ -84,7 +102,7 @@ export function MarkdownContent({
       return { block: true, skipCount: run.length - 1, node: <div
         className="md-task-group shard-task-group" key={`tasks-${block.lineIndex}`}>
         {run.map((line, position) => <Fragment key={line.lineIndex}>
-          {renderLine(line, inline, renderImage, taskToggle)}
+          {renderSearchableLine(line, inline, renderImage, taskToggle)}
           {position < run.length - 1 ? "\n" : null}
         </Fragment>)}
       </div> }
@@ -92,7 +110,8 @@ export function MarkdownContent({
     const embed = renderEmbed?.(block.source)
     if (embed !== undefined) {
       return { block: true, node: <Fragment key={`embed-${block.lineIndex}`}>
-        {embed}{block.lineIndex < lastVisibleIndex ? "\n" : null}
+        <div data-markdown-search-exclude="embed">{embed}</div>
+        {block.lineIndex < lastVisibleIndex ? "\n" : null}
       </Fragment> }
     }
     if (block.type === "table") {
@@ -106,7 +125,7 @@ export function MarkdownContent({
       // Declining the fence keeps every line of it exactly as before.
       if (fence === undefined) return renderContentLine(block.line)
       return { block: true, skipCount: block.lineCount - 1, node: <Fragment key={`fence-${block.lineIndex}`}>
-        {fence}
+        <div data-markdown-search-exclude="codeBlock">{fence}</div>
         {block.lineIndex + block.lineCount - 1 < lastVisibleIndex ? "\n" : null}
       </Fragment> }
     }
@@ -118,6 +137,7 @@ export function MarkdownContent({
   const Root = rendered.nodes?.some((entry) => entry.block) ? "div" : "span"
 
   return <Root className={["md-content shard-fragment-content", className].filter(Boolean).join(" ")}
+    data-markdown-search-root="true"
     aria-busy={(!error && (loading || rendered.pending)) || undefined} data-markdown-error={error ? "true" : undefined}>
     {error ? (errorFallback ?? content) : loading ? <span role="status">{loadingFallback}</span>
       : rendered.nodes?.map((entry) => entry.node)}
@@ -172,9 +192,11 @@ function getSkippedLines(block: RenderedContentBlock) {
 function renderTable(table: MarkdownContentTable, renderInline: (text: string) => ReactNode) {
   return <table className="md-table shard-markdown-table">
     <thead><tr>{table.header.map((cell, index) => <th key={index}
+      data-markdown-search-block="text"
       style={{ textAlign: table.align[index] ?? undefined }}>{renderInline(cell)}</th>)}</tr></thead>
     <tbody>{table.rows.slice(table.rowStart, table.rowEnd).map((row, rowIndex) => <tr key={rowIndex}>
       {table.align.map((alignment, index) => <td key={index}
+        data-markdown-search-block="text"
         style={{ textAlign: alignment ?? undefined }}>{renderInline(row[index] ?? "")}</td>)}
     </tr>)}</tbody>
   </table>
@@ -196,6 +218,23 @@ function renderLine(
     <TaskMarker checked={checked} lineIndex={line.lineIndex} onTaskToggle={onTaskToggle} />
     <span className="md-task-body shard-task-body">{renderInline(body)}</span>
   </>
+}
+
+function renderSearchableLine(
+  line: MarkdownContentLine,
+  renderInline: (text: string) => ReactNode,
+  renderImage: MarkdownContentProps["renderImage"],
+  onTaskToggle: MarkdownContentProps["onTaskToggle"],
+  excluded?: "codeBlock"
+) {
+  const rendered = renderLine(line, renderInline, renderImage, onTaskToggle)
+  if (excluded) {
+    return <span data-markdown-search-exclude={excluded}>{rendered}</span>
+  }
+  if (line.image && renderImage) {
+    return <span data-markdown-search-exclude="embed">{rendered}</span>
+  }
+  return <span data-markdown-search-block="text">{rendered}</span>
 }
 
 function TaskMarker({ checked, lineIndex, onTaskToggle }: {
