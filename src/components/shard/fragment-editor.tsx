@@ -91,6 +91,18 @@ interface EditorImageAttachment {
   previewUrl?: string
 }
 
+const blurCommitPauseListeners = new Set<(paused: boolean) => void>()
+let isBlurCommitPaused = false
+
+/**
+ * Search focus is not navigation. Pause only the inline blur commit before the
+ * palette takes focus; normal content autosave remains active.
+ */
+export function setFragmentEditorBlurCommitPaused(paused: boolean) {
+  isBlurCommitPaused = paused
+  for (const listener of blurCommitPauseListeners) listener(paused)
+}
+
 export function FragmentEditor({
   commitOnBlur = false,
   csvFiles = [],
@@ -117,6 +129,7 @@ export function FragmentEditor({
   const onCreateRef = useRef(onCreate)
   const onSaveRef = useRef(onSave)
   const blurCommitTimerRef = useRef<number | null>(null)
+  const blurCommitPausedRef = useRef(isBlurCommitPaused)
   const saveTimerRef = useRef<number | null>(null)
   const editorFrameRef = useRef<HTMLDivElement>(null)
   const richEditorRef = useRef<ShardRichEditorHandle>(null)
@@ -212,6 +225,18 @@ export function FragmentEditor({
     return () => {
       clearBlurCommitTimer()
       revokeEditorImagePreviewUrls(imageAttachmentsRef.current)
+    }
+  }, [])
+
+  useEffect(() => {
+    const handlePauseChange = (paused: boolean) => {
+      blurCommitPausedRef.current = paused
+      if (paused) clearBlurCommitTimer()
+    }
+    blurCommitPauseListeners.add(handlePauseChange)
+    handlePauseChange(isBlurCommitPaused)
+    return () => {
+      blurCommitPauseListeners.delete(handlePauseChange)
     }
   }, [])
 
@@ -381,7 +406,7 @@ export function FragmentEditor({
   }
 
   function handleEditorBlur(event: FocusEvent<HTMLElement>) {
-    if (!commitOnBlur || isZen) return
+    if (!commitOnBlur || isZen || blurCommitPausedRef.current) return
 
     const editorElement = event.currentTarget
     const nextFocused = event.relatedTarget
@@ -390,6 +415,7 @@ export function FragmentEditor({
     clearBlurCommitTimer()
     blurCommitTimerRef.current = window.setTimeout(() => {
       blurCommitTimerRef.current = null
+      if (blurCommitPausedRef.current) return
       const activeElement = document.activeElement
       if (activeElement instanceof Node && editorElement.contains(activeElement)) {
         return

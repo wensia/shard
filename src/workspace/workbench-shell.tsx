@@ -5,8 +5,12 @@ import styles from "../App.module.css"
 import { LockKeyholeIcon } from "@/components/icons"
 import { BottomTabs } from "@/components/shard/bottom-tabs"
 import { StatusBar } from "@/components/shard/status-bar"
-import { FragmentEditor } from "@/components/shard/fragment-editor"
+import {
+  FragmentEditor,
+  setFragmentEditorBlurCommitPaused,
+} from "@/components/shard/fragment-editor"
 import { FragmentImageExporter } from "@/components/shard/fragment-image-exporter"
+import { SearchPalette } from "@/components/shard/search-palette"
 import {
   SearchContextBar,
   type FragmentSearchSession as LegacyFragmentSearchSession,
@@ -83,13 +87,20 @@ import {
 } from "@/lib/lockbox"
 import {
   searchTargetKey,
+  type SearchMode,
   type SearchSession,
 } from "@/lib/search-contract"
+import { buildOpenCatalog } from "@/lib/quick-open-catalog"
+import { clearQuickOpenMatchCache } from "@/lib/quick-open-match"
+import { readPublicOpenRecent } from "@/lib/search-recent"
+import {
+  createLegacyPublicSearchProvider,
+  createRustSearchProvider,
+} from "@/lib/search-provider"
 import {
   acceptsSearchSessionIdentity,
   captureSearchSessionIdentity,
   createSearchSession,
-  legacyWorkerFragmentsForScope,
   revokeSearchSession as revokeSearchSessionState,
   scopeForSpace,
   type SearchRevokeReason,
@@ -124,6 +135,7 @@ import {
   useVaultSyncSchedule,
 } from "@/workspace/use-vault-sync"
 import { useAutoCheckpoint } from "@/workspace/use-auto-checkpoint"
+import { useSearchController } from "@/workspace/use-search-controller"
 
 const AUTO_SYNC_FAILURE_TOAST_ID = "auto-sync-failure"
 const GLOBAL_CAPTURE_EVENT = "shard:capture"
@@ -131,6 +143,7 @@ const SIDEBAR_COLLAPSED_STORAGE_KEY = "shard.sidebar-collapsed"
 /** 切回窗口时对账碎片列表的最小间隔，避免频繁切换反复全量读取 vault。 */
 const FOCUS_REFRESH_INTERVAL_MS = 5_000
 const DEFAULT_PROJECT_TAGS: readonly string[] = ["日程"]
+const LOCKBOX_SEARCH_PROVIDER = createRustSearchProvider("lockbox")
 type EditingVariant = "inline" | "zen"
 interface ZenDraft {
   content: string
@@ -216,7 +229,6 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     string | null
   >(null)
   const [isSearchModeActive, setIsSearchModeActive] = useState(false)
-  const [searchFocusSignal, setSearchFocusSignal] = useState(0)
   const [legacySearchSession, setLegacySearchSession] =
     useState<LegacyFragmentSearchSession | null>(null)
   const [searchSession, setSearchSession] = useState<SearchSession | null>(null)
@@ -227,7 +239,6 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
   const [libraryTree, setLibraryTree] = useState<LibraryTreeSnapshot | null>(null)
   const [fragmentFilters, setFragmentFilters] = useState<FragmentFilters>(EMPTY_FRAGMENT_FILTERS)
   const [isFragmentFilterOpen, setIsFragmentFilterOpen] = useState(false)
-  const [searchType, setSearchType] = useState<"all" | "fragments" | "notes">("all")
   const [navigationOrigin, setNavigationOrigin] = useState<{ route: WorkspaceRoute; filters: FragmentFilters } | null>(null)
   const [convertingFragment, setConvertingFragment] = useState<Fragment | null>(null)
   const [conversionDraft, setConversionDraft] = useState({ title: "", directory: "notes" })
@@ -263,6 +274,8 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
   useEffect(() => () => {
     searchUiEpochRef.current += 1
     searchSessionRef.current = null
+    setFragmentEditorBlurCommitPaused(false)
+    clearQuickOpenMatchCache()
   }, [])
 
   // 没有文件监听：终端 `shard` 等外部写入的碎片，在切回窗口时静默对账一次。
@@ -325,17 +338,18 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     route,
   })
 
-  function replaceSearchSession(next: SearchSession | null) {
+  const replaceSearchSession = useCallback((next: SearchSession | null) => {
     searchSessionRef.current = next
     setSearchSession(next)
-  }
+  }, [])
 
-  function beginSearchSession() {
+  function beginSearchSession(mode: SearchMode) {
     const scope = scopeForSpace(routeRef.current.space)
     searchUiEpochRef.current += 1
     nextSearchSessionIdRef.current += 1
     const next = createSearchSession({
       id: `search-${nextSearchSessionIdRef.current}`,
+      mode,
       scope,
       uiEpoch: searchUiEpochRef.current,
       vaultPath: vaultPathRef.current,
@@ -344,36 +358,14 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     return next
   }
 
-  function updateLegacySearchQuery(query: string) {
-    const current = searchSessionRef.current
-    if (!current || current.scope !== "public") return
-    replaceSearchSession({
-      ...current,
-      drafts: { ...current.drafts, fullText: query },
-      querySequence: current.querySequence + 1,
-      state: query.trim() ? "indexing" : "emptyQuery",
-      hits: [],
-      total: null,
-      selectedKey: null,
-      pendingNavigation: null,
-      error: null,
-    })
-  }
-
-  const isSearchSessionCurrent = useCallback(
-    (sessionId: string, uiEpoch: number) => {
-      const current = searchSessionRef.current
-      return current?.id === sessionId && current.uiEpoch === uiEpoch
-    },
-    []
-  )
-
   function revokeSearchSession(reason: SearchRevokeReason) {
     revokeSearchSessionState(
       {
         sessionRef: searchSessionRef,
         uiEpochRef: searchUiEpochRef,
         clear: () => {
+          clearQuickOpenMatchCache()
+          setFragmentEditorBlurCommitPaused(false)
           setSearchSession(null)
           setLegacySearchSession(null)
           setIsSearchModeActive(false)
@@ -1502,42 +1494,42 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     void refreshLibraryTree()
   }
 
-  async function openSearch() {
-    await openScopedSearch("all")
+  function openSearch() {
+    openSearchMode("fullText")
   }
 
-  async function openScopedSearch(type: "all" | "fragments" | "notes") {
-    if (scopeForSpace(routeRef.current.space) === "lockbox") {
-      revokeSearchSession("spaceChanged")
-      toast("密匣全文搜索将在 Rust 搜索接入后恢复")
-      return
-    }
-    if (!(await saveLibraryDraftBeforeNavigation())) return
+  function openQuickOpen() {
+    openSearchMode("open")
+  }
 
+  function openSearchMode(mode: SearchMode) {
+    // This must happen before React mounts the Dialog and moves focus.
+    setFragmentEditorBlurCommitPaused(true)
     if (!isSearchModeActive && document.activeElement instanceof HTMLElement) {
       searchReturnFocusRef.current = document.activeElement
     }
-    if (!isSearchModeActive) setNavigationOrigin(current => current ?? { route, filters: fragmentFilters })
-    setRoute({ space: "fragments", params: {} })
-    if (!searchSessionRef.current) beginSearchSession()
-    setSearchType(type)
+    const current = searchSessionRef.current
+    const scope = scopeForSpace(routeRef.current.space)
+    if (
+      !current ||
+      current.vaultPath !== vaultPathRef.current ||
+      current.scope !== scope
+    ) {
+      beginSearchSession(mode)
+    } else if (current.mode !== mode) {
+      searchController.onModeChange(mode)
+    }
+    if (mode === "open" && scope === "public" && !libraryTree) {
+      void refreshLibraryTree()
+    }
     setIsSearchModeActive(true)
-    setSearchFocusSignal((current) => current + 1)
   }
 
   function exitSearchMode() {
     setIsSearchModeActive(false)
-    if (legacySearchSession) return
-
+    setFragmentEditorBlurCommitPaused(false)
     const returnFocus = searchReturnFocusRef.current
     revokeSearchSession("close")
-
-    if (navigationOrigin) {
-      setRoute(navigationOrigin.route)
-      setFragmentFilters(navigationOrigin.filters)
-      setNavigationOrigin(null)
-    }
-
     window.requestAnimationFrame(() => returnFocus?.focus())
   }
 
@@ -1644,18 +1636,47 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
   }, [lockbox?.unlocked, lockboxFragments, selectedLockboxTag])
 
   const visibleStreamFragments = useMemo(() => inboxFragments.filter(fragment => matchesFragmentFilters(fragment, fragmentFilters)), [inboxFragments, fragmentFilters])
-  const searchableFragments = useMemo(() => {
-    const scopedFragments = legacyWorkerFragmentsForScope(
-      fragments,
-      scopeForSpace(route.space)
-    )
-    if (searchType === "all") return scopedFragments
-    return scopedFragments.filter((fragment) =>
-      searchType === "notes"
-        ? deriveKind(fragment.tags) === "note"
-        : deriveKind(fragment.tags) === "fragment"
-    )
-  }, [fragments, route.space, searchType])
+  const searchScope = scopeForSpace(route.space)
+  const publicSearchProvider = useMemo(
+    () => createLegacyPublicSearchProvider(publicOnlyFragments),
+    [publicOnlyFragments]
+  )
+  useEffect(
+    () => () => {
+      publicSearchProvider.dispose()
+    },
+    [publicSearchProvider]
+  )
+  const openCatalog = useMemo(
+    () =>
+      buildOpenCatalog({
+        csvFiles,
+        fragments,
+        libraryTree,
+        mindMaps,
+        scope: searchScope,
+        vaultPath,
+      }),
+    [csvFiles, fragments, libraryTree, mindMaps, searchScope, vaultPath]
+  )
+  const openRecent = useMemo(
+    () =>
+      searchScope === "public" && vaultPath
+        ? readPublicOpenRecent(vaultPath)
+        : new Map<string, number>(),
+    [searchScope, vaultPath]
+  )
+  const getSearchSession = useCallback(() => searchSessionRef.current, [])
+  const searchController = useSearchController({
+    getSession: getSearchSession,
+    isLockboxAvailable: Boolean(lockbox?.unlocked),
+    lockboxProvider: LOCKBOX_SEARCH_PROVIDER,
+    openCatalog,
+    publicProvider: publicSearchProvider,
+    recent: openRecent,
+    replaceSession: (next) => replaceSearchSession(next),
+    session: searchSession,
+  })
 
   const knownTags = useMemo(
     () =>
@@ -1709,17 +1730,20 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
 
   useEffect(() => {
     function handleGlobalSearchShortcut(event: KeyboardEvent) {
+      const key = event.key.toLowerCase()
       const isSearchShortcut =
         (event.metaKey || event.ctrlKey) &&
         !event.altKey &&
-        event.key.toLowerCase() === "k"
+        !event.shiftKey &&
+        (key === "k" || key === "o")
 
       if (!isSearchShortcut) return
 
       event.preventDefault()
       if (isModalBusy) return
 
-      void openSearch()
+      if (key === "k") openSearch()
+      else openQuickOpen()
     }
 
     window.addEventListener("keydown", handleGlobalSearchShortcut)
@@ -1727,7 +1751,14 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     return () => {
       window.removeEventListener("keydown", handleGlobalSearchShortcut)
     }
-  }, [isModalBusy, isSearchModeActive, route, fragmentFilters, navigationOrigin, searchType])
+  }, [
+    isModalBusy,
+    isSearchModeActive,
+    libraryTree,
+    route,
+    searchController,
+    vaultPath,
+  ])
 
   useEffect(() => {
     function handleGlobalCaptureShortcut(event: KeyboardEvent) {
@@ -1983,37 +2014,38 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     vaultPath,
   }
 
-  const searchProps = {
-    focusSignal: searchFocusSignal,
-    fragments: searchableFragments,
-    contentType: searchType,
-    initialSession: legacySearchSession,
-    isSessionCurrent: isSearchSessionCurrent,
-    onExit: exitSearchMode,
-    onFilterFragments: () => setIsFragmentFilterOpen(true),
-    onOpenFragment: handleOpenSearchResult,
-    onQueryChange: updateLegacySearchQuery,
-    privacyScope: searchSession?.scope ?? scopeForSpace(route.space),
-    sessionId: searchSession?.id ?? "revoked",
-    uiEpoch: searchSession?.uiEpoch ?? searchUiEpochRef.current,
-  }
-
   const searchContextBarProps = legacySearchSession
     ? {
-        onBack: () => openScopedSearch(searchType),
+        onBack: () => openSearchMode("fullText"),
         onClose: endSearchSession,
         onNavigate: navigateSearchResult,
         session: legacySearchSession,
       }
     : null
 
+  const searchPalette =
+    isSearchModeActive && searchSession ? (
+      <SearchPalette
+        onClose={exitSearchMode}
+        onIncludeTrashChange={searchController.onIncludeTrashChange}
+        onModeChange={searchController.onModeChange}
+        onQueryChange={searchController.onQueryChange}
+        onSelect={searchController.onSelect}
+        onSelectedKeyChange={searchController.onSelectedKeyChange}
+        session={searchSession}
+      />
+    ) : null
+
   if (activeMindMapId) {
     return (
-      <MindMapWorkspace
-        mapId={activeMindMapId}
-        onClose={() => setActiveMindMapId(null)}
-        onMapsChange={setMindMaps}
-      />
+      <>
+        <MindMapWorkspace
+          mapId={activeMindMapId}
+          onClose={() => setActiveMindMapId(null)}
+          onMapsChange={setMindMaps}
+        />
+        {searchPalette}
+      </>
     )
   }
 
@@ -2065,7 +2097,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
                 </Button>
               </div>
             ) : null}
-            {route.space === "fragments" && (isSearchModeActive || fragmentsView !== "trash") ? (
+            {route.space === "fragments" && fragmentsView !== "trash" ? (
               <FragmentsWorkspace
             capture={{
               secondarySubmit: fragmentSelectionActive,
@@ -2083,12 +2115,10 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
               onOpenZen: openZenDraft,
             }}
             isMindMapViewActive={isMindMapViewActive}
-            isSearchModeActive={isSearchModeActive}
             mindMapPanel={{
               onMapsChange: setMindMaps,
               onOpenMap: setActiveMindMapId,
             }}
-            search={searchProps}
             searchContextBar={searchContextBarProps}
             filterContext={<FragmentFilterContext filters={fragmentFilters} onClear={() => void applyFragmentFilters(EMPTY_FRAGMENT_FILTERS)} />}
             timeline={{
@@ -2277,6 +2307,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
         onSetup={handleSetupLockbox}
         onUnlock={handleUnlockLockbox}
       />
+      {searchPalette}
     </>
   )
 }

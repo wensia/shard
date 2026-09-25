@@ -107,7 +107,7 @@ const SIDEBAR_COPY: Record<
       lockbox: "密匣",
     },
     search: "搜索内容",
-    searchPlaceholder: "搜索正文或标签",
+    searchPlaceholder: "搜索或打开…",
     searchShortcut: "⌘K",
     stats: {
       days: "天",
@@ -138,7 +138,7 @@ const SIDEBAR_COPY: Record<
       lockbox: "Lockbox",
     },
     search: "Search notes",
-    searchPlaceholder: "Search body or tags",
+    searchPlaceholder: "Search or open…",
     searchShortcut: "⌘K",
     stats: {
       days: "Days",
