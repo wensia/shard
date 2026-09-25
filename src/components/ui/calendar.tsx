@@ -93,6 +93,7 @@ export function Calendar({ value, onValueChange, className }: CalendarProps) {
     onValueChange(formatDay(date))
   }
 
+  const today = formatDay(todayDay())
   return <div className={cn("kiln-calendar", className)} data-slot="calendar"
     onCompositionStart={() => { composing.current = true }} onCompositionEnd={() => { composing.current = false }}>
     <div className="kiln-calendar-nav">
@@ -102,15 +103,19 @@ export function Calendar({ value, onValueChange, className }: CalendarProps) {
       <Button type="button" size="icon" variant="outline" aria-label="下个月"
         disabled={display.year === 9999 && display.month === 12} onClick={() => browse(shiftMonth(display, 1))}><ChevronRightIcon /></Button>
     </div>
+    {/* 今天格写「今」、挂 aria-current（kiln 上游 Calendar grid 规范）：读屏名仍是完整日期，
+        只换可见字形；它与选中同为实心主色，靠字形区分，不代表已选。 */}
     <div ref={daysRef} className="kiln-calendar-grid" role="grid" aria-label={monthLabel}>
       <div className="kiln-calendar-row" role="row">{weekdays.map(day => <span key={day} role="columnheader" className="kiln-calendar-weekday">{day}</span>)}</div>
       {Array.from({ length: 6 }, (_, week) => <div role="row" className="kiln-calendar-row" key={week}>
         {days.slice(week * 7, week * 7 + 7).map(date => {
           const stamp = formatDay(date)
+          const isToday = stamp === today
           return <div role="gridcell" key={stamp}><Button type="button" className="kiln-calendar-day" variant="ghost"
             data-date={stamp} data-outside={date.month !== display.month} disabled={!inRange(date)}
-            aria-label={stamp} aria-pressed={stamp === value} tabIndex={stamp === focusedDay ? 0 : -1}
-            onFocus={() => setFocusedDay(stamp)} onKeyDown={event => moveDay(event, date)} onClick={() => choose(date)}>{date.day}</Button></div>
+            aria-label={stamp} aria-pressed={stamp === value} aria-current={isToday ? "date" : undefined}
+            tabIndex={stamp === focusedDay ? 0 : -1}
+            onFocus={() => setFocusedDay(stamp)} onKeyDown={event => moveDay(event, date)} onClick={() => choose(date)}>{isToday ? "今" : date.day}</Button></div>
         })}
       </div>)}
     </div>

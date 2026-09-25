@@ -2,7 +2,7 @@ import { parseReminderAt } from "@shard/markdown/core"
 import { useRef, useState, type ReactElement, type ReactNode } from "react"
 
 import { Button } from "@/components/ui/button"
-import { Calendar, formatDay, todayDay } from "@/components/ui/calendar"
+import { Calendar } from "@/components/ui/calendar"
 import { Dialog, DialogClose, DialogTrigger } from "@/components/ui/dialog"
 import { PickerDialogContent } from "@/components/ui/picker-dialog"
 import { TimeColumns } from "@/components/ui/time-columns"
@@ -28,7 +28,8 @@ type Draft = { date: string; hour: string | null; minute: string | null; picked:
 function initialDraft(value: string | null): Draft {
   const { date, time } = splitReminderAt(value)
   const [hour, minute] = time ? time.split(":") : [null, null]
-  return { date: date || formatDay(todayDay()), hour, minute, picked: date !== "" }
+  // 空值不预选今天（kiln：标出今天不等于替用户选了今天）；日历仍翻到本月，今天格写「今」。
+  return { date, hour, minute, picked: date !== "" }
 }
 
 /**

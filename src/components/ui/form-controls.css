@@ -56,7 +56,11 @@
 .kiln-calendar-weekday { text-align: center; font-size: var(--text-meta); color: var(--muted-foreground); }
 .kiln-calendar-day { padding: 0; width: 100%; height: var(--control-height); font-size: var(--text-section-title); font-weight: var(--weight-regular); font-variant-numeric: tabular-nums; }
 .kiln-calendar-day[data-outside="true"]:not([aria-pressed="true"]) { color: color-mix(in srgb, var(--muted-foreground) 45%, transparent); }
-.kiln-calendar-day[aria-pressed="true"] { background: var(--primary); color: var(--primary-foreground); }
+.kiln-calendar-day[aria-pressed="true"] { background: var(--primary); color: var(--primary-foreground); font-weight: var(--weight-medium); }
+/* 今天与选中同为实心主色，区分靠字形（「今」对日号）；汉字比两位数字压得满，缩一档与整片数字齐平。 */
+.kiln-calendar-day[aria-current="date"] { background: var(--primary); color: var(--primary-foreground); font-size: var(--text-meta); font-weight: var(--weight-medium); }
+/* 溢出到相邻月的今天只留字不留底：它是翻到的那个月的地标，不是那个月的主角。 */
+.kiln-calendar-day[data-outside="true"][aria-current="date"]:not([aria-pressed="true"]) { background: transparent; color: color-mix(in srgb, var(--muted-foreground) 45%, transparent); font-weight: var(--weight-regular); }
 .kiln-time-input { font-variant-numeric: tabular-nums; }
 .kiln-time-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-2); }
 .kiln-time-column { position: relative; display: flex; flex-direction: column; gap: var(--space-1); min-height: 0; overflow-y: auto; overscroll-behavior: contain; }

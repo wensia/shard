@@ -68,7 +68,25 @@ test("日期对话框保留空值、闰日、年份边界、清空与键盘选�
   await expect(dialog.getByRole("button", { name: "清空", exact: true })).toBeDisabled()
   await expect(dialog.getByRole("button", { name: "关闭", exact: true })).toHaveCount(1)
   await expect(page.getByLabel("日期结果")).toHaveText("empty")
-  await expect(dialog.getByRole("button", { name: "2024-02-10", exact: true })).toBeFocused()
+  const today = dialog.getByRole("button", { name: "2024-02-10", exact: true })
+  await expect(today).toBeFocused()
+  // 今天格写「今」、挂 aria-current、实心主色，但空值不预选（aria-pressed 仍为 false）。
+  await expect(today).toHaveText("今")
+  await expect(today).toHaveAttribute("aria-current", "date")
+  await expect(today).toHaveAttribute("aria-pressed", "false")
+  const todayStyle = await today.evaluate((node) => {
+    const probe = document.createElement("span")
+    probe.style.background = "var(--primary)"
+    document.body.append(probe)
+    const expected = getComputedStyle(probe).backgroundColor
+    probe.remove()
+    return { actual: getComputedStyle(node).backgroundColor, expected }
+  })
+  expect(todayStyle.actual).toBe(todayStyle.expected)
+  // 翻到下个月：溢出格里的今天仍写「今」，但不填底。
+  await dialog.getByRole("button", { name: "下个月", exact: true }).click()
+  await expect(dialog.getByRole("button", { name: "2024-02-10", exact: true })).toHaveCount(0)
+  await dialog.getByRole("button", { name: "上个月", exact: true }).click()
 
   // 选中态：实心 primary + aria-pressed；非本月日期降为 45% 的 muted。
   await dialog.getByRole("button", { name: "2024-02-29", exact: true }).click()
@@ -87,13 +105,15 @@ test("日期对话框保留空值、闰日、年份边界、清空与键盘选�
     const result = {
       selectedBg: getComputedStyle(selected).backgroundColor, primary: color("var(--primary)"),
       outside: getComputedStyle(outside).color, outsideExpected: color("color-mix(in srgb, var(--muted-foreground) 45%, transparent)"),
-      dayHeight: selected.offsetHeight, dayFont: getComputedStyle(selected).fontSize, dayWeight: getComputedStyle(selected).fontWeight,
+      dayHeight: selected.offsetHeight, dayFont: getComputedStyle(selected).fontSize, dayWeight: getComputedStyle(node.querySelector<HTMLElement>('[data-date="2024-02-20"]')!).fontWeight,
+      selectedWeight: getComputedStyle(selected).fontWeight,
       summaryRadius: getComputedStyle(summary).borderRadius, dialogRadius: getComputedStyle(node).borderRadius,
     }
     probe.remove(); return result
   })
   expect(look.selectedBg).toBe(look.primary); expect(look.outside).toBe(look.outsideExpected)
-  expect(look).toMatchObject({ dayHeight: 36, dayFont: "14px", dayWeight: "400", summaryRadius: "8px", dialogRadius: "6px" })
+  // 普通日期 400，选中日期提到 500（kiln 上游参考实现）。
+  expect(look).toMatchObject({ dayHeight: 36, dayFont: "14px", dayWeight: "400", selectedWeight: "500", summaryRadius: "8px", dialogRadius: "6px" })
   await page.keyboard.press("ArrowRight"); await page.keyboard.press("Enter")
   await expect(trigger).toHaveText("2024-03-01")
 

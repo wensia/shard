@@ -160,10 +160,17 @@ test.describe("备忘卡片提醒", () => {
     await expect(dialog.getByRole("button", { name: "清除提醒", exact: true })).toBeDisabled()
     // 日历、时间列直接内嵌：不再有第二层日期 / 时间浮层。
     await expect(page.locator('[data-slot="date-picker-content"], [data-slot="time-picker-content"]')).toHaveCount(0)
-    await expect(dialog.getByRole("button", { name: "2026-09-25", exact: true })).toHaveAttribute("aria-pressed", "true")
+    // 今天格写「今」、挂 aria-current，但空值不预选今天；读屏名仍是完整日期。
+    const today = dialog.getByRole("button", { name: "2026-09-25", exact: true })
+    await expect(today).toHaveText("今")
+    await expect(today).toHaveAttribute("aria-current", "date")
+    await expect(today).toHaveAttribute("aria-pressed", "false")
+    await expect(dialog.getByRole("button", { name: "2026-09-24", exact: true })).toHaveText("24")
 
     await dialog.getByRole("button", { name: "2026-09-30", exact: true }).click()
     await expect(summary).toHaveText(/提醒时间\s*2026-09-30 --:--/)
+    await expect(today).toHaveText("今")
+    await expect(today).toHaveAttribute("aria-pressed", "false")
     await dialog.getByRole("group", { name: "小时" }).getByRole("button", { name: "14", exact: true }).click()
     await expect(summary).toHaveText(/2026-09-30 14:--/)
     await expect(dialog.getByRole("button", { name: "确定", exact: true })).toBeDisabled()
