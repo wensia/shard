@@ -20,8 +20,8 @@ use rusqlite::{params, Connection, Error, ErrorCode, OptionalExtension};
 use sha2::{Digest, Sha256};
 use shard_core::search::SearchProjectionBlock;
 
-const SCHEMA_VERSION: i64 = 1;
-const INDEX_FORMAT: &str = "search-projection-v1";
+const SCHEMA_VERSION: i64 = 2;
+const INDEX_FORMAT: &str = "search-projection-assets-v2";
 const BATCH_SIZE: usize = 1_000;
 
 #[derive(Default)]
@@ -85,6 +85,7 @@ pub(crate) struct CachedFile {
     pub(crate) indexed_at_ns: i128,
     pub(crate) parse_error: bool,
     pub(crate) doc: Option<CachedDoc>,
+    pub(crate) asset_references: Vec<String>,
 }
 
 pub(crate) type IndexEntry = CachedFile;
@@ -193,6 +194,7 @@ impl IndexStore {
                 indexed_at_ns: i128::from(row.get::<_, i64>(7)?),
                 parse_error: row.get::<_, i64>(8)? != 0,
                 doc,
+                asset_references: Vec::new(),
             })
         })?;
         let mut files = HashMap::new();
@@ -211,6 +213,25 @@ impl IndexStore {
         stale_paths: &[String],
     ) -> rusqlite::Result<()> {
         self.apply_rows(batch.entries(), stale_paths)
+    }
+
+    pub(crate) fn asset_references(&self) -> rusqlite::Result<std::collections::HashSet<String>> {
+        let conn = self.conn.lock().unwrap_or_else(|error| error.into_inner());
+        let mut statement = conn.prepare(
+            "SELECT l.src_path, l.target FROM links l JOIN files f ON f.path = l.src_path \
+             WHERE l.kind = 'asset' AND l.src_path LIKE 'notes/%'",
+        )?;
+        let rows = statement.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+        let mut references = std::collections::HashSet::new();
+        for row in rows {
+            let (source, target) = row?;
+            if crate::is_library_reference_source(Path::new(&source)) {
+                references.insert(target);
+            }
+        }
+        Ok(references)
     }
 
     fn apply_rows(&self, batch: &[IndexEntry], stale_paths: &[String]) -> rusqlite::Result<()> {
@@ -256,6 +277,13 @@ impl IndexStore {
                     ],
                 )?;
                 tx.execute("DELETE FROM docs WHERE path = ?1", [&entry.path])?;
+                tx.execute("DELETE FROM links WHERE src_path = ?1", [&entry.path])?;
+                for target in &entry.asset_references {
+                    tx.execute(
+                        "INSERT INTO links (src_path, kind, target) VALUES (?1, 'asset', ?2)",
+                        params![entry.path, target],
+                    )?;
+                }
                 if let Some(doc) = &entry.doc {
                     tx.execute(
                         "INSERT INTO docs (path, search_kind, object_id, archived, title, \
@@ -358,11 +386,11 @@ fn initialize(conn: &mut Connection, vault: &str) -> rusqlite::Result<InitAction
         return Ok(InitAction::Recreate);
     }
     let table_count: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('meta', 'files', 'docs')",
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('meta', 'files', 'docs', 'links')",
         [],
         |row| row.get(0),
     )?;
-    if table_count != 3 {
+    if table_count != 4 {
         return Ok(InitAction::Recreate);
     }
     let meta = |key: &str| -> rusqlite::Result<Option<String>> {
@@ -404,7 +432,14 @@ fn create_schema(conn: &mut Connection, vault: &str) -> rusqlite::Result<()> {
            title TEXT NOT NULL, tags_json TEXT NOT NULL, updated_at TEXT,
            revision TEXT NOT NULL, projection_version INTEGER NOT NULL,
            blocks_json TEXT NOT NULL
-         );",
+         );
+         CREATE INDEX docs_by_object ON docs(object_id);
+         CREATE TABLE links (
+           src_path TEXT NOT NULL REFERENCES files(path) ON DELETE CASCADE,
+           kind TEXT NOT NULL, target TEXT NOT NULL,
+           PRIMARY KEY (src_path, kind, target)
+         ) WITHOUT ROWID;
+         CREATE INDEX links_by_target ON links(target, kind);",
     )?;
     for (key, value) in [
         ("index_format", INDEX_FORMAT),
@@ -582,6 +617,7 @@ mod tests {
                     text: "public text".to_owned(),
                 }],
             }),
+            asset_references: Vec::new(),
         };
         (directory, root, vault, entry)
     }

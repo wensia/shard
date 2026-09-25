@@ -154,7 +154,7 @@ pub(crate) fn build_snapshot_with_index(
         SearchScope::Public => {
             let index = index_registry.and_then(|registry| registry.open(&vault));
             let (loaded, skipped, sources) =
-                load_public_documents(&vault, &request, index.as_deref())?;
+                load_public_documents(&vault, &request, index.as_deref(), false)?;
             (loaded, skipped, None, sources)
         }
         SearchScope::Lockbox => {
@@ -205,6 +205,7 @@ fn load_public_documents(
     vault: &Path,
     request: &SearchBuildRequest,
     index: Option<&IndexStore>,
+    strict_index: bool,
 ) -> Result<
     (
         Vec<LoadedSearchDocument>,
@@ -224,6 +225,9 @@ fn load_public_documents(
             None
         }
     });
+    if strict_index && cached.is_none() {
+        return Err(SearchError::Io { retryable: true });
+    }
     let force_read_all = matches!(request.refresh, SearchRefresh::Rebuild)
         || (request.force_read_all && cached.is_none());
     let mut index_batch = PublicIndexBatch::new();
@@ -239,6 +243,7 @@ fn load_public_documents(
         .unwrap_or_default();
 
     for source in enumerated {
+        let library_source = crate::is_library_reference_source(Path::new(&source.relative));
         current_paths.insert(source.relative.clone());
         let cached_file = cached
             .as_ref()
@@ -283,7 +288,18 @@ fn load_public_documents(
             if old.is_some_and(|record| record.parse_error) {
                 skipped = skipped.saturating_add(1);
                 if index.is_some() && !cached_current {
-                    index_batch.push(index_entry(&source.relative, old.unwrap(), None));
+                    let references = read_asset_references(&source.path, library_source);
+                    if strict_index && references.is_err() {
+                        return Err(SearchError::Io { retryable: true });
+                    }
+                    if let Ok(references) = references {
+                        index_batch.push(index_entry(
+                            &source.relative,
+                            old.unwrap(),
+                            None,
+                            references,
+                        ));
+                    }
                 }
                 sources.insert(source.relative, old.unwrap().clone());
                 continue;
@@ -292,11 +308,18 @@ fn load_public_documents(
                 if index.is_some()
                     && (!cached_current || cached_file.is_some_and(|row| row.doc.is_none()))
                 {
-                    index_batch.push(index_entry(
-                        &source.relative,
-                        old.unwrap(),
-                        Some(encode_cached_document(&document)),
-                    ));
+                    let references = read_asset_references(&source.path, library_source);
+                    if strict_index && references.is_err() {
+                        return Err(SearchError::Io { retryable: true });
+                    }
+                    if let Ok(references) = references {
+                        index_batch.push(index_entry(
+                            &source.relative,
+                            old.unwrap(),
+                            Some(encode_cached_document(&document)),
+                            references,
+                        ));
+                    }
                 }
                 documents.push(document);
                 sources.insert(source.relative, old.unwrap().clone());
@@ -304,10 +327,18 @@ fn load_public_documents(
             }
         }
 
-        let loaded = if !force_read_all && source.kind == PublicSourceKind::Markdown {
-            // A file in the racy window must be read, but unchanged bytes need no projection.
+        let mut references_from_text = None;
+        let loaded = if source.kind == PublicSourceKind::Markdown {
+            // Reuse the same Markdown read for projection and asset extraction.
             read_public_markdown_text(vault, &source.path).and_then(|(text, revision)| {
-                if old.is_some_and(|record| !record.parse_error && record.revision == revision) {
+                references_from_text = Some(if library_source {
+                    crate::extract_asset_references(&text)
+                } else {
+                    Vec::new()
+                });
+                if !force_read_all
+                    && old.is_some_and(|record| !record.parse_error && record.revision == revision)
+                {
                     if let Some(document) = old_document() {
                         return Ok(document);
                     }
@@ -338,7 +369,20 @@ fn load_public_documents(
             parse_error,
         };
         if index.is_some() {
-            index_batch.push(index_entry(&source.relative, &record, cached_doc));
+            let references = references_from_text
+                .map(Ok)
+                .unwrap_or_else(|| read_asset_references(&source.path, library_source));
+            if strict_index && references.is_err() {
+                return Err(SearchError::Io { retryable: true });
+            }
+            if let Ok(references) = references {
+                index_batch.push(index_entry(
+                    &source.relative,
+                    &record,
+                    cached_doc,
+                    references,
+                ));
+            }
         }
         sources.insert(source.relative, record);
     }
@@ -355,6 +399,9 @@ fn load_public_documents(
             .unwrap_or_default();
         if let Err(error) = index.apply(&index_batch, &stale) {
             index.discard_if_corrupt(&error);
+            if strict_index {
+                return Err(SearchError::Io { retryable: true });
+            }
         }
     }
     Ok((documents, skipped, sources))
@@ -465,7 +512,12 @@ fn decode_cached_document(vault: &Path, file: &CachedFile) -> Option<LoadedSearc
     })
 }
 
-fn index_entry(relative: &str, record: &SourceRecord, doc: Option<CachedDoc>) -> IndexEntry {
+fn index_entry(
+    relative: &str,
+    record: &SourceRecord,
+    doc: Option<CachedDoc>,
+    asset_references: Vec<String>,
+) -> IndexEntry {
     IndexEntry {
         path: relative.to_string(),
         source_kind: source_kind_name(record.kind).to_string(),
@@ -477,7 +529,36 @@ fn index_entry(relative: &str, record: &SourceRecord, doc: Option<CachedDoc>) ->
         content_hash: record.revision.clone(),
         parse_error: record.parse_error,
         doc,
+        asset_references,
     }
+}
+
+fn read_asset_references(path: &Path, library_source: bool) -> std::io::Result<Vec<String>> {
+    if !library_source {
+        return Ok(Vec::new());
+    }
+    let file = File::open(path)?;
+    let mut references = std::collections::HashSet::new();
+    for line in BufReader::new(file).lines().map_while(Result::ok) {
+        references.extend(crate::extract_asset_references(&line));
+    }
+    Ok(references.into_iter().collect())
+}
+
+pub(crate) fn sync_public(vault: &Path, index: &IndexStore) -> Result<(), SearchError> {
+    let request = SearchBuildRequest {
+        context: SearchContext {
+            vault_path: vault.to_string_lossy().into_owned(),
+            vault_epoch: String::new(),
+            privacy_epoch: String::new(),
+        },
+        scope: SearchScope::Public,
+        refresh: SearchRefresh::Reconcile,
+        start_generation: 0,
+        force_read_all: false,
+        previous: None,
+    };
+    load_public_documents(vault, &request, Some(index), true).map(|_| ())
 }
 
 fn now_ns() -> i128 {

@@ -28,7 +28,7 @@ use std::{
     process::{Command, Stdio},
     sync::{
         atomic::AtomicBool,
-        Arc, Condvar, LockResult, Mutex, MutexGuard,
+        Arc, Condvar, LockResult, Mutex, MutexGuard, OnceLock,
     },
     time::{Duration, SystemTime},
 };
@@ -68,6 +68,7 @@ const CSV_GIT_PATHSPEC: &str = ":(glob,icase)**/*.csv";
 /// Vault selection changes the persisted path and the active search context as one unit.
 /// Per-vault write gates cannot serialize two concurrent switches to different paths.
 static VAULT_SELECTION_GATE: Mutex<()> = Mutex::new(());
+static LIBRARY_INDEX_REGISTRY: OnceLock<Arc<search_index::IndexRegistry>> = OnceLock::new();
 
 /// Shard 托管的 vault 根目录。提交、脏检测、检查点、计数必须共用这一份清单——
 /// 目录在多处手写曾造成 notes 完全不入 git 状态的盲区。
@@ -2532,9 +2533,80 @@ fn build_library_tree(vault: &Path) -> Result<LibraryTreeSnapshot, String> {
 }
 
 fn library_asset_references(vault: &Path) -> HashSet<String> {
+    library_asset_references_with_index(vault, LIBRARY_INDEX_REGISTRY.get().map(Arc::as_ref))
+}
+
+fn is_library_reference_source(path: &Path) -> bool {
+    let mut parts = path.components();
+    if !matches!(parts.next(), Some(Component::Normal(root)) if root == "notes") {
+        return false;
+    }
+    let mut has_child = false;
+    for part in parts {
+        let Component::Normal(name) = part else { return false };
+        if name.to_string_lossy().starts_with('.') {
+            return false;
+        }
+        has_child = true;
+    }
+    has_child && (matches!(path.extension().and_then(|extension| extension.to_str()), Some("md" | "csv"))
+        || is_mind_map_file(path)
+        || canvas_commands::is_canvas(path)
+        || canvas_commands::is_flow(path)
+        || table_commands::is_table(path))
+}
+
+fn extract_asset_references(text: &str) -> Vec<String> {
+    let mut references = HashSet::new();
+    for line in text.lines() {
+        let line = line.replace("\\/", "/");
+        for marker in ["assets/", "shard-attachment:"] {
+            let mut remaining = line.as_str();
+            while let Some(start) = remaining.find(marker) {
+                let is_local_reference = remaining[..start]
+                    .chars()
+                    .next_back()
+                    .map(|character| {
+                        character.is_whitespace()
+                            || matches!(character, '(' | '[' | '<' | '"' | '\'' | '=')
+                    })
+                    .unwrap_or(true);
+                let candidate = &remaining[start..];
+                let end = candidate
+                    .find(|character: char| {
+                        character.is_whitespace()
+                            || matches!(character, '"' | '\'' | ')' | ']' | '>' | '<' | '`' | '\\' | ',')
+                    })
+                    .unwrap_or(candidate.len());
+                if is_local_reference && end > marker.len() {
+                    references.insert(candidate[..end].to_string());
+                }
+                remaining = &candidate[marker.len()..];
+            }
+        }
+    }
+    references.into_iter().collect()
+}
+
+fn library_asset_references_with_index(
+    vault: &Path,
+    registry: Option<&search_index::IndexRegistry>,
+) -> HashSet<String> {
+    if let Some(index) = registry.and_then(|registry| registry.open(vault)) {
+        if search_sources::sync_public(vault, &index).is_ok() {
+            match index.asset_references() {
+                Ok(references) => return references,
+                Err(error) => index.discard_if_corrupt(&error),
+            }
+        }
+    }
+    library_asset_references_full_scan(vault)
+}
+
+fn library_asset_references_full_scan(vault: &Path) -> HashSet<String> {
     // Shared attachments remain on disk. Public library references establish
     // visibility; fragments, trash, lockbox and unknown provenance never do.
-    fn collect(directory: &Path, references: &mut HashSet<String>) {
+    fn collect(vault: &Path, directory: &Path, references: &mut HashSet<String>) {
         let Ok(entries) = fs::read_dir(directory) else {
             return;
         };
@@ -2547,52 +2619,21 @@ fn library_asset_references(vault: &Path) -> HashSet<String> {
             }
             let path = entry.path();
             if file_type.is_dir() {
-                collect(&path, references);
+                collect(vault, &path, references);
             } else if file_type.is_file()
-                && (matches!(
-                    path.extension().and_then(|extension| extension.to_str()),
-                    Some("md" | "csv")
-                ) || is_mind_map_file(&path)
-                    || canvas_commands::is_canvas(&path)
-                    || canvas_commands::is_flow(&path)
-                    || table_commands::is_table(&path))
+                && path
+                    .strip_prefix(vault)
+                    .is_ok_and(is_library_reference_source)
             {
                 let Ok(file) = File::open(path) else { continue };
                 for line in BufReader::new(file).lines().map_while(Result::ok) {
-                    let line = line.replace("\\/", "/");
-                    for marker in ["assets/", "shard-attachment:"] {
-                        let mut remaining = line.as_str();
-                        while let Some(start) = remaining.find(marker) {
-                            let is_local_reference = remaining[..start]
-                                .chars()
-                                .next_back()
-                                .map(|character| {
-                                    character.is_whitespace()
-                                        || matches!(character, '(' | '[' | '<' | '"' | '\'' | '=')
-                                })
-                                .unwrap_or(true);
-                            let candidate = &remaining[start..];
-                            let end = candidate
-                                .find(|character: char| {
-                                    character.is_whitespace()
-                                        || matches!(
-                                            character,
-                                            '"' | '\'' | ')' | ']' | '>' | '<' | '`' | '\\' | ','
-                                        )
-                                })
-                                .unwrap_or(candidate.len());
-                            if is_local_reference && end > marker.len() {
-                                references.insert(candidate[..end].to_string());
-                            }
-                            remaining = &candidate[marker.len()..];
-                        }
-                    }
+                    references.extend(extract_asset_references(&line));
                 }
             }
         }
     }
     let mut references = HashSet::new();
-    collect(&vault.join("notes"), &mut references);
+    collect(vault, &vault.join("notes"), &mut references);
     references
 }
 
@@ -6447,6 +6488,7 @@ pub fn run() {
     let search_runtime = search_runtime::managed_runtime();
     let lockbox_runtime = LockboxRuntime::default();
     let index_registry = Arc::new(search_index::IndexRegistry::default());
+    let _ = LIBRARY_INDEX_REGISTRY.set(index_registry.clone());
     search_lockbox::bind_search_runtime(&lockbox_runtime, search_runtime.clone());
     search_sources::install_snapshot_builder(
         &search_runtime,
@@ -7591,6 +7633,63 @@ mod tests {
             "只有 fragments/、notes/ 中的文档可以移入密匣。"
         );
         assert!(source.is_file());
+    }
+
+    #[test]
+    fn library_asset_references_index_equals_full_scan() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let vault = &tempdir.path().join("vault");
+        ensure_vault_layout(vault).unwrap();
+        fs::create_dir_all(vault.join("notes/nested")).unwrap();
+        fs::create_dir_all(vault.join("notes/.hidden")).unwrap();
+        fs::create_dir_all(vault.join("fragments")).unwrap();
+        fs::write(vault.join("notes/nested/doc.md"), "![x](assets/a.png)\nshard-attachment:abc\n![x](assets\\/escaped.png)").unwrap();
+        fs::write(vault.join("notes/nested/data.csv"), "header\nassets/csv.png").unwrap();
+        fs::write(vault.join("notes/.hidden/no.md"), "assets/hidden.png").unwrap();
+        fs::write(vault.join("fragments/one.md"), "assets/fragment.png").unwrap();
+        let registry = search_index::IndexRegistry::default();
+        registry.set_root(tempdir.path().join("cache"));
+
+        let indexed = library_asset_references_with_index(vault, Some(&registry));
+        assert_eq!(indexed, registry.open(vault).unwrap().asset_references().unwrap());
+        assert_eq!(indexed, library_asset_references_full_scan(vault));
+        for expected in ["assets/a.png", "assets/escaped.png", "assets/csv.png", "shard-attachment:abc"] {
+            assert!(indexed.contains(expected), "missing {expected}");
+        }
+        assert!(!indexed.contains("assets/hidden.png"));
+        assert!(!indexed.contains("assets/fragment.png"));
+    }
+
+    #[test]
+    fn library_asset_references_update_after_note_edit() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let vault = &tempdir.path().join("vault");
+        ensure_vault_layout(vault).unwrap();
+        let note = vault.join("notes/doc.md");
+        fs::write(&note, "assets/old.png").unwrap();
+        let registry = search_index::IndexRegistry::default();
+        registry.set_root(tempdir.path().join("cache"));
+        assert!(library_asset_references_with_index(vault, Some(&registry)).contains("assets/old.png"));
+
+        fs::write(&note, "assets/new-long.png").unwrap();
+        let updated = library_asset_references_with_index(vault, Some(&registry));
+        assert_eq!(updated, registry.open(vault).unwrap().asset_references().unwrap());
+        assert_eq!(updated, library_asset_references_full_scan(vault));
+        assert!(updated.contains("assets/new-long.png"));
+        assert!(!updated.contains("assets/old.png"));
+    }
+
+    #[test]
+    fn library_asset_references_fallback_without_index() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let vault = tempdir.path();
+        ensure_vault_layout(vault).unwrap();
+        fs::write(vault.join("notes/doc.md"), "assets/fallback.png").unwrap();
+        let registry = search_index::IndexRegistry::default();
+        assert_eq!(
+            library_asset_references_with_index(vault, Some(&registry)),
+            library_asset_references_full_scan(vault)
+        );
     }
 
     #[test]
