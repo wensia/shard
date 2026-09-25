@@ -58,7 +58,19 @@ function desktopInvoke<T>(command: string, args?: Record<string, unknown>) {
   )
 }
 
-function hydrateFragment(fragment: StoredFragment): Fragment {
+/** 搜索命令使用的原始调用路径；调用方负责把未知错误归一化为自己的类型。 */
+export function desktopInvokeRaw<T>(
+  command: string,
+  args?: Record<string, unknown>
+) {
+  if (!isTauri()) {
+    return Promise.reject(DESKTOP_RUNTIME_MESSAGE)
+  }
+
+  return invoke<T>(command, args)
+}
+
+export function hydrateFragment(fragment: StoredFragment): Fragment {
   return { ...fragment, kind: deriveKind(fragment.tags) }
 }
 

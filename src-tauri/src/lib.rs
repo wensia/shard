@@ -39,15 +39,13 @@ mod canvas_commands;
 mod table_commands;
 mod table_exchange_commands;
 mod window_frame;
-#[allow(dead_code)] // T06 注册搜索 command 后移除。
+mod search_commands;
 mod search_contract;
-#[allow(dead_code)] // T05/T06 接入真实来源与 command 后移除。
+#[allow(dead_code)] // Lifecycle test probes remain available for later search tasks.
 mod search_reconcile;
-#[allow(dead_code)] // T05/T06 接入真实来源与 command 后移除。
+#[allow(dead_code)] // Snapshot diagnostics remain available for later search tasks.
 mod search_runtime;
-#[allow(dead_code)] // T06 consumes lease expiry and the single-target reader through IPC.
 mod search_lockbox;
-#[allow(dead_code)] // T06 maps snapshot metadata and LoadedSearchDocument into wire responses.
 mod search_sources;
 
 const DEFAULT_WINDOW_TITLE: &str = "Shard";
@@ -6371,6 +6369,8 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            search_commands::search_vault,
+            search_commands::read_search_target,
             table_commands::create_table,
             canvas_commands::create_canvas,
             canvas_commands::read_canvas,

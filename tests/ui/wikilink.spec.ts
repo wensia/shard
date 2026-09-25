@@ -3,6 +3,7 @@ import { expect, test, type Page } from "@playwright/test"
 import { applyFragmentTag } from "./fragment-filter-helpers"
 
 import { fillEditor, readEditor } from "./editor-helpers"
+import { installSearchIpcMock } from "./search-ipc-mock"
 
 interface WikilinkCall {
   args: Record<string, unknown>
@@ -16,6 +17,7 @@ interface WikilinkMockOptions {
 }
 
 async function installWikilinkMock(page: Page, options: WikilinkMockOptions = {}) {
+  await installSearchIpcMock(page)
   await page.addInitScript((options: WikilinkMockOptions) => {
     const now = "2026-08-30T12:00:00.000Z"
     const fragments = [

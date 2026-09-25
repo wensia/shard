@@ -1,6 +1,7 @@
 import { expect, test, type Page } from "@playwright/test"
 
 import { fillEditor, readEditorSnapshot, selectDocRange, selectEditorText } from "./editor-helpers"
+import { installSearchIpcMock } from "./search-ipc-mock"
 
 interface ScrollCounters {
   rootRenders: number
@@ -24,6 +25,7 @@ interface ScrollProbe {
 type ProbeWindow = Window & { __fragmentScrollProbe: ScrollProbe }
 
 async function installScrollMock(page: Page) {
+  await installSearchIpcMock(page)
   await page.addInitScript(() => {
     const fragments = Array.from({ length: 40 }, (_, index) => ({
       id: `scroll-${index}`,

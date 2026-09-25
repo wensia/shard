@@ -6,6 +6,7 @@ import {
   readEditor,
   typeEditor,
 } from "./editor-helpers"
+import { installSearchIpcMock } from "./search-ipc-mock"
 
 /**
  * 阶段 D2a：资料库编辑器切富文本（技术方案 §5、§6 阶段 3）。
@@ -31,6 +32,7 @@ interface TestCall {
  * 可由用例释放的重命名（用来把编辑器压成只读态）。
  */
 async function installRichLibraryMock(page: Page, noteBody = NOTE_BODY) {
+  await installSearchIpcMock(page)
   await page.addInitScript((noteBody: string) => {
     const now = "2026-09-10T08:00:00.000Z"
     const fragments = [

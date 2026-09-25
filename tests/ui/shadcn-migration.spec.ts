@@ -9,6 +9,7 @@ import {
   selectionToolbar,
   typeEditor,
 } from "./editor-helpers"
+import { installSearchIpcMock } from "./search-ipc-mock"
 
 async function installTauriMock(
   page: Page,
@@ -17,6 +18,7 @@ async function installTauriMock(
     relations?: Record<string, { targetId: string; note?: string }[]>
   } = {}
 ) {
+  await installSearchIpcMock(page)
   await page.addInitScript((injected: typeof options) => {
     const now = "2026-08-03T10:00:00.000Z"
     const fragments = Array.from({ length: 24 }, (_, index) => ({

@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test"
+import { installSearchIpcMock } from "./search-ipc-mock"
 
 interface LockboxCall {
   args: Record<string, unknown>
@@ -10,6 +11,7 @@ interface LockboxCall {
  * 传送门 = 资料库树上的上锁挂载点；安全区 = 整个密匣空间，离开即上锁。
  */
 async function installLockboxSpaceMock(page: Page) {
+  await installSearchIpcMock(page)
   await page.addInitScript(() => {
     const now = "2026-08-30T10:00:00.000Z"
     const publicFragments = [

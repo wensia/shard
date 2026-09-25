@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test"
 import type { CanvasFile, CanvasReadResult } from "../../src/features/canvas/model"
+import { installSearchIpcMock } from "./search-ipc-mock"
 
 type RecoveryHarness = Window & {
   __canvasHarness: { flush(): Promise<boolean>; dirty(): boolean; closed: number }
@@ -9,6 +10,7 @@ type RecoveryHarness = Window & {
 }
 
 async function prepareConflict(page: Page, loseNextResult = false) {
+  await installSearchIpcMock(page)
   await page.goto("/canvas-workspace-test.html?mock=1")
   await page.getByRole("button", { name: "添加对象", exact: true }).click()
   await page.getByRole("menuitem", { name: "流程", exact: true }).click()

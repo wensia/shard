@@ -1,5 +1,6 @@
 import { expect, test, type Locator, type Page } from "@playwright/test"
 import type { LibraryTreeEntry, LibraryTreeSnapshot } from "../../src/types"
+import { installSearchIpcMock } from "./search-ipc-mock"
 
 interface CommandCall {
   command: string
@@ -26,6 +27,7 @@ const FILES = [
 
 // A small in-memory vault: real UI and command contracts, no user's filesystem.
 async function installSelectionMock(page: Page, extraFileCount = 0) {
+  await installSearchIpcMock(page)
   await page.addInitScript(({ longName, extraFileCount }: { longName: string; extraFileCount: number }) => {
     const now = "2026-09-08T10:00:00.000Z"
     const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T

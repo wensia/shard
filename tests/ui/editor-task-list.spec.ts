@@ -3,6 +3,7 @@ import { writeFile } from "node:fs/promises"
 import { expect, test, type Locator, type Page } from "@playwright/test"
 
 import { fillEditor, focusEditor, readEditor, readEditorSnapshot, selectEditorText, typeEditor } from "./editor-helpers"
+import { installSearchIpcMock } from "./search-ipc-mock"
 
 type Surface = "composer" | "inline" | "zen" | "library"
 
@@ -13,6 +14,7 @@ interface TestCall {
 
 // Exercise the real workbench routes with an in-memory vault; no user's files are written.
 async function installTaskListMock(page: Page) {
+  await installSearchIpcMock(page)
   await page.addInitScript(() => {
     const now = "2026-09-10T08:00:00.000Z"
     const fragments = [

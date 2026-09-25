@@ -5,10 +5,12 @@ import { expect, test, type Page } from "@playwright/test"
 import { fillEditor, readEditor, readEditorSnapshot, selectEditorText } from "./editor-helpers"
 import { applyFragmentTag, openFragmentFilters } from "./fragment-filter-helpers"
 import { selectOption } from "./select-helpers"
+import { installSearchIpcMock } from "./search-ipc-mock"
 
 const fragmentIds = Array.from({ length: 18 }, (_, index) => `masonry-${index}`)
 
 async function installMasonryMock(page: Page, count = 18) {
+  await installSearchIpcMock(page)
   await page.addInitScript((count: number) => {
     const longLengths = new Map([[0, 42], [2, 64], [4, 38]])
     const fragments = Array.from({ length: count }, (_, index) => {

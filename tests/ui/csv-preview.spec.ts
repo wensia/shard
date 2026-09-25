@@ -1,6 +1,7 @@
 import { expect, test, type Locator, type Page } from "@playwright/test"
 
 import { fillEditor, focusEditor } from "./editor-helpers"
+import { installSearchIpcMock } from "./search-ipc-mock"
 
 interface CsvPreviewCall {
   args: Record<string, unknown>
@@ -8,6 +9,7 @@ interface CsvPreviewCall {
 }
 
 async function installCsvPreviewMock(page: Page) {
+  await installSearchIpcMock(page)
   await page.addInitScript(() => {
     const now = "2026-08-30T12:00:00.000Z"
     const fragment = (id: string, content: string, tags = ["inbox"]) => ({

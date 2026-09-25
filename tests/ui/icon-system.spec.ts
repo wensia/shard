@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test"
+import { installSearchIpcMock } from "./search-ipc-mock"
 
 // 图标系统回归网（design.md）：尺寸只能来自 --shard-icon-size-* token，
 // 描边只能来自 --shard-icon-stroke token 的全局 CSS 规则。这两条断言
@@ -12,6 +13,7 @@ const DATATABLE_FRAGMENT = [
 ].join("\n")
 
 async function installIconMock(page: Page) {
+  await installSearchIpcMock(page)
   await page.addInitScript((datatable: string) => {
     const fragment = {
       id: "fragment-1",

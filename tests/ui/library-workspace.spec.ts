@@ -1,6 +1,7 @@
 import { expect, test, type Page } from "@playwright/test"
 
 import { fillEditor, focusEditor, readEditor } from "./editor-helpers"
+import { installSearchIpcMock } from "./search-ipc-mock"
 
 interface TestCall {
   args: Record<string, unknown>
@@ -8,6 +9,7 @@ interface TestCall {
 }
 
 async function installLibraryMock(page: Page, includeNotes = true) {
+  await installSearchIpcMock(page)
   await page.addInitScript((withNotes: boolean) => {
     const fragments = [
       {

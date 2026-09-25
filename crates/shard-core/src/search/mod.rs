@@ -4,7 +4,7 @@ mod scan;
 use std::{error::Error, fmt};
 
 pub use projection::{project_document, project_markdown};
-pub use scan::scan_exact;
+pub use scan::{scan_exact, scan_exact_filtered};
 
 pub const SEARCH_QUERY_MAX_CHARACTERS: usize = 256;
 pub const SEARCH_QUERY_MAX_TERMS: usize = 8;

@@ -8,6 +8,7 @@ import {
   selectionToolbar,
   typeEditor,
 } from "./editor-helpers"
+import { installSearchIpcMock } from "./search-ipc-mock"
 
 /** 多维表格是唯一的表格导入入口；正文里的 GFM 表格在富文本里是表格节点，逐格编辑、只读渲染都不丢内容。 */
 const LEGACY_TABLE = "| 名称 | 状态 |\n| :--- | ---: |\n| A\\|B | 完成 |"
@@ -18,6 +19,7 @@ const LEGACY_TABLE = "| 名称 | 状态 |\n| :--- | ---: |\n| A\\|B | 完成 |"
 const LEGACY_TABLE_SAVED = "| 名称 | 状态 |\n| :-- | --: |\n| A\\|B | 完成 |"
 
 async function installTauriMock(page: Page) {
+  await installSearchIpcMock(page)
   await page.addInitScript(() => {
     const now = "2026-08-27T10:00:00.000Z"
     const state = {
@@ -126,6 +128,19 @@ async function installTauriMock(page: Page) {
               }
             case "plugin:app|version":
               return "0.1.3"
+            case "list_fragments":
+              return clone(state)
+            case "set_window_controls_hidden":
+              return null
+            case "sync_vault":
+              return clone(state.git)
+            case "checkpoint_vault":
+              return {
+                status: "no_changes",
+                changes: 0,
+                reason: null,
+                git: clone(state.git),
+              }
             case "github_cli_status":
               return {
                 installed: true,
@@ -151,7 +166,7 @@ async function installTauriMock(page: Page) {
               return clone(fragment)
             }
             default:
-              return clone(state)
+              throw new Error(`Unhandled Tauri test command: ${command}`)
           }
         },
       },

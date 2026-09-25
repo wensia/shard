@@ -8,6 +8,7 @@ import {
   selectionToolbar,
   typeEditor,
 } from "./editor-helpers"
+import { installSearchIpcMock } from "./search-ipc-mock"
 
 interface TestCall {
   command: string
@@ -19,6 +20,7 @@ const PLACEHOLDER = "想到什么，写什么..."
 
 // Exercise the real workbench route with an in-memory vault; no user's files are written.
 async function installRichComposerMock(page: Page) {
+  await installSearchIpcMock(page)
   await page.addInitScript(() => {
     const now = "2026-09-10T08:00:00.000Z"
     const fragments = [
@@ -432,4 +434,3 @@ test("旧的回退开关不再生效，速记框始终是富文本编辑器", as
   await fillEditor(page, "composer", "默认即富文本")
   await expect.poll(() => readEditor(page, "composer")).toBe("默认即富文本")
 })
-

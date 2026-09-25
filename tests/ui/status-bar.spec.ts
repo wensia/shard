@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test"
+import { installSearchIpcMock } from "./search-ipc-mock"
 
 // 底部状态栏（借鉴 Tolaria 的 ADR 0032：git 与全局状态沉到底部，侧栏只做导航）。
 // 断言一律取 computed style 而不是 class 名——条带几何是这次改动的实质。
@@ -14,6 +15,7 @@ type GitOverrides = Partial<{
 }>
 
 async function installStatusBarMock(page: Page, gitOverrides: GitOverrides = {}) {
+  await installSearchIpcMock(page)
   await page.addInitScript((overrides: GitOverrides) => {
     const git = {
       ahead: 0,

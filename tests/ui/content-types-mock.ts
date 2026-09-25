@@ -1,5 +1,7 @@
 import { expect, type Locator, type Page } from "@playwright/test"
 
+import { installSearchIpcMock } from "./search-ipc-mock"
+
 /**
  * 三种内容类型共用的工作台 mock（产品框架 §2）。
  *
@@ -31,6 +33,7 @@ interface MockBodies {
 }
 
 export async function installContentTypesMock(page: Page) {
+  await installSearchIpcMock(page)
   await page.addInitScript(
     ({ documentBody, fragmentBody, outlineBody }: MockBodies) => {
       const now = "2026-09-10T08:00:00.000Z"

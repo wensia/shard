@@ -6,6 +6,7 @@ import {
   readEditor,
   typeEditor,
 } from "./editor-helpers"
+import { installSearchIpcMock } from "./search-ipc-mock"
 
 interface TestCall {
   command: string
@@ -59,6 +60,7 @@ const PASTED_MARKDOWN = [
 
 // 跑真实工作台路由 + 内存 vault；不写用户的任何文件。
 async function installRichBlocksMock(page: Page) {
+  await installSearchIpcMock(page)
   await page.addInitScript(
     ({ csvFence, inlineFence }: { csvFence: string; inlineFence: string }) => {
       const now = "2026-09-10T08:00:00.000Z"

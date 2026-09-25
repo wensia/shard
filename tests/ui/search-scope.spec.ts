@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test"
+import { installSearchIpcMock } from "./search-ipc-mock"
 
 interface WorkerMessage {
   documents?: Array<{ id: string }>
@@ -16,6 +17,7 @@ async function installSearchScopeMock(
   page: Page,
   options: SearchScopeMockOptions = {}
 ) {
+  await installSearchIpcMock(page)
   await page.addInitScript((mockOptions) => {
     const publicFragment = {
       id: "public-result",

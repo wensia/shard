@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test"
 import { readEditor } from "./editor-helpers"
+import { installSearchIpcMock } from "./search-ipc-mock"
 
 type RecoveryScenario = "lost-response-and-check" | "failed-before-move"
 interface RecoveryCall {
@@ -10,6 +11,7 @@ interface RecoveryCall {
 // The same Tauri protocol as library-tree.spec.ts, with one object so a lost
 // conversion response cannot be masked by an unrelated refresh or fixture.
 async function installConversionRecoveryMock(page: Page, scenario: RecoveryScenario) {
+  await installSearchIpcMock(page)
   await page.addInitScript((scenario: RecoveryScenario) => {
     const stamp = "2026-08-30T10:00:00.000Z"
     const fragment = {

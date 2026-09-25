@@ -1,6 +1,7 @@
 import { expect, test, type Locator, type Page } from "@playwright/test"
 
 import { fillEditor, focusEditor } from "./editor-helpers"
+import { installSearchIpcMock } from "./search-ipc-mock"
 
 // 4 个节点：根 + 两个分支 + 一片叶子；围栏外另有一行普通正文。
 const OUTLINE_FRAGMENT = [
@@ -23,6 +24,7 @@ const largeOutline = [
 ].join("\n")
 
 async function installFenceMock(page: Page) {
+  await installSearchIpcMock(page)
   await page.addInitScript((largeOutline: string) => {
     const now = "2026-09-10T08:00:00.000Z"
     const fragments = [

@@ -1,6 +1,7 @@
 import { expect, test, type Page } from "@playwright/test"
 
 import { fillEditor, readEditor } from "./editor-helpers"
+import { installSearchIpcMock } from "./search-ipc-mock"
 
 interface OrganizeCall {
   args: Record<string, unknown>
@@ -10,6 +11,7 @@ interface OrganizeCall {
 type OrganizeMockMode = "deferred-success" | "fail-once" | "save-failure" | "deferred-save-failure"
 
 async function installOrganizeMock(page: Page, mode: OrganizeMockMode) {
+  await installSearchIpcMock(page)
   await page.addInitScript((mockMode: OrganizeMockMode) => {
     const now = "2026-08-30T12:00:00.000Z"
     const fragments = [

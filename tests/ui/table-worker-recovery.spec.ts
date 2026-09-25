@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { installSearchIpcMock } from "./search-ipc-mock";
 
 type Harness = {
   __tableWorkers: Worker[];
@@ -7,6 +8,7 @@ type Harness = {
   __TAURI_INTERNALS__: { invoke(command: string, bytes: Uint8Array): Promise<unknown> };
 };
 async function open(page: Page, loseReply = false) {
+  await installSearchIpcMock(page);
   await page.addInitScript(() => {
     const NativeWorker = window.Worker; const workers: Worker[] = [];
     Object.assign(window, { __tableWorkers: workers });

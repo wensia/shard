@@ -8,6 +8,7 @@ import {
   selectDocRange,
   typeEditor,
 } from "./editor-helpers"
+import { installSearchIpcMock } from "./search-ipc-mock"
 
 interface TestCall {
   command: string
@@ -34,6 +35,7 @@ const IMAGE_DATA_URL =
  * 这条命令取地址）。
  */
 async function installRichInlineMock(page: Page) {
+  await installSearchIpcMock(page)
   await page.addInitScript((imageDataUrl: string) => {
     const now = "2026-09-10T08:00:00.000Z"
     const fragments = [
@@ -671,4 +673,3 @@ test.describe("富文本行内与附件组件", () => {
     await expect.poll(() => readEditor(page, "composer")).toBe("记一笔 \\#撤销探针")
   })
 })
-

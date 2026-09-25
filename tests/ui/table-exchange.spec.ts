@@ -2,9 +2,11 @@ import { selectOption } from "./select-helpers"
 import { expect, test, type Page } from "@playwright/test"
 import { readFileSync } from "node:fs"
 import type { TableFile } from "../../src/features/tables/model"
+import { installSearchIpcMock } from "./search-ipc-mock"
 const nativeFixture: TableFile = JSON.parse(readFileSync(new URL("../fixtures/tables/valid/six-types.json", import.meta.url), "utf8"))
 
 async function installExchangeMock(page: Page, options: { kind?: "csv" | "xlsx" | "native"; loseFirstCreate?: boolean } = {}) {
+  await installSearchIpcMock(page)
   await page.addInitScript(({ kind, loseFirstCreate, nativeFixture }) => {
     const calls: { command: string; args: unknown }[] = []
     const writes: { path: string; text: string }[] = []

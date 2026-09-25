@@ -1,6 +1,8 @@
 import { expect, test, type Page } from "@playwright/test"
+import { installSearchIpcMock } from "./search-ipc-mock"
 
 async function installSidebarMock(page: Page) {
+  await installSearchIpcMock(page)
   await page.addInitScript(() => {
     const fragment = {
       id: "fragment-1",

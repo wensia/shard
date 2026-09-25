@@ -6,6 +6,7 @@ import { fillEditor, readEditor, readEditorSnapshot } from "./editor-helpers"
 import { selectOption } from "./select-helpers"
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import type { MindMapReadResult, ShardMapFile } from "../../src/types"
+import { installSearchIpcMock } from "./search-ipc-mock"
 
 async function createLibraryEntry(page: Page, name: "新建文档" | "新建目录") {
   const directory = page.getByRole("complementary", { name: "资料库目录" })
@@ -64,6 +65,7 @@ async function installLibraryTreeMock(
   lockboxState: LockboxMockState = DEFAULT_LOCKBOX_STATE,
   includeAssets = true
 ) {
+  await installSearchIpcMock(page)
   await page.addInitScript(({ includeAssets, lockbox }: {
     includeAssets: boolean
     lockbox: LockboxMockState

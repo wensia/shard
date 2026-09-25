@@ -24,6 +24,18 @@ pub fn scan_exact(
     query: &ParsedQuery,
     limit: usize,
 ) -> ScanResult {
+    scan_exact_filtered(documents, query, limit, |_| true)
+}
+
+pub fn scan_exact_filtered<F>(
+    documents: &[ProjectedDocument],
+    query: &ParsedQuery,
+    limit: usize,
+    include: F,
+) -> ScanResult
+where
+    F: Fn(&ProjectedDocument) -> bool,
+{
     if query.is_empty() {
         return ScanResult {
             matches: Vec::new(),
@@ -33,6 +45,7 @@ pub fn scan_exact(
 
     let mut ranked = documents
         .iter()
+        .filter(|document| include(document))
         .filter_map(|document| rank_document(document, query))
         .collect::<Vec<_>>();
     ranked.sort_by(compare_ranked);
@@ -338,6 +351,23 @@ mod tests {
         let result = scan_exact(&documents, &ParsedQuery::parse("alpha 搜索").unwrap(), 1);
         assert_eq!(result.total, 2);
         assert_eq!(result.matches[0].stable_key, "02-title");
+    }
+
+    #[test]
+    fn search_filter_applies_before_total_and_top_k() {
+        let documents = vec![
+            document("00-excluded", "Alpha 搜索", &[], "正文", 100),
+            document("01-included", "Alpha", &[], "正文搜索", 1),
+        ];
+        let result = scan_exact_filtered(
+            &documents,
+            &ParsedQuery::parse("alpha 搜索").unwrap(),
+            1,
+            |document| document.stable_key != "00-excluded",
+        );
+
+        assert_eq!(result.total, 1);
+        assert_eq!(result.matches[0].stable_key, "01-included");
     }
 
     #[test]

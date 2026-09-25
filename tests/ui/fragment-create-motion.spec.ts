@@ -2,6 +2,7 @@ import { expect, test, type Page } from "@playwright/test"
 
 import { fillEditor, focusEditor, readEditor } from "./editor-helpers"
 import { applyFragmentTag } from "./fragment-filter-helpers"
+import { installSearchIpcMock } from "./search-ipc-mock"
 
 interface RecordedMotion {
   id: string
@@ -28,6 +29,7 @@ const createdId = "motion-created-1"
 const newContent = "把刚刚的观察保存下来，让新碎片自然接入已有记录。"
 
 async function installCreateMotionMock(page: Page, count: number, pinned: boolean) {
+  await installSearchIpcMock(page)
   await page.addInitScript(({ count, pinned }) => {
     const fragments = Array.from({ length: count }, (_, index) => {
       const createdAt = new Date(Date.UTC(2026, 0, 1, 12, 0, -index)).toISOString()
