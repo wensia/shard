@@ -137,11 +137,16 @@ test.describe("备忘卡片提醒", () => {
     await expect(chip).toHaveText("9月26日 09:00")
     await expect(chip).toHaveAttribute("title", "提醒：2026-09-26 09:00")
     await expect(chip).not.toHaveAttribute("data-due", "true")
+    // 芯片替换铃铛占据右侧控件位，标题正文里不再有芯片。
+    await expect(composer.locator(".shard-rich-task-reminder-slot .shard-rich-reminder")).toHaveCount(1)
+    await expect(composer.locator(".shard-rich-task-body .shard-rich-reminder")).toHaveCount(0)
+    await expect(composer.getByRole("button", { name: "设置提醒", exact: true })).toHaveCount(0)
 
     await chip.click()
     await page.getByRole("button", { name: "清除提醒", exact: true }).click()
     await expect.poll(() => readEditor(page, "composer")).toBe("- [ ] 买菜\n  番茄")
     await expect(composer.locator(".shard-rich-reminder")).toHaveCount(0)
+    await expect(composer.getByRole("button", { name: "设置提醒", exact: true })).toHaveCount(1)
   })
 
   test("自定义日期与时间走共享 DatePicker / TimePicker", async ({ page }) => {

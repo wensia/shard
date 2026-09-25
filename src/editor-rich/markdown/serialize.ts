@@ -89,7 +89,7 @@ function serializeBlock(node: JSONContent): string {
           indent: bullet.length,
           key: 0,
         }
-      })
+      }, serializeTaskItemBody)
     }
     case "codeBlock": {
       const language = String(node.attrs?.language ?? "") || ""
@@ -112,15 +112,41 @@ function serializeBlock(node: JSONContent): string {
 
 function serializeList(
   node: JSONContent,
-  marker: (item: JSONContent, index: number) => { marker: string; indent: number; key: number }
+  marker: (item: JSONContent, index: number) => { marker: string; indent: number; key: number },
+  body: (item: JSONContent) => string = (item) => serializeListItemBody(item.content ?? [])
 ) {
   const items = node.content ?? []
   return items
     .map((item, index) => {
       const { marker: prefix, indent } = marker(item, index)
-      return indentBlock(prefix, serializeListItemBody(item.content ?? []), indent)
+      return indentBlock(prefix, body(item), indent)
     })
     .join("\n")
+}
+
+/**
+ * 任务项正文：`reminder` 属性（解析时从标题行尾提升上来的提醒）写回标题第一行末尾，
+ * 与 `liftTrailingReminder` 互逆——有标题时隔一个空格，空标题时整行就是提醒。
+ */
+function serializeTaskItemBody(item: JSONContent): string {
+  const content = item.content ?? []
+  const at = item.attrs?.reminder ? String(item.attrs.reminder) : ""
+  if (!at) return serializeListItemBody(content)
+
+  const token = `⏰ ${at}`
+  const [first, ...rest] = content
+  const title = first?.type === "paragraph" ? serializeInline(first.content ?? []) : ""
+  if (!title) {
+    if (rest.length === 0) return token
+    const glue = LIST_TYPES.has(rest[0].type ?? "") ? "\n" : "\n\n"
+    return `${token}${glue}${serializeBlocks(rest, true)}`
+  }
+
+  // 行尾空白在 Markdown 里无意义，去掉后恰好一个空格分隔，重新读取才会再次提升。
+  const body = serializeListItemBody(content)
+  const lineEnd = body.indexOf("\n")
+  const line = (lineEnd < 0 ? body : body.slice(0, lineEnd)).replace(/[ \t]+$/u, "")
+  return `${line} ${token}${lineEnd < 0 ? "" : body.slice(lineEnd)}`
 }
 
 /**

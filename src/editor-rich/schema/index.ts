@@ -69,6 +69,19 @@ export const shardEditorExtensions: AnyExtension[] = [
     },
   }),
   TaskItem.extend({
+    addAttributes() {
+      return {
+        ...this.parent?.(),
+        // 标题行尾的提醒 `⏰ YYYY-MM-DD HH:mm`（解析时提升上来，序列化写回原位），
+        // 由 NodeView 渲染在右侧控件位；缺省 null，普通任务的 DOM 不多一个属性。
+        reminder: {
+          default: null,
+          parseHTML: (element) => element.getAttribute("data-reminder"),
+          renderHTML: (attributes) =>
+            attributes.reminder ? { "data-reminder": String(attributes.reminder) } : {},
+        },
+      }
+    },
     // 备忘卡片是任务项的渲染增强，不进围栏块注册表（技术方案 §4.4 末段）。
     // NodeView 的外层元素必须仍是 `li`，taskList 的 `ul` 才有合法子节点。
     addNodeView() {

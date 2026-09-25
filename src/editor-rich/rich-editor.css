@@ -271,7 +271,9 @@
   > .shard-rich-task-body
   > *
   > p:first-child
-  .shard-rich-reminder[data-due="true"] {
+  .shard-rich-reminder[data-due="true"],
+/* 右侧控件位的芯片由 NodeView 按「已到点且未勾选」直接挂 data-due。 */
+.shard-rich-editor .ProseMirror .shard-rich-task-reminder-slot .shard-rich-reminder[data-due="true"] {
   border-color: color-mix(in srgb, var(--warning) 35%, transparent);
   background: var(--warning-bg);
   color: var(--warning);
@@ -482,6 +484,20 @@
 .shard-rich-editor .ProseMirror .shard-rich-memo-toggle {
   flex-shrink: 0;
   color: var(--muted-foreground);
+}
+
+/* 任务项右侧的提醒位：标题行尾的提醒（taskItem 的 reminder 属性）画成芯片放在这里，
+ * 备忘卡片上它替换铃铛。普通任务与首行等高，备忘卡片与折叠钮等高，芯片垂直居中。 */
+.shard-rich-editor .ProseMirror .shard-rich-task-reminder-slot {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  min-height: calc(var(--shard-editor-font-size) * var(--shard-editor-line-height));
+  user-select: none;
+}
+
+.shard-rich-editor .ProseMirror .shard-rich-memo .shard-rich-task-reminder-slot {
+  min-height: var(--control-height-sm);
 }
 
 /* 备忘卡片的提醒钮：与折叠钮同一档；已设提醒时提到正文色，一眼可见。 */

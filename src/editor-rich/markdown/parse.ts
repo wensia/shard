@@ -175,8 +175,41 @@ function parseTaskItem(task: LezerNode, children: LezerNode[], src: string): JSO
     children.filter((child) => child.name !== "ListMark" && child.name !== "Task"),
     src
   )
-  const head: JSONContent = first.length > 0 ? { type: "paragraph", content: first } : { type: "paragraph" }
-  return { type: "taskItem", attrs: { checked }, content: [head, ...rest] }
+  const lifted = liftTrailingReminder(first)
+  const title = lifted?.content ?? first
+  const head: JSONContent = title.length > 0 ? { type: "paragraph", content: title } : { type: "paragraph" }
+  const attrs = lifted ? { checked, reminder: lifted.at } : { checked }
+  return { type: "taskItem", attrs, content: [head, ...rest] }
+}
+
+/**
+ * 标题第一行行尾的提醒 `买菜 ⏰ 2026-10-01 09:00` 提升为任务项的 `reminder` 属性：
+ * 编辑区不在正文里画芯片，由任务项 NodeView 渲染在右侧控件位（备忘卡片替换铃铛）。
+ *
+ * 只收「写回后字节不变」的形态：提醒前恰好一个无标记的半角空格（或整行只有提醒），
+ * 后面要么什么都没有、要么紧跟软换行。句中、紧贴正文、硬换行前的仍保留为行内芯片。
+ */
+function liftTrailingReminder(inline: JSONContent[]): { content: JSONContent[]; at: string } | null {
+  const index = inline.findIndex((node) => node.type === "reminder")
+  if (index < 0) return null
+  for (const node of inline.slice(0, index)) {
+    if (node.type === "hardBreak" || (node.type === "text" && (node.text ?? "").includes("\n"))) return null
+  }
+
+  const after = inline[index + 1]
+  if (after && !(after.type === "text" && (after.text ?? "").startsWith("\n"))) return null
+  const at = String(inline[index].attrs?.at ?? "")
+
+  if (index === 0) return after ? null : { content: [], at }
+
+  const before = inline[index - 1]
+  const text = before.type === "text" ? (before.text ?? "") : ""
+  if (!text.endsWith(" ") || text.endsWith("  ") || (before.marks?.length ?? 0) > 0) return null
+  const trimmed = text.slice(0, -1)
+  if (!trimmed.trim() && index === 1) return null
+
+  const head = trimmed ? [...inline.slice(0, index - 1), { ...before, text: trimmed }] : inline.slice(0, index - 1)
+  return { content: [...head, ...inline.slice(index + 1)], at }
 }
 
 /**

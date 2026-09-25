@@ -2,17 +2,19 @@ import type { Node as ProseMirrorNode } from "@tiptap/pm/model"
 import { NodeViewContent, NodeViewWrapper, type ReactNodeViewProps } from "@tiptap/react"
 import { useState, type CSSProperties } from "react"
 
-import { BellIcon, ChevronDownIcon, ChevronRightIcon } from "@/components/icons"
+import { BellIcon, ChevronDownIcon, ChevronRightIcon, ClockIcon } from "@/components/icons"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import {
   MEMO_CARD_DETAIL_PLACEHOLDER,
   MEMO_CARD_TITLE_PLACEHOLDER,
 } from "@/lib/slash-commands"
+import { formatReminderLabel } from "@/lib/reminders"
 
 import { ReminderPopover } from "../blocks/reminder-popover"
-import { findTaskReminders, setTaskReminder } from "../commands"
+import { setTaskReminder, taskReminderOf } from "../commands"
 import { useNodeViewEditable } from "./node-view-utils"
+import { useReminderDue } from "./reminder-view"
 
 /** NodeView 里不属于正文的装饰（复选框、提醒钮、折叠钮），事件不交给 ProseMirror。 */
 export const TASK_ITEM_CONTROL_ATTRIBUTE = "data-shard-task-control"
@@ -77,7 +79,10 @@ export function TaskItemNodeView({
   const [collapsed, setCollapsed] = useState(false)
   const checked = node.attrs.checked === true
   const memo = taskItemHasDetail(node)
-  const reminder = memo ? findTaskReminders(node, 0)[0]?.at ?? null : null
+  // 标题行尾的提醒已提升为属性：芯片画在右侧控件位，备忘卡片上替换铃铛。
+  const pinned = typeof node.attrs.reminder === "string" && node.attrs.reminder ? node.attrs.reminder : null
+  const reminder = pinned ?? (memo ? taskReminderOf(node, 0) : null)
+  const due = useReminderDue(pinned)
   const checkboxLabel: string =
     extension.options.a11y?.checkboxLabel?.(node, checked) ??
     (checked ? "标记为未完成" : "标记为完成")
@@ -104,30 +109,64 @@ export function TaskItemNodeView({
         />
       </span>
       <NodeViewContent className="shard-rich-task-body" />
-      {memo ? (
-        <span contentEditable={false} {...{ [TASK_ITEM_CONTROL_ATTRIBUTE]: "reminder" }}>
-          <ReminderPopover
-            disabled={!editable}
-            onChange={(at) => {
-              const pos = getPos()
-              if (typeof pos === "number") setTaskReminder(editor, pos, at)
-            }}
-            trigger={
-              <Button
-                aria-label={reminder ? `修改提醒（${reminder}）` : "设置提醒"}
-                className="shard-rich-memo-reminder"
-                data-active={reminder ? "true" : undefined}
-                // 指针优先：按下不把光标从正文里抢走，弹层打开后再接管焦点。
-                onMouseDown={(event) => event.preventDefault()}
-                size="icon-sm"
-                title={reminder ? `提醒：${reminder}` : "设置提醒"}
-                variant="ghost"
-              />
-            }
-            value={reminder}
-          >
-            <BellIcon />
-          </ReminderPopover>
+      {pinned || memo ? (
+        <span
+          className="shard-rich-task-reminder-slot"
+          contentEditable={false}
+          {...{ [TASK_ITEM_CONTROL_ATTRIBUTE]: "reminder" }}
+        >
+          {pinned && !editable ? (
+            <span
+              className="shard-rich-reminder"
+              data-due={due && !checked ? "true" : undefined}
+              title={`提醒：${pinned}`}
+            >
+              <ClockIcon />
+              <span>{formatReminderLabel(pinned)}</span>
+            </span>
+          ) : (
+            <ReminderPopover
+              disabled={!editable}
+              onChange={(at) => {
+                const pos = getPos()
+                if (typeof pos === "number") setTaskReminder(editor, pos, at)
+              }}
+              trigger={
+                pinned ? (
+                  <button
+                    aria-label={`修改提醒（${pinned}）`}
+                    className="shard-rich-reminder"
+                    data-due={due && !checked ? "true" : undefined}
+                    data-shard-reminder={pinned}
+                    // 指针优先：按下不把光标从正文里抢走，弹层打开后再接管焦点。
+                    onMouseDown={(event) => event.preventDefault()}
+                    title={`提醒：${pinned}`}
+                    type="button"
+                  />
+                ) : (
+                  <Button
+                    aria-label={reminder ? `修改提醒（${reminder}）` : "设置提醒"}
+                    className="shard-rich-memo-reminder"
+                    data-active={reminder ? "true" : undefined}
+                    onMouseDown={(event) => event.preventDefault()}
+                    size="icon-sm"
+                    title={reminder ? `提醒：${reminder}` : "设置提醒"}
+                    variant="ghost"
+                  />
+                )
+              }
+              value={reminder}
+            >
+              {pinned ? (
+                <>
+                  <ClockIcon />
+                  <span>{formatReminderLabel(pinned)}</span>
+                </>
+              ) : (
+                <BellIcon />
+              )}
+            </ReminderPopover>
+          )}
         </span>
       ) : null}
       {memo ? (

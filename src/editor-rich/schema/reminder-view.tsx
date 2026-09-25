@@ -13,8 +13,8 @@ import { useNodeViewEditable } from "./node-view-utils"
 const MAX_TIMER_DELAY = 2_147_483_647
 
 /** 到点前挂一个定时器，到点后芯片自己切到警示态，不依赖外部重渲染。 */
-function useDue(at: string) {
-  const dueAt = parseReminderAt(at)
+export function useReminderDue(at: string | null) {
+  const dueAt = at ? parseReminderAt(at) : null
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
     setNow(Date.now())
@@ -37,7 +37,7 @@ function useDue(at: string) {
 export function ReminderNodeView({ editor, getPos, node, updateAttributes }: ReactNodeViewProps) {
   const editable = useNodeViewEditable(editor)
   const at = String(node.attrs.at ?? "")
-  const due = useDue(at)
+  const due = useReminderDue(at)
   const label = formatReminderLabel(at)
   const title = `提醒：${at}`
 

@@ -177,11 +177,19 @@ function deleteReminder(tr: Transaction, pos: number) {
   tr.delete(from, to)
 }
 
+/** 任务项当前的提醒：优先取提升上来的 `reminder` 属性，退回标题段里第一个行内芯片。 */
+export function taskReminderOf(task: ProseMirrorNode, taskPos: number): string | null {
+  const attr = task.attrs.reminder
+  if (typeof attr === "string" && attr) return attr
+  return findTaskReminders(task, taskPos)[0]?.at ?? null
+}
+
 /**
  * 设置 / 替换 / 清除一张任务卡片的提醒（`at` 为 `YYYY-MM-DD HH:mm`，null 表示清除）。
  *
- * 提醒写在标题段第一行的末尾（Tasks 兼容写法要求与任务同一行），
- * 一张卡片只保留一个：已有就改第一个的时间、删掉多余的。返回 null 表示位置不是任务项。
+ * 提醒存成任务项的 `reminder` 属性，序列化时写回标题第一行末尾（Tasks 兼容写法要求
+ * 与任务同一行）；一张卡片只保留一个，标题段里残留的行内芯片一并删掉。
+ * 返回 null 表示位置不是任务项。
  */
 export function taskReminderTransaction(
   state: EditorState,
@@ -189,44 +197,14 @@ export function taskReminderTransaction(
   at: string | null
 ): Transaction | null {
   const task = state.doc.nodeAt(taskPos)
-  const title = task?.firstChild
-  if (!task || task.type.name !== "taskItem" || !title?.isTextblock) return null
+  if (!task || task.type.name !== "taskItem" || !task.firstChild?.isTextblock) return null
 
-  const existing = findTaskReminders(task, taskPos)
   const tr = state.tr
-  const keep = at === null ? null : existing[0] ?? null
-  // 从后往前删，前面的位置不受影响。
-  for (const reminder of [...existing].reverse()) {
-    if (reminder !== keep) deleteReminder(tr, reminder.pos)
+  // 从后往前删，前面的位置不受影响；删行内芯片不改变任务项自身的起点。
+  for (const reminder of [...findTaskReminders(task, taskPos)].reverse()) {
+    deleteReminder(tr, reminder.pos)
   }
-  if (at === null) return tr
-
-  if (keep) {
-    tr.setNodeMarkup(keep.pos, undefined, { at })
-    return tr
-  }
-
-  const titleStart = taskPos + 2
-  let insertAt = titleStart + title.content.size
-  let found = false
-  title.forEach((child, offset) => {
-    if (found) return
-    if (child.type.name === "hardBreak") {
-      insertAt = titleStart + offset
-      found = true
-    } else if (child.isText) {
-      const index = (child.text ?? "").indexOf("\n")
-      if (index >= 0) {
-        insertAt = titleStart + offset + index
-        found = true
-      }
-    }
-  })
-
-  const reminder = state.schema.nodes.reminder.create({ at })
-  const before = insertAt > titleStart ? charAt(tr.doc, insertAt - 1, insertAt) : ""
-  const needsSpace = before !== "" && !/\s/u.test(before)
-  tr.insert(insertAt, needsSpace ? [state.schema.text(" "), reminder] : [reminder])
+  tr.setNodeAttribute(taskPos, "reminder", at)
   return tr
 }
 

@@ -9,13 +9,14 @@ import { describe, expect, it } from "vitest"
 
 import { shardSchema } from "@/editor-rich/schema"
 
-import { findTaskReminders, taskReminderTransaction } from "./commands"
+import { findTaskReminders, taskReminderOf, taskReminderTransaction } from "./commands"
 import { parseShardMarkdown } from "./markdown/parse"
 import { serializeShardMarkdown } from "./markdown/serialize"
 
 function reminderAts(doc: JSONContent): string[] {
   const found: string[] = []
   const visit = (node: JSONContent) => {
+    if (node.type === "taskItem" && node.attrs?.reminder) found.push(String(node.attrs.reminder))
     if (node.type === "reminder") found.push(String(node.attrs?.at))
     node.content?.forEach(visit)
   }
@@ -78,6 +79,43 @@ describe("提醒芯片的识别", () => {
   })
 })
 
+describe("标题行尾提醒提升为任务项属性", () => {
+  function titleOf(markdown: string) {
+    const task = parseShardMarkdown(markdown).doc.content?.[0]?.content?.[0]
+    return { reminder: task?.attrs?.reminder ?? null, title: task?.content?.[0]?.content ?? [] }
+  }
+
+  it("行尾、空格分隔的提醒提升，标题里不再留芯片", () => {
+    expect(titleOf("- [ ] 买菜 ⏰ 2026-10-01 09:00")).toEqual({
+      reminder: "2026-10-01 09:00",
+      title: [{ type: "text", text: "买菜" }],
+    })
+    expect(titleOf("- [ ] ⏰ 2026-10-01 09:00").reminder).toBe("2026-10-01 09:00")
+    expect(titleOf("- [ ] 买菜 ⏰ 2026-10-01 09:00\n  番茄").reminder).toBe("2026-10-01 09:00")
+  })
+
+  it("句中、紧贴正文、双空格的保持行内芯片", () => {
+    expect(titleOf("- [ ] 甲 ⏰ 2026-10-01 09:00 乙").reminder).toBeNull()
+    expect(titleOf("- [ ] 紧贴⏰ 2026-10-01 09:00").reminder).toBeNull()
+    expect(titleOf("- [ ] 甲  ⏰ 2026-10-01 09:00").reminder).toBeNull()
+  })
+
+  it("提升与写回字节不变", () => {
+    for (const source of [
+      "- [ ] 买菜 ⏰ 2026-10-01 09:00",
+      "- [x] 交房租 ⏰ 2026-09-01 10:30",
+      "- [ ] ⏰ 2026-10-01 09:00",
+      "- [ ] 买菜 ⏰ 2026-10-01 09:00\n  番茄、鸡蛋、葱",
+      "- [ ] 标题 ⏰ 2026-10-01 09:00\n\n  细节",
+      "- [ ] ⏰ 2026-10-01 09:00\n\n  细节",
+      "- [ ] 标签 #生活 ⏰ 2026-10-03 08:05",
+      "1. [ ] 有序 ⏰ 2026-10-03 08:05",
+    ]) {
+      expect(serializeShardMarkdown(parseShardMarkdown(source).doc)).toBe(source)
+    }
+  })
+})
+
 describe("taskReminderTransaction", () => {
   it("在标题末尾插入，正文与提醒之间补一个空格", () => {
     expect(apply("- [ ] 买菜", 0, "2026-10-01 09:00")).toBe("- [ ] 买菜 ⏰ 2026-10-01 09:00")
@@ -99,7 +137,7 @@ describe("taskReminderTransaction", () => {
       "- [ ] 买菜 ⏰ 2026-10-02 18:00"
     )
     expect(apply("- [ ] 甲 ⏰ 2026-10-01 09:00 乙 ⏰ 2026-10-05 09:00", 0, "2026-10-02 18:00")).toBe(
-      "- [ ] 甲 ⏰ 2026-10-02 18:00 乙"
+      "- [ ] 甲 乙 ⏰ 2026-10-02 18:00"
     )
   })
 
@@ -117,11 +155,20 @@ describe("taskReminderTransaction", () => {
     expect(apply(source, 1, null)).toBe("- [ ] 父\n  - [ ] 子")
   })
 
-  it("findTaskReminders 只看标题段", () => {
-    const state = stateOf("- [ ] 标题 ⏰ 2026-10-01 09:00\n\n  细节 ⏰ 2026-10-02 09:00")
+  it("findTaskReminders 只看标题段里的行内芯片", () => {
+    const state = stateOf("- [ ] 标题 ⏰ 2026-10-01 09:00 句中\n\n  细节 ⏰ 2026-10-02 09:00")
     const pos = taskPositions(state)[0]
     const task = state.doc.nodeAt(pos)!
     expect(findTaskReminders(task, pos).map((item) => item.at)).toEqual(["2026-10-01 09:00"])
+  })
+
+  it("taskReminderOf 优先取提升上来的属性", () => {
+    const state = stateOf("- [ ] 标题 ⏰ 2026-10-01 09:00\n\n  细节")
+    const pos = taskPositions(state)[0]
+    const task = state.doc.nodeAt(pos)!
+    expect(task.attrs.reminder).toBe("2026-10-01 09:00")
+    expect(findTaskReminders(task, pos)).toEqual([])
+    expect(taskReminderOf(task, pos)).toBe("2026-10-01 09:00")
   })
 
   it("位置不是任务项时返回 null", () => {
