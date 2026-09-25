@@ -9,7 +9,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { readTable, saveTableCopy, tableError, type SaveTableCopyRequest } from "./api";
 import { TableExportDialog } from "./exchange-dialog";
 import { readKilnGridTheme } from "./kiln-grid-theme";
-import { createTableId, TABLE_LIMITS, type CellValue, type TableContent, type TableError, type TableFile, type TableRecord, type TableView } from "./model";
+import { createTableId, TABLE_LIMITS, type CellValue, type TableContent, type TableError, type TableFile, type TableReadResult, type TableRecord, type TableView } from "./model";
 import type { TableMutation } from "./mutations";
 import type { TableSaveState } from "./save-queue";
 import { TableSettingsPopover } from "./table-settings-popover";
@@ -24,7 +24,7 @@ import type { TableWorkerCommand, TableWorkerIdentity, TableWorkerSnapshot, Tabl
 import "./table-workspace.css";
 
 export type TableWorkspaceHandle = { flush(): Promise<boolean>; isDirty(): boolean; setInteractionBlocked(blocked: boolean): void };
-export type TableWorkspaceProps = { path: string; title: string; onSaved?(): void; onClose?(): void; onSaveStateChange?(state: "dirty" | "saving" | "saved" | "error"): void; refreshToken?: unknown; embedded?: boolean; disabled?: boolean };
+export type TableWorkspaceProps = { path: string; title: string; initialRead?: TableReadResult | null; onSaved?(): void; onClose?(): void; onSaveStateChange?(state: "dirty" | "saving" | "saved" | "error"): void; onReady?(revision: string): void; onLoadError?(error: unknown): void; refreshToken?: unknown; embedded?: boolean; disabled?: boolean };
 const INITIAL_STATE: TableSaveState = { status: "saved", generation: 0, savedGeneration: 0, dirty: false, pendingCount: 0, error: null };
 function problemText(error: unknown): string { const detail = tableError(error); return detail.message + (detail.pointer ? `（${detail.pointer}）` : ""); }
 function isContent(value: TableWorkerValue): value is TableContent { return !!value && !Array.isArray(value) && "records" in value; }
@@ -40,6 +40,7 @@ function groupIndex(groups: TableWorkerSnapshot["projection"]["groups"], row: nu
 export const TableWorkspace = forwardRef<TableWorkspaceHandle, TableWorkspaceProps>(function TableWorkspace(props, ref) {
   const { path, title, refreshToken } = props;
   const callbacks = useRef(props); callbacks.current = props;
+  const initialRead = useRef(props.initialRead ?? null);
   const host = useRef<HTMLDivElement>(null);
   const portal = useRef<HTMLDivElement>(null);
   const grid = useRef<DataEditorRef>(null);
@@ -140,13 +141,14 @@ export const TableWorkspace = forwardRef<TableWorkspaceHandle, TableWorkspacePro
       onError: showError,
     });
     client.current = instance;
-    void readTable({ path }).then(async initial => {
+    const provided = initialRead.current?.path === path ? initialRead.current : null; initialRead.current = null;
+    void (provided ? Promise.resolve(provided) : readTable({ path })).then(async initial => {
       if (cancelled) return;
       tableId.current = initial.file.id;
       initialSource.current = { tableId: initial.file.id, revision: initial.revision, contentHash: initial.contentHash };
       await instance.open(initial);
-      if (!cancelled) setLoading(false);
-    }).catch(error => { if (!cancelled) { showError(error); setLoading(false); } });
+      if (!cancelled) { setLoading(false); callbacks.current.onReady?.(String(initial.revision)); }
+    }).catch(error => { if (!cancelled) { showError(error); setLoading(false); callbacks.current.onLoadError?.(error); } });
     return () => { cancelled = true; alive.current = false; clearTimeout(debounce.current); instance.dispose(); if (client.current === instance) client.current = null; };
   }, [path, showError]);
 

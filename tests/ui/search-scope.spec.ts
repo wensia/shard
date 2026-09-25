@@ -224,21 +224,36 @@ test("public search excludes unlocked lockbox objects", async ({ page }) => {
   await page.goto("/")
 
   await page.keyboard.press("Control+k")
-  const input = page.getByRole("combobox", { name: "搜索内容" })
+  const palette = page.getByRole("dialog", { name: "搜索", exact: true })
+  const input = palette.getByRole("combobox", { name: "搜索内容" })
   await expect(input).toBeVisible()
+
+  // T07's public adapter creates and indexes its legacy Worker lazily on the
+  // first non-empty full-text query.
+  await input.fill("公开唯一词")
   await expect
     .poll(async () => {
       const indexes = await workerMessages(page, "index")
       return indexes.at(-1)?.documents?.map((document) => document.id) ?? []
     })
     .toEqual(["public-result"])
-
-  await input.fill("公开唯一词")
+  await expect
+    .poll(async () => {
+      const searches = await workerMessages(page, "search")
+      return searches.at(-1)?.query ?? null
+    })
+    .toBe("公开唯一词")
   await expect(
-    page.getByRole("option").filter({ hasText: "公开唯一词" })
-  ).toBeVisible()
+    palette.getByRole("option").filter({ hasText: "公开唯一词" })
+  ).toHaveCount(1)
   await input.fill("密匣唯一词")
-  await expect(page.getByRole("option")).toHaveCount(0)
+  await expect
+    .poll(async () => {
+      const searches = await workerMessages(page, "search")
+      return searches.at(-1)?.query ?? null
+    })
+    .toBe("密匣唯一词")
+  await expect(palette.getByRole("option")).toHaveCount(0)
   await expect(page.getByText("没有找到“密匣唯一词”")).toBeVisible()
 })
 
@@ -249,15 +264,35 @@ test("lockbox space never shows public search results", async ({ page }) => {
   const before = await workerMessages(page, "index")
 
   await page.keyboard.press("Control+k")
-
+  const palette = page.getByRole("dialog", { name: "搜索", exact: true })
+  const input = palette.getByRole("combobox", { name: "搜索内容" })
+  await input.fill("密匣唯一词")
   await expect(
-    page.getByText("密匣全文搜索将在 Rust 搜索接入后恢复")
-  ).toBeVisible()
-  await expect(page.getByRole("combobox", { name: "搜索内容" })).toHaveCount(0)
+    palette.getByRole("option").filter({ hasText: "密匣唯一词" })
+  ).toHaveCount(1)
+  await expect(
+    palette.getByRole("option").filter({ hasText: "公开唯一词" })
+  ).toHaveCount(0)
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        (
+          globalThis as typeof globalThis & {
+            __SHARD_SEARCH_IPC_MOCK__?: {
+              calls: Array<{ request: { scope?: string } }>
+            }
+          }
+        ).__SHARD_SEARCH_IPC_MOCK__?.calls.map(({ request }) => request.scope) ?? []
+      )
+    )
+    .toEqual(["lockbox"])
+
+  await input.fill("公开唯一词")
+  await expect(palette.getByRole("option")).toHaveCount(0)
+  await expect(page.getByText("没有找到“公开唯一词”")).toBeVisible()
   await expect.poll(() => workerMessages(page, "index")).toHaveLength(
     before.length
   )
-  await expect(page.getByRole("option").filter({ hasText: "公开唯一词" })).toHaveCount(0)
 })
 
 test("leaving lockbox clears query results and pending navigation", async ({
@@ -267,9 +302,11 @@ test("leaving lockbox clears query results and pending navigation", async ({
   await page.goto("/")
 
   await page.keyboard.press("Control+k")
-  const searchInput = page.getByRole("combobox", { name: "搜索内容" })
+  const palette = page.getByRole("dialog", { name: "搜索", exact: true })
+  const searchInput = palette.getByRole("combobox", { name: "搜索内容" })
   await searchInput.fill("公开唯一词")
-  await page.getByRole("option").filter({ hasText: "公开唯一词" }).click()
+  await palette.getByRole("option").filter({ hasText: "公开唯一词" }).click()
+  await expect(palette).toHaveCount(0)
   await expect(
     page.getByRole("button", { name: "返回搜索结果" })
   ).toBeVisible()
@@ -308,9 +345,10 @@ test("leaving lockbox clears query results and pending navigation", async ({
   ).toHaveCount(0)
 
   await page.keyboard.press("Control+k")
-  const reopenedInput = page.getByRole("combobox", { name: "搜索内容" })
+  const reopenedPalette = page.getByRole("dialog", { name: "搜索", exact: true })
+  const reopenedInput = reopenedPalette.getByRole("combobox", { name: "搜索内容" })
   await expect(reopenedInput).toHaveValue("")
-  await expect(page.getByRole("option")).toHaveCount(0)
+  await expect(reopenedPalette.getByRole("option")).toHaveCount(0)
 })
 
 test("moving a public fragment into a locked lockbox needs no unlock and keeps it locked", async ({

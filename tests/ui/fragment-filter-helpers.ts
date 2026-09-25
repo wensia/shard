@@ -3,10 +3,15 @@ import { expect, type Page } from "@playwright/test"
 import { selectOption } from "./select-helpers"
 
 export async function openFragmentFilters(page: Page) {
-  const sidebarSearch = page.getByRole("button", { name: "搜索内容", exact: true })
+  const sidebarSearch = page
+    .getByRole("button", { name: "搜索内容", exact: true })
+    .filter({ hasText: "搜索或打开…" })
   if (await sidebarSearch.isVisible()) await sidebarSearch.click()
   else await page.keyboard.press("Control+k")
-  await page.getByRole("button", { name: "筛选碎片", exact: true }).click()
+  const palette = page.getByRole("dialog", { name: "搜索", exact: true })
+  await expect(palette).toBeVisible()
+  await palette.getByRole("button", { name: "筛选碎片", exact: true }).click()
+  await expect(palette).toHaveCount(0)
   const dialog = page.getByRole("dialog", { name: "筛选碎片", exact: true })
   await expect(dialog).toBeVisible()
   return dialog

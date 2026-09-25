@@ -26,7 +26,7 @@ import {
 import type { DiagramDocumentSummary, Fragment, ShardDocumentLink, ShardMapFile, ShardMapNode } from "@/types"
 import { createCanvas, readCanvas, splitCanvas, writeCanvas, type CanvasSplitResult } from "./api"
 import { CanvasHistory } from "./history"
-import { cloneCanvasFile, createCanvasFile, createCanvasId, createCanvasNode, type CanvasFile, type CanvasNode, type CanvasNodeKind } from "./model"
+import { cloneCanvasFile, createCanvasFile, createCanvasId, createCanvasNode, type CanvasFile, type CanvasNode, type CanvasNodeKind, type CanvasReadResult } from "./model"
 import {
   addCanvasEdge, addCanvasNode, removeCanvasEdges, removeCanvasNodes, updateCanvasEdge,
   updateCanvasNode,
@@ -42,12 +42,16 @@ export interface CanvasWorkspaceHandle {
 
 export interface CanvasWorkspaceProps {
   path: string
+  initialRead?: CanvasReadResult | null
   fragments: Fragment[]
   onOpenLink: (link: ShardDocumentLink) => void | Promise<void>
   onSaved?: () => void
   onRecovered?: (path: string) => void | Promise<void>
   onSplit?: (result: CanvasSplitResult) => void | Promise<void>
   onSaveStateChange?: (state: "dirty" | "error" | "saved" | "saving") => void
+  onReady?: (revision: string) => void
+  onLoadError?: (error: unknown) => void
+  readOnly?: boolean
 }
 
 type TreeSelection = { nodeId: string; treeNodeId: string }
@@ -201,7 +205,9 @@ const CanvasObject = memo(function CanvasObject({ data, selected }: NodeProps<Fl
 const NODE_TYPES = { shardCanvas: CanvasObject }
 
 export const CanvasWorkspace = forwardRef<CanvasWorkspaceHandle, CanvasWorkspaceProps>(function CanvasWorkspace({
-  path, fragments, onOpenLink, onSaved, onRecovered, onSaveStateChange, onSplit,
+  path, initialRead = null, fragments, onOpenLink, onSaved, onRecovered,
+  onSaveStateChange, onSplit, onReady, onLoadError,
+  readOnly = false,
 }, ref) {
   const [draft, setDraft] = useState<CanvasFile | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -253,10 +259,18 @@ export const CanvasWorkspace = forwardRef<CanvasWorkspaceHandle, CanvasWorkspace
   const menuActionRef = useRef<(() => void) | null>(null)
   const deferMenuFocusRef = useRef(false)
   const flowRef = useRef<ReactFlowInstance<FlowNode, Edge> | null>(null)
+  const initialReadRef = useRef(initialRead)
+  const [flowReady, setFlowReady] = useState(false)
   const blockedRef = useRef(false)
   const draggingRef = useRef(false)
-  const callbacksRef = useRef({ onSaved, onRecovered, onSaveStateChange, onOpenLink })
-  callbacksRef.current = { onSaved, onRecovered, onSaveStateChange, onOpenLink }
+  const callbacksRef = useRef({ onSaved, onRecovered, onSaveStateChange, onOpenLink, onReady, onLoadError })
+  callbacksRef.current = { onSaved, onRecovered, onSaveStateChange, onOpenLink, onReady, onLoadError }
+
+  useEffect(() => {
+    externalBlockedRef.current = readOnly
+    blockedRef.current = readOnly || recoveringRef.current
+    setBlocked(blockedRef.current)
+  }, [readOnly])
   const workerRef = useRef<Worker | null>(null)
   const requestIdRef = useRef(0)
   const layoutPendingRef = useRef(new Map<number, LayoutRequest>())
@@ -264,14 +278,16 @@ export const CanvasWorkspace = forwardRef<CanvasWorkspaceHandle, CanvasWorkspace
 
   useEffect(() => {
     let active = true
-    setLoading(true); setLoadError(null); setDraft(null); draftRef.current = null
+    setLoading(true); setLoadError(null); setDraft(null); draftRef.current = null; setFlowReady(false)
     queueRef.current = null; historyRef.current = null
     setSelectedNodes([]); setSelectedEdges([]); setEditing(null); setTreeSelection(null); setPositions({})
     setMeasurements({})
     setSaveState(null); setActionError(null); setPicker(null); setPendingText(null); pendingTextRef.current = null
     setInspectorPinned(false); setInspectorTab("properties")
     recoveryAttemptRef.current = null; setRecoveryError(null); setSplitResult(null)
-    void readCanvas(path).then((result) => {
+    const initial = initialReadRef.current?.path === path ? initialReadRef.current : null
+    initialReadRef.current = null
+    void (initial ? Promise.resolve(initial) : readCanvas(path)).then((result) => {
       if (!active) return
       const queue = new CanvasSaveQueue(result, writeCanvas, (state) => {
         if (!active) return
@@ -281,10 +297,15 @@ export const CanvasWorkspace = forwardRef<CanvasWorkspaceHandle, CanvasWorkspace
       historyRef.current = new CanvasHistory(result.file)
       draftRef.current = result.file; setDraft(result.file); setSaveState(queue.getState())
       callbacksRef.current.onSaveStateChange?.("saved")
-    }).catch((error) => { if (active) setLoadError(getApiErrorMessage(error)) })
+    }).catch((error) => { if (active) { setLoadError(getApiErrorMessage(error)); callbacksRef.current.onLoadError?.(error) } })
       .finally(() => { if (active) setLoading(false) })
     return () => { active = false }
   }, [path, loadAttempt])
+
+  useEffect(() => {
+    if (!draft || !flowReady) return
+    callbacksRef.current.onReady?.(String(draft.revision))
+  }, [draft, flowReady])
 
   useEffect(() => {
     let active = true
@@ -357,17 +378,17 @@ export const CanvasWorkspace = forwardRef<CanvasWorkspaceHandle, CanvasWorkspace
     flush,
     isDirty: () => !!queueRef.current?.getState().dirty || !!pendingTextRef.current || draggingRef.current || recoveringRef.current,
     setInteractionBlocked(value) {
-      externalBlockedRef.current = value
-      blockedRef.current = value || recoveringRef.current
+      externalBlockedRef.current = readOnly || value
+      blockedRef.current = readOnly || value || recoveringRef.current
       setBlocked(blockedRef.current)
     },
-  }), [flush])
+  }), [flush, readOnly])
 
   useEffect(() => {
-    if ((!saveState?.dirty && !pendingText) || saveState?.saving || saveState?.status === "error" || draggingRef.current || composing) return
+    if (readOnly || (!saveState?.dirty && !pendingText) || saveState?.saving || saveState?.status === "error" || draggingRef.current || composing) return
     const timer = window.setTimeout(() => { void flush() }, AUTO_SAVE_DELAY)
     return () => window.clearTimeout(timer)
-  }, [draft, flush, saveState, pendingText, composing])
+  }, [draft, flush, readOnly, saveState, pendingText, composing])
 
   const commit = useCallback((change: (file: CanvasFile) => CanvasFile, mergeKey?: string) => {
     const current = draftRef.current
@@ -933,7 +954,7 @@ export const CanvasWorkspace = forwardRef<CanvasWorkspaceHandle, CanvasWorkspace
             { id: createCanvasId(), targetType: "fragment", targetId: item.id } },
           flowRef.current.screenToFlowPosition({ x: event.clientX, y: event.clientY }))
         }}>
-        <ReactFlow<FlowNode, Edge> nodes={flowNodes} edges={flowEdges} nodeTypes={NODE_TYPES} onInit={(instance) => { flowRef.current = instance; setZoomPercent(Math.round(instance.getZoom() * 100)) }}
+        <ReactFlow<FlowNode, Edge> nodes={flowNodes} edges={flowEdges} nodeTypes={NODE_TYPES} onInit={(instance) => { flowRef.current = instance; setFlowReady(true); setZoomPercent(Math.round(instance.getZoom() * 100)) }}
           onNodesChange={onNodesChange} onEdgesChange={onEdgesChange} onConnect={connect} connectionMode={ConnectionMode.Loose}
           onConnectStart={() => setConnecting(true)} onConnectEnd={() => setConnecting(false)}
           onMove={(_event, viewport) => setZoomPercent(Math.round(viewport.zoom * 100))}

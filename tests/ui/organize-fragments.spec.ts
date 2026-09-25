@@ -1,6 +1,7 @@
 import { expect, test, type Page } from "@playwright/test"
 
 import { fillEditor, readEditor } from "./editor-helpers"
+import { openFragmentFilters } from "./fragment-filter-helpers"
 import { installSearchIpcMock } from "./search-ipc-mock"
 
 interface OrganizeCall {
@@ -409,9 +410,7 @@ test("筛选变化清空多选，恢复全部结果不会带回隐藏选择", as
   await installOrganizeMock(page, "fail-once")
   await page.goto("/")
   await enterOrganizeModeAndSelectTwo(page)
-  await page.getByRole("button", { name: "搜索内容", exact: true }).click()
-  await page.getByRole("button", { name: "筛选碎片", exact: true }).click()
-  const filters = page.getByRole("dialog", { name: "筛选碎片", exact: true })
+  const filters = await openFragmentFilters(page)
   await filters.getByRole("combobox", { name: "标签", exact: true }).click()
   await page.getByRole("option", { name: "#research", exact: true }).click()
   await filters.getByRole("button", { name: "查看碎片", exact: true }).click()

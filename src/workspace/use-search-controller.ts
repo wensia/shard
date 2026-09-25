@@ -491,6 +491,9 @@ export function useSearchController({
         if (!current.hits.some((candidate) => candidate.target.key === hit.target.key)) {
           return current
         }
+        if (current.pendingNavigation?.targetKey === hit.target.key) {
+          return current
+        }
         nextRequestIdRef.current += 1
         return {
           ...current,

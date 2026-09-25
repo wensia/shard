@@ -504,15 +504,24 @@ export function FragmentSearchWorkspace({
 }
 
 export function SearchContextBar({
+  documentHit,
   onBack,
   onClose,
   onNavigate,
   session,
 }: {
+  documentHit?: {
+    activeIndex: number
+    matchCount: number
+    onNavigate: (direction: 1 | -1) => void
+  } | null
   onBack: () => void
   onClose: () => void
   onNavigate: (index: number) => void
-  session: FragmentSearchSession
+  session: Pick<
+    FragmentSearchSession,
+    "activeIndex" | "query" | "resultIds" | "total"
+  >
 }) {
   const canGoPrevious = session.activeIndex > 0
   const canGoNext = session.activeIndex < session.resultIds.length - 1
@@ -554,6 +563,31 @@ export function SearchContextBar({
           >
             <ChevronRightIcon aria-hidden="true" />
           </Button>
+          {documentHit ? (
+            <>
+              <span className={styles.contextPosition}>
+                文内 {documentHit.activeIndex + 1} / {documentHit.matchCount}
+              </span>
+              <Button
+                aria-label="当前文档上一个命中"
+                onClick={() => documentHit.onNavigate(-1)}
+                size="icon-sm"
+                type="button"
+                variant="ghost"
+              >
+                <ChevronLeftIcon aria-hidden="true" />
+              </Button>
+              <Button
+                aria-label="当前文档下一个命中"
+                onClick={() => documentHit.onNavigate(1)}
+                size="icon-sm"
+                type="button"
+                variant="ghost"
+              >
+                <ChevronRightIcon aria-hidden="true" />
+              </Button>
+            </>
+          ) : null}
           <Button
             aria-label="结束搜索"
             onClick={onClose}

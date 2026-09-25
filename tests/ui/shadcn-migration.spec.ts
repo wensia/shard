@@ -844,51 +844,51 @@ test("search recall mode preserves context, focus, and timeline scrolling", asyn
 }) => {
   const composer = page.locator('[data-shard-editor="composer"]')
   const composerContent = composer.locator(".ProseMirror")
+  const composerTopBefore = (await composer.boundingBox())!.y
   const documentScrollBefore = await page.evaluate(
     () => document.scrollingElement?.scrollTop ?? -1
   )
 
   await page.keyboard.press("Control+k")
-  const search = page.getByRole("combobox", { name: "搜索内容" })
+  const palette = page.getByRole("dialog", { name: "搜索", exact: true })
+  const search = palette.getByRole("combobox", { name: "搜索内容" })
   await expect(search).toBeFocused()
   await search.fill("密匣中的")
   await expect(page.getByText("没有找到“密匣中的”")).toBeVisible()
-  await expect(page.getByRole("option")).toHaveCount(0)
+  await expect(palette.getByRole("option")).toHaveCount(0)
   await search.fill("work")
-  await expect(page.getByRole("option")).toHaveCount(12)
+  await expect(palette.getByRole("option")).toHaveCount(12)
   await expect(page.getByText(/fragments\/2026/)).toHaveCount(0)
 
   await search.fill("不存在的快速查询")
   await search.press("Enter")
-  await expect(page.getByRole("search")).toBeVisible()
+  await expect(palette).toBeVisible()
+  await expect(palette).toHaveAttribute("data-search-pending", "false")
   await expect(page.getByRole("button", { name: "返回搜索结果" })).toHaveCount(0)
   await expect(page.getByText("没有找到“不存在的快速查询”")).toBeVisible()
   await search.fill("work")
-  await expect(page.getByRole("option")).toHaveCount(12)
+  await expect(palette.getByRole("option")).toHaveCount(12)
 
   await page.waitForTimeout(200)
-  const searchStyles = await search.evaluate((element) => {
-    const style = getComputedStyle(element)
-    const focusProbe = document.createElement("div")
-    focusProbe.style.cssText = [
-      "all: initial",
-      "position: absolute",
-      "border: 1px solid color-mix(in oklab, var(--primary) 70%, transparent)",
-      "box-shadow: var(--shadow-primary-focus)",
-    ].join(";")
-    element.parentElement?.append(focusProbe)
-    const focusProbeStyle = getComputedStyle(focusProbe)
-    const expectedBorderColor = focusProbeStyle.borderColor
-    const expectedBoxShadow = focusProbeStyle.boxShadow
-    focusProbe.remove()
+  const searchStyles = await palette.evaluate((element) => {
+    const input = element.querySelector<HTMLInputElement>('[role="combobox"]')!
+    const dialogStyle = getComputedStyle(element)
+    const dialogBounds = element.getBoundingClientRect()
+    const style = getComputedStyle(input)
     return {
+      bottom: dialogBounds.bottom,
       borderRadius: style.borderRadius,
       borderColor: style.borderColor,
       boxShadow: style.boxShadow,
-      expectedBorderColor,
-      expectedBoxShadow,
+      dialogRadius: dialogStyle.borderRadius,
+      dialogShadow: dialogStyle.boxShadow,
       fontFamily: style.fontFamily,
       height: style.height,
+      left: dialogBounds.left,
+      right: dialogBounds.right,
+      top: dialogBounds.top,
+      viewportHeight: innerHeight,
+      viewportWidth: innerWidth,
     }
   })
   // 32px = compact 档的 --control-height（kiln standard 档是 36px）。
@@ -896,24 +896,27 @@ test("search recall mode preserves context, focus, and timeline scrolling", asyn
   // 圆角不随密度档变，仍是 4px。
   expect(searchStyles.height).toBe("32px")
   expect(searchStyles.borderRadius).toBe("4px")
-  expect(searchStyles.borderColor).toBe(searchStyles.expectedBorderColor)
-  expect(searchStyles.boxShadow.endsWith(searchStyles.expectedBoxShadow)).toBe(
-    true
-  )
-  expect(searchStyles.boxShadow).not.toContain("0px 0px 0px 3px")
+  expect(searchStyles.borderColor).toBe("rgba(0, 0, 0, 0)")
+  expect(searchStyles.boxShadow).toBe("none")
   expect(searchStyles.fontFamily).toContain("Noto Sans SC")
+  expect(searchStyles.dialogRadius).toBe("6px")
+  expect(searchStyles.dialogShadow).not.toBe("none")
+  expect(searchStyles.left).toBeGreaterThan(0)
+  expect(searchStyles.right).toBeLessThan(searchStyles.viewportWidth)
+  expect(searchStyles.top).toBeGreaterThan(0)
+  expect(searchStyles.bottom).toBeLessThan(searchStyles.viewportHeight)
 
   await page.keyboard.press("Escape")
-  await expect(page.getByRole("search")).toBeHidden()
+  await expect(palette).toBeHidden()
   await expect(composerContent).toBeFocused()
 
   await page.keyboard.press("Control+k")
   await search.fill("work")
-  await expect(page.getByRole("option")).toHaveCount(12)
+  await expect(palette.getByRole("option")).toHaveCount(12)
   for (let index = 0; index < 9; index += 1) {
     await search.press("ArrowDown")
   }
-  const selectedOption = page.getByRole("option").nth(9)
+  const selectedOption = palette.getByRole("option").nth(9)
   await expect(selectedOption).toHaveAttribute("aria-selected", "true")
   await search.press("Enter")
 
@@ -972,46 +975,60 @@ test("search recall mode preserves context, focus, and timeline scrolling", asyn
   expect(scrollContract.targetBottom).toBeLessThanOrEqual(
     scrollContract.viewportBottom ?? Number.POSITIVE_INFINITY
   )
+  expect((await composer.boundingBox())!.y).toBe(composerTopBefore)
 
   await page.getByRole("button", { name: "返回搜索结果" }).click()
   await expect(composer).toBeVisible()
   await expect(search).toBeFocused()
   await expect(search).toHaveValue("work")
-  await page.getByRole("button", { name: "退出搜索" }).click()
-  await page.getByRole("button", { name: "结束搜索" }).click()
+  await page.getByRole("button", { name: "关闭搜索" }).click()
+  await expect(
+    page.getByRole("button", { name: "返回搜索结果" })
+  ).toHaveCount(0)
 
   await page.keyboard.press("Control+k")
   await search.fill("已删除")
-  await expect(page.getByRole("option")).toHaveCount(1)
-  await page.getByRole("button", { name: "未删除" }).click()
+  await expect(palette.getByRole("option")).toHaveCount(0)
+  await page.getByRole("button", { name: "包含回收站" }).click()
+  await expect(palette.getByRole("option")).toHaveCount(1)
+  await page.getByRole("button", { name: "包含回收站" }).click()
   await expect(page.getByText("没有找到“已删除”")).toBeVisible()
-  await page.getByRole("button", { name: "退出搜索" }).click()
+  await page.getByRole("button", { name: "关闭搜索" }).click()
 
   await page.setViewportSize({ height: 640, width: 720 })
   await page.keyboard.press("Control+k")
   await search.fill("work")
-  await expect(page.getByRole("option")).toHaveCount(12)
-  const compactGeometry = await page.getByRole("search").evaluate((element) => {
+  await expect(palette.getByRole("option")).toHaveCount(12)
+  const compactGeometry = await palette.evaluate((element) => {
     const input = element.querySelector<HTMLInputElement>(
       '[role="combobox"]'
     )
+    const bounds = element.getBoundingClientRect()
     const inputRect = input?.getBoundingClientRect()
     const inputStyle = input ? getComputedStyle(input) : null
     return {
+      bottom: bounds.bottom,
       clientWidth: element.clientWidth,
       inputBottom: inputRect?.bottom,
       inputLeft: inputRect?.left,
       inputRight: inputRect?.right,
       inputShadow: inputStyle?.boxShadow,
+      left: bounds.left,
+      right: bounds.right,
       scrollWidth: element.scrollWidth,
+      top: bounds.top,
     }
   })
   expect(compactGeometry.scrollWidth).toBe(compactGeometry.clientWidth)
-  expect(compactGeometry.inputLeft).toBeGreaterThan(0)
-  expect(compactGeometry.inputRight).toBeLessThan(720)
-  expect(compactGeometry.inputBottom).toBeLessThan(640)
-  expect(compactGeometry.inputShadow).toContain("rgb")
-  await page.getByRole("button", { name: "退出搜索" }).click()
+  expect(compactGeometry.left).toBeGreaterThanOrEqual(16)
+  expect(compactGeometry.right).toBeLessThanOrEqual(704)
+  expect(compactGeometry.top).toBeGreaterThanOrEqual(16)
+  expect(compactGeometry.bottom).toBeLessThanOrEqual(624)
+  expect(compactGeometry.inputLeft).toBeGreaterThan(compactGeometry.left)
+  expect(compactGeometry.inputRight).toBeLessThan(compactGeometry.right)
+  expect(compactGeometry.inputBottom).toBeLessThan(compactGeometry.bottom)
+  expect(compactGeometry.inputShadow).toBe("none")
+  await page.getByRole("button", { name: "关闭搜索" }).click()
   await page.setViewportSize({ height: 720, width: 1280 })
 
   const utilityTrigger = page.locator(

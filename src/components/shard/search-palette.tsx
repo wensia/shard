@@ -41,6 +41,7 @@ export interface SearchPaletteProps {
   onQueryChange(query: string): void;
   onSelect(hit: SearchHit): void;
   onClose(): void;
+  onFilterFragments?(): void;
   onIncludeTrashChange?(includeTrash: boolean): void;
   onSelectedKeyChange?(key: string | null): void;
 }
@@ -72,6 +73,7 @@ const KIND_LABEL: Record<SearchKind, string> = {
 export function SearchPalette({
   session,
   onClose,
+  onFilterFragments,
   onIncludeTrashChange,
   onModeChange,
   onQueryChange,
@@ -350,6 +352,18 @@ export function SearchPalette({
               "公开空间"
             )}
           </span>
+          {session.scope === "public" &&
+          session.mode === "fullText" &&
+          onFilterFragments ? (
+            <Button
+              onClick={onFilterFragments}
+              size="sm"
+              type="button"
+              variant="ghost"
+            >
+              筛选碎片
+            </Button>
+          ) : null}
           {session.mode === "fullText" && onIncludeTrashChange ? (
             <Button
               aria-pressed={session.includeTrash}

@@ -42,7 +42,7 @@ interface FragmentTimelineProps {
   onPin?: (fragment: Fragment) => void
   onNavigateToFragment?: (fragmentId: string) => void
   onScrollDown?: () => void
-  onScrollToFragmentComplete?: (fragmentId: string) => void
+  onScrollToFragmentComplete?: (fragmentId: string, navigationId?: string) => void
   onSelectionModeChange?: (active: boolean) => void
   onSave?: (id: string, content: string, tags: string[]) => Promise<Fragment>
   onToggleKind?: (fragment: Fragment) => void
@@ -57,6 +57,7 @@ interface FragmentTimelineProps {
    */
   relationFragments?: Fragment[]
   scrollToFragmentId?: string | null
+  scrollNavigationId?: string | null
   /** Include vault and active filters; changing scope clears selection. */
   scopeKey?: string
   /**
@@ -96,6 +97,7 @@ export function FragmentTimeline({
   onUnlinkFragment,
   relationFragments = fragments,
   scrollToFragmentId = null,
+  scrollNavigationId = null,
   scopeKey,
   variant = "card",
   vaultPath,
@@ -231,9 +233,13 @@ export function FragmentTimeline({
     setOrganizeError(null)
   }, [onOrganize])
 
+  const scrollTargetIdentity = scrollToFragmentId
+    ? `${scrollNavigationId ?? "browse"}:${scrollToFragmentId}`
+    : null
+
   useEffect(() => {
     completedScrollTargetRef.current = null
-  }, [scrollToFragmentId])
+  }, [scrollTargetIdentity])
 
   useEffect(() => {
     return () => {
@@ -270,7 +276,7 @@ export function FragmentTimeline({
       }
     }
     if (!scrollToFragmentId || isLoading
-      || completedScrollTargetRef.current === scrollToFragmentId) return false
+      || completedScrollTargetRef.current === scrollTargetIdentity) return false
     beforeNavigate()
     return scrollFragmentIntoViewport(
       viewportRef.current,
@@ -371,10 +377,10 @@ export function FragmentTimeline({
     programmaticScrollRef.current = false
     programmaticScrollFrameRef.current = null
     programmaticScrollTimeoutRef.current = null
-    completedScrollTargetRef.current = fragmentId
+    completedScrollTargetRef.current = `${scrollNavigationId ?? "browse"}:${fragmentId}`
     restorePositionRef.current = null
     flashFragmentCard(fragmentId)
-    onScrollToFragmentComplete?.(fragmentId)
+    onScrollToFragmentComplete?.(fragmentId, scrollNavigationId ?? undefined)
   }
 
   function flashFragmentCard(fragmentId: string) {
@@ -502,7 +508,7 @@ export function FragmentTimeline({
           >
             <FragmentMasonry
               key={scopeKey}
-              layoutKey={JSON.stringify([isLoading, scrollToFragmentId, timelineItems.map((item) => item.id)])}
+              layoutKey={JSON.stringify([isLoading, scrollTargetIdentity, timelineItems.map((item) => item.id)])}
               renderLimit={renderLimit}
               onBeforeScroll={suppressLayoutScroll}
               onLayout={handleTimelineLayout}

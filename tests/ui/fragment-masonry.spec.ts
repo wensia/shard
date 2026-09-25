@@ -268,10 +268,9 @@ test("搜索内组合筛选支持键盘、取消草稿和应用清除，首页�
   await expect(dialog.getByRole("checkbox", { name: "只看置顶", exact: true })).toBeChecked()
   await page.keyboard.press("Escape")
   await expect(dialog).toHaveCount(0)
-  await expect(page.getByRole("button", { name: "筛选碎片", exact: true })).toBeFocused()
+  await expect(page.getByRole("button", { name: "搜索内容", exact: true })).toBeFocused()
 
-  await page.getByRole("button", { name: "筛选碎片", exact: true }).click()
-  dialog = page.getByRole("dialog", { name: "筛选碎片", exact: true })
+  dialog = await openFragmentFilters(page)
   await expect(dialog.getByRole("combobox", { name: "标签", exact: true })).toContainText("全部标签")
   await expect(dialog.getByRole("combobox", { name: "时间", exact: true })).toContainText("全部时间")
   await expect(dialog.getByRole("checkbox", { name: "只看置顶", exact: true })).not.toBeChecked()
@@ -307,6 +306,10 @@ test("窄窗低高度仍可从搜索打开筛选，弹层与下拉菜单不越�
   await page.setViewportSize({ width: 640, height: 520 })
   await openFragmentStream(page)
   const before = await expectQuietFragmentHome(page)
+  const sidebarSearch = page.getByRole("button", { name: "搜索内容", exact: true })
+  const composer = page.locator('[data-shard-editor="composer"] .ProseMirror')
+  const returnsToSidebar = await sidebarSearch.isVisible()
+  if (!returnsToSidebar) await composer.click()
   const dialog = await openFragmentFilters(page)
   const geometry = await readFilterDialogGeometry(page)
   expectFilterDialogGeometry(geometry)
@@ -326,7 +329,8 @@ test("窄窗低高度仍可从搜索打开筛选，弹层与下拉菜单不越�
   await page.screenshot({ path: "tests/evidence/fragments-separation/fragments-filter-narrow.png", animations: "disabled" })
   await dialog.getByRole("button", { name: "取消", exact: true }).press("Enter")
   await expect(dialog).toHaveCount(0)
-  await expect(page.getByRole("button", { name: "筛选碎片", exact: true })).toBeFocused()
+  if (returnsToSidebar) await expect(sidebarSearch).toBeFocused()
+  else await expect(composer).toBeFocused()
   writeFileSync("tests/evidence/fragments-separation/fragments-filter-narrow-geometry.json", JSON.stringify({ before, dialog: geometry, popup: popupBounds }, null, 2))
 })
 
@@ -462,10 +466,12 @@ test("标签过滤重新紧凑排版，搜索定位只滚动碎片流 viewport",
   await expectPackedLayout(page, fragmentIds.filter((_, index) => index % 2 === 0))
 
   await page.keyboard.press("Control+k")
-  const search = page.getByRole("combobox", { name: "搜索内容" })
+  const palette = page.getByRole("dialog", { name: "搜索", exact: true })
+  const search = palette.getByRole("combobox", { name: "搜索内容" })
   await search.fill("瀑布定位目标")
-  await expect(page.getByRole("option")).toHaveCount(1)
+  await expect(palette.getByRole("option")).toHaveCount(1)
   await search.press("Enter")
+  await expect(palette).toHaveCount(0)
   const target = page.locator('[data-shard-fragment-id="masonry-17"]')
   await expect(target).toBeInViewport()
   await expect.poll(() => target.evaluate((element) => {
@@ -487,10 +493,10 @@ test("搜索平滑定位期间上方内容异步增高后仍完成目标定位",
   const viewerTop = (await viewer.boundingBox())!.y
   const documentScroll = await page.evaluate(() => document.scrollingElement?.scrollTop)
   await page.keyboard.press("Control+k")
-  const search = page.getByRole("combobox", { name: "搜索内容" })
+  const palette = page.getByRole("dialog", { name: "搜索", exact: true })
+  const search = palette.getByRole("combobox", { name: "搜索内容" })
   await search.fill("瀑布定位目标")
-  await expect(page.getByRole("option")).toHaveCount(1)
-  await search.press("Enter")
+  await expect(palette.getByRole("option")).toHaveCount(1)
 
   await page.evaluate(() => {
     const started = performance.now()
@@ -513,23 +519,34 @@ test("搜索平滑定位期间上方内容异步增高后仍完成目标定位",
     sample()
     const sampling = window.setInterval(sample, 50)
     window.setTimeout(() => window.clearInterval(sampling), 2400)
-    window.setTimeout(() => {
+    const growDuringNavigation = () => {
       const upstream = document.querySelector<HTMLElement>('[data-shard-fragment-id="masonry-0"]')!
         .closest<HTMLElement>(".shard-timeline-item")!
       const target = document.querySelector<HTMLElement>('[data-shard-fragment-id="masonry-17"]')!
       const viewport = target.closest<HTMLElement>('[data-slot="scroll-area-viewport"]')!
+      const targetTop = target.getBoundingClientRect().top
+      const viewportBottom = viewport.getBoundingClientRect().bottom
+      if (viewport.scrollTop <= 0 || targetTop <= viewportBottom) {
+        if (performance.now() - started < 2400) {
+          window.requestAnimationFrame(growDuringNavigation)
+        }
+        return
+      }
       Object.assign(globalThis, {
         __SHARD_MASONRY_ASYNC_GROWTH__: {
           scrollTop: viewport.scrollTop,
-          targetTop: target.getBoundingClientRect().top,
-          viewportBottom: viewport.getBoundingClientRect().bottom,
+          targetTop,
+          viewportBottom,
         },
       })
       // 仅模拟图片/异步正文加载造成的几何增长；搜索及定位使用真实产品链路。
       upstream.style.paddingBottom = "960px"
       upstream.dataset.simulatedAsyncContent = "loaded"
-    }, 90)
+    }
+    window.requestAnimationFrame(growDuringNavigation)
   })
+  await search.press("Enter")
+  await expect(palette).toHaveCount(0)
   const upstream = page.locator(".shard-timeline-item")
     .filter({ has: page.locator('[data-shard-fragment-id="masonry-0"]') })
   await expect(upstream).toHaveAttribute("data-simulated-async-content", "loaded")
@@ -574,10 +591,12 @@ test("完整碎片流渐进渲染，搜索可定位第 80 条并保持 composer 
   const composerTop = (await composer.boundingBox())!.y
   const documentScroll = await page.evaluate(() => document.scrollingElement?.scrollTop)
   await page.keyboard.press("Control+k")
-  const search = page.getByRole("combobox", { name: "搜索内容" })
+  const palette = page.getByRole("dialog", { name: "搜索", exact: true })
+  const search = palette.getByRole("combobox", { name: "搜索内容" })
   await search.fill("短卡 79")
-  await expect(page.getByRole("option")).toHaveCount(1)
+  await expect(palette.getByRole("option")).toHaveCount(1)
   await search.press("Enter")
+  await expect(palette).toHaveCount(0)
   const target = page.locator('[data-shard-fragment-id="masonry-79"]')
   await expect(target).toHaveClass(/shard-fragment-card-highlight/)
   await expect(target).toBeInViewport()

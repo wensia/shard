@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -72,12 +73,14 @@ interface FragmentEditorProps {
   onRegisterFlush?: (flush: (() => Promise<boolean>) | null) => void
   onCreate?: (content: string, tags: string[]) => Promise<Fragment | void>
   onNavigateToFragment?: (fragmentId: string) => void
+  onReady?: (fragmentId: string) => void
   /**
    * 行内编辑遇到文档类型时改开禅模式（产品框架 §2「文档……直接进入禅模式」）。
    * 不传就照常行内编辑。
    */
   onRequestZen?: () => void
   onSave: (id: string, content: string, tags: string[]) => Promise<Fragment>
+  readOnly?: boolean
   variant?: "inline" | "zen"
   vaultPath?: string
 }
@@ -114,8 +117,10 @@ export function FragmentEditor({
   onRegisterFlush,
   onCreate,
   onNavigateToFragment,
+  onReady,
   onRequestZen,
   onSave,
+  readOnly = false,
   variant = "zen",
   vaultPath,
 }: FragmentEditorProps) {
@@ -136,7 +141,7 @@ export function FragmentEditor({
   const closeEditorRef = useRef<() => void>(() => undefined)
   const savePromiseRef = useRef<Promise<boolean> | null>(null)
   const flushRef = useRef<() => Promise<boolean>>(async () => true)
-  flushRef.current = handleSubmit
+  flushRef.current = flushWithoutClose
   const isZen = variant === "zen"
   const isDraft = fragment === null && draft !== null
   const isOpen = fragment !== null || draft !== null
@@ -277,7 +282,7 @@ export function FragmentEditor({
 
     setSaveState("dirty")
 
-    if (!isZen || isDraft) return
+    if (!isZen || isDraft || readOnly) return
 
     saveTimerRef.current = window.setTimeout(() => {
       // 落盘取编辑器的收敛视图，而不是 onChange 缓存的字符串：手打的 `#标签`
@@ -286,7 +291,25 @@ export function FragmentEditor({
     }, 800)
 
     return clearSaveTimer
-  }, [draft?.id, draftContent, fragment?.id, isDraft, isOpen, isZen])
+  }, [draft?.id, draftContent, fragment?.id, isDraft, isOpen, isZen, readOnly])
+
+  // Navigation may re-read the same object ID at a newer revision. Refresh a
+  // clean editor from that payload instead of relying on identity alone.
+  useEffect(() => {
+    if (!fragment || fragment.content === lastSavedContentRef.current) return
+    if (draftContent !== lastSavedContentRef.current) return
+
+    const nextDraft = splitContentImageAttachments(fragment.content)
+    revokeEditorImagePreviewUrls(imageAttachmentsRef.current)
+    imageAttachmentsRef.current = nextDraft.images
+    setContent(nextDraft.content)
+    setImageAttachments(nextDraft.images)
+    lastSavedContentRef.current = buildContentWithImageAttachments(
+      nextDraft.content,
+      nextDraft.images
+    )
+    setSaveState("saved")
+  }, [draftContent, fragment])
 
   useEffect(() => {
     if (!isOpen || !isZen || !isTauri()) return
@@ -336,13 +359,14 @@ export function FragmentEditor({
 
   // 与其他 hooks 一样，必须位于关闭编辑器的提前 return 之前。
   const { isDropTarget: isTableDropTarget } = useTableDocumentDrop({
-    enabled: isOpen,
+    enabled: isOpen && !readOnly,
     frameRef: editorFrameRef,
   })
   const { uploadPastedImages } = useImageUpload({
     getContent: getCurrentDraftContent,
     isLockbox: Boolean(fragment?.lockbox),
     onUploaded: ({ alt, fileName, path, previewUrl }) => {
+      if (readOnly) return
       setImageAttachments((current) => [
         ...current,
         {
@@ -364,6 +388,11 @@ export function FragmentEditor({
     return () => onRegisterFlush?.(null)
   }, [isOpen, onRegisterFlush])
 
+  useLayoutEffect(() => {
+    if (!fragment || !isOpen) return
+    onReady?.(fragment.id)
+  }, [fragment, isOpen, onReady])
+
   if (!isOpen) return null
   // 文档类型的行内编辑已经转交禅模式，这一帧什么都不画。
   if (!isZen && isDocumentSurface && onRequestZen) return null
@@ -372,7 +401,7 @@ export function FragmentEditor({
     clearBlurCommitTimer()
     clearSaveTimer()
 
-    if (!isZen) {
+    if (!isZen || readOnly) {
       onClose()
       return
     }
@@ -405,8 +434,20 @@ export function FragmentEditor({
     return saved
   }
 
+  async function flushWithoutClose() {
+    clearBlurCommitTimer()
+    clearSaveTimer()
+    if (readOnly) return true
+
+    const currentDraftContent = getCurrentDraftContent()
+    if (currentDraftContent === lastSavedContentRef.current && !savePromiseRef.current) {
+      return true
+    }
+    return saveDraft(currentDraftContent)
+  }
+
   function handleEditorBlur(event: FocusEvent<HTMLElement>) {
-    if (!commitOnBlur || isZen || blurCommitPausedRef.current) return
+    if (readOnly || !commitOnBlur || isZen || blurCommitPausedRef.current) return
 
     const editorElement = event.currentTarget
     const nextFocused = event.relatedTarget
@@ -438,6 +479,7 @@ export function FragmentEditor({
   }
 
   async function persistDraft(nextContent: string) {
+    if (readOnly) return true
     if (nextContent.trim().length === 0) {
       setSaveState("error")
       toast.error("片段内容不能为空", { duration: Infinity })
@@ -586,7 +628,7 @@ export function FragmentEditor({
           <FragmentImageAttachment
             alt={image.alt}
             key={image.id}
-            onRemove={() => removeImageAttachment(image.id)}
+            onRemove={readOnly ? undefined : () => removeImageAttachment(image.id)}
             path={image.path}
             src={image.previewUrl}
             vaultPath={vaultPath}
@@ -639,23 +681,24 @@ export function FragmentEditor({
           <OutlineComposer
             code={content}
             key={editorId}
-            onChange={setContent}
+            onChange={readOnly ? () => undefined : setContent}
             // 幕布式大纲里 Escape 是「离开这块编辑区」；整篇即大纲时没有外层
             // 正文可回，直接按当前编辑面的收尾语义走，用户刚写的树不会丢。
             onExit={() => {
               if (isZen) closeEditorRef.current()
               else void handleSubmit()
             }}
-            onSubmit={() => {
+            onSubmit={readOnly ? () => undefined : () => {
               void handleSubmit()
             }}
+            readOnly={readOnly}
           />
         </div>
       ) : (
         <div style={richFieldStyle}>
           <ShardRichEditor
             ariaLabel={isZen ? "禅模式片段编辑器" : "片段编辑器"}
-            autoFocus
+            autoFocus={!readOnly}
             editorId={editorId}
             getKnownTags={() => knownTagsRef.current}
             getWikilinkCandidates={() => wikilinkCandidatesRef.current}
@@ -664,23 +707,24 @@ export function FragmentEditor({
             onChange={(nextContent) => {
               setContent(nextContent)
             }}
-            onDropFiles={(files) => {
+            onDropFiles={readOnly ? undefined : (files) => {
               void uploadPastedImages(files)
             }}
             // ProseMirror 对 Esc 一律 preventDefault，禅模式外壳的 window 监听
             // 因此等不到这个键；由编辑器把它转交回宿主（见 shard-host.ts）。
             onEscape={isZen ? () => closeEditorRef.current() : undefined}
-            onImageFiles={(files) => {
+            onImageFiles={readOnly ? undefined : (files) => {
               void uploadPastedImages(files)
             }}
             onNavigateWikilink={navigateWikilink}
-            onPasteFiles={(files) => {
+            onPasteFiles={readOnly ? undefined : (files) => {
               void uploadPastedImages(files)
             }}
-            onSubmit={() => {
+            onSubmit={readOnly ? undefined : () => {
               void handleSubmit()
             }}
             ref={richEditorRef}
+            readOnly={readOnly}
             tier={tier}
             value={content}
             variant={isZen ? "zen" : "inline"}
@@ -816,7 +860,7 @@ export function FragmentEditor({
             </div>
           ) : (
             <EditorToolbar
-              disabled={saveState === "saving"}
+              disabled={readOnly || saveState === "saving"}
               trailing={inlineTrailing}
             />
           )}
@@ -912,7 +956,7 @@ export function FragmentEditor({
               </div>
             ) : (
               <EditorToolbar
-                disabled={saveState === "saving"}
+                disabled={readOnly || saveState === "saving"}
                 trailing={zenTrailing}
               />
             )}

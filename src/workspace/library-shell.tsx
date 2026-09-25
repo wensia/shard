@@ -6,6 +6,7 @@ import {
   Suspense,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -58,7 +59,7 @@ import { Input } from "@/components/ui/input"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import type { CanvasWorkspaceHandle } from "@/features/canvas/canvas-workspace"
 import { createCanvas } from "@/features/canvas/api"
-import { createCanvasFile, type CanvasFile } from "@/features/canvas/model"
+import { createCanvasFile, type CanvasFile, type CanvasReadResult } from "@/features/canvas/model"
 import { TableWorkspace, type TableWorkspaceHandle } from "@/features/tables/table-workspace"
 import { TableImportDialog } from "@/features/tables/exchange-dialog"
 import { createTable, type CreateTableRequest } from "@/features/tables/api"
@@ -106,7 +107,9 @@ import type {
   LibraryMutationResult,
   LibraryTreeEntry,
   LibraryTreeSnapshot,
+  MindMapReadResult,
 } from "@/types"
+import type { SearchTarget } from "@/lib/search-contract"
 
 import styles from "./library-shell.module.css"
 
@@ -125,6 +128,34 @@ export type LibraryNavigationTarget =
   | { kind: "note"; id: string; requestId: number; edit?: boolean }
   | { kind: "trash"; requestId: number }
 
+export type LibrarySearchNavigationTarget =
+  | {
+      kind: "note"
+      requestId: string
+      target: SearchTarget
+      fragment: Fragment
+      readOnly: boolean
+      revision: string
+    }
+  | {
+      kind: "canvas" | "flowchart"
+      requestId: string
+      target: SearchTarget
+      result: CanvasReadResult
+    }
+  | {
+      kind: "table"
+      requestId: string
+      target: SearchTarget
+      result: TableReadResult
+    }
+  | {
+      kind: "mindmap"
+      requestId: string
+      target: SearchTarget
+      result: MindMapReadResult
+    }
+
 interface LibraryShellProps {
   vaultPath: string
   csvFiles?: CsvFileSummary[]
@@ -133,6 +164,11 @@ interface LibraryShellProps {
   libraryTree: LibraryTreeSnapshot | null
   knownTags: string[]
   navigateTo?: LibraryNavigationTarget | null
+  searchNavigateTo?: LibrarySearchNavigationTarget | null
+  onSearchNavigationSettled?: (
+    requestId: string,
+    result: { status: "ready"; revision: string } | { status: "error"; error: unknown }
+  ) => void
   onNavigateToFragment?: (fragmentId: string) => void
   onConvertedToFragment?: (fragment: Fragment) => void
   onLibraryMutation: (result: LibraryMutationResult) => void
@@ -211,6 +247,8 @@ export function LibraryShell({
   libraryTree,
   knownTags,
   navigateTo = null,
+  searchNavigateTo = null,
+  onSearchNavigationSettled,
   onNavigateToFragment,
   onConvertedToFragment,
   onLibraryMutation,
@@ -233,6 +271,9 @@ export function LibraryShell({
     [notes]
   )
   const [selection, setSelection] = useState<LibrarySelection>(() => readLibrarySelection(vaultPath))
+  const [searchNote, setSearchNote] = useState<Fragment | null>(null)
+  const [activeSearchNavigation, setActiveSearchNavigation] =
+    useState<LibrarySearchNavigationTarget | null>(null)
   const [pendingIndexPath, setPendingIndexPath] = useState<string | null>(null)
   const richNoteEditor = useRef<ShardRichEditorHandle>(null)
   const tableHandle = useRef<TableWorkspaceHandle>(null)
@@ -302,9 +343,17 @@ export function LibraryShell({
   const [isZen, setIsZen] = useState(false)
   const selectedNoteId = selection?.kind === "note" ? selection.id : null
   const selectedNote = useMemo(
-    () => notes.find((note) => note.id === selectedNoteId) ?? null,
-    [notes, selectedNoteId]
+    () => (searchNote?.id === selectedNoteId ? searchNote : null) ??
+      notes.find((note) => note.id === selectedNoteId) ?? null,
+    [notes, searchNote, selectedNoteId]
   )
+  const selectedNoteReadOnly = Boolean(
+    activeSearchNavigation?.kind === "note" &&
+    activeSearchNavigation.fragment.id === selectedNoteId &&
+    activeSearchNavigation.readOnly
+  ) || Boolean(searchNote?.archived && searchNote.id === selectedNoteId)
+  const selectedTargetReadOnly =
+    selectedNoteReadOnly || Boolean(activeSearchNavigation?.target.archived)
   const libraryMindMaps = useMemo(
     () => collectMindMapEntries(libraryTree?.entries ?? []),
     [libraryTree]
@@ -376,7 +425,7 @@ export function LibraryShell({
   const pendingDiskReloadRef = useRef(false)
   const selectedNoteRef = useRef<Fragment | null>(selectedNote)
   const savePromiseRef = useRef<Promise<boolean> | null>(null)
-  const consumedNavigationRef = useRef(0)
+  const consumedNavigationRef = useRef<string | number | null>(null)
   const knownTagsRef = useRef<string[]>([])
   const wikilinkCandidates = useMemo(
     () => [
@@ -409,6 +458,10 @@ export function LibraryShell({
     getContent: () => draftRef.current,
     isLockbox: selectedNote?.lockbox,
     onUploaded: ({ alt, path, previewUrl }) => {
+      if (selectedNoteReadOnly) {
+        URL.revokeObjectURL(previewUrl)
+        return
+      }
       const imageMarkdown = `![${escapeMarkdownImageAlt(alt)}](${path})`
       // 空行分隔：图片附件按方言要独占一个块（技术方案 §3）。只隔一个换行时，
       // 正文末尾若是列表或段落，图片会被当成它的续行。
@@ -426,7 +479,9 @@ export function LibraryShell({
 
   useEffect(() => {
     if (isLoading || !libraryTree) return
-    const missingNote = selection?.kind === "note" && !notes.some((note) => note.id === selection.id)
+    const missingNote = selection?.kind === "note" &&
+      !notes.some((note) => note.id === selection.id) &&
+      searchNote?.id !== selection.id
     const missingFile = selection && ["directory", "mindmap", "table", "canvas", "flowchart"].includes(selection.kind) &&
       "path" in selection && selection.path !== "notes" && !findTreeEntry(libraryTree.entries, selection.path!)
     if (!selection || missingNote || missingFile) {
@@ -450,7 +505,7 @@ export function LibraryShell({
     if (selection.kind !== "note") setSelectedTreePath(selection.kind === "assets" ? "::assets" : selection.path)
     try { sessionStorage.setItem(`shard.library-selection:${vaultPath}`, JSON.stringify(selection)) }
     catch { /* Browsing remains available when session storage is unavailable. */ }
-  }, [isLoading, libraryTree, notes, selection, vaultPath])
+  }, [isLoading, libraryTree, notes, searchNote?.id, selection, vaultPath])
 
   useEffect(() => {
     if (!selectedNote) return
@@ -507,6 +562,7 @@ export function LibraryShell({
     if (canvasHandle.current && !(await canvasHandle.current.flush())) return false
     if (mindMapHandle.current && !(await mindMapHandle.current.save())) return false
     if (tableHandle.current && !(await tableHandle.current.flush())) return false
+    if (selectedNoteReadOnly) return true
     // 排空式保存：在飞的保存只覆盖它启动瞬间的快照。等它结束后必须回头重查
     // 草稿是否又变了，直到「无在飞 && 草稿==已落盘」才算 flush 完成，
     // 否则慢保存期间的尾随输入会被吞掉（自动保存 800ms 与切换/同步都依赖这里）。
@@ -608,7 +664,7 @@ export function LibraryShell({
         savePromiseRef.current = null
       }
     }
-  }, [onSave])
+  }, [onSave, selectedNoteReadOnly])
 
   const saveStateRef = useRef<SaveState>("saved")
   saveStateRef.current = saveState
@@ -662,7 +718,8 @@ export function LibraryShell({
   async function selectNote(noteId: string, edit = false) {
     if (noteId !== selectedNoteRef.current?.id) {
       const saved = await saveCurrentNote()
-      if (!saved) return
+      if (!saved) return false
+      if (searchNote?.id !== noteId) setSearchNote(null)
       setSelection({ kind: "note", id: noteId })
       const note = notes.find((candidate) => candidate.id === noteId)
       if (note) setSelectedTreePath(note.path)
@@ -672,6 +729,7 @@ export function LibraryShell({
     if (edit) window.requestAnimationFrame(() => {
       if (selectedNoteRef.current?.id === noteId) focusNoteEditor()
     })
+    return true
   }
 
   function focusNoteEditor() {
@@ -790,12 +848,13 @@ export function LibraryShell({
   }
 
   async function selectTrashView(path = ".trash") {
-    if (!(await saveCurrentNote())) return
+    if (!(await saveCurrentNote())) return false
     setSelection({ kind: "trash" })
     setTrashDirectoryPath(path)
     setSelectedTreePath("::trash")
     setIsZen(false)
     setMobilePane("editor")
+    return true
   }
 
   useEffect(() => {
@@ -805,19 +864,80 @@ export function LibraryShell({
     if (navigateTo.kind === "note") {
       // 目标文档可能还没进列表（刚整理生成、刷新在途）：不消费，等 notes 更新重试
       if (!notes.some((note) => note.id === navigateTo.id)) return
-      consumedNavigationRef.current = navigateTo.requestId
-      void selectNote(navigateTo.id, navigateTo.edit)
+      void selectNote(navigateTo.id, navigateTo.edit).then((selected) => {
+        if (selected) consumedNavigationRef.current = navigateTo.requestId
+      })
       return
     }
-    consumedNavigationRef.current = navigateTo.requestId
     if (navigateTo.kind === "trash") {
-      void selectTrashView()
+      void selectTrashView().then((selected) => {
+        if (selected) consumedNavigationRef.current = navigateTo.requestId
+      })
     }
   }, [navigateTo, notes])
 
+  useEffect(() => {
+    if (
+      !searchNavigateTo ||
+      searchNavigateTo.requestId === consumedNavigationRef.current ||
+      searchNavigateTo.requestId === activeSearchNavigation?.requestId
+    ) {
+      return
+    }
+
+    setActiveSearchNavigation(searchNavigateTo)
+    setIsZen(false)
+    setMobilePane("editor")
+    if (searchNavigateTo.kind === "note") {
+      const note = searchNavigateTo.fragment
+      setSearchNote(note)
+      setSelection({ kind: "note", id: note.id })
+      setSelectedTreePath(note.path)
+      setDraft(note.content)
+      draftRef.current = note.content
+      lastSavedContentRef.current = note.content
+      baseShaRef.current = null
+      setSaveState("saved")
+      return
+    }
+    if (searchNavigateTo.kind === "mindmap") {
+      setSelection({ kind: "mindmap", path: searchNavigateTo.target.path })
+    } else if (searchNavigateTo.kind === "table") {
+      setSelection({ kind: "table", path: searchNavigateTo.target.path })
+    } else {
+      setSelection({ kind: searchNavigateTo.kind, path: searchNavigateTo.target.path })
+    }
+    setSelectedTreePath(searchNavigateTo.target.path)
+  }, [activeSearchNavigation?.requestId, searchNavigateTo])
+
+  useLayoutEffect(() => {
+    const navigation = activeSearchNavigation
+    if (
+      navigation?.kind !== "note" ||
+      navigation.fragment.id !== selectedNote?.id ||
+      draft !== navigation.fragment.content
+    ) {
+      return
+    }
+    settleSearchNavigation(navigation.requestId, {
+      status: "ready",
+      revision: navigation.revision,
+    })
+  }, [activeSearchNavigation, draft, searchNavigateTo, selectedNote?.id])
+
+  function settleSearchNavigation(
+    requestId: string,
+    result: { status: "ready"; revision: string } | { status: "error"; error: unknown }
+  ) {
+    if (activeSearchNavigation?.requestId !== requestId) return
+    if (result.status === "ready") consumedNavigationRef.current = requestId
+    onSearchNavigationSettled?.(requestId, result)
+  }
+
   // 树只剩目录后，第三栏打开文件就没有回到列表的路了——给出所在目录的返回口，
   // 与图片单张视图的「返回图片列表」同一个模式。
-  const selectedFilePath = selectedNote?.path ?? selectedMindMap?.path ?? selectedTablePath ?? selectedCanvasPath
+  const selectedFilePath = selectedNote?.path ?? selectedMindMap?.path ??
+    activeSearchNavigation?.target.path ?? selectedTablePath ?? selectedCanvasPath
   const canEnterZen = selection?.kind === "note" || selection?.kind === "mindmap" ||
     (selection?.kind === "assets" && Boolean(selection.path))
   const openedFileParentPath = (() => {
@@ -1493,9 +1613,18 @@ export function LibraryShell({
     }
 
     if (selectedCanvasPath) {
+      const searchCanvas = activeSearchNavigation &&
+        (activeSearchNavigation.kind === "canvas" || activeSearchNavigation.kind === "flowchart") &&
+        activeSearchNavigation.target.path === selectedCanvasPath
+        ? activeSearchNavigation
+        : null
       return <Suspense fallback={<LibraryEmptyState message={selection?.kind === "flowchart" ? "正在载入流程图…" : "正在载入旧画布…"} />}>
-        <CanvasWorkspace key={selectedCanvasPath} ref={canvasHandle} path={selectedCanvasPath} fragments={relationFragments}
+        <CanvasWorkspace key={`${selectedCanvasPath}:${searchCanvas?.requestId ?? "browse"}`} ref={canvasHandle} path={selectedCanvasPath}
+          initialRead={searchCanvas?.result ?? null} fragments={relationFragments}
+          readOnly={Boolean(searchCanvas?.target.archived)}
           onOpenLink={openCanvasLink} onSplit={onCanvasSplit} onSaved={onTableSaved} onSaveStateChange={setCanvasSaveState}
+          onReady={(revision) => searchCanvas && settleSearchNavigation(searchCanvas.requestId, { status: "ready", revision })}
+          onLoadError={(error) => searchCanvas && settleSearchNavigation(searchCanvas.requestId, { status: "error", error })}
           onRecovered={async (path) => {
             setSelection({ kind: path.endsWith(".shardflow.json") ? "flowchart" : "canvas", path })
             setSelectedTreePath(path)
@@ -1507,7 +1636,14 @@ export function LibraryShell({
     }
 
     if (selectedTablePath) {
-      return <TableWorkspace key={selectedTablePath} ref={tableHandle} embedded disabled={tableStructureBusy || !!busyAction} path={selectedTablePath} title={selectedTitle} refreshToken={libraryTree}
+      const searchTable = activeSearchNavigation?.kind === "table" &&
+        activeSearchNavigation.target.path === selectedTablePath
+        ? activeSearchNavigation
+        : null
+      return <TableWorkspace key={`${selectedTablePath}:${searchTable?.requestId ?? "browse"}`} ref={tableHandle} embedded disabled={Boolean(searchTable?.target.archived) || tableStructureBusy || !!busyAction}
+        initialRead={searchTable?.result ?? null} path={selectedTablePath} title={selectedTitle} refreshToken={libraryTree}
+        onReady={(revision) => searchTable && settleSearchNavigation(searchTable.requestId, { status: "ready", revision })}
+        onLoadError={(error) => searchTable && settleSearchNavigation(searchTable.requestId, { status: "error", error })}
         onSaveStateChange={setTableSaveState} onSaved={onTableSaved} onClose={() => void selectDirectoryView(openedFileParentPath ?? "notes")} />
     }
 
@@ -1522,25 +1658,25 @@ export function LibraryShell({
             getKnownTags={() => knownTagsRef.current}
             getWikilinkCandidates={() => wikilinkCandidatesRef.current}
             // 换一篇文档就换一个编辑器实例：正文与撤销历史一起重置。
-            key={selectedNote.id}
-            onChange={(content) => {
+            key={`${selectedNote.id}:${activeSearchNavigation?.kind === "note" ? activeSearchNavigation.requestId : "browse"}`}
+            onChange={selectedNoteReadOnly ? () => undefined : (content) => {
               setDraft(content)
               draftRef.current = content
               setSaveState(
                 content === lastSavedContentRef.current ? "saved" : "dirty"
               )
             }}
-            onDropFiles={(files) => void uploadPastedImages(files)}
+            onDropFiles={selectedNoteReadOnly ? undefined : (files) => void uploadPastedImages(files)}
             // ProseMirror 对 Esc 一律 preventDefault，ZenSurface 挂在 window 上的
             // 监听因此等不到这个键；由编辑器转交回宿主（见 shard-host.ts）。
             onEscape={zen ? () => setIsZen(false) : undefined}
-            onImageFiles={(files) => void uploadPastedImages(files)}
+            onImageFiles={selectedNoteReadOnly ? undefined : (files) => void uploadPastedImages(files)}
             onNavigateWikilink={navigateWikilink}
             onOpenDocumentLink={(link) => void openCanvasLink(link)}
-            onPasteFiles={(files) => void uploadPastedImages(files)}
-            onSubmit={() => void saveCurrentNote()}
+            onPasteFiles={selectedNoteReadOnly ? undefined : (files) => void uploadPastedImages(files)}
+            onSubmit={selectedNoteReadOnly ? undefined : () => void saveCurrentNote()}
             placeholder="开始写文档…"
-            readOnly={interactionBlocked || tableStructureBusy || busyAction !== null}
+            readOnly={selectedNoteReadOnly || interactionBlocked || tableStructureBusy || busyAction !== null}
             // 资料库里全是文档：工具集合按文档档开放（产品框架 §2）。
             tier="document"
             value={draft}
@@ -1550,7 +1686,12 @@ export function LibraryShell({
       )
     }
 
-    if (selectedMindMap) {
+    const searchMindMap = activeSearchNavigation?.kind === "mindmap" &&
+      selection?.kind === "mindmap" &&
+      activeSearchNavigation.target.path === selection.path
+      ? activeSearchNavigation
+      : null
+    if (selectedMindMap || searchMindMap) {
       return (
         <div
           className={
@@ -1558,12 +1699,17 @@ export function LibraryShell({
           }
         >
           <MindMapCanvas
+            initialRead={searchMindMap?.result ?? null}
+            key={`${selection?.kind === "mindmap" ? selection.path : "map"}:${searchMindMap?.requestId ?? "browse"}`}
             ref={mindMapHandle}
-            mapId={selectedMindMap.mindMapId!}
+            mapId={searchMindMap?.result.file.id ?? selectedMindMap!.mindMapId!}
             fragments={relationFragments}
             onOpenLink={openCanvasLink}
             onSaveStateChange={setMindMapSaveState}
             onMapsChange={() => onTableSaved?.()}
+            onReady={(revision) => searchMindMap && settleSearchNavigation(searchMindMap.requestId, { status: "ready", revision })}
+            onLoadError={(error) => searchMindMap && settleSearchNavigation(searchMindMap.requestId, { status: "error", error })}
+            readOnly={Boolean(searchMindMap?.target.archived)}
             surface={zen ? renderMindMapZenSurface : undefined}
             toolbarLeading={zen ? <Button aria-label="退出禅模式" title="退出禅模式（Esc）"
               onClick={() => setIsZen(false)} size="icon-sm" variant="ghost"><ChevronLeftIcon /></Button> : undefined}
@@ -1886,7 +2032,7 @@ export function LibraryShell({
                         <button
                           aria-label="重命名文件"
                           className={styles.editorTitleButton}
-                          disabled={busyAction !== null || tableStructureBusy}
+                          disabled={selectedTargetReadOnly || busyAction !== null || tableStructureBusy}
                           onClick={() => startRename(selectedFilePath, "editor")}
                           title="重命名文件"
                           type="button"
@@ -1907,7 +2053,7 @@ export function LibraryShell({
                     data-state={saveState}
                     data-tauri-drag-region
                   >
-                    {formatSaveState(saveState)}
+                    {selectedNoteReadOnly ? "只读" : formatSaveState(saveState)}
                   </span>
                 ) : null}
                 {canEnterZen ? (
@@ -1926,7 +2072,7 @@ export function LibraryShell({
             ) : null}
           </div>
 
-          {selectedMindMap
+          {selectedMindMap || activeSearchNavigation?.kind === "mindmap"
             ? renderSelectedViewer(isZen)
             : !isZen
               ? renderSelectedViewer(false)

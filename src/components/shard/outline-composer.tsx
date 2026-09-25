@@ -17,6 +17,7 @@ interface OutlineComposerProps {
   /** Escape：退出大纲态，回到普通速记。 */
   onExit: () => void
   onSubmit: () => void
+  readOnly?: boolean
 }
 
 /**
@@ -31,6 +32,7 @@ export function OutlineComposer({
   onChange,
   onExit,
   onSubmit,
+  readOnly = false,
 }: OutlineComposerProps) {
   const containerRef = useRef<HTMLDivElement>(null)
 
@@ -61,6 +63,7 @@ export function OutlineComposer({
    * （Cmd+Enter 在它那里是「离开输入框」），冒泡阶段等不到这个键。
    */
   function handleKeyDownCapture(event: KeyboardEvent<HTMLDivElement>) {
+    if (readOnly) return
     if (event.key !== "Enter") return
     if (!event.metaKey && !event.ctrlKey) return
     if (event.nativeEvent.isComposing) return
@@ -81,7 +84,7 @@ export function OutlineComposer({
         code={code}
         onChange={onChange}
         onExit={onExit}
-        readOnly={false}
+        readOnly={readOnly}
         sourceStart={0}
       />
     </div>

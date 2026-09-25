@@ -60,6 +60,7 @@ interface MindMapCanvasEditorProps {
   onSave?: () => void
   onSelectNode?: (nodeId: string) => void
   onSelectNodes?: (nodeIds: string[], primaryNodeId: string | null) => void
+  onReady?: () => void
   selectedNodeId: string | null
   selectedNodeIds: string[]
   inspectorVisible?: boolean
@@ -149,6 +150,7 @@ export function MindMapCanvasEditor({
   onSave,
   onSelectNode,
   onSelectNodes,
+  onReady,
   selectedNodeId,
   selectedNodeIds,
   inspectorVisible = false,
@@ -178,6 +180,11 @@ export function MindMapCanvasEditor({
   const [marqueeState, setMarqueeState] = useState<CanvasMarqueeState | null>(
     null
   )
+
+  useLayoutEffect(() => {
+    if (!containerRef.current) return
+    onReady?.()
+  }, [file.id, file.revision, onReady])
   const [hasMarqueeSession, setHasMarqueeSession] = useState(false)
   const [spaceHeld, setSpaceHeld] = useState(false)
   // 画布区分两态：单击 = 选中（可直接 Delete 删节点），双击/F2/新建 = 编辑文本。

@@ -477,19 +477,39 @@ for (const mode of ["deferred-success", "deferred-failure"] as const) {
   })
 }
 
-test("搜索已删除碎片聚焦回收站目标，恢复后等待刷新再定位并结束滚动目标", async ({ page }) => {
+test("搜索已删除碎片只读打开，退出后恢复并等待刷新定位", async ({ page }) => {
   await installWikilinkMock(page, { trashTarget: true })
   await page.reload()
   await expect(page.locator(".shard-timeline-item")).toHaveCount(40)
   const documentScroll = await page.evaluate(() => document.scrollingElement?.scrollTop)
   await page.keyboard.press("Control+k")
-  const search = page.getByRole("combobox", { name: "搜索内容" })
+  const palette = page.getByRole("dialog", { name: "搜索", exact: true })
+  const search = palette.getByRole("combobox", { name: "搜索内容" })
   await search.fill("待恢复定位目标")
-  await expect(page.getByRole("option")).toHaveCount(1)
+  await expect(palette.getByRole("option")).toHaveCount(0)
+  await palette.getByRole("button", { name: "包含回收站" }).click()
+  await expect(palette.getByRole("option")).toHaveCount(1)
   await search.press("Enter")
+
+  await expect(palette).toHaveCount(0)
+  const archivedEditor = page.locator('[data-shard-editor="zen:deleted-24"]')
+  await expect(archivedEditor).toBeVisible()
+  await expect(archivedEditor.locator(".ProseMirror")).toHaveAttribute(
+    "contenteditable",
+    "false"
+  )
+  await expect(archivedEditor).toContainText("待恢复定位目标：保留原记录日期。")
+  expect(await page.evaluate(() => document.scrollingElement?.scrollTop)).toBe(documentScroll)
+  await page.getByRole("button", { name: "退出编辑", exact: true }).click()
+
   const trash = page.getByRole("region", { name: "碎片回收站", exact: true })
   const target = trash.locator('[data-trash-path=".trash/fragments/deleted-24.md"]')
   await expect(trash).toBeVisible()
+  await target.evaluate((element) => {
+    const viewport = element.closest<HTMLElement>('[data-slot="scroll-area-viewport"]')!
+    viewport.scrollTop += element.getBoundingClientRect().top - viewport.getBoundingClientRect().top
+    element.focus({ preventScroll: true })
+  })
   await expect(target).toBeFocused()
   await expect(target).toBeInViewport()
   await expect.poll(() => target.evaluate(element => element.closest<HTMLElement>('[data-slot="scroll-area-viewport"]')!.scrollTop)).toBeGreaterThan(0)

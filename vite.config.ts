@@ -33,8 +33,12 @@ export default defineConfig({
         }
       : undefined,
     watch: {
-      // 3. tell Vite to ignore watching `src-tauri`
-      ignored: ["**/src-tauri/**", "**/tests/evidence/**"],
+      // 3. ignore backend sources and Playwright evidence written during UI runs
+      ignored: [
+        "**/src-tauri/**",
+        "**/tests/evidence/**",
+        "**/docs/design/evidence/**",
+      ],
     },
   },
 });

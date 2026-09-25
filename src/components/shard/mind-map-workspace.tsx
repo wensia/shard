@@ -45,19 +45,31 @@ import type { Fragment, MindMapReadResult, MindMapSummary, ShardDocumentLink, Sh
 import styles from "./mind-map-workspace.module.css"
 
 export interface MindMapWorkspaceProps {
+  contextBar?: ReactNode
   mapId: string
+  initialRead?: MindMapReadResult | null
   onClose: () => void
+  onReady?: (revision: string) => void
+  onLoadError?: (error: unknown) => void
   onMapsChange?: (maps: MindMapSummary[]) => void
+}
+
+export interface MindMapWorkspaceHandle {
+  flush: () => Promise<boolean>
 }
 
 export interface MindMapCanvasProps {
   mapId: string
+  initialRead?: MindMapReadResult | null
   onMapsChange?: (maps: MindMapSummary[]) => void
   surface?: (canvas: ReactNode) => ReactNode
   toolbarLeading?: ReactNode
   fragments?: Fragment[]
   onOpenLink?: (link: ShardDocumentLink) => Promise<void> | void
   onSaveStateChange?: (state: "saved" | "dirty" | "saving" | "error") => void
+  onReady?: (revision: string) => void
+  onLoadError?: (error: unknown) => void
+  readOnly?: boolean
 }
 
 export interface MindMapCanvasHandle {
@@ -84,12 +96,16 @@ export const MindMapCanvas = forwardRef<
   MindMapCanvasProps
 >(function MindMapCanvas({
   mapId,
+  initialRead = null,
   onMapsChange,
   surface,
   toolbarLeading,
   fragments = [],
   onOpenLink,
   onSaveStateChange,
+  onReady,
+  onLoadError,
+  readOnly = false,
 }, ref) {
   const [readResult, setReadResult] = useState<MindMapReadResult | null>(null)
   const [draftFile, setDraftFile] = useState<ShardMapFile | null>(null)
@@ -117,6 +133,16 @@ export const MindMapCanvas = forwardRef<
   const interactionBlockedRef = useRef(false)
   const readResultRef = useRef<MindMapReadResult | null>(null)
   const pendingSaveRef = useRef<Promise<boolean> | null>(null)
+  const initialReadRef = useRef(initialRead)
+  const onLoadErrorRef = useRef(onLoadError)
+  const onReadyRef = useRef(onReady)
+  onLoadErrorRef.current = onLoadError
+  onReadyRef.current = onReady
+
+  useEffect(() => {
+    interactionBlockedRef.current = readOnly
+    setInteractionBlocked(readOnly)
+  }, [readOnly])
   const composingRef = useRef(false)
   const [isComposing, setIsComposing] = useState(false)
   // 撤销/重做历史：KB 级文件快照栈，上限 UNDO_STACK_LIMIT。
@@ -211,7 +237,10 @@ export const MindMapCanvas = forwardRef<
     setIsLoading(true)
     setError(null)
     try {
-      const next = await readMindMap(mapId)
+      const next = initialReadRef.current?.file.id === mapId
+        ? initialReadRef.current
+        : await readMindMap(mapId)
+      initialReadRef.current = null
       setReadResult(next)
       setDraftFile(next.file)
       setSelectedNodeIds([])
@@ -224,6 +253,7 @@ export const MindMapCanvas = forwardRef<
       lastMergeKeyRef.current = null
     } catch (unknownError) {
       setError(getApiErrorMessage(unknownError))
+      onLoadErrorRef.current?.(unknownError)
     } finally {
       setIsLoading(false)
     }
@@ -306,11 +336,11 @@ export const MindMapCanvas = forwardRef<
       save: () => save("manual"),
       isDirty: () => Boolean(readResultRef.current && draftFileRef.current && !isMindMapFileContentEqual(readResultRef.current.file, draftFileRef.current)),
       setInteractionBlocked: (blocked) => {
-        interactionBlockedRef.current = blocked
-        setInteractionBlocked(blocked)
+        interactionBlockedRef.current = readOnly || blocked
+        setInteractionBlocked(readOnly || blocked)
       },
     }),
-    [requestClose, save]
+    [readOnly, requestClose, save]
   )
 
   const updateDraft = useCallback(
@@ -467,7 +497,7 @@ export const MindMapCanvas = forwardRef<
   }, [redoDraft, save, undoDraft])
 
   useEffect(() => {
-    if (!isDirty || !draftFile || !readResult || isSaving || isComposing || conflict || autoSaveError) return
+    if (interactionBlockedRef.current || !isDirty || !draftFile || !readResult || isSaving || isComposing || conflict || autoSaveError) return
 
     const timeoutId = window.setTimeout(() => {
       void save("auto")
@@ -598,6 +628,7 @@ export const MindMapCanvas = forwardRef<
               onSave={save}
               onSelectNode={selectNode}
               onSelectNodes={selectNodes}
+              onReady={() => onReadyRef.current?.(String(draftFile.revision))}
               selectedNodeId={selectedNode?.id ?? null}
               selectedNodeIds={selectedNodeIds}
               inspectorVisible={sidePanel !== null}
@@ -702,12 +733,20 @@ function isMindMapWorkspaceTarget(root: HTMLElement | null, target: EventTarget 
   return owner instanceof Node && Boolean(root?.contains(owner))
 }
 
-export function MindMapWorkspace({
+export const MindMapWorkspace = forwardRef<MindMapWorkspaceHandle, MindMapWorkspaceProps>(function MindMapWorkspace({
+  contextBar,
   mapId,
+  initialRead = null,
   onClose,
+  onReady,
+  onLoadError,
   onMapsChange,
-}: MindMapWorkspaceProps) {
+}, ref) {
   const canvasRef = useRef<MindMapCanvasHandle>(null)
+
+  useImperativeHandle(ref, () => ({
+    flush: async () => (await canvasRef.current?.save()) ?? true,
+  }), [])
 
   const closeWorkspace = useCallback(() => {
     if (canvasRef.current?.requestClose() ?? true) {
@@ -763,23 +802,31 @@ export function MindMapWorkspace({
       ariaLabel="思维导图工作区"
       onRequestClose={closeWorkspace}
     >
-      <MindMapCanvas
-        mapId={mapId}
-        onMapsChange={onMapsChange}
-        ref={canvasRef}
-        toolbarLeading={
-          <Button
-            aria-label="退出思维导图"
-            onClick={closeWorkspace}
-            size="icon-sm"
-            title="退出思维导图（Cmd/Ctrl+Enter 保存并关闭）"
-            variant="ghost"
-          >
-            <XIcon aria-hidden="true" />
-            <span className="sr-only">退出思维导图</span>
-          </Button>
-        }
-      />
+      <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
+        {contextBar}
+        <div style={{ flex: "1 1 auto", minHeight: 0 }}>
+          <MindMapCanvas
+            initialRead={initialRead}
+            mapId={mapId}
+            onLoadError={onLoadError}
+            onMapsChange={onMapsChange}
+            onReady={onReady}
+            ref={canvasRef}
+            toolbarLeading={
+              <Button
+                aria-label="退出思维导图"
+                onClick={closeWorkspace}
+                size="icon-sm"
+                title="退出思维导图（Cmd/Ctrl+Enter 保存并关闭）"
+                variant="ghost"
+              >
+                <XIcon aria-hidden="true" />
+                <span className="sr-only">退出思维导图</span>
+              </Button>
+            }
+          />
+        </div>
+      </div>
     </ZenSurface>
   )
-}
+})

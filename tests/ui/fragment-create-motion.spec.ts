@@ -420,11 +420,13 @@ test("入场动画中搜索定位旧卡，取消位移动画后按最终卡片�
   expect(moving.transform).not.toBe("none")
 
   await page.keyboard.press("Control+k")
-  const search = page.getByRole("combobox", { name: "搜索内容" })
+  const palette = page.getByRole("dialog", { name: "搜索", exact: true })
+  const search = palette.getByRole("combobox", { name: "搜索内容" })
   await search.fill("已有碎片 1 的")
-  const result = page.getByRole("option").filter({ hasText: "已有碎片 1 的" })
+  const result = palette.getByRole("option").filter({ hasText: "已有碎片 1 的" })
   await expect(result).toHaveCount(1)
   await result.click()
+  await expect(palette).toHaveCount(0)
   await expect(target).toHaveClass(/shard-fragment-card-highlight/)
   await expect.poll(() => target.evaluate((element) => {
     const viewport = element.closest<HTMLElement>('[data-slot="scroll-area-viewport"]')!

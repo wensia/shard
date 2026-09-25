@@ -299,7 +299,7 @@ export async function installSearchIpcMock(page: Page) {
         expiresAt: target.scope === "lockbox" ? state.lockbox.expiresAt : null,
         target: actualTarget,
         revision: revisionOf(fragment),
-        readOnly: true,
+        readOnly: Boolean(fragment.archived),
         fragment: stored,
       }
     }

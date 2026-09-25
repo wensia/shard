@@ -382,8 +382,26 @@ test("palette is available in standalone mindmap workspace", async ({
   ).toBeVisible();
 
   await page.keyboard.press("Control+k");
-  await expect(page.getByRole("dialog", { name: "搜索" })).toBeVisible();
+  const palette = page.getByRole("dialog", { name: "搜索" });
+  await expect(palette).toBeVisible();
   await expect(page.getByRole("combobox", { name: "搜索内容" })).toBeFocused();
+  await palette
+    .getByRole("button", { name: "筛选碎片", exact: true })
+    .click();
+  const filters = page.getByRole("dialog", {
+    name: "筛选碎片",
+    exact: true,
+  });
+  await expect(filters).toBeVisible();
+  await filters
+    .getByRole("button", { name: "查看碎片", exact: true })
+    .click();
+  await expect(
+    page.getByRole("button", { name: "退出思维导图", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "碎片", exact: true }),
+  ).toHaveAttribute("aria-current", "page");
 });
 
 test("states distinguish indexing stale locked and failure", async ({
@@ -475,6 +493,53 @@ test("public and lockbox providers never share payloads", async ({ page }) => {
   expect(
     nativeRequests.every(({ request }) => request.scope === "lockbox"),
   ).toBe(true);
+});
+
+test("fragment filter entry is limited to public full-text search", async ({
+  page,
+}) => {
+  await installSearchPaletteFixture(page);
+  await page.goto("/");
+
+  const sidebarSearch = page.getByRole("button", {
+    name: "搜索内容",
+    exact: true,
+  });
+  await sidebarSearch.click();
+  const publicDialog = page.getByRole("dialog", { name: "搜索" });
+  const filterButton = publicDialog.getByRole("button", {
+    name: "筛选碎片",
+    exact: true,
+  });
+  await expect(filterButton).toBeVisible();
+  await expect(
+    publicDialog.getByRole("button", { name: "包含回收站", exact: true }),
+  ).toBeVisible();
+  await filterButton.click();
+  await expect(publicDialog).toHaveCount(0);
+  const filters = page.getByRole("dialog", {
+    name: "筛选碎片",
+    exact: true,
+  });
+  await expect(filters).toBeVisible();
+  await expect(page.getByRole("dialog")).toHaveCount(1);
+  await filters.getByRole("button", { name: "取消", exact: true }).click();
+  await expect(sidebarSearch).toBeFocused();
+
+  await sidebarSearch.click();
+  await page.keyboard.press("Control+o");
+  await expect(
+    publicDialog.getByRole("button", { name: "筛选碎片", exact: true }),
+  ).toHaveCount(0);
+
+  await page.keyboard.press("Escape");
+  await openLockbox(page);
+  await unlockLockbox(page);
+  await page.keyboard.press("Control+k");
+  const lockboxDialog = page.getByRole("dialog", { name: "搜索" });
+  await expect(
+    lockboxDialog.getByRole("button", { name: "筛选碎片", exact: true }),
+  ).toHaveCount(0);
 });
 
 test("result geometry shows every row promised by the net viewport", async ({

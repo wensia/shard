@@ -20,7 +20,10 @@ import { conversionTitle, EMPTY_FRAGMENT_FILTERS, libraryDirectoryOptions, match
 import {
   LockboxDialog,
 } from "@/components/shard/lockbox-dialog"
-import { MindMapWorkspace } from "@/components/shard/mind-map-workspace"
+import {
+  MindMapWorkspace,
+  type MindMapWorkspaceHandle,
+} from "@/components/shard/mind-map-workspace"
 import {
   SidebarNav,
   SidebarToggleButton,
@@ -87,12 +90,16 @@ import {
 } from "@/lib/lockbox"
 import {
   searchTargetKey,
+  type ReadSearchTargetResponse,
   type SearchMode,
+  type SearchRevealHandle,
   type SearchSession,
 } from "@/lib/search-contract"
+import { runSearchNavigation } from "@/lib/search-navigation"
+import { normalizeSearchError } from "@/lib/search-api"
 import { buildOpenCatalog } from "@/lib/quick-open-catalog"
 import { clearQuickOpenMatchCache } from "@/lib/quick-open-match"
-import { readPublicOpenRecent } from "@/lib/search-recent"
+import { readPublicOpenRecent, recordPublicOpen } from "@/lib/search-recent"
 import {
   createLegacyPublicSearchProvider,
   createRustSearchProvider,
@@ -119,8 +126,10 @@ import {
   LibraryShell,
   type LibraryDraftHandle,
   type LibraryNavigationTarget,
+  type LibrarySearchNavigationTarget,
   type SaveState,
 } from "@/workspace/library-shell"
+import { createSearchTargetRouter } from "@/workspace/search-target-router"
 import {
   writeWorkspaceRoute,
   type WorkspaceRoute,
@@ -228,12 +237,23 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
   const [pendingScrollFragmentId, setPendingScrollFragmentId] = useState<
     string | null
   >(null)
+  const [pendingScrollNavigationId, setPendingScrollNavigationId] =
+    useState<string | null>(null)
   const [isSearchModeActive, setIsSearchModeActive] = useState(false)
   const [legacySearchSession, setLegacySearchSession] =
     useState<LegacyFragmentSearchSession | null>(null)
   const [searchSession, setSearchSession] = useState<SearchSession | null>(null)
   const [isMindMapViewActive, setIsMindMapViewActive] = useState(false)
   const [activeMindMapId, setActiveMindMapId] = useState<string | null>(null)
+  const [searchMindMapNavigation, setSearchMindMapNavigation] = useState<{
+    requestId: string
+    result: import("@/types").MindMapReadResult
+  } | null>(null)
+  const [searchEditorNavigation, setSearchEditorNavigation] = useState<{
+    fragment: Fragment
+    readOnly: boolean
+    requestId: string
+  } | null>(null)
   const [mindMaps, setMindMaps] = useState<MindMapSummary[]>([])
   const [csvFiles, setCsvFiles] = useState<CsvFileSummary[]>([])
   const [libraryTree, setLibraryTree] = useState<LibraryTreeSnapshot | null>(null)
@@ -249,11 +269,15 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
   const [fragmentSelectionActive, setFragmentSelectionActive] = useState(false)
   const fragmentsView = route.space === "fragments" ? route.params.view ?? "all" : "all"
   const searchReturnFocusRef = useRef<HTMLElement | null>(null)
+  const fragmentFilterReturnFocusRef = useRef<HTMLElement | null>(null)
   const librarySaveHandlerRef = useRef<LibraryDraftHandle | null>(null)
+  const mindMapWorkspaceRef = useRef<MindMapWorkspaceHandle>(null)
   const fragmentFlushRef = useRef<(() => Promise<boolean>) | null>(null)
   const registerFragmentFlush = useCallback((flush: (() => Promise<boolean>) | null) => { fragmentFlushRef.current = flush }, [])
   const [pendingLibraryTarget, setPendingLibraryTarget] =
     useState<LibraryNavigationTarget | null>(null)
+  const [pendingLibrarySearchTarget, setPendingLibrarySearchTarget] =
+    useState<LibrarySearchNavigationTarget | null>(null)
   const nextLibraryNavigationIdRef = useRef(0)
   const migratedLibraryVaultRef = useRef<string | null>(null)
   const routeRef = useRef(route)
@@ -262,6 +286,17 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
   const searchUiEpochRef = useRef(0)
   const nextSearchSessionIdRef = useRef(0)
   const nextSearchNavigationIdRef = useRef(0)
+  const searchNavigationAbortRef = useRef<AbortController | null>(null)
+  const searchNavigationStartedRef = useRef<string | null>(null)
+  const searchNavigationWaitersRef = useRef(new Map<string, {
+    reject: (error: unknown) => void
+    resolve: () => void
+  }>())
+  const activeSearchRevealRef = useRef<{
+    handle: SearchRevealHandle
+    requestId: string
+    targetKey: string
+  } | null>(null)
 
   vaultPathRef.current = vaultPath
   searchSessionRef.current = searchSession
@@ -326,9 +361,10 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
 
   const saveLibraryDraftBeforeNavigation = useCallback(async () => {
     if (fragmentFlushRef.current && !(await fragmentFlushRef.current())) return false
+    if (activeMindMapId && !((await mindMapWorkspaceRef.current?.flush()) ?? true)) return false
     if (routeRef.current.space !== "library") return true
     return (await librarySaveHandlerRef.current?.flush()) ?? true
-  }, [])
+  }, [activeMindMapId])
 
   useLockboxSecurityEffects({
     autoLock: (options) => {
@@ -359,6 +395,10 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
   }
 
   function revokeSearchSession(reason: SearchRevokeReason) {
+    searchNavigationAbortRef.current?.abort()
+    searchNavigationAbortRef.current = null
+    activeSearchRevealRef.current?.handle.clearHits("revoke")
+    activeSearchRevealRef.current = null
     revokeSearchSessionState(
       {
         sessionRef: searchSessionRef,
@@ -370,7 +410,11 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
           setLegacySearchSession(null)
           setIsSearchModeActive(false)
           setPendingLibraryTarget(null)
+          setPendingLibrarySearchTarget(null)
           setPendingScrollFragmentId(null)
+          setPendingScrollNavigationId(null)
+          setSearchEditorNavigation(null)
+          setSearchMindMapNavigation(null)
           searchReturnFocusRef.current = null
         },
       },
@@ -793,6 +837,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
   function closeEditor() {
     setEditingFragmentId(null)
     setZenDraft(null)
+    setSearchEditorNavigation(null)
   }
 
   async function handleToggleFragmentTask(fragment: Fragment, lineIndex: number) {
@@ -1533,16 +1578,39 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     window.requestAnimationFrame(() => returnFocus?.focus())
   }
 
+  function openFragmentFiltersFromSearch() {
+    const current = searchSessionRef.current
+    if (!current || current.scope !== "public" || current.mode !== "fullText") return
+    fragmentFilterReturnFocusRef.current = searchReturnFocusRef.current
+    setIsSearchModeActive(false)
+    setFragmentEditorBlurCommitPaused(false)
+    revokeSearchSession("close")
+    setIsFragmentFilterOpen(true)
+  }
+
+  function closeFragmentFilters() {
+    setIsFragmentFilterOpen(false)
+    const returnFocus = fragmentFilterReturnFocusRef.current
+    fragmentFilterReturnFocusRef.current = null
+    window.requestAnimationFrame(() => returnFocus?.focus())
+  }
+
   async function applyFragmentFilters(filters: FragmentFilters) {
     if (!(await saveLibraryDraftBeforeNavigation())) return
     setFragmentFilters(filters)
     setIsFragmentFilterOpen(false)
+    fragmentFilterReturnFocusRef.current = null
     revokeSearchSession("close")
+    setIsMindMapViewActive(false)
+    setActiveMindMapId(null)
+    setSearchMindMapNavigation(null)
     setNavigationOrigin(null)
     setRoute({ space: "fragments", params: {} })
   }
 
   function endSearchSession() {
+    activeSearchRevealRef.current?.handle.clearHits("exit")
+    activeSearchRevealRef.current = null
     revokeSearchSession("close")
   }
 
@@ -1557,6 +1625,30 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
 
     const nextSession = { ...legacySearchSession, activeIndex: nextIndex }
     handleOpenSearchResult(fragment, nextSession)
+  }
+
+  function navigateCurrentSearchResult(nextIndex: number) {
+    const current = searchSessionRef.current
+    const hit = current?.hits[nextIndex]
+    if (!current || !hit) return
+    searchController.onSelect(hit)
+  }
+
+  function stepCurrentDocumentHit(direction: 1 | -1) {
+    const active = activeSearchRevealRef.current
+    const current = searchSessionRef.current
+    if (!active || !current || current.openedKey !== active.targetKey) return
+    void active.handle.stepHit(direction).then((result) => {
+      const latest = searchSessionRef.current
+      if (
+        !latest ||
+        latest.openedKey !== active.targetKey ||
+        activeSearchRevealRef.current?.requestId !== active.requestId
+      ) {
+        return
+      }
+      replaceSearchSession({ ...latest, lastReveal: result })
+    })
   }
 
   async function openMindMap(map?: MindMapSummary) {
@@ -1678,6 +1770,243 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     session: searchSession,
   })
 
+  useEffect(() => {
+    const session = searchSession
+    const pending = session?.pendingNavigation
+    if (!session || !pending || searchNavigationStartedRef.current === pending.requestId) {
+      return
+    }
+    const hit = session.hits.find((candidate) => candidate.target.key === pending.targetKey)
+    if (!hit) return
+
+    searchNavigationStartedRef.current = pending.requestId
+    searchNavigationAbortRef.current?.abort()
+    const controller = new AbortController()
+    searchNavigationAbortRef.current = controller
+    const identity = captureSearchSessionIdentity(session)
+    const isCurrent = () => {
+      const current = searchSessionRef.current
+      return Boolean(
+        acceptsSearchSessionIdentity(current, identity) &&
+        current?.pendingNavigation?.requestId === pending.requestId &&
+        current.pendingNavigation.targetKey === pending.targetKey
+      )
+    }
+
+    const router = createSearchTargetRouter({
+      // The temporary public Worker has no native epoch authority. Let the
+      // single-target Rust read bind the current public context itself.
+      context: session.snapshotId === "legacy-public-worker" ? null : session.context,
+      hit,
+      adapters: {
+        flushBeforeLeave: saveLibraryDraftBeforeNavigation,
+        openMarkdown: (response, requestId, signal) =>
+          openMarkdownSearchTarget(response, requestId, signal),
+        openMindMap: async (_target, result, requestId, signal) => {
+          setPendingLibrarySearchTarget(null)
+          setSearchEditorNavigation(null)
+          setSearchMindMapNavigation({ requestId, result })
+          setActiveMindMapId(result.file.id)
+          await waitForSearchHost(requestId, signal)
+          return { reveal: null }
+        },
+        openCanvas: async (target, result, requestId, signal) => {
+          setActiveMindMapId(null)
+          setSearchEditorNavigation(null)
+          setPendingLibrarySearchTarget({
+            kind: target.kind === "flowchart" ? "flowchart" : "canvas",
+            requestId,
+            result,
+            target,
+          })
+          setRoute({ space: "library", params: {} })
+          await waitForSearchHost(requestId, signal)
+          return { reveal: null }
+        },
+        openTable: async (target, result, requestId, signal) => {
+          setActiveMindMapId(null)
+          setSearchEditorNavigation(null)
+          setPendingLibrarySearchTarget({
+            kind: "table",
+            requestId,
+            result,
+            target,
+          })
+          setRoute({ space: "library", params: {} })
+          await waitForSearchHost(requestId, signal)
+          return { reveal: null }
+        },
+      },
+    })
+
+    void runSearchNavigation(
+      {
+        hit,
+        query: session.drafts[session.mode],
+        requestId: pending.requestId,
+        sessionId: session.id,
+        uiEpoch: session.uiEpoch,
+      },
+      router,
+      isCurrent,
+      controller.signal
+    ).then((result) => {
+      if (!isCurrent()) return
+      const current = searchSessionRef.current
+      if (!current) return
+
+      if (result.status === "ready") {
+        activeSearchRevealRef.current?.handle.clearHits("revoke")
+        activeSearchRevealRef.current = result.revealHandle
+          ? {
+              handle: result.revealHandle,
+              requestId: pending.requestId,
+              targetKey: hit.target.key,
+            }
+          : null
+        replaceSearchSession({
+          ...current,
+          error: null,
+          lastReveal: result.reveal,
+          openedKey: hit.target.key,
+          pendingNavigation: null,
+        })
+        recordPublicOpen(hit.target, Date.now())
+        setIsSearchModeActive(false)
+        setFragmentEditorBlurCommitPaused(false)
+        searchReturnFocusRef.current = null
+        return
+      }
+
+      if (result.status === "saveFailed") {
+        replaceSearchSession({ ...current, pendingNavigation: null })
+      } else if (result.status === "failed") {
+        replaceSearchSession({
+          ...current,
+          error: normalizeSearchError(result.error),
+          pendingNavigation: null,
+        })
+      }
+    })
+
+    return () => {
+      controller.abort()
+      if (searchNavigationAbortRef.current === controller) {
+        searchNavigationAbortRef.current = null
+      }
+    }
+    // Navigation is keyed by the frozen request identity. Other state changes
+    // are validated through searchSessionRef before they can acknowledge.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchSession?.pendingNavigation?.requestId])
+
+  async function openMarkdownSearchTarget(
+    response: ReadSearchTargetResponse,
+    requestId: string,
+    signal: AbortSignal
+  ): Promise<{ reveal: SearchRevealHandle | null }> {
+    const { fragment, target } = response
+    setActiveMindMapId(null)
+    setSearchMindMapNavigation(null)
+
+    if (target.scope === "lockbox") {
+      if (!lockbox?.unlocked) throw { code: "locked" }
+      setRoute({ space: "lockbox", params: {} })
+      if (target.kind === "note" || target.archived) {
+        setZenDraft(null)
+        setEditingVariant("zen")
+        setEditingFragmentId(null)
+        setSearchEditorNavigation({
+          fragment,
+          readOnly: response.readOnly || target.archived,
+          requestId,
+        })
+      } else {
+        setFragments((current) => sortFragmentsForDisplay([
+          fragment,
+          ...current.filter((candidate) => candidate.id !== fragment.id),
+        ]))
+        setPendingScrollNavigationId(requestId)
+        setPendingScrollFragmentId(fragment.id)
+      }
+      await waitForSearchHost(requestId, signal)
+      return { reveal: null }
+    }
+
+    if (target.kind === "note") {
+      setSearchEditorNavigation(null)
+      setPendingLibrarySearchTarget({
+        fragment,
+        kind: "note",
+        readOnly: response.readOnly || target.archived,
+        requestId,
+        revision: response.revision,
+        target,
+      })
+      setRoute({ space: "library", params: {} })
+      await waitForSearchHost(requestId, signal)
+      return { reveal: null }
+    }
+
+    if (target.archived) {
+      setZenDraft(null)
+      setRoute({ space: "fragments", params: { view: "trash" } })
+      setEditingVariant("zen")
+      setEditingFragmentId(null)
+      setSearchEditorNavigation({
+        fragment,
+        readOnly: true,
+        requestId,
+      })
+      await waitForSearchHost(requestId, signal)
+      return { reveal: null }
+    }
+
+    setSearchEditorNavigation(null)
+    setFragments((current) => sortFragmentsForDisplay([
+      fragment,
+      ...current.filter((candidate) => candidate.id !== fragment.id),
+    ]))
+    setFragmentFilters(EMPTY_FRAGMENT_FILTERS)
+    setRoute({ space: "fragments", params: {} })
+    setPendingScrollNavigationId(requestId)
+    setPendingScrollFragmentId(fragment.id)
+    await waitForSearchHost(requestId, signal)
+    return { reveal: null }
+  }
+
+  function waitForSearchHost(requestId: string, signal: AbortSignal) {
+    return new Promise<void>((resolve, reject) => {
+      const abort = () => {
+        searchNavigationWaitersRef.current.delete(requestId)
+        reject(new DOMException("Navigation aborted", "AbortError"))
+      }
+      if (signal.aborted) {
+        abort()
+        return
+      }
+      signal.addEventListener("abort", abort, { once: true })
+      searchNavigationWaitersRef.current.set(requestId, {
+        reject: (error) => {
+          signal.removeEventListener("abort", abort)
+          reject(error)
+        },
+        resolve: () => {
+          signal.removeEventListener("abort", abort)
+          resolve()
+        },
+      })
+    })
+  }
+
+  function settleSearchHost(requestId: string, error?: unknown) {
+    const waiter = searchNavigationWaitersRef.current.get(requestId)
+    if (!waiter) return
+    searchNavigationWaitersRef.current.delete(requestId)
+    if (error) waiter.reject(error)
+    else waiter.resolve()
+  }
+
   const knownTags = useMemo(
     () =>
       Array.from(
@@ -1715,16 +2044,20 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
 
   const lockboxScrollTargetId =
     pendingScrollFragmentId &&
-    !isSearchModeActive &&
+    (!isSearchModeActive || pendingScrollNavigationId !== null) &&
     lockboxTimelineFragments.some(
       (fragment) => fragment.id === pendingScrollFragmentId
     )
       ? pendingScrollFragmentId
       : null
 
-  const handleTimelineScrollComplete = useCallback((fragmentId: string) => {
+  const handleTimelineScrollComplete = useCallback((fragmentId: string, navigationId?: string) => {
+    if (navigationId) settleSearchHost(navigationId)
     setPendingScrollFragmentId((current) =>
       current === fragmentId ? null : current
+    )
+    setPendingScrollNavigationId((current) =>
+      current === navigationId ? null : current
     )
   }, [])
 
@@ -1782,6 +2115,23 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
       window.removeEventListener("keydown", handleGlobalCaptureShortcut)
     }
   }, [isModalBusy])
+
+  useEffect(() => {
+    function handleDocumentHitShortcut(event: KeyboardEvent) {
+      if (
+        !(event.metaKey || event.ctrlKey) ||
+        event.altKey ||
+        event.key.toLowerCase() !== "g" ||
+        !activeSearchRevealRef.current
+      ) {
+        return
+      }
+      event.preventDefault()
+      stepCurrentDocumentHit(event.shiftKey ? -1 : 1)
+    }
+    window.addEventListener("keydown", handleDocumentHitShortcut)
+    return () => window.removeEventListener("keydown", handleDocumentHitShortcut)
+  })
 
   useEffect(() => {
     function handleGlobalSidebarShortcut(event: KeyboardEvent) {
@@ -2003,6 +2353,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
       void handleNavigateToFragment(fragmentId)
     },
     onScrollToFragmentComplete: handleTimelineScrollComplete,
+    scrollNavigationId: pendingScrollNavigationId,
     onSave: handleUpdateFragment,
     onToggleKind: handleToggleFragmentKind,
     onToggleTask: (fragment: Fragment, lineIndex: number) => {
@@ -2014,19 +2365,44 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     vaultPath,
   }
 
-  const searchContextBarProps = legacySearchSession
+  const openedSearchIndex = searchSession?.openedKey
+    ? searchSession.hits.findIndex((hit) => hit.target.key === searchSession.openedKey)
+    : -1
+  const searchContextBarProps = searchSession && openedSearchIndex >= 0
     ? {
-        onBack: () => openSearchMode("fullText"),
+        documentHit:
+          searchSession.lastReveal?.status === "revealed" &&
+          activeSearchRevealRef.current?.targetKey === searchSession.openedKey
+            ? {
+                activeIndex: searchSession.lastReveal.activeIndex,
+                matchCount: searchSession.lastReveal.matchCount,
+                onNavigate: stepCurrentDocumentHit,
+              }
+            : null,
+        onBack: () => openSearchMode(searchSession.mode),
         onClose: endSearchSession,
-        onNavigate: navigateSearchResult,
-        session: legacySearchSession,
+        onNavigate: navigateCurrentSearchResult,
+        session: {
+          activeIndex: openedSearchIndex,
+          query: searchSession.drafts[searchSession.mode],
+          resultIds: searchSession.hits.map((hit) => hit.target.key),
+          total: searchSession.total ?? searchSession.hits.length,
+        },
       }
-    : null
+    : legacySearchSession
+      ? {
+          onBack: () => openSearchMode("fullText"),
+          onClose: endSearchSession,
+          onNavigate: navigateSearchResult,
+          session: legacySearchSession,
+        }
+      : null
 
   const searchPalette =
     isSearchModeActive && searchSession ? (
       <SearchPalette
         onClose={exitSearchMode}
+        onFilterFragments={openFragmentFiltersFromSearch}
         onIncludeTrashChange={searchController.onIncludeTrashChange}
         onModeChange={searchController.onModeChange}
         onQueryChange={searchController.onQueryChange}
@@ -2036,15 +2412,43 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
       />
     ) : null
 
+  const fragmentFilterDialog = (
+    <FragmentFilterDialog
+      filters={fragmentFilters}
+      fragments={inboxFragments}
+      onApply={filters => void applyFragmentFilters(filters)}
+      onClose={closeFragmentFilters}
+      open={isFragmentFilterOpen}
+    />
+  )
+
   if (activeMindMapId) {
     return (
       <>
         <MindMapWorkspace
+          contextBar={searchContextBarProps ? <SearchContextBar {...searchContextBarProps} /> : null}
+          initialRead={searchMindMapNavigation?.result ?? null}
+          key={`${activeMindMapId}:${searchMindMapNavigation?.requestId ?? "browse"}`}
           mapId={activeMindMapId}
-          onClose={() => setActiveMindMapId(null)}
+          onClose={() => {
+            setActiveMindMapId(null)
+            setSearchMindMapNavigation(null)
+          }}
+          onLoadError={(error) => {
+            if (searchMindMapNavigation) {
+              settleSearchHost(searchMindMapNavigation.requestId, error)
+            }
+          }}
           onMapsChange={setMindMaps}
+          onReady={() => {
+            if (searchMindMapNavigation) {
+              settleSearchHost(searchMindMapNavigation.requestId)
+            }
+          }}
+          ref={mindMapWorkspaceRef}
         />
         {searchPalette}
+        {fragmentFilterDialog}
       </>
     )
   }
@@ -2180,6 +2584,11 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
             libraryTree={libraryTree}
             knownTags={knownTags}
             navigateTo={pendingLibraryTarget}
+            searchNavigateTo={pendingLibrarySearchTarget}
+            onSearchNavigationSettled={(requestId, result) => {
+              if (result.status === "error") settleSearchHost(requestId, result.error)
+              else settleSearchHost(requestId)
+            }}
             onNavigateToFragment={(fragmentId) => {
               void handleNavigateToFragment(fragmentId)
             }}
@@ -2237,7 +2646,8 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
       <FragmentEditor
         csvFiles={csvFiles}
         draft={editingVariant === "zen" ? zenDraft : null}
-        fragment={editingVariant === "zen" ? editingFragment : null}
+        fragment={searchEditorNavigation?.fragment ??
+          (editingVariant === "zen" ? editingFragment : null)}
         fragments={publicOnlyFragments}
         knownTags={knownTags}
         onClose={closeEditor}
@@ -2246,11 +2656,16 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
         onNavigateToFragment={(fragmentId) => {
           void handleNavigateToFragment(fragmentId)
         }}
+        onReady={() => {
+          if (searchEditorNavigation) {
+            settleSearchHost(searchEditorNavigation.requestId)
+          }
+        }}
         onSave={handleUpdateFragment}
+        readOnly={searchEditorNavigation?.readOnly ?? false}
         vaultPath={vaultPath}
       />
-      <FragmentFilterDialog open={isFragmentFilterOpen} fragments={inboxFragments} filters={fragmentFilters}
-        onClose={() => setIsFragmentFilterOpen(false)} onApply={filters => void applyFragmentFilters(filters)} />
+      {fragmentFilterDialog}
       <ConvertFragmentDialog open={convertingFragment !== null} title={conversionDraft.title} directory={conversionDraft.directory}
         entries={libraryTree?.entries ?? []} busy={conversionBusy} needsVerification={conversionNeedsVerification} error={conversionError}
         onTitleChange={title => setConversionDraft(current => ({ ...current, title }))}
