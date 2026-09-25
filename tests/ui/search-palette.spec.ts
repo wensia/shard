@@ -336,9 +336,7 @@ test("composition does not query or open a result", async ({ page }) => {
   await input.press("Escape");
 
   expect(
-    (await fixture(page)).workerMessages.filter(
-      ({ type }) => type === "search",
-    ),
+    (await searchCalls(page)).filter(({ command }) => command === "search_vault"),
   ).toHaveLength(0);
   await expect(dialog).toHaveAttribute("data-search-pending", "false");
   await expect(dialog).toBeVisible();
@@ -346,9 +344,7 @@ test("composition does not query or open a result", async ({ page }) => {
   await input.dispatchEvent("compositionend", { data: "共同词" });
   await expect(page.getByRole("option")).toHaveCount(18);
   expect(
-    (await fixture(page)).workerMessages.filter(
-      ({ type }) => type === "search",
-    ),
+    (await searchCalls(page)).filter(({ command }) => command === "search_vault"),
   ).toHaveLength(1);
 });
 
@@ -435,6 +431,7 @@ test("states distinguish indexing stale locked and failure", async ({
     nextError: {
       command: "search_vault",
       error: { code: "io", retryable: false },
+      query: "失败状态",
     },
   });
   await input.fill("失败状态");
@@ -465,34 +462,28 @@ test("public and lockbox providers never share payloads", async ({ page }) => {
   const input = page.getByRole("combobox", { name: "搜索内容" });
   await input.fill("密匣唯一词");
   await expect(page.getByText("没有找到“密匣唯一词”")).toBeVisible();
-  const publicMessages = (await fixture(page)).workerMessages;
-  expect(
-    publicMessages
-      .filter(({ type }) => type === "index")
-      .at(-1)
-      ?.documents?.map(({ id }) => id),
-  ).toEqual(Array.from({ length: 18 }, (_, index) => `public-${index + 1}`));
+  const publicRequests = (await searchCalls(page)).filter(
+    ({ command }) => command === "search_vault",
+  );
+  expect(publicRequests).toHaveLength(1);
+  expect(publicRequests[0].request).toMatchObject({ scope: "public", query: "密匣唯一词" });
 
   await page.keyboard.press("Escape");
-  const publicWorkerCount = publicMessages.filter(
-    ({ documents, query }) => documents !== undefined || query !== undefined,
-  ).length;
   await openLockbox(page);
   await unlockLockbox(page);
   await page.keyboard.press("Control+k");
   await page.getByRole("combobox", { name: "搜索内容" }).fill("密匣唯一词");
   await expect(page.getByRole("option")).toHaveCount(2);
 
+  const nativeRequests = (await searchCalls(page)).filter(
+    ({ command }) => command === "search_vault",
+  );
+  expect(nativeRequests.at(-1)?.request.scope).toBe("lockbox");
   expect(
     (await fixture(page)).workerMessages.filter(
       ({ documents, query }) => documents !== undefined || query !== undefined,
     ),
-  ).toHaveLength(publicWorkerCount);
-  const nativeRequests = await searchCalls(page);
-  expect(nativeRequests).not.toHaveLength(0);
-  expect(
-    nativeRequests.every(({ request }) => request.scope === "lockbox"),
-  ).toBe(true);
+  ).toHaveLength(0);
 });
 
 test("fragment filter entry is limited to public full-text search", async ({

@@ -326,10 +326,15 @@ fn format_time(value: SystemTime) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::HashMap, thread, time::Duration};
+    use std::{
+        collections::HashMap,
+        fs, thread,
+        time::{Duration, Instant},
+    };
 
     use serde_json::json;
     use shard_core::search::{project_document, SourceDocument};
+    use shard_core::FragmentFrontmatter;
 
     use super::*;
     use crate::{
@@ -475,5 +480,150 @@ mod tests {
             response.hits[0].matched_fields.as_slice(),
             [SearchField::Title, SearchField::Body]
         ));
+    }
+
+    #[test]
+    #[ignore = "release-only 5k vault benchmark"]
+    fn search_5k_hot_query_p95() {
+        const DOCUMENTS: usize = 5_000;
+        const QUERIES: [&str; 6] = [
+            "检索",
+            "检索 work",
+            "arch",
+            "计划 work",
+            "绝无此关键词",
+            "常见词",
+        ];
+
+        let directory = tempfile::tempdir().unwrap();
+        let vault = directory.path().to_path_buf();
+        fs::create_dir_all(vault.join("fragments")).unwrap();
+        fs::create_dir_all(vault.join("notes")).unwrap();
+        let mut seed = 20_260_925_u64;
+        let mut file_bytes = 0_u64;
+        let mut largest_file = 0_u64;
+        for index in 0..DOCUMENTS {
+            // Fixed seed also determines the content mix, not just file names.
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            let topic = ["研究", "设计", "工程", "阅读"][(seed as usize) % 4];
+            let kind = index % 4;
+            let path = vault.join(if kind == 0 { "fragments" } else { "notes" })
+                .join(format!("search-{index:05}.md"));
+            let body = format!(
+                "# {topic}计划 {index:05}\n\n检索 archive 文档常见词，记录 searchable pipeline 与中文资料。\n\n| 字段 | 内容 |\n| --- | --- |\n| 项目 | {topic} work {index:05} |\n\n行内 `search_key_{index:05}` 保留原字符。\n\n```text\ncode token {index:05}\n```"
+            );
+            let frontmatter = FragmentFrontmatter {
+                id: format!("search-fixture-{index:05}"),
+                created_at: "2026-09-25T00:00:00Z".into(),
+                updated_at: "2026-09-25T01:00:00Z".into(),
+                tags: match kind {
+                    1 => vec!["note".into(), "work".into()],
+                    2 => vec!["outline".into(), "work".into()],
+                    3 => vec!["document".into(), "work".into()],
+                    _ => vec!["work".into()],
+                },
+                category: None,
+                ai_status: Some("none".into()),
+                pinned: false,
+                source: "search-benchmark".into(),
+                conflict_of: None,
+                related: Vec::new(),
+            };
+            shard_core::write_fragment_file(&path, &frontmatter, &body).unwrap();
+            let bytes = fs::metadata(&path).unwrap().len();
+            file_bytes += bytes;
+            largest_file = largest_file.max(bytes);
+        }
+
+        let runtime = SearchRuntime::default();
+        let lockbox_runtime = LockboxRuntime::default();
+        crate::search_sources::install_snapshot_builder(&runtime, &lockbox_runtime);
+        let context = runtime.activate_vault(&vault);
+        let vault_path = vault.display().to_string();
+        let make_request = |query: &str, refresh| SearchVaultRequest {
+            client_request_id: "search-5k".into(),
+            expected_vault_path: vault_path.clone(),
+            context: Some(context.clone()),
+            scope: SearchScope::Public,
+            include_trash: false,
+            query_version: 1,
+            projection_version: 1,
+            query: query.into(),
+            limit: 50,
+            refresh,
+        };
+
+        let build_start = Instant::now();
+        let first = search_vault_in_vault(
+            vault.clone(),
+            &runtime,
+            &lockbox_runtime,
+            make_request("检索", SearchRefresh::Rebuild),
+        )
+        .unwrap();
+        assert!(matches!(first.index_state, SearchIndexState::Indexing));
+        let deadline = Instant::now() + Duration::from_secs(120);
+        while runtime.is_reconciling(&context, &SearchScope::Public) {
+            assert!(Instant::now() < deadline, "5k search build timed out");
+            thread::sleep(Duration::from_millis(5));
+        }
+        let initial_build = build_start.elapsed();
+        let snapshot = runtime
+            .clone_snapshot(&context, SearchScope::Public)
+            .unwrap()
+            .expect("5k snapshot was not published");
+        assert_eq!(snapshot.documents.len(), DOCUMENTS);
+        assert_eq!(snapshot.skipped_files, 0);
+        let projection_bytes: usize = snapshot
+            .documents
+            .iter()
+            .map(|document| document.projection.searchable_text.len())
+            .sum();
+        let mut kind_counts = [0_usize; 4];
+        for metadata in snapshot.metadata.values() {
+            let slot = match metadata.target.kind {
+                SearchKind::Fragment => 0,
+                SearchKind::Note => 1,
+                SearchKind::Outline => 2,
+                SearchKind::Document => 3,
+                _ => panic!("unexpected 5k fixture kind"),
+            };
+            kind_counts[slot] += 1;
+        }
+        assert_eq!(kind_counts, [1_250; 4]);
+        eprintln!(
+            "search_5k initial_build={initial_build:?} files={DOCUMENTS} file_bytes={file_bytes} projection_bytes={projection_bytes} largest_file_bytes={largest_file} kinds={kind_counts:?}"
+        );
+
+        let mut samples = Vec::with_capacity(200);
+        for index in 0..200 {
+            let query = QUERIES[index % QUERIES.len()];
+            let start = Instant::now();
+            let response = search_vault_in_vault(
+                vault.clone(),
+                &runtime,
+                &lockbox_runtime,
+                make_request(query, SearchRefresh::Auto),
+            )
+            .unwrap();
+            samples.push(start.elapsed());
+            assert_eq!(
+                response.snapshot_id.as_deref(),
+                Some(snapshot.snapshot_id.as_str())
+            );
+            assert_eq!(response.total == Some(0), query == "绝无此关键词");
+        }
+        samples.sort_unstable();
+        let p95 = samples[189];
+        eprintln!(
+            "search_5k hot_queries=200 p50={:?} p95={p95:?} max={:?}",
+            samples[99], samples[199]
+        );
+        assert!(
+            p95 <= Duration::from_millis(30),
+            "hot query p95={p95:?} exceeds 30ms"
+        );
     }
 }

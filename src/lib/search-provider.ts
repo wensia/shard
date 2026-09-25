@@ -27,10 +27,17 @@ export interface DisposableContentSearchProvider extends ContentSearchProvider {
   dispose(): void
 }
 
-/**
- * T07 keeps public full-text on the existing Worker behind the same boundary as
- * the Rust provider. T11 can replace this adapter without changing the palette.
- */
+/** The public-only rollback remains available until native acceptance is complete. */
+export function createPublicSearchProvider(
+  fragments: readonly Fragment[]
+): DisposableContentSearchProvider {
+  if (import.meta.env.VITE_SEARCH_PUBLIC_LEGACY === "1") {
+    return createLegacyPublicSearchProvider(fragments)
+  }
+  const provider = createRustSearchProvider("public")
+  return { ...provider, dispose() {} }
+}
+
 export function createLegacyPublicSearchProvider(
   fragments: readonly Fragment[]
 ): DisposableContentSearchProvider {

@@ -3,7 +3,7 @@ import type { Page } from "@playwright/test"
 export interface SearchIpcMockControl {
   indexState: "indexing" | "ready" | "stale"
   delayMs: number
-  nextError: { command: "search_vault" | "read_search_target"; error: unknown } | null
+  nextError: { command: "search_vault" | "read_search_target"; error: unknown; query?: string } | null
   warning: unknown | null
   calls: Array<{ command: string; request: Record<string, unknown> }>
 }
@@ -181,7 +181,10 @@ export async function installSearchIpcMock(page: Page) {
     ) => {
       control.calls.push({ command, request: clone(request) })
       if (control.delayMs > 0) await pause(control.delayMs)
-      if (control.nextError?.command === command) {
+      if (
+        control.nextError?.command === command &&
+        (control.nextError.query === undefined || control.nextError.query === request.query)
+      ) {
         const error = clone(control.nextError.error)
         control.nextError = null
         throw error
@@ -260,7 +263,7 @@ export async function installSearchIpcMock(page: Page) {
               updatedAt: fragment.updatedAt ?? null,
               revision: revisionOf(fragment),
               matchedFields,
-              preview: parts(fragment.content, terms),
+              preview: parts(fragment.content.replace(/^#{1,6}\s+/u, ""), terms),
               revealHint: "text",
             }
           })

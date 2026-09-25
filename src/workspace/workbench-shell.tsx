@@ -99,9 +99,9 @@ import { runSearchNavigation } from "@/lib/search-navigation"
 import { normalizeSearchError } from "@/lib/search-api"
 import { buildOpenCatalog } from "@/lib/quick-open-catalog"
 import { clearQuickOpenMatchCache } from "@/lib/quick-open-match"
-import { readPublicOpenRecent, recordPublicOpen } from "@/lib/search-recent"
+import { readPublicOpenRecent, recordPublicOpen, removePublicOpen } from "@/lib/search-recent"
 import {
-  createLegacyPublicSearchProvider,
+  createPublicSearchProvider,
   createRustSearchProvider,
 } from "@/lib/search-provider"
 import {
@@ -1125,6 +1125,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     fragmentId: string,
     successMessage = "已移入密匣"
   ) {
+    const previousPath = publicOnlyFragments.find((fragment) => fragment.id === fragmentId)?.path
     if (searchSessionRef.current || legacySearchSession) {
       revokeSearchSession("targetMoved")
     }
@@ -1135,6 +1136,12 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     try {
       const state = await moveFragmentToLockbox(fragmentId)
       if (!acceptsVaultStateResponse(request, state.vaultPath)) return false
+      if (previousPath) {
+        removePublicOpen(
+          state.vaultPath,
+          searchTargetKey(state.vaultPath, "public", previousPath)
+        )
+      }
       completeVaultPrivacyChange()
       applyVaultState(state)
       await refreshLibraryTree()
@@ -1273,8 +1280,21 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     toast("密匣已解锁")
   }
 
+  function hideLockboxLocally(returnToLibrary: boolean) {
+    setLockbox((current) =>
+      current ? { ...current, unlocked: false, expiresAt: null } : current
+    )
+    setFragments((current) => publicFragments(current))
+    closeEditor()
+    setSelectedLockboxTag(null)
+    if (returnToLibrary && routeRef.current.space === "lockbox") {
+      setRoute({ space: "library", params: {} })
+    }
+  }
+
   async function handleLockLockbox() {
     revokeSearchSession("locked")
+    hideLockboxLocally(true)
     const request = beginVaultStateRequest(
       vaultPathRef.current || null,
       "privacy"
@@ -1284,12 +1304,6 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
       if (!acceptsVaultStateResponse(request, state.vaultPath)) return
       completeVaultPrivacyChange()
       applyVaultState(state)
-      closeEditor()
-      setSelectedLockboxTag(null)
-      if (routeRef.current.space === "lockbox") {
-        // 上锁即离开保险柜，回到传送门所在的资料库
-        setRoute({ space: "library", params: {} })
-      }
       toast("密匣已上锁")
     } catch (error) {
       toast.error(`${"密匣上锁失败"}：${getApiErrorMessage(error)}`, {
@@ -1304,6 +1318,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     if (searchSessionRef.current?.scope === "lockbox") {
       revokeSearchSession(options.returnToLibrary ? "expired" : "locked")
     }
+    hideLockboxLocally(Boolean(options.returnToLibrary))
     const request = beginVaultStateRequest(
       vaultPathRef.current || null,
       "privacy"
@@ -1313,15 +1328,27 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
       if (!acceptsVaultStateResponse(request, state.vaultPath)) return
       completeVaultPrivacyChange()
       applyVaultState(state)
-      if (options.returnToLibrary && routeRef.current.space === "lockbox") {
-        closeEditor()
-        setSelectedLockboxTag(null)
-        setRoute({ space: "library", params: {} })
-      }
-    } catch {
-      // 静默失败：下次进入密匣仍需密码，必要时可手动上锁
+    } catch (error) {
+      toast.error(`密匣上锁失败：${getApiErrorMessage(error)}`, {
+        duration: Infinity,
+      })
     }
   }
+
+  useEffect(() => {
+    if (searchSession?.scope !== "lockbox" || !searchSession.expiresAt) return
+    const deadline = Date.parse(searchSession.expiresAt)
+    if (!Number.isFinite(deadline)) return
+    const sessionId = searchSession.id
+    const uiEpoch = searchSession.uiEpoch
+    const timer = window.setTimeout(() => {
+      const current = searchSessionRef.current
+      if (current?.id !== sessionId || current.uiEpoch !== uiEpoch) return
+      revokeSearchSession("expired")
+      void autoLockLockbox({ returnToLibrary: true })
+    }, Math.max(0, Math.min(deadline - Date.now(), 2_147_483_647)))
+    return () => window.clearTimeout(timer)
+  }, [searchSession?.id, searchSession?.uiEpoch, searchSession?.expiresAt, searchSession?.scope])
 
   async function handleChangeLockboxPassword(
     currentPassword: string,
@@ -1731,7 +1758,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
   const visibleStreamFragments = useMemo(() => inboxFragments.filter(fragment => matchesFragmentFilters(fragment, fragmentFilters)), [inboxFragments, fragmentFilters])
   const searchScope = scopeForSpace(route.space)
   const publicSearchProvider = useMemo(
-    () => createLegacyPublicSearchProvider(publicOnlyFragments),
+    () => createPublicSearchProvider(publicOnlyFragments),
     [publicOnlyFragments]
   )
   useEffect(

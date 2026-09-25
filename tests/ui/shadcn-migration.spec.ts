@@ -1043,6 +1043,31 @@ test("search recall mode preserves context, focus, and timeline scrolling", asyn
   await expect(utilityTrigger).toBeFocused()
 })
 
+test("independent mind map search stays inside narrow and 200% effective viewports", async ({ page }) => {
+  await page.setViewportSize({ width: 720, height: 640 })
+  await openMindMaps(page)
+  await page.getByLabel("打开思维导图：测试导图").click()
+  await expect(page.getByLabel("思维导图编辑器")).toBeVisible()
+
+  for (const viewport of [{ width: 720, height: 640 }, { width: 640, height: 360 }]) {
+    await page.setViewportSize(viewport)
+    await page.keyboard.press("Control+k")
+    const palette = page.getByRole("dialog", { name: "搜索", exact: true })
+    const input = palette.getByRole("combobox", { name: "搜索内容" })
+    await expect(input).toBeFocused()
+    const bounds = await palette.boundingBox()
+    expect(bounds).not.toBeNull()
+    expect(bounds!.x).toBeGreaterThanOrEqual(0)
+    expect(bounds!.y).toBeGreaterThanOrEqual(0)
+    expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(page.viewportSize()!.width)
+    expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(page.viewportSize()!.height)
+    await input.fill("测试")
+    await expect(input).toHaveValue("测试")
+    await page.keyboard.press("Escape")
+    await expect(palette).toHaveCount(0)
+  }
+})
+
 test("lockbox and mind map editing preserve adaptive node geometry", async ({
   page,
 }) => {

@@ -1,12 +1,6 @@
 import { expect, test, type Page } from "@playwright/test"
 import { installSearchIpcMock } from "./search-ipc-mock"
 
-interface WorkerMessage {
-  documents?: Array<{ id: string }>
-  query?: string
-  type?: string
-}
-
 interface SearchScopeMockOptions {
   delayLock?: boolean
   delayUnlock?: boolean
@@ -37,7 +31,7 @@ async function installSearchScopeMock(
     }
     const lockboxFragment = {
       id: "lockbox-result",
-      content: "密匣唯一词，绝不能进入公开 Worker",
+      content: "密匣唯一词，绝不能进入公开搜索",
       createdAt: "2026-09-25T09:00:00.000Z",
       updatedAt: "2026-09-25T09:00:00.000Z",
       tags: ["私密"],
@@ -69,16 +63,6 @@ async function installSearchScopeMock(
       behind: 0,
     }
     const clone = <T,>(value: T): T => structuredClone(value)
-    const workerMessages: WorkerMessage[] = []
-    const NativeWorker = globalThis.Worker
-    class ObservedWorker extends NativeWorker {
-      override postMessage(message: unknown, options?: StructuredSerializeOptions) {
-        workerMessages.push(clone(message as WorkerMessage))
-        if (options === undefined) super.postMessage(message)
-        else super.postMessage(message, options)
-      }
-    }
-
     let releaseUnlock: (() => void) | null = null
     const unlockGate = mockOptions.delayUnlock
       ? new Promise<void>((resolve) => {
@@ -119,10 +103,8 @@ async function installSearchScopeMock(
     })
 
     Object.assign(globalThis, {
-      Worker: ObservedWorker,
       isTauri: true,
       __SHARD_SEARCH_SCOPE_CALLS__: calls,
-      __SHARD_SEARCH_WORKER_MESSAGES__: workerMessages,
       __SHARD_SEARCH_LOCKBOX_UNLOCKED__: () => lockbox.unlocked,
       __SHARD_RELEASE_SEARCH_UNLOCK__: () => releaseUnlock?.(),
       __SHARD_RELEASE_SEARCH_LOCK__: () => releaseLock?.(),
@@ -177,15 +159,18 @@ async function installSearchScopeMock(
   }, options)
 }
 
-async function workerMessages(page: Page, type: string) {
-  return page.evaluate((messageType) => {
-    const messages = (
+async function searchRequests(page: Page) {
+  return page.evaluate(() =>
+    (
       globalThis as typeof globalThis & {
-        __SHARD_SEARCH_WORKER_MESSAGES__?: WorkerMessage[]
+        __SHARD_SEARCH_IPC_MOCK__?: {
+          calls: Array<{ command: string; request: { query?: string; scope?: string } }>
+        }
       }
-    ).__SHARD_SEARCH_WORKER_MESSAGES__ ?? []
-    return messages.filter((message) => message.type === messageType)
-  }, type)
+    ).__SHARD_SEARCH_IPC_MOCK__?.calls
+      .filter(({ command }) => command === "search_vault")
+      .map(({ request }) => request) ?? []
+  )
 }
 
 async function commandCalls(page: Page, command: string) {
@@ -228,31 +213,23 @@ test("public search excludes unlocked lockbox objects", async ({ page }) => {
   const input = palette.getByRole("combobox", { name: "搜索内容" })
   await expect(input).toBeVisible()
 
-  // T07's public adapter creates and indexes its legacy Worker lazily on the
-  // first non-empty full-text query.
   await input.fill("公开唯一词")
   await expect
     .poll(async () => {
-      const indexes = await workerMessages(page, "index")
-      return indexes.at(-1)?.documents?.map((document) => document.id) ?? []
+      const requests = await searchRequests(page)
+      return requests.at(-1)
     })
-    .toEqual(["public-result"])
-  await expect
-    .poll(async () => {
-      const searches = await workerMessages(page, "search")
-      return searches.at(-1)?.query ?? null
-    })
-    .toBe("公开唯一词")
+    .toMatchObject({ query: "公开唯一词", scope: "public" })
   await expect(
     palette.getByRole("option").filter({ hasText: "公开唯一词" })
   ).toHaveCount(1)
   await input.fill("密匣唯一词")
   await expect
     .poll(async () => {
-      const searches = await workerMessages(page, "search")
-      return searches.at(-1)?.query ?? null
+      const requests = await searchRequests(page)
+      return requests.at(-1)
     })
-    .toBe("密匣唯一词")
+    .toMatchObject({ query: "密匣唯一词", scope: "public" })
   await expect(palette.getByRole("option")).toHaveCount(0)
   await expect(page.getByText("没有找到“密匣唯一词”")).toBeVisible()
 })
@@ -261,8 +238,6 @@ test("lockbox space never shows public search results", async ({ page }) => {
   await installSearchScopeMock(page)
   await page.goto("/")
   await unlockThroughPortal(page)
-  const before = await workerMessages(page, "index")
-
   await page.keyboard.press("Control+k")
   const palette = page.getByRole("dialog", { name: "搜索", exact: true })
   const input = palette.getByRole("combobox", { name: "搜索内容" })
@@ -273,26 +248,16 @@ test("lockbox space never shows public search results", async ({ page }) => {
   await expect(
     palette.getByRole("option").filter({ hasText: "公开唯一词" })
   ).toHaveCount(0)
-  await expect
-    .poll(() =>
-      page.evaluate(() =>
-        (
-          globalThis as typeof globalThis & {
-            __SHARD_SEARCH_IPC_MOCK__?: {
-              calls: Array<{ request: { scope?: string } }>
-            }
-          }
-        ).__SHARD_SEARCH_IPC_MOCK__?.calls.map(({ request }) => request.scope) ?? []
-      )
-    )
-    .toEqual(["lockbox"])
+  await expect.poll(searchRequests.bind(null, page)).toMatchObject([
+    { query: "密匣唯一词", scope: "lockbox" },
+  ])
 
   await input.fill("公开唯一词")
   await expect(palette.getByRole("option")).toHaveCount(0)
   await expect(page.getByText("没有找到“公开唯一词”")).toBeVisible()
-  await expect.poll(() => workerMessages(page, "index")).toHaveLength(
-    before.length
-  )
+  await expect
+    .poll(async () => (await searchRequests(page)).at(-1))
+    .toMatchObject({ query: "公开唯一词", scope: "lockbox" })
 })
 
 test("leaving lockbox clears query results and pending navigation", async ({

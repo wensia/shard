@@ -180,6 +180,9 @@ test("navigation_is_not_consumed_before_ready", async ({ page }) => {
   await page.goto("/")
   await openSearch(page)
   await updateSearchIpcMock(page, { delayMs: 300 })
+  const labels = await page.getByRole("option").allTextContents()
+  const alphaIndex = labels.findIndex((label) => label.includes("Alpha 搜索目标"))
+  expect(alphaIndex).toBeGreaterThanOrEqual(0)
   await selectResult(page, /Alpha 搜索目标/)
   await selectResult(page, /Alpha 搜索目标/)
 
@@ -187,7 +190,7 @@ test("navigation_is_not_consumed_before_ready", async ({ page }) => {
   await expect(dialog).toHaveAttribute("data-search-pending", "true")
   expect(await page.evaluate(() => localStorage.getItem("shard.recent./tmp/shard-search-navigation"))).toBeNull()
   await expect(dialog).toBeHidden()
-  await expect(page.getByText("2 / 2", { exact: false })).toBeVisible()
+  await expect(page.getByText(`${alphaIndex + 1} / 2`, { exact: false })).toBeVisible()
   const reads = await page.evaluate(() => (globalThis as typeof globalThis & {
     __SHARD_SEARCH_IPC_MOCK__: { calls: Array<{ command: string }> }
   }).__SHARD_SEARCH_IPC_MOCK__.calls.filter((call) => call.command === "read_search_target"))
@@ -211,7 +214,7 @@ test("read_current_revision_before_reveal", async ({ page }) => {
     __SHARD_SEARCH_IPC_MOCK__: { calls: Array<{ command: string; request: Record<string, unknown> }> }
   }).__SHARD_SEARCH_IPC_MOCK__.calls.filter((call) => call.command === "read_search_target"))
   expect(reads).toHaveLength(1)
-  expect(reads[0].request.expectedRevision).toBe("2026-09-25T08:00:00.000Z")
+  expect(reads[0].request.expectedRevision).toMatch(/^mock-[0-9a-f]{8}$/)
 })
 
 test("same_id_refreshed_document_uses_new_content", async ({ page }) => {
@@ -266,7 +269,9 @@ test("result navigation and in-document hit navigation are distinct", async ({ p
   await installNavigationFixture(page)
   await page.goto("/")
   await openSearch(page)
-  await selectResult(page, /Beta 搜索目标/)
+  const resultLabels = await page.getByRole("option").allTextContents()
+  expect(resultLabels).toHaveLength(2)
+  await page.getByRole("option").first().click()
   await expect(page.getByText("1 / 2", { exact: false })).toBeVisible()
   await expect(page.getByRole("button", { name: "下一个搜索结果" })).toBeVisible()
   await expect(page.getByRole("button", { name: "当前文档下一个命中" })).toHaveCount(0)
@@ -274,6 +279,10 @@ test("result navigation and in-document hit navigation are distinct", async ({ p
   await page.keyboard.press("Control+g")
   await expect(page.getByText("1 / 2", { exact: false })).toBeVisible()
   await page.getByRole("button", { name: "下一个搜索结果" }).click()
-  await expect(page.getByRole("heading", { name: "Alpha 搜索目标" })).toBeVisible()
+  await expect(page.getByRole("heading", {
+    name: resultLabels[1].includes("Alpha 搜索目标")
+      ? "Alpha 搜索目标"
+      : "Beta 搜索目标",
+  })).toBeVisible()
   await expect(page.getByText("2 / 2", { exact: false })).toBeVisible()
 })
