@@ -321,9 +321,11 @@ export const ShardRichEditor = forwardRef<ShardRichEditorHandle, ShardRichEditor
       () => [
         ...shardEditorExtensions,
         Placeholder.configure({
-          // 只有整篇为空时才给提示语，正文中间的空段落不挂提示文本。
-          placeholder: ({ editor }) =>
-            editor.isEmpty ? (placeholderRef.current ?? "") : "",
+          // 提示语只挂在首个顶层文本块上，是否显示由 rich-editor.css 按
+          // 「整篇只剩这一个空文本块」判定。不用 `editor.isEmpty`：它把空任务项
+          // 加空段落也算作空文档，每个空文本块都会挂上主提示语；而且装饰在
+          // state apply 里重建，那一拍 `editor.state` 还是旧文档。
+          placeholder: ({ pos }) => (pos === 0 ? (placeholderRef.current ?? "") : ""),
           // 默认不下钻到列表、任务项里。备忘卡片的空标题段与空细节段要拿到
           // `is-empty`，占位文字由 rich-editor.css 按位置取（见备忘卡片一节）。
           includeChildren: true,

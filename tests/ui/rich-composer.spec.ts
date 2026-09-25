@@ -135,7 +135,7 @@ test.describe("速记框富文本", () => {
 
   test("空草稿显示占位符，且编辑区是富文本而不是 CodeMirror", async ({ page }) => {
     await expect(page.locator(`${COMPOSER} .cm-content`)).toHaveCount(0)
-    const emptyParagraph = proseMirror(page).locator("p.is-editor-empty").first()
+    const emptyParagraph = proseMirror(page).locator(":scope > p.is-empty:only-child")
     await expect(emptyParagraph).toHaveAttribute("data-placeholder", PLACEHOLDER)
     await expect(proseMirror(page)).toHaveAttribute("aria-label", "快速记录")
 
@@ -160,7 +160,7 @@ test.describe("速记框富文本", () => {
     await submitComposer(page)
     await expect.poll(() => createdContents(page)).toEqual(["第一段\n\n**加粗**结尾"])
     // 提交后草稿清空，占位符回来。
-    await expect(proseMirror(page).locator("p.is-editor-empty")).toHaveCount(1)
+    await expect(proseMirror(page).locator(":scope > p.is-empty:only-child")).toHaveCount(1)
   })
 
   test("输入 `- ` 前缀转成列表，提交写回 `- 项`", async ({ page }) => {
@@ -392,6 +392,14 @@ test.describe("速记框富文本", () => {
     await expect.poll(() => readEditor(page, "composer")).toBe("- [ ]")
     await expect(proseMirror(page).getByRole("checkbox", { name: "标记为完成" })).toHaveCount(1)
     await expect(proseMirror(page).locator("li > div").first()).toBeEmpty()
+    // 插入空任务后文档不再算空：任务行与其后的空段落都不显示主提示语。
+    const visiblePlaceholders = await proseMirror(page).evaluate((root) =>
+      [...root.querySelectorAll(".is-empty")].filter((element) => {
+        const content = window.getComputedStyle(element, "::before").content
+        return content.includes("想到什么")
+      }).length
+    )
+    expect(visiblePlaceholders).toBe(0)
 
     await typeEditor(page, "composer", "任务正文")
     await expect.poll(() => readEditor(page, "composer")).toBe("- [ ] 任务正文")

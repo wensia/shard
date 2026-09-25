@@ -177,9 +177,9 @@
   border-radius: var(--shard-radius-control);
 }
 
-/* 占位符：Placeholder 扩展把提示语写进 data-placeholder，
- * `is-editor-empty` 只在整篇为空时出现。 */
-.shard-rich-editor .ProseMirror .is-editor-empty::before {
+/* 占位符：Placeholder 扩展把提示语写进首个顶层文本块的 data-placeholder。
+ * 只在整篇只剩一个空文本块时显示——插了空任务、空列表后就不再出提示语。 */
+.shard-rich-editor .ProseMirror > .is-empty:only-child::before {
   content: attr(data-placeholder);
   float: inline-start;
   height: 0;
