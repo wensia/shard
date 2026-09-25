@@ -227,5 +227,20 @@ test.describe("备忘卡片提醒", () => {
     await expect.poll(() => readEditor(page, "fragment:memo-fragment"))
       .toBe("- [ ] 买菜 ⏰ 2026-09-25 18:00\n  番茄、鸡蛋")
     await expect(chip).not.toHaveAttribute("data-due", "true")
+
+    // 触发器在铃铛与芯片之间切换（清除、再设置）：原触发器已卸载，焦点仍要回到编辑器，
+    // 不能落到 body 上触发失焦提交。
+    await editor.getByRole("button", { name: /^修改提醒/ }).click()
+    await dialog.getByRole("button", { name: "清除提醒", exact: true }).click()
+    await expect(dialog).toHaveCount(0)
+    await expect(editor.locator(".ProseMirror")).toBeVisible()
+    await expect(editor.locator(".ProseMirror")).toBeFocused()
+    await editor.getByRole("button", { name: "设置提醒", exact: true }).click()
+    await dialog.getByRole("button", { name: "明天 09:00", exact: true }).click()
+    await expect(dialog).toHaveCount(0)
+    await expect(editor.locator(".ProseMirror")).toBeVisible()
+    await expect(editor.locator(".ProseMirror")).toBeFocused()
+    await expect.poll(() => readEditor(page, "fragment:memo-fragment"))
+      .toBe("- [ ] 买菜 ⏰ 2026-09-26 09:00\n  番茄、鸡蛋")
   })
 })

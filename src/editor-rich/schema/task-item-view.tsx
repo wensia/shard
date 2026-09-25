@@ -127,6 +127,7 @@ export function TaskItemNodeView({
           ) : (
             <ReminderDialog
               disabled={!editable}
+              fallbackFocus={() => editor.view.dom}
               onChange={(at) => {
                 const pos = getPos()
                 if (typeof pos === "number") setTaskReminder(editor, pos, at)

@@ -1,3 +1,4 @@
+import type { DialogPopupProps } from "@base-ui/react/dialog"
 import { useRef, type KeyboardEvent, type ReactNode } from "react"
 
 import { isCompositionKey } from "@/components/ui/calendar"
@@ -27,6 +28,8 @@ export type PickerDialogContentProps = {
   onRequestClose(): void
   /** 打开时聚焦的元素选择器（在弹层内查询），缺省走 base-ui 的首个可聚焦元素。 */
   initialFocus?: string
+  /** 关闭后焦点去向，透传 base-ui 的 `finalFocus`；缺省回到触发器。 */
+  finalFocus?: DialogPopupProps["finalFocus"]
 }
 
 /**
@@ -34,7 +37,7 @@ export type PickerDialogContentProps = {
  * 头部只有标题，下面是「选择摘要」，再下面是选择器本体，底部是动作。
  * 桌面 `sm:max-w-sm`（可由 className 放宽），窄屏走底部抽屉姿态。
  */
-export function PickerDialogContent({ title, summaryLabel, summary, placeholder, footer, children, slot, className, onRequestClose, initialFocus }: PickerDialogContentProps) {
+export function PickerDialogContent({ title, summaryLabel, summary, placeholder, footer, children, slot, className, onRequestClose, initialFocus, finalFocus }: PickerDialogContentProps) {
   const popupRef = useRef<HTMLDivElement>(null)
   const composing = useRef(false)
   const empty = summary === null || summary === ""
@@ -55,6 +58,7 @@ export function PickerDialogContent({ title, summaryLabel, summary, placeholder,
       onMouseDown: event => event.preventDefault(),
     }}
     initialFocus={initialFocus ? () => popupRef.current?.querySelector<HTMLElement>(initialFocus) ?? true : undefined}
+    finalFocus={finalFocus}
     onCompositionStart={() => { composing.current = true }} onCompositionEnd={() => { composing.current = false }}
     onKeyDownCapture={protectComposition}
     onKeyDown={event => {

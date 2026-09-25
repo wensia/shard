@@ -1,5 +1,5 @@
 import { parseReminderAt } from "@shard/markdown/core"
-import { useState, type ReactElement, type ReactNode } from "react"
+import { useRef, useState, type ReactElement, type ReactNode } from "react"
 
 import { Button } from "@/components/ui/button"
 import { Calendar, formatDay, todayDay } from "@/components/ui/calendar"
@@ -18,6 +18,8 @@ export interface ReminderDialogProps {
   /** 触发器内容。 */
   children?: ReactNode
   disabled?: boolean
+  /** 打开前的焦点元素已卸载时（触发器在铃铛与芯片之间切换）的退路，通常是编辑器本身。 */
+  fallbackFocus?: () => HTMLElement | null
 }
 
 /** 草稿：`picked` 表示已有提醒或用户点过日期，只有这时摘要才显示日期部分。 */
@@ -36,8 +38,10 @@ function initialDraft(value: string | null): Draft {
  * 弹层与遮罩带 `kiln-control-positioner`（见 PickerDialogContent）：卡片行内编辑按
  * 「失焦即提交」收尾，焦点落进对话框不算离开编辑器（见 fragment-editor 的失焦判定）。
  */
-export function ReminderDialog({ value, onChange, trigger, children, disabled }: ReminderDialogProps) {
+export function ReminderDialog({ value, onChange, trigger, children, disabled, fallbackFocus }: ReminderDialogProps) {
   const [open, setOpen] = useState(false)
+  // 打开前焦点所在：指针优先下触发器不抢焦点，这通常就是编辑器；键盘打开时是触发器。
+  const returnFocusRef = useRef<HTMLElement | null>(null)
   const [draft, setDraft] = useState<Draft>(() => initialDraft(value))
   const [quickOptions, setQuickOptions] = useState(() => reminderQuickOptions())
   const time = draft.hour && draft.minute ? `${draft.hour}:${draft.minute}` : ""
@@ -49,6 +53,7 @@ export function ReminderDialog({ value, onChange, trigger, children, disabled }:
 
   function changeOpen(next: boolean) {
     if (next) {
+      returnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
       setDraft(initialDraft(value))
       setQuickOptions(reminderQuickOptions())
     }
@@ -85,6 +90,13 @@ export function ReminderDialog({ value, onChange, trigger, children, disabled }:
             </Button>
           </>
         }
+        // 设置或清除提醒会让触发器在铃铛与芯片之间切换，原触发器已卸载；焦点回到打开前的
+        // 元素，它也不在了就交给 fallbackFocus，免得落到 body 上触发行内卡片的失焦提交。
+        finalFocus={() => {
+          const previous = returnFocusRef.current
+          if (previous?.isConnected) return previous
+          return fallbackFocus?.() ?? true
+        }}
         initialFocus='.kiln-calendar-day[tabindex="0"]'
         onRequestClose={() => setOpen(false)}
         placeholder="选择日期和时间"

@@ -52,6 +52,7 @@ export function ReminderNodeView({ editor, getPos, node, updateAttributes }: Rea
     <NodeViewWrapper as="span" className="shard-rich-reminder-wrapper" contentEditable={false}>
       {editable ? (
         <ReminderDialog
+          fallbackFocus={() => editor.view.dom}
           onChange={(next) => {
             if (next) {
               updateAttributes({ at: next })
