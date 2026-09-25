@@ -9,7 +9,7 @@ import { FragmentEditor } from "@/components/shard/fragment-editor"
 import { FragmentImageExporter } from "@/components/shard/fragment-image-exporter"
 import {
   SearchContextBar,
-  type FragmentSearchSession,
+  type FragmentSearchSession as LegacyFragmentSearchSession,
 } from "@/components/shard/fragment-search-workspace"
 import { ConvertFragmentDialog, FragmentFilterContext, FragmentFilterDialog, FragmentTrashWorkspace } from "@/components/shard/fragment-workspace-controls"
 import { conversionTitle, EMPTY_FRAGMENT_FILTERS, libraryDirectoryOptions, matchesFragmentFilters, type FragmentFilters } from "@/lib/fragment-space"
@@ -81,6 +81,19 @@ import {
   publicFragments,
   wantsLockbox,
 } from "@/lib/lockbox"
+import {
+  searchTargetKey,
+  type SearchSession,
+} from "@/lib/search-contract"
+import {
+  acceptsSearchSessionIdentity,
+  captureSearchSessionIdentity,
+  createSearchSession,
+  legacyWorkerFragmentsForScope,
+  revokeSearchSession as revokeSearchSessionState,
+  scopeForSpace,
+  type SearchRevokeReason,
+} from "@/lib/search-session"
 import type {
   Fragment,
   CsvFileSummary,
@@ -141,6 +154,9 @@ function readSidebarCollapsed(): boolean {
 
 export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
   const {
+    acceptsVaultStateResponse,
+    beginVaultStateRequest,
+    completeVaultPrivacyChange,
     fragments,
     inboxFragments,
     isCreating,
@@ -148,6 +164,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     lockboxFragments,
     publicActiveFragments,
     publicOnlyFragments,
+    revokeVaultStateRequests,
     setFragments,
     setIsCreating,
     setIsLoading,
@@ -200,8 +217,9 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
   >(null)
   const [isSearchModeActive, setIsSearchModeActive] = useState(false)
   const [searchFocusSignal, setSearchFocusSignal] = useState(0)
-  const [searchSession, setSearchSession] =
-    useState<FragmentSearchSession | null>(null)
+  const [legacySearchSession, setLegacySearchSession] =
+    useState<LegacyFragmentSearchSession | null>(null)
+  const [searchSession, setSearchSession] = useState<SearchSession | null>(null)
   const [isMindMapViewActive, setIsMindMapViewActive] = useState(false)
   const [activeMindMapId, setActiveMindMapId] = useState<string | null>(null)
   const [mindMaps, setMindMaps] = useState<MindMapSummary[]>([])
@@ -228,10 +246,23 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
   const nextLibraryNavigationIdRef = useRef(0)
   const migratedLibraryVaultRef = useRef<string | null>(null)
   const routeRef = useRef(route)
+  const vaultPathRef = useRef(vaultPath)
+  const searchSessionRef = useRef<SearchSession | null>(null)
+  const searchUiEpochRef = useRef(0)
+  const nextSearchSessionIdRef = useRef(0)
+  const nextSearchNavigationIdRef = useRef(0)
+
+  vaultPathRef.current = vaultPath
+  searchSessionRef.current = searchSession
 
   useEffect(() => {
     void refreshFragments()
     void refreshMindMaps()
+  }, [])
+
+  useEffect(() => () => {
+    searchUiEpochRef.current += 1
+    searchSessionRef.current = null
   }, [])
 
   // 没有文件监听：终端 `shard` 等外部写入的碎片，在切回窗口时静默对账一次。
@@ -294,11 +325,74 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     route,
   })
 
+  function replaceSearchSession(next: SearchSession | null) {
+    searchSessionRef.current = next
+    setSearchSession(next)
+  }
+
+  function beginSearchSession() {
+    const scope = scopeForSpace(routeRef.current.space)
+    searchUiEpochRef.current += 1
+    nextSearchSessionIdRef.current += 1
+    const next = createSearchSession({
+      id: `search-${nextSearchSessionIdRef.current}`,
+      scope,
+      uiEpoch: searchUiEpochRef.current,
+      vaultPath: vaultPathRef.current,
+    })
+    replaceSearchSession(next)
+    return next
+  }
+
+  function updateLegacySearchQuery(query: string) {
+    const current = searchSessionRef.current
+    if (!current || current.scope !== "public") return
+    replaceSearchSession({
+      ...current,
+      drafts: { ...current.drafts, fullText: query },
+      querySequence: current.querySequence + 1,
+      state: query.trim() ? "indexing" : "emptyQuery",
+      hits: [],
+      total: null,
+      selectedKey: null,
+      pendingNavigation: null,
+      error: null,
+    })
+  }
+
+  const isSearchSessionCurrent = useCallback(
+    (sessionId: string, uiEpoch: number) => {
+      const current = searchSessionRef.current
+      return current?.id === sessionId && current.uiEpoch === uiEpoch
+    },
+    []
+  )
+
+  function revokeSearchSession(reason: SearchRevokeReason) {
+    revokeSearchSessionState(
+      {
+        sessionRef: searchSessionRef,
+        uiEpochRef: searchUiEpochRef,
+        clear: () => {
+          setSearchSession(null)
+          setLegacySearchSession(null)
+          setIsSearchModeActive(false)
+          setPendingLibraryTarget(null)
+          setPendingScrollFragmentId(null)
+          searchReturnFocusRef.current = null
+        },
+      },
+      reason
+    )
+  }
+
   /** `silent`：后台对账（如切回窗口），不闪加载态，失败也不打扰，等下一次显式刷新。 */
   async function refreshFragments(options: { silent?: boolean } = {}) {
     if (!options.silent) setIsLoading(true)
+    const request = beginVaultStateRequest(vaultPathRef.current || null)
     try {
       const state = await listFragments()
+      if (!acceptsVaultStateResponse(request, state.vaultPath)) return
       applyVaultState(state)
     } catch (error) {
       if (options.silent) return
@@ -393,16 +487,26 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
   }
 
   function applyVaultState(state: VaultState) {
+    const previousVaultPath = vaultPathRef.current
+    if (previousVaultPath && previousVaultPath !== state.vaultPath) {
+      revokeSearchSession("vaultChanged")
+    } else if (
+      !state.lockbox.unlocked &&
+      searchSessionRef.current?.scope === "lockbox"
+    ) {
+      revokeSearchSession("locked")
+    }
+
     const visibleFragments = state.lockbox.unlocked
       ? state.fragments
       : publicFragments(state.fragments)
 
-    if (!state.lockbox.unlocked) setSearchSession(null)
     setFragments(sortFragmentsForDisplay(visibleFragments))
     setGit(state.git)
     setLockbox(state.lockbox)
+    vaultPathRef.current = state.vaultPath
     setVaultPath(state.vaultPath)
-    if (vaultPath && vaultPath !== state.vaultPath) {
+    if (previousVaultPath && previousVaultPath !== state.vaultPath) {
       setLibraryTree(null)
       migratedLibraryVaultRef.current = null
     }
@@ -414,6 +518,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     state: VaultState,
     options: { resetView?: boolean } = {}
   ) {
+    revokeVaultStateRequests()
     applyVaultState(state)
     if (options.resetView) {
       closeEditor()
@@ -855,8 +960,10 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
   }
 
   async function verifyFragmentConversion(id: string, failureMessage: string) {
+    const request = beginVaultStateRequest(vaultPathRef.current || null)
     try {
       const state = await listFragments()
+      if (!acceptsVaultStateResponse(request, state.vaultPath)) return
       const current = state.fragments.find(fragment => fragment.id === id)
       if (!current || current.archived || current.lockbox) {
         setConversionError("暂时无法确认内容所在位置，请重新核对后继续。")
@@ -973,7 +1080,6 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
       toast("设置密匣后会移入笔记")
       return
     }
-
     await moveFragmentIntoLockbox(fragment.id)
   }
 
@@ -981,8 +1087,17 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     fragmentId: string,
     successMessage = "已移入密匣"
   ) {
+    if (searchSessionRef.current || legacySearchSession) {
+      revokeSearchSession("targetMoved")
+    }
+    const request = beginVaultStateRequest(
+      vaultPathRef.current || null,
+      "privacy"
+    )
     try {
       const state = await moveFragmentToLockbox(fragmentId)
+      if (!acceptsVaultStateResponse(request, state.vaultPath)) return false
+      completeVaultPrivacyChange()
       applyVaultState(state)
       await refreshLibraryTree()
       closeEditor()
@@ -1057,7 +1172,13 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
   }
 
   async function handleSetupLockbox(password: string) {
+    const request = beginVaultStateRequest(
+      vaultPathRef.current || null,
+      "privacy"
+    )
     const result = await setupLockbox(password)
+    if (!acceptsVaultStateResponse(request, result.vault.vaultPath)) return
+    completeVaultPrivacyChange()
     applyVaultState(result.vault)
     setRecoveryKey(result.recoveryKey)
 
@@ -1072,7 +1193,33 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
   }
 
   async function handleUnlockLockbox(password: string) {
+    const request = beginVaultStateRequest(
+      vaultPathRef.current || null,
+      "privacy"
+    )
     const state = await unlockLockbox(password)
+    if (!acceptsVaultStateResponse(request, state.vaultPath)) {
+      if (state.lockbox.unlocked) {
+        try {
+          const relockRequest = beginVaultStateRequest(
+            vaultPathRef.current || null,
+            "privacy"
+          )
+          const lockedState = await lockLockbox()
+          if (
+            acceptsVaultStateResponse(relockRequest, lockedState.vaultPath) &&
+            lockedState.vaultPath === vaultPathRef.current
+          ) {
+            completeVaultPrivacyChange()
+            applyVaultState(lockedState)
+          }
+        } catch {
+          // 离开安全区后的迟到解锁必须尽力回锁；失败时不把旧响应写回前端。
+        }
+      }
+      return
+    }
+    completeVaultPrivacyChange()
     applyVaultState(state)
     setLockboxDialogMode(null)
 
@@ -1089,12 +1236,19 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
   }
 
   async function handleLockLockbox() {
+    revokeSearchSession("locked")
+    const request = beginVaultStateRequest(
+      vaultPathRef.current || null,
+      "privacy"
+    )
     try {
       const state = await lockLockbox()
+      if (!acceptsVaultStateResponse(request, state.vaultPath)) return
+      completeVaultPrivacyChange()
       applyVaultState(state)
       closeEditor()
       setSelectedLockboxTag(null)
-      if (route.space === "lockbox") {
+      if (routeRef.current.space === "lockbox") {
         // 上锁即离开保险柜，回到传送门所在的资料库
         setRoute({ space: "library", params: {} })
       }
@@ -1109,8 +1263,17 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
   async function autoLockLockbox(
     options: { returnToLibrary?: boolean } = {}
   ) {
+    if (searchSessionRef.current?.scope === "lockbox") {
+      revokeSearchSession(options.returnToLibrary ? "expired" : "locked")
+    }
+    const request = beginVaultStateRequest(
+      vaultPathRef.current || null,
+      "privacy"
+    )
     try {
       const state = await lockLockbox()
+      if (!acceptsVaultStateResponse(request, state.vaultPath)) return
+      completeVaultPrivacyChange()
       applyVaultState(state)
       if (options.returnToLibrary && routeRef.current.space === "lockbox") {
         closeEditor()
@@ -1126,7 +1289,13 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     currentPassword: string,
     newPassword: string
   ) {
+    const request = beginVaultStateRequest(
+      vaultPathRef.current || null,
+      "privacy"
+    )
     const state = await changeLockboxPassword(currentPassword, newPassword)
+    if (!acceptsVaultStateResponse(request, state.vaultPath)) return
+    completeVaultPrivacyChange()
     applyVaultState(state)
     setLockboxDialogMode(null)
     toast("密匣密码已修改")
@@ -1136,7 +1305,13 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     nextRecoveryKey: string,
     newPassword: string
   ) {
+    const request = beginVaultStateRequest(
+      vaultPathRef.current || null,
+      "privacy"
+    )
     const result = await resetLockboxPassword(nextRecoveryKey, newPassword)
+    if (!acceptsVaultStateResponse(request, result.vault.vaultPath)) return
+    completeVaultPrivacyChange()
     applyVaultState(result.vault)
     setRecoveryKey(result.recoveryKey)
 
@@ -1151,6 +1326,9 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
   }
 
   function closeLockboxDialog() {
+    if (lockboxDialogMode === "unlock") {
+      revokeVaultStateRequests()
+    }
     setPendingLockboxMoveId(null)
     setLockboxDialogMode(null)
     setRecoveryKey(null)
@@ -1168,19 +1346,70 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
 
   async function returnToOrigin() {
     if (!navigationOrigin || !(await saveLibraryDraftBeforeNavigation())) return
+    revokeSearchSession("spaceChanged")
     setFragmentFilters(navigationOrigin.filters)
     setRoute(navigationOrigin.route)
-    setPendingScrollFragmentId(null)
     setNavigationOrigin(null)
-    setPendingLibraryTarget(null)
-    setIsSearchModeActive(false)
   }
 
   async function handleOpenSearchResult(
     fragment: Fragment,
-    session?: FragmentSearchSession
+    session?: LegacyFragmentSearchSession
   ) {
-    if (!(await saveLibraryDraftBeforeNavigation())) return
+    let identity: ReturnType<typeof captureSearchSessionIdentity> | null = null
+    let targetKey: string | null = null
+    if (session) {
+      const currentSearchSession = searchSessionRef.current
+      if (!currentSearchSession) return
+      nextSearchNavigationIdRef.current += 1
+      targetKey = searchTargetKey(
+        currentSearchSession.vaultPath,
+        currentSearchSession.scope,
+        fragment.path
+      )
+      const navigationSession = {
+        ...currentSearchSession,
+        pendingNavigation: {
+          requestId: `legacy-navigation-${nextSearchNavigationIdRef.current}`,
+          targetKey,
+        },
+      }
+      replaceSearchSession(navigationSession)
+      identity = captureSearchSessionIdentity(navigationSession)
+    }
+    if (!(await saveLibraryDraftBeforeNavigation())) {
+      const current = searchSessionRef.current
+      if (
+        identity &&
+        acceptsSearchSessionIdentity(current, identity) &&
+        current
+      ) {
+        replaceSearchSession({ ...current, pendingNavigation: null })
+      }
+      return
+    }
+    if (
+      identity &&
+      !acceptsSearchSessionIdentity(searchSessionRef.current, identity)
+    ) {
+      return
+    }
+
+    const completeNavigation = () => {
+      if (!identity || !targetKey) return true
+      const current = searchSessionRef.current
+      if (!acceptsSearchSessionIdentity(current, identity) || !current) {
+        return false
+      }
+      replaceSearchSession({
+        ...current,
+        openedKey: targetKey,
+        pendingNavigation: null,
+      })
+      if (session) setLegacySearchSession(session)
+      return true
+    }
+
     // Search sessions may outlive a conversion. Resolve the current object by identity.
     fragment = fragments.find(current => current.id === fragment.id) ?? fragment
     setEditingVariant("inline")
@@ -1190,9 +1419,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
 
     if (fragment.lockbox) {
       if (!lockbox?.unlocked) {
-        setIsSearchModeActive(false)
-        setSearchSession(null)
-        searchReturnFocusRef.current = null
+        revokeSearchSession("locked")
         // 推门进密匣空间，解锁在空间内的面板里完成
         enterLockboxSpace()
         toast("请先解锁密匣后查看笔记")
@@ -1209,7 +1436,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
       if (route.space !== "library") setNavigationOrigin(current => current ?? { route, filters: fragmentFilters })
       requestLibraryTarget({ kind: "note", id: fragment.id })
       setIsSearchModeActive(false)
-      if (session) setSearchSession(session)
+      completeNavigation()
       searchReturnFocusRef.current = null
       return
     } else if (fragment.archived && deriveKind(fragment.tags) === "note") {
@@ -1219,7 +1446,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     }
 
     setIsSearchModeActive(false)
-    if (session) setSearchSession(session)
+    if (!completeNavigation()) return
     searchReturnFocusRef.current = null
     setPendingScrollFragmentId(fragment.id)
   }
@@ -1280,16 +1507,19 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
   }
 
   async function openScopedSearch(type: "all" | "fragments" | "notes") {
+    if (scopeForSpace(routeRef.current.space) === "lockbox") {
+      revokeSearchSession("spaceChanged")
+      toast("密匣全文搜索将在 Rust 搜索接入后恢复")
+      return
+    }
     if (!(await saveLibraryDraftBeforeNavigation())) return
 
     if (!isSearchModeActive && document.activeElement instanceof HTMLElement) {
       searchReturnFocusRef.current = document.activeElement
     }
-    // 密匣空间自带搜索覆盖层：留在空间内搜索，避免离开安全区触发上锁
-    if (route.space !== "lockbox") {
-      if (!isSearchModeActive) setNavigationOrigin(current => current ?? { route, filters: fragmentFilters })
-      setRoute({ space: "fragments", params: {} })
-    }
+    if (!isSearchModeActive) setNavigationOrigin(current => current ?? { route, filters: fragmentFilters })
+    setRoute({ space: "fragments", params: {} })
+    if (!searchSessionRef.current) beginSearchSession()
     setSearchType(type)
     setIsSearchModeActive(true)
     setSearchFocusSignal((current) => current + 1)
@@ -1297,7 +1527,10 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
 
   function exitSearchMode() {
     setIsSearchModeActive(false)
-    if (searchSession) return
+    if (legacySearchSession) return
+
+    const returnFocus = searchReturnFocusRef.current
+    revokeSearchSession("close")
 
     if (navigationOrigin) {
       setRoute(navigationOrigin.route)
@@ -1305,8 +1538,6 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
       setNavigationOrigin(null)
     }
 
-    const returnFocus = searchReturnFocusRef.current
-    searchReturnFocusRef.current = null
     window.requestAnimationFrame(() => returnFocus?.focus())
   }
 
@@ -1314,40 +1545,32 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     if (!(await saveLibraryDraftBeforeNavigation())) return
     setFragmentFilters(filters)
     setIsFragmentFilterOpen(false)
-    setIsSearchModeActive(false)
-    setSearchSession(null)
+    revokeSearchSession("close")
     setNavigationOrigin(null)
-    setPendingLibraryTarget(null)
-    setPendingScrollFragmentId(null)
-    searchReturnFocusRef.current = null
     setRoute({ space: "fragments", params: {} })
   }
 
   function endSearchSession() {
-    setIsSearchModeActive(false)
-    setSearchSession(null)
-    searchReturnFocusRef.current = null
+    revokeSearchSession("close")
   }
 
   function navigateSearchResult(nextIndex: number) {
-    if (!searchSession) return
-    const fragmentId = searchSession.resultIds[nextIndex]
+    if (!legacySearchSession) return
+    const fragmentId = legacySearchSession.resultIds[nextIndex]
     const fragment = fragments.find((candidate) => candidate.id === fragmentId)
     if (!fragment) {
       toast("这条笔记已不在当前搜索范围中")
       return
     }
 
-    const nextSession = { ...searchSession, activeIndex: nextIndex }
+    const nextSession = { ...legacySearchSession, activeIndex: nextIndex }
     handleOpenSearchResult(fragment, nextSession)
   }
 
   async function openMindMap(map?: MindMapSummary) {
     if (!(await saveLibraryDraftBeforeNavigation())) return
 
-    setIsSearchModeActive(false)
-    setSearchSession(null)
-    searchReturnFocusRef.current = null
+    revokeSearchSession("spaceChanged")
     if (!map) {
       if (route.space !== "fragments") {
         setRoute({ space: "fragments", params: {} })
@@ -1360,15 +1583,17 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
   }
 
   async function handleRouteChange(nextRoute: WorkspaceRoute) {
+    revokeSearchSession("spaceChanged")
+    if (
+      routeRef.current.space === "lockbox" &&
+      nextRoute.space !== "lockbox"
+    ) {
+      revokeVaultStateRequests()
+    }
     if (!(await saveLibraryDraftBeforeNavigation())) return
 
-    setIsSearchModeActive(false)
-    setSearchSession(null)
-    searchReturnFocusRef.current = null
     setIsMindMapViewActive(false)
     setNavigationOrigin(null)
-    setPendingLibraryTarget(null)
-    setPendingScrollFragmentId(null)
     setFragmentSelectionActive(false)
 
     if (nextRoute.space === "lockbox" && !lockbox?.configured) {
@@ -1419,7 +1644,18 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
   }, [lockbox?.unlocked, lockboxFragments, selectedLockboxTag])
 
   const visibleStreamFragments = useMemo(() => inboxFragments.filter(fragment => matchesFragmentFilters(fragment, fragmentFilters)), [inboxFragments, fragmentFilters])
-  const searchableFragments = useMemo(() => searchType === "all" ? fragments : fragments.filter(fragment => !fragment.lockbox && (searchType === "notes" ? deriveKind(fragment.tags) === "note" : deriveKind(fragment.tags) === "fragment")), [fragments, searchType])
+  const searchableFragments = useMemo(() => {
+    const scopedFragments = legacyWorkerFragmentsForScope(
+      fragments,
+      scopeForSpace(route.space)
+    )
+    if (searchType === "all") return scopedFragments
+    return scopedFragments.filter((fragment) =>
+      searchType === "notes"
+        ? deriveKind(fragment.tags) === "note"
+        : deriveKind(fragment.tags) === "fragment"
+    )
+  }, [fragments, route.space, searchType])
 
   const knownTags = useMemo(
     () =>
@@ -1555,9 +1791,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     async function handleGlobalCapture() {
       if (isModalBusy || !(await saveLibraryDraftBeforeNavigation())) return
 
-      setIsSearchModeActive(false)
-      setSearchSession(null)
-      searchReturnFocusRef.current = null
+      revokeSearchSession("spaceChanged")
       setIsMindMapViewActive(false)
       setRoute({ space: "fragments", params: {} })
       focusComposer()
@@ -1753,19 +1987,23 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     focusSignal: searchFocusSignal,
     fragments: searchableFragments,
     contentType: searchType,
-    initialSession: searchSession,
-    lockboxSearchAvailable: Boolean(lockbox?.unlocked),
+    initialSession: legacySearchSession,
+    isSessionCurrent: isSearchSessionCurrent,
     onExit: exitSearchMode,
-    onFilterFragments: route.space === "lockbox" ? undefined : () => setIsFragmentFilterOpen(true),
+    onFilterFragments: () => setIsFragmentFilterOpen(true),
     onOpenFragment: handleOpenSearchResult,
+    onQueryChange: updateLegacySearchQuery,
+    privacyScope: searchSession?.scope ?? scopeForSpace(route.space),
+    sessionId: searchSession?.id ?? "revoked",
+    uiEpoch: searchSession?.uiEpoch ?? searchUiEpochRef.current,
   }
 
-  const searchContextBarProps = searchSession
+  const searchContextBarProps = legacySearchSession
     ? {
         onBack: () => openScopedSearch(searchType),
         onClose: endSearchSession,
         onNavigate: navigateSearchResult,
-        session: searchSession,
+        session: legacySearchSession,
       }
     : null
 
@@ -1878,7 +2116,6 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
               />
             ) : route.space === "lockbox" ? (
               <LockboxShell
-            isSearchModeActive={isSearchModeActive}
             lockbox={lockbox}
             notes={lockboxNotes}
             onBack={() => void handleRouteChange({ space: "library", params: {} })}
@@ -1888,8 +2125,6 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
             onResetPassword={handleResetLockboxPassword}
             onSelectTag={setSelectedLockboxTag}
             onUnlock={handleUnlockLockbox}
-            search={searchProps}
-            searchContextBar={searchContextBarProps}
             selectedTag={selectedLockboxTag}
             summaries={lockboxTagSummaries}
             timeline={{

@@ -1,14 +1,20 @@
-import { useMemo, useState } from "react"
+import { useCallback, useMemo, useRef, useState } from "react"
 
 import { isTypeTag } from "@/lib/content-kind"
 import { isPublicStreamFragment } from "@/lib/fragment-space"
 import { LOCKBOX_TAG, publicFragments } from "@/lib/lockbox"
+import {
+  createVaultStateGenerationGate,
+  type VaultStateRequestKind,
+  type VaultStateRequestToken,
+} from "@/lib/search-session"
 import type { Fragment } from "@/types"
 
 export function useFragments() {
   const [fragments, setFragments] = useState<Fragment[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [isCreating, setIsCreating] = useState(false)
+  const vaultStateGateRef = useRef(createVaultStateGenerationGate())
   const publicOnlyFragments = useMemo(
     () => publicFragments(fragments),
     [fragments]
@@ -43,9 +49,33 @@ export function useFragments() {
       publicActiveFragments.filter(isPublicStreamFragment),
     [publicActiveFragments]
   )
+  const beginVaultStateRequest = useCallback(
+    (
+      expectedVaultPath: string | null,
+      kind: VaultStateRequestKind = "read"
+    ): VaultStateRequestToken =>
+      vaultStateGateRef.current.begin(expectedVaultPath, kind),
+    []
+  )
+  const acceptsVaultStateResponse = useCallback(
+    (token: VaultStateRequestToken, actualVaultPath: string) =>
+      vaultStateGateRef.current.accepts(token, actualVaultPath),
+    []
+  )
+  const revokeVaultStateRequests = useCallback(
+    () => vaultStateGateRef.current.invalidate(),
+    []
+  )
+  const completeVaultPrivacyChange = useCallback(
+    () => vaultStateGateRef.current.completePrivacyChange(),
+    []
+  )
 
   return {
+    acceptsVaultStateResponse,
     archivedFragments,
+    beginVaultStateRequest,
+    completeVaultPrivacyChange,
     fragments,
     inboxFragments,
     isCreating,
@@ -53,6 +83,7 @@ export function useFragments() {
     lockboxFragments,
     publicActiveFragments,
     publicOnlyFragments,
+    revokeVaultStateRequests,
     setFragments,
     setIsCreating,
     setIsLoading,

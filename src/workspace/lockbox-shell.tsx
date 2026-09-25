@@ -16,10 +16,6 @@ import {
 } from "@/components/icons"
 
 import appStyles from "@/App.module.css"
-import {
-  FragmentSearchWorkspace,
-  SearchContextBar,
-} from "@/components/shard/fragment-search-workspace"
 import { FragmentTimeline } from "@/components/shard/fragment-timeline"
 import {
   LockboxFormError,
@@ -35,7 +31,6 @@ import type { Fragment, LockboxState } from "@/types"
 import styles from "./lockbox-shell.module.css"
 
 interface LockboxShellProps {
-  isSearchModeActive: boolean
   lockbox: LockboxState | null
   notes: Fragment[]
   onChangePassword: () => void
@@ -45,8 +40,6 @@ interface LockboxShellProps {
   onResetPassword: (recoveryKey: string, newPassword: string) => Promise<void>
   onSelectTag: (tag: string | null) => void
   onUnlock: (password: string) => Promise<void>
-  search: ComponentProps<typeof FragmentSearchWorkspace>
-  searchContextBar: ComponentProps<typeof SearchContextBar> | null
   selectedTag: string | null
   summaries: TaggedSummary[]
   timeline: ComponentProps<typeof FragmentTimeline>
@@ -58,7 +51,6 @@ interface LockboxShellProps {
  * 内含密匣自己的笔记树（lockbox/notes/）与碎片流，安全区跟整个空间走。
  */
 export function LockboxShell({
-  isSearchModeActive,
   lockbox,
   notes,
   onBack,
@@ -68,8 +60,6 @@ export function LockboxShell({
   onResetPassword,
   onSelectTag,
   onUnlock,
-  search,
-  searchContextBar,
   selectedTag,
   summaries,
   timeline,
@@ -80,11 +70,7 @@ export function LockboxShell({
   return (
     <section className={appStyles.workspaceColumn}>
       <div className={appStyles.workAreaStage}>
-        <div
-          aria-hidden={isSearchModeActive ? true : undefined}
-          className={appStyles.normalWorkArea}
-          data-search-hidden={isSearchModeActive ? "true" : undefined}
-        >
+        <div className={appStyles.normalWorkArea}>
           {/*
            * 上锁态整页就是主体的解锁面板，不顶重复的标题说明条；但密匣是从
            * 资料库推门进来的一级空间，得留一条原路返回的出口。
@@ -105,9 +91,6 @@ export function LockboxShell({
               <LockboxBackButton onBack={onBack} />
             </div>
           )}
-          {searchContextBar ? (
-            <SearchContextBar {...searchContextBar} />
-          ) : null}
           {unlocked ? (
             <>
               {notes.length > 0 ? (
@@ -120,11 +103,6 @@ export function LockboxShell({
           )}
         </div>
 
-        {isSearchModeActive ? (
-          <div className={appStyles.searchWorkArea}>
-            <FragmentSearchWorkspace {...search} />
-          </div>
-        ) : null}
       </div>
     </section>
   )

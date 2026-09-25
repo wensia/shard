@@ -36,6 +36,8 @@ mod canvas_commands;
 mod table_commands;
 mod table_exchange_commands;
 mod window_frame;
+#[allow(dead_code)] // T06 注册搜索 command 后移除。
+mod search_contract;
 
 const DEFAULT_WINDOW_TITLE: &str = "Shard";
 const LOCKBOX_TTL: Duration = Duration::from_secs(15 * 60);

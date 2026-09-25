@@ -33,6 +33,7 @@ import {
 } from "@/lib/fragment-search"
 import { LOCKBOX_TAG } from "@/lib/lockbox"
 import { deriveKind, isTypeTag } from "@/lib/content-kind"
+import type { SearchScope } from "@/lib/search-contract"
 import { cn } from "@/lib/utils"
 import type { Fragment } from "@/types"
 
@@ -53,13 +54,17 @@ interface FragmentSearchWorkspaceProps {
   contentType?: "all" | "fragments" | "notes"
   fragments: Fragment[]
   initialSession?: FragmentSearchSession | null
-  lockboxSearchAvailable: boolean
+  isSessionCurrent: (sessionId: string, uiEpoch: number) => boolean
   onExit: () => void
   onFilterFragments?: () => void
   onOpenFragment: (
     fragment: Fragment,
     session: FragmentSearchSession
   ) => void
+  onQueryChange: (query: string) => void
+  privacyScope: SearchScope
+  sessionId: string
+  uiEpoch: number
 }
 
 export function FragmentSearchWorkspace({
@@ -67,10 +72,14 @@ export function FragmentSearchWorkspace({
   contentType = "all",
   fragments,
   initialSession = null,
-  lockboxSearchAvailable,
+  isSessionCurrent,
   onExit,
   onFilterFragments,
   onOpenFragment,
+  onQueryChange,
+  privacyScope,
+  sessionId,
+  uiEpoch,
 }: FragmentSearchWorkspaceProps) {
   const inputRef = useRef<HTMLInputElement>(null)
   const isComposingRef = useRef(false)
@@ -103,9 +112,13 @@ export function FragmentSearchWorkspace({
   const trimmedQuery = deferredQuery.trim()
   const currentSearchKey = getSearchKey(currentTrimmedQuery, scope)
   const requestedSearchKey = getSearchKey(trimmedQuery, scope)
-  const fragmentById = useMemo(
-    () => new Map(fragments.map((fragment) => [fragment.id, fragment])),
+  const workerFragments = useMemo(
+    () => fragments.filter((fragment) => !fragment.lockbox),
     [fragments]
+  )
+  const fragmentById = useMemo(
+    () => new Map(workerFragments.map((fragment) => [fragment.id, fragment])),
+    [workerFragments]
   )
   const visibleMatches = useMemo(
     () => {
@@ -127,6 +140,7 @@ export function FragmentSearchWorkspace({
       responseKey !== currentSearchKey)
 
   useEffect(() => {
+    if (privacyScope !== "public") return
     const worker = new Worker(
       new URL("../../workers/fragment-search.worker.ts", import.meta.url),
       { type: "module" }
@@ -143,6 +157,7 @@ export function FragmentSearchWorkspace({
     worker.onmessage = (
       event: MessageEvent<FragmentSearchWorkerResponse>
     ) => {
+      if (!isSessionCurrent(sessionId, uiEpoch)) return
       const response = event.data
       if (response.version !== versionRef.current) return
 
@@ -158,13 +173,14 @@ export function FragmentSearchWorkspace({
     }
 
     worker.onerror = () => {
+      if (!isSessionCurrent(sessionId, uiEpoch)) return
       setIsIndexReady(false)
       setIsSearching(false)
       setSearchError("搜索索引暂时不可用")
     }
 
     worker.postMessage({
-      documents: fragments.map(toFragmentSearchDocument),
+      documents: workerFragments.map(toFragmentSearchDocument),
       type: "index",
       version,
     } satisfies FragmentSearchWorkerRequest)
@@ -173,9 +189,17 @@ export function FragmentSearchWorkspace({
       worker.terminate()
       if (workerRef.current === worker) workerRef.current = null
     }
-  }, [fragments, workerRestartKey])
+  }, [
+    isSessionCurrent,
+    privacyScope,
+    sessionId,
+    uiEpoch,
+    workerFragments,
+    workerRestartKey,
+  ])
 
   useEffect(() => {
+    if (!isSessionCurrent(sessionId, uiEpoch)) return
     const worker = workerRef.current
     if (!trimmedQuery) {
       latestRequestIdRef.current += 1
@@ -202,7 +226,15 @@ export function FragmentSearchWorkspace({
       type: "search",
       version: versionRef.current,
     } satisfies FragmentSearchWorkerRequest)
-  }, [isIndexReady, requestedSearchKey, scope, trimmedQuery])
+  }, [
+    isIndexReady,
+    isSessionCurrent,
+    requestedSearchKey,
+    scope,
+    sessionId,
+    trimmedQuery,
+    uiEpoch,
+  ])
 
   useEffect(() => {
     inputRef.current?.focus()
@@ -305,8 +337,17 @@ export function FragmentSearchWorkspace({
 
   function clearQuery() {
     setQuery("")
+    onQueryChange("")
     setSelectedIndex(0)
     inputRef.current?.focus()
+  }
+
+  if (privacyScope === "lockbox") {
+    return (
+      <section className={styles.workspace} role="status">
+        密匣全文搜索将在 Rust 搜索接入后恢复
+      </section>
+    )
   }
 
   return (
@@ -333,7 +374,10 @@ export function FragmentSearchWorkspace({
                 aria-expanded={visibleMatches.length > 0}
                 aria-label="搜索内容"
                 className={styles.input}
-                onChange={(event) => setQuery(event.target.value)}
+                onChange={(event) => {
+                  setQuery(event.target.value)
+                  onQueryChange(event.target.value)
+                }}
                 onCompositionEnd={() => {
                   isComposingRef.current = false
                 }}
@@ -395,7 +439,7 @@ export function FragmentSearchWorkspace({
               <span aria-hidden="true">·</span>
               <span className={styles.lockboxState}>
                 <LockKeyholeIcon aria-hidden="true" />
-                {lockboxSearchAvailable ? "包含已解锁密匣" : "密匣未搜索"}
+                仅当前公开空间
               </span>
             </div>
             <span className={styles.resultCount} aria-live="polite">
@@ -403,7 +447,7 @@ export function FragmentSearchWorkspace({
                 ? isBusy
                   ? "正在搜索"
                   : formatResultCount(searchResponse.total, MAX_RESULTS)
-                : `${fragments.length} 条可搜索内容`}
+                : `${workerFragments.length} 条可搜索内容`}
             </span>
           </div>
         </div>
@@ -425,7 +469,7 @@ export function FragmentSearchWorkspace({
               onRetry={() => setWorkerRestartKey((current) => current + 1)}
             />
           ) : !currentTrimmedQuery ? (
-            <SearchIntro fragmentCount={fragments.length} />
+            <SearchIntro fragmentCount={workerFragments.length} />
           ) : isBusy && visibleMatches.length === 0 ? (
             <SearchSkeleton />
           ) : visibleMatches.length === 0 && !isBusy ? (
