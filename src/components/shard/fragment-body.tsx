@@ -1,9 +1,10 @@
-import type { CSSProperties } from "react"
+import { useEffect, useRef, type CSSProperties } from "react"
 
 import { FragmentContent } from "@/components/shard/fragment-content"
 import { containsMarkdownBlocks } from "@shard/markdown"
 import { hasBlockUI } from "@/editor-rich/blocks/registry-ui"
 import { cn } from "@/lib/utils"
+import { attachSelectionBand } from "@/lib/selection-band"
 import { parseWikilinks } from "@/lib/wikilink"
 
 const FENCE_OPEN_PATTERN = /^```(\S*)\s*$/
@@ -35,6 +36,7 @@ export function FragmentBody({
   trimEnd = false,
   vaultPath,
 }: FragmentBodyProps) {
+  const hostRef = useRef<HTMLDivElement | HTMLParagraphElement>(null)
   const body = (
     <FragmentContent
       className={contentClassName}
@@ -59,16 +61,38 @@ export function FragmentBody({
     return links.length === 1 && Boolean(links[0].embed) && links[0].to === trimmed.length
   })
 
+  useEffect(() => {
+    const host = hostRef.current
+    if (!host) return
+    let root: HTMLElement | null = null
+    let detach: (() => void) | undefined
+    const connect = () => {
+      const nextRoot = host.querySelector<HTMLElement>("[data-markdown-search-root]")
+      if (nextRoot === root) return
+      detach?.()
+      root = nextRoot
+      detach = root ? attachSelectionBand(root, host) : undefined
+    }
+    connect()
+    // The async Markdown renderer can replace its inline root with a block root.
+    const observer = new MutationObserver(connect)
+    observer.observe(host, { childList: true })
+    return () => {
+      observer.disconnect()
+      detach?.()
+    }
+  }, [as, hasBlockContent])
+
   if (as === "div" || hasBlockContent) {
     return (
-      <div className={bodyClassName} style={bodyStyle}>
+      <div ref={hostRef} className={bodyClassName} style={bodyStyle}>
         {body}
       </div>
     )
   }
 
   return (
-    <p className={bodyClassName} style={{ ...bodyStyle, margin: 0 }}>
+    <p ref={hostRef} className={bodyClassName} style={{ ...bodyStyle, margin: 0 }}>
       {body}
     </p>
   )

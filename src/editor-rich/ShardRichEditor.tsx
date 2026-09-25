@@ -38,6 +38,7 @@ import {
   previewConvergedDoc,
 } from "./extensions/inline-converge"
 import { ShardCaret } from "./extensions/shard-caret"
+import { ShardSelectionBand } from "./extensions/shard-selection-band"
 import { ShardMemoGuard } from "./extensions/memo-guard"
 import {
   createSearchRevealHandle,
@@ -365,6 +366,7 @@ export const ShardRichEditor = forwardRef<ShardRichEditorHandle, ShardRichEditor
         ShardMemoGuard,
         ShardSearchHighlight,
         ShardCaret,
+        ShardSelectionBand,
       ],
       // 扩展集一次成型：回调全部经 callbacks ref 取最新值。
       // eslint-disable-next-line react-hooks/exhaustive-deps

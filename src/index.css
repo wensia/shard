@@ -239,6 +239,28 @@
     --shard-icon-stroke-sm: 1.75;
 }
 
+[data-shard-selection-band]::selection,
+[data-shard-selection-band] :not(input):not(textarea)::selection {
+    background: transparent;
+}
+
+[data-shard-selection-band] input::selection,
+[data-shard-selection-band] textarea::selection {
+    background: color-mix(in srgb, var(--primary) 22%, transparent);
+}
+
+.shard-selection-band-layer {
+    position: absolute;
+    z-index: -1;
+    inset: 0;
+    pointer-events: none;
+}
+
+.shard-selection-band-layer [data-shard-selection-band-rect] {
+    position: absolute;
+    background: color-mix(in srgb, var(--primary) 22%, transparent);
+}
+
 :root[data-shard-theme="clay"] {
     --shard-accent: var(--palette-clay);
     --shard-primary-rgb: 182 83 60;
