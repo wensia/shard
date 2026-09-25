@@ -20,13 +20,13 @@ use shard_core::{
 };
 use sha2::{Digest, Sha256};
 use std::{
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::{BTreeMap, HashSet},
     env, fs,
     fs::File,
     io::{BufRead, BufReader, Read, Write},
     path::{Component, Path, PathBuf},
     process::{Command, Stdio},
-    sync::{Arc, Mutex, OnceLock},
+    sync::{Arc, Mutex},
     time::{Duration, SystemTime},
 };
 use tauri::Manager;
@@ -38,6 +38,10 @@ mod table_exchange_commands;
 mod window_frame;
 #[allow(dead_code)] // T06 注册搜索 command 后移除。
 mod search_contract;
+#[allow(dead_code)] // T05/T06 接入真实来源与 command 后移除。
+mod search_reconcile;
+#[allow(dead_code)] // T05/T06 接入真实来源与 command 后移除。
+mod search_runtime;
 
 const DEFAULT_WINDOW_TITLE: &str = "Shard";
 const LOCKBOX_TTL: Duration = Duration::from_secs(15 * 60);
@@ -53,6 +57,10 @@ const SHARD_MAP_SCHEMA_VERSION: u32 = 1;
 const SHARD_MAP_MAX_NODES: usize = 400;
 const SHARD_MAP_MAX_NODE_TEXT_CHARS: usize = 2_000;
 const CSV_GIT_PATHSPEC: &str = ":(glob,icase)**/*.csv";
+
+/// Vault selection changes the persisted path and the active search context as one unit.
+/// Per-vault write gates cannot serialize two concurrent switches to different paths.
+static VAULT_SELECTION_GATE: Mutex<()> = Mutex::new(());
 
 /// Shard 托管的 vault 根目录。提交、脏检测、检查点、计数必须共用这一份清单——
 /// 目录在多处手写曾造成 notes 完全不入 git 状态的盲区。
@@ -455,28 +463,12 @@ where
         .map_err(|error| format!("后台任务失败：{error}"))?
 }
 
-/// vault 级操作门。`run_blocking` 是裸线程池，命令之间没有任何隐式串行化：
-/// 保存、结构性多文件事务（rename→wikilink→commit）、检查点与同步的
-/// commit/pull 临界段可以并发交错，产生半成品提交或互抢 git index。
-/// 所有写 vault 的命令在拿到 vault 路径后必须立刻持门；纯读命令不持门。
-/// 网络阶段（push / ls-remote）必须放在门外，避免长网络延迟阻塞编辑保存。
-fn vault_gate(vault: &Path) -> &'static Mutex<()> {
-    static GATES: OnceLock<Mutex<HashMap<PathBuf, &'static Mutex<()>>>> = OnceLock::new();
-    let registry = GATES.get_or_init(|| Mutex::new(HashMap::new()));
-    let mut registry = registry
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    registry
-        .entry(vault.to_path_buf())
-        .or_insert_with(|| Box::leak(Box::new(Mutex::new(()))))
-}
-
 /// 门内不可重入：持门代码不得再调用本函数（会自死锁）。
 /// 惯例：只在命令体最外层与 push_vault/checkpoint 的临界段取门，内部 helper 一律不取。
-fn lock_vault_gate(vault: &Path) -> std::sync::MutexGuard<'static, ()> {
-    vault_gate(vault)
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
+/// guard 在真正拿到物理门后把搜索写代次置奇数，并在所有返回路径 RAII 恢复偶数。
+fn lock_vault_gate(vault: &Path) -> search_runtime::VaultWriteGuard {
+    search_runtime::acquire_write_guard(vault)
+        .unwrap_or_else(|error| panic!("无法获取 vault 写门：{error:?}"))
 }
 
 #[tauri::command]
@@ -815,15 +807,30 @@ async fn set_vault_path(
             return Err("请选择一个文件夹，而不是文件。".to_string());
         }
 
-        fs::create_dir_all(&vault).map_err(|error| error.to_string())?;
-        ensure_vault_layout(&vault)?;
-        if initialize_git {
-            ensure_git_repo(&vault)?;
-        }
-        let mut config = read_app_config(&app)?;
-        config.vault_path = Some(vault.display().to_string());
-        write_app_config(&app, &config)?;
-        lock_lockbox_runtime(&lockbox_runtime);
+        let search_context = {
+            let _selection = VAULT_SELECTION_GATE
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            {
+                let _gate = lock_vault_gate(&vault);
+                fs::create_dir_all(&vault).map_err(|error| error.to_string())?;
+                ensure_vault_layout(&vault)?;
+                if initialize_git {
+                    ensure_git_repo(&vault)?;
+                }
+            }
+            let mut config = read_app_config(&app)?;
+            config.vault_path = Some(vault.display().to_string());
+            write_app_config(&app, &config)?;
+            let search_context = search_runtime::activate_vault(&vault);
+            lock_lockbox_runtime(&lockbox_runtime);
+            search_context
+        };
+        search_runtime::request_reconcile(
+            search_context,
+            search_contract::SearchScope::Public,
+            search_contract::SearchRefresh::Rebuild,
+        );
 
         list_fragments_in_vault(&vault, &lockbox_runtime)
     })
@@ -962,6 +969,7 @@ fn organize_fragments_in_vault(
     let sources = read_organize_sources(vault, &request.fragment_paths)?;
     let prompt = organize_fragments_prompt(&sources, target, request.template);
     let generated = run_codex_exec(vault, &prompt)?;
+    let _gate = lock_vault_gate(vault);
     write_organized_note(vault, &sources, &generated)
 }
 
@@ -1159,27 +1167,67 @@ async fn create_github_vault_repo(
     run_blocking(move || {
         let repo_name = sanitize_repo_name(&repo_name)?;
         let vault = ensure_vault_dirs(&app)?;
-        ensure_git_repo(&vault)?;
+        {
+            let _gate = lock_vault_gate(&vault);
+            ensure_git_repo(&vault)?;
 
-        if default_remote(&vault).is_some() {
-            return Err("当前 Vault 已经配置 Git remote。".to_string());
+            if default_remote(&vault).is_some() {
+                return Err("当前 Vault 已经配置 Git remote。".to_string());
+            }
+
+            commit_all_if_dirty(&vault, "configure git sync")?;
         }
 
-        commit_all_if_dirty(&vault, "configure git sync")?;
-
+        let qualified_repo_name = if repo_name.contains('/') {
+            repo_name.clone()
+        } else {
+            let owner = run_gh_in(&vault, &["api", "user", "--jq", ".login"])?;
+            let owner = owner.trim();
+            if owner.is_empty() {
+                return Err("无法读取当前 GitHub 用户。".to_string());
+            }
+            format!("{owner}/{repo_name}")
+        };
+        // Remote creation and lookup are network-only. Add the local Git remote later,
+        // under the vault write gate, instead of letting `gh --remote` mix both phases.
         run_gh_in(
+            &vault,
+            &["repo", "create", &qualified_repo_name, "--private"],
+        )?;
+        let protocol = run_gh_in(
+            &vault,
+            &["config", "get", "git_protocol", "--host", "github.com"],
+        )
+        .unwrap_or_else(|_| "https".to_string());
+        let remote_field = if protocol.trim() == "ssh" {
+            "sshUrl"
+        } else {
+            "url"
+        };
+        let remote_selector = format!(".{remote_field}");
+        let remote_url = run_gh_in(
             &vault,
             &[
                 "repo",
-                "create",
-                &repo_name,
-                "--private",
-                "--source",
-                ".",
-                "--remote",
-                "origin",
+                "view",
+                &qualified_repo_name,
+                "--json",
+                remote_field,
+                "--jq",
+                &remote_selector,
             ],
         )?;
+        let remote_url = remote_url.trim();
+        if remote_url.is_empty() {
+            return Err("GitHub 仓库已创建，但未能读取 remote URL。".to_string());
+        }
+        {
+            let _gate = lock_vault_gate(&vault);
+            if default_remote(&vault).is_some() {
+                return Err("当前 Vault 已经配置 Git remote。".to_string());
+            }
+            run_git(&vault, &["remote", "add", "origin", remote_url])?;
+        }
 
         if run_git(&vault, &["rev-parse", "--verify", "HEAD"]).is_ok() {
             push_vault(&vault)?;
@@ -1800,23 +1848,18 @@ async fn reveal_fragment_image_in_dir(app: tauri::AppHandle, path: String) -> Re
 }
 
 #[tauri::command]
-async fn save_recovery_key(path: String, recovery_key: String) -> Result<(), String> {
+async fn save_recovery_key(
+    app: tauri::AppHandle,
+    path: String,
+    recovery_key: String,
+) -> Result<(), String> {
     run_blocking(move || {
         if recovery_key.trim().is_empty() {
             return Err("恢复密钥不能为空".to_string());
         }
 
-        let path = PathBuf::from(path);
-        if path.as_os_str().is_empty() {
-            return Err("保存路径不能为空".to_string());
-        }
-        if path.is_dir() {
-            return Err("请选择文件保存路径，而不是文件夹。".to_string());
-        }
-
-        if let Some(parent) = path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
-            fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-        }
+        let vault = configured_vault_path(&app)?;
+        let path = external_save_target(Path::new(&path), &vault)?;
 
         let text = format!(
             "Shard 恢复密钥\n\n{recovery_key}\n\n这是唯一能保留密匣内容的重置凭据。Shard 不保存恢复密钥明文，关闭后不会再次显示。\n"
@@ -1827,30 +1870,45 @@ async fn save_recovery_key(path: String, recovery_key: String) -> Result<(), Str
 }
 
 #[tauri::command]
-async fn save_exported_image(path: String, bytes: Vec<u8>) -> Result<(), String> {
+async fn save_exported_image(
+    app: tauri::AppHandle,
+    path: String,
+    bytes: Vec<u8>,
+) -> Result<(), String> {
     run_blocking(move || {
         if bytes.is_empty() {
             return Err("图片内容为空".to_string());
         }
 
-        let path = PathBuf::from(path);
-        if path.as_os_str().is_empty() {
-            return Err("保存路径不能为空".to_string());
-        }
-        if path.is_dir() {
-            return Err("请选择文件保存路径，而不是文件夹。".to_string());
-        }
-
-        if let Some(parent) = path
-            .parent()
-            .filter(|parent| !parent.as_os_str().is_empty())
-        {
-            fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-        }
+        let vault = configured_vault_path(&app)?;
+        let path = external_save_target(Path::new(&path), &vault)?;
 
         fs::write(&path, bytes).map_err(|error| error.to_string())
     })
     .await
+}
+
+fn external_save_target(path: &Path, vault: &Path) -> Result<PathBuf, String> {
+    if !path.is_absolute() || path.file_name().is_none() {
+        return Err("保存路径无效".to_string());
+    }
+
+    let parent = path
+        .parent()
+        .ok_or_else(|| "保存目录不存在".to_string())?
+        .canonicalize()
+        .map_err(|_| "保存目录不存在".to_string())?;
+    let target = parent.join(path.file_name().expect("file name was checked above"));
+    let vault = vault.canonicalize().map_err(|error| error.to_string())?;
+    if target.starts_with(&vault) {
+        return Err("请选择资料库以外的保存位置".to_string());
+    }
+    if let Ok(metadata) = fs::symlink_metadata(&target) {
+        if !metadata.is_file() || metadata.file_type().is_symlink() {
+            return Err("保存目标不能是目录或符号链接".to_string());
+        }
+    }
+    Ok(target)
 }
 
 #[tauri::command]
@@ -2089,62 +2147,135 @@ async fn sync_vault(app: tauri::AppHandle) -> Result<GitInfo, String> {
             return Err("Git 未初始化。请先在 Vault 设置中初始化 Git。".to_string());
         }
 
-        push_vault(&vault)?;
+        let context = search_runtime::active_context(&vault);
+        run_sync_with_reconcile(
+            &vault,
+            context,
+            || push_vault(&vault),
+            |context| {
+                search_runtime::request_reconcile(
+                    context,
+                    search_contract::SearchScope::Public,
+                    search_contract::SearchRefresh::Reconcile,
+                );
+            },
+        )?;
         Ok(git_info(&vault))
     })
     .await
 }
 
+fn run_sync_with_reconcile<T, F, R>(
+    vault: &Path,
+    context: Option<search_contract::SearchContext>,
+    sync: F,
+    reconcile: R,
+) -> Result<T, String>
+where
+    F: FnOnce() -> Result<T, String>,
+    R: FnOnce(search_contract::SearchContext),
+{
+    let generation_before = search_runtime::write_generation(vault);
+    let result = sync();
+    let generation_changed = search_runtime::write_generation(vault) != generation_before;
+    if (result.is_ok() || generation_changed) && context.is_some() {
+        reconcile(context.expect("context was checked above"));
+    }
+    result
+}
+
 fn push_vault(vault: &Path) -> Result<(), String> {
-    let Some(remote) = default_remote(vault) else {
-        return Err("Git remote 未配置。请先在 ShardVault 中设置远端。".to_string());
-    };
-
-    // 网络探测放在门外：ls-remote 的延迟不该阻塞任何编辑保存。
     let branch = current_branch(vault);
-    let has_upstream = run_git(
+    let upstream_tracking_ref = run_git(
         vault,
-        &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+        &["rev-parse", "--symbolic-full-name", "@{u}"],
     )
-    .is_ok();
-    let remote_has_branch = if has_upstream {
-        true
+    .ok()
+    .map(|value| value.trim().to_string())
+    .filter(|value| !value.is_empty());
+    let has_upstream = upstream_tracking_ref.is_some();
+    let (remote, remote_ref, tracking_ref) = if let Some(tracking_ref) = upstream_tracking_ref {
+        let remote = run_git(
+            vault,
+            &["config", "--get", &format!("branch.{branch}.remote")],
+        )?
+        .trim()
+        .to_string();
+        let remote_ref = run_git(
+            vault,
+            &["config", "--get", &format!("branch.{branch}.merge")],
+        )?
+        .trim()
+        .to_string();
+        if remote.is_empty() || remote_ref.is_empty() {
+            return Err("Git upstream 配置不完整，请重新设置远端分支。".to_string());
+        }
+        (remote, remote_ref, tracking_ref)
     } else {
-        !run_git(vault, &["ls-remote", "--heads", &remote, &branch])
-            .unwrap_or_default()
-            .trim()
-            .is_empty()
+        let Some(remote) = default_remote(vault) else {
+            return Err("Git remote 未配置。请先在 ShardVault 中设置远端。".to_string());
+        };
+        (
+            remote.clone(),
+            format!("refs/heads/{branch}"),
+            format!("refs/remotes/{remote}/{branch}"),
+        )
     };
+    // Network transfer stays outside the write gate. Pin the advertised commit so a
+    // concurrent fetch cannot change what the later local rebase consumes.
+    let fetched_oid = fetch_remote_head(vault, &remote, &remote_ref)?;
+    if has_upstream && fetched_oid.is_none() {
+        return Err("Git upstream 分支不存在，请检查远端配置。".to_string());
+    }
 
-    {
-        // 本地临界段：提交与 pull --rebase 会改写工作树与索引，必须持门；
-        // pull 含网络传输，但 rebase 阶段与工作树不可分割，只能整体持门。
+    let push_oid = {
+        // Only local Git/worktree mutations are inside the gate.
         let _gate = lock_vault_gate(vault);
         ensure_no_unfinished_git_operation(vault)?;
         commit_all_if_dirty(vault, "sync local vault changes")?;
-        if has_upstream {
-            pull_rebase_autostash(vault, None)?;
-        } else if remote_has_branch {
-            pull_rebase_autostash(vault, Some((&remote, &branch)))?;
+        if let Some(oid) = fetched_oid.as_deref() {
+            run_git(vault, &["update-ref", &tracking_ref, oid])?;
+            rebase_onto_autostash(vault, oid)?;
         }
-    }
+        run_git(vault, &["rev-parse", "HEAD"])?.trim().to_string()
+    };
 
-    if has_upstream {
-        run_git(vault, &["push"])?;
-    } else {
-        run_git(vault, &["push", "-u", &remote, &branch])?;
+    let push_refspec = format!("{push_oid}:{remote_ref}");
+    run_git(vault, &["push", &remote, &push_refspec])?;
+    {
+        // Push the captured OID, then record exactly that remote state locally.
+        // A concurrent checkpoint after the first gate remains dirty for the next sync.
+        let upstream = format!("{remote}/{branch}");
+        let _gate = lock_vault_gate(vault);
+        run_git(vault, &["update-ref", &tracking_ref, &push_oid])?;
+        if !has_upstream {
+            run_git(
+                vault,
+                &["branch", "--set-upstream-to", &upstream, &branch],
+            )?;
+        }
     }
     Ok(())
 }
 
-fn pull_rebase_autostash(vault: &Path, target: Option<(&str, &str)>) -> Result<(), String> {
-    let mut args = vec!["pull", "--rebase", "--autostash"];
-    if let Some((remote, branch)) = target {
-        args.push(remote);
-        args.push(branch);
-    }
+fn fetch_remote_head(vault: &Path, remote: &str, remote_ref: &str) -> Result<Option<String>, String> {
+    let advertised = run_git(vault, &["ls-remote", "--heads", remote, remote_ref])
+        .map_err(|error| format_git_sync_error(&error))?;
+    let Some(oid) = advertised
+        .lines()
+        .find_map(|line| line.split_whitespace().next())
+        .filter(|oid| !oid.is_empty())
+        .map(ToString::to_string)
+    else {
+        return Ok(None);
+    };
+    run_git(vault, &["fetch", "--no-write-fetch-head", remote, &oid])
+        .map_err(|error| format_git_sync_error(&error))?;
+    Ok(Some(oid))
+}
 
-    match run_git(vault, &args) {
+fn rebase_onto_autostash(vault: &Path, oid: &str) -> Result<(), String> {
+    match run_git(vault, &["rebase", "--autostash", oid]) {
         Ok(_) => {
             if has_rebase_in_progress(vault) {
                 return Err("Git rebase 未完成。请先在 Vault 中解决冲突后再同步。".to_string());
@@ -2168,8 +2299,19 @@ fn pull_rebase_autostash(vault: &Path, target: Option<(&str, &str)>) -> Result<(
 
 fn ensure_vault_dirs(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     let vault = configured_vault_path(app)?;
-    ensure_vault_layout(&vault)?;
+    if !vault_layout_is_complete(&vault) {
+        let _gate = lock_vault_gate(&vault);
+        if !vault_layout_is_complete(&vault) {
+            ensure_vault_layout(&vault)?;
+        }
+    }
     Ok(vault)
+}
+
+fn vault_layout_is_complete(vault: &Path) -> bool {
+    ["fragments", "notes", "assets", "maps", ".shard"]
+        .iter()
+        .all(|directory| vault.join(directory).is_dir())
 }
 
 fn configured_vault_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
@@ -6187,6 +6329,7 @@ fn relative_path(vault: &Path, path: &Path) -> Result<String, String> {
 pub fn run() {
     tauri::Builder::default()
         .manage(Arc::new(Mutex::new(LockboxSession::default())))
+        .manage(search_runtime::managed_runtime())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
@@ -6271,6 +6414,33 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn external_save_target_rejects_vault_and_symlink_destinations() {
+        let directory = tempfile::tempdir().unwrap();
+        let vault = directory.path().join("vault");
+        let exports = directory.path().join("exports");
+        fs::create_dir_all(&vault).unwrap();
+        fs::create_dir_all(&exports).unwrap();
+
+        let outside = exports.join("share.png");
+        assert_eq!(
+            external_save_target(&outside, &vault).unwrap(),
+            exports.canonicalize().unwrap().join("share.png")
+        );
+        assert!(external_save_target(&vault.join("searchable.md"), &vault).is_err());
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::symlink;
+
+            let existing = vault.join("existing.md");
+            fs::write(&existing, "secret").unwrap();
+            let link = exports.join("linked.txt");
+            symlink(&existing, &link).unwrap();
+            assert!(external_save_target(&link, &vault).is_err());
+        }
+    }
 
     #[test]
     fn extracts_last_codex_agent_message_from_jsonl() {

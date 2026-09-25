@@ -106,7 +106,11 @@ pub async fn write_table_exchange_file(app: tauri::AppHandle, request: tauri::ip
     let encoded = request.headers().get("x-shard-export-path").and_then(|value| value.to_str().ok()).ok_or_else(|| io("缺少导出路径"))?;
     let path = decode_export_path(encoded)?; let bytes = raw_body(&request)?;
     background(move || {
-        let vault = crate::configured_vault_path(&app).ok();
+        let vault = match crate::configured_vault_path(&app) {
+            Ok(vault) => Some(vault),
+            Err(error) if error == "vault_not_configured" => None,
+            Err(error) => return Err(io(error)),
+        };
         write_export(&path, &bytes, vault.as_deref())
     }).await
 }
