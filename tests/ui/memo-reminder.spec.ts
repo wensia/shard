@@ -171,6 +171,12 @@ test.describe("备忘卡片提醒", () => {
     await expect(summary).toHaveText(/提醒时间\s*2026-09-30 --:--/)
     await expect(today).toHaveText("今")
     await expect(today).toHaveAttribute("aria-pressed", "false")
+    // 时间列可滚动但不显示滚动条（窄列里的滑块会压在选项上）。
+    const hourColumn = dialog.getByRole("group", { name: "小时" })
+    expect(await hourColumn.evaluate((node) => ({
+      scrollable: node.scrollHeight > node.clientHeight,
+      scrollbar: node.offsetWidth - node.clientWidth,
+    }))).toEqual({ scrollable: true, scrollbar: 0 })
     await dialog.getByRole("group", { name: "小时" }).getByRole("button", { name: "14", exact: true }).click()
     await expect(summary).toHaveText(/2026-09-30 14:--/)
     await expect(dialog.getByRole("button", { name: "确定", exact: true })).toBeDisabled()

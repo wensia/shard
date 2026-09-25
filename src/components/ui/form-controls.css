@@ -63,7 +63,9 @@
 .kiln-calendar-day[data-outside="true"][aria-current="date"]:not([aria-pressed="true"]) { background: transparent; color: color-mix(in srgb, var(--muted-foreground) 45%, transparent); font-weight: var(--weight-regular); }
 .kiln-time-input { font-variant-numeric: tabular-nums; }
 .kiln-time-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-2); }
-.kiln-time-column { position: relative; display: flex; flex-direction: column; gap: var(--space-1); min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+/* 时间列仍可滚轮 / 触控 / 键盘滚动，只隐藏滚动条：窄列里的滑块会压在选项上。 */
+.kiln-time-column { position: relative; display: flex; flex-direction: column; gap: var(--space-1); min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: none; }
+.kiln-time-column::-webkit-scrollbar { display: none; width: 0; height: 0; }
 .kiln-time-dialog-columns .kiln-time-column { max-height: calc(var(--control-height-sm) * 6 + var(--space-1) * 5); }
 .kiln-time-option { flex: none; width: 100%; font-weight: var(--weight-regular); font-variant-numeric: tabular-nums; }
 .kiln-time-option[aria-pressed="true"] { background: var(--primary); color: var(--primary-foreground); }
