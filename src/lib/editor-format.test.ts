@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 
-import { getTagRanges, type TagRange } from "@/lib/editor-format"
+import { getTagMarker, getTagRanges, type TagRange } from "@/lib/editor-format"
 
 describe("getTagRanges golden cases", () => {
   it.each<[string, TagRange[]]>([
@@ -18,5 +18,19 @@ describe("getTagRanges golden cases", () => {
     ["", []],
   ])("锁定 %#", (input, expected) => {
     expect(getTagRanges(input)).toEqual(expected)
+  })
+})
+
+describe("getTagMarker", () => {
+  it.each([
+    ["", "#"],
+    [" ", "#"],
+    ["，", "#"],
+    ["(", "#"],
+    ["文", " #"],
+    ["a", " #"],
+    ["匣", " #"],
+  ])("在 %j 之后插入标签写下 %j", (previous, expected) => {
+    expect(getTagMarker(previous)).toBe(expected)
   })
 })

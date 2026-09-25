@@ -161,6 +161,38 @@ export function resolveWikilinkTarget(
   return matches.length === 1 ? matches[0] : null
 }
 
+/** `[[` 建议一次最多给出的候选数，与 CM6 补全的 `slice(0, 12)` 同口径。 */
+export const WIKILINK_SUGGESTION_LIMIT = 12
+
+/**
+ * `[[查询` 的候选过滤：标签与目标拼起来做归一化 includes。
+ * 语义与 `createShardWikilinkCompletionSource` 一致，富文本与 CodeMirror 共用这一份。
+ */
+export function filterWikilinkCandidates(
+  candidates: readonly WikilinkCandidate[],
+  query: string,
+  limit: number = WIKILINK_SUGGESTION_LIMIT
+): WikilinkCandidate[] {
+  const normalized = normalizeWikilinkTarget(query)
+  const matched = normalized
+    ? candidates.filter((candidate) =>
+        normalizeWikilinkTarget(`${candidate.label} ${candidate.target}`).includes(
+          normalized
+        )
+      )
+    : [...candidates]
+
+  return matched.slice(0, Math.max(0, limit))
+}
+
+/** 候选右侧的类别徽标。 */
+export function wikilinkCandidateDetail(kind: WikilinkCandidate["kind"]) {
+  if (kind === "csv") return "CSV"
+  if (kind === "mindmap") return "思维导图"
+  if (kind === "note") return "笔记"
+  return "碎片"
+}
+
 export function normalizeWikilinkTarget(value: string) {
   return value.trim().normalize("NFKC").toLocaleLowerCase("zh-CN")
 }

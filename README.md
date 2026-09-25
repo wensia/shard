@@ -2,6 +2,8 @@
 
 Shard 是一个本地优先的桌面端 Markdown 片段捕捉应用，目前只发布 Apple Silicon macOS 安装包。
 
+> 产品方向（2026-09-15）：正在设计只围绕碎片的版本，移除资料库、思维导图、画布与内置多维表格等独立模块（大纲成为碎片内容类型之一，导图是其视图，见 docs/dev/product-framework.md），加入可组合的 Git / 飞书 / 夸克存储目标和 Hermes / OpenClaw 接入。详见 [设计方案](docs/dev/fragment-only-design.md) 与 [实施文档入口](docs/dev/README.md)。目前仅完成方案整理，相关代码移除、数据迁移及新同步能力尚未实施；下文仍描述现有版本。
+
 它借鉴了 [flomo](https://flomoapp.com/) 的核心心智：先把稍纵即逝的想法记下来，让碎片在时间流里自然沉淀，再在需要时回看、整理和连接。Shard 不是 flomo 的复刻，也与 flomo 没有关联；它把这个灵感收敛到本地优先、Markdown 优先、Git 可追踪的桌面工具里。
 
 ![Shard 主界面：片段捕捉、时间线、标签和 Git 状态](docs/design/shard-main-screen-concept.png)
@@ -133,6 +135,21 @@ source: desktop
 
 一个突然出现的产品想法 #product
 ```
+
+## 终端快捷创建
+
+```bash
+pnpm install:cli            # 构建并安装到 ~/.local/bin/shard（PREFIX 可覆盖）
+
+shard 今天心情很好
+shard #备忘 /任务列表 买咖啡   # 前导 #标签 与 /块命令，其余是正文
+pbpaste | shard #摘录          # 没有内容参数时读标准输入
+```
+
+- 块命令与编辑器 `/` 菜单同名（含拼音缩写）：`/任务列表` `/待办` `/备忘` → `- [ ]`，`/列表` → `-`，`/编号` → `1.`，`/引用` → `>`；多行内容每行一项。
+- 资料库依次取 `--vault`、`SHARD_VAULT`、App 设置里的资料库、`~/Documents/ShardVault`。
+- 只写文件（`source: cli`），提交交给 App 的检查点；App 运行中切回窗口即可看到新碎片。
+- bash 等把 `#` 当注释的 shell 里给标签加引号，或用全角 `＃备忘`。`#密匣` 只能在 App 中保存。
 
 ## Design
 

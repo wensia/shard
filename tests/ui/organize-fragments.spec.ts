@@ -128,7 +128,6 @@ async function installOrganizeMock(page: Page, mode: OrganizeMockMode) {
             })
           }
           if (command === "list_mind_maps") return []
-          if (command === "restore_window_frame") return null
           if (command === "sync_vault") {
             return {
               branch: "main",

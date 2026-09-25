@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test"
 
-import { fillEditor, readEditorSnapshot, selectRange } from "./editor-helpers"
+import { fillEditor, readEditorSnapshot, selectDocRange, selectEditorText } from "./editor-helpers"
 
 interface ScrollCounters {
   rootRenders: number
@@ -51,7 +51,6 @@ async function installScrollMock(page: Page) {
         if (command === "migrate_legacy_notes") return { tree: structuredClone(tree), migratedCount: 0 }
         if (command === "list_mind_maps" || command === "list_csv_files") return []
         if (command === "plugin:app|version") return "0.1.3"
-        if (command === "restore_window_frame") return null
         if (command === "sync_vault") return structuredClone(git)
         throw new Error(`Unexpected scroll regression command: ${command}`)
       } },
@@ -202,11 +201,11 @@ test("输入框已折叠后的连续真实下滚和上滚不重渲染工作区�
 })
 
 test("展开后下滚只折叠一次，重新展开可再次折叠且保留草稿与选区", async ({ page }, testInfo) => {
-  const editor = page.locator('[data-shard-editor="composer"] .cm-content')
+  const editor = page.locator('[data-shard-editor="composer"] .ProseMirror')
   const draft = "保留这段草稿，不要被折叠更改。\n第二行继续记录。"
   await editor.click()
   await fillEditor(page, "composer", draft)
-  await selectRange(page, "composer", 3, 9)
+  await selectEditorText(page, "composer", "草稿，不要被")
   await expect(composerFrame(page)).toHaveAttribute("data-expanded", "true")
   await settleGeometry(page)
   const expanded = await readGeometry(page)
@@ -227,7 +226,7 @@ test("展开后下滚只折叠一次，重新展开可再次折叠且保留草�
   expect(await readEditorSnapshot(page, "composer")).toEqual(original)
 
   await editor.click()
-  await selectRange(page, "composer", original.selectionStart, original.selectionEnd)
+  await selectDocRange(page, "composer", original.selectionStart, original.selectionEnd)
   await expect(composerFrame(page)).toHaveAttribute("data-expanded", "true")
   await settleGeometry(page)
   await startProbe(page)
@@ -241,9 +240,9 @@ test("展开后下滚只折叠一次，重新展开可再次折叠且保留草�
 })
 
 test("搜索定位远端碎片仅滚动时间线，不把程序导航当成用户下滚折叠输入框", async ({ page }, testInfo) => {
-  await page.locator('[data-shard-editor="composer"] .cm-content').click()
+  await page.locator('[data-shard-editor="composer"] .ProseMirror').click()
   await fillEditor(page, "composer", "定位过程中保留的合成草稿")
-  await selectRange(page, "composer", 2, 7)
+  await selectEditorText(page, "composer", "过程中保留")
   await expect(composerFrame(page)).toHaveAttribute("data-expanded", "true")
   await settleGeometry(page)
   const before = await readGeometry(page)

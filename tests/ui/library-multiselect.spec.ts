@@ -92,7 +92,6 @@ async function installSelectionMock(page: Page, extraFileCount = 0) {
           if (command === "migrate_legacy_notes") return { tree: snapshot(), migratedCount: 0 }
           if (command === "list_mind_maps" || command === "list_csv_files") return []
           if (command === "plugin:app|version") return "0.1.3-test"
-          if (command === "restore_window_frame") return null
           if (command === "sync_vault") return clone(git)
           if (command === "read_csv_file") return Array.from(new TextEncoder().encode("名称,状态\n测试,进行中"))
           if (command === "read_canvas") return { file: { nodes: [], edges: [] } }
@@ -339,7 +338,7 @@ for (const mode of ["列表", "宫格"] as const) {
 
     // 最后一项取消后普通单击恢复打开文件，不能停留在隐形多选状态。
     await entryButton(page, FILES[0]).click()
-    await expect(page.locator('[data-shard-editor="library:note-0"] .cm-content')).toBeVisible()
+    await expect(page.locator('[data-shard-editor="library:note-0"] .ProseMirror')).toBeVisible()
   })
 
   test(`${mode}底部批量操作栏显示隐藏不改变文件或操作按钮坐标`, async ({ page }) => {
@@ -497,7 +496,7 @@ test("改名输入框保留全选文字快捷键，切换目录清空原目录�
   await expect(page.getByText(/^已选 \d+ 项$/u)).toBeHidden()
   await expect(page.getByRole("button", { name: "多选文件", exact: true })).toBeVisible()
   await entryButton(page, "内页.md").click()
-  await expect(page.locator('[data-shard-editor="library:note-1"] .cm-content')).toBeVisible()
+  await expect(page.locator('[data-shard-editor="library:note-1"] .ProseMirror')).toBeVisible()
 })
 
 test("混合文件与整目录可批量移动，目录后代跟随且源目录不残留选中项", async ({ page }) => {
@@ -841,7 +840,7 @@ for (const mode of ["列表", "宫格"] as const) {
     await entryButton(page, FILES[0]).click({ button: "right" })
     await context.getByRole("menuitem", { name: "打开", exact: true }).click()
     await expect(context).toHaveCount(0)
-    const editor = page.locator('[data-shard-editor="library:note-0"] .cm-content')
+    const editor = page.locator('[data-shard-editor="library:note-0"] .ProseMirror')
     await expect(editor).toBeVisible()
     await expect(editor).toBeFocused()
     await expect(editor).toContainText("A 笔记")
@@ -892,7 +891,7 @@ test("空白菜单实际新建目录和笔记在关闭菜单后将焦点交给�
   await openBlankMenu()
   await context.getByRole("menuitem", { name: "新建文档", exact: true }).click()
   await expect(context).toHaveCount(0)
-  const editor = page.locator('[data-shard-editor="library:note-created"] .cm-content')
+  const editor = page.locator('[data-shard-editor="library:note-created"] .ProseMirror')
   await expect(editor).toBeVisible()
   await expect(editor).toBeFocused()
   await expect(editor).toContainText("未命名")

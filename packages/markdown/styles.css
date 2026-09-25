@@ -80,6 +80,31 @@
     opacity: var(--md-divider-opacity, 0.55);
   }
 
+  /* Consecutive task lines sit in one card; a memo (task with a note) is its
+     own card, checkbox and title on top, the note inside below the title. */
+  .shard-task-group,
+  .shard-task-memo {
+    display: block;
+    box-sizing: border-box;
+    padding: var(--md-space-2, 0.5rem) var(--md-space-3, 0.75rem);
+    border: 1px solid var(--md-border, color-mix(in srgb, currentColor 18%, transparent));
+    border-radius: var(--md-card-radius, var(--md-radius, 0.25rem));
+    background: var(--md-card, transparent);
+  }
+
+  .shard-task-group + .shard-task-group,
+  .shard-task-group + .shard-task-memo,
+  .shard-task-memo + .shard-task-group,
+  .shard-task-memo + .shard-task-memo { margin-top: var(--md-space-2, 0.5rem); }
+
+  .shard-task-memo-detail {
+    display: block;
+    margin-top: calc(var(--md-space-2, 0.5rem) / 2);
+    padding-inline-start: calc(1em + 2 * var(--md-space-2, 0.5rem));
+    color: var(--md-muted-foreground, inherit);
+    font-size: var(--md-detail-font-size, 0.875em);
+  }
+
   /* Align the marker to the capital height of the surrounding text. */
   .shard-task-marker {
     vertical-align: text-bottom;

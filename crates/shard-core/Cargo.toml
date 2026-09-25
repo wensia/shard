@@ -1,0 +1,15 @@
+[package]
+name = "shard-core"
+version = "0.1.3"
+description = "Vault 文件格式核心：碎片 frontmatter、标签规则与原子写。App 与 CLI 共用，不依赖 Tauri。"
+edition.workspace = true
+publish = false
+
+[dependencies]
+chrono = { workspace = true }
+rand = "0.8"
+serde = { workspace = true }
+serde_yaml = "0.9"
+
+[dev-dependencies]
+tempfile = "3"

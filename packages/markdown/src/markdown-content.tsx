@@ -9,6 +9,14 @@ export interface MarkdownImageRenderProps {
   lineIndex: number
 }
 
+export interface MarkdownFenceRenderProps {
+  language: string
+  /** Fence body without the opening and closing markers. */
+  code: string
+  /** Zero-based source line of the opening fence. */
+  lineIndex: number
+}
+
 export interface MarkdownContentProps {
   content: string
   className?: string
@@ -20,6 +28,8 @@ export interface MarkdownContentProps {
   renderInline?: (text: string) => ReactNode
   /** Return undefined when the source line does not match an embed. */
   renderEmbed?: (line: string) => ReactNode | undefined
+  /** Return undefined to keep a closed fence as its original source lines. */
+  renderFence?: (fence: MarkdownFenceRenderProps) => ReactNode | undefined
   loadingFallback?: ReactNode
   /** Worker errors fall back to escaped source text unless overridden. */
   errorFallback?: ReactNode
@@ -33,17 +43,52 @@ interface RenderedContentBlock {
 
 export function MarkdownContent({
   content, className, hideTags = false, onTaskToggle, renderImage, renderInline,
-  renderEmbed, loadingFallback = "加载中…", errorFallback,
+  renderEmbed, renderFence, loadingFallback = "加载中…", errorFallback,
 }: MarkdownContentProps) {
   const parsed = useMarkdown("content", content, hideTags, Boolean(renderImage))
   const result = parsed.result?.kind === "content" ? parsed.result : undefined
+  const blocks = result?.blocks
   const lastVisibleIndex = result?.lastVisibleIndex ?? -1
   const inline = renderInline ?? renderLiteralInline
   const taskToggleRef = useRef(onTaskToggle)
   useEffect(() => { taskToggleRef.current = onTaskToggle }, [onTaskToggle])
   const forwardTaskToggle = useCallback((lineIndex: number) => taskToggleRef.current?.(lineIndex), [])
   const taskToggle = onTaskToggle ? forwardTaskToggle : undefined
-  const render = useCallback((block: MarkdownContentBlock): RenderedContentBlock => {
+  const renderContentLine = useCallback((line: MarkdownContentLine): RenderedContentBlock => {
+    if (line.hidden) return { block: false, node: null }
+    return { block: false, node: <Fragment key={`line-${line.lineIndex}`}>
+      {renderLine(line, inline, renderImage, taskToggle)}
+      {line.lineIndex < lastVisibleIndex && !line.image ? "\n" : null}
+    </Fragment> }
+  }, [inline, lastVisibleIndex, taskToggle, renderImage])
+  const render = useCallback((block: MarkdownContentBlock, index: number): RenderedContentBlock => {
+    // Cards are block boxes that already end their line, so no trailing
+    // newline: one would render as an extra blank line below the card.
+    const memo = blocks ? memoAt(blocks, index) : null
+    if (memo) {
+      const [title, ...rest] = memo
+      const details = rest.filter((line) => !line.hidden && line.source.trim() !== "")
+      return { block: true, skipCount: memo.length - 1, node: <div
+        className="md-task-memo shard-task-memo" data-task-memo="true" key={`memo-${block.lineIndex}`}>
+        {renderLine(title, inline, renderImage, taskToggle)}
+        <div className="md-task-memo-detail shard-task-memo-detail">
+          {details.map((line, position) => <Fragment key={line.lineIndex}>
+            {line.task ? renderLine(line, inline, renderImage, taskToggle) : inline(line.display.replace(/^\s+/u, ""))}
+            {position < details.length - 1 ? "\n" : null}
+          </Fragment>)}
+        </div>
+      </div> }
+    }
+    const run = blocks ? taskRunAt(blocks, index) : []
+    if (run.length > 0) {
+      return { block: true, skipCount: run.length - 1, node: <div
+        className="md-task-group shard-task-group" key={`tasks-${block.lineIndex}`}>
+        {run.map((line, position) => <Fragment key={line.lineIndex}>
+          {renderLine(line, inline, renderImage, taskToggle)}
+          {position < run.length - 1 ? "\n" : null}
+        </Fragment>)}
+      </div> }
+    }
     const embed = renderEmbed?.(block.source)
     if (embed !== undefined) {
       return { block: true, node: <Fragment key={`embed-${block.lineIndex}`}>
@@ -56,12 +101,17 @@ export function MarkdownContent({
         {block.lineIndex + block.table.lineCount - 1 < lastVisibleIndex ? "\n" : null}
       </Fragment> }
     }
-    if (block.hidden) return { block: false, node: null }
-    return { block: false, node: <Fragment key={`line-${block.lineIndex}`}>
-      {renderLine(block, inline, renderImage, taskToggle)}
-      {block.lineIndex < lastVisibleIndex && !block.image ? "\n" : null}
-    </Fragment> }
-  }, [inline, lastVisibleIndex, taskToggle, renderEmbed, renderImage])
+    if (block.type === "fence") {
+      const fence = renderFence?.({ code: block.code, language: block.language, lineIndex: block.lineIndex })
+      // Declining the fence keeps every line of it exactly as before.
+      if (fence === undefined) return renderContentLine(block.line)
+      return { block: true, skipCount: block.lineCount - 1, node: <Fragment key={`fence-${block.lineIndex}`}>
+        {fence}
+        {block.lineIndex + block.lineCount - 1 < lastVisibleIndex ? "\n" : null}
+      </Fragment> }
+    }
+    return renderContentLine(block)
+  }, [blocks, inline, lastVisibleIndex, renderContentLine, renderEmbed, renderFence, renderImage, taskToggle])
   const rendered = useRenderedBlocks(result?.blocks, render, parsed.asynchronous, getSkippedLines)
   const error = parsed.error ?? rendered.error
   const loading = !error && !rendered.nodes
@@ -72,6 +122,47 @@ export function MarkdownContent({
     {error ? (errorFallback ?? content) : loading ? <span role="status">{loadingFallback}</span>
       : rendered.nodes?.map((entry) => entry.node)}
   </Root>
+}
+
+type TaskLine = MarkdownContentLine & { task: NonNullable<MarkdownContentLine["task"]> }
+
+function isTaskLine(block: MarkdownContentBlock | undefined): block is TaskLine {
+  return block?.type === "line" && !block.hidden && block.task !== null
+}
+
+function isLine(block: MarkdownContentBlock | undefined): block is MarkdownContentLine {
+  return block?.type === "line"
+}
+
+const INDENTED = /^\s+\S/u
+
+/**
+ * A memo card is a task line followed by an indented note: every following
+ * indented or blank line up to the last indented one, provided at least one of
+ * them is a note (not a nested task). Nested tasks alone keep the item a task.
+ */
+function memoAt(blocks: MarkdownContentBlock[], index: number): MarkdownContentLine[] | null {
+  if (!isTaskLine(blocks[index]) || INDENTED.test(blocks[index].source)) return null
+  let end = index
+  let hasNote = false
+  for (let cursor = index + 1; isLine(blocks[cursor]); cursor += 1) {
+    const line = blocks[cursor] as MarkdownContentLine
+    if (line.source.trim() === "") continue
+    if (!INDENTED.test(line.source)) break
+    end = cursor
+    if (!line.task) hasNote = true
+  }
+  return hasNote ? (blocks.slice(index, end + 1) as MarkdownContentLine[]) : null
+}
+
+/** Consecutive task lines render in one card, broken off before a memo card. */
+function taskRunAt(blocks: MarkdownContentBlock[], index: number): TaskLine[] {
+  const run: TaskLine[] = []
+  for (let cursor = index; isTaskLine(blocks[cursor]); cursor += 1) {
+    if (cursor > index && memoAt(blocks, cursor)) break
+    run.push(blocks[cursor] as TaskLine)
+  }
+  return run
 }
 
 function getSkippedLines(block: RenderedContentBlock) {

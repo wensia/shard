@@ -5,8 +5,14 @@ import { expect, test, type Page } from "@playwright/test"
 // 渲染结果而不是源码——五套竞争尺寸机制或散装 strokeWidth 一旦复活，
 // computed 值就会偏离 token 值。
 
+const DATATABLE_FRAGMENT = [
+  "```datatable",
+  '{ "title": "图标场景", "columns": [{ "key": "a", "label": "甲" }], "rows": [{ "a": "一" }] }',
+  "```",
+].join("\n")
+
 async function installIconMock(page: Page) {
-  await page.addInitScript(() => {
+  await page.addInitScript((datatable: string) => {
     const fragment = {
       id: "fragment-1",
       content: "图标系统回归片段",
@@ -22,6 +28,8 @@ async function installIconMock(page: Page) {
       pinned: false,
       related: [],
     }
+    // 数据表围栏块也要进图标回归网：它有自己的工具条与 14px 标题图标。
+    const datatableFragment = { ...fragment, content: datatable, id: "fragment-datatable", path: "fragments/2026/08/fragment-datatable.md" }
     const git = {
       branch: "main",
       shortCommit: "abc1234",
@@ -33,7 +41,7 @@ async function installIconMock(page: Page) {
     }
     const state = {
       vaultPath: "/tmp/shard-icon-test",
-      fragments: [fragment],
+      fragments: [fragment, datatableFragment],
       git,
       lockbox: {
         configured: false,
@@ -47,8 +55,8 @@ async function installIconMock(page: Page) {
       assets: [],
       trashEntries: [],
       fragmentStream: {
-        totalCount: 1,
-        years: [{ year: "2026", totalCount: 1, months: [{ month: "08", count: 1 }] }],
+        totalCount: 2,
+        years: [{ year: "2026", totalCount: 2, months: [{ month: "08", count: 2 }] }],
       },
     }
 
@@ -63,13 +71,12 @@ async function installIconMock(page: Page) {
           if (command === "migrate_legacy_notes") {
             return { tree: structuredClone(tree), migratedCount: 0 }
           }
-          if (command === "restore_window_frame") return null
           if (command === "sync_vault") return structuredClone(git)
           throw new Error(`Unhandled Tauri test command: ${command}`)
         },
       },
     })
-  })
+  }, DATATABLE_FRAGMENT)
 }
 
 test.beforeEach(async ({ page }) => {
@@ -113,6 +120,30 @@ test("片段菜单图标消费 sm 尺寸档与小尺寸补偿描边", async ({ p
     expect(m.width).toBe("14px")
     expect(m.height).toBe("14px")
     expect(m.stroke).toBe("1.75px")
+  }
+})
+
+test("数据表工具条消费 md 尺寸档，14px 标题图标走补偿描边", async ({ page }) => {
+  const block = page
+    .locator('[data-shard-fragment-id="fragment-datatable"] [data-datatable="block"]')
+  await expect(block).toBeVisible()
+
+  const metrics = await block.evaluate((element) => {
+    const read = (svg: Element) => {
+      const cs = getComputedStyle(svg)
+      return { width: cs.width, height: cs.height, stroke: cs.strokeWidth }
+    }
+    const title = element.querySelector("header > svg")!
+    const buttons = Array.from(element.querySelectorAll('[data-slot="button"] svg'))
+    return { title: read(title), buttons: buttons.map(read) }
+  })
+
+  expect(metrics.title).toEqual({ width: "14px", height: "14px", stroke: "1.75px" })
+  expect(metrics.buttons.length).toBeGreaterThan(0)
+  for (const metric of metrics.buttons) {
+    expect(metric.width).toBe("16px")
+    expect(metric.height).toBe("16px")
+    expect(metric.stroke).toBe("1.5px")
   }
 })
 

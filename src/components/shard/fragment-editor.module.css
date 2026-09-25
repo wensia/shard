@@ -19,6 +19,15 @@
   border-color: var(--shard-sapphire);
 }
 
+/* 大纲类型的编辑面：整篇正文就是这棵树，占满宿主给的高度。
+   OutlineComposer 的模块样式按速记框调好（4 行起、60vh 封顶），
+   这里只把禅模式的两处几何换成禅模式自己的尺寸，不改那个组件。 */
+.outlineSurfaceZen [data-capture-outline="editor"] {
+  max-height: none;
+  padding-inline: var(--zen-editor-inline-padding);
+  padding-block: var(--shard-space-4);
+}
+
 .zenFooter {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
@@ -42,7 +51,16 @@
 }
 
 @media (width < 48rem) {
-  .zenFooter {
+  /* 大纲类型的编辑面：整篇正文就是这棵树，占满宿主给的高度。
+   OutlineComposer 的模块样式按速记框调好（4 行起、60vh 封顶），
+   这里只把禅模式的两处几何换成禅模式自己的尺寸，不改那个组件。 */
+.outlineSurfaceZen [data-capture-outline="editor"] {
+  max-height: none;
+  padding-inline: var(--zen-editor-inline-padding);
+  padding-block: var(--shard-space-4);
+}
+
+.zenFooter {
     grid-template-columns: minmax(0, 1fr);
   }
 

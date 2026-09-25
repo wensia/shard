@@ -1,0 +1,9 @@
+/* CM6 块级 replace 自己参与文档流；宽度交给 .cm-content，只负责撤掉编辑器的 pre-wrap。 */
+.widget {
+  display: block;
+  box-sizing: border-box;
+  min-width: 0;
+  width: 100%;
+  margin-block: var(--space-2);
+  white-space: normal;
+}

@@ -2,12 +2,12 @@
   "before": {
     "composer": {
       "top": 32,
-      "bottom": 223,
+      "bottom": 173,
       "left": 16,
       "right": 624
     },
     "firstCard": {
-      "top": 239,
+      "top": 189,
       "left": 16,
       "right": 624
     },

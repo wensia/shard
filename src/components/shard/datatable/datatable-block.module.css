@@ -1,0 +1,454 @@
+/* 数据表围栏块。几何与配色全部消费 Kiln token；表格排版口径对齐
+ * csv-preview.module.css，这样同一张碎片里 CSV 预览与数据表看起来是一家的。 */
+
+.block {
+  --datatable-line: color-mix(in srgb, var(--border) var(--shard-alpha-55), transparent);
+  --datatable-tint: color-mix(in srgb, var(--muted) var(--shard-alpha-34), var(--card));
+
+  display: block;
+  box-sizing: border-box;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--card);
+  color: var(--card-foreground);
+  font-size: var(--text-body);
+  line-height: var(--leading-normal);
+  white-space: normal;
+}
+
+/* 头部是一条安静的标题带：标题 + 行数，工具只在悬停或聚焦时出现，
+ * 排序/分组/搜索生效时常驻（对齐 Craft Agents 的 MarkdownDatatableBlock）。 */
+.header {
+  display: flex;
+  min-height: var(--control-height-sm);
+  align-items: center;
+  gap: var(--space-2);
+  border-bottom: 1px solid var(--datatable-line);
+  padding: var(--space-1) var(--space-1) var(--space-1) var(--space-3);
+  background: var(--datatable-tint);
+}
+
+/* 14px 档按 design.md 走光学补偿描边；只改变量，不新写 stroke-width 规则。 */
+.titleIcon {
+  --shard-icon-stroke: var(--shard-icon-stroke-sm);
+
+  flex-shrink: 0;
+  width: var(--shard-icon-size-sm);
+  height: var(--shard-icon-size-sm);
+  color: var(--muted-foreground);
+}
+
+.title {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted-foreground);
+  font-size: var(--text-meta);
+  font-weight: var(--weight-medium);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.meta {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted-foreground);
+  font-size: var(--text-tiny);
+  font-variant-numeric: tabular-nums;
+  opacity: var(--shard-alpha-55);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.controls {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-1);
+  margin-inline-start: auto;
+  transition: opacity 120ms ease;
+}
+
+.block[data-view-active="false"] > .header .controls {
+  opacity: 0;
+}
+
+.block:hover > .header .controls,
+.block:focus-within > .header .controls,
+.block .controls:has([data-popup-open]) {
+  opacity: 1;
+}
+
+.search {
+  width: calc(var(--space-8) * 2.5);
+  min-width: 0;
+  height: calc(var(--control-height-sm) - var(--space-1));
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  background: var(--card);
+  padding-inline: var(--space-2);
+  color: var(--foreground);
+  font: inherit;
+  font-size: var(--text-meta);
+  outline: none;
+}
+
+.search::placeholder {
+  color: var(--muted-foreground);
+}
+
+.search:focus {
+  border-color: var(--border-visible);
+}
+
+.controlButton {
+  color: var(--muted-foreground);
+}
+
+.scroll {
+  display: block;
+  max-width: 100%;
+  max-height: calc(var(--table-row-height) * 10);
+  overflow: auto;
+  overscroll-behavior: none;
+}
+
+.table {
+  width: max-content;
+  min-width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+.table th {
+  position: sticky;
+  z-index: 1;
+  top: 0;
+  border-bottom: 1px solid var(--datatable-line);
+  background: var(--card);
+  padding: 0;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.table th[data-align="right"] .headerButton {
+  justify-content: flex-end;
+}
+
+.table th[data-align="center"] .headerButton {
+  justify-content: center;
+}
+
+.headerButton {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: var(--space-1);
+  border: 0;
+  background: transparent;
+  padding: var(--space-2) var(--space-3);
+  color: var(--muted-foreground);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--text-meta);
+  font-weight: var(--weight-medium);
+  transition: color 120ms ease;
+}
+
+.headerButton:hover {
+  color: var(--foreground);
+}
+
+.headerLabel {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sortMark {
+  flex-shrink: 0;
+  width: var(--space-3);
+  height: var(--space-3);
+  opacity: var(--shard-alpha-21);
+}
+
+.headerButton:hover .sortMark {
+  opacity: var(--shard-alpha-55);
+}
+
+.headerButton[data-direction="asc"] .sortMark,
+.headerButton[data-direction="desc"] .sortMark {
+  color: var(--primary);
+  opacity: 1;
+}
+
+/* 只画横向细线，不画列线；末行交给外框收边。 */
+.table tbody tr {
+  transition: background-color 120ms ease;
+}
+
+.table tbody tr:hover {
+  background: var(--datatable-tint);
+}
+
+.cell {
+  border-bottom: 1px solid var(--datatable-line);
+  padding: 0;
+  vertical-align: middle;
+}
+
+.table tbody tr:last-child > .cell {
+  border-bottom: 0;
+}
+
+.cell[data-align="right"] {
+  text-align: right;
+}
+
+.cell[data-align="center"] {
+  text-align: center;
+}
+
+.cellText {
+  display: block;
+  padding: var(--space-2) var(--space-3);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.cellInput {
+  display: block;
+  width: 100%;
+  min-width: calc(var(--space-8) * 3);
+  border: 0;
+  background: transparent;
+  padding: var(--space-2) var(--space-3);
+  color: inherit;
+  font: inherit;
+  outline: none;
+  text-align: inherit;
+}
+
+.cellInput:focus {
+  background: var(--card);
+  box-shadow: inset 0 0 0 1px var(--border-visible);
+}
+
+.groupCell {
+  border-bottom: 1px solid var(--datatable-line);
+  padding: 0;
+  background: var(--datatable-tint);
+}
+
+.groupButton {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: var(--space-2);
+  border: 0;
+  background: transparent;
+  padding: var(--space-2) var(--space-3);
+  color: var(--muted-foreground);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--text-meta);
+  font-weight: var(--weight-medium);
+  text-align: left;
+}
+
+.groupButton:hover {
+  color: var(--foreground);
+}
+
+.groupChevron {
+  --shard-icon-stroke: var(--shard-icon-stroke-sm);
+
+  flex-shrink: 0;
+  width: var(--shard-icon-size-sm);
+  height: var(--shard-icon-size-sm);
+  transition: transform 120ms ease;
+}
+
+.groupChevron[data-expanded="true"] {
+  transform: rotate(90deg);
+}
+
+.groupCount {
+  color: var(--muted-foreground);
+  font-size: var(--text-tiny);
+  opacity: var(--shard-alpha-55);
+}
+
+/* ---- 可编辑表的增删入口：平时收起，悬停所在行/列头时浮现 ---- */
+
+.headerCell {
+  display: flex;
+  align-items: center;
+}
+
+.headerCell > .headerButton {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.columnMenuButton,
+.columnAdd,
+.rowAction {
+  --shard-icon-stroke: var(--shard-icon-stroke-sm);
+
+  display: inline-flex;
+  flex-shrink: 0;
+  width: var(--space-6);
+  height: var(--space-6);
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  padding: 0;
+  color: var(--muted-foreground);
+  cursor: pointer;
+  transition:
+    opacity 120ms ease,
+    background-color 120ms ease,
+    color 120ms ease;
+}
+
+.columnMenuButton svg,
+.columnAdd svg,
+.rowAction svg,
+.rowAdd svg {
+  width: var(--shard-icon-size-sm);
+  height: var(--shard-icon-size-sm);
+}
+
+.columnMenuButton:hover,
+.columnAdd:hover,
+.rowAction:hover {
+  background: var(--datatable-tint);
+  color: var(--foreground);
+}
+
+.rowAction:hover {
+  color: var(--destructive);
+}
+
+.columnMenuButton {
+  margin-inline-end: var(--space-1);
+  opacity: 0;
+}
+
+.rowAction {
+  opacity: 0;
+}
+
+.table th:hover .columnMenuButton,
+.columnMenuButton:focus-visible,
+.columnMenuButton[data-popup-open],
+.table tbody tr:hover .rowAction,
+.rowAction:focus-visible {
+  opacity: 1;
+}
+
+.actionCell {
+  position: sticky;
+  z-index: 1;
+  top: 0;
+  width: var(--space-8);
+  border-bottom: 1px solid var(--datatable-line);
+  padding: 0 var(--space-1);
+  text-align: center;
+  vertical-align: middle;
+}
+
+.table tbody .actionCell {
+  position: static;
+}
+
+.table thead .actionCell {
+  background: var(--card);
+}
+
+.table tbody tr:last-child > .actionCell {
+  border-bottom: 0;
+}
+
+.columnNameInput {
+  display: block;
+  width: 100%;
+  min-width: calc(var(--space-8) * 3);
+  border: 0;
+  background: var(--card);
+  box-shadow: inset 0 0 0 1px var(--border-visible);
+  padding: var(--space-2) var(--space-3);
+  color: var(--foreground);
+  font: inherit;
+  font-size: var(--text-meta);
+  font-weight: var(--weight-medium);
+  outline: none;
+}
+
+.table tfoot td {
+  border-top: 1px solid var(--datatable-line);
+  padding: 0;
+}
+
+.rowAdd {
+  --shard-icon-stroke: var(--shard-icon-stroke-sm);
+
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: var(--space-1);
+  border: 0;
+  background: transparent;
+  padding: var(--space-2) var(--space-3);
+  color: var(--muted-foreground);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--text-meta);
+  transition:
+    background-color 120ms ease,
+    color 120ms ease;
+}
+
+.rowAdd:hover {
+  background: var(--datatable-tint);
+  color: var(--foreground);
+}
+
+.empty,
+.status {
+  padding: var(--space-4) var(--space-3);
+  color: var(--muted-foreground);
+  font-size: var(--text-meta);
+  text-align: center;
+}
+
+.rawSource {
+  margin: 0;
+  max-height: calc(var(--table-row-height) * 6);
+  overflow: auto;
+  padding: var(--space-3);
+  color: var(--muted-foreground);
+  font-size: var(--text-meta);
+  white-space: pre-wrap;
+}
+
+.fullscreen {
+  width: calc(100vw - var(--space-8));
+  max-width: calc(100vw - var(--space-8));
+  height: calc(100dvh - var(--space-8));
+  max-height: calc(100dvh - var(--space-8));
+  gap: var(--space-3);
+}
+
+.fullscreenScroll {
+  min-height: 0;
+  flex: 1 1 0%;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+}

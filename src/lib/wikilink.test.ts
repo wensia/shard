@@ -3,8 +3,11 @@ import { describe, expect, it } from "vitest"
 import {
   buildCsvWikilinkCandidates,
   buildMindMapWikilinkCandidates,
+  filterWikilinkCandidates,
   parseWikilinks,
   resolveWikilinkTarget,
+  wikilinkCandidateDetail,
+  type WikilinkCandidate,
 } from "@/lib/wikilink"
 
 describe("parseWikilinks", () => {
@@ -99,5 +102,47 @@ describe("buildMindMapWikilinkCandidates", () => {
       link.target,
       buildMindMapWikilinkCandidates(maps)
     )).toMatchObject({ kind: "mindmap", path: "maps/project.shardmap.json" })
+  })
+})
+
+describe("filterWikilinkCandidates", () => {
+  const candidates: WikilinkCandidate[] = [
+    { fragmentId: "f1", kind: "fragment", label: "可定位的碎片摘要", matchKeys: [], target: "碎片-42" },
+    { fragmentId: "n1", kind: "note", label: "目标笔记", matchKeys: [], target: "目标笔记" },
+    { kind: "mindmap", label: "季度导图", matchKeys: [], path: "maps/季度.md", target: "季度导图" },
+    { kind: "csv", label: "small.csv", matchKeys: [], path: "data/small.csv", target: "data/small.csv" },
+  ]
+
+  it("空 query 返回全部候选", () => {
+    expect(filterWikilinkCandidates(candidates, "")).toHaveLength(4)
+    expect(filterWikilinkCandidates(candidates, "   ")).toHaveLength(4)
+  })
+
+  it("标签与目标一起参与匹配，忽略大小写与全角差异", () => {
+    expect(filterWikilinkCandidates(candidates, "目标").map((item) => item.target)).toEqual([
+      "目标笔记",
+    ])
+    expect(filterWikilinkCandidates(candidates, "SMALL.CSV").map((item) => item.target)).toEqual([
+      "data/small.csv",
+    ])
+    expect(filterWikilinkCandidates(candidates, "碎片-42").map((item) => item.target)).toEqual([
+      "碎片-42",
+    ])
+  })
+
+  it("无匹配返回空数组，超过上限时截断", () => {
+    expect(filterWikilinkCandidates(candidates, "不存在")).toEqual([])
+    expect(filterWikilinkCandidates(candidates, "", 2)).toHaveLength(2)
+  })
+})
+
+describe("wikilinkCandidateDetail", () => {
+  it.each([
+    ["csv", "CSV"],
+    ["mindmap", "思维导图"],
+    ["note", "笔记"],
+    ["fragment", "碎片"],
+  ] as const)("%s 的徽标是 %s", (kind, detail) => {
+    expect(wikilinkCandidateDetail(kind)).toBe(detail)
   })
 })

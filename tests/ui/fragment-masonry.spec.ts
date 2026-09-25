@@ -2,7 +2,7 @@ import { mkdirSync, writeFileSync } from "node:fs"
 
 import { expect, test, type Page } from "@playwright/test"
 
-import { fillEditor, readEditor, readEditorSnapshot, selectRange } from "./editor-helpers"
+import { fillEditor, readEditor, readEditorSnapshot, selectEditorText } from "./editor-helpers"
 import { applyFragmentTag, openFragmentFilters } from "./fragment-filter-helpers"
 import { selectOption } from "./select-helpers"
 
@@ -66,7 +66,6 @@ async function installMasonryMock(page: Page, count = 18) {
             return { tree: structuredClone(tree), migratedCount: 0 }
           }
           if (command === "list_mind_maps" || command === "list_csv_files") return []
-          if (command === "restore_window_frame") return null
           if (command === "sync_vault") return structuredClone(git)
           throw new Error(`Unexpected Tauri command in masonry test: ${command}`)
         },
@@ -368,15 +367,18 @@ test("编辑中的卡片跨单双列切换保留同一编辑器、草稿和选�
   await card.getByRole("button", { name: "片段操作", exact: true }).click()
   await page.getByRole("menuitem", { name: "编辑", exact: true }).click()
   const editorId = "fragment:masonry-1"
-  const editor = page.locator(`[data-shard-editor="${editorId}"] .cm-content`)
+  const editor = page.locator(`[data-shard-editor="${editorId}"] .ProseMirror`)
   await expect(editor).toBeFocused()
   const initialHeight = (await card.boundingBox())!.height
-  const draft = "未保存的长文草稿\n\n" + "编辑期间宽度变化仍应保留正文。\n\n".repeat(22)
+  // 富文本序列化会去掉文末空段，草稿不以空行结尾，才能逐字比较往返结果。
+  const draft = ["未保存的长文草稿", ...Array(22).fill("编辑期间宽度变化仍应保留正文。")].join("\n\n")
   await fillEditor(page, editorId, draft)
   // 不改变窗口，真实编辑内容变高后仍应由观察器重新排布相邻卡片。
   await expect.poll(async () => (await card.boundingBox())!.height)
     .toBeGreaterThan(initialHeight + 300)
-  await selectRange(page, editorId, 2, 6)
+  await selectEditorText(page, editorId, "保存的长")
+  const originalSelection = await readEditorSnapshot(page, editorId)
+  expect(originalSelection.selectionEnd - originalSelection.selectionStart).toBe(4)
   const originalEditor = await editor.elementHandle()
   expect(originalEditor).not.toBeNull()
   await expectPackedLayout(page)
@@ -388,7 +390,7 @@ test("编辑中的卡片跨单双列切换保留同一编辑器、草稿和选�
     expect(await originalEditor!.evaluate((element) => element.isConnected)).toBe(true)
     await expect(editor).toBeFocused()
     expect(await readEditor(page, editorId)).toBe(draft)
-    expect(await readEditorSnapshot(page, editorId)).toMatchObject({ selectionStart: 2, selectionEnd: 6 })
+    expect(await readEditorSnapshot(page, editorId)).toEqual(originalSelection)
     await expectPackedLayout(page)
   }
   const calls = await page.evaluate(() => (

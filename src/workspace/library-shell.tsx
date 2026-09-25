@@ -63,12 +63,10 @@ import { TableWorkspace, type TableWorkspaceHandle } from "@/features/tables/tab
 import { TableImportDialog } from "@/features/tables/exchange-dialog"
 import { createTable, type CreateTableRequest } from "@/features/tables/api"
 import { createTableId, type TableContent, type TableReadResult } from "@/features/tables/model"
-import { ShardEditor, type ShardEditorHandle } from "@/editor/shard-editor"
-import { createShardTagAutocomplete } from "@/editor/extensions/tag-autocomplete"
 import {
-  createShardWikilinkCompletionSource,
-  createShardWikilinkExtension,
-} from "@/editor/extensions/wikilink"
+  ShardRichEditor,
+  type ShardRichEditorHandle,
+} from "@/editor-rich/ShardRichEditor"
 import {
   createLibraryDirectory,
   createLibraryNote,
@@ -86,7 +84,6 @@ import {
   renameLibraryEntry,
   restoreFromTrash,
 } from "@/lib/api"
-import { createShardDocumentLinkExtension } from "@/editor/extensions/document-link"
 import { deriveKind } from "@/lib/content-kind"
 import { extractTags, normalizeTagList } from "@/lib/editor-format"
 import { libraryEntryName, libraryNameError, type LibrarySort } from "@/lib/library-entry"
@@ -97,6 +94,8 @@ import {
   buildCsvWikilinkCandidates,
   buildMindMapWikilinkCandidates,
   buildWikilinkCandidates,
+  isCsvWikilinkTarget,
+  resolveWikilinkTarget,
 } from "@/lib/wikilink"
 import type {
   ShardDocumentLink,
@@ -235,7 +234,7 @@ export function LibraryShell({
   )
   const [selection, setSelection] = useState<LibrarySelection>(() => readLibrarySelection(vaultPath))
   const [pendingIndexPath, setPendingIndexPath] = useState<string | null>(null)
-  const noteEditor = useRef<ShardEditorHandle>(null)
+  const richNoteEditor = useRef<ShardRichEditorHandle>(null)
   const tableHandle = useRef<TableWorkspaceHandle>(null)
   const canvasHandle = useRef<CanvasWorkspaceHandle>(null)
   const mindMapHandle = useRef<MindMapCanvasHandle>(null)
@@ -403,42 +402,6 @@ export function LibraryShell({
   knownTagsRef.current = normalizedKnownTags
   wikilinkCandidatesRef.current = wikilinkCandidates
   wikilinkNavigateRef.current = onNavigateToFragment
-  const wikilinkCompletionSource = useMemo(
-    () =>
-      createShardWikilinkCompletionSource({
-        getCandidates: () => wikilinkCandidatesRef.current,
-      }),
-    []
-  )
-  const tagAutocompleteExtension = useMemo(
-    () =>
-      createShardTagAutocomplete({
-        additionalSources: [wikilinkCompletionSource],
-        getKnownTags: () => knownTagsRef.current,
-      }),
-    [wikilinkCompletionSource]
-  )
-  const wikilinkExtension = useMemo(
-    () =>
-      createShardWikilinkExtension({
-        getCandidates: () => wikilinkCandidatesRef.current,
-        maxCsvRows: 50,
-        onMissingTarget: (target) =>
-          toast(`待建链接「${target}」尚不存在，可在资料库新建文档`),
-        onNavigate: (fragmentId) =>
-          wikilinkNavigateRef.current?.(fragmentId),
-        onNavigateToMindMap: (path) => void selectMindMap(path),
-      }),
-    [wikilinkCandidates]
-  )
-  const documentNavigateRef = useRef(openCanvasLink)
-  documentNavigateRef.current = openCanvasLink
-  const documentLinkExtension = useMemo(() => createShardDocumentLinkExtension(link => void documentNavigateRef.current(link)), [])
-  const editorExtensions = useMemo(
-    () => [tagAutocompleteExtension, wikilinkExtension, documentLinkExtension],
-    [tagAutocompleteExtension, wikilinkExtension, documentLinkExtension]
-  )
-
   draftRef.current = draft
   selectedNoteRef.current = selectedNote
 
@@ -447,9 +410,11 @@ export function LibraryShell({
     isLockbox: selectedNote?.lockbox,
     onUploaded: ({ alt, path, previewUrl }) => {
       const imageMarkdown = `![${escapeMarkdownImageAlt(alt)}](${path})`
+      // 空行分隔：图片附件按方言要独占一个块（技术方案 §3）。只隔一个换行时，
+      // 正文末尾若是列表或段落，图片会被当成它的续行。
       const nextDraft = [draftRef.current.trimEnd(), imageMarkdown]
         .filter(Boolean)
-        .join("\n")
+        .join("\n\n")
       draftRef.current = nextDraft
       setDraft(nextDraft)
       setSaveState(
@@ -553,7 +518,10 @@ export function LibraryShell({
       }
 
       const note = selectedNoteRef.current
-      const content = draftRef.current
+      // 落盘取编辑器的收敛视图：手打的 `#标签` 还没跟空格时，onChange 缓存的
+      // 草稿里是字面转义 `\#标签`。peek 只算不改，用户可以接着打字；宿主刚写入
+      // 编辑器还没接到的内容（图片附件）时它原样返回草稿。
+      const content = richNoteEditor.current?.peekMarkdown(draftRef.current) ?? draftRef.current
       if (!note || content === lastSavedContentRef.current) {
         setSaveState("saved")
         return true
@@ -702,8 +670,44 @@ export function LibraryShell({
     setIsZen(false)
     setMobilePane("editor")
     if (edit) window.requestAnimationFrame(() => {
-      if (selectedNoteRef.current?.id === noteId) noteEditor.current?.focus()
+      if (selectedNoteRef.current?.id === noteId) focusNoteEditor()
     })
+  }
+
+  function focusNoteEditor() {
+    richNoteEditor.current?.focus()
+  }
+
+  /**
+   * 富文本双链芯片的点击：分派规则——
+   * CSV 交给系统打开，导图切到画布，碎片 / 笔记走宿主导航，待建只提示。
+   */
+  function navigateWikilink(target: string) {
+    const candidate = resolveWikilinkTarget(target, wikilinkCandidatesRef.current)
+    const csvPath =
+      candidate?.kind === "csv"
+        ? candidate.path
+        : isCsvWikilinkTarget(target)
+          ? target
+          : undefined
+    if (csvPath) {
+      void openCsvFile(csvPath).catch((error) => {
+        toast.error(`打开 CSV 失败：${getApiErrorMessage(error)}`, { duration: Infinity })
+      })
+      return
+    }
+
+    if (candidate?.kind === "mindmap" && candidate.path) {
+      void selectMindMap(candidate.path)
+      return
+    }
+
+    if (candidate?.fragmentId) {
+      wikilinkNavigateRef.current?.(candidate.fragmentId)
+      return
+    }
+
+    toast(`待建链接「${target}」尚不存在，可在资料库新建文档`)
   }
 
   useEffect(() => {
@@ -1510,13 +1514,15 @@ export function LibraryShell({
     if (selectedNote) {
       return (
         <div className={zen ? styles.zenNoteViewport : styles.editorViewport}>
-          <ShardEditor
-            ref={noteEditor}
+          <ShardRichEditor
+            ref={richNoteEditor}
             ariaLabel="资料库文档编辑器"
             autoFocus={zen || mobilePane === "editor"}
-            documentKey={selectedNote.id}
             editorId={`library:${selectedNote.id}`}
-            extensions={editorExtensions}
+            getKnownTags={() => knownTagsRef.current}
+            getWikilinkCandidates={() => wikilinkCandidatesRef.current}
+            // 换一篇文档就换一个编辑器实例：正文与撤销历史一起重置。
+            key={selectedNote.id}
             onChange={(content) => {
               setDraft(content)
               draftRef.current = content
@@ -1525,12 +1531,20 @@ export function LibraryShell({
               )
             }}
             onDropFiles={(files) => void uploadPastedImages(files)}
+            // ProseMirror 对 Esc 一律 preventDefault，ZenSurface 挂在 window 上的
+            // 监听因此等不到这个键；由编辑器转交回宿主（见 shard-host.ts）。
+            onEscape={zen ? () => setIsZen(false) : undefined}
+            onImageFiles={(files) => void uploadPastedImages(files)}
+            onNavigateWikilink={navigateWikilink}
+            onOpenDocumentLink={(link) => void openCanvasLink(link)}
             onPasteFiles={(files) => void uploadPastedImages(files)}
             onSubmit={() => void saveCurrentNote()}
             placeholder="开始写文档…"
             readOnly={interactionBlocked || tableStructureBusy || busyAction !== null}
+            // 资料库里全是文档：工具集合按文档档开放（产品框架 §2）。
+            tier="document"
             value={draft}
-            variant={zen ? "zen" : "inline"}
+            variant="library"
           />
         </div>
       )

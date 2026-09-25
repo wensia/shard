@@ -1,4 +1,4 @@
-import { deriveKind, deriveNoteTitle } from "@/lib/content-kind"
+import { deriveKind, deriveNoteTitle, isStreamKind } from "@/lib/content-kind"
 import type { Fragment, LibraryTreeEntry } from "@/types"
 
 export interface FragmentFilters {
@@ -10,7 +10,8 @@ export interface FragmentFilters {
 export const EMPTY_FRAGMENT_FILTERS: FragmentFilters = { tag: null, month: null, pinned: false }
 
 export function isPublicStreamFragment(fragment: Fragment) {
-  return !fragment.archived && !fragment.lockbox && deriveKind(fragment.tags) === "fragment"
+  // 碎片、大纲、文档同在一条时间线（产品框架 §3）；资料库笔记仍归资料库。
+  return !fragment.archived && !fragment.lockbox && isStreamKind(deriveKind(fragment.tags))
 }
 
 export function matchesFragmentFilters(fragment: Fragment, filters: FragmentFilters) {

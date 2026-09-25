@@ -2,8 +2,11 @@ import type { CSSProperties } from "react"
 
 import { FragmentContent } from "@/components/shard/fragment-content"
 import { containsMarkdownBlocks } from "@shard/markdown"
+import { hasBlockUI } from "@/editor-rich/blocks/registry-ui"
 import { cn } from "@/lib/utils"
 import { parseWikilinks } from "@/lib/wikilink"
+
+const FENCE_OPEN_PATTERN = /^```(\S*)\s*$/
 
 interface FragmentBodyProps {
   as?: "div" | "p"
@@ -47,8 +50,10 @@ export function FragmentBody({
   const bodyClassName = cn("shard-memo-body", className)
   const bodyStyle: CSSProperties = { whiteSpace: "pre-wrap" }
   // <table> 不能合法嵌在 <p> 里，含表格时容器降级为 div；
-  // 其余情况保持原有的段落语义。
+  // 注册过的围栏块渲染成 <section>，同理；其余情况保持原有的段落语义。
   const hasBlockContent = containsMarkdownBlocks(content, (line) => {
+    const fence = FENCE_OPEN_PATTERN.exec(line)
+    if (fence && hasBlockUI(fence[1])) return true
     const trimmed = line.trim()
     const links = parseWikilinks(trimmed)
     return links.length === 1 && Boolean(links[0].embed) && links[0].to === trimmed.length

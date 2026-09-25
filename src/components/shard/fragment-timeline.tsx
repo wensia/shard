@@ -257,10 +257,11 @@ export function FragmentTimeline({
 
   // Navigation runs after measured geometry is applied. Keep its target until
   // scrolling settles, so late image/editor resizes can re-align it first.
-  function handleTimelineLayout() {
+  function handleTimelineLayout(beforeNavigate: () => void) {
     if (!scrollToFragmentId && restorePositionRef.current !== null && !isLoading) {
       const viewport = viewportRef.current
       if (viewport) {
+        beforeNavigate()
         suppressLayoutScroll()
         viewport.scrollTop = restorePositionRef.current
         lastScrollTopRef.current = viewport.scrollTop
@@ -270,6 +271,7 @@ export function FragmentTimeline({
     }
     if (!scrollToFragmentId || isLoading
       || completedScrollTargetRef.current === scrollToFragmentId) return false
+    beforeNavigate()
     return scrollFragmentIntoViewport(
       viewportRef.current,
       scrollToFragmentId,
@@ -471,7 +473,9 @@ export function FragmentTimeline({
           >
             正在读取 Shard vault...
           </div>
-        ) : timelineItems.length === 0 ? (
+        ) : (
+          <>
+          {timelineItems.length === 0 ? (
           <div
             className="flex h-full items-center justify-center gap-3"
             style={{
@@ -491,14 +495,15 @@ export function FragmentTimeline({
               {emptyMessage}
             </div>
           </div>
-        ) : (
+          ) : null}
           <div
             className="shard-content-inset"
-            style={{ paddingBottom: `calc(var(--shard-space-8) + ${selectionDockHeight}px)` }}
+            style={{ paddingBottom: timelineItems.length ? `calc(var(--shard-space-8) + ${selectionDockHeight}px)` : 0 }}
           >
             <FragmentMasonry
               key={scopeKey}
               layoutKey={JSON.stringify([isLoading, scrollToFragmentId, timelineItems.map((item) => item.id)])}
+              renderLimit={renderLimit}
               onBeforeScroll={suppressLayoutScroll}
               onLayout={handleTimelineLayout}
               variant={variant}
@@ -554,6 +559,7 @@ export function FragmentTimeline({
               </div>
             ) : null}
           </div>
+          </>
         )}
       </ScrollArea>
       {onOrganize && selectableFragments.length > 0 ? (

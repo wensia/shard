@@ -8,44 +8,53 @@ import {
   useRef,
   useState,
 } from "react"
-import { Loader2Icon, LockKeyholeIcon, SendHorizontalIcon } from "@/components/icons"
-import { startCompletion } from "@codemirror/autocomplete"
+import {
+  FileTextIcon,
+  GitBranchIcon,
+  Loader2Icon,
+  LockKeyholeIcon,
+  SendHorizontalIcon,
+} from "@/components/icons"
 import { toast } from "sonner"
 
 import { EditorToolbar } from "@/components/shard/editor-toolbar"
 import { FragmentImageAttachment } from "@/components/shard/fragment-content"
+import { OutlineComposer } from "@/components/shard/outline-composer"
+import { Button } from "@/components/ui/button"
 import { ToolbarIconButton } from "@/components/ui/toolbar-icon-button"
 import {
-  ShardEditor,
-  type ShardEditorHandle,
-} from "@/editor/shard-editor"
-import { createShardTagAutocomplete } from "@/editor/extensions/tag-autocomplete"
+  ShardRichEditor,
+  type ShardRichEditorHandle,
+} from "@/editor-rich/ShardRichEditor"
 import {
-  createShardWikilinkCompletionSource,
-  createShardWikilinkExtension,
-} from "@/editor/extensions/wikilink"
-import {
-  applyInlineFormat,
-  applyLineFormat,
   extractTags,
   getMarkdownImageAlt,
-  insertHorizontalRule,
-  insertTagMarker,
   normalizeTagList,
-  type InlineFormat,
-  type LineFormat,
-  type TextEdit,
 } from "@/lib/editor-format"
 import {
   getApiErrorMessage,
+  openCsvFile,
   saveFragmentImage,
 } from "@/lib/api"
+import {
+  applyTypeTag,
+  CONTENT_KIND_LABELS,
+  DOCUMENT_TYPE_TAG,
+  OUTLINE_TYPE_TAG,
+} from "@/lib/content-kind"
 import { wantsLockbox } from "@/lib/lockbox"
+import {
+  EMPTY_MIND_MAP_OUTLINE_SOURCE,
+  parseMindMapOutline,
+  serializeMindMapOutline,
+} from "@/lib/mind-map-outline"
 import { useTableDocumentDrop } from "@/lib/use-table-document-drop"
 import {
   buildCsvWikilinkCandidates,
   buildMindMapWikilinkCandidates,
   buildWikilinkCandidates,
+  isCsvWikilinkTarget,
+  resolveWikilinkTarget,
 } from "@/lib/wikilink"
 import type { CsvFileSummary, Fragment, MindMapSummary } from "@/types"
 
@@ -62,9 +71,12 @@ interface CaptureBoxProps {
   isCreating: boolean
   knownTags: string[]
   mindMaps?: MindMapSummary[]
-  onCreate: (content: string, tags: string[]) => void | Promise<void>
+  /** 返回创建后的碎片，`/文档` 提交后据此直接进禅模式（产品框架 §2）。 */
+  onCreate: (content: string, tags: string[]) => Promise<Fragment | void>
   onNavigateToFragment?: (fragmentId: string) => void
   onOpenMindMap?: (map: MindMapSummary) => void
+  /** 用创建好的碎片打开禅模式；两套编辑器共用这一条路径。 */
+  onOpenFragmentZen?: (fragment: Fragment) => void
   onOpenZen?: (content: string) => void
 }
 
@@ -86,18 +98,25 @@ export const CaptureBox = forwardRef<CaptureBoxHandle, CaptureBoxProps>(function
   onCreate,
   onNavigateToFragment,
   onOpenMindMap,
+  onOpenFragmentZen,
   onOpenZen,
 }, ref) {
   const [content, setContent] = useState("")
+  /**
+   * 大纲态的正文：非 null 即整个速记框切成幕布式大纲（产品框架 §2）。
+   * 普通草稿留在 `content` 里原样不动，退出大纲态时按 value 恢复；
+   * 两者互不转换，这样「进大纲、想想又退出来」的结果永远可预期。
+   */
+  const [outlineCode, setOutlineCode] = useState<string | null>(null)
+  /** `/文档` 打下的类型标记：提交时写入文档 type 标签。 */
+  const [isDocumentType, setIsDocumentType] = useState(false)
   const [isEditorExpanded, setIsEditorExpanded] = useState(false)
   const [pendingImages, setPendingImages] = useState<PendingImage[]>([])
-  const [selectionStart, setSelectionStart] = useState(0)
-  const [selectionEnd, setSelectionEnd] = useState(0)
   const containerRef = useRef<HTMLDivElement>(null)
   const editorFrameRef = useRef<HTMLDivElement>(null)
   const codeMirrorViewportRef = useRef<HTMLDivElement>(null)
   const codeMirrorContentHeightRef = useRef(0)
-  const shardEditorRef = useRef<ShardEditorHandle>(null)
+  const richEditorRef = useRef<ShardRichEditorHandle>(null)
   const hasSkippedInitialFocusRef = useRef(false)
   const pendingImagesRef = useRef<PendingImage[]>([])
 
@@ -118,61 +137,67 @@ export const CaptureBox = forwardRef<CaptureBoxHandle, CaptureBoxProps>(function
   )
   const wikilinkCandidatesRef = useRef(wikilinkCandidates)
   const wikilinkNavigateRef = useRef(onNavigateToFragment)
+  const mindMapsRef = useRef(mindMaps)
+  const openMindMapRef = useRef(onOpenMindMap)
   wikilinkCandidatesRef.current = wikilinkCandidates
   wikilinkNavigateRef.current = onNavigateToFragment
-  const wikilinkCompletionSource = useMemo(
-    () =>
-      createShardWikilinkCompletionSource({
-        getCandidates: () => wikilinkCandidatesRef.current,
-      }),
-    []
-  )
-  const tagAutocompleteExtension = useMemo(
-    () =>
-      createShardTagAutocomplete({
-        additionalSources: [wikilinkCompletionSource],
-        getKnownTags: () => knownTagsRef.current,
-      }),
-    [wikilinkCompletionSource]
-  )
-  const wikilinkExtension = useMemo(
-    () =>
-      createShardWikilinkExtension({
-        getCandidates: () => wikilinkCandidatesRef.current,
-        maxCsvRows: 10,
-        onMissingTarget: (target) =>
-          toast(`待建链接「${target}」尚不存在，可在资料库新建笔记`),
-        onNavigate: (fragmentId) =>
-          wikilinkNavigateRef.current?.(fragmentId),
-        onNavigateToMindMap: (path) => {
-          const map = mindMaps.find((candidate) => candidate.path === path)
-          if (map) onOpenMindMap?.(map)
-        },
-      }),
-    [mindMaps, onOpenMindMap, wikilinkCandidates]
-  )
-  const codeMirrorExtensionSet = useMemo(
-    () => [tagAutocompleteExtension, wikilinkExtension],
-    [tagAutocompleteExtension, wikilinkExtension]
-  )
-  const canSubmit =
-    (content.trim().length > 0 || pendingImages.length > 0) && !isCreating
+  mindMapsRef.current = mindMaps
+  openMindMapRef.current = onOpenMindMap
+  /**
+   * 富文本编辑器点击双链芯片：目标解析与分派规则——
+   * 碎片 / 笔记走时间线与资料库导航，导图打开导图，CSV 交给系统，待建只提示。
+   */
+  const navigateWikilink = useCallback((target: string) => {
+    const candidate = resolveWikilinkTarget(target, wikilinkCandidatesRef.current)
+    if (candidate?.kind === "mindmap" && candidate.path) {
+      const map = mindMapsRef.current.find((item) => item.path === candidate.path)
+      if (map) openMindMapRef.current?.(map)
+      return
+    }
 
-  function getCurrentSelection() {
-    return (
-      shardEditorRef.current?.getSelection() ?? {
-        start: selectionStart,
-        end: selectionEnd,
-      }
-    )
-  }
+    const csvPath =
+      candidate?.kind === "csv"
+        ? candidate.path
+        : isCsvWikilinkTarget(target)
+          ? target
+          : undefined
+    if (csvPath) {
+      void openCsvFile(csvPath).catch((error) => {
+        toast.error(`打开 CSV 失败：${getApiErrorMessage(error)}`, { duration: Infinity })
+      })
+      return
+    }
+
+    if (candidate?.fragmentId) {
+      wikilinkNavigateRef.current?.(candidate.fragmentId)
+      return
+    }
+
+    toast(`待建链接「${target}」尚不存在，可在资料库新建笔记`)
+  }, [])
+  const isOutlineMode = outlineCode !== null
+  const outlineFile = useMemo(
+    () => (outlineCode === null ? null : parseMindMapOutline(outlineCode).file),
+    [outlineCode]
+  )
+  /** 根节点为空的大纲没有中心主题，不允许提交。 */
+  const hasOutlineRoot = Boolean(
+    outlineFile && (outlineFile.nodes[outlineFile.rootId]?.text ?? "").trim()
+  )
+  const canSubmit = isOutlineMode
+    ? hasOutlineRoot && !isCreating
+    : (content.trim().length > 0 || pendingImages.length > 0) && !isCreating
 
   function getCurrentEditorValue() {
-    return shardEditorRef.current?.view?.state.doc.toString() ?? content
+    return richEditorRef.current?.getMarkdown() ?? content
   }
 
   function focusActiveEditor() {
-    shardEditorRef.current?.focus()
+    richEditorRef.current?.focus()
+  }
+
+  function clearActiveEditor() {
+    richEditorRef.current?.setMarkdown("")
   }
 
   const syncCodeMirrorGeometry = useCallback(() => {
@@ -246,11 +271,71 @@ export const CaptureBox = forwardRef<CaptureBoxHandle, CaptureBoxProps>(function
     }
   }, [syncCodeMirrorGeometry])
 
+  /**
+   * 进入大纲态。已有草稿原样留在 `content` 里（编辑器随之卸载），
+   * 退出时按 value 恢复；大纲内容与草稿之间不做任何转换。
+   */
+  function enterOutlineMode() {
+    if (outlineCode !== null) return
+
+    setContent(getCurrentEditorValue())
+    setOutlineCode(EMPTY_MIND_MAP_OUTLINE_SOURCE)
+    setIsEditorExpanded(true)
+  }
+
+  function exitOutlineMode() {
+    if (outlineCode === null) return
+
+    setOutlineCode(null)
+    setIsEditorExpanded(true)
+  }
+
+  function markDocumentType() {
+    setIsDocumentType(true)
+    setIsEditorExpanded(true)
+  }
+
+  /**
+   * 大纲提交：正文就是纯缩进列表，不加围栏（技术方案 §3「大纲文件」）。
+   * 标签沿用普通提交的规则，再补上受保护的大纲 type 标签。
+   */
+  async function submitOutline() {
+    if (isCreating) return
+    if (!outlineFile || !hasOutlineRoot) {
+      toast("大纲还没有中心主题：先写下根节点，再保存。")
+      return
+    }
+
+    const draft = serializeMindMapOutline(outlineFile)
+    const tags = applyTypeTag(
+      normalizeTagList(["inbox", ...extractTags(draft)]),
+      OUTLINE_TYPE_TAG
+    )
+
+    try {
+      await onCreate(draft, tags)
+      // 回到普通速记：进入大纲前的草稿原样还在 content 里。
+      setOutlineCode(null)
+      setIsEditorExpanded(false)
+    } catch {
+      // 创建失败时保持大纲态，用户刚写的树不能丢。
+      setIsEditorExpanded(true)
+    }
+  }
+
   async function submit() {
     if (isCreating) return
+    if (isOutlineMode) {
+      await submitOutline()
+      return
+    }
 
-    const draftTags = normalizeTagList(["inbox", ...extractTags(content)])
-    if (wantsLockbox(content, draftTags) && pendingImages.length > 0) {
+    // 提交以编辑器当前值为准，不用 React state：富文本要在提交前把手打的
+    // `#标签` / `[[双链]]` 收敛成节点（getMarkdown 负责），收敛产生的 onChange
+    // 要等下一次渲染才回到 content 上，直接用 content 会漏掉这一步。
+    const draft = getCurrentEditorValue()
+    const draftTags = normalizeTagList(["inbox", ...extractTags(draft)])
+    if (wantsLockbox(draft, draftTags) && pendingImages.length > 0) {
       toast.error("密匣暂不支持图片附件：请先移除图片，再保存到密匣，避免附件写入公开 assets 目录。", { duration: Infinity })
       setIsEditorExpanded(true)
       return
@@ -267,77 +352,33 @@ export const CaptureBox = forwardRef<CaptureBoxHandle, CaptureBoxProps>(function
         )
         savedImages.push({ alt: image.alt, path })
       }
-      const next = buildContentWithPendingImages(content, savedImages)
+      const next = buildContentWithPendingImages(draft, savedImages)
       if (!next) return
 
-      await onCreate(next, normalizeTagList(["inbox", ...extractTags(next)]))
+      const nextTags = normalizeTagList(["inbox", ...extractTags(next)])
+      const wasDocumentType = isDocumentType
+      const created = await onCreate(
+        next,
+        wasDocumentType ? applyTypeTag(nextTags, DOCUMENT_TYPE_TAG) : nextTags
+      )
       pendingImages.forEach((image) => {
         URL.revokeObjectURL(image.previewUrl)
       })
       setContent("")
+      setIsDocumentType(false)
       setPendingImages([])
       setIsEditorExpanded(false)
-      setSelectionStart(0)
-      setSelectionEnd(0)
       requestAnimationFrame(() => {
-        shardEditorRef.current?.replaceDocument("")
+        clearActiveEditor()
       })
+      // `/文档` 提交后直接进禅模式接着写（产品框架 §2「`/文档` 直接进入禅模式新建」）。
+      if (wasDocumentType && created) onOpenFragmentZen?.(created)
     } catch {
       setIsEditorExpanded(true)
       requestAnimationFrame(() => {
         focusActiveEditor()
       })
     }
-  }
-
-  function insertTag() {
-    const cursor = getCurrentSelection().start
-    const nextEdit = insertTagMarker(getCurrentEditorValue(), cursor)
-    setIsEditorExpanded(true)
-    applyTextEdit(nextEdit)
-    const view = shardEditorRef.current?.view
-    if (view) startCompletion(view)
-  }
-
-  function formatLines(format: LineFormat) {
-    const selection = getCurrentSelection()
-
-    const nextEdit = applyLineFormat(
-      content,
-      selection.start,
-      selection.end,
-      format
-    )
-
-    setIsEditorExpanded(true)
-    applyTextEdit(nextEdit)
-  }
-
-  function formatInline(format: InlineFormat) {
-    const selection = getCurrentSelection()
-
-    const nextEdit = applyInlineFormat(
-      content,
-      selection.start,
-      selection.end,
-      format
-    )
-
-    setIsEditorExpanded(true)
-    applyTextEdit(nextEdit)
-  }
-
-  function insertDivider() {
-    const selection = getCurrentSelection()
-
-    setIsEditorExpanded(true)
-    applyTextEdit(
-      insertHorizontalRule(
-        content,
-        selection.start,
-        selection.end
-      )
-    )
   }
 
   const { isDropTarget: isTableDropTarget } = useTableDocumentDrop({
@@ -356,10 +397,8 @@ export const CaptureBox = forwardRef<CaptureBoxHandle, CaptureBoxProps>(function
     onOpenZen(draftContent)
     setContent("")
     setIsEditorExpanded(false)
-    setSelectionStart(0)
-    setSelectionEnd(0)
     requestAnimationFrame(() => {
-      shardEditorRef.current?.replaceDocument("")
+      clearActiveEditor()
     })
   }
 
@@ -394,13 +433,6 @@ export const CaptureBox = forwardRef<CaptureBoxHandle, CaptureBoxProps>(function
     }
   }
 
-  function applyTextEdit(nextEdit: TextEdit) {
-    setContent(nextEdit.content)
-    setSelectionStart(nextEdit.selectionStart)
-    setSelectionEnd(nextEdit.selectionEnd)
-    shardEditorRef.current?.applyTextEdit(nextEdit)
-  }
-
   function removePendingImage(id: string) {
     setPendingImages((current) => {
       const removedImage = current.find((image) => image.id === id)
@@ -415,11 +447,36 @@ export const CaptureBox = forwardRef<CaptureBoxHandle, CaptureBoxProps>(function
     })
   }
 
+  const submitButton = (
+    <ToolbarIconButton
+      className="shard-edge-action"
+      disabled={!canSubmit}
+      label={isCreating ? "保存中" : "保存片段"}
+      onClick={() => void submit()}
+      type="button"
+      variant={secondarySubmit ? "default" : "primary"}
+    >
+      {isCreating ? (
+        <Loader2Icon className={styles.spin} />
+      ) : (
+        <SendHorizontalIcon />
+      )}
+    </ToolbarIconButton>
+  )
+
   return (
     <div
       className={`shard-content-measure ${styles.composer}`}
       ref={containerRef}
     >
+      {isOutlineMode ? (
+        <OutlineComposer
+          code={outlineCode ?? ""}
+          onChange={setOutlineCode}
+          onExit={exitOutlineMode}
+          onSubmit={() => void submit()}
+        />
+      ) : (
       <div ref={editorFrameRef} style={{ position: "relative" }}>
         <div
           className={styles.codeMirrorViewport}
@@ -429,17 +486,17 @@ export const CaptureBox = forwardRef<CaptureBoxHandle, CaptureBoxProps>(function
             // its text must reopen it even when no new focus event is emitted.
             setIsEditorExpanded(true)
             if (event.target === event.currentTarget) {
-              shardEditorRef.current?.focus()
+              focusActiveEditor()
             }
           }}
           ref={codeMirrorViewportRef}
         >
-          <ShardEditor
+          <ShardRichEditor
             ariaLabel="快速记录"
             autoFocus
-            documentKey="composer"
             editorId="composer"
-            extensions={codeMirrorExtensionSet}
+            getKnownTags={() => knownTagsRef.current}
+            getWikilinkCandidates={() => wikilinkCandidatesRef.current}
             onChange={(nextContent) => {
               setIsEditorExpanded(true)
               setContent(nextContent)
@@ -447,15 +504,15 @@ export const CaptureBox = forwardRef<CaptureBoxHandle, CaptureBoxProps>(function
             onDropFiles={(files) => void uploadPastedImages(files)}
             onFocus={handleEditorFocus}
             onHeightChange={handleCodeMirrorHeightChange}
+            onEnterOutline={enterOutlineMode}
+            onImageFiles={(files) => void uploadPastedImages(files)}
+            onMarkDocument={markDocumentType}
+            onNavigateWikilink={navigateWikilink}
             onPasteFiles={(files) => void uploadPastedImages(files)}
-            onSelectionChange={(start, end) => {
-              setSelectionStart(start)
-              setSelectionEnd(end)
-            }}
             onSubmit={() => void submit()}
             onToggleZen={onOpenZen && !isCreating ? openZenEditor : undefined}
             placeholder="想到什么，写什么..."
-            ref={shardEditorRef}
+            ref={richEditorRef}
             value={content}
             variant="composer"
           />
@@ -466,7 +523,8 @@ export const CaptureBox = forwardRef<CaptureBoxHandle, CaptureBoxProps>(function
           </div>
         ) : null}
       </div>
-      {pendingImages.length > 0 ? (
+      )}
+      {!isOutlineMode && pendingImages.length > 0 ? (
         <div
           className="shard-image-attachment-row"
           style={{
@@ -496,16 +554,64 @@ export const CaptureBox = forwardRef<CaptureBoxHandle, CaptureBoxProps>(function
         }}
       >
         <div style={{ minWidth: 0, flex: "1 1 0%" }}>
+          {isOutlineMode ? (
+            // 大纲态没有行内格式可用：工具条换成类型徽标 + 退出入口 + 提交。
+            <div
+              style={{
+                display: "flex",
+                minWidth: 0,
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: "var(--shard-space-3)",
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  minWidth: 0,
+                  alignItems: "center",
+                  gap: "var(--shard-space-2)",
+                }}
+              >
+                <span
+                  className="shard-tag shard-tag-muted"
+                  data-capture-type-badge="outline"
+                  style={{ flexShrink: 0, fontWeight: 500 }}
+                >
+                  <GitBranchIcon />
+                  {CONTENT_KIND_LABELS.outline}
+                </span>
+                <Button
+                  disabled={isCreating}
+                  onClick={exitOutlineMode}
+                  size="sm"
+                  type="button"
+                  variant="ghost"
+                >
+                  退出大纲
+                </Button>
+              </div>
+              {submitButton}
+            </div>
+          ) : (
           <EditorToolbar
             disabled={isCreating}
-            onImageUpload={uploadImage}
-            onInlineFormat={formatInline}
-            onInsertHorizontalRule={insertDivider}
-            onInsertTag={insertTag}
-            onLineFormat={formatLines}
             onOpenZen={onOpenZen ? openZenEditor : undefined}
             trailing={
               <>
+                {isDocumentType ? (
+                  <button
+                    aria-label="取消文档类型"
+                    className="shard-tag shard-tag-muted"
+                    data-capture-type-badge="document"
+                    onClick={() => setIsDocumentType(false)}
+                    style={{ flexShrink: 0, fontWeight: 500 }}
+                    type="button"
+                  >
+                    <FileTextIcon />
+                    {CONTENT_KIND_LABELS.document}
+                  </button>
+                ) : null}
                 {willSaveToLockbox ? (
                   <span
                     className="shard-tag shard-tag-lockbox"
@@ -515,23 +621,11 @@ export const CaptureBox = forwardRef<CaptureBoxHandle, CaptureBoxProps>(function
                     将保存到密匣
                   </span>
                 ) : null}
-                <ToolbarIconButton
-                  className="shard-edge-action"
-                  disabled={!canSubmit}
-                  label={isCreating ? "保存中" : "保存片段"}
-                  onClick={() => void submit()}
-                  type="button"
-                  variant={secondarySubmit ? "default" : "primary"}
-                >
-                  {isCreating ? (
-                    <Loader2Icon className={styles.spin} />
-                  ) : (
-                    <SendHorizontalIcon />
-                  )}
-                </ToolbarIconButton>
+                {submitButton}
               </>
             }
           />
+          )}
         </div>
       </div>
       {isCreating ? (
@@ -614,7 +708,7 @@ function resizeCodeMirrorEditor(
 }
 
 function getCodeMirrorRowsHeight(viewport: HTMLDivElement, rows: number) {
-  const content = viewport.querySelector<HTMLElement>(".cm-content")
+  const content = viewport.querySelector<HTMLElement>(".ProseMirror")
   if (!content) return 0
 
   const styles = window.getComputedStyle(content)

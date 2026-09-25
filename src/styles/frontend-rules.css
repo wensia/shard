@@ -65,7 +65,6 @@
   [contenteditable=""],
   [contenteditable="true"],
   [contenteditable="plaintext-only"],
-  .cm-content,
   .shard-fragment-content,
   .shard-markdown-document,
   [data-csv-path] table {
@@ -173,27 +172,6 @@
 }
 
 @layer components {
-  .shard-cm-wikilink {
-    border-radius: var(--radius-control);
-    color: var(--info);
-    cursor: pointer;
-    text-decoration: underline;
-    text-decoration-color: color-mix(in srgb, var(--info) 45%, transparent);
-    text-underline-offset: 0.16em;
-  }
-
-  .shard-cm-wikilink:hover {
-    background: var(--info-bg);
-    text-decoration-color: var(--info);
-  }
-
-  .shard-cm-wikilink--missing {
-    background: var(--muted);
-    color: var(--muted-foreground);
-    text-decoration-style: dotted;
-    text-decoration-color: var(--muted-foreground);
-  }
-
   .shard-related-group-title {
     margin-block: var(--space-2) var(--space-1);
     color: var(--muted-foreground);
@@ -567,6 +545,9 @@
     --md-space-2: var(--shard-space-2);
     --md-space-3: var(--shard-space-3);
     --md-radius: var(--shard-radius-control);
+    --md-card: var(--card);
+    --md-card-radius: var(--radius-card);
+    --md-detail-font-size: var(--text-meta);
     --md-font-size: var(--shard-memo-font-size);
     --md-border: var(--border);
     --md-border-visible: var(--border-visible);
@@ -629,130 +610,6 @@
     border-bottom: 1px solid var(--border);
   }
 
-  /* CM6 widget 内的可编辑表格。 */
-  .shard-editor-table-block {
-    position: relative;
-    display: inline-block;
-    width: 100%;
-    vertical-align: top;
-  }
-
-  /* CM6 的块级 replace 自己参与文档流，不再需要 legacy 的透明源码测量层。 */
-  .shard-cm-table-widget {
-    display: block;
-    width: 100%;
-  }
-
-  .shard-cm-table-widget .shard-editor-table-block {
-    display: block;
-  }
-
-  .shard-cm-table-widget .shard-editor-table {
-    height: auto;
-  }
-
-  .shard-editor-table-surface {
-    position: relative;
-    display: block;
-    overflow-x: auto;
-    border-radius: var(--shard-radius-control);
-    background: var(--card);
-    inset: auto;
-    pointer-events: auto;
-  }
-
-  .shard-editor-table {
-    width: 100%;
-    height: 100%;
-    border-collapse: collapse;
-    font-size: var(--shard-memo-font-size);
-    font-variant-numeric: tabular-nums;
-    table-layout: fixed;
-    white-space: normal;
-  }
-
-  .shard-editor-table th,
-  .shard-editor-table td {
-    overflow: hidden;
-    border: 1px solid var(--border);
-    padding: 0;
-    vertical-align: middle;
-  }
-
-  .shard-editor-table th {
-    background: var(--muted);
-  }
-
-  .shard-editor-table-input {
-    display: block;
-    width: 100%;
-    border: 0;
-    background: transparent;
-    padding-block: 0;
-    padding-inline: var(--shard-space-2);
-    color: inherit;
-    font: inherit;
-    line-height: inherit;
-    outline: none;
-  }
-
-  .shard-editor-table th .shard-editor-table-input {
-    font-weight: 600;
-  }
-
-  .shard-editor-table-input:focus {
-    background: rgb(var(--shard-primary-rgb) / var(--shard-alpha-8));
-  }
-
-  .shard-editor-table-input::placeholder {
-    color: var(--muted-foreground);
-    opacity: var(--shard-alpha-55);
-  }
-
-  /* 行列操作条：平时不占视线，鼠标进表格或光标进单元格时才出现。 */
-  .shard-editor-table-actions {
-    position: absolute;
-    top: var(--shard-space-1);
-    right: var(--shard-space-1);
-    display: flex;
-    gap: 2px;
-    border-radius: var(--shard-radius-control);
-    background: var(--popover);
-    padding: 2px;
-    box-shadow: var(--shadow-popover);
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity 120ms ease;
-  }
-
-  .shard-editor-table-surface:hover .shard-editor-table-actions,
-  .shard-editor-table-surface:focus-within .shard-editor-table-actions {
-    opacity: 1;
-    pointer-events: auto;
-  }
-
-  .shard-editor-table-action {
-    height: 20px;
-    border: 1px solid var(--border);
-    border-radius: var(--shard-radius-control);
-    background: var(--card);
-    padding-inline: var(--shard-space-1);
-    color: var(--muted-foreground);
-    cursor: pointer;
-    font-size: 11px;
-    line-height: 1;
-  }
-
-  .shard-editor-table-action:hover:not(:disabled) {
-    border-color: var(--border-visible);
-    color: var(--foreground);
-  }
-
-  .shard-editor-table-action:disabled {
-    cursor: default;
-    opacity: var(--shard-alpha-34);
-  }
-
   /* 表格文档拖进编辑器时的落点提示，也复用为导入中的状态。 */
   .shard-editor-drop-hint {
     position: absolute;
@@ -768,91 +625,6 @@
     inset: var(--shard-space-2);
     pointer-events: none;
     backdrop-filter: blur(1px);
-  }
-
-  /* 工具栏的插入表格网格。 */
-  .shard-table-size-picker {
-    position: absolute;
-    z-index: 40;
-    display: flex;
-    flex-direction: column;
-    gap: var(--shard-space-2);
-    border: 1px solid var(--border);
-    border-radius: var(--shard-surface-radius);
-    background: var(--popover);
-    padding: var(--shard-space-2);
-    box-shadow: var(--shadow-popover);
-  }
-
-  /* 上方放不下就翻到按钮下面；靠窗口右缘时改成右对齐。 */
-  .shard-table-size-picker[data-side="top"] {
-    bottom: calc(100% + var(--shard-space-2));
-  }
-
-  .shard-table-size-picker[data-side="bottom"] {
-    top: calc(100% + var(--shard-space-2));
-  }
-
-  .shard-table-size-picker[data-align="start"] {
-    left: 0;
-  }
-
-  .shard-table-size-picker[data-align="end"] {
-    right: 0;
-  }
-
-  .shard-table-size-grid {
-    display: grid;
-    grid-template-columns: repeat(6, 16px);
-    gap: 3px;
-  }
-
-  .shard-table-size-cell {
-    width: 16px;
-    height: 16px;
-    border: 1px solid var(--border-visible);
-    border-radius: 2px;
-    background: transparent;
-    padding: 0;
-    cursor: pointer;
-  }
-
-  .shard-table-size-cell[data-selected] {
-    border-color: var(--shard-sapphire);
-    background: rgb(var(--shard-primary-rgb) / var(--shard-alpha-21));
-  }
-
-  .shard-table-size-import {
-    display: flex;
-    width: 100%;
-    align-items: center;
-    justify-content: center;
-    gap: var(--shard-space-1);
-    border: 1px solid var(--border);
-    border-radius: var(--shard-radius-control);
-    background: var(--card);
-    padding-block: var(--shard-space-1);
-    color: var(--muted-foreground);
-    cursor: pointer;
-    font-size: 12px;
-  }
-
-  .shard-table-size-import:hover {
-    border-color: var(--border-visible);
-    color: var(--foreground);
-  }
-
-  .shard-table-size-import svg {
-    --shard-icon-stroke: var(--shard-icon-stroke-sm);
-    width: var(--shard-icon-size-sm);
-    height: var(--shard-icon-size-sm);
-  }
-
-  .shard-table-size-label {
-    color: var(--muted-foreground);
-    font-size: 12px;
-    font-variant-numeric: tabular-nums;
-    text-align: center;
   }
 
   .shard-fragment-card-highlight {
@@ -1031,58 +803,6 @@
 
   .dark .shard-image-preview-image {
     outline-color: rgb(255 255 255 / 0.1);
-  }
-
-  .shard-editor .shard-cm-task-checkbox {
-    vertical-align: text-bottom;
-    vertical-align: calc(0.5cap - 0.5em);
-  }
-
-  /* 编辑器中的 checkbox 留在文本流中，不能借用卡片的绝对定位。
-   * 即使运行中的旧 widget 尚未换成包裹结构，也不能锚到输入框边缘。 */
-  .shard-editor .shard-cm-task-marker {
-    display: inline-flex;
-    align-items: center;
-  }
-
-  .shard-editor .shard-cm-task-checkbox {
-    position: relative;
-    top: auto;
-    left: auto;
-    flex-shrink: 0;
-    transform: none;
-    cursor: pointer;
-  }
-
-  .shard-editor .shard-cm-task-checkbox[aria-readonly="true"] {
-    cursor: default;
-  }
-
-  /* 编辑器里的分割线是行内 widget：卡片版是 block + 上下 margin，塞进
-   * .cm-line 会把一行撑成两行高。这里改成行内块、在本行行盒里垂直居中，
-   * 上下留白就是行高减 1px 自然分摊出来的。 */
-  .shard-editor .shard-cm-divider {
-    display: inline-block;
-    width: 100%;
-    margin-block: 0;
-    vertical-align: middle;
-  }
-
-  .shard-cm-image-widget {
-    white-space: normal;
-  }
-
-  .shard-cm-image-fallback {
-    display: flex;
-    width: 100%;
-    height: 100%;
-    align-items: center;
-    justify-content: center;
-    padding: var(--shard-space-2);
-    color: var(--muted-foreground);
-    font-size: var(--text-tiny);
-    line-height: var(--leading-normal);
-    text-align: center;
   }
 
   .shard-tag-remove {

@@ -439,6 +439,34 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* 紧凑档（编辑器围栏 widget）：撤掉全高滚动与 54.5rem 文档排版，字号交还正文级别。
+   左内边距留足一格缩进，让行首的主题菜单与层级引导线不越出编辑器内容区。 */
+.viewport[data-compact="true"] {
+  flex: none;
+  min-height: 0;
+  overflow: visible;
+  padding: 0;
+  background: transparent;
+}
+
+.viewport[data-compact="true"] .outline {
+  --outline-title-size: var(--outline-body-size);
+  max-width: none;
+  margin-inline: 0;
+  padding-inline: var(--outline-indent) 0;
+  padding-block-end: 0;
+}
+
+.viewport[data-compact="true"] .titleRow {
+  margin-block-end: 0;
+}
+
+.viewport[data-compact="true"] .titleInput {
+  min-height: var(--space-8);
+  padding-block: calc((var(--space-8) - var(--outline-line-height)) / 2);
+  line-height: var(--leading-relaxed);
+}
+
 @container (max-width: 640px) {
   .outline {
     padding-inline: var(--space-4) var(--space-3);

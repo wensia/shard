@@ -317,10 +317,6 @@ export function setCanvasGrabCursor(active: boolean) {
   return desktopInvoke<void>("set_canvas_grab_cursor", { active })
 }
 
-export function restoreWindowFrame() {
-  return desktopInvoke<void>("restore_window_frame")
-}
-
 export function setVaultPath(path: string, initializeGit: boolean) {
   return invokeVaultState("set_vault_path", { path, initializeGit })
 }

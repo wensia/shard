@@ -58,7 +58,19 @@ export interface MarkdownContentTable extends MarkdownTable {
   rowEnd: number
 }
 
-export type MarkdownContentBlock = MarkdownContentLine | {
+/** A fenced block only becomes one block when its closing fence exists. */
+export interface MarkdownContentFence {
+  type: "fence"
+  source: string
+  lineIndex: number
+  language: string
+  code: string
+  lineCount: number
+  /** Hosts that decline the fence fall back to this untouched opening line. */
+  line: MarkdownContentLine
+}
+
+export type MarkdownContentBlock = MarkdownContentLine | MarkdownContentFence | {
   type: "table"
   source: string
   lineIndex: number
@@ -179,6 +191,15 @@ export function parseMarkdownContent(
     const source = lines[index]
     const line = parseContentLine(source, index, options)
     if (!line.hidden) lastVisibleIndex = index
+    const fence = source.match(FENCE_PATTERN)
+    const fenceEnd = fence ? findFenceEnd(lines, index) : -1
+    if (fence && fenceEnd > index) {
+      // Later lines are still pushed one by one; the renderer skips them through skipCount.
+      blocks.push({ type: "fence", source, lineIndex: index, line,
+        language: fence[1] ?? "", code: lines.slice(index + 1, fenceEnd).join("\n"),
+        lineCount: fenceEnd - index + 1 })
+      continue
+    }
     const header = index + 1 < lines.length
       ? parseMarkdownTable([source, lines[index + 1]], 0) : null
     if (header) {
@@ -191,6 +212,14 @@ export function parseMarkdownContent(
     }
   }
   return { kind: "content", blocks, lastVisibleIndex }
+}
+
+/** Scanning stops at the next fence line, so the total work stays linear in the document. */
+function findFenceEnd(lines: string[], start: number) {
+  for (let index = start + 1; index < lines.length; index += 1) {
+    if (FENCE_PATTERN.test(lines[index])) return index
+  }
+  return -1
 }
 
 function parseContentLine(

@@ -63,10 +63,14 @@ import {
 } from "@/lib/mind-map-tree"
 import type { ShardMapFile } from "@/types"
 
-interface MindMapOutlineEditorProps {
+export interface MindMapOutlineEditorProps {
+  /** 紧凑档：嵌在编辑器围栏 widget 里，去掉全高滚动与文档级排版，并禁用描述入口。 */
+  compact?: boolean
   file: ShardMapFile
   focusNodeId?: string | null
   onChange: (file: ShardMapFile, meta?: MindMapChangeMeta) => void
+  /** 紧凑档下 Escape 的去处：把焦点交还给宿主编辑器。 */
+  onExit?: () => void
   onFocusHandled?: () => void
   onSave?: () => void
   onSelectNode?: (nodeId: string) => void
@@ -94,9 +98,11 @@ const DROP_INDICATOR_COLOR =
   "rgb(var(--shard-primary-rgb) / var(--shard-alpha-55))"
 
 export function MindMapOutlineEditor({
+  compact = false,
   file,
   focusNodeId = null,
   onChange,
+  onExit,
   onFocusHandled,
   onSave,
   onSelectNode,
@@ -266,6 +272,8 @@ export function MindMapOutlineEditor({
   }
 
   function editNote(nodeId: string) {
+    // 围栏文本承载不了描述：紧凑档直接关掉这个入口。
+    if (compact) return
     setEditingNoteId(nodeId)
     focusNode(nodeId, false, { field: "note" })
   }
@@ -419,7 +427,8 @@ export function MindMapOutlineEditor({
     if (event.key === "Escape") {
       event.preventDefault()
       event.stopPropagation()
-      viewportRef.current?.focus({ preventScroll: true })
+      if (compact && onExit) onExit()
+      else viewportRef.current?.focus({ preventScroll: true })
       return
     }
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
@@ -515,6 +524,7 @@ export function MindMapOutlineEditor({
     <div
       aria-label="思维导图大纲编辑器"
       className={styles.viewport}
+      data-compact={compact ? "true" : undefined}
       data-mind-map-outline
       id={outlineId}
       onFocusCapture={event => {
@@ -623,7 +633,7 @@ export function MindMapOutlineEditor({
                     onFocus={() => { setEditingNoteId(null); onSelectNode?.(node.id) }}
                     onKeyDown={(event) => handleKeyDown(event, node.id)}
                     onSelect={saveSession}
-                    placeholder={isTitle ? "无标题" : ""}
+                    placeholder={isTitle ? (compact ? "中心主题" : "无标题") : ""}
                     registerInput={(element) => {
                       inputRefs.current[node.id] = element
                     }}
@@ -664,7 +674,7 @@ export function MindMapOutlineEditor({
                     <DropdownMenuGroup>
                       <DropdownMenuLabel className={styles.menuSectionLabel}>主题</DropdownMenuLabel>
                       <DropdownMenuItem onClick={() => focusNode(node.id, false, inputRefs.current[node.id] ? caret(inputRefs.current[node.id]!) : undefined)}><PencilLineIcon />编辑主题</DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => editNote(node.id)}><FileTextIcon />编辑描述<DropdownMenuShortcut aria-hidden>Shift+Enter</DropdownMenuShortcut></DropdownMenuItem>
+                      {!compact && <DropdownMenuItem onClick={() => editNote(node.id)}><FileTextIcon />编辑描述<DropdownMenuShortcut aria-hidden>Shift+Enter</DropdownMenuShortcut></DropdownMenuItem>}
                       {!isTitle && hasChildren && <DropdownMenuItem onClick={() => {
                         onChange(toggleMindMapNodeCollapsed(file, node.id))
                         focusNode(node.id, false, inputRefs.current[node.id] ? caret(inputRefs.current[node.id]!) : undefined)

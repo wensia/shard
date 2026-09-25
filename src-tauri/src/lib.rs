@@ -11,6 +11,13 @@ use rsa::{
     Oaep, RsaPrivateKey, RsaPublicKey,
 };
 use serde::{Deserialize, Serialize};
+use shard_core::{
+    contains_lockbox_tag, create_public_fragment_in_vault, default_vault_path,
+    ensure_vault_layout, is_false, new_fragment_id, normalize_tag, normalize_tags,
+    temporary_filename, unique_suffix, write_bytes_atomically, write_fragment_file,
+    write_text_atomically, AppConfig, FragmentFrontmatter, FragmentRelation, LOCKBOX_TAG,
+    LIBRARY_FILENAME_MAX_BYTES,
+};
 use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
@@ -20,7 +27,7 @@ use std::{
     path::{Component, Path, PathBuf},
     process::{Command, Stdio},
     sync::{Arc, Mutex, OnceLock},
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime},
 };
 use tauri::Manager;
 
@@ -28,11 +35,9 @@ mod table;
 mod canvas_commands;
 mod table_commands;
 mod table_exchange_commands;
+mod window_frame;
 
-const DEFAULT_WINDOW_WIDTH: f64 = 1180.0;
-const DEFAULT_WINDOW_HEIGHT: f64 = 820.0;
 const DEFAULT_WINDOW_TITLE: &str = "Shard";
-const LOCKBOX_TAG: &str = "密匣";
 const LOCKBOX_TTL: Duration = Duration::from_secs(15 * 60);
 const LOCKBOX_VERSION: u32 = 1;
 const LOCKBOX_MASTER_KEY_BYTES: usize = 32;
@@ -237,12 +242,6 @@ struct LegacyNoteMigrationResult {
     migrated_count: usize,
 }
 
-#[derive(Debug, Serialize, Deserialize, Default, Clone)]
-#[serde(rename_all = "camelCase")]
-struct AppConfig {
-    vault_path: Option<String>,
-}
-
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct GitInfo {
@@ -442,38 +441,6 @@ enum LockboxWriteKey {
 struct LockboxReadKeys {
     master_key: Vec<u8>,
     write_private_key: Option<RsaPrivateKey>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-#[serde(rename_all = "camelCase")]
-struct FragmentRelation {
-    target_id: String,
-    /// manual | walk | insight | tag | wikilink
-    origin: String,
-    created_at: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    note: Option<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-struct FragmentFrontmatter {
-    id: String,
-    created_at: String,
-    updated_at: String,
-    tags: Vec<String>,
-    category: Option<String>,
-    ai_status: Option<String>,
-    #[serde(default, skip_serializing_if = "is_false")]
-    pinned: bool,
-    source: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    conflict_of: Option<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    related: Vec<FragmentRelation>,
-}
-
-fn is_false(value: &bool) -> bool {
-    !*value
 }
 
 async fn run_blocking<T, F>(operation: F) -> Result<T, String>
@@ -1453,31 +1420,7 @@ async fn create_fragment(
             );
         }
 
-        let now = Local::now();
-        let id = new_fragment_id(&now);
-        let created_at = now.to_rfc3339();
-        let dir = vault
-            .join("fragments")
-            .join(now.format("%Y").to_string())
-            .join(now.format("%m").to_string());
-        fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
-
-        let path = dir.join(format!("{id}.md"));
-        let frontmatter = FragmentFrontmatter {
-            id: id.clone(),
-            created_at: created_at.clone(),
-            updated_at: created_at,
-            tags: normalized_tags,
-            category: None,
-            ai_status: Some("none".to_string()),
-            pinned: false,
-            source: "desktop".to_string(),
-            conflict_of: None,
-            related: Vec::new(),
-        };
-
-        write_fragment_file(&path, &frontmatter, &content)?;
-
+        let path = create_public_fragment_in_vault(&vault, &content, normalized_tags, "desktop")?;
 
         let dirty = dirty_paths(&vault);
         // 内容保存只落盘，提交由聚合检查点接管（docs/design/commit-coalescing-plan.md §7 A2）
@@ -2136,47 +2079,6 @@ fn set_canvas_grab_cursor(_window: tauri::Window, _active: bool) -> Result<(), S
 }
 
 #[tauri::command]
-fn restore_window_frame(window: tauri::WebviewWindow) -> Result<(), String> {
-    restore_default_window_frame(&window)
-}
-
-fn restore_default_window_frame(window: &tauri::WebviewWindow) -> Result<(), String> {
-    if window.is_fullscreen().map_err(|error| error.to_string())? {
-        window
-            .set_fullscreen(false)
-            .map_err(|error| error.to_string())?;
-    }
-    if window.is_maximized().map_err(|error| error.to_string())? {
-        window.unmaximize().map_err(|error| error.to_string())?;
-    }
-
-    window
-        .set_size(tauri::LogicalSize::new(
-            DEFAULT_WINDOW_WIDTH,
-            DEFAULT_WINDOW_HEIGHT,
-        ))
-        .map_err(|error| error.to_string())?;
-
-    if let Some(monitor) = window
-        .current_monitor()
-        .map_err(|error| error.to_string())?
-    {
-        let work_area = monitor.work_area();
-        let scale_factor = monitor.scale_factor();
-        let target_width = (DEFAULT_WINDOW_WIDTH * scale_factor).round() as i32;
-        let target_height = (DEFAULT_WINDOW_HEIGHT * scale_factor).round() as i32;
-        let x = work_area.position.x + (work_area.size.width as i32 - target_width) / 2;
-        let y = work_area.position.y + (work_area.size.height as i32 - target_height) / 2;
-
-        window
-            .set_position(tauri::PhysicalPosition::new(x, y))
-            .map_err(|error| error.to_string())
-    } else {
-        window.center().map_err(|error| error.to_string())
-    }
-}
-
-#[tauri::command]
 async fn sync_vault(app: tauri::AppHandle) -> Result<GitInfo, String> {
     run_blocking(move || {
         let vault = ensure_vault_dirs(&app)?;
@@ -2268,15 +2170,6 @@ fn ensure_vault_dirs(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     Ok(vault)
 }
 
-fn ensure_vault_layout(vault: &Path) -> Result<(), String> {
-    fs::create_dir_all(vault.join("fragments")).map_err(|error| error.to_string())?;
-    fs::create_dir_all(vault.join("notes")).map_err(|error| error.to_string())?;
-    fs::create_dir_all(vault.join("assets")).map_err(|error| error.to_string())?;
-    fs::create_dir_all(vault.join("maps")).map_err(|error| error.to_string())?;
-    fs::create_dir_all(vault.join(".shard")).map_err(|error| error.to_string())?;
-    Ok(())
-}
-
 fn configured_vault_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     if let Some(path) = read_app_config(app)?.vault_path {
         return Ok(PathBuf::from(path));
@@ -2316,36 +2209,6 @@ fn write_app_config(app: &tauri::AppHandle, config: &AppConfig) -> Result<(), St
 
     let text = serde_json::to_string_pretty(config).map_err(|error| error.to_string())?;
     fs::write(path, text).map_err(|error| error.to_string())
-}
-
-fn default_vault_path() -> Result<PathBuf, String> {
-    let home = std::env::var("HOME")
-        .or_else(|_| std::env::var("USERPROFILE"))
-        .map_err(|_| "无法找到用户 home 目录".to_string())?;
-    Ok(PathBuf::from(home).join("Documents").join("ShardVault"))
-}
-
-fn new_fragment_id(now: &DateTime<Local>) -> String {
-    let mut bytes = [0u8; 7];
-    OsRng.fill_bytes(&mut bytes);
-    let random: String = bytes[..4]
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect();
-    let device: String = bytes[4..]
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect();
-
-    format!("{}-{random}-{device}", now.format("%Y%m%d-%H%M%S"))
-}
-
-fn unique_suffix() -> String {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_nanos())
-        .unwrap_or_default();
-    format!("{:04x}", nanos & 0xffff)
 }
 
 fn collect_markdown_files(dir: &Path, files: &mut Vec<PathBuf>) -> Result<(), String> {
@@ -2850,7 +2713,6 @@ fn library_mutation_result(
 }
 
 const LIBRARY_NAME_MAX_LENGTH: usize = 64;
-const LIBRARY_FILENAME_MAX_BYTES: usize = 255;
 
 fn validate_library_name_characters(name: &str) -> Result<&str, String> {
     let name = name.trim();
@@ -2984,17 +2846,6 @@ fn bounded_library_filename(stem: &str, collision_suffix: &str, extension: &str)
         })
         .collect();
     format!("{stem}{collision_suffix}{extension}")
-}
-
-fn temporary_filename(name: &str, suffix: &str) -> String {
-    // Retain the real extension and recognizable temporary-file suffix. Long existing
-    // filenames must remain writable even when adding the atomic-write suffix.
-    let available = LIBRARY_FILENAME_MAX_BYTES.saturating_sub(1 + suffix.len());
-    let mut start = name.len().saturating_sub(available);
-    while !name.is_char_boundary(start) {
-        start += 1;
-    }
-    format!(".{}{suffix}", &name[start..])
 }
 
 fn unique_titled_path(directory: &Path, title: &str, extension: &str) -> PathBuf {
@@ -4356,41 +4207,6 @@ fn hash_bytes(bytes: &[u8]) -> String {
     digest.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
-fn write_text_atomically(path: &Path, text: &str) -> Result<(), String> {
-    write_bytes_atomically(path, text.as_bytes())
-}
-
-fn write_bytes_atomically(path: &Path, bytes: &[u8]) -> Result<(), String> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-    }
-
-    let file_name = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .ok_or_else(|| "文件名无效。".to_string())?;
-    let temp_path = path.with_file_name(temporary_filename(
-        file_name,
-        &format!(".tmp-{}", unique_suffix()),
-    ));
-    {
-        let mut file = File::create(&temp_path).map_err(|error| error.to_string())?;
-        file.write_all(bytes).map_err(|error| error.to_string())?;
-        file.sync_all().map_err(|error| error.to_string())?;
-    }
-    fs::rename(&temp_path, path).map_err(|error| {
-        let _ = fs::remove_file(&temp_path);
-        error.to_string()
-    })?;
-    // rename 的断电持久性依赖父目录元数据落盘；尽力而为，内容本身已 fsync。
-    if let Some(parent) = path.parent() {
-        if let Ok(dir) = File::open(parent) {
-            let _ = dir.sync_all();
-        }
-    }
-    Ok(())
-}
-
 fn write_mind_map_last_good(vault: &Path, file: &ShardMapFile) -> Result<(), String> {
     let text = canonical_mind_map_text(file)?;
     let path = vault.join(mind_map_last_good_rel_path(file));
@@ -4467,17 +4283,6 @@ fn parse_fragment_text(text: &str) -> Result<(FragmentFrontmatter, &str), String
     let frontmatter =
         serde_yaml::from_str::<FragmentFrontmatter>(yaml).map_err(|error| error.to_string())?;
     Ok((frontmatter, body))
-}
-
-fn write_fragment_file(
-    path: &Path,
-    frontmatter: &FragmentFrontmatter,
-    body: &str,
-) -> Result<(), String> {
-    let yaml = serde_yaml::to_string(frontmatter).map_err(|error| error.to_string())?;
-    let yaml = yaml.strip_prefix("---\n").unwrap_or(&yaml);
-    let text = format!("---\n{}---\n\n{}\n", yaml, body.trim_end());
-    write_text_atomically(path, &text)
 }
 
 fn link_fragments_in_vault(
@@ -5500,10 +5305,6 @@ fn system_time_to_rfc3339(value: SystemTime) -> String {
     datetime.to_rfc3339()
 }
 
-fn contains_lockbox_tag(tags: &[String]) -> bool {
-    tags.iter().any(|tag| tag == LOCKBOX_TAG)
-}
-
 fn normalize_lockbox_tags(tags: Vec<String>) -> Vec<String> {
     let mut next_tags = tags
         .into_iter()
@@ -5535,52 +5336,6 @@ fn commit_override_status(
         Ok(None) => Some(("saved".to_string(), None)),
         Err(error) => Some(("commit_failed".to_string(), Some(error))),
     }
-}
-
-fn normalize_tag(tag: &str) -> Option<String> {
-    let tag = tag.trim().trim_start_matches('#').trim_matches(|char| {
-        matches!(
-            char,
-            ',' | '.'
-                | '?'
-                | '!'
-                | ';'
-                | ':'
-                | '，'
-                | '。'
-                | '？'
-                | '！'
-                | '；'
-                | '：'
-                | '、'
-                | ')'
-                | ']'
-                | '}'
-                | '"'
-                | '\''
-                | '”'
-                | '’'
-        )
-    });
-    let tag = tag.split_whitespace().collect::<Vec<_>>().join(" ");
-    if tag.is_empty() {
-        None
-    } else {
-        Some(tag)
-    }
-}
-
-fn normalize_tags(tags: Vec<String>, include_inbox: bool) -> Vec<String> {
-    let mut next_tags = tags
-        .iter()
-        .filter_map(|tag| normalize_tag(tag))
-        .collect::<Vec<_>>();
-    if include_inbox {
-        next_tags.push("inbox".to_string());
-    }
-    next_tags.sort();
-    next_tags.dedup();
-    next_tags
 }
 
 fn resolve_vault_asset_path(vault: &Path, raw_path: &str) -> Result<PathBuf, String> {
@@ -6434,7 +6189,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             for window in app.webview_windows().values() {
-                restore_default_window_frame(window)?;
+                window_frame::set_startup_minimum(window)?;
             }
 
             Ok(())
@@ -6505,7 +6260,6 @@ pub fn run() {
             copy_exported_image,
             set_window_controls_hidden,
             set_canvas_grab_cursor,
-            restore_window_frame,
             sync_vault
         ])
         .run(tauri::generate_context!())

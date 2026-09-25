@@ -3,7 +3,6 @@ import {
   GitBranchIcon,
   HelpCircleIcon,
   KeyboardIcon,
-  Maximize2Icon,
   MoreHorizontalIcon,
   RefreshCwIcon,
   SettingsIcon,
@@ -42,7 +41,6 @@ interface StatusBarProps {
   onOpenGitSettings: () => void
   onOpenMindMaps: () => void
   onOpenSettings: () => void
-  onRestoreWindow: () => void
   onShortcuts: () => void
   onSync: () => void
 }
@@ -66,7 +64,6 @@ export function StatusBar({
   onOpenGitSettings,
   onOpenMindMaps,
   onOpenSettings,
-  onRestoreWindow,
   onShortcuts,
   onSync,
 }: StatusBarProps) {
@@ -172,23 +169,6 @@ export function StatusBar({
             <StatusBarSeparator />
           </>
         ) : null}
-
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                aria-label="还原窗口尺寸"
-                onClick={onRestoreWindow}
-                size="icon-sm"
-                variant="ghost"
-              />
-            }
-          >
-            <Maximize2Icon className="size-(--shard-icon-size-sm)" />
-            <span className="sr-only">还原窗口尺寸</span>
-          </TooltipTrigger>
-          <TooltipContent side="top">还原窗口尺寸</TooltipContent>
-        </Tooltip>
 
         <DropdownMenu>
           <DropdownMenuTrigger

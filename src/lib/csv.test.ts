@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 
-import { decodeCsvBytes, parseCsv, parseCsvBytes } from "@/lib/csv"
+import { decodeCsvBytes, parseCsv, parseCsvBytes, serializeCsv } from "@/lib/csv"
 
 describe("parseCsv", () => {
   it("解析 RFC4180 的逗号、转义引号与单元格换行", () => {
@@ -50,5 +50,21 @@ describe("decodeCsvBytes", () => {
       encoding: "gbk",
       text: "姓名,城市\r\n张三,北京",
     })
+  })
+})
+
+describe("serializeCsv", () => {
+  it("只给含引号、逗号或换行的字段加引号，并与 parseCsv 往返一致", () => {
+    const records = [
+      ["name", "note"],
+      ["张三", "第一行\r\n第二行"],
+      ['李"四', "上海,浦东"],
+      ["", "普通"],
+    ]
+
+    expect(serializeCsv(records)).toBe(
+      'name,note\r\n张三,"第一行\r\n第二行"\r\n"李""四","上海,浦东"\r\n,普通'
+    )
+    expect(parseCsv(serializeCsv(records))).toEqual(records)
   })
 })

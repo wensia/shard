@@ -1,0 +1,34 @@
+.preview {
+  display: block;
+  min-width: 0;
+  max-width: 100%;
+  margin-block: var(--space-3);
+  overflow: hidden;
+  border-radius: var(--radius-card);
+  background: var(--card);
+  box-shadow: var(--shadow-xs);
+  color: var(--card-foreground);
+  white-space: normal;
+  /* 离屏卡片跳过导图绘制；预留固定高度，滚动时不会引起跳动。 */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 180px;
+}
+
+.notice {
+  margin: 0;
+  padding: 0 var(--space-3) var(--space-2);
+  color: var(--muted-foreground);
+  font-size: var(--text-meta);
+  line-height: var(--leading-normal);
+}
+
+.empty {
+  display: block;
+  min-width: 0;
+  max-width: 100%;
+  margin-block: var(--space-3);
+  color: var(--muted-foreground);
+  font-size: var(--text-meta);
+  line-height: var(--leading-normal);
+  white-space: normal;
+}

@@ -1,16 +1,22 @@
 import { describe, expect, it } from "vitest"
 
 import {
+  applyTypeTag,
+  countPlainTextCharacters,
+  deriveDocumentDigest,
   deriveKind,
   deriveNoteTitle,
+  isStreamKind,
   isTypeTag,
   TYPE_TAGS,
 } from "@/lib/content-kind"
 
 describe("content kind", () => {
-  it("首期只把 note 识别为保留类型标签", () => {
-    expect(TYPE_TAGS).toEqual(["note"])
+  it("笔记、大纲与文档都是受保护的类型标签", () => {
+    expect(TYPE_TAGS).toEqual(["note", "outline", "document"])
     expect(isTypeTag("note")).toBe(true)
+    expect(isTypeTag("outline")).toBe(true)
+    expect(isTypeTag("document")).toBe(true)
     expect(isTypeTag("project")).toBe(false)
   })
 
@@ -18,6 +24,62 @@ describe("content kind", () => {
     expect(deriveKind([])).toBe("fragment")
     expect(deriveKind(["inbox", "灵感"])).toBe("fragment")
     expect(deriveKind(["inbox", "note", "灵感"])).toBe("note")
+    expect(deriveKind(["inbox", "outline"])).toBe("outline")
+    expect(deriveKind(["inbox", "document"])).toBe("document")
+  })
+
+  it("type 是单值：写入一个 type 标签会摘掉其余 type 标签", () => {
+    expect(applyTypeTag(["inbox", "灵感"], "outline")).toEqual([
+      "inbox",
+      "灵感",
+      "outline",
+    ])
+    expect(applyTypeTag(["inbox", "outline", "灵感"], "document")).toEqual([
+      "inbox",
+      "灵感",
+      "document",
+    ])
+    // 同一个 type 重复写入不会留下两份。
+    expect(applyTypeTag(["inbox", "document"], "document")).toEqual([
+      "inbox",
+      "document",
+    ])
+  })
+
+  it("碎片流承载碎片、大纲与文档，资料库笔记除外", () => {
+    expect(isStreamKind("fragment")).toBe(true)
+    expect(isStreamKind("outline")).toBe(true)
+    expect(isStreamKind("document")).toBe(true)
+    expect(isStreamKind("note")).toBe(false)
+  })
+})
+
+describe("deriveDocumentDigest", () => {
+  it("标题取首个标题行，摘要是标题之后的纯文本", () => {
+    expect(
+      deriveDocumentDigest("# 季度复盘\n\n**第一条**结论\n- 第二条结论")
+    ).toEqual({ summary: "第一条结论 第二条结论", title: "季度复盘" })
+  })
+
+  it("没有标题行时用首行前 40 字作标题，余下作摘要", () => {
+    const firstLine = "甲".repeat(52)
+    expect(deriveDocumentDigest(`${firstLine}\n第二行`)).toEqual({
+      summary: "第二行",
+      title: `${"甲".repeat(40)}…`,
+    })
+  })
+
+  it("摘要截到 120 字，围栏源码不进摘要", () => {
+    const digest = deriveDocumentDigest(
+      ["# 标题", "", "```js", "const a = 1", "```", "正文".repeat(100)].join("\n")
+    )
+    expect(digest.title).toBe("标题")
+    expect(digest.summary).not.toContain("const a")
+    expect(digest.summary).toBe(`${"正文".repeat(60)}…`)
+  })
+
+  it("空正文返回空标题与空摘要", () => {
+    expect(deriveDocumentDigest(" \n\t")).toEqual({ summary: "", title: "" })
   })
 })
 
@@ -43,5 +105,27 @@ describe("deriveNoteTitle", () => {
 
   it("空内容返回空标题", () => {
     expect(deriveNoteTitle(" \n\t")).toBe("")
+  })
+})
+
+describe("countPlainTextCharacters", () => {
+  it("只数正文字符：标记、空白与换行都不计", () => {
+    expect(
+      countPlainTextCharacters("## 季度复盘\n\n**第一条**结论\n- 第二条")
+    ).toBe(4 + 5 + 3)
+  })
+
+  it("围栏里的源码整段跳过", () => {
+    expect(
+      countPlainTextCharacters(["正文", "```js", "const a = 1", "```", "收尾"].join("\n"))
+    ).toBe(4)
+  })
+
+  it("双链与图片按可见文字计数", () => {
+    expect(countPlainTextCharacters("看 [[目标笔记]] 与 ![图](a.png)")).toBe(6)
+  })
+
+  it("空正文是零", () => {
+    expect(countPlainTextCharacters(" \n\t")).toBe(0)
   })
 })

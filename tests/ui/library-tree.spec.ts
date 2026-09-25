@@ -117,7 +117,7 @@ async function installLibraryTreeMock(
       },
       {
         id: "note-plan",
-        content: "# 项目计划\n从 [[旧笔记|打开笔记]] 继续",
+        content: "# 项目计划\n\n从 [[旧笔记|打开笔记]] 继续",
         createdAt: "2026-08-28T08:00:00.000Z",
         updatedAt: now,
         tags: ["inbox", "note", "工作"],
@@ -132,7 +132,7 @@ async function installLibraryTreeMock(
       },
       {
         id: "note-old",
-        content: "# 旧笔记\n待重命名",
+        content: "# 旧笔记\n\n待重命名",
         createdAt: "2026-08-27T08:00:00.000Z",
         updatedAt: now,
         tags: ["inbox", "note"],
@@ -384,7 +384,7 @@ async function installLibraryTreeMock(
             return `assets/${String(args.fileName)}`
           }
           if (command === "list_csv_files") return []
-          if (command === "restore_window_frame" || command === "open_csv_file") return null
+          if (command === "open_csv_file") return null
           if (command === "plugin:app|version") return "0.1.3-test"
           if (command === "sync_vault") return clone(git)
           if (command === "update_fragment") {
@@ -452,7 +452,7 @@ async function installLibraryTreeMock(
             const fragment = fragments.find((item) => item.path === oldPath)
             if (fragment) {
               fragment.path = nextPath
-              if (fragment.id === "note-old") fragment.content = "# 新笔记\n待重命名"
+              if (fragment.id === "note-old") fragment.content = "# 新笔记\n\n待重命名"
             }
             for (const item of fragments) {
               item.content = item.content.replaceAll("[[旧笔记]]", "[[新笔记]]").replaceAll("[[旧笔记|", "[[新笔记|")
@@ -869,14 +869,15 @@ test("高矮窗口都让目录树占满剩余高度，长目录独立滚动并�
 })
 
 test("桌面标题和目录表头不产生文本选区，正文与编辑器仍可选词", async ({ page }) => {
-  const editor = page.locator('[data-shard-editor="composer"] .cm-content')
+  const editor = page.locator('[data-shard-editor="composer"] .ProseMirror')
   await expect(editor).toBeVisible()
   await expect(editor).toHaveCSS("user-select", "text")
   await expect(page.locator(".shard-fragment-content").first()).toHaveCSS("user-select", "text")
   await fillEditor(page, "composer", "selection survives")
-  await editor.locator(".cm-line").dblclick({ position: { x: 20, y: 10 } })
+  await editor.locator("p").first().dblclick({ position: { x: 20, y: 10 } })
+  expect(await page.evaluate(() => window.getSelection()?.toString())).toBe("selection")
   const selected = await readEditorSnapshot(page, "composer")
-  expect(selected.value.slice(selected.selectionStart, selected.selectionEnd)).toBe("selection")
+  expect(selected.selectionEnd - selected.selectionStart).toBe("selection".length)
   await fillEditor(page, "composer", "")
 
   await page.getByRole("button", { name: "资料库", exact: true }).click()
@@ -1195,7 +1196,7 @@ test("脏笔记进入目录前先保存草稿", async ({ page }) => {
   await page.getByRole("region", { name: "notes 目录列表", exact: true })
     .getByRole("button", { name: "打开文件 旧笔记.md", exact: true })
     .click()
-  await fillEditor(page, "library:note-old", "# 旧笔记\n先保存再浏览目录")
+  await fillEditor(page, "library:note-old", "# 旧笔记\n\n先保存再浏览目录")
   await treePane.getByRole("button", { name: "项目", exact: true }).click()
 
   await expect.poll(() => commandCalls(page, "update_fragment")).toHaveLength(1)
@@ -1396,7 +1397,7 @@ test("脏文档进入碎片空间前先保存草稿，返回后恢复同一文�
   await page.getByRole("region", { name: "notes 目录列表", exact: true })
     .getByRole("button", { name: "打开文件 旧笔记.md", exact: true })
     .click()
-  await fillEditor(page, "library:note-old", "# 旧笔记\n先保存再看碎片")
+  await fillEditor(page, "library:note-old", "# 旧笔记\n\n先保存再看碎片")
   await page.getByRole("navigation", { name: "工作台导航" }).getByRole("button", { name: "碎片", exact: true }).click()
 
   await expect.poll(() => commandCalls(page, "update_fragment")).toHaveLength(1)
@@ -1405,7 +1406,7 @@ test("脏文档进入碎片空间前先保存草稿，返回后恢复同一文�
   ).toBeVisible()
   await page.getByRole("button", { name: "资料库", exact: true }).click()
   await expect(page.getByRole("textbox", { name: "资料库文档编辑器", exact: true })).toBeVisible()
-  await expect.poll(() => readEditor(page, "library:note-old")).toBe("# 旧笔记\n先保存再看碎片")
+  await expect.poll(() => readEditor(page, "library:note-old")).toBe("# 旧笔记\n\n先保存再看碎片")
   await expect(page.locator('[data-shard-fragment-id]')).toHaveCount(0)
 })
 
@@ -1462,7 +1463,7 @@ test("资料库文档禅模式进出后保留同一份草稿", async ({ page }) 
     .click()
 
   const editorId = "library:note-plan"
-  const zenDraft = "# 项目计划\n禅模式共用草稿"
+  const zenDraft = "# 项目计划\n\n禅模式共用草稿"
   await fillEditor(page, editorId, zenDraft)
   await page.getByRole("button", { name: "进入禅模式", exact: true }).click()
 
@@ -1470,7 +1471,7 @@ test("资料库文档禅模式进出后保留同一份草稿", async ({ page }) 
   await expect(zenSurface).toBeVisible()
   await expect.poll(() => readEditor(page, editorId)).toBe(zenDraft)
 
-  const editedInZen = `${zenDraft}\n退出后仍然存在`
+  const editedInZen = `${zenDraft}\n\n退出后仍然存在`
   await fillEditor(page, editorId, editedInZen)
   await page.keyboard.press("Escape")
 
@@ -1796,7 +1797,7 @@ test("资料库文档粘贴图片会调用共享上传命令", async ({ page }) 
     .click()
 
   const editor = page.locator('[data-shard-editor="library:note-plan"]')
-  await editor.locator(".cm-content").evaluate((element) => {
+  await editor.locator(".ProseMirror").evaluate((element) => {
     const clipboardData = new DataTransfer()
     clipboardData.items.add(
       new File([new Uint8Array([137, 80, 78, 71])], "library-paste.png", {
@@ -2158,10 +2159,10 @@ test("子目录新建文档直接聚焦正文，键盘输入后可保存", async
   await page.keyboard.press("ControlOrMeta+End")
   await page.keyboard.press("Enter")
   await page.keyboard.insertText("直接写入子目录笔记")
-  await expect.poll(() => readEditor(page, "library:note-created-5")).toBe("# 未命名\n直接写入子目录笔记")
+  await expect.poll(() => readEditor(page, "library:note-created-5")).toBe("# 未命名\n\n直接写入子目录笔记")
   await page.keyboard.press("ControlOrMeta+s")
   await expect.poll(async () => (await commandCalls(page, "update_fragment"))
-    .some(call => call.args.id === "note-created-5" && call.args.content === "# 未命名\n直接写入子目录笔记")).toBe(true)
+    .some(call => call.args.id === "note-created-5" && call.args.content === "# 未命名\n\n直接写入子目录笔记")).toBe(true)
   expect((await commandCalls(page, "create_library_note"))[0].args).toEqual({ parentPath: "notes/项目", title: "未命名" })
   await page.getByRole("button", { name: "返回所在目录", exact: true }).click()
   await expect(page.getByRole("region", { name: "notes/项目 目录列表", exact: true })
@@ -2190,11 +2191,11 @@ test("已有笔记草稿保存完成后再新建，连续新建均直接接受�
       return original(command, args)
     }
   })
-  await fillEditor(page, "library:note-old", "# 原有笔记\n创建前必须保存的草稿")
+  await fillEditor(page, "library:note-old", "# 原有笔记\n\n创建前必须保存的草稿")
   await createLibraryEntry(page, "新建文档")
   await expect.poll(() => page.evaluate(() => (window as any).__newNoteSaveGate.entered)).toBe(true)
   expect(await commandCalls(page, "create_library_note")).toHaveLength(0)
-  await expect.poll(() => readEditor(page, "library:note-old")).toBe("# 原有笔记\n创建前必须保存的草稿")
+  await expect.poll(() => readEditor(page, "library:note-old")).toBe("# 原有笔记\n\n创建前必须保存的草稿")
   await page.evaluate(() => (window as any).__newNoteSaveGate.release())
 
   const editor = page.getByRole("textbox", { name: "资料库文档编辑器", exact: true })
@@ -2205,15 +2206,15 @@ test("已有笔记草稿保存完成后再新建，连续新建均直接接受�
     await page.keyboard.press("ControlOrMeta+End")
     await page.keyboard.press("Enter")
     await page.keyboard.insertText(text)
-    await expect.poll(() => readEditor(page, editorId)).toBe(`# 未命名\n${text}`)
+    await expect.poll(() => readEditor(page, editorId)).toBe(`# 未命名\n\n${text}`)
     if (index === 0) await createLibraryEntry(page, "新建文档")
   }
   await page.keyboard.press("ControlOrMeta+s")
   const writes = await commandCalls(page, "update_fragment")
-  expect(writes.some(call => call.args.id === "note-old" && call.args.content === "# 原有笔记\n创建前必须保存的草稿")).toBe(true)
-  expect(writes.some(call => call.args.id === "note-created-5" && call.args.content === "# 未命名\n第一篇正文")).toBe(true)
+  expect(writes.some(call => call.args.id === "note-old" && call.args.content === "# 原有笔记\n\n创建前必须保存的草稿")).toBe(true)
+  expect(writes.some(call => call.args.id === "note-created-5" && call.args.content === "# 未命名\n\n第一篇正文")).toBe(true)
   await expect.poll(async () => (await commandCalls(page, "update_fragment"))
-    .some(call => call.args.id === "note-created-6" && call.args.content === "# 未命名\n第二篇正文")).toBe(true)
+    .some(call => call.args.id === "note-created-6" && call.args.content === "# 未命名\n\n第二篇正文")).toBe(true)
   await expect(page.getByRole("button", { name: "重命名文件", exact: true })).toHaveText("未命名-2")
   expect(await commandCalls(page, "create_library_note")).toHaveLength(2)
 })
@@ -2228,7 +2229,7 @@ test("窄屏新建文档直接显示并聚焦编辑器", async ({ page }) => {
   await page.keyboard.press("ControlOrMeta+End")
   await page.keyboard.press("Enter")
   await page.keyboard.insertText("窄屏直接输入")
-  await expect.poll(() => readEditor(page, "library:note-created-5")).toBe("# 未命名\n窄屏直接输入")
+  await expect.poll(() => readEditor(page, "library:note-created-5")).toBe("# 未命名\n\n窄屏直接输入")
 })
 
 test("新建前保存失败会保留原笔记草稿且不创建文件", async ({ page }) => {
@@ -2245,10 +2246,10 @@ test("新建前保存失败会保留原笔记草稿且不创建文件", async ({
       return original(command, args)
     }
   })
-  await fillEditor(page, "library:note-old", "# 保留草稿\n尚未保存")
+  await fillEditor(page, "library:note-old", "# 保留草稿\n\n尚未保存")
   await createLibraryEntry(page, "新建文档")
   await expect(page.getByText(/新建文档测试：保存失败/u).first()).toBeVisible()
-  await expect.poll(() => readEditor(page, "library:note-old")).toBe("# 保留草稿\n尚未保存")
+  await expect.poll(() => readEditor(page, "library:note-old")).toBe("# 保留草稿\n\n尚未保存")
   await expect(page.getByRole("button", { name: "重命名文件", exact: true })).toHaveText("旧笔记")
   expect(await commandCalls(page, "create_library_note")).toHaveLength(0)
 })
@@ -2364,10 +2365,12 @@ test("重命名批量更新旧 wikilink 后仍可从别名链接导航", async (
   await expect.poll(() => readEditor(page, "library:note-plan")).toContain(
     "[[新笔记|打开笔记]]"
   )
-  await expect(sourceEditor.locator(".shard-cm-wikilink")).toHaveText(
-    "[[新笔记|打开笔记]]"
-  )
-  await sourceEditor.locator(".shard-cm-wikilink").click()
+  const aliasChip = sourceEditor.getByRole("link", {
+    name: "双链：新笔记",
+    exact: true,
+  })
+  await expect(aliasChip).toHaveText("打开笔记")
+  await aliasChip.click()
   await expect(page.locator('[data-shard-editor="library:note-old"]')).toBeVisible()
 })
 
@@ -2883,9 +2886,9 @@ test("图文档链接可以复制到笔记，并在跳转前保存正文", async
   await page.getByRole("menuitem", { name: "复制文档链接", exact: true }).click()
   await expect.poll(() => page.evaluate(() => (window as any).__diagramLinks.copied)).toBe(`[未命名流程图](shard://flow/${id})`)
   await page.getByRole("button", { name: "打开文件 旧笔记.md", exact: true }).click()
-  const content = `# 项目说明\n[需求导图](shard://map/map-project)\n[审批流程](shard://flow/${id})\n跳转前的草稿`
+  const content = `# 项目说明\n\n[需求导图](shard://map/map-project)\n\n[审批流程](shard://flow/${id})\n\n跳转前的草稿`
   await fillEditor(page, "library:note-old", content)
-  await page.locator(`[data-shard-document-link="shard://flow/${id}"]`).click()
+  await page.locator(`[data-shard-editor="library:note-old"] a[href="shard://flow/${id}"]`).click()
   await expect(page.locator(".shard-canvas-workspace")).toBeVisible()
   const writes = await commandCalls(page, "update_fragment")
   expect(writes.some(call => call.args.content === content)).toBe(true)
@@ -2897,13 +2900,13 @@ test("笔记保存失败时文档链接不跳走，成功后按稳定 ID 打开�
   await page.getByRole("button", { name: "资料库", exact: true }).click()
   await page.getByRole("button", { name: /^文件（/u }).click()
   await page.getByRole("button", { name: "打开文件 旧笔记.md", exact: true }).click()
-  await fillEditor(page, "library:note-old", "# 未保存草稿\n[打开需求](shard://map/map-project)")
+  await fillEditor(page, "library:note-old", "# 未保存草稿\n\n[打开需求](shard://map/map-project)")
   await page.evaluate(() => { (window as any).__diagramLinks.failNoteSave = true })
-  await page.locator('[data-shard-document-link="shard://map/map-project"]').click()
+  await page.locator('[data-shard-editor="library:note-old"] a[href="shard://map/map-project"]').click()
   await expect(page.getByRole("textbox", { name: "资料库文档编辑器" })).toBeVisible()
   await expect(page.getByText(/文档跳转测试：笔记保存失败/u).first()).toBeVisible()
   await page.evaluate(() => { (window as any).__diagramLinks.failNoteSave = false })
-  await page.locator('[data-shard-document-link="shard://map/map-project"]').click()
+  await page.locator('[data-shard-editor="library:note-old"] a[href="shard://map/map-project"]').click()
   await expect(page.getByRole("textbox", { name: "资料库文档编辑器" })).toHaveCount(0)
   await expect(page.getByRole("article", { name: "资料库查看器" })).toContainText("项目导图")
 })
@@ -2922,8 +2925,8 @@ test("流程图重命名并移动后，笔记中的 ID 链接仍打开新路径"
   await page.getByRole("menuitem", { name: "项目", exact: true }).click()
   await expect.poll(() => commandCalls(page, "move_library_entry")).toHaveLength(1)
   await page.getByRole("button", { name: "打开文件 旧笔记.md", exact: true }).click()
-  await fillEditor(page, "library:note-old", `# 项目说明\n[原流程链接](shard://flow/${id})`)
-  await page.locator(`[data-shard-document-link="shard://flow/${id}"]`).click()
+  await fillEditor(page, "library:note-old", `# 项目说明\n\n[原流程链接](shard://flow/${id})`)
+  await page.locator(`[data-shard-editor="library:note-old"] a[href="shard://flow/${id}"]`).click()
   await expect(page.locator(".shard-canvas-workspace")).toBeVisible()
   await expect(page.getByRole("button", { name: "重命名文件", exact: true })).toHaveText("审批流程")
   expect(await page.evaluate(() => (window as any).__canvasLibrary.disk.path)).toBe("notes/项目/审批流程.shardflow.json")

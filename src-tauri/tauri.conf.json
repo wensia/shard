@@ -15,8 +15,8 @@
         "title": "Shard",
         "width": 1180,
         "height": 820,
-        "minWidth": 720,
-        "minHeight": 640,
+        "center": true,
+        "preventOverflow": { "width": 32, "height": 32 },
         "titleBarStyle": "Overlay",
         "trafficLightPosition": { "x": 9, "y": 28 },
         "hiddenTitle": true

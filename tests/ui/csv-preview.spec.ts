@@ -26,7 +26,7 @@ async function installCsvPreviewMock(page: Page) {
       related: [],
     })
     const fragments = [
-      fragment("note-csv", "# CSV 资料笔记\n![[data/large.csv]]", [
+      fragment("note-csv", "# CSV 资料笔记\n\n![[data/large.csv]]", [
         "inbox",
         "note",
       ]),
@@ -102,7 +102,6 @@ async function installCsvPreviewMock(page: Page) {
           }
           if (command === "list_mind_maps") return []
           if (command === "list_csv_files") return clone(csvFiles)
-          if (command === "restore_window_frame") return null
           if (command === "set_window_controls_hidden") return null
           if (command === "read_csv_file") {
             const path = String(args.path ?? "")
@@ -222,6 +221,9 @@ test("资料库与 Zen 的 CSV 嵌入预览最多展示 50 行", async ({ page }
   )
 
   await page.getByRole("button", { name: "碎片", exact: true }).click()
+  await expect(
+    page.locator('[data-shard-editor="composer"] .ProseMirror')
+  ).toBeVisible()
   await fillEditor(page, "composer", "![[data/large.csv]]")
   await focusEditor(page, "composer")
   await page.keyboard.press("Control+Shift+f")

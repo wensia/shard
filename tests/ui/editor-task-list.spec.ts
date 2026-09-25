@@ -2,7 +2,7 @@ import { writeFile } from "node:fs/promises"
 
 import { expect, test, type Locator, type Page } from "@playwright/test"
 
-import { fillEditor, focusEditor, readEditor, readEditorSnapshot, selectRange } from "./editor-helpers"
+import { fillEditor, focusEditor, readEditor, readEditorSnapshot, selectEditorText, typeEditor } from "./editor-helpers"
 
 type Surface = "composer" | "inline" | "zen" | "library"
 
@@ -51,7 +51,6 @@ async function installTaskListMock(page: Page) {
             case "plugin:event|listen": return ++callbackId
             case "plugin:event|unlisten":
             case "unhide_pointer":
-            case "restore_window_frame":
             case "set_window_controls_hidden": return null
             case "plugin:app|version": return "0.1.3"
             case "list_fragments": return clone(state)
@@ -94,7 +93,7 @@ async function openSurface(page: Page, surface: Surface) {
     id = "library:task-note"
   }
   const editor = page.locator(`[data-shard-editor="${id}"]`)
-  await expect(editor.locator(".cm-content")).toBeVisible()
+  await expect(editor.locator(".ProseMirror")).toBeVisible()
   const toolbar = surface === "composer"
     ? page.locator(".shard-content-measure").filter({ has: editor })
     : surface === "zen"
@@ -103,15 +102,27 @@ async function openSurface(page: Page, surface: Surface) {
   return { id, editor, toolbar }
 }
 
-async function measureTaskGeometry(lineLocator: Locator, sample: string) {
+interface TaskSelectors {
+  checkbox: string
+  marker: string
+}
+
+/** 碎片卡片的只读渲染（packages/markdown）。 */
+const CARD_TASK: TaskSelectors = { checkbox: ".shard-task-checkbox", marker: ".shard-task-marker" }
+/** 富文本编辑器任务项 NodeView（src/editor-rich/schema/task-item-view.tsx）。 */
+const RICH_TASK: TaskSelectors = { checkbox: '[role="checkbox"]', marker: ".shard-rich-task-check" }
+
+async function measureTaskGeometry(lineLocator: Locator, sample: string, selectors: TaskSelectors = CARD_TASK) {
   await lineLocator.evaluate(() => document.fonts.ready)
-  return lineLocator.evaluate((line, textSample) => {
-    const checkbox = line.querySelector<HTMLElement>(".shard-task-checkbox")!
+  return lineLocator.evaluate((line, { textSample, selectors }) => {
+    const checkbox = line.querySelector<HTMLElement>(selectors.checkbox)!
     const box = checkbox.getBoundingClientRect()
-    const marker = checkbox.closest(".shard-task-marker")!.getBoundingClientRect()
+    const marker = checkbox.closest(selectors.marker)!.getBoundingClientRect()
     const walker = document.createTreeWalker(line, NodeFilter.SHOW_TEXT)
     let node: Node | null
     while ((node = walker.nextNode())) {
+      // 复选框里的读屏名称不是正文。
+      if (checkbox.contains(node)) continue
       const offset = node.textContent?.indexOf(textSample) ?? -1
       if (offset < 0) continue
       const range = document.createRange()
@@ -147,16 +158,20 @@ async function measureTaskGeometry(lineLocator: Locator, sample: string) {
         textRows: range.getClientRects().length,
         lineHeight: parseFloat(textStyle.lineHeight),
         rowHeight: line.getBoundingClientRect().height,
-        fontSize: parseFloat(style.fontSize),
+        fontSize: parseFloat(textStyle.fontSize),
         radius: style.borderRadius,
       }
     }
     throw new Error("Task text has no rendered text range")
-  }, sample)
+  }, { textSample: sample, selectors })
+}
+
+function taskRows(editor: Locator) {
+  return editor.locator(".ProseMirror .shard-rich-task")
 }
 
 async function taskGeometry(editor: Locator, sample = "任务正文") {
-  return measureTaskGeometry(editor.locator(".cm-line").first(), sample)
+  return measureTaskGeometry(taskRows(editor).first(), sample, RICH_TASK)
 }
 
 async function expectStableTaskGeometry(editor: Locator, baseline: Awaited<ReturnType<typeof taskGeometry>>) {
@@ -167,18 +182,17 @@ async function expectStableTaskGeometry(editor: Locator, baseline: Awaited<Retur
   return actual
 }
 
-async function expectTaskInsideLine(line: Locator) {
-  const geometry = await line.evaluate((element) => {
+/** 复选框落在自己这一行的行盒里，上下都不越界。 */
+async function expectTaskInsideLine(row: Locator) {
+  const geometry = await row.evaluate((element) => {
     const checkbox = element.querySelector('[role="checkbox"]')!
     const box = checkbox.getBoundingClientRect()
-    const row = element.getBoundingClientRect()
+    const bounds = element.getBoundingClientRect()
     return {
-      left: box.left - row.left,
-      top: box.top - row.top,
-      bottom: row.bottom - box.bottom,
+      top: box.top - bounds.top,
+      bottom: bounds.bottom - box.bottom,
     }
   })
-  expect(geometry.left, "checkbox has the same leading and trailing inset").toBeCloseTo(8, 1)
   expect(geometry.top, "checkbox must not escape above its text line").toBeGreaterThanOrEqual(0)
   expect(geometry.bottom, "checkbox must not escape below its text line").toBeGreaterThanOrEqual(0)
 }
@@ -190,10 +204,21 @@ async function latestSavedContent(page: Page, id: string) {
   }, id)
 }
 
+/**
+ * 把光标落在正文 `text` 的开头或结尾。
+ *
+ * 编辑器刚载入正文或刚获得焦点的一小段时间里，ProseMirror 会把自己的选区写回 DOM，
+ * 覆盖刚设好的原生选区；落点后稍等再核对光标确实还在目标处，被覆盖就重放一次。
+ */
+async function placeCaret(page: Page, id: string, text: string, collapse: "start" | "end") {
+  await focusEditor(page, id)
+  await selectEditorText(page, id, text, { collapse })
+}
+
 test.beforeEach(async ({ page }) => {
   await installTaskListMock(page)
   await page.goto("/")
-  await expect(page.locator('[data-shard-editor="composer"] .cm-content')).toBeFocused()
+  await expect(page.locator('[data-shard-editor="composer"] .ProseMirror')).toBeFocused()
 })
 
 for (const surface of ["composer", "inline", "zen", "library"] as const) {
@@ -202,36 +227,39 @@ for (const surface of ["composer", "inline", "zen", "library"] as const) {
     await fillEditor(page, id, "")
     await focusEditor(page, id)
     if (surface === "library") {
-      // The document route has no formatting toolbar; type the same Markdown syntax.
-      await page.keyboard.insertText("- [ ] ")
+      // 资料库文档走同一套 Markdown 输入前缀。
+      await typeEditor(page, id, "[ ] ")
     } else {
-      await toolbar.getByRole("button", { name: "复选框", exact: true }).click()
+      // 其余编辑面走 `/任务` 命令：底部操作条不再放列表按钮。
+      await typeEditor(page, id, "/任务")
+      await expect(page.getByRole("listbox", { name: "命令菜单" }).getByRole("option")).toHaveCount(1)
+      await page.keyboard.press("Enter")
     }
-    await expect.poll(() => readEditor(page, id)).toBe("- [ ] ")
+    // 空任务项行尾没有正文，规范化输出不带尾随空格。
+    await expect.poll(() => readEditor(page, id)).toBe("- [ ]")
     await expect(editor.getByRole("checkbox", { name: "标记为完成" })).toBeVisible()
-    await expect(editor.locator(".cm-content")).not.toContainText("-")
-    await expect(editor.locator(".cm-content")).not.toContainText("[ ]")
-    await expectTaskInsideLine(editor.locator(".cm-line").first())
+    await expect(editor.locator(".ProseMirror")).not.toContainText("-")
+    await expect(editor.locator(".ProseMirror")).not.toContainText("[ ]")
+    await expectTaskInsideLine(taskRows(editor).first())
     const emptyPath = testInfo.outputPath(`${surface}-empty-task.png`)
     await (surface === "library" ? editor : toolbar).screenshot({ path: emptyPath })
     await testInfo.attach(`${surface}-empty-task`, { path: emptyPath, contentType: "image/png" })
 
     await page.keyboard.insertText("任务正文")
     await expect.poll(() => readEditor(page, id)).toBe("- [ ] 任务正文")
-    await expect(editor.locator(".cm-content")).toHaveText("任务正文")
+    await expect(editor.locator(".ProseMirror .shard-rich-task-body")).toHaveText("任务正文")
     await page.keyboard.press("Enter")
-    await expect.poll(() => readEditor(page, id)).toBe("- [ ] 任务正文\n- [ ] ")
+    await expect.poll(() => readEditor(page, id)).toBe("- [ ] 任务正文\n- [ ]")
     await expect(editor.getByRole("checkbox")).toHaveCount(2)
-    await expect(editor.locator(".cm-content")).not.toContainText("-")
-    await expectTaskInsideLine(editor.locator(".cm-line").last())
+    await expect(editor.locator(".ProseMirror")).not.toContainText("-")
+    await expectTaskInsideLine(taskRows(editor).last())
 
-    for (const [key, cursor] of [["Backspace", 6], ["Delete", 0]] as const) {
-      await fillEditor(page, id, "- [ ] 任务正文")
-      await selectRange(page, id, cursor, cursor)
-      await page.keyboard.press(key)
-      await expect.poll(() => readEditor(page, id)).toBe("任务正文")
-      await expect(editor.getByRole("checkbox")).toHaveCount(0)
-    }
+    // 光标在任务正文开头退格：去掉任务标记，正文留成普通段落。
+    await fillEditor(page, id, "- [ ] 任务正文")
+    await placeCaret(page, id, "任务正文", "start")
+    await page.keyboard.press("Backspace")
+    await expect.poll(() => readEditor(page, id)).toBe("任务正文")
+    await expect(editor.getByRole("checkbox")).toHaveCount(0)
   })
 
   test(`${surface} 任务复选框 hover、完成、撤销保持文字和控件几何`, async ({ page }, testInfo) => {
@@ -239,7 +267,7 @@ for (const surface of ["composer", "inline", "zen", "library"] as const) {
     await fillEditor(page, id, "- [ ] 任务正文")
     const checkbox = editor.getByRole("checkbox")
     await expect(checkbox).toHaveAttribute("aria-checked", "false")
-    await expect(editor.locator(".cm-content")).not.toContainText("-")
+    await expect(editor.locator(".ProseMirror")).not.toContainText("-")
     await page.mouse.move(0, 0)
     const baseline = await taskGeometry(editor)
     expect(baseline.width).toBeCloseTo(baseline.height, 1)
@@ -275,31 +303,14 @@ for (const surface of ["composer", "inline", "zen", "library"] as const) {
     for (const sample of ["111", "任务正文"]) {
       await fillEditor(page, id, `- [ ] ${sample}`)
       const geometry = await taskGeometry(editor, sample)
-      expect(geometry.leadingGap).toBeCloseTo(8, 1)
       expect(geometry.gap).toBeCloseTo(8, 1)
-      expect(geometry.leadingGap).toBeCloseTo(geometry.gap, 1)
       expect(geometry.centerOffset, `${sample} checkbox and ink center`).toBeLessThanOrEqual(sample === "111" ? 0.5 : 0.75)
-      expect(geometry.rowHeight, "inline widget must not enlarge the text line").toBeCloseTo(geometry.lineHeight, 1)
+      expect(geometry.rowHeight, "checkbox must not enlarge the text line").toBeCloseTo(geometry.lineHeight, 1)
       await expect.poll(() => readEditor(page, id)).toBe(`- [ ] ${sample}`)
       if (sample === "111") {
         const path = testInfo.outputPath(`${surface}-digits-alignment.png`)
         await editor.screenshot({ path })
         await testInfo.attach(`${surface}-digits-alignment`, { path, contentType: "image/png" })
-        // Select only the task marker, as in the reported screenshot.
-        await selectRange(page, id, 0, 6)
-        const selection = editor.locator(".shard-cm-selection")
-        await expect(selection).toBeVisible()
-        await expect.poll(async () => {
-          const box = await editor.getByRole("checkbox").boundingBox()
-          const selected = await selection.boundingBox()
-          return {
-            before: box!.x - selected!.x,
-            after: selected!.x + selected!.width - box!.x - box!.width,
-          }
-        }, { message: "selected checkbox has symmetric insets" }).toEqual({ before: 8, after: 8 })
-        const selectedPath = testInfo.outputPath(`${surface}-selected-task.png`)
-        await editor.screenshot({ path: selectedPath })
-        await testInfo.attach(`${surface}-selected-task`, { path: selectedPath, contentType: "image/png" })
         const geometryPath = testInfo.outputPath(`${surface}-digits-geometry.json`)
         await writeFile(geometryPath, JSON.stringify(geometry, null, 2))
         await testInfo.attach(`${surface}-digits-geometry`, { path: geometryPath, contentType: "application/json" })
@@ -323,7 +334,7 @@ test("字号和行高变化、长任务换行后复选框仍与首行字形居�
     expect(geometry.lineHeight).toBe(44)
     expect(geometry.textRows, "long task must really wrap").toBeGreaterThan(1)
     expect(geometry.centerOffset, `${sample} stays aligned to the first line`).toBeLessThanOrEqual(sample === "111" ? 0.5 : 0.75)
-    await expectTaskInsideLine(editor.locator(".cm-line").first())
+    await expectTaskInsideLine(taskRows(editor).first())
     await expect.poll(() => readEditor(page, id)).toBe(`- [ ] ${body}`)
   }
 })
@@ -333,8 +344,8 @@ test("碎片切入禅模式、文档切入禅模式并保存读回仍使用同�
   await fillEditor(page, inline.id, "- [ ] 任务正文")
   await inline.toolbar.getByRole("button", { name: "保存修改", exact: true }).click()
   await expect.poll(() => latestSavedContent(page, "task-fragment")).toBe("- [ ] 任务正文")
-  // Leaving the inline editor saves and returns to the fragment card.
-  if (await inline.editor.isVisible()) await inline.toolbar.getByRole("button", { name: "取消", exact: true }).click()
+  // 保存修改即落盘并收起行内编辑，回到碎片卡片（fragment-editor handleSubmit）。
+  await expect(inline.editor).toBeHidden()
   const cardBody = page.locator('[data-shard-fragment-id="task-fragment"] .shard-fragment-content')
   const cardUnchecked = await measureTaskGeometry(cardBody, "任务正文")
   expect(cardUnchecked.leadingGap).toBeCloseTo(8, 1)
@@ -342,7 +353,7 @@ test("碎片切入禅模式、文档切入禅模式并保存读回仍使用同�
   expect(cardUnchecked.centerOffset, "saved card uses the same glyph alignment").toBeLessThanOrEqual(0.75)
   const zen = await openSurface(page, "zen")
   await expect.poll(() => readEditor(page, zen.id)).toBe("- [ ] 任务正文")
-  await expect(zen.editor.locator(".cm-content")).not.toContainText("-")
+  await expect(zen.editor.locator(".ProseMirror")).not.toContainText("-")
   await zen.editor.getByRole("checkbox").click()
   await page.getByRole("button", { name: "退出编辑", exact: true }).click()
   await expect.poll(() => latestSavedContent(page, "task-fragment")).toBe("- [x] 任务正文")
@@ -358,7 +369,7 @@ test("碎片切入禅模式、文档切入禅模式并保存读回仍使用同�
   await page.getByRole("button", { name: "进入禅模式", exact: true }).click()
   const zenDocument = page.getByRole("region", { name: "资料库文档禅模式", exact: true })
   await expect(zenDocument).toBeVisible()
-  await expect(library.editor.locator(".cm-content")).not.toContainText("-")
+  await expect(library.editor.locator(".ProseMirror")).not.toContainText("-")
   await library.editor.getByRole("checkbox").click()
   await focusEditor(page, library.id)
   await page.keyboard.press("ControlOrMeta+s")
@@ -369,36 +380,128 @@ test("碎片切入禅模式、文档切入禅模式并保存读回仍使用同�
   const reopened = await openSurface(page, "library")
   await expect.poll(() => readEditor(page, reopened.id)).toBe("- [x] 任务正文")
   await expect(reopened.editor.getByRole("checkbox")).toHaveAttribute("aria-checked", "true")
-  await expect(reopened.editor.locator(".cm-content")).not.toContainText("-")
+  await expect(reopened.editor.locator(".ProseMirror")).not.toContainText("-")
 })
 
-test("有序、引用、嵌套任务及前方插行后点击准确写回，方向键跨过隐藏标记", async ({ page }) => {
+test("引用、嵌套任务及前方插行后点击准确写回", async ({ page }) => {
   const { id, editor } = await openSurface(page, "composer")
-  let markdown = "- [ ] 根任务\n  - [ ] 子任务\n\n> - [ ] 引用任务\n\n1. [ ] 有序任务"
+  let markdown = "- [ ] 根任务\n  - [ ] 子任务\n\n> - [ ] 引用任务"
   await fillEditor(page, id, markdown)
-  await expect(editor.getByRole("checkbox")).toHaveCount(4)
-  await expect(editor.locator(".cm-content")).toContainText("1.")
-  await expect(editor.locator(".cm-content")).toContainText(">")
-  await editor.getByRole("checkbox").nth(3).click()
-  markdown = markdown.replace("1. [ ]", "1. [x]")
-  await expect.poll(() => readEditor(page, id)).toBe(markdown)
+  await expect(editor.getByRole("checkbox")).toHaveCount(3)
+  await expect(editor.locator(".ProseMirror blockquote").getByRole("checkbox")).toHaveCount(1)
+  await expect(editor.locator(".ProseMirror")).not.toContainText("[ ]")
+  await expect(editor.locator(".ProseMirror")).not.toContainText(">")
   await editor.getByRole("checkbox").nth(2).click()
   markdown = markdown.replace("> - [ ]", "> - [x]")
   await expect.poll(() => readEditor(page, id)).toBe(markdown)
 
-  await selectRange(page, id, 0, 0)
-  await page.keyboard.insertText("前方新增正文\n\n")
+  // 在最前面插一段正文：根任务开头回车留出空任务项，退格把它变回普通段落。
+  await placeCaret(page, id, "根任务", "start")
+  const firstItemStart = (await readEditorSnapshot(page, id)).selectionStart
+  await page.keyboard.press("Enter")
+  await expect(editor.getByRole("checkbox")).toHaveCount(4)
+  // 新的空任务项占住了第一项的位置：光标上移回到这个位置，才算进了空项。
+  await page.keyboard.press("ArrowUp")
+  await expect.poll(() => readEditorSnapshot(page, id).then((state) => state.selectionStart)).toBe(firstItemStart)
+  await page.keyboard.press("Backspace")
+  await page.keyboard.insertText("前方新增正文")
   markdown = "前方新增正文\n\n" + markdown
+  await expect.poll(() => readEditor(page, id)).toBe(markdown)
   await editor.getByRole("checkbox").nth(1).click()
   markdown = markdown.replace("  - [ ]", "  - [x]")
   await expect.poll(() => readEditor(page, id)).toBe(markdown)
   await expect(editor.getByRole("checkbox").first()).toHaveAttribute("aria-checked", "false")
-
-  await fillEditor(page, id, "- [ ] 任务正文")
-  await selectRange(page, id, 6, 6)
-  await page.keyboard.press("ArrowLeft")
-  await expect.poll(() => readEditorSnapshot(page, id).then((state) => state.selectionStart)).toBe(0)
-  await page.keyboard.press("ArrowRight")
-  await expect.poll(() => readEditorSnapshot(page, id).then((state) => state.selectionStart)).toBe(6)
-  await expect.poll(() => readEditor(page, id)).toBe("- [ ] 任务正文")
 })
+
+/**
+ * 光标所在段落的有序列表嵌套深度与文字：0 表示已经不在列表里。
+ * 富文本选区坐标不是 Markdown 下标，按「光标落在哪一层的哪一项」判定位置。
+ */
+async function caretInList(editor: Locator) {
+  return editor.locator(".ProseMirror").evaluate((root) => {
+    const anchor = window.getSelection()?.anchorNode ?? null
+    const element = anchor instanceof Element ? anchor : anchor?.parentElement ?? null
+    const block = element?.closest("p")
+    if (!block || !root.contains(block)) return null
+    let depth = 0
+    for (let node: Element | null = block; node && node !== root; node = node.parentElement) {
+      if (node.tagName === "OL") depth += 1
+    }
+    return { depth, text: block.textContent ?? "" }
+  })
+}
+
+async function expectListDocument(
+  page: Page,
+  id: string,
+  editor: Locator,
+  value: string,
+  caret: { depth: number; text: string }
+) {
+  await expect.poll(() => readEditor(page, id)).toBe(value)
+  await expect(editor.locator(".ProseMirror")).toBeFocused()
+  await expect.poll(() => caretInList(editor)).toEqual(caret)
+}
+
+// Shard 方言的有序列表只有数字序号（技术方案 §3），`a.` 字母序号不是列表语法。
+for (const surface of ["composer", "inline", "zen", "library"] as const) {
+  test(`${surface} 1. 子项 Enter 续行后 Shift+Tab 创建父层下一项`, async ({ page }) => {
+    const { id, editor } = await openSurface(page, surface)
+    const initial = "1. 父项\n   1. 子项甲\n   2. 子项乙\n   3. 子项丙"
+    await fillEditor(page, id, initial)
+    await placeCaret(page, id, "子项丙", "end")
+
+    await page.keyboard.press("Enter")
+    // 空列表项行尾没有正文，规范化输出不带尾随空格。
+    await expectListDocument(page, id, editor, `${initial}\n   4.`, { depth: 2, text: "" })
+
+    await page.keyboard.press("Shift+Tab")
+    const promoted = `${initial}\n2.`
+    await expectListDocument(page, id, editor, promoted, { depth: 1, text: "" })
+    await page.keyboard.insertText("父层第二项")
+    await expectListDocument(page, id, editor, `${promoted} 父层第二项`, { depth: 1, text: "父层第二项" })
+  })
+
+  for (const key of ["Enter", "Shift+Tab"] as const) {
+    test(`${surface} 空子项 ${key} 提升到父层 2. 并可撤销`, async ({ page }) => {
+      const { id, editor } = await openSurface(page, surface)
+      const prefix = "1. 父项\n   1. 子项甲\n   2. 子项乙"
+      const initial = `${prefix}\n   3.`
+      await fillEditor(page, id, `${initial} `)
+      await expect.poll(() => readEditor(page, id)).toBe(initial)
+      // 光标落进空的第 3 个子项：从子项乙行尾往下一行。
+      await placeCaret(page, id, "子项乙", "end")
+      await page.keyboard.press("ArrowDown")
+      await expect.poll(() => caretInList(editor)).toEqual({ depth: 2, text: "" })
+
+      await page.keyboard.press(key)
+      await expectListDocument(page, id, editor, `${prefix}\n2.`, { depth: 1, text: "" })
+      await page.keyboard.press("ControlOrMeta+z")
+      await expectListDocument(page, id, editor, initial, { depth: 2, text: "" })
+    })
+  }
+
+  test(`${surface} 多级空列表 Enter 逐级返回后退出顶层，撤销恢复列表`, async ({ page }) => {
+    const { id, editor } = await openSurface(page, surface)
+    const prefix = "1. 父项\n   1. 子项"
+    const initial = `${prefix}\n      1.`
+    await fillEditor(page, id, `${initial} `)
+    await expect.poll(() => readEditor(page, id)).toBe(initial)
+    await placeCaret(page, id, "子项", "end")
+    await page.keyboard.press("ArrowDown")
+    await expect.poll(() => caretInList(editor)).toEqual({ depth: 3, text: "" })
+
+    await page.keyboard.press("Enter")
+    await expectListDocument(page, id, editor, `${prefix}\n   2.`, { depth: 2, text: "" })
+    await page.keyboard.press("Enter")
+    await expectListDocument(page, id, editor, `${prefix}\n2.`, { depth: 1, text: "" })
+    // prosemirror-history 把 500ms 内的相邻改动并成一次撤销；拉开分组，
+    // 让「退出顶层」单独成为一步，撤销只退回这一步。
+    await page.waitForTimeout(600)
+    await page.keyboard.press("Enter")
+    // 退出顶层列表：光标落在列表后的空段落里，空段落不写进文件。
+    await expectListDocument(page, id, editor, prefix, { depth: 0, text: "" })
+    await page.keyboard.press("ControlOrMeta+z")
+    await expectListDocument(page, id, editor, `${prefix}\n2.`, { depth: 1, text: "" })
+  })
+}

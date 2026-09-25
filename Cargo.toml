@@ -1,7 +1,7 @@
 # Shard 的 Rust workspace。
 [workspace]
 resolver = "2"
-members = ["src-tauri"]
+members = ["src-tauri", "crates/shard-core", "crates/shard-cli"]
 
 [workspace.package]
 edition = "2021"

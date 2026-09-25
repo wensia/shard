@@ -5,7 +5,8 @@ import {
   focusEditor,
   readEditor,
   readEditorSnapshot,
-  selectRange,
+  selectEditorText,
+  selectionToolbar,
   typeEditor,
 } from "./editor-helpers"
 
@@ -338,7 +339,6 @@ async function installTauriMock(
               return "/tmp/shard-ui-test-vault/assets/test.png"
             case "unhide_pointer":
             case "set_window_controls_hidden":
-            case "restore_window_frame":
             case "reveal_fragment_image_in_dir":
             case "save_recovery_key":
             case "save_exported_image":
@@ -377,7 +377,7 @@ test.beforeEach(async ({ page }) => {
   await installTauriMock(page)
   await page.goto("/")
   await expect(
-    page.locator('[data-shard-editor="composer"] .cm-content')
+    page.locator('[data-shard-editor="composer"] .ProseMirror')
   ).toBeFocused()
   await expect(page.locator("[data-shard-fragment-id]")).toHaveCount(24)
 })
@@ -385,10 +385,11 @@ test.beforeEach(async ({ page }) => {
 test("editor toolbars expose visible labels through the shared icon button", async ({
   page,
 }) => {
-  const uploadButton = page.getByRole("button", { name: "上传图片" })
-
-  await uploadButton.hover()
-  await expect(page.getByRole("tooltip", { name: "上传图片" })).toBeVisible()
+  // 行内格式在选区浮动条上，同样走共享图标按钮的 label → tooltip 契约。
+  await fillEditor(page, "composer", "浮动条提示回归")
+  await selectEditorText(page, "composer", "浮动条")
+  await selectionToolbar(page).getByRole("button", { name: "粗体" }).hover()
+  await expect(page.getByRole("tooltip", { name: "粗体" })).toBeVisible()
 
   await fillEditor(page, "composer", "禅模式工具栏提示回归")
   await focusEditor(page, "composer")
@@ -399,7 +400,7 @@ test("editor toolbars expose visible labels through the shared icon button", asy
   await expect(page.getByRole("tooltip", { name: "退出编辑" })).toBeVisible()
 })
 
-test("inline 工具栏操作一步撤销，切换片段后 history 隔离", async ({
+test("inline 浮动条操作一步撤销，切换片段后 history 隔离", async ({
   page,
 }) => {
   async function openInlineEditor(fragmentId: string) {
@@ -411,7 +412,7 @@ test("inline 工具栏操作一步撤销，切换片段后 history 隔离", asyn
 
     const editorId = `fragment:${fragmentId}`
     const editor = page.locator(`[data-shard-editor="${editorId}"]`)
-    await expect(editor.locator(".cm-content")).toBeFocused()
+    await expect(editor.locator(".ProseMirror")).toBeFocused()
     return {
       article: page.locator("article").filter({ has: editor }),
       editor,
@@ -421,17 +422,18 @@ test("inline 工具栏操作一步撤销，切换片段后 history 隔离", asyn
 
   const first = await openInlineEditor("fragment-1")
   const firstOriginal = await readEditor(page, first.editorId)
-  await selectRange(page, first.editorId, 0, 2)
-  await first.article.getByRole("button", { name: "粗体" }).click()
-  const firstFormatted = `**${firstOriginal.slice(0, 2)}**${firstOriginal.slice(2)}`
+  const firstHead = firstOriginal.slice(0, 2)
+  await selectEditorText(page, first.editorId, firstHead)
+  await selectionToolbar(page).getByRole("button", { name: "粗体" }).click()
+  const firstFormatted = `**${firstHead}**${firstOriginal.slice(2)}`
   await expect.poll(() => readEditor(page, first.editorId)).toBe(firstFormatted)
 
   await focusEditor(page, first.editorId)
   await page.keyboard.press("Meta+z")
   await expect.poll(() => readEditor(page, first.editorId)).toBe(firstOriginal)
 
-  await selectRange(page, first.editorId, 0, 2)
-  await first.article.getByRole("button", { name: "粗体" }).click()
+  await selectEditorText(page, first.editorId, firstHead)
+  await selectionToolbar(page).getByRole("button", { name: "粗体" }).click()
   await expect.poll(() => readEditor(page, first.editorId)).toBe(firstFormatted)
   await first.article.getByRole("button", { name: "取消" }).click()
   await expect(first.editor).toBeHidden()
@@ -443,84 +445,61 @@ test("inline 工具栏操作一步撤销，切换片段后 history 隔离", asyn
   await expect.poll(() => readEditor(page, second.editorId)).toBe(secondOriginal)
 })
 
-test("CM 编辑器按行盒自绘选区、正文保持 Kiln 选区", async ({
-  page,
-}) => {
-  const content = "第一行选中文字\n第二行继续选中"
-  await fillEditor(page, "composer", content)
-  await selectRange(page, "composer", 0, content.length)
-
-  const selectionColors = await page
-    .locator('[data-shard-editor="composer"] .cm-line')
-    .first()
-    .evaluate((element) => {
-      return {
-        editor: getComputedStyle(element, "::selection").backgroundColor,
-        global: getComputedStyle(document.body, "::selection").backgroundColor,
-      }
-    })
-
-  // 编辑器里：原生选区背景透明，由 .shard-cm-selection 按行盒绘制；
-  // 编辑器外：正文仍是 Kiln 的原生选区
-  await expect(page.locator(".shard-cm-selection")).toHaveCount(2)
-  expect(selectionColors.editor).toBe("rgba(0, 0, 0, 0)")
-  expect(selectionColors.global).not.toBe("rgba(0, 0, 0, 0)")
-})
-
-test("荧光标记在节点外隐藏，左移进入后揭示并按默认 Backspace 删除", async ({
+test("荧光笔渲染为行内高亮，编辑区看不到 == 且写回原样", async ({
   page,
 }) => {
   const content = "==荧光=="
   const editor = page.locator('[data-shard-editor="composer"]')
   await fillEditor(page, "composer", content)
-  await selectRange(page, "composer", content.length, content.length)
 
-  await expect(editor.locator(".shard-cm-highlight")).toHaveText("荧光")
-  await expect(editor.locator(".cm-content")).not.toContainText("==")
+  await expect(editor.locator(".ProseMirror mark")).toHaveText("荧光")
+  await expect(editor.locator(".ProseMirror")).not.toContainText("==")
+  await expect.poll(() => readEditor(page, "composer")).toBe(content)
 
-  await page.keyboard.press("ArrowLeft")
-  await expect(editor.locator(".cm-content")).toContainText("==荧光==")
-
+  // 光标在高亮末尾删一个字，删的是正文，不是看不见的标记
+  await selectEditorText(page, "composer", "荧光", { collapse: "end" })
   await page.keyboard.press("Backspace")
-  await expect.poll(() => readEditor(page, "composer")).toBe("==荧光=")
+  await expect.poll(() => readEditor(page, "composer")).toBe("==荧==")
 })
 
-test("任务 checkbox widget 不影响 Enter 续行与任务标记删除", async ({
+test("任务复选框不影响 Enter 续行，行首 Backspace 去掉任务标记", async ({
   page,
 }) => {
   const editor = page.locator('[data-shard-editor="composer"]')
 
   await fillEditor(page, "composer", "- [ ] 任务")
-  await expect(editor.locator(".shard-cm-task-checkbox")).toBeVisible()
-  await selectRange(page, "composer", 8, 8)
+  await expect(
+    editor.getByRole("checkbox", { name: "标记为完成" })
+  ).toBeVisible()
+  await selectEditorText(page, "composer", "任务", { collapse: "end" })
   await page.keyboard.press("Enter")
   await expect.poll(() => readEditor(page, "composer")).toBe(
-    "- [ ] 任务\n- [ ] ",
+    "- [ ] 任务\n- [ ]",
   )
-  await expect(editor.locator(".shard-cm-task-checkbox")).toHaveCount(2)
+  await expect(editor.getByRole("checkbox")).toHaveCount(2)
 
   await fillEditor(page, "composer", "- [ ] 任务")
-  await selectRange(page, "composer", 5, 5)
+  await selectEditorText(page, "composer", "任务", { collapse: "start" })
   await page.keyboard.press("Backspace")
   await expect.poll(() => readEditor(page, "composer")).toBe("任务")
-
-  await fillEditor(page, "composer", "- [ ] 任务")
-  await selectRange(page, "composer", 0, 0)
-  await page.keyboard.press("Delete")
-  await expect.poll(() => readEditor(page, "composer")).toBe("任务")
+  await expect(editor.getByRole("checkbox")).toHaveCount(0)
 })
 
-test("#tag 永不隐藏且不参与 caret reveal", async ({ page }) => {
+test("#tag 与荧光笔并存时标签始终可见", async ({ page }) => {
   await fillEditor(page, "composer", "#tag ==荧光==")
-  await selectRange(page, "composer", 11, 11)
   const editor = page.locator('[data-shard-editor="composer"]')
-  await expect(editor.locator(".shard-cm-tag")).toHaveText("#tag")
-  await expect(editor.locator(".cm-content")).toContainText("#tag")
-  await expect(editor.locator(".cm-content")).not.toContainText("==")
+  await expect(editor.locator(".shard-rich-tag")).toHaveText("#tag")
+  await expect(editor.locator(".ProseMirror mark")).toHaveText("荧光")
+  await expect(editor.locator(".ProseMirror")).not.toContainText("==")
 
-  await selectRange(page, "composer", 2, 2)
-  await expect(editor.locator(".shard-cm-tag")).toHaveText("#tag")
-  await expect(editor.locator(".cm-content")).toContainText("#tag")
+  // 光标移动到哪里标签都保持原样，不会被隐藏或换成源码
+  await selectEditorText(page, "composer", "荧光", { collapse: "end" })
+  await expect(editor.locator(".shard-rich-tag")).toHaveText("#tag")
+  await focusEditor(page, "composer")
+  await page.keyboard.press("ControlOrMeta+Home")
+  await expect(editor.locator(".shard-rich-tag")).toHaveText("#tag")
+  await expect(editor.locator(".ProseMirror")).toContainText("#tag")
+  await expect.poll(() => readEditor(page, "composer")).toBe("#tag ==荧光==")
 })
 
 test("任务 checkbox 点击写回完成状态", async ({ page }) => {
@@ -532,20 +511,18 @@ test("任务 checkbox 点击写回完成状态", async ({ page }) => {
   await expect.poll(() => readEditor(page, "composer")).toBe("- [x] 完成")
 })
 
-test("分割线 widget 在光标进入该行时揭示源码", async ({ page }) => {
+test("分割线在编辑区渲染为分隔线，编辑区看不到源码", async ({ page }) => {
   const editor = page.locator('[data-shard-editor="composer"]')
-  await fillEditor(page, "composer", "---\n后文")
-  await selectRange(page, "composer", 6, 6)
-  await expect(editor.locator(".shard-fragment-divider")).toBeVisible()
+  await fillEditor(page, "composer", "---\n\n后文")
+  await expect(editor.locator(".ProseMirror hr")).toHaveCount(1)
+  await expect(editor.locator(".ProseMirror")).not.toContainText("---")
 
-  await selectRange(page, "composer", 1, 1)
-  await expect(editor.locator(".shard-fragment-divider")).toHaveCount(0)
-  await expect(editor.locator(".cm-content")).toContainText("---")
+  await selectEditorText(page, "composer", "后文", { collapse: "start" })
+  await expect(editor.locator(".ProseMirror hr")).toHaveCount(1)
+  await expect.poll(() => readEditor(page, "composer")).toBe("---\n\n后文")
 })
 
-test("图片行使用 read_fragment_image 结果渲染并在进光标时揭示", async ({
-  page,
-}) => {
+test("图片附件使用 read_fragment_image 结果渲染", async ({ page }) => {
   const imageSrc =
     "data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs="
   await installTauriMock(page, { imageSrc })
@@ -555,38 +532,44 @@ test("图片行使用 read_fragment_image 结果渲染并在进光标时揭示",
   const content = "![测试图](assets/test.png)\n正文"
   const editor = page.locator('[data-shard-editor="composer"]')
   await fillEditor(page, "composer", content)
-  await selectRange(page, "composer", content.length, content.length)
-  const image = editor.locator('.shard-cm-image-widget img[alt="测试图"]')
+  const image = editor.locator(
+    '[data-shard-rich-inline="image"] img[data-source-path="assets/test.png"]'
+  )
   await expect(image).toHaveAttribute("src", imageSrc)
+  await expect(editor.locator(".ProseMirror")).not.toContainText("![测试图]")
 
-  await selectRange(page, "composer", 2, 2)
-  await expect(editor.locator(".shard-cm-image-widget")).toHaveCount(0)
-  await expect(editor.locator(".cm-content")).toContainText("![测试图]")
+  // 光标进入同一段不再揭示源码：附件节点一直在
+  await selectEditorText(page, "composer", "正文", { collapse: "end" })
+  await expect(image).toHaveAttribute("src", imageSrc)
 })
 
 test("code span 内的 == 不高亮", async ({ page }) => {
-  await fillEditor(page, "composer", "`==代码==` ==荧光==")
-  await selectRange(page, "composer", 15, 15)
+  const content = "`==代码==` ==荧光=="
+  await fillEditor(page, "composer", content)
   const editor = page.locator('[data-shard-editor="composer"]')
-  await expect(editor.locator(".shard-cm-highlight")).toHaveCount(1)
-  await expect(editor.locator(".shard-cm-highlight")).toHaveText("荧光")
-  await expect(editor.locator(".cm-content")).toContainText("`==代码==`")
+  await expect(editor.locator(".ProseMirror mark")).toHaveCount(1)
+  await expect(editor.locator(".ProseMirror mark")).toHaveText("荧光")
+  await expect(editor.locator(".ProseMirror code")).toHaveText("==代码==")
+  await expect.poll(() => readEditor(page, "composer")).toBe(content)
 })
 
 test("跨 #tag 与荧光笔的原生选区 rect 连续", async ({ page }) => {
   const content = "前 #tag ==荧光== 后"
   await fillEditor(page, "composer", content)
-  await selectRange(page, "composer", 0, content.length)
+  await focusEditor(page, "composer")
+  await page.keyboard.press("ControlOrMeta+a")
 
   const metrics = await page
-    .locator('[data-shard-editor="composer"] .cm-content')
-    .evaluate((element) => {
+    .locator('[data-shard-editor="composer"] .ProseMirror')
+    .evaluate(() => {
       const selection = window.getSelection()
       const range = selection?.rangeCount ? selection.getRangeAt(0) : null
       const rects = range
-        ? Array.from(range.getClientRects()).sort(
-            (left, right) => left.top - right.top || left.left - right.left,
-          )
+        ? Array.from(range.getClientRects())
+            .filter((rect) => rect.width > 0)
+            .sort(
+              (left, right) => left.top - right.top || left.left - right.left,
+            )
         : []
       let maxGap = 0
       for (let index = 1; index < rects.length; index += 1) {
@@ -594,111 +577,26 @@ test("跨 #tag 与荧光笔的原生选区 rect 连续", async ({ page }) => {
           maxGap = Math.max(maxGap, rects[index].left - rects[index - 1].right)
         }
       }
-      const lineHeight = Number.parseFloat(getComputedStyle(element).lineHeight)
-      return {
-        heights: rects.map((rect) => rect.height),
-        lineHeight,
-        maxGap,
-        rectCount: rects.length,
-      }
+      return { maxGap, rectCount: rects.length }
     })
 
   expect(metrics.rectCount).toBeGreaterThan(0)
-  // 同一行内相邻 rect 必须相接：#tag / 荧光笔的 mark 把文本拆成多个 span，
+  // 同一行内相邻 rect 必须相接：标签节点与荧光笔 mark 把文本拆成多个元素，
   // 选区不能因此碎成有缝的块。
   expect(metrics.maxGap).toBeLessThan(1)
-
-  // 实际绘制由自绘选区层负责：跨 mark 的一行只画一块，且高度是整个行盒
-  const drawn = await page
-    .locator('[data-shard-editor="composer"]')
-    .evaluate((editor) => {
-      const lineHeight = Number.parseFloat(
-        getComputedStyle(editor.querySelector(".cm-content") ?? editor).lineHeight,
-      )
-      const blocks = Array.from(
-        editor.querySelectorAll<HTMLElement>(".shard-cm-selection"),
-      ).map((block) => block.getBoundingClientRect().height)
-      return { blocks, lineHeight }
-    })
-  expect(drawn.blocks).toHaveLength(1)
-  expect(Math.abs(drawn.blocks[0] - drawn.lineHeight)).toBeLessThan(1)
-})
-
-test("组合态文本变更只映射旧 decoration，结束后再重算", async ({ page }) => {
-  const editor = page.locator('[data-shard-editor="composer"]')
-  await fillEditor(page, "composer", "==a==")
-  await selectRange(page, "composer", 1, 1)
-  await expect(editor.locator(".shard-cm-highlight")).toHaveCount(1)
-
-  // 合成的 CompositionEvent 不会让 CM 进入 composing（它要看到真实的 DOM 变更），
-  // 所以走 CDP 的 IME 接口模拟一次真正的拼音组合。
-  await focusEditor(page, "composer")
-  const cdp = await page.context().newCDPSession(page)
-  await cdp.send("Input.imeSetComposition", {
-    selectionEnd: 1,
-    selectionStart: 1,
-    text: "x",
-  })
-  const composed = await editor.locator(".cm-content").evaluate(() => {
-    type Bridge = { get(id: string): { composing: boolean; value: string } }
-    const bridge = (window as typeof window & { __shardEditorTest?: Bridge })
-      .__shardEditorTest
-    return bridge?.get("composer") ?? { composing: false, value: "" }
-  })
-  expect(composed.composing).toBe(true)
-  expect(composed.value).toBe("=x=a==")
-  // 组合期间只映射旧 decoration：荧光笔块还在，没有因为 `=x=a==` 不再匹配而消失
-  await expect(editor.locator(".shard-cm-highlight")).toHaveCount(1)
-
-  // 上屏结束组合，此时才重算：`=x=a==` 不是荧光笔
-  await cdp.send("Input.insertText", { text: "x" })
-  await expect(editor.locator(".shard-cm-highlight")).toHaveCount(0)
-  await cdp.detach()
-})
-
-test("选区高亮铺满行盒且跨行连成整片", async ({ page }) => {
-  const content = "单独单独 abc 后文\n第二行继续选中 xyz"
-  await fillEditor(page, "composer", content)
-  await selectRange(page, "composer", 2, 20)
-
-  const metrics = await page
-    .locator('[data-shard-editor="composer"]')
-    .evaluate((editor) => {
-      const lineHeight = Number.parseFloat(
-        getComputedStyle(editor.querySelector(".cm-content") ?? editor).lineHeight,
-      )
-      const blocks = Array.from(
-        editor.querySelectorAll<HTMLElement>(".shard-cm-selection"),
-      )
-        .map((block) => block.getBoundingClientRect())
-        .sort((left, right) => left.top - right.top)
-      return {
-        heights: blocks.map((block) => block.height),
-        lineHeight,
-        rowCount: blocks.length,
-        seam: blocks.length > 1 ? blocks[1].top - blocks[0].bottom : null,
-      }
-    })
-
-  // 自绘选区层每个视觉行画一块：块高 = 行盒高（同 flomo / 原生 contenteditable），
-  // 相邻两行的块首尾相接，不再是断开的横条。
-  expect(metrics.rowCount).toBe(2)
-  for (const height of metrics.heights) {
-    expect(Math.abs(height - metrics.lineHeight)).toBeLessThan(1)
-  }
-  expect(Math.abs(metrics.seam ?? 99)).toBeLessThan(1)
 })
 
 test("荧光笔高亮块铺满行盒", async ({ page }) => {
   await fillEditor(page, "composer", "前面 ==荧光笔== 后面")
-  await selectRange(page, "composer", 0, 0)
-  const highlight = page.locator('[data-shard-editor="composer"] .shard-cm-highlight')
+  const highlight = page.locator(
+    '[data-shard-editor="composer"] .ProseMirror mark'
+  )
   await expect(highlight).toHaveText("荧光笔")
 
   const metrics = await highlight.evaluate((element) => {
     const highlightRect = element.getBoundingClientRect()
     const lineHeight = Number.parseFloat(
-      getComputedStyle(element.closest(".cm-content") ?? element).lineHeight,
+      getComputedStyle(element.closest(".ProseMirror") ?? element).lineHeight,
     )
     return { highlightHeight: highlightRect.height, lineHeight }
   })
@@ -721,11 +619,11 @@ test("zen editor renders highlight markup with hidden markers", async ({ page })
   expect(zenEditorId).not.toBe("")
   const zenContent = "==禅模式荧光笔=="
   await fillEditor(page, zenEditorId, zenContent)
-  await selectRange(page, zenEditorId, zenContent.length, zenContent.length)
 
   const editor = page.locator(`[data-shard-editor="${zenEditorId}"]`)
-  await expect(editor.locator(".shard-cm-highlight")).toHaveText("禅模式荧光笔")
-  await expect(editor.locator(".cm-content")).not.toContainText("==")
+  await expect(editor.locator(".ProseMirror mark")).toHaveText("禅模式荧光笔")
+  await expect(editor.locator(".ProseMirror")).not.toContainText("==")
+  await expect.poll(() => readEditor(page, zenEditorId)).toBe(zenContent)
 })
 
 test("main shell keeps geometry and local scrolling", async ({ page }) => {
@@ -943,7 +841,7 @@ test("search recall mode preserves context, focus, and timeline scrolling", asyn
   page,
 }) => {
   const composer = page.locator('[data-shard-editor="composer"]')
-  const composerContent = composer.locator(".cm-content")
+  const composerContent = composer.locator(".ProseMirror")
   const documentScrollBefore = await page.evaluate(
     () => document.scrollingElement?.scrollTop ?? -1
   )
@@ -1615,7 +1513,7 @@ test("fragment navigation only exposes all fragments and trash", async ({ page }
   await expect(page.getByRole("region", { name: "碎片回收站", exact: true })).toBeVisible()
   await navigation.getByRole("button", { name: /^全部碎片 24$/u }).click()
   await expect(page.locator("[data-shard-fragment-id]")).toHaveCount(24)
-  await expect(page.locator('[data-shard-editor="composer"] .cm-content')).toBeVisible()
+  await expect(page.locator('[data-shard-editor="composer"] .ProseMirror')).toBeVisible()
 })
 
 for (const mode of ["dailyReview", "insight", "walk"]) {
@@ -1629,7 +1527,7 @@ for (const mode of ["dailyReview", "insight", "walk"]) {
       }, route)
       await page.reload()
       await expect(page.locator("[data-shard-fragment-id]")).toHaveCount(24)
-      await expect(page.locator('[data-shard-editor="composer"] .cm-content')).toBeVisible()
+      await expect(page.locator('[data-shard-editor="composer"] .ProseMirror')).toBeVisible()
       await expect(page.getByRole("button", { name: /^全部碎片 24$/u })).toHaveAttribute("aria-current", "page")
       await expect(page.getByRole("button", { name: /每日回顾|洞察视角|随机漫步/u })).toHaveCount(0)
     })
@@ -1843,46 +1741,51 @@ test.describe("片段关系层", () => {
 
 })
 
-test("插入标签按需补空格，汉字后不粘连", async ({ page }) => {
-  const insertTag = page.getByRole("button", { name: "插入标签" })
+/** 清空编辑器后像用户一样逐字输入，输入规则与标签建议都会照常触发。 */
+async function typeFresh(page: Page, id: string, text: string) {
+  await fillEditor(page, id, "")
+  await focusEditor(page, id)
+  await typeEditor(page, id, text)
+}
 
-  // 汉字后面必须补空格：isTagBoundary 把汉字当边界是为了识别，
-  // 插入时沿用会得到 `#密匣#高菲` 这种粘连。
-  await fillEditor(page, "composer", "密匣")
-  await selectRange(page, "composer", 2, 2)
-  await insertTag.click()
-  await expect.poll(() => readEditor(page, "composer")).toBe("密匣 #")
+/**
+ * 编辑区可见正文（含空白）。序列化会裁掉段尾空白，
+ * 断言「标签后补出的空格」「未收敛的手打井号」时看编辑区本身。
+ */
+async function editorText(page: Page, id: string) {
+  return page
+    .locator(`[data-shard-editor="${id}"] .ProseMirror`)
+    .evaluate((element) => element.textContent ?? "")
+}
 
-  // 已经有空白分隔时不重复补
-  await fillEditor(page, "composer", "密匣 ")
-  await selectRange(page, "composer", 3, 3)
-  await insertTag.click()
-  await expect.poll(() => readEditor(page, "composer")).toBe("密匣 #")
+test("/标签 插入井号：空白后不重复补空格", async ({ page }) => {
+  // `/` 只在行首或空白后触发，删掉命令文本后光标前一定是空白或行首，
+  // 井号直接落下，不会补出第二个空格。汉字后补空格的规则由
+  // `getTagMarker` 单测覆盖，手打 `#` 的路径见下面的补全用例。
+  await typeFresh(page, "composer", "密匣 /标签")
+  await page.keyboard.press("Enter")
+  await expect.poll(() => editorText(page, "composer")).toBe("密匣 #")
 
-  // 中文标点后同样不补，保持 `你好，#标签` 的自然写法
-  await fillEditor(page, "composer", "你好，")
-  await selectRange(page, "composer", 3, 3)
-  await insertTag.click()
-  await expect.poll(() => readEditor(page, "composer")).toBe("你好，#")
+  await typeFresh(page, "composer", "/标签")
+  await page.keyboard.press("Enter")
+  await expect.poll(() => editorText(page, "composer")).toBe("#")
 })
 
 test("从建议里选中标签后自动补空格", async ({ page }) => {
-  await fillEditor(page, "composer", "#w")
-  await selectRange(page, "composer", 2, 2)
-  await typeEditor(page, "composer", "o")
+  await typeFresh(page, "composer", "#wo")
   const suggestion = page
     .getByRole("listbox", { name: "标签建议" })
     .getByRole("option", { name: /work/ })
   await suggestion.click()
 
   // 补全后必须留出分隔空格，否则接着写下一个标签会粘连
-  await expect.poll(() => readEditor(page, "composer")).toBe("#work ")
-  await expect
-    .poll(async () => (await readEditorSnapshot(page, "composer")).selectionStart)
-    .toBe(6)
+  await expect.poll(() => editorText(page, "composer")).toBe("#work ")
   await expect(
-    page.locator('[data-shard-editor="composer"] .cm-content')
+    page.locator('[data-shard-editor="composer"] .ProseMirror')
   ).toBeFocused()
+  // 光标落在补出的空格之后：接着打字不会粘在标签上
+  await typeEditor(page, "composer", "续写")
+  await expect.poll(() => readEditor(page, "composer")).toBe("#work 续写")
 })
 
 test("编辑模式选中标签后留出输入边距", async ({ page }) => {
@@ -1891,24 +1794,16 @@ test("编辑模式选中标签后留出输入边距", async ({ page }) => {
   await page.getByRole("menuitem", { name: "编辑" }).click()
 
   const editor = page.locator(
-    '[data-shard-editor="fragment:fragment-1"] .cm-content'
+    '[data-shard-editor="fragment:fragment-1"] .ProseMirror'
   )
   await expect(editor).toBeFocused()
-  await fillEditor(page, "fragment:fragment-1", "#w")
-  await selectRange(page, "fragment:fragment-1", 2, 2)
-  await typeEditor(page, "fragment:fragment-1", "o")
+  await typeFresh(page, "fragment:fragment-1", "#wo")
   await page
     .getByRole("listbox", { name: "标签建议" })
     .getByRole("option", { name: /work/ })
     .click()
 
-  await expect.poll(() => readEditor(page, "fragment:fragment-1")).toBe("#work ")
-  await expect
-    .poll(
-      async () =>
-        (await readEditorSnapshot(page, "fragment:fragment-1")).selectionStart
-    )
-    .toBe(6)
+  await expect.poll(() => editorText(page, "fragment:fragment-1")).toBe("#work ")
   await expect(editor).toBeFocused()
   const caretGap = await page.evaluate(() => {
     const selection = window.getSelection()
@@ -1917,7 +1812,7 @@ test("编辑模式选中标签后留出输入边距", async ({ page }) => {
       : undefined
     const tag = document
       .querySelector(
-        '[data-shard-editor="fragment:fragment-1"] .shard-cm-tag'
+        '[data-shard-editor="fragment:fragment-1"] .shard-rich-tag'
       )
       ?.getBoundingClientRect()
     return caret && tag ? caret.left - tag.right : null
@@ -1927,14 +1822,16 @@ test("编辑模式选中标签后留出输入边距", async ({ page }) => {
 })
 
 test("标签补全用 ArrowDown 与 Enter 选择第二项", async ({ page }) => {
-  await fillEditor(page, "composer", "")
-  await selectRange(page, "composer", 0, 0)
-  await typeEditor(page, "composer", "#")
+  await typeFresh(page, "composer", "#")
   const listbox = page.getByRole("listbox", { name: "标签建议" })
   await expect(listbox).toBeVisible()
   // 空 query 时候选顺序由标签索引决定，不假设第二项是谁：读出来再比对
   const second = (
-    await listbox.getByRole("option").nth(1).locator(".cm-completionLabel").innerText()
+    await listbox
+      .getByRole("option")
+      .nth(1)
+      .locator(".shard-rich-suggestion-label")
+      .innerText()
   ).trim()
   expect(second.length).toBeGreaterThan(0)
   await expect(listbox.getByRole("option").nth(0)).toHaveAttribute("aria-selected", "true")
@@ -1943,13 +1840,12 @@ test("标签补全用 ArrowDown 与 Enter 选择第二项", async ({ page }) => 
   await expect(listbox.getByRole("option").nth(1)).toHaveAttribute("aria-selected", "true")
   await page.keyboard.press("Enter")
 
-  await expect.poll(() => readEditor(page, "composer")).toBe(`#${second} `)
+  await expect.poll(() => editorText(page, "composer")).toBe(`#${second} `)
+  await expect.poll(() => readEditor(page, "composer")).toBe(`#${second}`)
 })
 
 test("Escape 关闭标签补全且不改文本", async ({ page }) => {
-  await fillEditor(page, "composer", "#w")
-  await selectRange(page, "composer", 2, 2)
-  await typeEditor(page, "composer", "o")
+  await typeFresh(page, "composer", "#wo")
   const listbox = page.getByRole("listbox", { name: "标签建议" })
   await expect(listbox).toBeVisible()
 
@@ -1960,9 +1856,7 @@ test("Escape 关闭标签补全且不改文本", async ({ page }) => {
 })
 
 test("刚输入井号就展示已知标签且不展示新建项", async ({ page }) => {
-  await fillEditor(page, "composer", "")
-  await selectRange(page, "composer", 0, 0)
-  await typeEditor(page, "composer", "#")
+  await typeFresh(page, "composer", "#")
   const listbox = page.getByRole("listbox", { name: "标签建议" })
 
   await expect(listbox).toBeVisible()
@@ -1971,9 +1865,7 @@ test("刚输入井号就展示已知标签且不展示新建项", async ({ page 
 })
 
 test("未知标签显示新建并由 Enter 应用", async ({ page }) => {
-  await fillEditor(page, "composer", "")
-  await selectRange(page, "composer", 0, 0)
-  await typeEditor(page, "composer", "#新标签")
+  await typeFresh(page, "composer", "#新标签")
   const listbox = page.getByRole("listbox", { name: "标签建议" })
 
   await expect(
@@ -1981,14 +1873,15 @@ test("未知标签显示新建并由 Enter 应用", async ({ page }) => {
   ).toBeVisible()
   await page.keyboard.press("Enter")
 
-  await expect.poll(() => readEditor(page, "composer")).toBe("#新标签 ")
+  await expect.poll(() => editorText(page, "composer")).toBe("#新标签 ")
+  await expect(
+    page.locator('[data-shard-editor="composer"] .shard-rich-tag')
+  ).toHaveText("#新标签")
 })
 
-test("汉字后用工具栏插入标签会补空格并立即打开补全", async ({ page }) => {
-  await fillEditor(page, "composer", "密匣")
-  await selectRange(page, "composer", 2, 2)
-
-  await page.getByRole("button", { name: "插入标签" }).click()
+test("/标签 插入井号后立即打开补全", async ({ page }) => {
+  await typeFresh(page, "composer", "密匣 /标签")
+  await page.keyboard.press("Enter")
 
   await expect.poll(() => readEditor(page, "composer")).toBe("密匣 #")
   await expect(
@@ -1998,9 +1891,7 @@ test("汉字后用工具栏插入标签会补空格并立即打开补全", async
 
 test("IME 组合期间不弹补全，上屏后才出现", async ({ page }) => {
   const session = await page.context().newCDPSession(page)
-  await fillEditor(page, "composer", "")
-  await selectRange(page, "composer", 0, 0)
-  await typeEditor(page, "composer", "#")
+  await typeFresh(page, "composer", "#")
   await expect(
     page.getByRole("listbox", { name: "标签建议" })
   ).toBeVisible()
@@ -2018,7 +1909,8 @@ test("IME 组合期间不弹补全，上屏后才出现", async ({ page }) => {
 
   await session.send("Input.insertText", { text: "wo" })
 
-  await expect.poll(() => readEditor(page, "composer")).toBe("#wo")
+  // 建议开着时手打的 `#wo` 还是文本、尚未收敛成标签节点，看编辑区原文
+  await expect.poll(() => editorText(page, "composer")).toBe("#wo")
   await expect(
     page.getByRole("listbox", { name: "标签建议" })
   ).toBeVisible()
@@ -2027,9 +1919,7 @@ test("IME 组合期间不弹补全，上屏后才出现", async ({ page }) => {
 })
 
 test("补全打开时 Cmd+Enter 仍提交而不接受候选", async ({ page }) => {
-  await fillEditor(page, "composer", "#w")
-  await selectRange(page, "composer", 2, 2)
-  await typeEditor(page, "composer", "o")
+  await typeFresh(page, "composer", "#wo")
   await expect(
     page.getByRole("listbox", { name: "标签建议" })
   ).toBeVisible()
@@ -2052,13 +1942,13 @@ test("补全打开时 Cmd+Enter 仍提交而不接受候选", async ({ page }) =
 test("连续标签高亮保留可见空格", async ({ page }) => {
   await fillEditor(page, "composer", "#work #notes ")
 
-  const tagGap = await page
-    .locator('[data-shard-editor="composer"] .shard-cm-tag')
-    .evaluateAll((tags) => {
-      const first = tags[0]?.getBoundingClientRect()
-      const second = tags[1]?.getBoundingClientRect()
-      return first && second ? second.left - first.right : null
-    })
+  const tags = page.locator('[data-shard-editor="composer"] .shard-rich-tag')
+  await expect(tags).toHaveCount(2)
+  const tagGap = await tags.evaluateAll((elements) => {
+    const first = elements[0]?.getBoundingClientRect()
+    const second = elements[1]?.getBoundingClientRect()
+    return first && second ? second.left - first.right : null
+  })
   expect(tagGap).not.toBeNull()
   // 两个标签之间的空格必须完整可见，不能只是「没重叠」
   expect(tagGap ?? 0).toBeGreaterThanOrEqual(3)
@@ -2338,16 +2228,5 @@ test.describe("正文表格", () => {
     await expect(
       table.locator("tbody tr").last().locator("td").nth(1)
     ).toHaveText("—")
-  })
-
-  test("编辑态保留旧表格源码，不再提供另一套单元格编辑器", async ({ page }) => {
-    await fillEditor(page, "composer", TABLE)
-    await page.getByRole("button", { name: "粗体", exact: true }).focus()
-
-    await expect(page.locator("table.shard-markdown-table")).toHaveCount(0)
-    await expect(page.locator("table.shard-editor-table")).toHaveCount(0)
-    await expect(page.getByRole("button", { name: "插入表格", exact: true })).toHaveCount(0)
-    await expect(page.locator('[data-shard-editor="composer"] .cm-content')).toContainText("行知中学")
-    await expect.poll(() => readEditor(page, "composer")).toBe(TABLE)
   })
 })

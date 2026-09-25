@@ -1,0 +1,6 @@
+export { looksLikeShardMarkdown } from "./dialect-signals"
+export { joinFrontmatter, splitFrontmatter } from "./frontmatter"
+export type { FrontmatterSplit } from "./frontmatter"
+export { parseShardMarkdown } from "./parse"
+export type { ShardMarkdownDocument } from "./parse"
+export { serializeShardMarkdown } from "./serialize"

@@ -14,7 +14,7 @@ async function installConversionRecoveryMock(page: Page, scenario: RecoveryScena
     const stamp = "2026-08-30T10:00:00.000Z"
     const fragment = {
       id: "conversion-source",
-      content: "# 原始碎片标题\n正文和来源都应保留。",
+      content: "# 原始碎片标题\n\n正文和来源都应保留。",
       createdAt: stamp,
       updatedAt: stamp,
       tags: ["inbox", "灵感"],
@@ -65,7 +65,6 @@ async function installConversionRecoveryMock(page: Page, scenario: RecoveryScena
           if (command === "list_library_tree") return structuredClone(tree())
           if (command === "migrate_legacy_notes") return { tree: structuredClone(tree()), migratedCount: 0 }
           if (command === "list_mind_maps" || command === "list_csv_files" || command === "list_diagram_documents") return []
-          if (command === "restore_window_frame") return null
           if (command === "convert_fragment_to_note") {
             conversions++
             if (scenario === "failed-before-move" && conversions === 1) {
@@ -106,7 +105,7 @@ async function expectConvertedDocument(page: Page) {
   await expect(page.getByRole("dialog", { name: "转为文档", exact: true })).toHaveCount(0)
   await expect(page.getByRole("textbox", { name: "资料库文档编辑器", exact: true })).toBeFocused()
   await expect.poll(() => readEditor(page, "library:conversion-source"))
-    .toBe("# 原始碎片标题\n正文和来源都应保留。")
+    .toBe("# 原始碎片标题\n\n正文和来源都应保留。")
   await expect(page.locator('[data-shard-fragment-id="conversion-source"]')).toHaveCount(0)
 }
 

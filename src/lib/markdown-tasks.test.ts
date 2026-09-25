@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 
-import { shardMarkdownParser } from "@/editor/extensions/markdown"
+import { shardMarkdownParser } from "@shard/markdown/core"
 import { markdownTaskFromNode, type MarkdownTask } from "@/lib/markdown-tasks"
 
 function tasksIn(source: string) {

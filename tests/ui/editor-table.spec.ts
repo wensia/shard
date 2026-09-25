@@ -4,12 +4,18 @@ import {
   fillEditor,
   focusEditor,
   readEditor,
-  selectRange,
+  selectEditorText,
+  selectionToolbar,
   typeEditor,
 } from "./editor-helpers"
 
-/** 多维表格是唯一表格编辑器；旧 GFM 正文仍可源码编辑与阅读。 */
+/** 多维表格是唯一的表格导入入口；正文里的 GFM 表格在富文本里是表格节点，逐格编辑、只读渲染都不丢内容。 */
 const LEGACY_TABLE = "| 名称 | 状态 |\n| :--- | ---: |\n| A\\|B | 完成 |"
+/**
+ * 富文本载入即按方言规范化（技术方案 §3「非规范输入首次保存后被规范化」）：
+ * 对齐标记统一写成 `:--` / `--:`，转义竖线与单元格内容原样保留。
+ */
+const LEGACY_TABLE_SAVED = "| 名称 | 状态 |\n| :-- | --: |\n| A\\|B | 完成 |"
 
 async function installTauriMock(page: Page) {
   await page.addInitScript(() => {
@@ -158,13 +164,13 @@ async function openFragmentEditor(page: Page, variant: "inline" | "zen") {
     .getByRole("button", { name: "片段操作", exact: true }).click()
   await page.getByRole("menuitem", { name: variant === "inline" ? "编辑" : "禅模式", exact: true }).click()
   const editorId = `${variant === "inline" ? "fragment" : "zen"}:fragment-1`
-  await expect(page.locator(`[data-shard-editor="${editorId}"] .cm-content`)).toBeVisible()
+  await expect(page.locator(`[data-shard-editor="${editorId}"] .ProseMirror`)).toBeVisible()
   return editorId
 }
 
 async function emitDrag(page: Page, editorId: string, phase: "enter" | "over" | "drop" | "leave", paths: string[]) {
   await page.evaluate(({ editorId, phase, paths }) => {
-    const content = document.querySelector(`[data-shard-editor="${editorId}"] .cm-content`)!
+    const content = document.querySelector(`[data-shard-editor="${editorId}"] .ProseMirror`)!
     const bounds = content.getBoundingClientRect()
     const runtime = window as unknown as {
       __SHARD_EMIT_TEST_EVENT__(name: string, payload: unknown): void
@@ -185,34 +191,31 @@ async function expectNoLegacyTableControls(page: Page) {
 test.beforeEach(async ({ page }) => {
   await installTauriMock(page)
   await page.goto("/")
-  await expect(page.locator('[data-shard-editor="composer"] .cm-content')).toBeFocused()
+  await expect(page.locator('[data-shard-editor="composer"] .ProseMirror')).toBeFocused()
 })
 
-test("速记工具栏不再提供简单表格和 Excel 转正文入口，其余格式操作保留", async ({ page }) => {
+test("速记工具栏不再提供简单表格和 Excel 转正文入口，行内格式由选区浮动条提供", async ({ page }) => {
   await expectNoLegacyTableControls(page)
-  await expect(page.getByRole("button", { name: "插入标签", exact: true })).toBeVisible()
-  await expect(page.getByRole("button", { name: "上传图片", exact: true })).toBeVisible()
   await fillEditor(page, "composer", "正文")
-  await selectRange(page, "composer", 0, 2)
-  await page.getByRole("button", { name: "粗体", exact: true }).click()
+  await selectEditorText(page, "composer", "正文")
+  await selectionToolbar(page).getByRole("button", { name: "粗体", exact: true }).click()
   await expect.poll(() => readEditor(page, "composer")).toBe("**正文**")
 })
 
 for (const variant of ["inline", "zen"] as const) {
-  test(`${variant} 编辑器不再提供简单表格入口，旧表格原样保留`, async ({ page }) => {
+  test(`${variant} 编辑器不再提供简单表格入口，旧表格内容保留并可逐格修改`, async ({ page }) => {
     const editorId = await openFragmentEditor(page, variant)
     await fillEditor(page, editorId, LEGACY_TABLE)
     await expectNoLegacyTableControls(page)
-    await expect.poll(() => readEditor(page, editorId)).toBe(LEGACY_TABLE)
-    const at = LEGACY_TABLE.indexOf("完成")
-    await selectRange(page, editorId, at, at + 2)
+    await expect.poll(() => readEditor(page, editorId)).toBe(LEGACY_TABLE_SAVED)
+    await selectEditorText(page, editorId, "完成")
     await typeEditor(page, editorId, "待办")
-    await expect.poll(() => readEditor(page, editorId)).toBe(LEGACY_TABLE.replace("完成", "待办"))
+    await expect.poll(() => readEditor(page, editorId)).toBe(LEGACY_TABLE_SAVED.replace("完成", "待办"))
   })
 }
 
 test("全局 Tab 不轮转焦点，工具栏在明暗主题下没有焦点框且仍可点击编辑", async ({ page }) => {
-  const button = page.getByRole("button", { name: "无序列表", exact: true })
+  const button = page.getByRole("button", { name: "禅模式", exact: true })
   for (const dark of [false, true]) {
     await page.evaluate(value => document.documentElement.classList.toggle("dark", value), dark)
     await button.focus()
@@ -228,36 +231,36 @@ test("全局 Tab 不轮转焦点，工具栏在明暗主题下没有焦点框且
     expect(visibleShadows === "none" || !/rgba?\(/.test(visibleShadows)).toBe(true)
   }
   await fillEditor(page, "composer", "焦点测试")
-  await focusEditor(page, "composer")
-  await button.click()
-  await expect.poll(() => readEditor(page, "composer")).toContain("- 焦点测试")
-  await page.locator('[data-shard-editor="composer"] .cm-content').click()
+  await selectEditorText(page, "composer", "焦点测试")
+  await selectionToolbar(page).getByRole("button", { name: "粗体", exact: true }).click()
+  await expect.poll(() => readEditor(page, "composer")).toContain("**焦点测试**")
+  await page.locator('[data-shard-editor="composer"] .ProseMirror').click()
   await page.keyboard.type("ok")
   await expect.poll(() => readEditor(page, "composer")).toContain("ok")
 })
 
-test("旧 Markdown 表格切换焦点与源码位置后逐字符保留，不自动迁移", async ({ page }) => {
-  const original = `正文\n\n${LEGACY_TABLE}\n\n后记`
-  await fillEditor(page, "composer", original)
-  await selectRange(page, "composer", original.indexOf("名称"), original.indexOf("名称"))
-  await page.getByRole("button", { name: "粗体", exact: true }).focus()
-  await selectRange(page, "composer", original.length, original.length)
+test("旧 Markdown 表格切换焦点与光标位置后内容不变，不自动迁移", async ({ page }) => {
+  const saved = `正文\n\n${LEGACY_TABLE_SAVED}\n\n后记`
+  await fillEditor(page, "composer", `正文\n\n${LEGACY_TABLE}\n\n后记`)
+  await expect.poll(() => readEditor(page, "composer")).toBe(saved)
+  await selectEditorText(page, "composer", "名称", { collapse: "start" })
+  await page.getByRole("button", { name: "禅模式", exact: true }).focus()
+  await selectEditorText(page, "composer", "后记", { collapse: "end" })
   await expectNoLegacyTableControls(page)
-  await expect.poll(() => readEditor(page, "composer")).toBe(original)
+  await expect.poll(() => readEditor(page, "composer")).toBe(saved)
 })
 
-test("旧表格源码修改支持撤销，不重排空格、对齐标记或转义竖线", async ({ page }) => {
+test("旧表格单元格修改支持撤销，对齐方向与转义竖线不丢", async ({ page }) => {
   await fillEditor(page, "composer", LEGACY_TABLE)
-  const at = LEGACY_TABLE.indexOf("完成")
-  await selectRange(page, "composer", at, at + 2)
+  await selectEditorText(page, "composer", "完成")
   await typeEditor(page, "composer", "待办")
-  await expect.poll(() => readEditor(page, "composer")).toBe(LEGACY_TABLE.replace("完成", "待办"))
+  await expect.poll(() => readEditor(page, "composer")).toBe(LEGACY_TABLE_SAVED.replace("完成", "待办"))
   await page.keyboard.press("Meta+z")
-  await expect.poll(() => readEditor(page, "composer")).toBe(LEGACY_TABLE)
+  await expect.poll(() => readEditor(page, "composer")).toBe(LEGACY_TABLE_SAVED)
   await expectNoLegacyTableControls(page)
 })
 
-test("保存旧 Markdown 表格后仍使用只读表格渲染并保留原文", async ({ page }) => {
+test("保存旧 Markdown 表格后仍使用只读表格渲染并保留内容", async ({ page }) => {
   await fillEditor(page, "composer", LEGACY_TABLE)
   await focusEditor(page, "composer")
   await page.keyboard.press("Meta+Enter")
@@ -269,40 +272,42 @@ test("保存旧 Markdown 表格后仍使用只读表格渲染并保留原文", a
   await expect(table.locator("input, button")).toHaveCount(0)
   await card.getByRole("button", { name: "片段操作", exact: true }).click()
   await page.getByRole("menuitem", { name: "编辑", exact: true }).click()
-  await expect.poll(() => readEditor(page, "fragment:fragment-created")).toBe(LEGACY_TABLE)
+  await expect.poll(() => readEditor(page, "fragment:fragment-created")).toBe(LEGACY_TABLE_SAVED)
 })
 
-test("同一文档的多张旧表格可按源码独立修改", async ({ page }) => {
+test("同一文档的多张旧表格可独立修改", async ({ page }) => {
   const second = "| C | D |\n| --- | --- |\n| 3 | 4 |"
-  const original = `${LEGACY_TABLE}\n\n${second}\n\n`
-  await fillEditor(page, "composer", original)
-  const at = original.indexOf("C")
-  await selectRange(page, "composer", at, at + 1)
+  await fillEditor(page, "composer", `${LEGACY_TABLE}\n\n${second}\n\n`)
+  // 文末空行不是内容，规范化时去掉。
+  const saved = `${LEGACY_TABLE_SAVED}\n\n${second}`
+  await expect.poll(() => readEditor(page, "composer")).toBe(saved)
+  await selectEditorText(page, "composer", "C")
   await typeEditor(page, "composer", "第二")
-  await expect.poll(() => readEditor(page, "composer")).toBe(original.replace("C", "第二"))
+  await expect.poll(() => readEditor(page, "composer")).toBe(saved.replace("C", "第二"))
   await expectNoLegacyTableControls(page)
 })
 
-test("旧 Markdown 表格源码中中文组词不创建单元格编辑器或丢失原文", async ({ page }) => {
+test("旧 Markdown 表格单元格中中文组词不创建旧表格控件或丢失内容", async ({ page }) => {
   await fillEditor(page, "composer", LEGACY_TABLE)
-  const at = LEGACY_TABLE.indexOf("名称")
-  await selectRange(page, "composer", at, at + 2)
+  await selectEditorText(page, "composer", "名称")
   const session = await page.context().newCDPSession(page)
   try {
     await session.send("Input.imeSetComposition", { text: "zhongwen", selectionStart: 8, selectionEnd: 8 })
     await session.send("Input.insertText", { text: "中文" })
-    await expect.poll(() => readEditor(page, "composer")).toBe(LEGACY_TABLE.replace("名称", "中文"))
+    await expect.poll(() => readEditor(page, "composer")).toBe(LEGACY_TABLE_SAVED.replace("名称", "中文"))
     await expectNoLegacyTableControls(page)
   } finally { await session.detach() }
 })
 
 for (const count of [100, 1200]) {
-  test(`${count} 行旧 Markdown 表格保留完整源码且不创建可编辑网格`, async ({ page }) => {
+  test(`${count} 行旧 Markdown 表格保留完整内容且不创建旧表格控件`, async ({ page }) => {
     const lines = ["| 学校 | 事项 |", "| --- | --- |"]
     for (let index = 0; index < count; index++) lines.push(`| 第${index}中学 | 采单 |`)
-    const content = `${lines.join("\n")}\n\n`
-    await fillEditor(page, "composer", content)
+    const content = lines.join("\n")
+    // 文末空行在规范化时去掉，行内容逐行保留。
+    await fillEditor(page, "composer", `${content}\n\n`)
     await expectNoLegacyTableControls(page)
+    await expect(page.locator('[data-shard-editor="composer"] .ProseMirror tr')).toHaveCount(count + 1)
     await expect.poll(() => readEditor(page, "composer")).toBe(content)
   })
 }
@@ -315,7 +320,7 @@ for (const variant of ["composer", "inline", "zen"] as const) {
     await expect(page.getByText("请在资料库中导入为多维表格", { exact: true })).toBeVisible()
     await emitDrag(page, editorId, "drop", ["/tmp/测试.csv", "/tmp/测试.xlsx"])
     await expect(page.getByText("请在资料库的“多维表格”菜单中选择“从 CSV / Excel 导入…”，导入 CSV 或 XLSX 文件。", { exact: true })).toBeVisible()
-    await expect.poll(() => readEditor(page, editorId)).toBe(LEGACY_TABLE)
+    await expect.poll(() => readEditor(page, editorId)).toBe(LEGACY_TABLE_SAVED)
     const commands = await page.evaluate(() => (window as unknown as { __SHARD_TEST_COMMANDS__: string[] }).__SHARD_TEST_COMMANDS__)
     expect(commands).not.toContain("convert_table_document_to_markdown")
     expect(commands).not.toContain("read_table_exchange_file")

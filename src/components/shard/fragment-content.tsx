@@ -25,7 +25,11 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 
-import { MarkdownContent, type MarkdownImageRenderProps } from "@shard/markdown"
+import {
+  MarkdownContent,
+  type MarkdownFenceRenderProps,
+  type MarkdownImageRenderProps,
+} from "@shard/markdown"
 import {
   attachmentHash,
   downloadFragmentImageAttachment,
@@ -37,6 +41,8 @@ import {
   revealFragmentImageInDir,
 } from "@/lib/api"
 import { CsvInlineLink, CsvPreview } from "@/components/shard/csv-preview"
+// 副作用导入：卡片渲染同样按围栏语言查 UI 注册表，启动时先让块完成注册。
+import { getBlockUI } from "@/editor-rich/blocks/registry-ui"
 import { isCsvWikilinkTarget, parseWikilinks } from "@/lib/wikilink"
 
 import styles from "./fragment-content.module.css"
@@ -88,6 +94,7 @@ export function FragmentContent({
       hideTags={hideTags}
       onTaskToggle={onTaskToggle}
       renderEmbed={renderCsvEmbed}
+      renderFence={renderRegisteredFence}
       renderInline={renderInlineContent}
       renderImage={renderImages ? renderImage : undefined}
     />
@@ -97,6 +104,18 @@ export function FragmentContent({
 function renderCsvEmbed(line: string): ReactNode | undefined {
   const link = parseStandaloneCsvEmbed(line)
   return link ? <CsvPreview maxRows={10} path={link.target} /> : undefined
+}
+
+/**
+ * 围栏块的卡片渲染：查 UI 注册表拿 `Preview`（技术方案 §4.4）。
+ * 这里不认识任何具体语言，新增一个围栏块只需要注册，不用改卡片渲染。
+ */
+function renderRegisteredFence({
+  code,
+  language,
+}: MarkdownFenceRenderProps): ReactNode | undefined {
+  const ui = getBlockUI(language)
+  return ui ? <ui.Preview source={code} /> : undefined
 }
 
 interface FragmentImageAttachmentProps {

@@ -1,3 +1,5 @@
+import type { ContentKind } from "@/lib/content-kind"
+
 export type FragmentStatus =
   | "saved"
   | "committed"
@@ -21,7 +23,7 @@ export interface FragmentRelation {
 export interface Fragment {
   id: string
   content: string
-  kind: "fragment" | "note"
+  kind: ContentKind
   createdAt: string
   updatedAt: string
   tags: string[]

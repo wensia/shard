@@ -14,12 +14,14 @@ import {
   Share2Icon,
   ShardZenIcon,
   Trash2Icon,
+  type ShardIcon,
 } from "@/components/icons"
-import { useState, type ReactNode } from "react"
+import { useMemo, useState, type ReactNode } from "react"
 import { toast } from "sonner"
 
 import { FragmentEditor } from "@/components/shard/fragment-editor"
 import { FragmentBody } from "@/components/shard/fragment-body"
+import { MindMapFenceEmbed } from "@/components/shard/mind-map-fence-embed"
 import { FragmentLinkDialog } from "@/components/shard/fragment-link-dialog"
 import { FragmentRelated } from "@/components/shard/fragment-related"
 import { TagBadge } from "@/components/shard/tag-badge"
@@ -32,7 +34,13 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { getApiErrorMessage } from "@/lib/api"
-import { isTypeTag } from "@/lib/content-kind"
+import {
+  CONTENT_KIND_LABELS,
+  deriveDocumentDigest,
+  isTypeTag,
+  type ContentKind,
+} from "@/lib/content-kind"
+import { parseMindMapOutline } from "@/lib/mind-map-outline"
 import type { RelatedFragment } from "@/lib/relations"
 import { cn } from "@/lib/utils"
 import type { CsvFileSummary, Fragment } from "@/types"
@@ -122,6 +130,7 @@ export function FragmentCard({
   const displayTags = fragment.tags.filter(
     (tag) => tag !== "inbox" && !isTypeTag(tag)
   )
+  const typeBadge = TYPE_BADGES[fragment.kind]
 
   function openNextSurface(action: () => void) {
     setIsMenuOpen(false)
@@ -159,6 +168,8 @@ export function FragmentCard({
           onClose={() => onCancelEdit?.()}
           onRegisterFlush={onRegisterEditorFlush}
           onNavigateToFragment={onNavigateToFragment}
+          // 文档类型不做行内编辑，由编辑器转交禅模式（产品框架 §2）。
+          onRequestZen={onOpenZen ? () => onOpenZen(fragment) : undefined}
           onSave={onSave}
           variant="inline"
           vaultPath={vaultPath}
@@ -218,7 +229,7 @@ export function FragmentCard({
           {fragment.pinned ||
           fragment.lockbox ||
           fragment.conflictOf ||
-          fragment.kind === "note" ||
+          typeBadge ||
           displayTags.length > 0 ? (
             <div
               className="shard-card-tags"
@@ -259,13 +270,14 @@ export function FragmentCard({
                   冲突副本
                 </span>
               ) : null}
-              {fragment.kind === "note" ? (
+              {typeBadge ? (
                 <span
                   className="shard-tag shard-tag-muted"
+                  data-fragment-type-badge={fragment.kind}
                   style={{ fontWeight: 500 }}
                 >
-                  <FileTextIcon />
-                  笔记
+                  <typeBadge.icon />
+                  {typeBadge.label}
                 </span>
               ) : null}
               {displayTags.map((tag) => (
@@ -273,15 +285,21 @@ export function FragmentCard({
               ))}
             </div>
           ) : null}
-          <FragmentBody
-            content={displayContent}
-            contentClassName="shard-fragment-card-content"
-            downloadableImages
-            hideTags
-            onTaskToggle={(lineIndex) => onToggleTask?.(fragment, lineIndex)}
-            renderImages
-            vaultPath={vaultPath}
-          />
+          {fragment.kind === "outline" ? (
+            <OutlineCardBody content={displayContent} />
+          ) : fragment.kind === "document" ? (
+            <DocumentCardBody content={displayContent} />
+          ) : (
+            <FragmentBody
+              content={displayContent}
+              contentClassName="shard-fragment-card-content"
+              downloadableImages
+              hideTags
+              onTaskToggle={(lineIndex) => onToggleTask?.(fragment, lineIndex)}
+              renderImages
+              vaultPath={vaultPath}
+            />
+          )}
         </div>
 
         {!isSelectionMode ? (
@@ -312,7 +330,9 @@ export function FragmentCard({
                   openNextSurface(() => onEdit?.(fragment))
                 }
               />
-              {onToggleKind ? (
+              {/* 类型转换（产品框架 §7）本阶段只保留既有的碎片 ↔ 资料库文档两条，
+                  大纲与文档类型的转换入口等 §7 单独做，不在这里走半截路径。 */}
+              {onToggleKind && (fragment.kind === "fragment" || fragment.kind === "note") ? (
                 <CardMenuItem
                   icon={<FileTextIcon aria-hidden="true" />}
                   label={fragment.kind === "note" ? "转回碎片" : "转为文档…"}
@@ -427,6 +447,68 @@ export function FragmentCard({
         />
       ) : null}
     </article>
+  )
+}
+
+/** type 徽标：缺省的碎片没有徽标，其余三种各占一枚。 */
+const TYPE_BADGES: Partial<Record<ContentKind, { icon: ShardIcon; label: string }>> = {
+  document: { icon: FileTextIcon, label: CONTENT_KIND_LABELS.document },
+  note: { icon: FileTextIcon, label: CONTENT_KIND_LABELS.note },
+  outline: { icon: GitBranchIcon, label: CONTENT_KIND_LABELS.outline },
+}
+
+/**
+ * 大纲卡片：整篇正文就是一棵树，卡片给「根节点文本 + 导图缩略」，
+ * 不铺原始缩进列表（产品框架 §2 时间线卡片一列）。
+ */
+function OutlineCardBody({ content }: { content: string }) {
+  const title = useMemo(() => {
+    const file = parseMindMapOutline(content).file
+    return (file ? file.nodes[file.rootId]?.text ?? "" : "").trim()
+  }, [content])
+
+  return (
+    <div data-fragment-card-kind="outline">
+      <p
+        className="shard-memo-body"
+        style={{
+          margin: 0,
+          marginBottom: "var(--shard-space-2)",
+          fontWeight: "var(--font-weight-semibold)",
+        }}
+      >
+        {title || "未命名大纲"}
+      </p>
+      <MindMapFenceEmbed code={content} />
+    </div>
+  )
+}
+
+/** 文档卡片：标题 + 摘要，正文不上卡片。 */
+function DocumentCardBody({ content }: { content: string }) {
+  const digest = useMemo(() => deriveDocumentDigest(content), [content])
+
+  return (
+    <div data-fragment-card-kind="document">
+      <p
+        className="shard-memo-body"
+        style={{ margin: 0, fontWeight: "var(--font-weight-semibold)" }}
+      >
+        {digest.title || "未命名文档"}
+      </p>
+      {digest.summary ? (
+        <p
+          className="shard-memo-body"
+          style={{
+            margin: 0,
+            marginTop: "var(--shard-space-2)",
+            color: "var(--muted-foreground)",
+          }}
+        >
+          {digest.summary}
+        </p>
+      ) : null}
+    </div>
   )
 }
 

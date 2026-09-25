@@ -91,7 +91,6 @@ async function installLibraryMock(page: Page, includeNotes = true) {
           if (command === "list_fragments") return clone(state)
           if (command === "list_mind_maps") return []
           if (command === "sync_vault") return clone(git)
-          if (command === "restore_window_frame") return null
           if (command === "update_fragment") {
             const fragment = fragments.find((item) => item.id === args.id)
             if (!fragment) throw new Error("Fragment not found")
@@ -253,7 +252,7 @@ test("捕捉门禁：冷启动可输入保存并在时间线看见新条目", as
   await installLibraryMock(page)
   await page.goto("/")
 
-  const composer = page.locator('[data-shard-editor="composer"] .cm-content')
+  const composer = page.locator('[data-shard-editor="composer"] .ProseMirror')
   await expect(composer).toBeVisible()
   await fillEditor(page, "composer", "捕捉门禁回归 #work")
   await focusEditor(page, "composer")
@@ -317,7 +316,7 @@ test("资料库第三栏选择笔记，并在切笔记、切空间与捕捉时�
   await fillEditor(page, "library:note-new", "捕捉事件前保存 #work")
   await page.keyboard.press("ControlOrMeta+n")
   await expect.poll(() => getUpdateCalls(page)).toHaveLength(3)
-  await expect(page.locator('[data-shard-editor="composer"] .cm-content')).toBeFocused()
+  await expect(page.locator('[data-shard-editor="composer"] .ProseMirror')).toBeFocused()
 })
 
 test("编辑停顿后自动保存，Cmd+S 立即保存", async ({ page }) => {

@@ -123,7 +123,6 @@ async function installLockboxSpaceMock(page: Page) {
           if (command === "list_mind_maps" || command === "list_csv_files") {
             return []
           }
-          if (command === "restore_window_frame") return null
           if (command === "plugin:app|version") return "0.1.3-test"
           if (command === "sync_vault") return clone(git)
           throw new Error(`Unhandled Tauri test command: ${command}`)

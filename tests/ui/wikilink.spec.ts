@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test"
 
 import { applyFragmentTag } from "./fragment-filter-helpers"
 
-import { fillEditor, readEditor, typeEditor } from "./editor-helpers"
+import { fillEditor, readEditor } from "./editor-helpers"
 
 interface WikilinkCall {
   args: Record<string, unknown>
@@ -152,7 +152,6 @@ async function installWikilinkMock(page: Page, options: WikilinkMockOptions = {}
           if (command === "plugin:app|version") return "0.0.0"
           if (command === "list_csv_files") return []
           if (command === "list_mind_maps") return []
-          if (command === "restore_window_frame") return null
           if (command === "restore_from_trash" && options.trashTarget) {
             const fragment = fragments.find(item => item.path === args.path)
             if (!fragment) throw new Error("Trash fragment not found")
@@ -304,51 +303,30 @@ test.beforeEach(async ({ page }) => {
   await page.goto("/")
 })
 
-test("输入双左括号展示笔记标题与碎片摘要候选并写回 wikilink", async ({
-  page,
-}) => {
-  await fillEditor(page, "composer", "[")
-  await typeEditor(page, "composer", "[")
-
-  const listbox = page.getByRole("listbox", { name: "标签建议" })
-  await expect(listbox).toBeVisible()
-  await expect(listbox.getByText("目标笔记", { exact: true })).toBeVisible()
-  await expect(listbox.getByText("可定位的碎片摘要", { exact: true })).toBeVisible()
-  await listbox.getByText("目标笔记", { exact: true }).click()
-
-  await expect.poll(() => readEditor(page, "composer")).toBe("[[目标笔记]]")
-})
+// 「输入双左括号展示笔记标题与碎片摘要候选并写回 wikilink」已由富文本用例覆盖：
+// tests/ui/rich-inline.spec.ts「双左括号弹出双链建议，选中后写成芯片并提交为 [[目标]]」
+// 与 tests/ui/rich-library.spec.ts「[[ 建议按类别给出候选，选中写成芯片并落盘为 [[目标]]」。
 
 test("链接点击复用资料库与时间线导航且不滚动 document", async ({ page }) => {
   await fillEditor(page, "composer", "[[目标笔记]]")
-  await page.locator('[data-shard-editor="composer"] .shard-cm-wikilink').click()
+  await page.locator('[data-shard-editor="composer"] .shard-rich-wikilink').click()
   await expect(page.locator('[data-shard-editor="library:note-target"]')).toBeVisible()
 
   await page.getByRole("button", { name: "碎片", exact: true }).click()
+  // 切回碎片空间后速记框重新挂载，等编辑区出现再写入。
+  await expect(page.locator('[data-shard-editor="composer"] .ProseMirror')).toBeVisible()
   await fillEditor(page, "composer", "[[fragment-target]]")
   const documentScrollBefore = await page.evaluate(() => window.scrollY)
-  await page.locator('[data-shard-editor="composer"] .shard-cm-wikilink').click()
+  await page.locator('[data-shard-editor="composer"] .shard-rich-wikilink').click()
   await expect(page.getByRole("button", { name: "碎片", exact: true })).toHaveAttribute("aria-current", "page")
   await expect(page.getByRole("complementary", { name: "资料库目录" })).toHaveCount(0)
   await expect(page.locator('[data-shard-fragment-id="fragment-target"]')).toHaveClass(/shard-fragment-card-highlight/u)
   expect(await page.evaluate(() => window.scrollY)).toBe(documentScrollBefore)
 })
 
-test("断链使用待建样式，点击仅提示且编辑器可继续输入", async ({ page }) => {
-  const pageErrors: string[] = []
-  page.on("pageerror", (error) => pageErrors.push(error.message))
-  await fillEditor(page, "composer", "[[尚未创建]]")
-
-  const missing = page.locator(
-    '[data-shard-editor="composer"] .shard-cm-wikilink--missing'
-  )
-  await expect(missing).toBeVisible()
-  await missing.click()
-  await expect(page.getByText(/待建链接「尚未创建」尚不存在/u)).toBeVisible()
-  await typeEditor(page, "composer", " 继续编辑")
-  await expect.poll(() => readEditor(page, "composer")).toContain("继续编辑")
-  expect(pageErrors).toEqual([])
-})
+// 「断链使用待建样式，点击仅提示且编辑器可继续输入」已由富文本用例覆盖：
+// tests/ui/rich-inline.spec.ts「断链芯片用待建样式，点击只提示且正文不动」
+// 与 tests/ui/rich-library.spec.ts「芯片导航：CSV 交给系统打开，待建链接只提示」。
 
 test("资料库保存通过现有 relation 命令同步 wikilink diff", async ({ page }) => {
   await page.getByRole("button", { name: "资料库", exact: true }).click()
@@ -402,9 +380,9 @@ test("文档里的碎片引用保存草稿后进入碎片，返回时保留文�
     .getByRole("button", { name: /^文件（/ }).click()
   await page.getByRole("region", { name: "notes 目录列表", exact: true })
     .getByRole("button", { name: "打开文件 目标笔记.md", exact: true }).click()
-  const content = "# 目标笔记\n最新正文 [[fragment-target]]"
+  const content = "# 目标笔记\n\n最新正文 [[fragment-target]]"
   await fillEditor(page, "library:note-target", content)
-  await page.locator('[data-shard-editor="library:note-target"] .shard-cm-wikilink').click()
+  await page.locator('[data-shard-editor="library:note-target"] .shard-rich-wikilink').click()
   await expect(page.getByRole("button", { name: "碎片", exact: true })).toHaveAttribute("aria-current", "page")
   await expect(page.locator('[data-shard-fragment-id="fragment-target"]')).toHaveClass(/shard-fragment-card-highlight/u)
   await expect(page.getByRole("complementary", { name: "资料库目录" })).toHaveCount(0)

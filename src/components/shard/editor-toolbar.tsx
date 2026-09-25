@@ -1,51 +1,20 @@
-import { useRef, type ChangeEvent, type ReactNode } from "react"
-import {
-  BoldIcon,
-  HashIcon,
-  HighlighterIcon,
-  ImageIcon,
-  ListIcon,
-  ListOrderedIcon,
-  ListTodoIcon,
-  SeparatorHorizontalIcon,
-  UnderlineIcon,
-  ShardZenIcon,
-} from "@/components/icons"
+import type { ReactNode } from "react"
+import { ShardZenIcon } from "@/components/icons"
 
 import { ToolbarIconButton } from "@/components/ui/toolbar-icon-button"
-import type { InlineFormat, LineFormat } from "@/lib/editor-format"
 
 interface EditorToolbarProps {
   disabled?: boolean
-  onImageUpload: (file: File) => void | Promise<void>
-  onInlineFormat: (format: InlineFormat) => void
-  onInsertHorizontalRule: () => void
-  onInsertTag: () => void
-  onLineFormat: (format: LineFormat) => void
   onOpenZen?: () => void
   trailing?: ReactNode
 }
 
-export function EditorToolbar({
-  disabled = false,
-  onImageUpload,
-  onInlineFormat,
-  onInsertHorizontalRule,
-  onInsertTag,
-  onLineFormat,
-  onOpenZen,
-  trailing,
-}: EditorToolbarProps) {
-  const fileInputRef = useRef<HTMLInputElement>(null)
-
-  async function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.currentTarget.files?.[0]
-    event.currentTarget.value = ""
-    if (!file) return
-
-    await onImageUpload(file)
-  }
-
+/**
+ * 编辑面底部的操作条。插入与块级转换（图片、标签、列表、分割线、表格、
+ * 标题、引用、代码块）全部走 `/` 命令菜单，行内格式在选中文字后由
+ * 编辑器里的选区浮动条提供；这里只留编辑面自身的动作与宿主的尾部操作。
+ */
+export function EditorToolbar({ disabled = false, onOpenZen, trailing }: EditorToolbarProps) {
   return (
     <div
       style={{
@@ -56,89 +25,32 @@ export function EditorToolbar({
         gap: "var(--shard-space-3)",
       }}
     >
-      <input
-        accept="image/*"
-        onChange={handleFileChange}
-        ref={fileInputRef}
-        style={{ display: "none" }}
-        type="file"
-      />
-
       <div
         style={{
           display: "flex",
           minWidth: 0,
           alignItems: "center",
-          flexWrap: "wrap",
           gap: "var(--shard-space-1)",
         }}
       >
-        <EditorToolbarButton
-          disabled={disabled}
-          icon={<ImageIcon />}
-          label="上传图片"
-          onClick={() => fileInputRef.current?.click()}
-        />
-        <ToolbarDivider />
-        <EditorToolbarButton
-          disabled={disabled}
-          icon={<HashIcon />}
-          label="插入标签"
-          onClick={onInsertTag}
-        />
-        <EditorToolbarButton
-          disabled={disabled}
-          icon={<ListIcon />}
-          label="无序列表"
-          onClick={() => onLineFormat("unordered")}
-        />
-        <EditorToolbarButton
-          disabled={disabled}
-          icon={<ListOrderedIcon />}
-          label="有序列表"
-          onClick={() => onLineFormat("ordered")}
-        />
-        <EditorToolbarButton
-          disabled={disabled}
-          icon={<ListTodoIcon />}
-          label="复选框"
-          onClick={() => onLineFormat("task")}
-        />
-        <EditorToolbarButton
-          disabled={disabled}
-          icon={<SeparatorHorizontalIcon />}
-          label="分割线"
-          onClick={onInsertHorizontalRule}
-        />
-        <ToolbarDivider />
-        <EditorToolbarButton
-          disabled={disabled}
-          icon={<BoldIcon />}
-          label="粗体"
-          onClick={() => onInlineFormat("bold")}
-        />
-        <EditorToolbarButton
-          disabled={disabled}
-          icon={<UnderlineIcon />}
-          label="下划线"
-          onClick={() => onInlineFormat("underline")}
-        />
-        <EditorToolbarButton
-          disabled={disabled}
-          icon={<HighlighterIcon />}
-          label="荧光笔"
-          onClick={() => onInlineFormat("highlight")}
-        />
         {onOpenZen ? (
-          <>
-            <ToolbarDivider />
-            <EditorToolbarButton
-              disabled={disabled}
-              icon={<ShardZenIcon />}
-              label="禅模式"
-              onClick={onOpenZen}
-            />
-          </>
+          <ToolbarIconButton
+            className="shard-edge-action"
+            disabled={disabled}
+            label="禅模式"
+            onMouseDown={(event) => {
+              event.preventDefault()
+              onOpenZen()
+            }}
+            style={{
+              borderRadius: "var(--shard-radius-control)",
+              color: "var(--muted-foreground)",
+            }}
+            type="button"
+            variant="ghost"
+          >
+            <ShardZenIcon />
+          </ToolbarIconButton>
         ) : null}
       </div>
 
@@ -155,55 +67,5 @@ export function EditorToolbar({
         </div>
       ) : null}
     </div>
-  )
-}
-
-interface EditorToolbarButtonProps {
-  disabled: boolean
-  icon: ReactNode
-  label: string
-  onClick: () => void
-}
-
-function EditorToolbarButton({
-  disabled,
-  icon,
-  label,
-  onClick,
-}: EditorToolbarButtonProps) {
-  return (
-    <ToolbarIconButton
-      className="shard-edge-action"
-      disabled={disabled}
-      label={label}
-      onMouseDown={(event) => {
-        event.preventDefault()
-        onClick()
-      }}
-      style={{
-        borderRadius: "var(--shard-radius-control)",
-        color: "var(--muted-foreground)",
-      }}
-      type="button"
-      variant="ghost"
-    >
-      {icon}
-    </ToolbarIconButton>
-  )
-}
-
-function ToolbarDivider() {
-  return (
-    <span
-      aria-orientation="vertical"
-      role="separator"
-      style={{
-        flexShrink: 0,
-        height: 20,
-        width: 1,
-        marginInline: "var(--shard-space-1)",
-        background: "var(--border)",
-      }}
-    />
   )
 }

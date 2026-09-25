@@ -58,7 +58,6 @@ async function installSidebarMock(page: Page) {
           if (command === "migrate_legacy_notes") {
             return { tree: structuredClone(tree), migratedCount: 0 }
           }
-          if (command === "restore_window_frame") return null
           if (command === "sync_vault") return structuredClone(git)
           throw new Error(`Unhandled Tauri test command: ${command}`)
         },

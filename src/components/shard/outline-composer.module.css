@@ -1,0 +1,13 @@
+/* 大纲态占满速记框的正文区；内边距与编辑器正文对齐，几何全部消费 token。 */
+.outline {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: calc(
+    var(--shard-editor-font-size) * var(--shard-editor-line-height) * 4
+  );
+  max-height: 60vh;
+  overflow-y: auto;
+  border-radius: var(--shard-surface-radius) var(--shard-surface-radius) 0 0;
+  padding-inline: var(--shard-composer-padding);
+  padding-block: var(--shard-space-2);
+}

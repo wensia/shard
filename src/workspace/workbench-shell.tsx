@@ -58,7 +58,6 @@ import {
   migrateLegacyNotes,
   organizeFragments,
   pinFragment,
-  restoreWindowFrame,
   resetLockboxPassword,
   setupLockbox,
   checkpointVault,
@@ -116,6 +115,8 @@ import { useAutoCheckpoint } from "@/workspace/use-auto-checkpoint"
 const AUTO_SYNC_FAILURE_TOAST_ID = "auto-sync-failure"
 const GLOBAL_CAPTURE_EVENT = "shard:capture"
 const SIDEBAR_COLLAPSED_STORAGE_KEY = "shard.sidebar-collapsed"
+/** 切回窗口时对账碎片列表的最小间隔，避免频繁切换反复全量读取 vault。 */
+const FOCUS_REFRESH_INTERVAL_MS = 5_000
 const DEFAULT_PROJECT_TAGS: readonly string[] = ["日程"]
 type EditingVariant = "inline" | "zen"
 interface ZenDraft {
@@ -233,6 +234,24 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     void refreshMindMaps()
   }, [])
 
+  // 没有文件监听：终端 `shard` 等外部写入的碎片，在切回窗口时静默对账一次。
+  const refreshFragmentsRef = useRef(refreshFragments)
+  refreshFragmentsRef.current = refreshFragments
+  useEffect(() => {
+    let lastRefreshAt = Date.now()
+    let inFlight = false
+    const handleFocus = () => {
+      if (inFlight || Date.now() - lastRefreshAt < FOCUS_REFRESH_INTERVAL_MS) return
+      inFlight = true
+      lastRefreshAt = Date.now()
+      void refreshFragmentsRef.current({ silent: true }).finally(() => {
+        inFlight = false
+      })
+    }
+    window.addEventListener("focus", handleFocus)
+    return () => window.removeEventListener("focus", handleFocus)
+  }, [])
+
   useEffect(() => {
     routeRef.current = route
     writeWorkspaceRoute(route)
@@ -275,12 +294,14 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     route,
   })
 
-  async function refreshFragments() {
-    setIsLoading(true)
+  /** `silent`：后台对账（如切回窗口），不闪加载态，失败也不打扰，等下一次显式刷新。 */
+  async function refreshFragments(options: { silent?: boolean } = {}) {
+    if (!options.silent) setIsLoading(true)
     try {
       const state = await listFragments()
       applyVaultState(state)
     } catch (error) {
+      if (options.silent) return
       const message = getApiErrorMessage(error)
 
       if (message === DESKTOP_RUNTIME_MESSAGE) {
@@ -306,7 +327,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
 
       toast.error(`${"读取 Shard vault 失败"}：${message}`, { duration: Infinity })
     } finally {
-      setIsLoading(false)
+      if (!options.silent) setIsLoading(false)
     }
   }
 
@@ -402,7 +423,8 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     setIsVaultGuideOpen(true)
   }
 
-  async function handleCreate(content: string, tags: string[]) {
+  /** 返回创建好的碎片：`/文档` 提交后速记框据此直接进禅模式（产品框架 §2）。 */
+  async function handleCreate(content: string, tags: string[]): Promise<Fragment> {
     recordContentActivity()
     setIsCreating(true)
     const shouldCreateInLockbox = wantsLockbox(content, tags)
@@ -420,6 +442,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
         setFragments((current) => [created, ...current])
         toast("已保存到密匣")
         void refreshFragments()
+        return created
       } catch (error) {
         const message = getApiErrorMessage(error)
         toast.error(`${"创建密匣片段失败"}：${message}`, {
@@ -429,67 +452,50 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
       } finally {
         setIsCreating(false)
       }
-      return
     }
-
-    const optimisticId = `pending-${Date.now()}`
-    const pendingFragment: Fragment = {
-      id: optimisticId,
-      content,
-      kind: deriveKind(tags),
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      tags,
-      category: null,
-      path: "",
-      gitStatus: "saved",
-      error: null,
-      archived: false,
-      lockbox: false,
-      pinned: false,
-    }
-
-    setFragments((current) => sortFragmentsForDisplay([pendingFragment, ...current]))
 
     try {
       let created = await createFragment(content, tags)
       setFragments((current) =>
-        sortFragmentsForDisplay(
-          current.map((fragment) =>
-            fragment.id === optimisticId ? created : fragment
-          )
-        )
+        sortFragmentsForDisplay([created, ...current])
       )
-      try {
-        const links = await parseWikilinksInWorker(content)
-        const candidates = buildWikilinkCandidates([...fragments, created])
-        const targetIds = Array.from(
-          new Set(
-            links
-              .map((link) =>
-                resolveWikilinkTarget(link.target, candidates)?.fragmentId
-              )
-              .filter(
-                (targetId): targetId is string =>
-                  Boolean(targetId) && targetId !== created.id
-              )
-          )
-        )
-        for (const targetId of targetIds) {
-          created = await linkFragments(created.id, targetId, "wikilink")
-          setFragments((current) =>
-            sortFragmentsForDisplay(
-              current.map((fragment) =>
-                fragment.id === created.id ? created : fragment
+      setGit((current) => current?.status === "ready"
+        ? { ...current, status: "dirty" }
+        : current)
+      if (content.includes("[[")) {
+        try {
+          const links = await parseWikilinksInWorker(content)
+          if (links.length > 0) {
+            const candidates = buildWikilinkCandidates([...fragments, created])
+            const targetIds = Array.from(
+              new Set(
+                links
+                  .map((link) =>
+                    resolveWikilinkTarget(link.target, candidates)?.fragmentId
+                  )
+                  .filter(
+                    (targetId): targetId is string =>
+                      Boolean(targetId) && targetId !== created.id
+                  )
               )
             )
+            for (const targetId of targetIds) {
+              created = await linkFragments(created.id, targetId, "wikilink")
+              setFragments((current) =>
+                sortFragmentsForDisplay(
+                  current.map((fragment) =>
+                    fragment.id === created.id ? created : fragment
+                  )
+                )
+              )
+            }
+          }
+        } catch (error) {
+          toast.error(
+            `片段已保存，但双链同步失败：${getApiErrorMessage(error)}`,
+            { duration: Infinity }
           )
         }
-      } catch (error) {
-        toast.error(
-          `片段已保存，但双链同步失败：${getApiErrorMessage(error)}`,
-          { duration: Infinity }
-        )
       }
       if (created.gitStatus === "commit_failed") {
         toast(
@@ -502,12 +508,9 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
           toast("已记录，当前筛选下不可见", { action: { label: "查看碎片", onClick: () => showFragmentTarget(created) } })
         } else toast("碎片已保存")
       }
-      void refreshFragments()
+      return created
     } catch (error) {
       const message = getApiErrorMessage(error)
-      setFragments((current) =>
-        current.filter((fragment) => fragment.id !== optimisticId)
-      )
       toast.error(`${"创建片段失败"}：${message}`, { duration: Infinity })
       throw new Error(message)
     } finally {
@@ -1051,17 +1054,6 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     toast(
       `${"帮助"}：${"先在 Inbox 写片段，用 #标签归类。需要持久化和同步时，在设置里选择或创建 vault。"}`
     )
-  }
-
-  async function handleRestoreWindow() {
-    try {
-      await restoreWindowFrame()
-      toast("已还原窗口尺寸")
-    } catch (error) {
-      toast.error(`${"还原窗口尺寸失败"}：${getApiErrorMessage(error)}`, {
-        duration: Infinity,
-      })
-    }
   }
 
   async function handleSetupLockbox(password: string) {
@@ -1849,6 +1841,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
                 void handleNavigateToFragment(fragmentId)
               },
               onOpenMindMap: (map) => void openMindMap(map),
+              onOpenFragmentZen: openZenEditor,
               onOpenZen: openZenDraft,
             }}
             isMindMapViewActive={isMindMapViewActive}
@@ -1952,7 +1945,6 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
             onOpenMindMaps={() => openMindMap()}
             onOpenSearch={openSearch}
             onOpenSettings={() => openSettings("vault")}
-            onRestoreWindow={handleRestoreWindow}
             onRouteChange={handleRouteChange}
             onShortcuts={showShortcuts}
             route={route}
@@ -1971,7 +1963,6 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
             onOpenGitSettings={() => openSettings("git")}
             onOpenMindMaps={() => openMindMap()}
             onOpenSettings={() => openSettings("vault")}
-            onRestoreWindow={handleRestoreWindow}
             onShortcuts={showShortcuts}
             onSync={() => void handleSync()}
             saveState={librarySaveState}

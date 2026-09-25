@@ -26,6 +26,27 @@ test("the published core works without a DOM or a Shard runtime", () => {
   ])
 })
 
+test("a closed fence becomes one block while its lines stay addressable", async () => {
+  const { parseMarkdownContent } = await import("../dist/parser.js")
+  const { blocks, lastVisibleIndex } = parseMarkdownContent("前言\n```mindmap\n- 根\n  - 甲\n```\n结尾")
+  assert.equal(blocks.length, 6)
+  assert.equal(lastVisibleIndex, 5)
+  assert.deepEqual(blocks.map(block => block.type), ["line", "fence", "line", "line", "line", "line"])
+  const fence = blocks[1]
+  assert.equal(fence.language, "mindmap")
+  assert.equal(fence.code, "- 根\n  - 甲")
+  assert.equal(fence.lineCount, 4)
+  assert.equal(fence.lineIndex, 1)
+  assert.equal(fence.source, "```mindmap")
+  // Hosts that decline the fence render this line, so it must stay a normal parsed line.
+  assert.equal(fence.line.type, "line")
+  assert.equal(fence.line.display, "```mindmap")
+
+  // Without a closing fence there is no block at all.
+  const unclosed = parseMarkdownContent("```mindmap\n- 根")
+  assert.deepEqual(unclosed.blocks.map(block => block.type), ["line", "line"])
+})
+
 async function filesIn(directory) {
   const entries = await readdir(directory, { withFileTypes: true })
   return (await Promise.all(entries.map(entry => {

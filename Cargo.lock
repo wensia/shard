@@ -3929,12 +3929,33 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "sha2",
+ "shard-core",
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",
  "tauri-plugin-opener",
  "tempfile",
  "zip",
+]
+
+[[package]]
+name = "shard-cli"
+version = "0.1.3"
+dependencies = [
+ "serde_json",
+ "shard-core",
+ "tempfile",
+]
+
+[[package]]
+name = "shard-core"
+version = "0.1.3"
+dependencies = [
+ "chrono",
+ "rand 0.8.6",
+ "serde",
+ "serde_yaml",
+ "tempfile",
 ]
 
 [[package]]

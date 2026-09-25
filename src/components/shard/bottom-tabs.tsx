@@ -4,7 +4,6 @@ import {
   HelpCircleIcon,
   InboxIcon,
   KeyboardIcon,
-  Maximize2Icon,
   MoreHorizontalIcon,
   SearchIcon,
   SettingsIcon,
@@ -41,7 +40,6 @@ interface BottomTabsProps {
   onOpenMindMaps: () => void
   onOpenSearch: () => void
   onOpenSettings: () => void
-  onRestoreWindow: () => void
   onRouteChange: (route: WorkspaceRoute) => void
   onShortcuts: () => void
   route: WorkspaceRoute
@@ -83,7 +81,6 @@ export function BottomTabs({
   onOpenMindMaps,
   onOpenSearch,
   onOpenSettings,
-  onRestoreWindow,
   onRouteChange,
   onShortcuts,
   route,
@@ -247,12 +244,6 @@ export function BottomTabs({
                 icon={GitBranchIcon}
                 label="思维导图"
                 onSelect={onOpenMindMaps}
-              />
-              <DropdownMenuSeparator />
-              <BottomMenuItem
-                icon={Maximize2Icon}
-                label="还原窗口尺寸"
-                onSelect={onRestoreWindow}
               />
               <DropdownMenuSeparator />
               <BottomMenuItem

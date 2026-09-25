@@ -132,6 +132,35 @@ test("fragment tasks keep original source line indexes after hiding tags and par
   await expect(consumer.locator("p > div, p table")).toHaveCount(0)
 })
 
+test("task lines group into a card while a task with a note becomes its own memo card", async ({ page }) => {
+  await render(page, "content", [
+    "今天要做",
+    "- [ ] 买菜",
+    "  - [ ] 番茄",
+    "- [x] 回邮件",
+    "- [ ] 周会准备",
+    "",
+    "  带上数据表",
+    "- [ ] 整理需求",
+    "收尾",
+  ].join("\n"))
+  const consumer = page.getByTestId("consumer")
+  const groups = consumer.locator(".shard-task-group")
+  const memos = consumer.locator(".shard-task-memo")
+  // Nested tasks stay in the task card; the note splits the memo off.
+  await expect(groups).toHaveCount(2)
+  await expect(memos).toHaveCount(1)
+  await expect(groups.first()).toContainText("番茄")
+  await expect(groups.first()).toContainText("回邮件")
+  await expect(memos.locator(".shard-task-memo-detail")).toHaveText("带上数据表")
+  await expect(groups.last()).toContainText("整理需求")
+  await expect(consumer).toContainText("收尾")
+
+  await memos.getByRole("button", { name: "标记为完成", exact: true }).click()
+  await groups.last().getByRole("button", { name: "标记为完成", exact: true }).click()
+  expect(await page.evaluate(() => (window as unknown as FixtureWindow).__markdownFixture.toggles)).toEqual([4, 7])
+})
+
 test("image, inline, and embed adapters work without vault or desktop APIs", async ({ page }) => {
   await render(page, "content", "普通首行\n![图片描述](attachments/example.png)\n![[data.csv]]\n[[local]]", { adapters: true })
   await expect(page.locator("[data-adapter-image]")).toHaveAttribute("data-adapter-image", "attachments/example.png")

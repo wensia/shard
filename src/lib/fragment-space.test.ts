@@ -12,6 +12,9 @@ describe("fragment space ownership", () => {
   it("keeps historical fragments without an inbox tag and excludes documents and private or deleted content", () => {
     expect(isPublicStreamFragment(sample())).toBe(true)
     expect(isPublicStreamFragment(sample({ tags: ["inbox", "note"], kind: "note" }))).toBe(false)
+    // 大纲与文档与碎片同在一条时间线（产品框架 §3）。
+    expect(isPublicStreamFragment(sample({ tags: ["inbox", "outline"], kind: "outline" }))).toBe(true)
+    expect(isPublicStreamFragment(sample({ tags: ["inbox", "document"], kind: "document" }))).toBe(true)
     expect(isPublicStreamFragment(sample({ lockbox: true }))).toBe(false)
     expect(isPublicStreamFragment(sample({ archived: true }))).toBe(false)
   })
