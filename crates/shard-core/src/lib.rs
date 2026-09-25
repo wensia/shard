@@ -4,6 +4,8 @@
 //! 桌面 App（`src-tauri`）与终端 CLI（`crates/shard-cli`）共用，避免两边落盘格式漂移。
 //! 本 crate 不依赖 Tauri，也不碰 git：提交由 App 的检查点聚合接管。
 
+pub mod search;
+
 use chrono::{DateTime, Local};
 use rand::{rngs::OsRng, RngCore};
 use serde::{Deserialize, Serialize};

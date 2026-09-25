@@ -1,0 +1,76 @@
+{
+  "version": 1,
+  "normalizationCases": [
+    {
+      "id": "ascii-fullwidth-crlf",
+      "input": "Ａlpha　BETA\r\n中文 😀",
+      "normalized": "alpha beta\n中文 😀",
+      "terms": ["alpha", "beta", "中文", "😀"]
+    },
+    {
+      "id": "deduplicates-after-folding",
+      "input": "Foo ＦＯＯ foo",
+      "normalized": "foo foo foo",
+      "terms": ["foo"]
+    },
+    {
+      "id": "punctuation-is-literal",
+      "input": "a-b #标签",
+      "normalized": "a-b #标签",
+      "terms": ["a-b", "#标签"]
+    }
+  ],
+  "documents": [
+    {
+      "key": "01-title",
+      "title": "Alpha 搜索",
+      "tags": ["计划"],
+      "body": "普通正文",
+      "modifiedAt": 10
+    },
+    {
+      "key": "02-title-tag",
+      "title": "Alpha",
+      "tags": ["搜索"],
+      "body": "普通正文",
+      "modifiedAt": 30
+    },
+    {
+      "key": "03-body",
+      "title": "Alpha",
+      "tags": ["计划"],
+      "body": "正文包含搜索与 searchInfixSuffix",
+      "modifiedAt": 50
+    },
+    {
+      "key": "04-no-match",
+      "title": "Alpha",
+      "tags": ["计划"],
+      "body": "只有普通正文",
+      "modifiedAt": 100
+    }
+  ],
+  "queries": [
+    {
+      "id": "ranking-tiers",
+      "query": "alpha 搜索",
+      "limit": 10,
+      "expectedKeys": ["01-title", "02-title-tag", "03-body"],
+      "total": 3
+    },
+    {
+      "id": "ascii-infix",
+      "query": "infix",
+      "limit": 10,
+      "expectedKeys": ["03-body"],
+      "total": 1
+    },
+    {
+      "id": "exact-before-top-k",
+      "query": "搜索",
+      "limit": 1,
+      "expectedKeys": ["01-title"],
+      "total": 3
+    }
+  ]
+}

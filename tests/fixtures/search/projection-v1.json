@@ -1,0 +1,60 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "inline-visible-text",
+      "markdown": "## 全角 ＳＥＡＲＣＨ\r\n\r\n用 `snake_case` 和 **中文**。\r\n链接 [Shard 搜索](https://example.com?q=x)。  \r\n下一行 😀",
+      "expected": {
+        "blocks": [
+          { "kind": "text", "text": "全角 ＳＥＡＲＣＨ" },
+          {
+            "kind": "text",
+            "text": "用 snake_case 和 中文。\n链接 Shard 搜索。\n下一行 😀"
+          }
+        ],
+        "documentOnlyText": "",
+        "revealableText": "全角 ＳＥＡＲＣＨ\n用 snake_case 和 中文。\n链接 Shard 搜索。\n下一行 😀",
+        "searchableText": "全角 ＳＥＡＲＣＨ\n用 snake_case 和 中文。\n链接 Shard 搜索。\n下一行 😀",
+        "version": 1
+      }
+    },
+    {
+      "id": "gfm-table-boundaries",
+      "markdown": "| 名称 | 值 |\n| --- | :---: |\n| Alpha | [链接](https://example.com) |\n| 行内 | `a_b` |",
+      "expected": {
+        "blocks": [
+          { "kind": "text", "text": "名称\t值" },
+          { "kind": "text", "text": "Alpha\t链接\n行内\ta_b" }
+        ],
+        "documentOnlyText": "",
+        "revealableText": "名称\t值\nAlpha\t链接\n行内\ta_b",
+        "searchableText": "名称\t值\nAlpha\t链接\n行内\ta_b",
+        "version": 1
+      }
+    },
+    {
+      "id": "document-only-fence-and-embed",
+      "markdown": "正文命中\n\n```rust\nlet snake_case = \"ＦＯＯ\";\n```\n\n收尾 ![[notes/目标|嵌入标题]]",
+      "expected": {
+        "blocks": [
+          { "kind": "text", "text": "正文命中" },
+          {
+            "kind": "documentOnly",
+            "reason": "codeBlock",
+            "text": "let snake_case = \"ＦＯＯ\";"
+          },
+          { "kind": "text", "text": "收尾" },
+          {
+            "kind": "documentOnly",
+            "reason": "embed",
+            "text": "嵌入标题"
+          }
+        ],
+        "documentOnlyText": "let snake_case = \"ＦＯＯ\";\n嵌入标题",
+        "revealableText": "正文命中\n收尾",
+        "searchableText": "正文命中\nlet snake_case = \"ＦＯＯ\";\n收尾\n嵌入标题",
+        "version": 1
+      }
+    }
+  ]
+}
