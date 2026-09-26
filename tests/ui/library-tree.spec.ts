@@ -1417,7 +1417,7 @@ test("资料库普通导图条目在第三栏打开并保留侧栏与目录树",
   const treePane = page.getByRole("complementary", { name: "资料库目录" })
   const sidebar = page.getByRole("navigation", { name: "工作台导航" })
 
-  await expect(sidebar.getByRole("button")).toHaveText(["碎片", "资料库"])
+  await expect(sidebar.getByRole("button")).toHaveText(["碎片", "日历", "资料库"])
   await expect(
     treePane.getByRole("button", { name: /^思维导图（/ })
   ).toHaveCount(0)
