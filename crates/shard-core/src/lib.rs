@@ -119,6 +119,12 @@ pub fn ensure_vault_layout(vault: &Path) -> Result<(), String> {
     fs::create_dir_all(vault.join("notes")).map_err(|error| error.to_string())?;
     fs::create_dir_all(vault.join("assets")).map_err(|error| error.to_string())?;
     fs::create_dir_all(vault.join("maps")).map_err(|error| error.to_string())?;
+    let datasets = vault.join("datasets");
+    fs::create_dir_all(&datasets).map_err(|error| error.to_string())?;
+    let attributes = datasets.join(".gitattributes");
+    if !attributes.exists() {
+        fs::write(attributes, "*.csv merge=binary\n").map_err(|error| error.to_string())?;
+    }
     fs::create_dir_all(vault.join(".shard")).map_err(|error| error.to_string())?;
     Ok(())
 }
@@ -407,6 +413,19 @@ fn is_cjk_script(char: char) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn vault_layout_creates_dataset_attributes_without_overwriting_them() {
+        let vault = tempfile::tempdir().unwrap();
+        let attributes = vault.path().join("datasets/.gitattributes");
+
+        ensure_vault_layout(vault.path()).unwrap();
+        assert_eq!(fs::read_to_string(&attributes).unwrap(), "*.csv merge=binary\n");
+
+        fs::write(&attributes, "*.csv merge=ours\n").unwrap();
+        ensure_vault_layout(vault.path()).unwrap();
+        assert_eq!(fs::read_to_string(attributes).unwrap(), "*.csv merge=ours\n");
+    }
 
     #[test]
     fn extracts_tags_like_the_editor() {

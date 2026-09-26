@@ -76,7 +76,7 @@ static LIBRARY_INDEX_REGISTRY: OnceLock<Arc<search_index::IndexRegistry>> = Once
 /// Shard 托管的 vault 根目录。提交、脏检测、检查点、计数必须共用这一份清单——
 /// 目录在多处手写曾造成 notes 完全不入 git 状态的盲区。
 const MANAGED_VAULT_ROOTS: &[&str] = &[
-    "fragments", "notes", ".trash", "assets", "maps", "lockbox", ".shard",
+    "fragments", "notes", ".trash", "assets", "maps", "datasets", "lockbox", ".shard",
 ];
 
 /// 保存基线过期（磁盘内容已被同步或外部编辑改写）的错误标记；
@@ -109,6 +109,7 @@ fn managed_pathspecs() -> Vec<String> {
         .map(|root| (*root).to_string())
         .collect();
     specs.push(CSV_GIT_PATHSPEC.to_string());
+    specs.push(":(exclude,glob)datasets/**/.?*.tmp-[0-9a-f][0-9a-f][0-9a-f][0-9a-f]".to_string());
     // Only native-table atomic-write leftovers: a nonempty name and exactly
     // 32 lowercase hex characters. Do not ignore arbitrary hidden/temporary files.
     specs.push(format!(
@@ -2445,9 +2446,10 @@ fn ensure_vault_dirs(app: &tauri::AppHandle) -> Result<PathBuf, String> {
 }
 
 fn vault_layout_is_complete(vault: &Path) -> bool {
-    ["fragments", "notes", "assets", "maps", ".shard"]
+    ["fragments", "notes", "assets", "maps", "datasets", ".shard"]
         .iter()
         .all(|directory| vault.join(directory).is_dir())
+        && vault.join("datasets/.gitattributes").is_file()
 }
 
 fn configured_vault_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
@@ -3479,7 +3481,7 @@ fn safe_vault_relative_path(rel_path: &str) -> Result<&Path, String> {
 fn trashable_vault_path(vault: &Path, rel_path: &str) -> Result<PathBuf, String> {
     let rel_path = safe_vault_relative_path(rel_path)?;
     let first = rel_path.components().next();
-    if !matches!(first, Some(Component::Normal(root)) if matches!(root.to_str(), Some("fragments" | "notes" | "assets" | "maps")))
+    if !matches!(first, Some(Component::Normal(root)) if matches!(root.to_str(), Some("fragments" | "notes" | "assets" | "maps" | "datasets")))
     {
         return Err("只能把公开内容移入回收站。".to_string());
     }
@@ -3596,7 +3598,7 @@ fn restore_from_trash_in_vault(vault: &Path, trash_rel_path: &str) -> Result<Pat
         .strip_prefix(".trash/")
         .ok_or_else(|| "只能恢复回收站内的条目。".to_string())?;
     let original_path = safe_vault_relative_path(original_rel)?;
-    if !matches!(original_path.components().next(), Some(Component::Normal(root)) if matches!(root.to_str(), Some("fragments" | "notes" | "assets" | "maps")))
+    if !matches!(original_path.components().next(), Some(Component::Normal(root)) if matches!(root.to_str(), Some("fragments" | "notes" | "assets" | "maps" | "datasets")))
     {
         return Err("回收站条目没有可恢复的公开原位置。".to_string());
     }
@@ -6617,6 +6619,13 @@ mod tests {
     use super::*;
 
     #[test]
+    fn managed_pathspecs_include_datasets_and_exclude_atomic_leftovers() {
+        let specs = managed_pathspecs();
+        assert!(specs.contains(&"datasets".to_string()));
+        assert!(specs.contains(&":(exclude,glob)datasets/**/.?*.tmp-[0-9a-f][0-9a-f][0-9a-f][0-9a-f]".to_string()));
+    }
+
+    #[test]
     fn cli_and_app_share_lock_directory_contract() {
         let tauri_config: serde_json::Value =
             serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
@@ -6902,16 +6911,35 @@ mod tests {
 
         let result = checkpoint_vault_locked(vault, Some("测试")).unwrap();
         assert_eq!(result.status, "committed");
-        assert_eq!(result.changes, 2);
+        assert_eq!(result.changes, 3);
 
         let committed = run_git(vault, &["show", "--format=%B", "--name-only", "HEAD"]).unwrap();
-        assert!(committed.contains("检查点：更新 2 个文件"));
+        assert!(committed.contains("检查点：更新 3 个文件"));
         assert!(committed.contains("触发：测试"));
         // 提交 body 的清单里应有未转义的中文路径（--name-only 段会被 quotepath 转义）
         assert!(committed.contains("A notes/方案笔记.md"));
 
         let result = checkpoint_vault_locked(vault, None).unwrap();
         assert_eq!(result.status, "no_changes");
+    }
+
+    #[test]
+    fn checkpoint_commits_dataset_without_atomic_leftover() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let vault = tempdir.path();
+        ensure_vault_layout(vault).unwrap();
+        ensure_git_repo(vault).unwrap();
+        fs::write(vault.join("datasets/a.csv"), "name\nvalue\n").unwrap();
+        fs::write(vault.join("datasets/.a.csv.tmp-abcd"), "incomplete").unwrap();
+
+        let result = checkpoint_vault_locked(vault, None).unwrap();
+        assert_eq!(result.status, "committed");
+        let committed = run_git(vault, &["ls-tree", "-r", "--name-only", "HEAD"]).unwrap();
+        assert!(committed.lines().any(|path| path == "datasets/a.csv"));
+        assert!(committed.lines().any(|path| path == "datasets/.gitattributes"));
+        assert!(!committed.lines().any(|path| path == "datasets/.a.csv.tmp-abcd"));
+        assert!(vault.join("datasets/.a.csv.tmp-abcd").is_file());
+        assert!(managed_dirty_paths(vault).unwrap().is_empty());
     }
 
     #[test]
@@ -8704,6 +8732,20 @@ mod tests {
         );
         assert_ne!(restored, vault.join("notes/collision.md"));
         assert_eq!(fs::read_to_string(restored).unwrap(), "deleted version");
+    }
+
+    #[test]
+    fn moves_and_restores_dataset_through_trash() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let vault = tempdir.path();
+        ensure_vault_layout(vault).unwrap();
+        fs::write(vault.join("datasets/a.csv"), "name\nvalue\n").unwrap();
+
+        let trashed = move_to_trash_in_vault(vault, "datasets/a.csv").unwrap();
+        assert_eq!(relative_path(vault, &trashed).unwrap(), ".trash/datasets/a.csv");
+        let restored = restore_from_trash_in_vault(vault, ".trash/datasets/a.csv").unwrap();
+        assert_eq!(restored, vault.join("datasets/a.csv"));
+        assert_eq!(fs::read_to_string(restored).unwrap(), "name\nvalue\n");
     }
 
     #[test]
