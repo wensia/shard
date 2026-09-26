@@ -5,6 +5,7 @@
 //! 本 crate 不依赖 Tauri，也不碰 git：提交由 App 的检查点聚合接管。
 
 pub mod search;
+pub mod vault_lock;
 
 use chrono::{DateTime, Local};
 use rand::{rngs::OsRng, RngCore};
@@ -12,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     fs::{self, File},
     io::Write,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -65,6 +66,52 @@ pub fn default_vault_path() -> Result<PathBuf, String> {
         .or_else(|_| std::env::var("USERPROFILE"))
         .map_err(|_| "无法找到用户 home 目录".to_string())?;
     Ok(PathBuf::from(home).join("Documents").join("ShardVault"))
+}
+
+pub fn normalized_vault_key(vault: &Path) -> PathBuf {
+    if let Ok(canonical) = vault.canonicalize() {
+        return canonical;
+    }
+
+    let absolute = if vault.is_absolute() {
+        vault.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map(|current| current.join(vault))
+            .unwrap_or_else(|_| vault.to_path_buf())
+    };
+    let mut normalized = PathBuf::new();
+    for component in absolute.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            other => normalized.push(other.as_os_str()),
+        }
+    }
+
+    // A newly selected vault may not exist yet. Resolve the nearest existing ancestor
+    // so a symlinked parent cannot produce one gate before creation and another after it.
+    let mut ancestor = normalized.as_path();
+    let mut suffix = Vec::new();
+    loop {
+        if let Ok(mut canonical) = ancestor.canonicalize() {
+            for component in suffix.iter().rev() {
+                canonical.push(component);
+            }
+            return canonical;
+        }
+        let Some(name) = ancestor.file_name() else {
+            break;
+        };
+        suffix.push(name.to_os_string());
+        let Some(parent) = ancestor.parent() else {
+            break;
+        };
+        ancestor = parent;
+    }
+    normalized
 }
 
 pub fn ensure_vault_layout(vault: &Path) -> Result<(), String> {

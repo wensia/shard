@@ -37,7 +37,7 @@ impl IndexRegistry {
 
     pub(crate) fn open(&self, vault: &Path) -> Option<Arc<IndexStore>> {
         let root = self.root.get()?;
-        let vault = crate::search_runtime::normalized_vault_key(vault);
+        let vault = shard_core::normalized_vault_key(vault);
         let mut active = self
             .active
             .lock()

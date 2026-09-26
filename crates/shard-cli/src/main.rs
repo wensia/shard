@@ -3,16 +3,18 @@
 
 mod parse;
 
-use shard_core::{create_public_fragment_in_vault, default_vault_path, AppConfig};
+use shard_core::{
+    create_public_fragment_in_vault, default_vault_path,
+    vault_lock::{app_settings_path, cli_lock_dir, VaultProcessLock},
+    AppConfig,
+};
 use std::{
     env, fs,
     io::{self, IsTerminal, Read},
     path::{Path, PathBuf},
     process::ExitCode,
+    time::Duration,
 };
-
-/// 与 `src-tauri/tauri.conf.json` 的 `identifier` 一致，决定 App 的配置目录。
-const APP_IDENTIFIER: &str = "dev.shard.desktop";
 
 const HELP: &str = "\
 shard — 在终端里记一条 Shard 碎片
@@ -94,6 +96,20 @@ fn run() -> Result<(), String> {
 
     let (body, tags) = parse::compose(&capture)?;
     let vault = resolve_vault(vault_arg)?;
+    let lock_dir = env::var_os("SHARD_LOCK_DIR")
+        .map(PathBuf::from)
+        .or_else(cli_lock_dir)
+        .ok_or("无法确定资料库锁目录")?;
+    let timeout = env::var("SHARD_LOCK_TIMEOUT_MS")
+        .ok()
+        .map(|value| {
+            value
+                .parse::<u64>()
+                .map_err(|_| "SHARD_LOCK_TIMEOUT_MS 必须是非负整数")
+        })
+        .transpose()?
+        .unwrap_or(30_000);
+    let _lock = VaultProcessLock::acquire(&lock_dir, &vault, Some(Duration::from_millis(timeout)))?;
     let path = create_public_fragment_in_vault(&vault, &body, tags, "cli")?;
 
     let shown = path.strip_prefix(&vault).unwrap_or(&path);
@@ -138,20 +154,6 @@ fn configured_vault_path() -> Result<Option<PathBuf>, String> {
     let config: AppConfig = serde_json::from_str(&text)
         .map_err(|error| format!("解析 {} 失败：{error}", settings.display()))?;
     Ok(config.vault_path.map(PathBuf::from))
-}
-
-/// Tauri `app_config_dir()` 在各平台的位置 + `settings.json`。
-fn app_settings_path() -> Option<PathBuf> {
-    let base = if cfg!(target_os = "macos") {
-        home_dir()?.join("Library").join("Application Support")
-    } else if cfg!(target_os = "windows") {
-        PathBuf::from(env::var_os("APPDATA")?)
-    } else {
-        env::var_os("XDG_CONFIG_HOME")
-            .map(PathBuf::from)
-            .or_else(|| home_dir().map(|home| home.join(".config")))?
-    };
-    Some(base.join(APP_IDENTIFIER).join("settings.json"))
 }
 
 fn home_dir() -> Option<PathBuf> {

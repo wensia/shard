@@ -18,6 +18,7 @@ use shard_core::{
     write_text_atomically, AppConfig, FragmentFrontmatter, FragmentRelation, LOCKBOX_TAG,
     LIBRARY_FILENAME_MAX_BYTES,
 };
+use shard_core::vault_lock::{VaultProcessLock, LOCKS_DIR_NAME};
 use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, HashSet},
@@ -26,6 +27,7 @@ use std::{
     io::{BufRead, BufReader, Read, Write},
     path::{Component, Path, PathBuf},
     process::{Command, Stdio},
+    ops::Deref,
     sync::{
         atomic::AtomicBool,
         Arc, Condvar, LockResult, Mutex, MutexGuard, OnceLock,
@@ -68,6 +70,7 @@ const CSV_GIT_PATHSPEC: &str = ":(glob,icase)**/*.csv";
 /// Vault selection changes the persisted path and the active search context as one unit.
 /// Per-vault write gates cannot serialize two concurrent switches to different paths.
 static VAULT_SELECTION_GATE: Mutex<()> = Mutex::new(());
+static VAULT_LOCK_DIR: OnceLock<PathBuf> = OnceLock::new();
 static LIBRARY_INDEX_REGISTRY: OnceLock<Arc<search_index::IndexRegistry>> = OnceLock::new();
 
 /// Shard 托管的 vault 根目录。提交、脏检测、检查点、计数必须共用这一份清单——
@@ -513,9 +516,28 @@ where
 /// 门内不可重入：持门代码不得再调用本函数（会自死锁）。
 /// 惯例：只在命令体最外层与 push_vault/checkpoint 的临界段取门，内部 helper 一律不取。
 /// guard 在真正拿到物理门后把搜索写代次置奇数，并在所有返回路径 RAII 恢复偶数。
-fn lock_vault_gate(vault: &Path) -> search_runtime::VaultWriteGuard {
-    search_runtime::acquire_write_guard(vault)
-        .unwrap_or_else(|error| panic!("无法获取 vault 写门：{error:?}"))
+struct VaultGate {
+    #[allow(dead_code)] // Held for RAII; declaration order releases it before the inner gate.
+    process: Option<VaultProcessLock>,
+    inner: search_runtime::VaultWriteGuard,
+}
+
+impl Deref for VaultGate {
+    type Target = search_runtime::VaultWriteGuard;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+fn lock_vault_gate(vault: &Path) -> VaultGate {
+    let inner = search_runtime::acquire_write_guard(vault)
+        .unwrap_or_else(|error| panic!("无法获取 vault 写门：{error:?}"));
+    let process = VAULT_LOCK_DIR.get().map(|dir| {
+        VaultProcessLock::acquire(dir, vault, None)
+            .unwrap_or_else(|error| panic!("无法获取跨进程 vault 写锁：{error}"))
+    });
+    VaultGate { process, inner }
 }
 
 #[tauri::command]
@@ -6503,6 +6525,8 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
+            let lock_dir = app.path().app_config_dir()?.join(LOCKS_DIR_NAME);
+            VAULT_LOCK_DIR.set(lock_dir).expect("vault 锁目录只能初始化一次");
             if let Ok(root) = app.path().app_cache_dir() {
                 app.state::<Arc<search_index::IndexRegistry>>().set_root(root);
             }
@@ -6591,6 +6615,28 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cli_and_app_share_lock_directory_contract() {
+        let tauri_config: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        assert_eq!(
+            tauri_config["identifier"],
+            shard_core::vault_lock::APP_IDENTIFIER
+        );
+        let dir = shard_core::vault_lock::cli_lock_dir().unwrap();
+        assert_eq!(dir.file_name().unwrap(), LOCKS_DIR_NAME);
+        assert_eq!(
+            dir.parent().unwrap().file_name().unwrap(),
+            shard_core::vault_lock::APP_IDENTIFIER
+        );
+        assert_eq!(
+            dir,
+            shard_core::vault_lock::app_config_dir()
+                .unwrap()
+                .join(LOCKS_DIR_NAME)
+        );
+    }
 
     #[test]
     fn external_save_target_rejects_vault_and_symlink_destinations() {

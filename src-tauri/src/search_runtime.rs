@@ -2,7 +2,7 @@ use std::{
     collections::HashMap,
     marker::PhantomData,
     panic::{catch_unwind, AssertUnwindSafe},
-    path::{Component, Path, PathBuf},
+    path::{Path, PathBuf},
     rc::Rc,
     sync::{
         atomic::{AtomicU64, Ordering},
@@ -11,7 +11,7 @@ use std::{
     thread,
 };
 
-use shard_core::search::ProjectedDocument;
+use shard_core::{normalized_vault_key, search::ProjectedDocument};
 
 use crate::{
     search_contract::{SearchContext, SearchError, SearchRefresh, SearchScope},
@@ -1109,52 +1109,6 @@ fn should_force_read_all(
 ) -> bool {
     refresh == RefreshKind::Rebuild
         || previous.is_none_or(|snapshot| snapshot.generation != start_generation)
-}
-
-pub(crate) fn normalized_vault_key(vault: &Path) -> PathBuf {
-    if let Ok(canonical) = vault.canonicalize() {
-        return canonical;
-    }
-
-    let absolute = if vault.is_absolute() {
-        vault.to_path_buf()
-    } else {
-        std::env::current_dir()
-            .map(|current| current.join(vault))
-            .unwrap_or_else(|_| vault.to_path_buf())
-    };
-    let mut normalized = PathBuf::new();
-    for component in absolute.components() {
-        match component {
-            Component::CurDir => {}
-            Component::ParentDir => {
-                normalized.pop();
-            }
-            other => normalized.push(other.as_os_str()),
-        }
-    }
-
-    // A newly selected vault may not exist yet. Resolve the nearest existing ancestor
-    // so a symlinked parent cannot produce one gate before creation and another after it.
-    let mut ancestor = normalized.as_path();
-    let mut suffix = Vec::new();
-    loop {
-        if let Ok(mut canonical) = ancestor.canonicalize() {
-            for component in suffix.iter().rev() {
-                canonical.push(component);
-            }
-            return canonical;
-        }
-        let Some(name) = ancestor.file_name() else {
-            break;
-        };
-        suffix.push(name.to_os_string());
-        let Some(parent) = ancestor.parent() else {
-            break;
-        };
-        ancestor = parent;
-    }
-    normalized
 }
 
 #[cfg(test)]
