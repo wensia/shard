@@ -11,6 +11,7 @@ use rsa::{
     Oaep, RsaPrivateKey, RsaPublicKey,
 };
 use serde::{Deserialize, Serialize};
+use shard_core::dataset::{self, DatasetLimits, DatasetOp, DatasetSnapshot};
 use shard_core::{
     contains_lockbox_tag, create_public_fragment_in_vault, default_vault_path,
     ensure_public_csv_path, ensure_vault_layout, is_false, new_fragment_id, normalize_tag, normalize_tags,
@@ -783,6 +784,93 @@ async fn read_csv_file(app: tauri::AppHandle, path: String) -> Result<Vec<u8>, S
         let vault = ensure_vault_dirs(&app)?;
         let csv_path = ensure_public_csv_path(&vault, &path)?;
         fs::read(csv_path).map_err(|error| error.to_string())
+    })
+    .await
+}
+
+fn read_dataset_in_vault(vault: &Path, path: &str) -> Result<DatasetSnapshot, String> {
+    dataset::read_dataset(vault, path, &DatasetLimits::default()).map_err(|error| error.to_string())
+}
+
+fn apply_dataset_ops_in_vault(
+    vault: &Path,
+    path: &str,
+    expected_sha: &str,
+    expected_schema_sha: Option<&str>,
+    ops: &[DatasetOp],
+) -> Result<DatasetSnapshot, String> {
+    let _gate = lock_vault_gate(vault);
+    dataset::write_dataset_ops(
+        vault,
+        path,
+        expected_sha,
+        expected_schema_sha,
+        ops,
+        &DatasetLimits::default(),
+    )
+    .map_err(|error| error.to_string())
+}
+
+fn create_dataset_in_vault(
+    vault: &Path,
+    title: &str,
+    header: Vec<String>,
+    rows: Vec<Vec<String>>,
+    primary_key: Option<String>,
+) -> Result<DatasetSnapshot, String> {
+    let _gate = lock_vault_gate(vault);
+    dataset::create_dataset(
+        vault,
+        title,
+        header,
+        rows,
+        primary_key,
+        &DatasetLimits::default(),
+    )
+    .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn read_dataset(app: tauri::AppHandle, path: String) -> Result<DatasetSnapshot, String> {
+    run_blocking(move || {
+        let vault = ensure_vault_dirs(&app)?;
+        read_dataset_in_vault(&vault, &path)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn apply_dataset_ops(
+    app: tauri::AppHandle,
+    path: String,
+    expected_sha: String,
+    expected_schema_sha: Option<String>,
+    ops: Vec<DatasetOp>,
+) -> Result<DatasetSnapshot, String> {
+    run_blocking(move || {
+        let vault = ensure_vault_dirs(&app)?;
+        apply_dataset_ops_in_vault(
+            &vault,
+            &path,
+            &expected_sha,
+            expected_schema_sha.as_deref(),
+            &ops,
+        )
+    })
+    .await
+}
+
+#[tauri::command]
+async fn create_dataset(
+    app: tauri::AppHandle,
+    title: String,
+    header: Vec<String>,
+    rows: Vec<Vec<String>>,
+    primary_key: Option<String>,
+) -> Result<DatasetSnapshot, String> {
+    run_blocking(move || {
+        let vault = ensure_vault_dirs(&app)?;
+        create_dataset_in_vault(&vault, &title, header, rows, primary_key)
     })
     .await
 }
@@ -6525,6 +6613,9 @@ pub fn run() {
             convert_fragment_to_note,
             convert_note_to_fragment,
             read_csv_file,
+            read_dataset,
+            apply_dataset_ops,
+            create_dataset,
             open_csv_file,
             create_mind_map,
             read_mind_map,
@@ -6569,6 +6660,57 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dataset_commands_create_read_apply_and_reject_stale_base() {
+        let directory = tempfile::tempdir().unwrap();
+        let vault = directory.path();
+        ensure_vault_layout(vault).unwrap();
+
+        let created = create_dataset_in_vault(
+            vault,
+            "阅读记录",
+            vec!["id".into(), "书名".into()],
+            vec![vec!["r_000000000001".into(), "第一本".into()]],
+            Some("id".into()),
+        )
+        .unwrap();
+        assert_eq!(created.path, "datasets/阅读记录.csv");
+        assert_eq!(read_dataset_in_vault(vault, &created.path).unwrap(), created);
+        let json = serde_json::to_value(&created).unwrap();
+        assert!(json.get("schemaSha").is_some());
+        assert!(json.get("readOnlyReason").is_some());
+
+        let ops = vec![DatasetOp::SetCells {
+            cells: vec![dataset::CellEdit {
+                row: 0,
+                column: 1,
+                value: "第二本".into(),
+            }],
+        }];
+        let updated = apply_dataset_ops_in_vault(
+            vault,
+            &created.path,
+            &created.sha,
+            created.schema_sha.as_deref(),
+            &ops,
+        )
+        .unwrap();
+        assert_eq!(updated.table.rows[0][1], "第二本");
+        assert_ne!(updated.sha, created.sha);
+        assert_eq!(read_dataset_in_vault(vault, &created.path).unwrap(), updated);
+
+        let error = apply_dataset_ops_in_vault(
+            vault,
+            &created.path,
+            &created.sha,
+            created.schema_sha.as_deref(),
+            &ops,
+        )
+        .unwrap_err();
+        assert_eq!(error, "STALE_BASE:数据文件已在别处被修改");
+        assert_eq!(read_dataset_in_vault(vault, &created.path).unwrap(), updated);
+    }
 
     #[test]
     fn managed_pathspecs_include_datasets_and_exclude_atomic_leftovers() {
