@@ -13,7 +13,7 @@ use rsa::{
 use serde::{Deserialize, Serialize};
 use shard_core::{
     contains_lockbox_tag, create_public_fragment_in_vault, default_vault_path,
-    ensure_vault_layout, is_false, new_fragment_id, normalize_tag, normalize_tags,
+    ensure_public_csv_path, ensure_vault_layout, is_false, new_fragment_id, normalize_tag, normalize_tags,
     temporary_filename, unique_suffix, write_bytes_atomically, write_fragment_file,
     write_text_atomically, AppConfig, FragmentFrontmatter, FragmentRelation, LOCKBOX_TAG,
     LIBRARY_FILENAME_MAX_BYTES,
@@ -4432,54 +4432,6 @@ fn ensure_public_markdown_path(vault: &Path, rel_path: &str) -> Result<PathBuf, 
         return Err(format!("找不到 Markdown 文件 {}", trimmed));
     }
     Ok(full_path)
-}
-
-fn ensure_public_csv_path(vault: &Path, rel_path: &str) -> Result<PathBuf, String> {
-    let trimmed = rel_path.trim();
-    if trimmed.is_empty() {
-        return Err("CSV 路径不能为空。".to_string());
-    }
-    if trimmed.contains('\\') {
-        return Err("CSV 路径必须使用 / 分隔。".to_string());
-    }
-
-    let path = Path::new(trimmed);
-    if path.is_absolute() {
-        return Err("CSV 路径必须是 vault 内相对路径。".to_string());
-    }
-    for component in path.components() {
-        match component {
-            Component::Normal(value) => {
-                let value = value.to_string_lossy();
-                if value.eq_ignore_ascii_case("lockbox") {
-                    return Err("当前版本不允许读取密匣路径。".to_string());
-                }
-                if value == ".git" || value == ".shard" {
-                    return Err("当前版本不允许读取 Shard 内部路径。".to_string());
-                }
-            }
-            _ => return Err("CSV 路径不能包含 . 或 ..。".to_string()),
-        }
-    }
-    if !path
-        .extension()
-        .and_then(|extension| extension.to_str())
-        .map(|extension| extension.eq_ignore_ascii_case("csv"))
-        .unwrap_or(false)
-    {
-        return Err("只能读取 CSV 文件。".to_string());
-    }
-
-    let full_path = vault.join(path);
-    if !full_path.is_file() {
-        return Err(format!("找不到 CSV 文件 {trimmed}"));
-    }
-    let canonical_vault = vault.canonicalize().map_err(|error| error.to_string())?;
-    let canonical_path = full_path.canonicalize().map_err(|error| error.to_string())?;
-    if !canonical_path.starts_with(&canonical_vault) {
-        return Err("CSV 路径不能越出 vault。".to_string());
-    }
-    Ok(canonical_path)
 }
 
 fn list_csv_files_in_vault(vault: &Path) -> Result<Vec<CsvFileSummary>, String> {
