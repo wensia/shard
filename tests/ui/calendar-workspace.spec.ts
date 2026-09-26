@@ -97,13 +97,18 @@ test.describe("侧栏日历页", () => {
     await page.getByRole("button", { name: /日历/ }).click()
   })
 
-  test("格子计数、当日横幅、私有排除和任务勾选", async ({ page }) => {
+  test("格子内横幅：待办与碎片、到点警示、已完成划线、私有排除与跳转", async ({ page }) => {
     const grid = page.getByRole("grid", { name: "2026年9月" })
-    await expect(grid.getByRole("button", { name: "2026-09-26" })).toContainText("今")
+    await expect(grid.getByRole("button", { name: "2026-09-26" })).toHaveText("今")
     await expect(grid.getByRole("button", { name: "2026-09-26" })).toHaveAttribute("aria-current", "date")
-    const overdue = grid.getByRole("button", { name: "2026-09-25" }).locator('[data-overdue="true"]')
-    await expect(overdue).toContainText("1")
-    expect(await overdue.evaluate((node) => {
+    // 整页只有月历：底部不再有当日横幅区。
+    await expect(page.getByRole("region", { name: /待办与记录/ })).toHaveCount(0)
+
+    const cell = (date: string) => grid.getByRole("gridcell").filter({ has: page.getByRole("button", { name: date, exact: true }) })
+    const due = cell("2026-09-25").locator('[data-kind="todo"][data-state="due"]')
+    await expect(due).toContainText("交电费")
+    await expect(due).toContainText("09:00")
+    expect(await due.evaluate((node) => {
       const probe = document.createElement("span")
       probe.style.color = "var(--warning)"
       document.body.append(probe)
@@ -111,15 +116,14 @@ test.describe("侧栏日历页", () => {
       probe.remove()
       return getComputedStyle(node).color === expected
     })).toBe(true)
-    await expect(grid.getByRole("button", { name: "2026-09-26" })).toContainText("1")
+    const done = cell("2026-09-25").locator('[data-kind="todo"][data-state="done"]')
+    await expect(done).toContainText("取快递")
+    expect(await done.locator("span").first().evaluate((node) => getComputedStyle(node).textDecorationLine)).toBe("line-through")
+    await expect(cell("2026-09-26").locator('[data-kind="todo"][data-state="upcoming"]')).toContainText("给妈妈打电话")
+    await expect(cell("2026-09-26").locator('[data-kind="fragment"]')).toContainText("买菜")
     await expect(page.getByText("私密")).toHaveCount(0)
-    await grid.getByRole("button", { name: "2026-09-25" }).click()
-    const agenda = page.getByRole("region", { name: "9月25日 待办与记录" })
-    await expect(agenda).toContainText("交电费")
-    await expect(agenda).toContainText("取快递")
-    await agenda.getByRole("checkbox", { name: "标记为完成：交电费" }).click()
-    await expect.poll(() => page.evaluate(() => (globalThis as typeof globalThis & { __SHARD_CALENDAR_CALLS__: TestCall[] }).__SHARD_CALENDAR_CALLS__.filter((call) => call.command === "update_fragment").at(-1)?.args.content)).toContain("- [x] 交电费")
-    await agenda.getByRole("button", { name: /06:18/ }).click()
+
+    await cell("2026-09-25").locator('[data-kind="fragment"]').click()
     await expect(page.locator('[data-shard-fragment-id="memo-fragment"]')).toBeVisible()
   })
 

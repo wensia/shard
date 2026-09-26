@@ -2593,7 +2593,6 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
             ) : route.space === "calendar" ? (
               <CalendarWorkspace
                 fragments={publicActiveFragments}
-                onToggleTask={(fragment, lineIndex) => void handleToggleFragmentTask(fragment, lineIndex)}
                 onOpenFragment={(id) => void handleNavigateToFragment(id)}
                 isSidebarCollapsed={isSidebarCollapsed}
                 onToggleSidebar={() => setIsSidebarCollapsed(false)}

@@ -1,35 +1,55 @@
 .workspace { display: flex; flex: 1; flex-direction: column; min-width: 0; min-height: 0; background: var(--background); }
-.header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); min-height: var(--shard-titlebar-height); padding: var(--space-2) var(--space-4); border-bottom: 1px solid var(--border); background: var(--topbar); box-shadow: var(--shadow-topbar); }
+.header { display: flex; flex: none; align-items: center; justify-content: space-between; gap: var(--space-3); min-height: var(--shard-titlebar-height); padding: var(--space-2) var(--space-4); border-bottom: 1px solid var(--border); background: var(--topbar); box-shadow: var(--shadow-topbar); }
 :global([data-sidebar-collapsed="true"]) .header { padding-left: var(--shard-traffic-light-clearance); }
 .month { font-size: var(--text-page-title); font-weight: var(--weight-semibold); white-space: nowrap; }
 .nav { display: flex; align-items: center; gap: var(--space-1); }
-.scroll { min-height: 0; overflow: auto; padding: var(--space-4); container-type: inline-size; }
-.grid { display: grid; gap: var(--space-1); }
-.week { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: var(--space-1); }
-.week [role="columnheader"] { text-align: center; color: var(--muted-foreground); font-size: var(--text-meta); }
-.cell { min-width: 0; }
-.dayButton { display: flex; width: 100%; min-height: calc(var(--control-height) * 2); flex-direction: column; gap: var(--space-1); padding: var(--space-2); border-radius: var(--radius-control); background: transparent; color: var(--foreground); text-align: left; cursor: pointer; }
-.dayButton:hover { background: var(--muted); }
-.dayButton[aria-pressed="true"] { box-shadow: inset 0 0 0 1px var(--primary); background: color-mix(in srgb, var(--primary) 5%, transparent); }
-.dayButton[data-outside="true"] { color: var(--muted-foreground); opacity: var(--shard-alpha-55); }
+
+/* 整页只有月历：星期行 + 6 行等分剩余高度；视口太矮时每行保底，整张网格滚动。 */
+.grid {
+  display: grid;
+  flex: 1;
+  min-height: 0;
+  grid-template-rows: auto repeat(6, minmax(calc(var(--control-height) * 2.75), 1fr));
+  gap: var(--space-1);
+  overflow: auto;
+  padding: var(--space-2) var(--space-4) var(--space-4);
+}
+.weekdays, .week { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: var(--space-1); }
+.weekdays [role="columnheader"] { padding: var(--space-1) var(--space-2); color: var(--muted-foreground); font-size: var(--text-meta); }
+
+/* 格子：--card 底色铺在画布上，靠格间距露出的画布分隔（kiln：白色表面靠留白分隔，不画线）；
+ * 整页月历里透明格会让日与日之间失去边界。非本月格整体退到 muted。 */
+.cell { display: flex; min-width: 0; min-height: 0; flex-direction: column; gap: var(--space-1); padding: var(--space-1); border-radius: var(--radius-control); background: var(--card); overflow: hidden; }
+.cell[data-outside="true"] { opacity: var(--shard-alpha-55); }
+.dayButton { align-self: flex-start; display: inline-flex; min-width: var(--space-6); height: var(--space-6); align-items: center; justify-content: center; padding: 0 var(--space-1); border-radius: var(--radius-control); background: transparent; color: var(--foreground); cursor: default; }
+.cell[data-outside="true"] .dayButton { color: var(--muted-foreground); }
 .dayNumber { font-size: var(--text-body); font-variant-numeric: tabular-nums; }
-.today { display: inline-grid; width: max-content; min-width: var(--space-5); place-items: center; padding: 0 var(--space-1); border-radius: var(--radius-control); background: var(--primary); color: var(--primary-foreground); font-size: var(--text-meta); }
-.meta { display: flex; min-height: var(--text-meta); flex-direction: column; align-items: flex-start; font-size: var(--text-meta); font-variant-numeric: tabular-nums; }
-.todoCount, .fragmentCount { display: inline-flex; align-items: center; gap: var(--space-1); white-space: nowrap; }
-.todoCount svg { width: var(--shard-icon-size-sm); height: var(--shard-icon-size-sm); }
-.todoCount[data-overdue="true"] { color: var(--warning); }
-.fragmentCount { color: var(--muted-foreground); }
-.agenda { margin-top: var(--space-4); padding-top: var(--space-4); border-top: 1px solid var(--border); }
-.dayHeading { font-size: var(--text-section-title); font-weight: var(--weight-semibold); }
-.columns { display: grid; gap: var(--space-6); margin-top: var(--space-3); }
-@container (min-width: 48rem) { .columns { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-.columnHeading { margin-bottom: var(--space-2); color: var(--muted-foreground); font-size: var(--text-meta); }
-.list { display: grid; gap: var(--space-1); }
-.taskRow, .fragmentRow { display: flex; min-width: 0; min-height: var(--control-height); align-items: center; gap: var(--space-2); }
-.taskTitle { min-width: 0; flex: 1; overflow: hidden; color: var(--foreground); text-align: left; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
-.taskTitle[data-checked="true"] { color: var(--muted-foreground); text-decoration: line-through; }
-.fragmentRow { width: 100%; border-radius: var(--radius-control); text-align: left; cursor: pointer; }
-.fragmentRow:hover { background: var(--muted); }
-.fragmentRow time { flex: none; color: var(--muted-foreground); font-size: var(--text-meta); font-variant-numeric: tabular-nums; }
-.fragmentRow span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.empty { margin-top: var(--space-4); color: var(--muted-foreground); font-size: var(--text-body); }
+/* 今天：实心主色写「今」，汉字比数字压得满，缩一档（同共享 Calendar）。 */
+.today { display: inline-grid; min-width: var(--space-5); place-items: center; padding: 0 var(--space-1); border-radius: var(--radius-control); background: var(--primary); color: var(--primary-foreground); font-size: var(--text-meta); font-weight: var(--weight-medium); }
+
+.banners { display: flex; min-height: 0; flex-direction: column; gap: 2px; }
+/* 横幅条：左侧 2px 色条 + 淡底，一行标题，待办行尾带提醒时间。 */
+.banner {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: var(--space-1);
+  padding: 1px var(--space-1) 1px calc(var(--space-1) + 2px);
+  border-radius: var(--radius-control);
+  background: color-mix(in srgb, var(--primary) 8%, transparent);
+  box-shadow: inset 2px 0 0 var(--primary);
+  color: var(--foreground);
+  font-size: var(--text-meta);
+  line-height: var(--leading-normal);
+  text-align: left;
+  cursor: pointer;
+}
+.banner:hover { background: color-mix(in srgb, var(--primary) 14%, transparent); }
+.banner[data-state="due"] { background: color-mix(in srgb, var(--warning) 12%, transparent); box-shadow: inset 2px 0 0 var(--warning); color: var(--warning); }
+.banner[data-state="done"] { background: var(--muted); box-shadow: inset 2px 0 0 var(--border-visible); color: var(--muted-foreground); }
+.banner[data-state="done"] .bannerText { text-decoration: line-through; }
+.banner[data-kind="fragment"] { background: var(--muted); box-shadow: inset 2px 0 0 var(--border-visible); color: var(--muted-foreground); }
+.banner[data-kind="fragment"]:hover, .banner[data-state="done"]:hover { color: var(--foreground); }
+.bannerText { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bannerTime { flex: none; font-variant-numeric: tabular-nums; }
+.more { padding: 0 var(--space-1); color: var(--muted-foreground); font-size: var(--text-meta); font-variant-numeric: tabular-nums; }
