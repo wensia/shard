@@ -1,5 +1,6 @@
 import {
   BookOpenIcon,
+  CalendarDaysIcon,
   InboxIcon,
   PanelLeftIcon,
   SearchIcon,
@@ -18,6 +19,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip"
 import type { Fragment } from "@/types"
+import { addDays, daysBetween, formatDateKey, startOfLocalDay } from "@/lib/local-date"
 import type {
   FragmentsView,
   WorkspaceRoute,
@@ -45,6 +47,7 @@ const SPACE_ITEMS: Array<{
     icon: InboxIcon,
     route: { space: "fragments", params: {} },
   },
+  { id: "calendar", icon: CalendarDaysIcon, route: { space: "calendar", params: {} } },
   { id: "library", icon: BookOpenIcon, route: { space: "library", params: {} } },
 ]
 
@@ -103,6 +106,7 @@ const SIDEBAR_COPY: Record<
     },
     spaces: {
       fragments: "碎片",
+      calendar: "日历",
       library: "资料库",
       lockbox: "密匣",
     },
@@ -134,6 +138,7 @@ const SIDEBAR_COPY: Record<
     },
     spaces: {
       fragments: "Fragments",
+      calendar: "Calendar",
       library: "Library",
       lockbox: "Lockbox",
     },
@@ -695,30 +700,9 @@ function getHeatmapLevel(count: number): 0 | 1 | 2 | 3 {
   return 3
 }
 
-function startOfLocalDay(date: Date) {
-  return new Date(date.getFullYear(), date.getMonth(), date.getDate())
-}
-
 function startOfWeek(date: Date) {
   const weekday = (date.getDay() + 6) % 7
   return addDays(date, -weekday)
-}
-
-function addDays(date: Date, days: number) {
-  const next = new Date(date)
-  next.setDate(next.getDate() + days)
-  return next
-}
-
-function daysBetween(start: Date, end: Date) {
-  const millisecondsPerDay = 24 * 60 * 60 * 1000
-  return Math.round((end.getTime() - start.getTime()) / millisecondsPerDay)
-}
-
-function formatDateKey(date: Date) {
-  const month = String(date.getMonth() + 1).padStart(2, "0")
-  const day = String(date.getDate()).padStart(2, "0")
-  return `${date.getFullYear()}-${month}-${day}`
 }
 
 function formatHeatmapDateLabel(date: Date, language: SidebarLanguage) {

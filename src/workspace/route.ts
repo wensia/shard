@@ -12,6 +12,11 @@ export type LibraryRoute = {
   params: Record<string, never>
 }
 
+export type CalendarRoute = {
+  space: "calendar"
+  params: Record<string, never>
+}
+
 /** 密匣一级空间：入口是资料库树上的上锁挂载点，安全区跟这个空间走。 */
 export type LockboxRoute = {
   space: "lockbox"
@@ -21,6 +26,7 @@ export type LockboxRoute = {
 export type WorkspaceRoute =
   | FragmentsRoute
   | LibraryRoute
+  | CalendarRoute
   | LockboxRoute
 
 export const DEFAULT_WORKSPACE_ROUTE: WorkspaceRoute = {
@@ -50,6 +56,7 @@ export function isWorkspaceRoute(value: unknown): value is WorkspaceRoute {
 
   return (
     (value.space === "library" ||
+      value.space === "calendar" ||
       value.space === "lockbox") &&
     hasOnlyKeys(value.params, [])
   )

@@ -39,6 +39,7 @@ import {
   type AppSettings,
 } from "@/lib/app-settings"
 import { Button } from "@/components/ui/button"
+import { CalendarWorkspace } from "@/workspace/calendar-workspace"
 import {
   Dialog,
   DialogContent,
@@ -2519,7 +2520,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
           )}
         </div>
         <div className={styles.workspaceSlot} data-workspace-slot>
-          {isSidebarCollapsed ? (
+          {isSidebarCollapsed && route.space !== "calendar" ? (
             <div
               className={styles.collapsedTitlebar}
               data-sidebar-collapsed-titlebar
@@ -2588,6 +2589,14 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
                   setRoute({ space: "fragments", params: {} })
                   setPendingScrollFragmentId(id ?? null)
                 }}
+              />
+            ) : route.space === "calendar" ? (
+              <CalendarWorkspace
+                fragments={publicActiveFragments}
+                onToggleTask={(fragment, lineIndex) => void handleToggleFragmentTask(fragment, lineIndex)}
+                onOpenFragment={(id) => void handleNavigateToFragment(id)}
+                isSidebarCollapsed={isSidebarCollapsed}
+                onToggleSidebar={() => setIsSidebarCollapsed(false)}
               />
             ) : route.space === "lockbox" ? (
               <LockboxShell

@@ -12,6 +12,7 @@ describe("WorkspaceRoute", () => {
     DEFAULT_WORKSPACE_ROUTE,
     { space: "fragments", params: {} },
     { space: "library", params: {} },
+    { space: "calendar", params: {} },
     { space: "lockbox", params: {} },
     { space: "fragments", params: { view: "all" } },
     { space: "fragments", params: { view: "trash" } },
@@ -35,6 +36,7 @@ describe("WorkspaceRoute", () => {
     { space: "fragments", params: { filter: "lockbox" } },
     { space: "lockbox", params: { noteId: "1" } },
     { space: "library", params: { noteId: "1" } },
+    { space: "calendar", params: { date: "2026-09-26" } },
     { space: "review", params: { mode: "archive" } },
     { space: "review", params: { mode: "walk" }, onOpen: () => undefined },
   ])("rejects invalid or non-route shapes", (value) => {
