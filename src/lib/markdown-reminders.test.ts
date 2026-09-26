@@ -2,12 +2,14 @@ import { describe, expect, it } from "vitest"
 
 import {
   collectTaskReminders,
+  collectTaskItems,
   findReminderRanges,
   formatReminder,
   parseReminderAt,
   REMINDER_PATTERN,
   splitTaskReminder,
 } from "@shard/markdown/core"
+import { toggleTaskLine } from "@/lib/editor-format"
 
 const local = (year: number, month: number, day: number, hour: number, minute: number) =>
   new Date(year, month - 1, day, hour, minute).getTime()
@@ -50,6 +52,23 @@ describe("提醒写法解析", () => {
 })
 
 describe("collectTaskReminders", () => {
+  it("返回首行标题和可用于勾选的真实行号", () => {
+    const source = [
+      "前置段落",
+      "",
+      "- [ ] 父项 ⏰ 2026-10-01 09:00",
+      "  - [ ] 子项 ⏰ 2026-10-02 10:00",
+      "- [x] 已完成 ⏰ 2026-10-03 11:00",
+    ].join("\n")
+    const items = collectTaskItems(source)
+    expect(items.map(({ lineIndex, text, checked }) => ({ lineIndex, text, checked }))).toEqual([
+      { lineIndex: 2, text: "父项", checked: false },
+      { lineIndex: 3, text: "子项", checked: false },
+      { lineIndex: 4, text: "已完成", checked: true },
+    ])
+    expect(toggleTaskLine(source, items[1].lineIndex).split("\n")[3]).toContain("- [x] 子项")
+  })
+
   it("区分勾选与未勾选", () => {
     const source = [
       "- [ ] 买菜 ⏰ 2026-10-01 09:00",

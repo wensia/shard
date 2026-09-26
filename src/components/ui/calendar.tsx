@@ -26,13 +26,26 @@ export function parseDay(value: string): CalendarDay | undefined {
   const date = { year, month, day }
   return year >= 1 && year <= 9999 && formatDay(fromDate(asDate(date))) === value ? date : undefined
 }
-function addDays(date: CalendarDay, amount: number): CalendarDay { const result = asDate(date); result.setUTCDate(result.getUTCDate() + amount); return fromDate(result) }
-function shiftMonth(date: CalendarDay, amount: number): CalendarDay {
+export function addDays(date: CalendarDay, amount: number): CalendarDay { const result = asDate(date); result.setUTCDate(result.getUTCDate() + amount); return fromDate(result) }
+export function shiftMonth(date: CalendarDay, amount: number): CalendarDay {
   const first = fromDate(asDate({ ...date, month: date.month + amount, day: 1 }))
   const end = fromDate(asDate({ ...first, month: first.month + 1, day: 0 }))
   return { ...first, day: Math.min(date.day, end.day) }
 }
 const inRange = (date: CalendarDay) => date.year >= 1 && date.year <= 9999
+
+export function nextDayForKey(key: string, date: CalendarDay, shiftKey: boolean): CalendarDay | undefined {
+  const offset = (asDate(date).getUTCDay() + 6) % 7
+  if (key === "ArrowLeft") return addDays(date, -1)
+  if (key === "ArrowRight") return addDays(date, 1)
+  if (key === "ArrowUp") return addDays(date, -7)
+  if (key === "ArrowDown") return addDays(date, 7)
+  if (key === "Home") return addDays(date, -offset)
+  if (key === "End") return addDays(date, 6 - offset)
+  if (key === "PageUp") return shiftMonth(date, shiftKey ? -12 : -1)
+  if (key === "PageDown") return shiftMonth(date, shiftKey ? 12 : 1)
+  return undefined
+}
 
 /** 输入法组合中的按键（含 Safari 的 keyCode 229）不能当作确认或关闭。 */
 export function isCompositionKey(event: KeyboardEvent, composing: boolean) {
@@ -74,16 +87,7 @@ export function Calendar({ value, onValueChange, className }: CalendarProps) {
   }
   function moveDay(event: KeyboardEvent, date: CalendarDay) {
     if (isCompositionKey(event, composing.current)) return
-    let next: CalendarDay | undefined
-    const offset = (asDate(date).getUTCDay() + 6) % 7
-    if (event.key === "ArrowLeft") next = addDays(date, -1)
-    if (event.key === "ArrowRight") next = addDays(date, 1)
-    if (event.key === "ArrowUp") next = addDays(date, -7)
-    if (event.key === "ArrowDown") next = addDays(date, 7)
-    if (event.key === "Home") next = addDays(date, -offset)
-    if (event.key === "End") next = addDays(date, 6 - offset)
-    if (event.key === "PageUp") next = shiftMonth(date, event.shiftKey ? -12 : -1)
-    if (event.key === "PageDown") next = shiftMonth(date, event.shiftKey ? 12 : 1)
+    const next = nextDayForKey(event.key, date, event.shiftKey)
     if (next) { event.preventDefault(); browse(next, true) }
   }
   function choose(date: CalendarDay) {

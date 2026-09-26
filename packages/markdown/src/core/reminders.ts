@@ -31,6 +31,12 @@ export interface TaskReminder {
   checked: boolean
 }
 
+export interface TaskItem extends TaskReminder {
+  /** 零基行号，与 toggleTaskLine 使用同一口径。 */
+  lineIndex: number
+  text: string
+}
+
 const pad = (value: number, length = 2) => String(value).padStart(length, "0")
 
 /** 把本地时间格式化成 `YYYY-MM-DD HH:mm`（不带 `⏰` 前缀）。 */
@@ -107,9 +113,9 @@ function overlaps(start: number, end: number, ranges: readonly [number, number][
  * 嵌套子任务的范围被排除，子任务自己的提醒由它自己的 `Task` 计入，不重复计数。
  * 代码、链接目标、标签与双链里出现的 `⏰` 不算提醒，与编辑器的识别口径一致。
  */
-export function collectTaskReminders(markdown: string): TaskReminder[] {
-  const reminders: TaskReminder[] = []
-  if (!markdown.includes("⏰")) return reminders
+export function collectTaskItems(markdown: string): TaskItem[] {
+  const items: TaskItem[] = []
+  if (!markdown.includes("⏰")) return items
 
   const tree = shardMarkdownParser.parse(markdown)
   tree.iterate({
@@ -138,13 +144,20 @@ export function collectTaskReminders(markdown: string): TaskReminder[] {
         if (overlaps(start, end, excluded)) continue
         const dueAt = parseReminderAt(range.at)
         if (dueAt === null) continue
-        reminders.push({ at: range.at, dueAt, checked })
+        const lineIndex = markdown.slice(0, task.from).split("\n").length - 1
+        const firstLine = text.split("\n", 1)[0]
+        const body = firstLine.replace(/^\s*(?:(?:[-*+]|\d+[.)])\s+)?\[[ xX]\]\s*/u, "")
+        items.push({ at: range.at, dueAt, checked, lineIndex, text: (splitTaskReminder(body)?.body ?? body).trim() })
         break
       }
       return false
     },
   })
-  return reminders
+  return items
+}
+
+export function collectTaskReminders(markdown: string): TaskReminder[] {
+  return collectTaskItems(markdown).map(({ at, dueAt, checked }) => ({ at, dueAt, checked }))
 }
 
 /**
