@@ -36,6 +36,7 @@ export interface ShardSlashSuggestionOptions {
   getHostCommands?: () => ShardRichHostCommands
   /** 文档档才展示标题、引用、代码块；基础档不传或返回 false。 */
   isDocumentTier?: () => boolean
+  allowDatasetActions?: () => boolean
 }
 
 /**
@@ -53,6 +54,7 @@ export const ShardSlashSuggestion = Extension.create<ShardSlashSuggestionOptions
       onImageFiles: undefined,
       getHostCommands: undefined,
       isDocumentTier: undefined,
+      allowDatasetActions: undefined,
     }
   },
 
@@ -80,7 +82,9 @@ export const ShardSlashSuggestion = Extension.create<ShardSlashSuggestionOptions
           state.doc.resolve(range.from).parent.type.name !== "codeBlock",
         items: ({ query }) => {
           const claimed = new Set(listBlockSlashItems().map((item) => item.slash.id))
-          const blocks = filterBlockSlashItems(query).map(({ slash }) => ({
+          const blocks = filterBlockSlashItems(query)
+            .filter(({ slash }) => slash.id !== "dataset" || (this.options.allowDatasetActions?.() ?? true))
+            .map(({ slash }) => ({
             badge: slash.hint,
             id: slash.id,
             key: `block:${slash.id}`,

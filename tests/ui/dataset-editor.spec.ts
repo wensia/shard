@@ -1,15 +1,16 @@
 import { expect, test, type Page } from "@playwright/test"
 
 import { installSearchIpcMock } from "./search-ipc-mock"
+import { fillEditor, focusEditor, readEditor, typeEditor } from "./editor-helpers"
 
 const PATH = "datasets/阅读记录.csv"
 const FENCE = "```"
 
 type Call = { command: string; args: Record<string, unknown> }
 
-async function installMock(page: Page) {
+async function installMock(page: Page, withLockbox = false) {
   await installSearchIpcMock(page)
-  await page.addInitScript(({ path, fence }) => {
+  await page.addInitScript(({ path, fence, withLockbox }) => {
     const now = "2026-09-27T08:00:00.000Z"
     const csvFence = [fence + "datatable", JSON.stringify({ title: "阅读记录", src: path }), fence].join("\n")
     const fragments = [{
@@ -18,6 +19,11 @@ async function installMock(page: Page) {
       gitStatus: "committed", error: null, archived: false, lockbox: false,
       pinned: false, related: [],
     }]
+    const privateFragment = {
+      ...fragments[0], id: "private-card", path: "lockbox/fragments/private-card.shard",
+      content: "私密说明", tags: ["日记"], lockbox: true,
+    }
+    const lockbox = { configured: withLockbox, unlocked: false, expiresAt: null, ttlSeconds: 900 }
     const git = { branch: "main", shortCommit: "abc1234", hasRemote: false, status: "ready", error: null, ahead: 0, behind: 0 }
     const tree = { entries: [{ name: "阅读记录.csv", path, kind: "csv", size: 0, modifiedAt: now }], assets: [], trashEntries: [], fragmentTrashEntries: [], fragmentStream: { totalCount: 1, years: [] } }
     const schema = { schemaVersion: 1, datasetId: "ds_0123456789abcdef0123456789abcdef", title: "阅读记录", primaryKey: "id" }
@@ -42,7 +48,9 @@ async function installMock(page: Page) {
             case "set_window_controls_hidden":
             case "open_csv_file": return null
             case "plugin:app|version": return "0.1.3"
-            case "list_fragments": return clone({ vaultPath: "/tmp/shard-dataset-test", fragments, git, lockbox: { configured: false, unlocked: false, expiresAt: null, ttlSeconds: 900 } })
+            case "list_fragments": return clone({ vaultPath: "/tmp/shard-dataset-test", fragments: lockbox.unlocked ? [...fragments, privateFragment] : fragments, git, lockbox })
+            case "unlock_lockbox": lockbox.unlocked = true; return clone({ vaultPath: "/tmp/shard-dataset-test", fragments: [...fragments, privateFragment], git, lockbox })
+            case "lock_lockbox": lockbox.unlocked = false; return clone({ vaultPath: "/tmp/shard-dataset-test", fragments, git, lockbox })
             case "list_mind_maps": return []
             case "list_csv_files": return [{ name: "阅读记录.csv", path }]
             case "list_library_tree": return clone(tree)
@@ -68,7 +76,7 @@ async function installMock(page: Page) {
         },
       },
     })
-  }, { path: PATH, fence: FENCE })
+  }, { path: PATH, fence: FENCE, withLockbox })
 }
 
 const zen = (page: Page) => page.getByRole("region", { name: "数据集禅模式" })
@@ -103,6 +111,80 @@ async function editCell(page: Page, column: number, row: number, value: string) 
 }
 
 test.beforeEach(async ({ page }) => { await page.context().grantPermissions(["clipboard-read", "clipboard-write"]); await installMock(page); await page.goto("/") })
+
+test("碎片禅模式通过 /数据集 新建 CSV 并插入说明围栏", async ({ page }) => {
+  await page.locator('[data-shard-fragment-id="dataset-card"]').getByRole("button", { name: "片段操作" }).click()
+  await page.getByRole("menuitem", { name: "禅模式", exact: true }).click()
+  const id = "zen:dataset-card"
+  await fillEditor(page, id, "说明")
+  await focusEditor(page, id)
+  await page.keyboard.press("End")
+  await page.keyboard.press("Enter")
+  await typeEditor(page, id, "/数据集")
+  await page.getByRole("option", { name: /数据集/ }).click()
+  const dialog = page.getByRole("dialog", { name: "新建数据集" })
+  await expect(dialog.getByRole("textbox", { name: "数据集标题" })).toHaveValue("数据集")
+  await dialog.getByRole("textbox", { name: "数据集标题" }).fill("旅行清单")
+  await dialog.getByRole("button", { name: "创建", exact: true }).click()
+  await expect.poll(() => calls(page, "create_dataset")).toHaveLength(1)
+  expect((await calls(page, "create_dataset"))[0].args).toEqual({ title: "旅行清单", header: ["id", "名称"], rows: [], primaryKey: "id" })
+  await expect.poll(() => readEditor(page, id)).toContain('"src":"datasets/阅读记录.csv"')
+  await expect(zen(page)).toBeVisible()
+})
+
+test("速记框新建数据集后保留说明草稿，不自动提交碎片", async ({ page }) => {
+  await fillEditor(page, "composer", "说明")
+  await focusEditor(page, "composer")
+  await page.keyboard.press("End")
+  await page.keyboard.press("Enter")
+  await typeEditor(page, "composer", "/数据集")
+  await page.getByRole("option", { name: /数据集/ }).click()
+  await page.getByRole("dialog", { name: "新建数据集" }).getByRole("button", { name: "创建", exact: true }).click()
+  await expect.poll(() => readEditor(page, "composer")).toContain('"src":"datasets/阅读记录.csv"')
+  expect(await readEditor(page, "composer")).toContain("说明")
+  expect(await calls(page, "create_fragment")).toHaveLength(0)
+  await expect(zen(page)).toBeVisible()
+})
+
+test("速记框标记密匣时隐藏 /数据集", async ({ page }) => {
+  await fillEditor(page, "composer", "#密匣 ")
+  await focusEditor(page, "composer")
+  await page.keyboard.press("End")
+  await typeEditor(page, "composer", "/数据集")
+  await expect(page.getByRole("listbox", { name: "命令菜单" }).getByRole("option", { name: /数据集/ })).toHaveCount(0)
+})
+
+test("碎片准备移入密匣时隐藏 /数据集", async ({ page }) => {
+  await page.locator('[data-shard-fragment-id="dataset-card"]').getByRole("button", { name: "片段操作" }).click()
+  await page.getByRole("menuitem", { name: "禅模式", exact: true }).click()
+  const id = "zen:dataset-card"
+  await fillEditor(page, id, "#密匣 ")
+  await focusEditor(page, id)
+  await page.keyboard.press("End")
+  await typeEditor(page, id, "/数据集")
+  await expect(page.getByRole("listbox", { name: "命令菜单" }).getByRole("option", { name: /数据集/ })).toHaveCount(0)
+})
+
+test("已在密匣的碎片不显示 /数据集", async ({ page }) => {
+  const privatePage = await page.context().newPage()
+  await installMock(privatePage, true)
+  await privatePage.goto("/")
+  await privatePage.getByRole("button", { name: "资料库", exact: true }).click()
+  await privatePage.getByRole("complementary", { name: "资料库目录" })
+    .getByRole("button", { name: "密匣（上锁空间）", exact: true }).click()
+  const gate = privatePage.getByRole("form", { name: "解锁密匣" })
+  await gate.getByPlaceholder("密匣密码").fill("test-password")
+  await gate.getByRole("button", { name: "解锁", exact: true }).click()
+  await privatePage.locator('[data-shard-fragment-id="private-card"]')
+    .getByRole("button", { name: "片段操作" }).click()
+  await privatePage.getByRole("menuitem", { name: "禅模式", exact: true }).click()
+  const id = "zen:private-card"
+  await fillEditor(privatePage, id, "")
+  await focusEditor(privatePage, id)
+  await typeEditor(privatePage, id, "/数据集")
+  await expect(privatePage.getByRole("listbox", { name: "命令菜单" }).getByRole("option", { name: /数据集/ })).toHaveCount(0)
+  await privatePage.close()
+})
 
 test("卡片入口打开禅模式，显示标题、路径、表头和行", async ({ page }) => {
   await openFromCard(page)

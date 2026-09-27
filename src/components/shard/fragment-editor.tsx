@@ -707,6 +707,7 @@ export function FragmentEditor({
       ) : (
         <div style={richFieldStyle}>
           <ShardRichEditor
+            allowDatasetActions={!fragment?.lockbox && !willRouteToLockbox}
             ariaLabel={isZen ? "禅模式片段编辑器" : "片段编辑器"}
             autoFocus={!readOnly}
             editorId={editorId}

@@ -16,6 +16,14 @@ import type { SlashCommandId } from "@/lib/slash-commands"
 import type { SearchRevealHandle } from "@/lib/search-contract"
 import type { WikilinkCandidate } from "@/lib/wikilink"
 import type { ShardDocumentLink } from "@/types"
+import { Button } from "@/components/ui/button"
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Input } from "@/components/ui/input"
+import { createDataset } from "@/features/datasets/api"
+import { openDatasetEditor } from "@/features/datasets/open-dataset"
+import { getApiErrorMessage } from "@/lib/api"
+import { toast } from "sonner"
+import { findBlockSlashItem } from "./blocks/registry-ui"
 import { registerShardRichEditorTest } from "./test-bridge"
 
 import {
@@ -25,6 +33,7 @@ import {
   insertRichHorizontalRule,
   insertRichTable,
   runRichSlashCommand,
+  insertRichShardBlock,
   toggleRichBlockquote,
   toggleRichCodeBlock,
   type ShardRichHeadingLevel,
@@ -87,6 +96,7 @@ export interface ShardRichEditorProps {
   placeholder?: string
   ariaLabel?: string
   readOnly?: boolean
+  allowDatasetActions?: boolean
   autoFocus?: boolean
   onSubmit?: () => void
   onToggleZen?: () => void
@@ -177,6 +187,7 @@ export const ShardRichEditor = forwardRef<ShardRichEditorHandle, ShardRichEditor
       placeholder,
       ariaLabel,
       readOnly = false,
+      allowDatasetActions = true,
       autoFocus = false,
       onSubmit,
       onToggleZen,
@@ -196,6 +207,11 @@ export const ShardRichEditor = forwardRef<ShardRichEditorHandle, ShardRichEditor
     forwardedRef
   ) {
     const [menuState, setMenuState] = useState<SuggestionMenuState | null>(null)
+    const [datasetPosition, setDatasetPosition] = useState<number | null>(null)
+    const [datasetTitle, setDatasetTitle] = useState("数据集")
+    const [datasetCreating, setDatasetCreating] = useState(false)
+    const allowDatasetActionsRef = useRef(allowDatasetActions)
+    allowDatasetActionsRef.current = allowDatasetActions
     const menu = useMemo(() => new SuggestionMenuHost(setMenuState), [])
 
     // 回调走 ref：Tiptap 扩展在创建时固化闭包，扩展数组一变就重建整个
@@ -272,6 +288,32 @@ export const ShardRichEditor = forwardRef<ShardRichEditorHandle, ShardRichEditor
       return {
         ...(enterOutline ? { onEnterOutline: () => callbacks.current.onEnterOutline?.() } : {}),
         ...(markDocument ? { onMarkDocument: () => callbacks.current.onMarkDocument?.() } : {}),
+        onCreateDataset: (position: number) => {
+          if (!allowDatasetActionsRef.current) return
+          setDatasetTitle("数据集")
+          setDatasetPosition(position)
+        },
+      }
+    }
+
+    async function submitDataset() {
+      if (datasetPosition === null || datasetCreating || !allowDatasetActionsRef.current) return
+      const title = datasetTitle.trim()
+      if (!title) return
+      setDatasetCreating(true)
+      try {
+        const snapshot = await createDataset(title, ["id", "名称"], [], "id")
+        const instance = editorRef.current
+        const slash = findBlockSlashItem("datatable")
+        if (instance && !instance.isDestroyed && slash) {
+          insertRichShardBlock(instance, slash.lang, slash.slash, JSON.stringify({ title, src: snapshot.path }), datasetPosition)
+        }
+        setDatasetPosition(null)
+        openDatasetEditor(snapshot.path)
+      } catch (error) {
+        toast.error(getApiErrorMessage(error))
+      } finally {
+        setDatasetCreating(false)
       }
     }
 
@@ -355,6 +397,7 @@ export const ShardRichEditor = forwardRef<ShardRichEditorHandle, ShardRichEditor
           // 宿主命令按「有没有传回调」进菜单：没接大纲/文档的编辑面不展示它们。
           getHostCommands: () => hostCommands(),
           isDocumentTier: () => tierRef.current === "document",
+          allowDatasetActions: () => allowDatasetActionsRef.current,
         }),
         ShardWikilinkSuggestion.configure({
           getCandidates: () =>
@@ -599,6 +642,16 @@ export const ShardRichEditor = forwardRef<ShardRichEditorHandle, ShardRichEditor
         </div>
         {menuState ? <SuggestionMenu host={menu} state={menuState} /> : null}
         {editor ? <SelectionToolbar editor={editor} suppressed={menuState !== null} /> : null}
+        <Dialog open={datasetPosition !== null} onOpenChange={(open) => { if (!open && !datasetCreating) setDatasetPosition(null) }}>
+          <DialogContent>
+            <DialogHeader><DialogTitle>新建数据集</DialogTitle></DialogHeader>
+            <Input aria-label="数据集标题" autoFocus value={datasetTitle} disabled={datasetCreating} onChange={(event) => setDatasetTitle(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void submitDataset() } }} />
+            <DialogFooter>
+              <Button variant="outline" disabled={datasetCreating} onClick={() => setDatasetPosition(null)}>取消</Button>
+              <Button disabled={datasetCreating || !datasetTitle.trim()} onClick={() => void submitDataset()}>{datasetCreating ? "创建中…" : "创建"}</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </>
     )
   }

@@ -32,9 +32,12 @@ describe("围栏块 UI 注册表", () => {
     expect(listBlockSlashItems().map((item) => item.slash.label)).toEqual([
       "导图块",
       "数据表",
+      "数据集",
     ])
     expect(filterBlockSlashItems("sjb").map((item) => item.slash.id)).toEqual(["datatable"])
     expect(filterBlockSlashItems("导图").map((item) => item.slash.id)).toEqual(["mindmap"])
+    expect(filterBlockSlashItems("sjj").map((item) => item.slash.id)).toEqual(["dataset"])
+    expect(findBlockSlashItem("dataset")?.slash).toMatchObject({ label: "数据集", hint: "新建 CSV" })
     // 围栏块不再认「大纲」：那是内容类型命令的关键词。
     expect(filterBlockSlashItems("大纲")).toEqual([])
     expect(filterBlockSlashItems("不存在")).toEqual([])

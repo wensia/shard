@@ -90,9 +90,12 @@ export function listBlockUI(): { lang: string; ui: ShardBlockUI }[] {
 
 /** 注册顺序即菜单顺序：结构块排在行格式命令前面。 */
 export function listBlockSlashItems(): { lang: string; slash: ShardBlockSlashItem }[] {
-  return listBlockUI().flatMap(({ lang, ui }) =>
+  return [...listBlockUI().flatMap(({ lang, ui }) =>
     ui.slash ? [{ lang, slash: ui.slash }] : []
-  )
+  ), { lang: "", slash: {
+    id: "dataset", label: "数据集", hint: "新建 CSV",
+    keywords: ["数据集", "csv", "sjj", "dataset"], template: "",
+  } }]
 }
 
 /** 匹配规则与 `filterSlashCommands` 一致：关键词小写后做 includes。 */

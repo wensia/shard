@@ -492,6 +492,7 @@ export const CaptureBox = forwardRef<CaptureBoxHandle, CaptureBoxProps>(function
           ref={codeMirrorViewportRef}
         >
           <ShardRichEditor
+            allowDatasetActions={!willSaveToLockbox}
             ariaLabel="快速记录"
             autoFocus
             editorId="composer"
