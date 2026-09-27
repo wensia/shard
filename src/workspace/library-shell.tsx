@@ -127,6 +127,7 @@ export interface LibraryDraftHandle {
 export type LibraryNavigationTarget =
   | { kind: "note"; id: string; requestId: number; edit?: boolean }
   | { kind: "trash"; requestId: number }
+  | { kind: "mindmap" | "flowchart"; path: string; requestId: number }
 
 export type LibrarySearchNavigationTarget =
   | {
@@ -857,8 +858,16 @@ export function LibraryShell({
       void selectTrashView().then((selected) => {
         if (selected) consumedNavigationRef.current = navigateTo.requestId
       })
+      return
     }
-  }, [navigateTo, notes])
+    if (!findTreeEntry(libraryTree?.entries ?? [], navigateTo.path)) return
+    const selection = navigateTo.kind === "mindmap"
+      ? selectMindMap(navigateTo.path)
+      : selectCanvas(navigateTo.path, "flowchart")
+    void selection.then((selected) => {
+      if (selected) consumedNavigationRef.current = navigateTo.requestId
+    })
+  }, [libraryTree, navigateTo, notes])
 
   useEffect(() => {
     if (

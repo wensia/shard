@@ -4,6 +4,7 @@ import {
   card,
   createdFragments,
   createdGraphFragments,
+  failNextGraphCreate,
   installContentTypesMock,
   revealCard,
 } from "./content-types-mock"
@@ -84,6 +85,15 @@ async function runDocumentCommand(page: Page, editorId: string) {
   await expect(menu).toHaveCount(0)
 }
 
+async function runFlowchartCommand(page: Page, editorId: string) {
+  await focusEditor(page, editorId)
+  await typeEditor(page, editorId, "/流程图")
+  const menu = commandMenu(page)
+  await expect(menu.getByRole("option")).toHaveCount(1)
+  await page.keyboard.press("Enter")
+  await expect(menu).toHaveCount(0)
+}
+
 test.describe("速记框内容类型", () => {
   test.beforeEach(async ({ page }) => {
     await installContentTypesMock(page)
@@ -118,6 +128,34 @@ test.describe("速记框内容类型", () => {
     // 提交后退出大纲态，回到普通速记。
     await expect(outlineComposer(page)).toHaveCount(0)
     await expect(page.locator(`${COMPOSER} .ProseMirror`)).toHaveCount(1)
+  })
+
+  test("/流程图 立即创建空图、保留原草稿并打开流程图宿主", async ({ page }) => {
+    await fillEditor(page, "composer", "原有草稿")
+    await page.keyboard.press("Enter")
+    await runFlowchartCommand(page, "composer")
+
+    await expect.poll(() => createdGraphFragments(page)).toHaveLength(1)
+    const [created] = await createdGraphFragments(page)
+    expect(created).toMatchObject({ kind: "flowchart", graph: null, tags: ["inbox"] })
+    expect(created.operationId).toMatch(/^[0-9a-f-]{20,}$/u)
+    await expect(page.locator('section[aria-label="流程图工作区"]')).toHaveCount(1)
+
+    await page.keyboard.press("Escape")
+    await expect(page.locator('section[aria-label="流程图工作区"]')).toHaveCount(0)
+    await expect.poll(async () => (await readEditor(page, "composer")).trim()).toBe("原有草稿")
+    await expect(card(page, "typed-graph-created-1")).toHaveCount(1)
+  })
+
+  test("/流程图 创建失败时保留草稿并显示错误", async ({ page }) => {
+    await fillEditor(page, "composer", "失败也要保留")
+    await page.keyboard.press("Enter")
+    await failNextGraphCreate(page)
+    await runFlowchartCommand(page, "composer")
+
+    await expect(page.getByText("创建流程图失败：模拟流程图创建失败", { exact: true })).toBeVisible()
+    await expect.poll(async () => (await readEditor(page, "composer")).trim()).toBe("失败也要保留")
+    await expect(page.locator('section[aria-label="流程图工作区"]')).toHaveCount(0)
   })
 
   test("201 节点大纲完整提交，不沿用旧的 200 节点截断", async ({ page }) => {
@@ -247,7 +285,7 @@ test.describe("时间线与瀑布流的类型卡片", () => {
   test.beforeEach(async ({ page }) => {
     await installContentTypesMock(page)
     await page.goto("/")
-    await expect(page.locator(".shard-timeline-item")).toHaveCount(4)
+    await expect(page.locator(".shard-timeline-item")).toHaveCount(6)
   })
 
   test("大纲卡片渲染导图缩略加根节点标题，不铺原始列表", async ({ page }) => {
@@ -272,6 +310,37 @@ test.describe("时间线与瀑布流的类型卡片", () => {
     await expect(body.locator("p").first()).toHaveText("JSON 项目大纲")
     await expect(body.getByRole("img", { name: "思维导图预览" })).toBeVisible()
     await expect(target).not.toContainText("```shardmap")
+  })
+
+  test("流程图卡片显示 JSON 标题与节点连线计数，解析失败回退原正文", async ({ page }) => {
+    const valid = card(page, "card-json-flowchart")
+    await revealCard(valid)
+    await expect(valid.locator('[data-fragment-type-badge="flowchart"]')).toHaveText("流程图")
+    const body = valid.locator('[data-fragment-card-kind="flowchart"]')
+    await expect(body.locator("p").first()).toHaveText("发布流程")
+    await expect(body.locator("p").nth(1)).toHaveText("2 个节点 · 1 条连线")
+    await expect(valid).not.toContainText("```shardflow")
+
+    const invalid = card(page, "card-invalid-flowchart")
+    await revealCard(invalid)
+    await expect(invalid).toContainText("流程图原始正文")
+    await expect(invalid.locator('[data-fragment-card-kind="flowchart"]')).toHaveCount(0)
+  })
+
+  test("搜索与快速打开使用流程图 JSON 标题并进入碎片宿主", async ({ page }) => {
+    await page.keyboard.press("Control+o")
+    let dialog = page.getByRole("dialog", { name: "搜索", exact: true })
+    await expect(dialog).toHaveAttribute("data-search-mode", "open")
+    await dialog.getByRole("combobox", { name: "搜索内容" }).fill("发布流程")
+    await expect(dialog.getByRole("option")).toContainText("发布流程")
+    await dialog.getByRole("option").click()
+    await expect(page.locator('section[aria-label="流程图工作区"]')).toHaveCount(1)
+    await page.keyboard.press("Escape")
+
+    await page.keyboard.press("Control+k")
+    dialog = page.getByRole("dialog", { name: "搜索", exact: true })
+    await dialog.getByRole("combobox", { name: "搜索内容" }).fill("发布流程")
+    await expect(dialog).toContainText("发布流程")
   })
 
   test("搜索 mock 为 JSON 大纲提取根节点标题", async ({ page }) => {

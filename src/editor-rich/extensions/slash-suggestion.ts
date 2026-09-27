@@ -64,7 +64,9 @@ export const ShardSlashSuggestion = Extension.create<ShardSlashSuggestionOptions
       this.options.getHostCommands?.() ?? {}
     const supportsContentType = (id: SlashCommandId) => {
       const host = getHostCommands()
-      return Boolean(id === "outline" ? host.onEnterOutline : host.onMarkDocument)
+      if (id === "outline") return Boolean(host.onEnterOutline)
+      if (id === "flowchart") return Boolean(host.onCreateFlowchart)
+      return Boolean(host.onMarkDocument)
     }
     const isDocumentTier = () => this.options.isDocumentTier?.() ?? false
 

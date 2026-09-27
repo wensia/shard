@@ -65,6 +65,7 @@ export interface CaptureBoxHandle {
 }
 
 interface CaptureBoxProps {
+  initialContent?: string
   secondarySubmit?: boolean
   csvFiles?: CsvFileSummary[]
   fragments: Fragment[]
@@ -78,6 +79,11 @@ interface CaptureBoxProps {
     file: ShardMapFile,
     tags: string[]
   ) => Promise<Fragment | void>
+  onCreateFlowchart: (
+    operationId: string,
+    tags: string[]
+  ) => Promise<Fragment | void>
+  onDraftChange?: (content: string) => void
   onNavigateToFragment?: (fragmentId: string) => void
   onOpenMindMap?: (map: MindMapSummary) => void
   /** 用创建好的碎片打开禅模式；两套编辑器共用这一条路径。 */
@@ -95,6 +101,7 @@ interface PendingImage {
 
 export const CaptureBox = forwardRef<CaptureBoxHandle, CaptureBoxProps>(function CaptureBox({
   secondarySubmit = false,
+  initialContent = "",
   csvFiles = [],
   fragments,
   isCreating,
@@ -102,12 +109,14 @@ export const CaptureBox = forwardRef<CaptureBoxHandle, CaptureBoxProps>(function
   mindMaps = [],
   onCreate,
   onCreateOutline,
+  onCreateFlowchart,
+  onDraftChange,
   onNavigateToFragment,
   onOpenMindMap,
   onOpenFragmentZen,
   onOpenZen,
 }, ref) {
-  const [content, setContent] = useState("")
+  const [content, setContent] = useState(initialContent)
   /**
    * 大纲态的正文：非 null 即整个速记框切成幕布式大纲（产品框架 §2）。
    * 普通草稿留在 `content` 里原样不动，退出大纲态时按 value 恢复；
@@ -123,6 +132,10 @@ export const CaptureBox = forwardRef<CaptureBoxHandle, CaptureBoxProps>(function
   const editorFrameRef = useRef<HTMLDivElement>(null)
   const codeMirrorViewportRef = useRef<HTMLDivElement>(null)
   const codeMirrorContentHeightRef = useRef(0)
+
+  useEffect(() => {
+    onDraftChange?.(content)
+  }, [content, onDraftChange])
   const richEditorRef = useRef<ShardRichEditorHandle>(null)
   const hasSkippedInitialFocusRef = useRef(false)
   const pendingImagesRef = useRef<PendingImage[]>([])
@@ -301,6 +314,24 @@ export const CaptureBox = forwardRef<CaptureBoxHandle, CaptureBoxProps>(function
   function markDocumentType() {
     setIsDocumentType(true)
     setIsEditorExpanded(true)
+  }
+
+  async function createFlowchart() {
+    if (isCreating) return
+    const draft = getCurrentEditorValue()
+    setContent(draft)
+    onDraftChange?.(draft)
+    setIsEditorExpanded(true)
+
+    try {
+      const created = await onCreateFlowchart(
+        crypto.randomUUID(),
+        normalizeTagList(["inbox"])
+      )
+      if (created) onOpenFragmentZen?.(created)
+    } catch {
+      requestAnimationFrame(() => focusActiveEditor())
+    }
   }
 
   /**
@@ -535,6 +566,7 @@ export const CaptureBox = forwardRef<CaptureBoxHandle, CaptureBoxProps>(function
             onDropFiles={(files) => void uploadPastedImages(files)}
             onFocus={handleEditorFocus}
             onHeightChange={handleCodeMirrorHeightChange}
+            onCreateFlowchart={() => void createFlowchart()}
             onEnterOutline={enterOutlineMode}
             onImageFiles={(files) => void uploadPastedImages(files)}
             onMarkDocument={markDocumentType}

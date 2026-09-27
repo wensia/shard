@@ -42,6 +42,7 @@ import {
   type ContentKind,
 } from "@/lib/content-kind"
 import { readOutlineContent } from "@/lib/mind-map-outline"
+import { readFlowchartContent } from "@/lib/flowchart-content"
 import type { RelatedFragment } from "@/lib/relations"
 import { cn } from "@/lib/utils"
 import type { CsvFileSummary, Fragment } from "@/types"
@@ -298,6 +299,12 @@ export function FragmentCard({
           ) : null}
           {fragment.kind === "outline" ? (
             <OutlineCardBody content={displayContent} />
+          ) : fragment.kind === "flowchart" ? (
+            <FlowchartCardBody
+              content={displayContent}
+              onTaskToggle={(lineIndex) => onToggleTask?.(fragment, lineIndex)}
+              vaultPath={vaultPath}
+            />
           ) : fragment.kind === "document" ? (
             <DocumentCardBody content={displayContent} />
           ) : (
@@ -492,6 +499,49 @@ function OutlineCardBody({ content }: { content: string }) {
         {title || "未命名大纲"}
       </p>
       <MindMapFenceEmbed code={content} />
+    </div>
+  )
+}
+
+function FlowchartCardBody({
+  content,
+  onTaskToggle,
+  vaultPath,
+}: {
+  content: string
+  onTaskToggle: (lineIndex: number) => void
+  vaultPath?: string
+}) {
+  const flowchart = useMemo(() => readFlowchartContent(content), [content])
+  if (!flowchart) {
+    return (
+      <FragmentBody
+        content={content}
+        contentClassName="shard-fragment-card-content"
+        downloadableImages
+        hideTags
+        onTaskToggle={onTaskToggle}
+        renderImages
+        vaultPath={vaultPath}
+      />
+    )
+  }
+
+  const { file } = flowchart
+  return (
+    <div data-fragment-card-kind="flowchart">
+      <p
+        className="shard-memo-body"
+        style={{ margin: 0, fontWeight: "var(--font-weight-semibold)" }}
+      >
+        {file.title.trim() || "未命名流程图"}
+      </p>
+      <p
+        className="shard-memo-meta"
+        style={{ color: "var(--muted-foreground)", margin: 0 }}
+      >
+        {file.nodes.length} 个节点 · {file.edges.length} 条连线
+      </p>
     </div>
   )
 }

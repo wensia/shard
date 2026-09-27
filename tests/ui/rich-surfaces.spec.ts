@@ -1,6 +1,7 @@
 import { expect, test, type Page } from "@playwright/test"
 
 import {
+  CARD_JSON_FLOWCHART_FILE,
   CARD_JSON_OUTLINE_FILE,
   card,
   graphWrites,
@@ -41,6 +42,14 @@ function graphWorkspace(page: Page) {
   return page.locator('section[aria-label="思维导图工作区"]')
 }
 
+function flowchartWorkspace(page: Page) {
+  return page.locator('section[aria-label="流程图工作区"]')
+}
+
+function flowchartNode(page: Page, id = "flow-review") {
+  return flowchartWorkspace(page).locator(`[data-canvas-node-id="${id}"]`)
+}
+
 function graphRoot(page: Page) {
   return graphWorkspace(page).locator(
     '[data-mind-map-outline]:visible [data-outline-node][data-root="true"] textarea'
@@ -51,6 +60,12 @@ function graphFileWithRoot(text: string) {
   const file = structuredClone(CARD_JSON_OUTLINE_FILE)
   file.title = text
   file.nodes[file.rootId].text = text
+  return file
+}
+
+function flowchartFileWithNode(text: string) {
+  const file = structuredClone(CARD_JSON_FLOWCHART_FILE)
+  file.nodes = file.nodes.map((node) => node.id === "flow-review" ? { ...node, text } : node)
   return file
 }
 
@@ -87,7 +102,7 @@ test.describe("行内编辑与禅模式", () => {
     await installContentTypesMock(page)
     await page.goto("/")
     await expect(page.locator(`${COMPOSER} .ProseMirror`)).toBeFocused()
-    await expect(page.locator(".shard-timeline-item")).toHaveCount(4)
+    await expect(page.locator(".shard-timeline-item")).toHaveCount(6)
   })
 
   test("碎片的行内编辑是富文本：看不到语法，失焦保存规范 Markdown 且标签不变", async ({
@@ -387,6 +402,7 @@ test.describe("行内编辑与禅模式", () => {
 
     await graphRoot(page).fill("自动保存后的根节点")
     await expect.poll(() => lastGraphWrite(page, "card-json-outline")).not.toBeNull()
+    await expect(workspace.getByText("已自动保存", { exact: true })).toBeVisible()
     let write = await lastGraphWrite(page, "card-json-outline")
     expect(write?.args.expectedFileSha).toBe("file-sha-card-json-outline-1")
     expect((write?.args.graph as typeof CARD_JSON_OUTLINE_FILE).nodes["json-root"].text)
@@ -397,6 +413,7 @@ test.describe("行内编辑与禅模式", () => {
     await page.keyboard.press("Escape")
 
     await expect(workspace).toHaveCount(0)
+    await expect.poll(() => graphWrites(page, "card-json-outline")).toHaveLength(2)
     write = await lastGraphWrite(page, "card-json-outline")
     expect((write?.args.graph as typeof CARD_JSON_OUTLINE_FILE).nodes["json-root"].text)
       .toBe("Esc 排空后的根节点")
@@ -408,7 +425,7 @@ test.describe("行内编辑与禅模式", () => {
     await openFromCardMenu(page, "card-json-outline", "编辑")
 
     await graphRoot(page).fill("我的图形版本")
-    await expect(page.getByText("检测到保存冲突", { exact: true })).toBeVisible()
+    await expect(page.getByText(/检测到保存冲突/u)).toBeVisible()
     await page.getByRole("button", { name: "保留我的版本", exact: true }).click()
 
     await expect.poll(() => graphWrites(page, "card-json-outline")).toHaveLength(2)
@@ -417,7 +434,7 @@ test.describe("行内编辑与禅模式", () => {
     expect(writes[1].args.expectedFileSha).toBe("file-sha-card-json-outline-remote")
     expect((writes[1].args.graph as typeof CARD_JSON_OUTLINE_FILE).nodes["json-root"].text)
       .toBe("我的图形版本")
-    await expect(page.getByText("检测到保存冲突", { exact: true })).toHaveCount(0)
+    await expect(page.getByText(/检测到保存冲突/u)).toHaveCount(0)
   })
 
   test("JSON 大纲图形编辑 STALE_BASE 选择保留磁盘版本时重新载入", async ({ page }) => {
@@ -425,11 +442,11 @@ test.describe("行内编辑与禅模式", () => {
     await openFromCardMenu(page, "card-json-outline", "编辑")
 
     await graphRoot(page).fill("待放弃的本地图形版本")
-    await expect(page.getByText("检测到保存冲突", { exact: true })).toBeVisible()
+    await expect(page.getByText(/检测到保存冲突/u)).toBeVisible()
     await page.getByRole("button", { name: "保留磁盘版本", exact: true }).click()
 
     await expect(graphRoot(page)).toHaveValue("磁盘图形版本")
-    await expect(page.getByText("检测到保存冲突", { exact: true })).toHaveCount(0)
+    await expect(page.getByText(/检测到保存冲突/u)).toHaveCount(0)
     expect(await graphWrites(page, "card-json-outline")).toHaveLength(1)
 
     await page.keyboard.press("Escape")
@@ -439,6 +456,61 @@ test.describe("行内编辑与禅模式", () => {
     await revealCard(target)
     await expect(target.locator('[data-fragment-card-kind="outline"] p').first())
       .toHaveText("磁盘图形版本")
+  })
+
+  test("JSON 流程图从卡片编辑与禅模式都进入 Canvas，关闭前排空保存", async ({ page }) => {
+    for (const entry of ["编辑", "禅模式"] as const) {
+      await openFromCardMenu(page, "card-json-flowchart", entry)
+      const workspace = flowchartWorkspace(page)
+      await expect(workspace).toHaveCount(1)
+      await expect(workspace.locator('[data-canvas-workspace]')).toBeVisible()
+      await expect(page.locator('[data-shard-editor="fragment:card-json-flowchart"]')).toHaveCount(0)
+
+      await flowchartNode(page).dblclick()
+      const editor = page.getByRole("textbox", { name: "节点文字", exact: true })
+      await editor.fill(`${entry}后的审核`)
+      await page.getByRole("button", { name: "退出流程图", exact: true }).click()
+
+      await expect(workspace).toHaveCount(0)
+      const write = await lastGraphWrite(page, "card-json-flowchart")
+      expect(write?.args.expectedFileSha).toMatch(/^file-sha-card-json-flowchart-/u)
+      expect((write?.args.graph as typeof CARD_JSON_FLOWCHART_FILE).nodes.find(
+        (node) => node.id === "flow-review"
+      )?.text).toBe(`${entry}后的审核`)
+    }
+  })
+
+  test("流程图碎片冲突可用最新基线保留本地版本，且不显示副本恢复入口", async ({ page }) => {
+    await queueGraphStale(page, "card-json-flowchart", flowchartFileWithNode("磁盘冲突版本"))
+    await openFromCardMenu(page, "card-json-flowchart", "编辑")
+    await flowchartNode(page).dblclick()
+    await page.getByRole("textbox", { name: "节点文字", exact: true }).fill("我的流程图版本")
+    await page.getByRole("textbox", { name: "节点文字", exact: true }).press("ControlOrMeta+Enter")
+
+    await expect(page.getByText(/检测到保存冲突/u)).toBeVisible()
+    await expect(page.getByRole("button", { name: "另存流程图副本", exact: true })).toHaveCount(0)
+    await page.getByRole("button", { name: "保留我的版本", exact: true }).click()
+
+    await expect.poll(() => graphWrites(page, "card-json-flowchart")).toHaveLength(2)
+    const writes = await graphWrites(page, "card-json-flowchart")
+    expect(writes[1].args.expectedFileSha).toBe("file-sha-card-json-flowchart-remote")
+    expect((writes[1].args.graph as typeof CARD_JSON_FLOWCHART_FILE).nodes.find(
+      (node) => node.id === "flow-review"
+    )?.text).toBe("我的流程图版本")
+  })
+
+  test("流程图碎片冲突可载入磁盘版本", async ({ page }) => {
+    await queueGraphStale(page, "card-json-flowchart", flowchartFileWithNode("磁盘流程图版本"))
+    await openFromCardMenu(page, "card-json-flowchart", "编辑")
+    await flowchartNode(page).dblclick()
+    await page.getByRole("textbox", { name: "节点文字", exact: true }).fill("待放弃的流程图版本")
+    await page.getByRole("textbox", { name: "节点文字", exact: true }).press("ControlOrMeta+Enter")
+
+    await expect(page.getByText(/检测到保存冲突/u)).toBeVisible()
+    await page.getByRole("button", { name: "载入磁盘版本", exact: true }).click()
+    await expect(flowchartNode(page)).toContainText("磁盘流程图版本")
+    await expect(page.getByText(/检测到保存冲突/u)).toHaveCount(0)
+    expect(await graphWrites(page, "card-json-flowchart")).toHaveLength(1)
   })
 
   test("/文档 提交后直接进禅模式，且是文档档", async ({ page }) => {

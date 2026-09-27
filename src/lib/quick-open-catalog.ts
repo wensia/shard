@@ -6,6 +6,7 @@ import {
 } from "@/lib/content-kind"
 import { libraryEntryName } from "@/lib/library-entry"
 import { readOutlineContent } from "@/lib/mind-map-outline"
+import { readFlowchartContent } from "@/lib/flowchart-content"
 import {
   searchTargetKey,
   type SearchHit,
@@ -195,8 +196,11 @@ function fragmentTitle(
 ) {
   if (kind === "note") return deriveNoteTitle(fragment.content)
   if (kind === "document") return deriveDocumentDigest(fragment.content).title
-  const outline = readOutlineContent(fragment.content)?.file
-  return outline?.nodes[outline.rootId]?.text.trim() ?? ""
+  if (kind === "outline") {
+    const outline = readOutlineContent(fragment.content)?.file
+    return outline?.nodes[outline.rootId]?.text.trim() ?? ""
+  }
+  return readFlowchartContent(fragment.content)?.file.title.trim() ?? ""
 }
 
 function treeSearchKind(
@@ -258,5 +262,6 @@ function unnamedTitle(kind: SearchKind) {
   if (kind === "outline") return "未命名大纲"
   if (kind === "document") return "未命名文档"
   if (kind === "note") return "未命名笔记"
+  if (kind === "flowchart") return "未命名流程图"
   return "未命名项目"
 }

@@ -6,6 +6,7 @@ import {
   type OpenCatalogInput,
 } from "@/lib/quick-open-catalog"
 import { parseMindMapOutline } from "@/lib/mind-map-outline"
+import type { CanvasFile } from "@/features/canvas/model"
 import type { Fragment, LibraryTreeEntry, LibraryTreeSnapshot } from "@/types"
 
 const vaultPath = "/vault"
@@ -175,6 +176,33 @@ describe("buildOpenCatalog", () => {
         "json-outline": "JSON 根标题",
         "legacy-outline": "旧式根标题",
       })
+  })
+
+  it("uses the embedded JSON flowchart title", () => {
+    const file: CanvasFile = {
+      kind: "shard.flow",
+      schemaVersion: 1,
+      id: "flow-file",
+      title: "发布流程",
+      createdAt: "2026-09-01T00:00:00.000Z",
+      updatedAt: "2026-09-01T00:00:00.000Z",
+      revision: 0,
+      nodes: [],
+      edges: [],
+    }
+    const [hit] = buildOpenCatalog(input({
+      fragments: [fragment({
+        content: `\`\`\`shardflow\n${JSON.stringify(file)}\n\`\`\``,
+        id: "flowchart-id",
+        path: "fragments/2026/09/flowchart.md",
+        tags: ["flowchart"],
+      })],
+    }))
+
+    expect(hit).toMatchObject({
+      target: { kind: "flowchart", objectId: "flowchart-id" },
+      title: "发布流程",
+    })
   })
 
   it("deduplicates summaries by vault, scope and path without losing semantic metadata", () => {

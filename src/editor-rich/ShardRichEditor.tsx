@@ -100,6 +100,8 @@ export interface ShardRichEditorProps {
   onImageFiles?: (files: File[]) => void
   /** `/大纲`：宿主把整个速记框切成幕布式大纲态。不传即不提供该命令。 */
   onEnterOutline?: () => void
+  /** `/流程图`：宿主立即创建空流程图。不传即不提供该命令。 */
+  onCreateFlowchart?: () => void
   /** `/文档`：宿主把当前草稿标记为文档类型。不传即不提供该命令。 */
   onMarkDocument?: () => void
   /** `[[` 建议的候选，也是双链芯片判断断链的依据。 */
@@ -188,6 +190,7 @@ export const ShardRichEditor = forwardRef<ShardRichEditorHandle, ShardRichEditor
       getKnownTags,
       onImageFiles,
       onEnterOutline,
+      onCreateFlowchart,
       onMarkDocument,
       getWikilinkCandidates,
       onNavigateWikilink,
@@ -211,6 +214,7 @@ export const ShardRichEditor = forwardRef<ShardRichEditorHandle, ShardRichEditor
       onDropFiles,
       onImageFiles,
       onEnterOutline,
+      onCreateFlowchart,
       onMarkDocument,
       getKnownTags,
       getWikilinkCandidates,
@@ -228,6 +232,7 @@ export const ShardRichEditor = forwardRef<ShardRichEditorHandle, ShardRichEditor
       onDropFiles,
       onImageFiles,
       onEnterOutline,
+      onCreateFlowchart,
       onMarkDocument,
       getKnownTags,
       getWikilinkCandidates,
@@ -268,8 +273,13 @@ export const ShardRichEditor = forwardRef<ShardRichEditorHandle, ShardRichEditor
     tierRef.current = tier
 
     function hostCommands() {
-      const { onEnterOutline: enterOutline, onMarkDocument: markDocument } = callbacks.current
+      const {
+        onCreateFlowchart: createFlowchart,
+        onEnterOutline: enterOutline,
+        onMarkDocument: markDocument,
+      } = callbacks.current
       return {
+        ...(createFlowchart ? { onCreateFlowchart: () => callbacks.current.onCreateFlowchart?.() } : {}),
         ...(enterOutline ? { onEnterOutline: () => callbacks.current.onEnterOutline?.() } : {}),
         ...(markDocument ? { onMarkDocument: () => callbacks.current.onMarkDocument?.() } : {}),
       }

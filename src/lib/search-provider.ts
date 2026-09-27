@@ -7,6 +7,7 @@ import {
   type FragmentSearchWorkerResponse,
 } from "@/lib/fragment-search"
 import { readOutlineContent } from "@/lib/mind-map-outline"
+import { readFlowchartContent } from "@/lib/flowchart-content"
 import { searchVault } from "@/lib/search-api"
 import {
   searchTargetKey,
@@ -246,6 +247,9 @@ function fragmentSearchTitle(fragment: Fragment) {
   if (kind === "outline") {
     const file = readOutlineContent(fragment.content)?.file
     return file?.nodes[file.rootId]?.text.trim() || "未命名大纲"
+  }
+  if (kind === "flowchart") {
+    return readFlowchartContent(fragment.content)?.file.title.trim() || "未命名流程图"
   }
 
   const firstVisibleLine = fragment.content

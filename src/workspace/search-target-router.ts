@@ -2,7 +2,7 @@ import { readCanvas } from "@/features/canvas/api"
 import type { CanvasReadResult } from "@/features/canvas/model"
 import { readTable } from "@/features/tables/api"
 import type { TableReadResult } from "@/features/tables/model"
-import { openCsvFile, readMindMap } from "@/lib/api"
+import { openCsvFile, readGraphFragment, readMindMap, type GraphFragmentResult } from "@/lib/api"
 import { readSearchTarget } from "@/lib/search-api"
 import type {
   ReadSearchTargetResponse,
@@ -36,6 +36,12 @@ export interface SearchTargetRouterAdapters {
   openCanvas(
     target: SearchTarget,
     result: CanvasReadResult,
+    requestId: string,
+    signal: AbortSignal
+  ): Promise<{ reveal: SearchRevealHandle | null }>
+  openGraphFragment(
+    target: SearchTarget,
+    result: GraphFragmentResult,
     requestId: string,
     signal: AbortSignal
   ): Promise<{ reveal: SearchRevealHandle | null }>
@@ -99,6 +105,19 @@ export function createSearchTargetRouter({
           signal
         )
         return ready(String(result.file.revision), opened.reveal)
+      }
+
+      if (target.kind === "flowchart" && target.path.endsWith(".md")) {
+        if (!target.objectId) throw { code: "unsupportedTarget" }
+        const result = await readGraphFragment(target.objectId)
+        throwIfAborted(signal)
+        const opened = await adapters.openGraphFragment(
+          target,
+          result,
+          requestId,
+          signal
+        )
+        return ready(result.fragment.fileSha ?? result.fragment.updatedAt, opened.reveal)
       }
 
       if (target.kind === "canvas" || target.kind === "flowchart") {

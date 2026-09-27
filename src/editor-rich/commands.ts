@@ -36,6 +36,7 @@ export const RICH_SLASH_COMMAND_IDS: ReadonlySet<SlashCommandId> = new Set([
   "image",
   "memo",
   "outline",
+  "flowchart",
   "document",
   "heading1",
   "heading2",
@@ -51,6 +52,7 @@ export const RICH_SLASH_COMMAND_IDS: ReadonlySet<SlashCommandId> = new Set([
  */
 export interface ShardRichHostCommands {
   onEnterOutline?: () => void
+  onCreateFlowchart?: () => void
   onMarkDocument?: () => void
 }
 
@@ -344,6 +346,9 @@ export function runRichSlashCommand(
   switch (id) {
     case "outline":
       host?.onEnterOutline?.()
+      return
+    case "flowchart":
+      host?.onCreateFlowchart?.()
       return
     case "document":
       host?.onMarkDocument?.()

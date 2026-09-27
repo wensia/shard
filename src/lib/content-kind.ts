@@ -15,6 +15,7 @@ export type TypeTag = (typeof TYPE_TAGS)[number]
 export type ContentKind = "fragment" | TypeTag
 
 export const OUTLINE_TYPE_TAG: TypeTag = "outline"
+export const FLOWCHART_TYPE_TAG: TypeTag = "flowchart"
 export const DOCUMENT_TYPE_TAG: TypeTag = "document"
 
 /** 中文显示名：卡片徽标、速记框徽标与提示共用这一份，不各写各的。 */

@@ -252,13 +252,13 @@ test.describe("速记框富文本", () => {
     await expect.poll(() => readEditor(page, "composer")).toBe("")
   })
 
-  test("斜杠弹出十二项命令菜单，可过滤、应用与 Esc 关闭", async ({ page }) => {
+  test("斜杠弹出十三项命令菜单，可过滤、应用与 Esc 关闭", async ({ page }) => {
     await typeEditor(page, "composer", "/")
 
     const menu = commandMenu(page)
     await expect(menu).toBeVisible()
     // 围栏块（导图块、数据表）排在前面，行格式与内容类型命令跟在后面。
-    await expect(menu.getByRole("option")).toHaveCount(12)
+    await expect(menu.getByRole("option")).toHaveCount(13)
     await expect(menu).toContainText("文档")
     await expect(menu.getByRole("option").first()).toContainText("导图块")
     await expect(menu).toContainText("数据表")
@@ -288,15 +288,15 @@ test.describe("速记框富文本", () => {
     await typeEditor(page, "composer", "/")
     const menu = commandMenu(page)
     const options = menu.getByRole("option")
-    await expect(options).toHaveCount(12)
+    await expect(options).toHaveCount(13)
 
-    // 列表高度装不下十二项：一路按到最后一项，它必须完整露出来。
-    for (let index = 1; index < 12; index += 1) await page.keyboard.press("ArrowDown")
+    // 列表高度装不下十三项：一路按到最后一项，它必须完整露出来。
+    for (let index = 1; index < 13; index += 1) await page.keyboard.press("ArrowDown")
     await expect(options.last()).toHaveAttribute("aria-selected", "true")
     await expect(options.last()).toBeInViewport({ ratio: 1 })
     expect(await menu.evaluate((list) => list.scrollTop)).toBeGreaterThan(0)
 
-    for (let index = 1; index < 12; index += 1) await page.keyboard.press("ArrowUp")
+    for (let index = 1; index < 13; index += 1) await page.keyboard.press("ArrowUp")
     await expect(options.first()).toHaveAttribute("aria-selected", "true")
     await expect.poll(() => menu.evaluate((list) => list.scrollTop)).toBe(0)
   })

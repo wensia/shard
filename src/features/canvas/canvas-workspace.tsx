@@ -1,7 +1,7 @@
 import { SelectControl } from "@/components/ui/select"
 import {
   forwardRef, memo, useCallback, useEffect, useId, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState,
-  type KeyboardEvent,
+  type KeyboardEvent, type ReactNode,
 } from "react"
 import {
   Background, BackgroundVariant, ConnectionMode, Handle, MarkerType, Position, ReactFlow,
@@ -32,6 +32,7 @@ import {
   updateCanvasNode,
 } from "./mutations"
 import { CanvasSaveQueue, type CanvasSaveState } from "./save-queue"
+import type { CanvasSaveTransport } from "./save-queue"
 import "./canvas-workspace.css"
 
 export interface CanvasWorkspaceHandle {
@@ -43,8 +44,12 @@ export interface CanvasWorkspaceHandle {
 export interface CanvasWorkspaceProps {
   path: string
   initialRead?: CanvasReadResult | null
+  readFromStorage?: (path: string) => Promise<CanvasReadResult>
+  saveTransport?: CanvasSaveTransport
+  fragmentMode?: boolean
   fragments: Fragment[]
   onOpenLink: (link: ShardDocumentLink) => void | Promise<void>
+  onRequestClose?: () => void | Promise<void>
   onSaved?: () => void
   onRecovered?: (path: string) => void | Promise<void>
   onSplit?: (result: CanvasSplitResult) => void | Promise<void>
@@ -52,6 +57,7 @@ export interface CanvasWorkspaceProps {
   onReady?: (revision: string) => void
   onLoadError?: (error: unknown) => void
   readOnly?: boolean
+  toolbarLeading?: ReactNode
 }
 
 type TreeSelection = { nodeId: string; treeNodeId: string }
@@ -207,7 +213,8 @@ const NODE_TYPES = { shardCanvas: CanvasObject }
 export const CanvasWorkspace = forwardRef<CanvasWorkspaceHandle, CanvasWorkspaceProps>(function CanvasWorkspace({
   path, initialRead = null, fragments, onOpenLink, onSaved, onRecovered,
   onSaveStateChange, onSplit, onReady, onLoadError,
-  readOnly = false,
+  readFromStorage = readCanvas, saveTransport = writeCanvas, fragmentMode = false,
+  onRequestClose, readOnly = false, toolbarLeading,
 }, ref) {
   const [draft, setDraft] = useState<CanvasFile | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -263,8 +270,8 @@ export const CanvasWorkspace = forwardRef<CanvasWorkspaceHandle, CanvasWorkspace
   const [flowReady, setFlowReady] = useState(false)
   const blockedRef = useRef(false)
   const draggingRef = useRef(false)
-  const callbacksRef = useRef({ onSaved, onRecovered, onSaveStateChange, onOpenLink, onReady, onLoadError })
-  callbacksRef.current = { onSaved, onRecovered, onSaveStateChange, onOpenLink, onReady, onLoadError }
+  const callbacksRef = useRef({ onSaved, onRecovered, onSaveStateChange, onOpenLink, onRequestClose, onReady, onLoadError })
+  callbacksRef.current = { onSaved, onRecovered, onSaveStateChange, onOpenLink, onRequestClose, onReady, onLoadError }
 
   useEffect(() => {
     externalBlockedRef.current = readOnly
@@ -287,10 +294,11 @@ export const CanvasWorkspace = forwardRef<CanvasWorkspaceHandle, CanvasWorkspace
     recoveryAttemptRef.current = null; setRecoveryError(null); setSplitResult(null)
     const initial = initialReadRef.current?.path === path ? initialReadRef.current : null
     initialReadRef.current = null
-    void (initial ? Promise.resolve(initial) : readCanvas(path)).then((result) => {
+    void (initial ? Promise.resolve(initial) : readFromStorage(path)).then((result) => {
       if (!active) return
-      const queue = new CanvasSaveQueue(result, writeCanvas, (state) => {
-        if (!active) return
+      let queue: CanvasSaveQueue
+      queue = new CanvasSaveQueue(result, saveTransport, (state) => {
+        if (!active || queueRef.current !== queue) return
         setSaveState(state); callbacksRef.current.onSaveStateChange?.(state.status === "error" ? "error" : pendingTextRef.current ? "dirty" : state.status)
       })
       queueRef.current = queue
@@ -300,7 +308,7 @@ export const CanvasWorkspace = forwardRef<CanvasWorkspaceHandle, CanvasWorkspace
     }).catch((error) => { if (active) { setLoadError(getApiErrorMessage(error)); callbacksRef.current.onLoadError?.(error) } })
       .finally(() => { if (active) setLoading(false) })
     return () => { active = false }
-  }, [path, loadAttempt])
+  }, [path, loadAttempt, readFromStorage, saveTransport])
 
   useEffect(() => {
     if (!draft || !flowReady) return
@@ -497,6 +505,38 @@ export const CanvasWorkspace = forwardRef<CanvasWorkspaceHandle, CanvasWorkspace
       recoveringRef.current = false; setRecovering(false)
       blockedRef.current = externalBlockedRef.current; setBlocked(externalBlockedRef.current)
     }
+  }
+
+  async function keepLocalAfterConflict() {
+    if (recoveringRef.current || externalBlockedRef.current || draggingRef.current || !finalizeText()) return
+    const current = draftRef.current
+    if (!current) return
+    recoveringRef.current = true; blockedRef.current = true; setRecovering(true); setBlocked(true); setActionError(null)
+    try {
+      const latest = await readFromStorage(path)
+      let queue: CanvasSaveQueue
+      queue = new CanvasSaveQueue(latest, saveTransport, (state) => {
+        if (queueRef.current !== queue) return
+        setSaveState(state)
+        callbacksRef.current.onSaveStateChange?.(state.status === "error" ? "error" : pendingTextRef.current ? "dirty" : state.status)
+      })
+      queueRef.current = queue
+      queue.update(current)
+      const saved = await queue.flush()
+      const next = queue.getDraft()
+      draftRef.current = next; setDraft(next); setSaveState(queue.getState())
+      if (saved) callbacksRef.current.onSaved?.()
+    } catch (error) {
+      setActionError(getApiErrorMessage(error))
+    } finally {
+      recoveringRef.current = false; setRecovering(false)
+      blockedRef.current = externalBlockedRef.current; setBlocked(externalBlockedRef.current)
+    }
+  }
+
+  function loadDiskAfterConflict() {
+    if (recoveringRef.current || externalBlockedRef.current) return
+    setLoadAttempt((value) => value + 1)
   }
   const onText = useCallback((id: string, text: string) => stageText({ kind: "node", id, text }), [stageText])
   const editNode = useCallback((id: string | null) => {
@@ -701,6 +741,9 @@ export const CanvasWorkspace = forwardRef<CanvasWorkspaceHandle, CanvasWorkspace
       else deleteSelection()
     }
     if (event.key === "Escape") {
+      if (callbacksRef.current.onRequestClose && !editing && !picker && !selectedNodes.length && !selectedEdges.length && !treeSelection) {
+        consume(); void callbacksRef.current.onRequestClose(); return
+      }
       consume()
       setSelectedNodes([]); setSelectedEdges([]); setTreeSelection(null); setEditing(null); setPicker(null)
       rootRef.current?.focus({ preventScroll: true })
@@ -885,6 +928,7 @@ export const CanvasWorkspace = forwardRef<CanvasWorkspaceHandle, CanvasWorkspace
   if (!draft) return <div className="shard-canvas-loading" role="alert"><p>{loadError || "画布无法打开"}</p>
     <Button variant="outline" onClick={() => setLoadAttempt((value) => value + 1)}>重新打开</Button></div>
 
+  if (draft.kind === "shard.canvas" && fragmentMode) return <div className="shard-canvas-loading" role="alert">流程图片段格式无效</div>
   if (draft.kind === "shard.canvas") return <div className="shard-canvas-legacy" aria-label="旧画布拆分" aria-busy={recovering}>
     <strong>{draft.title}</strong>
     <p>这是一份旧版混合画布。思维导图和流程图现在分别保存在独立文档中。</p>
@@ -902,6 +946,7 @@ export const CanvasWorkspace = forwardRef<CanvasWorkspaceHandle, CanvasWorkspace
     onCompositionStartCapture={() => { composingRef.current = true; setComposing(true) }}
     onCompositionEndCapture={() => { composingRef.current = false; setComposing(false) }}>
     <header className="shard-canvas-toolbar" aria-label="画布工具栏">
+      {toolbarLeading}
       <DropdownMenu onOpenChange={(open) => { if (open) { skipMenuFocusRef.current = false; menuActionRef.current = null } }}
         onOpenChangeComplete={(open) => {
           if (open) return
@@ -934,7 +979,14 @@ export const CanvasWorkspace = forwardRef<CanvasWorkspaceHandle, CanvasWorkspace
         }}>对象面板</Button>
     </header>
     {(actionError || saveState?.error) && <div className="shard-canvas-error" role="alert">{actionError || saveState?.error}</div>}
-    {(saveState?.status === "error" || recoveryError) && <div className="shard-canvas-recovery" aria-busy={recovering}>
+    {fragmentMode && saveState?.error?.includes("STALE_BASE") && <div className="shard-canvas-recovery" aria-busy={recovering}>
+      <span>检测到保存冲突。请选择保留当前草稿，或载入磁盘上的版本。</span>
+      <Button size="sm" variant="outline" disabled={externalBlockedRef.current || recovering || composing}
+        onClick={() => { void keepLocalAfterConflict() }}>保留我的版本</Button>
+      <Button size="sm" variant="outline" disabled={externalBlockedRef.current || recovering || composing}
+        onClick={loadDiskAfterConflict}>载入磁盘版本</Button>
+    </div>}
+    {!fragmentMode && (saveState?.status === "error" || recoveryError) && <div className="shard-canvas-recovery" aria-busy={recovering}>
       <span>{recoveryError || "当前草稿可以另存为新流程图，原文件和冲突副本都会保留。"}</span>
       <Button size="sm" variant="outline" disabled={externalBlockedRef.current || recovering || composing}
         onClick={() => { void recoverAsCopy() }}>{recovering ? "正在另存副本…" : recoveryAttemptRef.current ? "重试另存副本" : "另存流程图副本"}</Button>

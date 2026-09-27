@@ -1,4 +1,5 @@
 import { expect, type Locator, type Page } from "@playwright/test"
+import type { CanvasFile } from "../../src/features/canvas/model"
 import type { ShardMapFile } from "../../src/types"
 
 import { installSearchIpcMock } from "./search-ipc-mock"
@@ -55,6 +56,25 @@ export const CARD_JSON_OUTLINE = [
   JSON.stringify(CARD_JSON_OUTLINE_FILE),
   "```",
 ].join("\n")
+export const CARD_JSON_FLOWCHART_FILE: CanvasFile = {
+  kind: "shard.flow",
+  schemaVersion: 1,
+  id: "card-json-flowchart",
+  title: "发布流程",
+  createdAt: OUTLINE_STAMP,
+  updatedAt: OUTLINE_STAMP,
+  revision: 1,
+  nodes: [
+    { id: "flow-start", kind: "terminal", x: 80, y: 80, text: "开始" },
+    { id: "flow-review", kind: "process", x: 320, y: 80, text: "审核" },
+  ],
+  edges: [{ id: "flow-edge", source: "flow-start", target: "flow-review", label: "" }],
+}
+export const CARD_JSON_FLOWCHART = [
+  "```shardflow",
+  JSON.stringify(CARD_JSON_FLOWCHART_FILE),
+  "```",
+].join("\n")
 export const CARD_DOCUMENT = [
   "# 季度复盘",
   "",
@@ -65,6 +85,8 @@ export const CARD_DOCUMENT = [
 
 interface MockBodies {
   documentBody: string
+  flowchartBody: string
+  flowchartFile: CanvasFile
   fragmentBody: string
   jsonOutlineBody: string
   jsonOutlineFile: ShardMapFile
@@ -72,13 +94,14 @@ interface MockBodies {
 }
 
 interface ContentTypesMockControl {
+  nextGraphCreateError: boolean
   nextFragmentWriteStale: null | {
     content: string
     id: string
     tags?: string[]
   }
   nextGraphWriteStale: null | {
-    file: ShardMapFile
+    file: ShardMapFile | CanvasFile
     id: string
   }
 }
@@ -86,7 +109,7 @@ interface ContentTypesMockControl {
 export async function installContentTypesMock(page: Page) {
   await installSearchIpcMock(page)
   await page.addInitScript(
-    ({ documentBody, fragmentBody, jsonOutlineBody, jsonOutlineFile, outlineBody }: MockBodies) => {
+    ({ documentBody, flowchartBody, flowchartFile, fragmentBody, jsonOutlineBody, jsonOutlineFile, outlineBody }: MockBodies) => {
       const now = "2026-09-10T08:00:00.000Z"
       const fragments = [
         {
@@ -104,6 +127,14 @@ export async function installContentTypesMock(page: Page) {
         {
           id: "card-document", path: "fragments/card-document.md",
           content: documentBody, tags: ["inbox", "document"],
+        },
+        {
+          id: "card-json-flowchart", path: "fragments/card-json-flowchart.md",
+          content: flowchartBody, tags: ["inbox", "flowchart"],
+        },
+        {
+          id: "card-invalid-flowchart", path: "fragments/card-invalid-flowchart.md",
+          content: "流程图原始正文", tags: ["inbox", "flowchart"],
         },
       ].map((fragment) => ({
         ...fragment, createdAt: now, updatedAt: now, category: null,
@@ -124,10 +155,12 @@ export async function installContentTypesMock(page: Page) {
       }
       const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T
       const calls: TestCall[] = []
-      const graphFiles: Record<string, ShardMapFile> = {
+      const graphFiles: Record<string, ShardMapFile | CanvasFile> = {
         "card-json-outline": clone(jsonOutlineFile),
+        "card-json-flowchart": clone(flowchartFile),
       }
       const control: ContentTypesMockControl = {
+        nextGraphCreateError: false,
         nextFragmentWriteStale: null,
         nextGraphWriteStale: null,
       }
@@ -135,8 +168,8 @@ export async function installContentTypesMock(page: Page) {
       let createdCount = 0
       let createdGraphCount = 0
       let savedRevision = 1
-      const graphBody = (file: ShardMapFile) =>
-        ["```shardmap", JSON.stringify(file), "```"].join("\n")
+      const graphBody = (file: ShardMapFile | CanvasFile) =>
+        [file.kind === "shard.map" ? "```shardmap" : "```shardflow", JSON.stringify(file), "```"].join("\n")
       Object.assign(globalThis, {
         isTauri: true,
         __SHARD_TYPE_CALLS__: calls,
@@ -157,7 +190,8 @@ export async function installContentTypesMock(page: Page) {
               case "plugin:app|version": return "0.1.3"
               case "list_fragments": return clone(state)
               case "list_csv_files":
-              case "list_mind_maps": return []
+              case "list_mind_maps":
+              case "list_diagram_documents": return []
               case "list_library_tree": return clone(tree)
               case "migrate_legacy_notes": return { tree: clone(tree), migratedCount: 0 }
               case "sync_vault": return clone(git)
@@ -178,12 +212,30 @@ export async function installContentTypesMock(page: Page) {
                 return clone(created)
               }
               case "create_graph_fragment": {
+                if (control.nextGraphCreateError) {
+                  control.nextGraphCreateError = false
+                  throw new Error("模拟流程图创建失败")
+                }
                 const id = `typed-graph-created-${++createdGraphCount}`
-                const graph = clone(args.graph as ShardMapFile)
+                const kind = String(args.kind ?? "")
+                const graph = args.graph
+                  ? clone(args.graph as ShardMapFile | CanvasFile)
+                  : {
+                      kind: "shard.flow" as const,
+                      schemaVersion: 1 as const,
+                      id,
+                      title: "未命名流程图",
+                      createdAt: now,
+                      updatedAt: now,
+                      revision: 0,
+                      nodes: [],
+                      edges: [],
+                    }
                 graph.id = id
+                const tags = (args.tags as string[]) ?? []
                 const created = {
                   id, path: `fragments/2026/09/${id}.md`, content: graphBody(graph),
-                  tags: (args.tags as string[]) ?? [], createdAt: now, updatedAt: now,
+                  tags: tags.includes(kind) ? tags : [...tags, kind], createdAt: now, updatedAt: now,
                   category: null, gitStatus: "saved", error: null,
                   archived: false, lockbox: false, pinned: false, related: [],
                   fileSha: `file-sha-${id}-1`,
@@ -213,7 +265,16 @@ export async function installContentTypesMock(page: Page) {
                 if (args.expectedFileSha !== undefined && args.expectedFileSha !== fragment.fileSha) {
                   throw new Error("STALE_BASE:磁盘上的笔记内容已变化（可能来自同步或外部编辑），保存已中止")
                 }
-                const graph = clone(args.graph as ShardMapFile)
+                const requested = clone(args.graph as ShardMapFile | CanvasFile)
+                const current = graphFiles[id]
+                const graph = requested.kind === "shard.map"
+                  ? requested
+                  : {
+                      ...requested,
+                      createdAt: current.createdAt,
+                      updatedAt: now,
+                      revision: current.revision + 1,
+                    }
                 graphFiles[id] = graph
                 fragment.content = graphBody(graph)
                 fragment.fileSha = `file-sha-${id}-${++savedRevision}`
@@ -246,6 +307,8 @@ export async function installContentTypesMock(page: Page) {
     },
     {
       documentBody: CARD_DOCUMENT,
+      flowchartBody: CARD_JSON_FLOWCHART,
+      flowchartFile: CARD_JSON_FLOWCHART_FILE,
       fragmentBody: CARD_FRAGMENT,
       jsonOutlineBody: CARD_JSON_OUTLINE,
       jsonOutlineFile: CARD_JSON_OUTLINE_FILE,
@@ -319,13 +382,22 @@ export async function queueFragmentStale(
   }, { content, id, tags })
 }
 
-export async function queueGraphStale(page: Page, id: string, file: ShardMapFile) {
+export async function queueGraphStale(page: Page, id: string, file: ShardMapFile | CanvasFile) {
   await page.evaluate(({ file, id }) => {
     const root = globalThis as typeof globalThis & {
       __SHARD_TYPE_CONTROL__: ContentTypesMockControl
     }
     root.__SHARD_TYPE_CONTROL__.nextGraphWriteStale = { file, id }
   }, { file, id })
+}
+
+export async function failNextGraphCreate(page: Page) {
+  await page.evaluate(() => {
+    const root = globalThis as typeof globalThis & {
+      __SHARD_TYPE_CONTROL__: ContentTypesMockControl
+    }
+    root.__SHARD_TYPE_CONTROL__.nextGraphCreateError = true
+  })
 }
 
 /** 某条碎片最近一次落盘的正文与标签。 */

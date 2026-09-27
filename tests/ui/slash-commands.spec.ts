@@ -112,7 +112,7 @@ test.beforeEach(async ({ page }) => {
   await expect(page.locator('[data-shard-editor="composer"] .ProseMirror')).toBeFocused()
 })
 
-// composer 面由富文本用例覆盖：tests/ui/rich-composer.spec.ts「斜杠弹出十二项命令菜单，可过滤、应用与 Esc 关闭」
+// composer 面由富文本用例覆盖：tests/ui/rich-composer.spec.ts「斜杠弹出十三项命令菜单，可过滤、应用与 Esc 关闭」
 // 与「composer 输入斜杠弹出命令菜单并写回选中的命令」。
 for (const surface of ["inline", "zen", "library"] as const) {
   // 围栏块（导图块、数据表）排在前面，八条行格式命令跟在后面；`/大纲`、`/文档`
@@ -131,6 +131,7 @@ for (const surface of ["inline", "zen", "library"] as const) {
     )
     await expect(menu.getByRole("option").first()).toContainText("导图块")
     await expect(menu).not.toContainText("文档")
+    await expect(menu).not.toContainText("流程图")
     await expect(menu.getByRole("option").filter({ hasText: /^大纲/u })).toHaveCount(0)
 
     // 导图块 → 数据表 → 任务列表
