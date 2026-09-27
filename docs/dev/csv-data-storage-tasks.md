@@ -304,3 +304,13 @@ pub fn new_dataset_id() -> String;   // ds_ + 32 hex
 ## 真机验证（Claude 在全部任务完成后执行 / 交用户）
 
 以下项自动化测不出，必须在真实 Tauri（WKWebView）中验证：Glide 单元格中文拼音连续输入、候选确认、Enter/Tab/Esc、快速切格；禅模式滚动与大表（1 万行）打开/滚动/改一格耗时；「用默认程序打开」后 Excel 修改保存、返回 Shard 后的重新载入与冲突；App 与 CLI 同时写入的真实并发。
+
+## 验收记录（2026-09-27）
+
+阶段 0 与阶段 1 全部完成，每个任务由 Codex（gpt-6-sol，medium）实现、Claude 审查并独立复跑后单独提交：T0.1 `c9e8fa9`、T0.2 `7e67a59`、T0.3 `f9e3fb1`、T0.4 `e0015e8`、T1.1 `ba847af`、T1.2 `2df7f9a`、T1.3 `dec79c1`、T1.4 `90886f7`、T1.5 `513c250`、T1.6 `2e508d6`、T1.7 `99d0b4a`、旧用例更新 `1f9e582`。
+
+- `cargo test --workspace`：247 通过、0 失败；`pnpm test:unit`：724 通过；`pnpm build` 通过；`git diff --check` 通过；clippy 无新增告警（基线既有告警未处理）。
+- 全量 Playwright（独立端口 1422）：667 通过、7 失败。7 条失败（`library-tree.spec.ts` 1486/1597/1666/1825、`fragment-scroll-performance.spec.ts` 179/205/244）在改动前的 `28f6877` 上同样失败，与本次无关。
+- 验收中返工：T1.2 编辑器获焦刷新会卸载网格、数据变更不重绘——在 T1.3 中修复并加用例覆盖。
+- 已知缺口（留待后续）：删除/移入回收站 `datasets/*.csv` 时不联动旁路 schema；数据集重命名入口未做；`read_import_csv_file` 可读任意绝对路径 `.csv`（与既有 `read_table_exchange_file` 同级信任）。
+- 未验证（需真机）：见上节「真机验证」。
