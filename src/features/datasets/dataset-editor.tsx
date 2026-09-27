@@ -15,7 +15,7 @@ import { applyDatasetOps, DatasetOpError, invertDatasetOps, newRowId } from "./o
 import type { CsvTable, DatasetOp, DatasetSnapshot } from "./types"
 
 export type DatasetEditorHandle = { flush(): Promise<boolean>; isDirty(): boolean }
-export type DatasetEditorProps = { path: string }
+export type DatasetEditorProps = { path: string; onSnapshot?: (snapshot: DatasetSnapshot) => void }
 type SaveStatus = "保存中" | "已保存" | "未保存" | "冲突" | "出错"
 type History = { undo: DatasetOp[]; redo: DatasetOp[] }
 
@@ -25,7 +25,7 @@ function explicitCells(ops: DatasetOp[]): number {
 }
 
 /** The parent awaits flush before unmounting or changing path. */
-export const DatasetEditor = forwardRef<DatasetEditorHandle, DatasetEditorProps>(function DatasetEditor({ path }, ref) {
+export const DatasetEditor = forwardRef<DatasetEditorHandle, DatasetEditorProps>(function DatasetEditor({ path, onSnapshot }, ref) {
   const host = useRef<HTMLDivElement>(null)
   const grid = useRef<DataEditorRef>(null)
   const [metrics, setMetrics] = useState<ReturnType<typeof readKilnGridTheme>>()
@@ -59,24 +59,25 @@ export const DatasetEditor = forwardRef<DatasetEditorHandle, DatasetEditorProps>
   const load = useCallback(async (discard = false) => {
     const version = ++generation.current
     if (discard) { cancelTimer(); pending.current = []; paused.current = false }
-    setLoading(true)
+    if (!snapshotRef.current) setLoading(true)
     try {
       const next = await readDataset(path)
       if (!alive.current || version !== generation.current) return
       const changed = snapshotRef.current?.sha !== next.sha || snapshotRef.current?.schemaSha !== next.schemaSha
       snapshotRef.current = next
       setSnapshot(next)
-      replaceTable(next.table)
+      onSnapshot?.(next)
+      if (changed || discard) replaceTable(next.table)
       if (changed || discard) resetHistory()
       setProblem("")
       setStatus("已保存")
-      setSelection(emptyGridSelection)
+      if (changed || discard) setSelection(emptyGridSelection)
     } catch (error) {
       if (alive.current && version === generation.current) { setProblem(failure(error)); setStatus("出错") }
     } finally {
       if (alive.current && version === generation.current) setLoading(false)
     }
-  }, [cancelTimer, path, replaceTable, resetHistory])
+  }, [cancelTimer, onSnapshot, path, replaceTable, resetHistory])
 
   useEffect(() => {
     alive.current = true
@@ -109,6 +110,7 @@ export const DatasetEditor = forwardRef<DatasetEditorHandle, DatasetEditorProps>
           setSnapshot(next)
           pending.current.shift()
           setProblem("")
+          window.dispatchEvent(new CustomEvent("shard:dataset-changed", { detail: { path } }))
         } catch (error) {
           if (!alive.current) return
           paused.current = true
@@ -192,9 +194,21 @@ export const DatasetEditor = forwardRef<DatasetEditorHandle, DatasetEditorProps>
   const blocked = !snapshot?.editable || paused.current
   const columns = useMemo(() => table?.header.map((title, index) => ({ id: `${index}:${title}`, title, width: metrics?.columnWidth ?? 180, hasMenu: !blocked, icon: index === keyColumn ? "lock" : undefined })) ?? [], [table?.header, metrics?.columnWidth, blocked, keyColumn])
   const getCellContent = useCallback(([column, row]: Item): GridCell => {
-    const text = tableRef.current?.rows[row]?.[column] ?? ""
+    const text = table?.rows[row]?.[column] ?? ""
     return { kind: GridCellKind.Text, data: text, displayData: text, allowOverlay: !blocked && column !== keyColumn, readonly: blocked || column === keyColumn }
-  }, [blocked, keyColumn])
+  }, [blocked, keyColumn, table])
+  useEffect(() => {
+    if (!import.meta.env.DEV || !host.current) return
+    const element = host.current as HTMLDivElement & { __datasetGetCellContent?: typeof getCellContent }
+    element.__datasetGetCellContent = getCellContent
+    return () => { delete element.__datasetGetCellContent }
+  }, [getCellContent])
+  useEffect(() => {
+    if (!import.meta.env.DEV || !host.current) return
+    const element = host.current as HTMLDivElement & { __datasetSelection?: GridSelection }
+    element.__datasetSelection = selection
+    return () => { delete element.__datasetSelection }
+  }, [selection])
   const paste = useCallback(([column, row]: Item, values: readonly (readonly string[])[]) => {
     const current = tableRef.current
     if (blocked || !current || !values.length) return false
@@ -272,7 +286,7 @@ export const DatasetEditor = forwardRef<DatasetEditorHandle, DatasetEditorProps>
     {status === "冲突" && <div className="mx-[var(--space-3)] flex items-center gap-[var(--space-2)] rounded-md bg-destructive/10 px-[var(--space-3)] py-[var(--space-2)] text-[length:var(--text-body)]" role="alert"><span>{problem}</span><Button size="sm" variant="outline" onClick={() => { void load(true) }}>放弃我的修改并载入磁盘版</Button><Button size="sm" variant="outline" onClick={() => { /* Keep the paused queue intact. */ }}>稍后处理</Button></div>}
     {status === "出错" && <div className="mx-[var(--space-3)] flex items-center gap-[var(--space-2)] rounded-md bg-destructive/10 px-[var(--space-3)] py-[var(--space-2)] text-[length:var(--text-body)]" role="alert"><span>{problem}</span><Button size="sm" variant="outline" onClick={() => { if (snapshotRef.current) { paused.current = false; void drain() } else void load() }}>重试</Button></div>}
     <div className="min-h-0 min-w-0 flex-1" aria-busy={loading}>
-      {loading ? <div className="p-[var(--space-4)]" role="status">正在读取数据集…</div> : !table ? <div className="p-[var(--space-4)]">无法打开数据集</div> : metrics && <DataEditor ref={grid} width="100%" height="100%" columns={columns} rows={table.rows.length} getCellContent={getCellContent} getCellsForSelection={true}
+      {loading && !table ? <div className="p-[var(--space-4)]" role="status">正在读取数据集…</div> : !table ? <div className="p-[var(--space-4)]">无法打开数据集</div> : metrics && <DataEditor ref={grid} width="100%" height="100%" columns={columns} rows={table.rows.length} getCellContent={getCellContent} getCellsForSelection={true}
         theme={metrics.theme} rowHeight={metrics.rowHeight} headerHeight={metrics.headerHeight} headerIcons={{ lock: ({ bgColor }) => `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="${bgColor}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>` }}
         rowMarkers={{ kind: "both", width: metrics.headerHeight }} rowSelect="multi" rowSelectionMode="multi" columnSelect="none" rangeSelect="rect" cellActivationBehavior="double-click"
         gridSelection={selection} onGridSelectionChange={setSelection} provideEditor={provideTableTextEditor}

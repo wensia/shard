@@ -27,6 +27,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { getApiErrorMessage, readCsvFile } from "@/lib/api"
+import { openDatasetEditor } from "@/features/datasets/open-dataset"
 import { parseCsvBytesInWorker } from "@/lib/csv-worker"
 import {
   addDatatableColumn,
@@ -135,18 +136,24 @@ function DatatableSurface({ spec, readOnly, onChange }: DatatableSurfaceProps) {
       return
     }
     let cancelled = false
+    const reload = () => {
+      // CSV 读取与解析都在后台：主线程只等 Promise（AGENTS.md Runtime Rules）。
+      void readCsvFile(src)
+        .then((bytes) => parseCsvBytesInWorker(Uint8Array.from(bytes)))
+        .then((document) => {
+          if (!cancelled) setCsv({ records: document.records, state: "ready" })
+        })
+        .catch((error: unknown) => {
+          if (!cancelled) setCsv({ message: getApiErrorMessage(error), state: "error" })
+        })
+    }
     setCsv({ state: "loading" })
-    // CSV 读取与解析都在后台：主线程只等 Promise（AGENTS.md Runtime Rules）。
-    void readCsvFile(src)
-      .then((bytes) => parseCsvBytesInWorker(Uint8Array.from(bytes)))
-      .then((document) => {
-        if (!cancelled) setCsv({ records: document.records, state: "ready" })
-      })
-      .catch((error: unknown) => {
-        if (!cancelled) setCsv({ message: getApiErrorMessage(error), state: "error" })
-      })
+    reload()
+    const changed = (event: Event) => { if ((event as CustomEvent<{ path: string }>).detail.path === src) reload() }
+    window.addEventListener("shard:dataset-changed", changed)
     return () => {
       cancelled = true
+      window.removeEventListener("shard:dataset-changed", changed)
     }
   }, [src])
 
@@ -316,6 +323,7 @@ function DatatableSurface({ spec, readOnly, onChange }: DatatableSurfaceProps) {
         <DownloadIcon />
         <span className="sr-only">导出 CSV</span>
       </Button>
+      {spec.src && <Button size="sm" variant="outline" onClick={() => openDatasetEditor(spec.src!)}>编辑数据</Button>}
       {isFullscreen ? null : (
         <Button
           aria-label="全屏"
@@ -374,7 +382,7 @@ function DatatableSurface({ spec, readOnly, onChange }: DatatableSurfaceProps) {
         <span className={styles.title}>{title}</span>
         <span className={styles.meta}>
           {rowSummary}
-          {spec.src ? <span title={spec.src}> · 来自 {spec.src}（只读）</span> : null}
+          {spec.src ? <span title={spec.src}> · 来自 {spec.src}</span> : null}
         </span>
         {controls}
       </header>

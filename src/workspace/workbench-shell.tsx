@@ -147,6 +147,8 @@ import {
 import { useAutoCheckpoint } from "@/workspace/use-auto-checkpoint"
 import { useReminderBadge } from "@/workspace/use-reminder-badge"
 import { useSearchController } from "@/workspace/use-search-controller"
+import { DatasetZen, type DatasetZenHandle } from "@/features/datasets/dataset-zen"
+import { OPEN_DATASET_EVENT } from "@/features/datasets/open-dataset"
 
 const AUTO_SYNC_FAILURE_TOAST_ID = "auto-sync-failure"
 const GLOBAL_CAPTURE_EVENT = "shard:capture"
@@ -222,6 +224,10 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
   const [librarySaveState, setLibrarySaveState] =
     useState<SaveState | null>(null)
   const [isClosing, setIsClosing] = useState(false)
+  const [openDatasetPath, setOpenDatasetPath] = useState<string | null>(null)
+  const openDatasetPathRef = useRef<string | null>(null)
+  const datasetZenRef = useRef<DatasetZenHandle>(null)
+  const datasetOpenQueue = useRef(Promise.resolve())
   const [vaultPath, setVaultPath] = useState("")
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(
     readSidebarCollapsed
@@ -276,6 +282,23 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
   const mindMapWorkspaceRef = useRef<MindMapWorkspaceHandle>(null)
   const fragmentFlushRef = useRef<(() => Promise<boolean>) | null>(null)
   const registerFragmentFlush = useCallback((flush: (() => Promise<boolean>) | null) => { fragmentFlushRef.current = flush }, [])
+  useEffect(() => {
+    const onOpen = (event: Event) => {
+      const path = (event as CustomEvent<{ path: string }>).detail?.path
+      if (!path) return
+      datasetOpenQueue.current = datasetOpenQueue.current.then(async () => {
+        if (openDatasetPathRef.current === path) { datasetZenRef.current?.focus(); return }
+        if (openDatasetPathRef.current && !((await datasetZenRef.current?.flush()) ?? true)) {
+          toast.error("当前数据集尚未保存，请先处理保存问题")
+          return
+        }
+        openDatasetPathRef.current = path
+        setOpenDatasetPath(path)
+      }).catch(error => { toast.error(`打开数据集失败：${getApiErrorMessage(error)}`) })
+    }
+    window.addEventListener(OPEN_DATASET_EVENT, onOpen)
+    return () => window.removeEventListener(OPEN_DATASET_EVENT, onOpen)
+  }, [])
   const [pendingLibraryTarget, setPendingLibraryTarget] =
     useState<LibraryNavigationTarget | null>(null)
   const [pendingLibrarySearchTarget, setPendingLibrarySearchTarget] =
@@ -2334,9 +2357,10 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
           drafts?.setInteractionBlocked(true)
           toast.loading("正在保存并退出…", { id: "window-close" })
           try {
+            const datasetFlushed = (await datasetZenRef.current?.flush()) ?? true
             const flushed =
               (await drafts?.flush()) ?? true
-            if (!flushed) {
+            if (!datasetFlushed || !flushed) {
               const leaveAnyway = window.confirm(
                 "还有草稿没能保存成功。仍要退出吗？（退出将丢失未保存的修改）"
               )
@@ -2714,6 +2738,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
         readOnly={searchEditorNavigation?.readOnly ?? false}
         vaultPath={vaultPath}
       />
+      {openDatasetPath && <DatasetZen key={openDatasetPath} ref={datasetZenRef} path={openDatasetPath} onClose={() => { openDatasetPathRef.current = null; setOpenDatasetPath(null) }} />}
       {fragmentFilterDialog}
       <ConvertFragmentDialog open={convertingFragment !== null} title={conversionDraft.title} directory={conversionDraft.directory}
         entries={libraryTree?.entries ?? []} busy={conversionBusy} needsVerification={conversionNeedsVerification} error={conversionError}

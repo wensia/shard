@@ -86,6 +86,7 @@ import {
   restoreFromTrash,
 } from "@/lib/api"
 import { deriveKind } from "@/lib/content-kind"
+import { openDatasetEditor } from "@/features/datasets/open-dataset"
 import { extractTags, normalizeTagList } from "@/lib/editor-format"
 import { libraryEntryName, libraryNameError, type LibrarySort } from "@/lib/library-entry"
 import { useLibraryFileSelection } from "@/lib/use-library-file-selection"
@@ -1428,11 +1429,7 @@ export function LibraryShell({
     }
     if (entry.kind === "csv") {
       setSelectedTreePath(entry.path)
-      void openCsvFile(entry.path).catch((error) =>
-        toast.error(`打开 CSV 失败：${getApiErrorMessage(error)}`, {
-          duration: Infinity,
-        })
-      )
+      openDatasetEditor(entry.path)
       return
     }
     const note = notes.find((candidate) => candidate.path === entry.path)
