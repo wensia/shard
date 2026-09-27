@@ -21,7 +21,9 @@
 | **H2** | 大纲端到端：`/大纲` 提交创建 JSON 大纲（用编辑会话里的树，上限 400 节点，超限报错不截断）；打开大纲进入禅模式外壳中的现有导图编辑器（大纲/导图两视图）；卡片、搜索标题、快速打开识别 JSON 大纲；`FragmentEditor` 接入文件级基线；修正 H1 保护条件 | H1 | 已完成，施工令见 §6 |
 | **H2b** | 流程图端到端：`/流程图` 创建；`CanvasWorkspace` 存储适配后在禅模式外壳中打开；流程图卡片 | H2 | 已完成，施工令见 §7 |
 | **H3** | 时间线按类型筛选；后端搜索的图内容投影、标题与 kind 修正（不索引 JSON 键名、坐标、ID） | H2b | 已完成，施工令见 §8 |
-| H4 | 旧 md 大纲批量升级（预检报告、正式导入器、确认成功的备份）；资料库时代 `notes/` 下 `.shardmap.json`/`.shardflow.json` 显式加入时间线；CLI 原生 JSON 读写与节点级修改 | H2 | 待细化 |
+| **H4a** | 旧格式 md 大纲批量升级：正式导入器（Rust）、预检报告、必须成功的检查点或独立备份、逐篇原子升级；加固偏重 UI 用例 | H3 | 执行中，施工令见 §9 |
+| H4b | 资料库独立 `.shardmap.json`/`.shardflow.json` 显式加入时间线（沿用旧图 id 作为碎片 id，原文件移入回收站）；`shard://map|flow/<id>` 与节点引用找不到独立文件时回退到同 id 碎片 | H4a | 待细化 |
+| H4c | CLI 原生 JSON 读写、缩进列表只读导出、按节点 id 修改（需把图模型与校验移入 shard-core） | H4b | 待细化 |
 | G1–G3 | 属性面板与 `.shard/properties.json`；SQLite 属性表与筛选；标签主题页表格视图 | P1 | 待细化 |
 
 ## 3. P0 施工令：frontmatter 保真读写
@@ -451,3 +453,64 @@ UI 改动遵守 AGENTS.md 与 `vendor/kiln`，复用现有组件与 token。
 ### 8.6 交付
 
 不提交 Git；测试改写的 `tests/evidence` 图片结束前恢复。报告写 `docs/dev/content-model-tasks-log/H3.md`：改动文件与要点、开工前 UI 基线、验收结果（含测试数与偶发项复跑）、偏差及原因、遗留问题。
+
+## 9. H4a 施工令：旧格式 md 大纲升级
+
+前置：P0–H3 已在本分支。「旧格式大纲」指 type 为 `outline`、正文没有 `shardmap` 区域的公开碎片（`find_region` 返回「没有区域」）。区域损坏（多个、未闭合、JSON 非法）的不属于本批，保持现状。
+
+现状要点：
+- 前端 `parseMindMapOutline`（`src/lib/mind-map-outline.ts`）：认 `- * + 1. 1)` 列表项，Tab 按 4 列；首个非列表行在没有根时当根文本，其余非列表行（段落、引用、续行、围栏行、表格）一律丢弃；不跟踪代码块；每个节点只取标记所在行；已有根之后的顶层项挂到根下；200 节点截断；行内 Markdown 原样作为节点文字。
+- 旧格式在行内/禅模式里每次编辑都会整篇重新序列化，上述内容会被丢掉——这是现存的数据丢失路径，本批不改它，但升级后就不再经过它。
+- Rust 没有缩进列表解析；`validate_mind_map_file` 要求标题非空、节点 ≤ 400、节点文字 ≤ 2000 字、同父 sortKey 不重复、无环、全可达；前端 `validateCanvasFile` 另要求 sortKey 为 `[0-9A-Za-z]+`、日期符合格式。
+- `checkpoint_vault_locked` 返回 `not_git` / `blocked` / `no_changes` / `committed` 或 `Err`；`checkpoint_before_structural_locked` 只打日志。
+
+### 9.1 正式导入器（Rust，`crates/shard-core/src/outline_import.rs`）
+
+- 输入旧大纲正文，输出树（节点 id、父 id、sortKey、文字）与一份**损失报告**。树结构规则与前端 `parseMindMapOutline` 完全一致（同样的列表项识别、缩进折算、根的确定、顶层项挂到根下），但**不做 200 截断**。
+- 生成的节点 id 用 `n0`、`n1`… 递增，sortKey 为只含 `[0-9A-Za-z]` 的有序字符串，保证同时通过 Rust 与前端校验。
+- 损失报告逐项计数并给出前几条样例：被丢弃的非列表行（首个根行除外）、续行、代码围栏、超过 2000 字的节点文字。没有任何损失时判为「无损」。
+- 判为「无法升级」的情形：根文字为空、节点数超过 400、没有任何有效行。
+- 单元测试覆盖上述每条规则，并用一组与前端 `mind-map-outline.test.ts` 相同的输入断言树结构一致。
+
+### 9.2 后端命令（`src-tauri/src/lib.rs`，按惯例注册，async + 后台线程）
+
+1. `preflight_outline_upgrade()`：只读，不持写门。扫描 `fragments/`（不含回收站、密匣）中的旧格式大纲，逐篇运行导入器，返回列表：`{ id, path, title, fileSha, nodeCount, status: "lossless" | "lossy" | "blocked", issues }`。
+2. `run_outline_upgrade(items: [{ id, fileSha }])`：
+   - 拿写门。**先确保可恢复**：Git 库调用检查点，只有 `committed` 或 `no_changes` 才继续，`blocked` 或错误直接返回错误、不改任何文件；非 Git 库先把每篇原文件完整复制到 `.shard/backups/outline-upgrade/<时间戳>/<原相对路径>`，任一复制失败就中止。新增一个「要求成功」的检查点辅助函数，不改 `checkpoint_before_structural_locked` 的现有行为。
+   - 逐篇处理，互不影响：重新读取并比对 `fileSha`，不一致跳过并报告「已被修改」；重新运行导入器，`blocked` 跳过；生成 `ShardMapFile`（`id` 等于碎片 id，`createdAt` 取 frontmatter 的 `created_at`，`title` 为根文字，`revision` 1），用 `validate_mind_map_file` 校验；正文整体换成 `render_region(Outline, canonical JSON)`，frontmatter 用 `apply_frontmatter` 只更新 `updated_at`（id、标签、其他属性原样保留）；原子写入。
+   - 全部处理完后对成功升级的路径做一次路径级语义提交（「升级旧格式大纲」），沿用现有 `commit_paths_if_git` 一类函数；非 Git 库跳过。
+   - 返回每篇结果：`upgraded` / `skipped`（原因）/ `failed`（原因），以及备份位置或检查点结果。
+3. 调用方选择的条目必须来自预检结果；`lossy` 只有前端明确勾选「包含有损项」时才会被传入，后端不做额外判断，但返回结果里保留损失摘要。
+
+### 9.3 前端
+
+- **提示**：碎片空间时间线上方的上下文条插槽（`fragments-workspace.tsx` 的 `filterContext`，与筛选状态条同一位置和样式）在当前库存在旧格式大纲时显示一条提示：「有 N 篇旧格式大纲，升级后可用导图编辑」，按钮「查看并升级」「暂不」。旧格式判定直接用已加载碎片的 `readOutlineContent(...).format === "legacy"`，不为此额外扫盘。「暂不」按库记在 localStorage（键带 vault 路径），数量增加时重新出现。筛选状态条与该提示同时存在时两者都要能显示。
+- **升级对话框**：复用现有对话框组件与 `ConvertFragmentDialog` 的结构。打开时调用预检；列出三组（可无损升级、有损、无法升级），有损项显示损失摘要，无法升级项显示原因；「包含有损项」复选框默认不勾；主按钮「升级 N 篇」；执行中显示进度与 `aria-busy`；完成后在对话框内显示结果汇总（成功、跳过、失败及原因、备份位置或「已先保存 Git 检查点」），并刷新碎片列表。检查点被阻塞或备份失败时显示错误，不做任何升级。
+- **单篇入口**：旧格式大纲的编辑面（`FragmentEditor` 的大纲面，行内与禅模式）顶部加一行提示「旧格式大纲，升级后可用导图编辑」与按钮「升级」，打开同一个对话框并只预选这一篇。旧格式大纲**仍然可以编辑**（不改为只读）。
+- 升级完成后，已打开的该篇旧编辑器要关闭或切到新的图形宿主，不能再用旧会话写回。
+
+### 9.4 加固偏重 UI 用例
+
+以下本分支新增的用例在高负载并行下偶发失败、串行通过：`content-types.spec.ts`「超过 400 节点时拦截提交…」、`rich-surfaces.spec.ts` 中 JSON 大纲与流程图禅模式、冲突相关的用例。给它们标 `test.slow()`，并把固定等待换成可观察条件（mock 调用记录、状态文字、元素出现）。不改业务代码。
+
+### 9.5 测试
+
+- Rust：导入器规则单测；`preflight_outline_upgrade` 三种状态；`run_outline_upgrade` 在 Git 库（检查点成功后升级、升级后 frontmatter 未知键与标签保留、正文只剩一个区域、`read_graph_fragment` 可读）、`fileSha` 不一致跳过、`blocked` 跳过、非 Git 库写出备份；检查点 `blocked` 时不改任何文件。
+- UI（mock 补两个新命令）：存在旧大纲时出现提示条、「暂不」后隐藏；对话框三组展示与「包含有损项」开关；执行后结果汇总与列表刷新；旧大纲编辑面的「升级」入口。
+
+### 9.6 验收命令
+
+沿用 `playwright.worktree.config.ts`（1422，不提交），开工前先跑一遍下表 UI 用例记录基线；偶发失败用 `--workers=1 --retries=0` 单独复跑并在报告注明。
+
+| 命令 | 要求 |
+| --- | --- |
+| `cargo test -p shard-core -p shard -p shard-cli` | 全部通过 |
+| `pnpm test:unit` | 除 golden 夹具那一项既有失败外全部通过（quick-open 性能若波动须单独复跑，并确认「参考结果对照」通过） |
+| `pnpm build` | 通过 |
+| `pnpm build:markdown && pnpm exec playwright test -c playwright.worktree.config.ts tests/ui/content-types.spec.ts tests/ui/rich-surfaces.spec.ts tests/ui/fragment-masonry.spec.ts tests/ui/mind-map-fence.spec.ts tests/ui/search-fragment-reveal.spec.ts tests/ui/search-integration.spec.ts` | 相对基线没有新增失败；新增用例全部通过 |
+| `rustfmt --edition 2021 --check crates/shard-core/src/frontmatter.rs crates/shard-core/src/graph_region.rs crates/shard-core/src/outline_import.rs` | 通过 |
+| `git diff --check` | 通过 |
+
+### 9.7 交付
+
+不提交 Git；测试改写的 `tests/evidence` 图片结束前恢复。报告写 `docs/dev/content-model-tasks-log/H4a.md`：改动文件与要点、开工前 UI 基线、验收结果（含测试数与偶发项复跑）、偏差及原因、遗留问题。
