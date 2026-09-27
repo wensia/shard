@@ -15,7 +15,14 @@ import {
   SearchContextBar,
   type FragmentSearchSession as LegacyFragmentSearchSession,
 } from "@/components/shard/fragment-search-workspace"
-import { ConvertFragmentDialog, FragmentFilterContext, FragmentFilterDialog, FragmentTrashWorkspace } from "@/components/shard/fragment-workspace-controls"
+import {
+  ConvertFragmentDialog,
+  FragmentFilterContext,
+  FragmentFilterDialog,
+  FragmentTrashWorkspace,
+  OutlineUpgradeContext,
+  OutlineUpgradeDialog,
+} from "@/components/shard/fragment-workspace-controls"
 import { conversionTitle, EMPTY_FRAGMENT_FILTERS, libraryDirectoryOptions, matchesFragmentFilters, type FragmentFilters } from "@/lib/fragment-space"
 import {
   LockboxDialog,
@@ -132,6 +139,7 @@ import type {
   Fragment,
   CsvFileSummary,
   MindMapSummary,
+  OutlineUpgradeRunResult,
   LibraryMutationResult,
   LibraryTreeSnapshot,
   ShardMapFile,
@@ -168,6 +176,7 @@ import { useSearchController } from "@/workspace/use-search-controller"
 const AUTO_SYNC_FAILURE_TOAST_ID = "auto-sync-failure"
 const GLOBAL_CAPTURE_EVENT = "shard:capture"
 const SIDEBAR_COLLAPSED_STORAGE_KEY = "shard.sidebar-collapsed"
+const OUTLINE_UPGRADE_DISMISSED_STORAGE_PREFIX = "shard.outline-upgrade-dismissed:"
 /** 切回窗口时对账碎片列表的最小间隔，避免频繁切换反复全量读取 vault。 */
 const FOCUS_REFRESH_INTERVAL_MS = 5_000
 
@@ -307,6 +316,10 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
   const [conversionNeedsVerification, setConversionNeedsVerification] = useState(false)
   const conversionActionRef = useRef(false)
   const [conversionError, setConversionError] = useState<string | null>(null)
+  const [outlineUpgradeRequest, setOutlineUpgradeRequest] = useState<{
+    preselectedIds: string[] | null
+  } | null>(null)
+  const [dismissedOutlineUpgradeCount, setDismissedOutlineUpgradeCount] = useState(0)
   const [fragmentSelectionActive, setFragmentSelectionActive] = useState(false)
   const fragmentsView = route.space === "fragments" ? route.params.view ?? "all" : "all"
   const searchReturnFocusRef = useRef<HTMLElement | null>(null)
@@ -1045,6 +1058,32 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     setZenDraft(null)
     setEditingVariant("zen")
     setEditingFragmentId(fragment.id)
+  }
+
+  async function openOutlineUpgrade(fragmentId?: string) {
+    if (fragmentId && fragmentFlushRef.current && !(await fragmentFlushRef.current())) return
+    setOutlineUpgradeRequest({ preselectedIds: fragmentId ? [fragmentId] : null })
+  }
+
+  async function handleOutlineUpgradeComplete(result: OutlineUpgradeRunResult) {
+    const upgradedIds = new Set(
+      result.results
+        .filter((item) => item.status === "upgraded")
+        .map((item) => item.id)
+    )
+    const openFragmentId = searchEditorNavigation?.fragment.id ?? editingFragmentId
+    if (openFragmentId && upgradedIds.has(openFragmentId)) closeEditor()
+    if (upgradedIds.size > 0) {
+      setDismissedOutlineUpgradeCount(0)
+      try {
+        window.localStorage.removeItem(
+          `${OUTLINE_UPGRADE_DISMISSED_STORAGE_PREFIX}${vaultPathRef.current}`
+        )
+      } catch {
+        // 受限 WebView 中 localStorage 可能不可用。
+      }
+    }
+    await refreshFragments()
   }
 
   function openOutlineEditor(fragment: Fragment, searchRequestId?: string) {
@@ -2398,6 +2437,30 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
         : null,
     [editingFragmentId, fragments]
   )
+  const legacyOutlineFragments = useMemo(
+    () => publicActiveFragments.filter((fragment) =>
+      fragment.path.startsWith("fragments/") &&
+      deriveKind(fragment.tags) === "outline" &&
+      readOutlineContent(fragment.content)?.format === "legacy"
+    ),
+    [publicActiveFragments]
+  )
+  useEffect(() => {
+    if (!vaultPath) {
+      setDismissedOutlineUpgradeCount(0)
+      return
+    }
+    try {
+      const stored = Number(window.localStorage.getItem(
+        `${OUTLINE_UPGRADE_DISMISSED_STORAGE_PREFIX}${vaultPath}`
+      ))
+      setDismissedOutlineUpgradeCount(Number.isFinite(stored) && stored > 0 ? stored : 0)
+    } catch {
+      setDismissedOutlineUpgradeCount(0)
+    }
+  }, [vaultPath])
+  const showOutlineUpgradeContext =
+    legacyOutlineFragments.length > dismissedOutlineUpgradeCount
   const isVaultDialogOpen = isVaultGuideOpen || needsVaultSetup
   const isExportSheetOpen = exportingFragment !== null
   const isLockboxArchiveConfirmOpen = pendingLockboxArchiveFragment !== null
@@ -2407,7 +2470,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     // 内联重置发起时没有弹窗 mode，恢复密钥步骤仍会独立弹出
     recoveryKey !== null ||
     isExportSheetOpen ||
-    isLockboxArchiveConfirmOpen || convertingFragment !== null || isFragmentFilterOpen
+    isLockboxArchiveConfirmOpen || convertingFragment !== null || isFragmentFilterOpen || outlineUpgradeRequest !== null
   const isBlockingDialogOpen = isModalBusy || isClosing
 
   const lockboxScrollTargetId =
@@ -2732,6 +2795,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     onOpenZen: openZenEditor,
     onPin: handlePinFragment,
     onRefreshFragments: refreshFragments,
+    onRequestOutlineUpgrade: openOutlineUpgrade,
     onNavigateToFragment: (fragmentId: string) => {
       void handleNavigateToFragment(fragmentId)
     },
@@ -2996,7 +3060,25 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
               onOpenMap: setActiveMindMapId,
             }}
             searchContextBar={searchContextBarProps}
-            filterContext={<FragmentFilterContext filters={fragmentFilters} onClear={() => void applyFragmentFilters(EMPTY_FRAGMENT_FILTERS)} />}
+            filterContext={<>
+              {showOutlineUpgradeContext ? <OutlineUpgradeContext
+                count={legacyOutlineFragments.length}
+                onDismiss={() => {
+                  const count = legacyOutlineFragments.length
+                  setDismissedOutlineUpgradeCount(count)
+                  try {
+                    window.localStorage.setItem(
+                      `${OUTLINE_UPGRADE_DISMISSED_STORAGE_PREFIX}${vaultPath}`,
+                      String(count)
+                    )
+                  } catch {
+                    // 受限 WebView 中 localStorage 可能不可用；本会话仍保持隐藏。
+                  }
+                }}
+                onOpen={() => void openOutlineUpgrade()}
+              /> : null}
+              <FragmentFilterContext filters={fragmentFilters} onClear={() => void applyFragmentFilters(EMPTY_FRAGMENT_FILTERS)} />
+            </>}
             timeline={{
               ...timelineHandlers,
               fragments: visibleStreamFragments,
@@ -3141,6 +3223,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
           }
         }}
         onRefreshFragments={refreshFragments}
+        onRequestOutlineUpgrade={openOutlineUpgrade}
         onSave={handleUpdateFragment}
         readOnly={searchEditorNavigation?.readOnly ?? false}
         vaultPath={vaultPath}
@@ -3151,6 +3234,12 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
         onTitleChange={title => setConversionDraft(current => ({ ...current, title }))}
         onDirectoryChange={directory => setConversionDraft(current => ({ ...current, directory }))}
         onClose={() => setConvertingFragment(null)} onSubmit={() => void submitFragmentConversion()} />
+      <OutlineUpgradeDialog
+        open={outlineUpgradeRequest !== null}
+        preselectedIds={outlineUpgradeRequest?.preselectedIds ?? null}
+        onClose={() => setOutlineUpgradeRequest(null)}
+        onComplete={handleOutlineUpgradeComplete}
+      />
       <FragmentImageExporter
         fragment={exportingFragment}
         onClose={() => setExportingFragment(null)}

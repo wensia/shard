@@ -76,6 +76,7 @@ interface FragmentEditorProps {
   onNavigateToFragment?: (fragmentId: string) => void
   onReady?: (fragmentId: string) => void
   onRefreshFragments?: () => Promise<void> | void
+  onRequestOutlineUpgrade?: (fragmentId: string) => Promise<void> | void
   /**
    * 行内编辑遇到文档类型时改开禅模式（产品框架 §2「文档……直接进入禅模式」）。
    * 不传就照常行内编辑。
@@ -137,6 +138,7 @@ export function FragmentEditor({
   onNavigateToFragment,
   onReady,
   onRefreshFragments,
+  onRequestOutlineUpgrade,
   onRequestZen,
   onSave,
   readOnly = false,
@@ -711,9 +713,9 @@ export function FragmentEditor({
     wantsLockbox(content, fragment?.tags ?? [])
   const lineCount = content.length > 0 ? content.split(/\r\n?|\n/).length : 0
   /** 大纲的只读导图视图：同一棵树的另一种读法，不是另一种文件。 */
-  const outlineFile = isOutlineSurface
-    ? readOutlineContent(content)?.file ?? null
-    : null
+  const outlineContent = isOutlineSurface ? readOutlineContent(content) : null
+  const outlineFile = outlineContent?.file ?? null
+  const isLegacyOutline = outlineContent?.format === "legacy"
   const isMindMapView = isOutlineSurface && isZen && outlineView === "mindmap"
   const documentCharacterCount = countPlainTextCharacters(content)
 
@@ -725,6 +727,21 @@ export function FragmentEditor({
         ...(isZen ? { display: "flex", flexDirection: "column", minHeight: 0, flex: "1 1 auto" } : {}),
       }}
     >
+      {isLegacyOutline && fragment ? (
+        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-[var(--shard-composer-padding)] py-2 text-[length:var(--text-meta)] text-muted-foreground">
+          <span>旧格式大纲，升级后可用导图编辑</span>
+          <Button
+            disabled={saveState === "saving"}
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => void onRequestOutlineUpgrade?.(fragment.id)}
+            size="sm"
+            type="button"
+            variant="outline"
+          >
+            升级
+          </Button>
+        </div>
+      ) : null}
       {isMindMapView ? (
         <div
           ref={mindMapViewRef}

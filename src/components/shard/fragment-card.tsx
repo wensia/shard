@@ -72,6 +72,7 @@ interface FragmentCardProps {
   onOpenZen?: (fragment: Fragment) => void
   onPin?: (fragment: Fragment) => void
   onRefreshFragments?: () => Promise<void> | void
+  onRequestOutlineUpgrade?: (fragmentId: string) => Promise<void> | void
   onSave?: (
     id: string,
     content: string,
@@ -120,6 +121,7 @@ export function FragmentCard({
   onOpenZen,
   onPin,
   onRefreshFragments,
+  onRequestOutlineUpgrade,
   onNavigateToFragment,
   onSave,
   onSelectChange,
@@ -181,6 +183,7 @@ export function FragmentCard({
           // 文档类型不做行内编辑，由编辑器转交禅模式（产品框架 §2）。
           onRequestZen={onOpenZen ? () => onOpenZen(fragment) : undefined}
           onRefreshFragments={onRefreshFragments}
+          onRequestOutlineUpgrade={onRequestOutlineUpgrade}
           onSave={onSave}
           variant="inline"
           vaultPath={vaultPath}

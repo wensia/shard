@@ -22,6 +22,9 @@ use shard_core::{
     graph_region::{
         find_region, render_region, replace_region, GraphRegionKind, MISSING_REGION_ERROR,
     },
+    outline_import::{
+        import_outline, OutlineImport, OutlineImportError, OutlineImportNode, OutlineLossIssue,
+    },
     temporary_filename, unique_suffix, write_bytes_atomically, write_fragment_file,
     write_text_atomically, AppConfig, FragmentFrontmatter, FragmentRelation, LOCKBOX_TAG,
     LIBRARY_FILENAME_MAX_BYTES, PROTECTED_TYPE_TAGS, TYPE_TAGS,
@@ -194,6 +197,58 @@ struct Fragment {
 struct GraphFragmentResult {
     fragment: Fragment,
     graph: serde_json::Value,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OutlineUpgradePreflightItem {
+    id: String,
+    path: String,
+    title: String,
+    file_sha: String,
+    node_count: usize,
+    status: String,
+    issues: Vec<OutlineLossIssue>,
+    reason: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct OutlineUpgradeSelection {
+    id: String,
+    file_sha: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OutlineUpgradeItemResult {
+    id: String,
+    path: Option<String>,
+    status: String,
+    reason: Option<String>,
+    issues: Vec<OutlineLossIssue>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OutlineUpgradeRunResult {
+    results: Vec<OutlineUpgradeItemResult>,
+    backup_path: Option<String>,
+    checkpoint_status: Option<String>,
+    commit_error: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct LegacyOutlineCandidate {
+    id: String,
+    path: PathBuf,
+    relative_path: String,
+    title: String,
+    file_sha: String,
+    node_count: usize,
+    status: String,
+    issues: Vec<OutlineLossIssue>,
+    reason: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -603,6 +658,30 @@ async fn list_fragments(
     run_blocking(move || {
         let vault = ensure_vault_dirs(&app)?;
         list_fragments_in_vault(&vault, &lockbox_runtime)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn preflight_outline_upgrade(
+    app: tauri::AppHandle,
+) -> Result<Vec<OutlineUpgradePreflightItem>, String> {
+    run_blocking(move || {
+        let vault = configured_vault_path(&app)?;
+        preflight_outline_upgrade_in_vault(&vault)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn run_outline_upgrade(
+    app: tauri::AppHandle,
+    items: Vec<OutlineUpgradeSelection>,
+) -> Result<OutlineUpgradeRunResult, String> {
+    run_blocking(move || {
+        let vault = ensure_vault_dirs(&app)?;
+        let _gate = lock_vault_gate(&vault);
+        run_outline_upgrade_in_vault(&vault, items)
     })
     .await
 }
@@ -1424,6 +1503,335 @@ fn list_fragments_in_vault(
         fragments,
         git: git_info(&vault),
         lockbox: lockbox_state(vault, lockbox_runtime),
+    })
+}
+
+fn preflight_outline_upgrade_in_vault(
+    vault: &Path,
+) -> Result<Vec<OutlineUpgradePreflightItem>, String> {
+    Ok(legacy_outline_candidates(vault)?
+        .into_iter()
+        .map(|candidate| OutlineUpgradePreflightItem {
+            id: candidate.id,
+            path: candidate.relative_path,
+            title: candidate.title,
+            file_sha: candidate.file_sha,
+            node_count: candidate.node_count,
+            status: candidate.status,
+            issues: candidate.issues,
+            reason: candidate.reason,
+        })
+        .collect())
+}
+
+fn legacy_outline_candidates(vault: &Path) -> Result<Vec<LegacyOutlineCandidate>, String> {
+    let mut files = Vec::new();
+    collect_markdown_files(&vault.join("fragments"), &mut files)?;
+    files.sort();
+
+    let mut candidates = Vec::new();
+    for path in files {
+        let text = match fs::read_to_string(&path) {
+            Ok(text) => text,
+            Err(_) => continue,
+        };
+        let parsed = match parse_fragment(&text) {
+            Ok(parsed) => parsed,
+            Err(_) => continue,
+        };
+        if derive_type(&parsed.frontmatter.tags) != Some("outline") {
+            continue;
+        }
+        match find_region(&parsed.body, GraphRegionKind::Outline) {
+            Err(error) if error == MISSING_REGION_ERROR => {}
+            Ok(_) | Err(_) => continue,
+        }
+
+        let relative_path = relative_path(vault, &path)?;
+        let (title, node_count, status, issues, reason) = match import_outline(&parsed.body) {
+            Ok(imported) => {
+                let status = if imported.loss_report.is_lossless() {
+                    "lossless"
+                } else {
+                    "lossy"
+                };
+                (
+                    imported.tree.title,
+                    imported.tree.nodes.len(),
+                    status.to_string(),
+                    imported.loss_report.issues,
+                    None,
+                )
+            }
+            Err(error) => {
+                let reason = error.to_string();
+                (
+                    relative_path
+                        .rsplit('/')
+                        .next()
+                        .unwrap_or(&parsed.frontmatter.id)
+                        .trim_end_matches(".md")
+                        .to_string(),
+                    error.node_count,
+                    "blocked".to_string(),
+                    error.loss_report.issues,
+                    Some(reason),
+                )
+            }
+        };
+        candidates.push(LegacyOutlineCandidate {
+            id: parsed.frontmatter.id,
+            path,
+            relative_path,
+            title,
+            file_sha: content_sha256_hex(&text),
+            node_count,
+            status,
+            issues,
+            reason,
+        });
+    }
+
+    let mut id_counts = HashMap::<String, usize>::new();
+    for candidate in &candidates {
+        *id_counts.entry(candidate.id.clone()).or_default() += 1;
+    }
+    for candidate in &mut candidates {
+        if id_counts.get(&candidate.id).copied().unwrap_or_default() > 1 {
+            candidate.status = "blocked".to_string();
+            candidate.reason = Some("碎片 id 重复，无法确定升级对象。".to_string());
+        }
+    }
+    Ok(candidates)
+}
+
+fn require_outline_upgrade_checkpoint(vault: &Path) -> Result<String, String> {
+    let checkpoint = checkpoint_vault_locked(vault, Some("升级旧格式大纲前"))?;
+    match checkpoint.status.as_str() {
+        "committed" | "no_changes" => Ok(checkpoint.status),
+        "blocked" => Err(checkpoint
+            .reason
+            .unwrap_or_else(|| "Git 检查点被阻塞，未升级任何大纲。".to_string())),
+        status => Err(format!("Git 检查点状态无效：{status}。")),
+    }
+}
+
+fn backup_outline_upgrade_files(
+    vault: &Path,
+    candidates: &[LegacyOutlineCandidate],
+) -> Result<Option<String>, String> {
+    if candidates.is_empty() {
+        return Ok(None);
+    }
+    let directory = format!(
+        "{}-{}",
+        Local::now().format("%Y%m%d-%H%M%S"),
+        unique_suffix()
+    );
+    let relative_root = format!(".shard/backups/outline-upgrade/{directory}");
+    let backup_root = vault.join(&relative_root);
+    for candidate in candidates {
+        let destination = backup_root.join(&candidate.relative_path);
+        let parent = destination
+            .parent()
+            .ok_or_else(|| "无法创建大纲升级备份目录。".to_string())?;
+        fs::create_dir_all(parent).map_err(|error| {
+            format!("创建大纲升级备份目录失败：{error}")
+        })?;
+        fs::copy(&candidate.path, &destination)
+            .map_err(|error| format!("备份 {} 失败：{error}", candidate.relative_path))?;
+    }
+    Ok(Some(relative_root))
+}
+
+fn imported_outline_file(
+    vault: &Path,
+    id: &str,
+    created_at: &str,
+    updated_at: &str,
+    imported: OutlineImport,
+) -> Result<(ShardMapFile, Vec<OutlineLossIssue>), String> {
+    let nodes = imported
+        .tree
+        .nodes
+        .into_iter()
+        .map(|node: OutlineImportNode| {
+            let id = node.id.clone();
+            (
+                id,
+                ShardMapNode {
+                    id: node.id,
+                    parent_id: node.parent_id,
+                    sort_key: node.sort_key,
+                    text: node.text,
+                    note: None,
+                    collapsed: false,
+                    width: None,
+                    created_at: created_at.to_string(),
+                    updated_at: updated_at.to_string(),
+                    links: Vec::new(),
+                    style: None,
+                },
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    let file = ShardMapFile {
+        kind: SHARD_MAP_KIND.to_string(),
+        schema_version: SHARD_MAP_SCHEMA_VERSION,
+        id: id.to_string(),
+        title: imported.tree.title,
+        created_at: created_at.to_string(),
+        updated_at: updated_at.to_string(),
+        saved_with_app_version: env!("CARGO_PKG_VERSION").to_string(),
+        revision: 1,
+        root_id: imported.tree.root_id,
+        has_protected_links: false,
+        nodes,
+        viewport: None,
+    };
+    validate_mind_map_file(vault, &file)?;
+    Ok((file, imported.loss_report.issues))
+}
+
+fn run_outline_upgrade_in_vault(
+    vault: &Path,
+    items: Vec<OutlineUpgradeSelection>,
+) -> Result<OutlineUpgradeRunResult, String> {
+    if items.is_empty() {
+        return Err("没有选择要升级的大纲。".to_string());
+    }
+    let candidates = legacy_outline_candidates(vault)?;
+    let mut by_id = HashMap::<String, Vec<LegacyOutlineCandidate>>::new();
+    for candidate in candidates {
+        by_id.entry(candidate.id.clone()).or_default().push(candidate);
+    }
+
+    let mut backup_candidates = Vec::new();
+    for item in &items {
+        if let Some(matches) = by_id.get(&item.id) {
+            if matches.len() == 1 {
+                backup_candidates.push(matches[0].clone());
+            }
+        }
+    }
+    backup_candidates.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
+    backup_candidates.dedup_by(|left, right| left.relative_path == right.relative_path);
+
+    let (backup_path, checkpoint_status) = if vault.join(".git").exists() {
+        (None, Some(require_outline_upgrade_checkpoint(vault)?))
+    } else {
+        (backup_outline_upgrade_files(vault, &backup_candidates)?, None)
+    };
+
+    let mut results = Vec::new();
+    let mut upgraded_paths = Vec::new();
+    for item in items {
+        let Some(matches) = by_id.get(&item.id) else {
+            results.push(OutlineUpgradeItemResult {
+                id: item.id,
+                path: None,
+                status: "skipped".to_string(),
+                reason: Some("预检条目已不存在。".to_string()),
+                issues: Vec::new(),
+            });
+            continue;
+        };
+        if matches.len() != 1 {
+            results.push(OutlineUpgradeItemResult {
+                id: item.id,
+                path: None,
+                status: "failed".to_string(),
+                reason: Some("碎片 id 重复，无法确定升级对象。".to_string()),
+                issues: Vec::new(),
+            });
+            continue;
+        }
+        let candidate = &matches[0];
+        if candidate.file_sha != item.file_sha {
+            results.push(OutlineUpgradeItemResult {
+                id: item.id,
+                path: Some(candidate.relative_path.clone()),
+                status: "skipped".to_string(),
+                reason: Some("已被修改。".to_string()),
+                issues: candidate.issues.clone(),
+            });
+            continue;
+        }
+
+        let outcome = (|| {
+            let text = fs::read_to_string(&candidate.path).map_err(|error| error.to_string())?;
+            if content_sha256_hex(&text) != item.file_sha {
+                return Err("SKIP:已被修改。".to_string());
+            }
+            let parsed = parse_fragment(&text)?;
+            if derive_type(&parsed.frontmatter.tags) != Some("outline") {
+                return Err("SKIP:已不再是大纲。".to_string());
+            }
+            match find_region(&parsed.body, GraphRegionKind::Outline) {
+                Err(error) if error == MISSING_REGION_ERROR => {}
+                Ok(_) => return Err("SKIP:已完成升级。".to_string()),
+                Err(error) => return Err(format!("SKIP:{error}")),
+            }
+            let imported = import_outline(&parsed.body)
+                .map_err(|error: OutlineImportError| format!("SKIP:{error}"))?;
+            let updated_at = Local::now().to_rfc3339();
+            let (file, issues) = imported_outline_file(
+                vault,
+                &item.id,
+                &parsed.frontmatter.created_at,
+                &updated_at,
+                imported,
+            )?;
+            let json = canonical_mind_map_text(&file)?;
+            let body = render_region(GraphRegionKind::Outline, &json);
+            let mut frontmatter = parsed.frontmatter;
+            frontmatter.updated_at = updated_at;
+            write_fragment_update(&candidate.path, &parsed.raw, &frontmatter, &body)?;
+            Ok::<Vec<OutlineLossIssue>, String>(issues)
+        })();
+
+        match outcome {
+            Ok(issues) => {
+                upgraded_paths.push(candidate.relative_path.clone());
+                results.push(OutlineUpgradeItemResult {
+                    id: item.id,
+                    path: Some(candidate.relative_path.clone()),
+                    status: "upgraded".to_string(),
+                    reason: None,
+                    issues,
+                });
+            }
+            Err(reason) if reason.starts_with("SKIP:") => {
+                results.push(OutlineUpgradeItemResult {
+                    id: item.id,
+                    path: Some(candidate.relative_path.clone()),
+                    status: "skipped".to_string(),
+                    reason: Some(reason.trim_start_matches("SKIP:").to_string()),
+                    issues: candidate.issues.clone(),
+                });
+            }
+            Err(reason) => {
+                results.push(OutlineUpgradeItemResult {
+                    id: item.id,
+                    path: Some(candidate.relative_path.clone()),
+                    status: "failed".to_string(),
+                    reason: Some(reason),
+                    issues: candidate.issues.clone(),
+                });
+            }
+        }
+    }
+
+    let commit_error = if upgraded_paths.is_empty() || !vault.join(".git").exists() {
+        None
+    } else {
+        commit_paths_if_git(vault, &upgraded_paths, "升级旧格式大纲").err()
+    };
+    Ok(OutlineUpgradeRunResult {
+        results,
+        backup_path,
+        checkpoint_status,
+        commit_error,
     })
 }
 
@@ -7064,6 +7472,8 @@ pub fn run() {
             table_exchange_commands::read_table_exchange_file,
             table_exchange_commands::write_table_exchange_file,
             list_fragments,
+            preflight_outline_upgrade,
+            run_outline_upgrade,
             checkpoint_vault,
             list_mind_maps,
             list_csv_files,
@@ -8532,6 +8942,248 @@ mod tests {
             related: Vec::new(),
         };
         write_fragment_file(path, &frontmatter, body).unwrap();
+    }
+
+    fn write_legacy_outline_fixture(vault: &Path, id: &str, body: &str) -> PathBuf {
+        let path = vault.join("fragments/tests").join(format!("{id}.md"));
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        write_t6_fragment(&path, id, vec!["inbox", "outline", "project"], body);
+        path
+    }
+
+    #[test]
+    fn outline_upgrade_preflight_reports_all_statuses_and_ignores_non_candidates() {
+        let directory = tempfile::tempdir().unwrap();
+        let vault = directory.path();
+        ensure_vault_layout(vault).unwrap();
+
+        write_legacy_outline_fixture(vault, "lossless", "- 根节点\n  - 子节点");
+        write_legacy_outline_fixture(vault, "lossy", "根节点\n会丢失的段落");
+        write_legacy_outline_fixture(vault, "blocked", "\n\n");
+        write_legacy_outline_fixture(
+            vault,
+            "damaged-region",
+            "```shardmap\n{\"kind\":\"shard.map\"}",
+        );
+        write_legacy_outline_fixture(vault, "invalid-json-region", "```shardmap\nnot json\n```");
+        create_graph_fragment_in_vault(
+            vault,
+            "outline",
+            &unique_graph_operation_id(),
+            Some(outline_graph_fixture(2)),
+            Vec::new(),
+        )
+        .unwrap();
+        let trash = vault.join(".trash/fragments/trash-outline.md");
+        fs::create_dir_all(trash.parent().unwrap()).unwrap();
+        write_t6_fragment(&trash, "trash-outline", vec!["outline"], "- 回收站根节点");
+        let lockbox = vault.join("lockbox/fragments/lockbox-outline.md");
+        fs::create_dir_all(lockbox.parent().unwrap()).unwrap();
+        write_t6_fragment(&lockbox, "lockbox-outline", vec!["outline"], "- 密匣根节点");
+
+        let preflight = preflight_outline_upgrade_in_vault(vault).unwrap();
+        assert_eq!(preflight.len(), 3);
+        let by_id = preflight
+            .iter()
+            .map(|item| (item.id.as_str(), item))
+            .collect::<HashMap<_, _>>();
+        assert_eq!(by_id["lossless"].status, "lossless");
+        assert_eq!(by_id["lossless"].node_count, 2);
+        assert!(by_id["lossless"].issues.is_empty());
+        assert_eq!(by_id["lossy"].status, "lossy");
+        assert!(!by_id["lossy"].issues.is_empty());
+        assert_eq!(by_id["blocked"].status, "blocked");
+        assert!(by_id["blocked"].reason.is_some());
+        for ignored in [
+            "damaged-region",
+            "invalid-json-region",
+            "trash-outline",
+            "lockbox-outline",
+        ] {
+            assert!(!by_id.contains_key(ignored), "不应预检 {ignored}");
+        }
+    }
+
+    #[test]
+    fn outline_upgrade_in_git_preserves_frontmatter_and_produces_readable_graph() {
+        let directory = tempfile::tempdir().unwrap();
+        let vault = directory.path();
+        ensure_vault_layout(vault).unwrap();
+        ensure_git_repo(vault).unwrap();
+        run_git(vault, &["config", "commit.gpgsign", "false"]).unwrap();
+
+        let path = write_legacy_outline_fixture(
+            vault,
+            "git-outline",
+            "- 发布计划\n  - 准备材料\n  - 安排评审",
+        );
+        let original = fs::read_to_string(&path).unwrap();
+        let parsed = parse_fragment(&original).unwrap();
+        let custom_raw = format!("# 用户注释\nauthor: \"张三\"\n{}", parsed.raw);
+        fs::write(
+            &path,
+            format!("---\n{custom_raw}\n---\n\n{}\n", parsed.body.trim_end()),
+        )
+        .unwrap();
+        let before = fs::read_to_string(&path).unwrap();
+        let before_raw = parse_fragment(&before).unwrap().raw;
+        let item = preflight_outline_upgrade_in_vault(vault)
+            .unwrap()
+            .into_iter()
+            .find(|item| item.id == "git-outline")
+            .unwrap();
+
+        let run = run_outline_upgrade_in_vault(
+            vault,
+            vec![OutlineUpgradeSelection {
+                id: item.id,
+                file_sha: item.file_sha,
+            }],
+        )
+        .unwrap();
+
+        assert_eq!(run.checkpoint_status.as_deref(), Some("committed"));
+        assert!(run.backup_path.is_none());
+        assert!(run.commit_error.is_none());
+        assert_eq!(run.results.len(), 1);
+        assert_eq!(run.results[0].status, "upgraded");
+        let after = fs::read_to_string(&path).unwrap();
+        let parsed = parse_fragment(&after).unwrap();
+        assert_eq!(
+            without_updated_at(&parsed.raw),
+            without_updated_at(&before_raw)
+        );
+        assert!(parsed.raw.contains("# 用户注释\nauthor: \"张三\""));
+        assert_eq!(parsed.frontmatter.tags, vec!["inbox", "outline", "project"]);
+        let region = find_region(&parsed.body, GraphRegionKind::Outline).unwrap();
+        assert_eq!(parsed.body.matches("```shardmap").count(), 1);
+        assert!(parsed.body[..region.range.start].trim().is_empty());
+        assert!(parsed.body[region.range.end..].trim().is_empty());
+
+        let read = read_graph_fragment_in_vault(vault, "git-outline").unwrap();
+        assert_eq!(read.fragment.id, "git-outline");
+        assert_eq!(read.graph["title"], "发布计划");
+        assert_eq!(read.graph["revision"], 1);
+        let messages = run_git(vault, &["log", "--format=%s"]).unwrap();
+        assert!(messages.lines().any(|message| message == "升级旧格式大纲"));
+        assert!(messages
+            .lines()
+            .any(|message| message.starts_with("检查点：更新 ")));
+    }
+
+    #[test]
+    fn non_git_outline_upgrade_backs_up_bytes_and_skips_stale_or_blocked_items() {
+        let directory = tempfile::tempdir().unwrap();
+        let vault = directory.path();
+        ensure_vault_layout(vault).unwrap();
+        let upgraded_path =
+            write_legacy_outline_fixture(vault, "upgrade-me", "- 根节点\n  - 子节点");
+        let stale_path = write_legacy_outline_fixture(vault, "stale", "- 过期根节点");
+        let blocked_path = write_legacy_outline_fixture(vault, "blocked-run", "\n\n");
+        let originals = [
+            (
+                "upgrade-me",
+                upgraded_path.clone(),
+                fs::read(&upgraded_path).unwrap(),
+            ),
+            ("stale", stale_path.clone(), fs::read(&stale_path).unwrap()),
+            (
+                "blocked-run",
+                blocked_path.clone(),
+                fs::read(&blocked_path).unwrap(),
+            ),
+        ];
+        let preflight = preflight_outline_upgrade_in_vault(vault).unwrap();
+        let by_id = preflight
+            .into_iter()
+            .map(|item| (item.id.clone(), item))
+            .collect::<HashMap<_, _>>();
+
+        let run = run_outline_upgrade_in_vault(
+            vault,
+            vec![
+                OutlineUpgradeSelection {
+                    id: "upgrade-me".into(),
+                    file_sha: by_id["upgrade-me"].file_sha.clone(),
+                },
+                OutlineUpgradeSelection {
+                    id: "stale".into(),
+                    file_sha: "0".repeat(64),
+                },
+                OutlineUpgradeSelection {
+                    id: "blocked-run".into(),
+                    file_sha: by_id["blocked-run"].file_sha.clone(),
+                },
+            ],
+        )
+        .unwrap();
+
+        assert!(run.checkpoint_status.is_none());
+        assert!(run.commit_error.is_none());
+        let backup_path = run.backup_path.as_deref().unwrap();
+        for (_, path, bytes) in &originals {
+            let relative = relative_path(vault, path).unwrap();
+            assert_eq!(
+                fs::read(vault.join(backup_path).join(relative)).unwrap(),
+                *bytes
+            );
+        }
+        let by_id = run
+            .results
+            .iter()
+            .map(|result| (result.id.as_str(), result))
+            .collect::<HashMap<_, _>>();
+        assert_eq!(by_id["upgrade-me"].status, "upgraded");
+        assert_eq!(by_id["stale"].status, "skipped");
+        assert_eq!(by_id["stale"].reason.as_deref(), Some("已被修改。"));
+        assert_eq!(by_id["blocked-run"].status, "skipped");
+        assert!(by_id["blocked-run"].reason.is_some());
+        assert_eq!(fs::read(stale_path).unwrap(), originals[1].2);
+        assert_eq!(fs::read(blocked_path).unwrap(), originals[2].2);
+        assert!(find_region(
+            &parse_fragment(&fs::read_to_string(upgraded_path).unwrap())
+                .unwrap()
+                .body,
+            GraphRegionKind::Outline,
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn blocked_outline_upgrade_checkpoint_leaves_file_unchanged() {
+        let directory = tempfile::tempdir().unwrap();
+        let vault = directory.path();
+        ensure_vault_layout(vault).unwrap();
+        ensure_git_repo(vault).unwrap();
+        run_git(vault, &["config", "commit.gpgsign", "false"]).unwrap();
+        let path =
+            write_legacy_outline_fixture(vault, "blocked-checkpoint", "- 根节点\n  - 子节点");
+        run_git(vault, &["add", "fragments/tests/blocked-checkpoint.md"]).unwrap();
+        run_git(vault, &["commit", "-m", "fixture"]).unwrap();
+        let item = preflight_outline_upgrade_in_vault(vault)
+            .unwrap()
+            .into_iter()
+            .find(|item| item.id == "blocked-checkpoint")
+            .unwrap();
+        let before = fs::read(&path).unwrap();
+        let head = run_git(vault, &["rev-parse", "HEAD"]).unwrap();
+        fs::write(vault.join(".git/CHERRY_PICK_HEAD"), "deadbeef\n").unwrap();
+
+        let error = run_outline_upgrade_in_vault(
+            vault,
+            vec![OutlineUpgradeSelection {
+                id: item.id,
+                file_sha: item.file_sha,
+            }],
+        )
+        .unwrap_err();
+
+        assert!(error.contains("cherry-pick"), "实际：{error}");
+        assert_eq!(fs::read(path).unwrap(), before);
+        assert_eq!(run_git(vault, &["rev-parse", "HEAD"]).unwrap(), head);
+        assert!(run_git(vault, &["status", "--porcelain"])
+            .unwrap()
+            .is_empty());
     }
 
     fn outline_graph_fixture(node_count: usize) -> serde_json::Value {

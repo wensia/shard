@@ -6,6 +6,7 @@ import {
   createdGraphFragments,
   failNextGraphCreate,
   installContentTypesMock,
+  readTypeCalls,
   revealCard,
 } from "./content-types-mock"
 import {
@@ -36,6 +37,17 @@ function submitButton(page: Page) {
 
 function zenSurface(page: Page) {
   return page.locator('section[aria-label="禅模式"]')
+}
+
+async function openFromCardMenu(page: Page, id: string, entry: "编辑" | "禅模式") {
+  const target = card(page, id)
+  await revealCard(target)
+  await target.getByRole("button", { name: "片段操作", exact: true }).click()
+  await page.getByRole("menuitem", { name: entry, exact: true }).click()
+}
+
+async function commandCount(page: Page, command: string) {
+  return (await readTypeCalls(page)).filter((call) => call.command === command).length
 }
 
 async function addEmptyOutlineNodes(page: Page, count: number) {
@@ -175,7 +187,7 @@ test.describe("速记框内容类型", () => {
   })
 
   test("超过 400 节点时拦截提交、提示并保留完整草稿", async ({ page }) => {
-    test.setTimeout(120_000)
+    test.slow()
     await runOutlineCommand(page, "composer")
     await page.keyboard.type("超限大纲")
     await addEmptyOutlineNodes(page, 400)
@@ -301,6 +313,88 @@ test.describe("时间线与瀑布流的类型卡片", () => {
     await expect(body.getByRole("img", { name: "思维导图预览" })).toBeVisible()
     // 卡片上看不到缩进列表的原文。
     await expect(target).not.toContainText("- 第一步")
+  })
+
+  test("存在旧格式大纲时显示升级提示，暂不后按当前库隐藏", async ({ page }) => {
+    const context = page.getByRole("region", { name: "旧格式大纲升级提示", exact: true })
+    await expect(context).toContainText("有 1 篇旧格式大纲，升级后可用导图编辑")
+
+    await context.getByRole("button", { name: "暂不", exact: true }).click()
+    await expect(context).toHaveCount(0)
+  })
+
+  test("旧格式大纲升级提示与筛选状态条同时显示", async ({ page }) => {
+    const dialog = await openFragmentFilters(page)
+    await selectOption(dialog.getByRole("combobox", { name: "类型", exact: true }), "flowchart")
+    await dialog.getByRole("button", { name: "查看碎片", exact: true }).click()
+
+    await expect(page.getByRole("region", { name: "旧格式大纲升级提示", exact: true })).toBeVisible()
+    await expect(page.getByRole("region", { name: "当前碎片筛选", exact: true })).toContainText("流程图")
+  })
+
+  test("升级对话框分三组展示，只有明确勾选后才包含有损项", async ({ page }) => {
+    await page.getByRole("button", { name: "查看并升级", exact: true }).click()
+    const dialog = page.getByRole("dialog", { name: "升级旧格式大纲", exact: true })
+    await expect(dialog).toHaveAttribute("aria-busy", "false")
+
+    await expect(dialog.getByRole("region", { name: "可无损升级", exact: true })).toContainText("项目大纲")
+    const lossy = dialog.getByRole("region", { name: "有损", exact: true })
+    await expect(lossy).toContainText("带备注的大纲")
+    await expect(lossy).toContainText("丢弃非列表行 1 处")
+    await expect(dialog.getByRole("region", { name: "无法升级", exact: true })).toContainText("没有任何有效行")
+
+    const lossyItem = dialog.getByRole("checkbox", { name: /^选择 带备注的大纲/u })
+    await expect(lossyItem).toBeDisabled()
+    await expect(dialog.getByRole("button", { name: "升级 1 篇", exact: true })).toBeEnabled()
+
+    await dialog.getByRole("checkbox", { name: "包含有损项", exact: true }).click()
+    await expect(lossyItem).toBeEnabled()
+    await expect(lossyItem).toBeChecked()
+    await expect(dialog.getByRole("button", { name: "升级 2 篇", exact: true })).toBeEnabled()
+  })
+
+  test("升级完成后显示结果、刷新列表并按 JSON 大纲重新打开", async ({ page }) => {
+    const listCallsBefore = await commandCount(page, "list_fragments")
+    await page.getByRole("button", { name: "查看并升级", exact: true }).click()
+    const dialog = page.getByRole("dialog", { name: "升级旧格式大纲", exact: true })
+    await dialog.getByRole("button", { name: "升级 1 篇", exact: true }).click()
+
+    const result = dialog.getByLabel("升级结果", { exact: true })
+    await expect(result).toContainText("成功 1 篇，跳过 0 篇，失败 0 篇。")
+    await expect(result).toContainText("已先保存 Git 检查点")
+    await expect.poll(() => commandCount(page, "list_fragments")).toBeGreaterThan(listCallsBefore)
+    await expect(page.getByRole("region", { name: "旧格式大纲升级提示", exact: true })).toHaveCount(0)
+
+    await dialog.locator('[data-slot="dialog-footer"]').getByRole("button", { name: "关闭", exact: true }).click()
+    await openFromCardMenu(page, "card-outline", "编辑")
+    await expect(page.locator('section[aria-label="思维导图工作区"]')).toHaveCount(1)
+  })
+
+  test("旧格式大纲行内编辑提供升级入口，成功后关闭旧编辑器", async ({ page }) => {
+    await openFromCardMenu(page, "card-outline", "编辑")
+    const editorCard = card(page, "card-outline")
+    const legacyEditor = editorCard.locator(OUTLINE)
+    await expect(legacyEditor).toHaveCount(1)
+    await expect(editorCard.getByText("旧格式大纲，升级后可用导图编辑", { exact: true })).toBeVisible()
+
+    await editorCard.getByRole("button", { name: "升级", exact: true }).click()
+    const dialog = page.getByRole("dialog", { name: "升级旧格式大纲", exact: true })
+    await dialog.getByRole("button", { name: "升级 1 篇", exact: true }).click()
+    await expect(dialog.getByLabel("升级结果", { exact: true })).toContainText("成功 1 篇")
+    await expect(legacyEditor).toHaveCount(0)
+  })
+
+  test("旧格式大纲禅模式提供升级入口，成功后关闭旧编辑器", async ({ page }) => {
+    await openFromCardMenu(page, "card-outline", "禅模式")
+    const zen = zenSurface(page)
+    await expect(zen).toHaveCount(1)
+    await expect(zen.getByText("旧格式大纲，升级后可用导图编辑", { exact: true })).toBeVisible()
+
+    await zen.getByRole("button", { name: "升级", exact: true }).click()
+    const dialog = page.getByRole("dialog", { name: "升级旧格式大纲", exact: true })
+    await dialog.getByRole("button", { name: "升级 1 篇", exact: true }).click()
+    await expect(dialog.getByLabel("升级结果", { exact: true })).toContainText("成功 1 篇")
+    await expect(zen).toHaveCount(0)
   })
 
   test("JSON 大纲卡片从受管区域显示根节点标题与缩略导图", async ({ page }) => {

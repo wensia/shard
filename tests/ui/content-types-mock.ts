@@ -1,6 +1,10 @@
 import { expect, type Locator, type Page } from "@playwright/test"
 import type { CanvasFile } from "../../src/features/canvas/model"
-import type { ShardMapFile } from "../../src/types"
+import type {
+  OutlineUpgradePreflightItem,
+  OutlineUpgradeRunResult,
+  ShardMapFile,
+} from "../../src/types"
 
 import { installSearchIpcMock } from "./search-ipc-mock"
 
@@ -170,6 +174,45 @@ export async function installContentTypesMock(page: Page) {
       let savedRevision = 1
       const graphBody = (file: ShardMapFile | CanvasFile) =>
         [file.kind === "shard.map" ? "```shardmap" : "```shardflow", JSON.stringify(file), "```"].join("\n")
+      const outlineUpgradeItems = (): OutlineUpgradePreflightItem[] => {
+        const legacyOutline = fragments.find((fragment) => fragment.id === "card-outline")
+        return [
+          ...(legacyOutline && !legacyOutline.content.includes("```shardmap") ? [{
+            id: legacyOutline.id,
+            path: legacyOutline.path,
+            title: "项目大纲",
+            fileSha: legacyOutline.fileSha,
+            nodeCount: 3,
+            status: "lossless" as const,
+            issues: [],
+            reason: null,
+          }] : []),
+          {
+            id: "card-outline-lossy",
+            path: "fragments/card-outline-lossy.md",
+            title: "带备注的大纲",
+            fileSha: "file-sha-card-outline-lossy-1",
+            nodeCount: 2,
+            status: "lossy",
+            issues: [{
+              kind: "discardedNonListLine",
+              count: 1,
+              samples: ["这行备注会被丢弃"],
+            }],
+            reason: null,
+          },
+          {
+            id: "card-outline-blocked",
+            path: "fragments/card-outline-blocked.md",
+            title: "空大纲",
+            fileSha: "file-sha-card-outline-blocked-1",
+            nodeCount: 0,
+            status: "blocked",
+            issues: [],
+            reason: "没有任何有效行",
+          },
+        ]
+      }
       Object.assign(globalThis, {
         isTauri: true,
         __SHARD_TYPE_CALLS__: calls,
@@ -197,6 +240,70 @@ export async function installContentTypesMock(page: Page) {
               case "sync_vault": return clone(git)
               case "checkpoint_vault":
                 return { status: "no_changes", changes: 0, reason: null, git: clone(git) }
+              case "preflight_outline_upgrade": return clone(outlineUpgradeItems())
+              case "run_outline_upgrade": {
+                const requested = (args.items ?? []) as Array<{ id: string; fileSha: string }>
+                const preflightById = new Map(outlineUpgradeItems().map((item) => [item.id, item]))
+                const results: OutlineUpgradeRunResult["results"] = []
+                for (const item of requested) {
+                  const preflight = preflightById.get(item.id)
+                  const fragment = fragments.find((candidate) => candidate.id === item.id)
+                  if (!preflight || !fragment) {
+                    results.push({
+                      id: item.id,
+                      path: preflight?.path ?? null,
+                      status: "skipped",
+                      reason: "碎片不存在",
+                      issues: preflight?.issues ?? [],
+                    })
+                    continue
+                  }
+                  if (item.fileSha !== fragment.fileSha) {
+                    results.push({
+                      id: item.id,
+                      path: fragment.path,
+                      status: "skipped",
+                      reason: "已被修改",
+                      issues: preflight.issues,
+                    })
+                    continue
+                  }
+                  const graph: ShardMapFile = {
+                    kind: "shard.map",
+                    schemaVersion: 1,
+                    id: fragment.id,
+                    title: "项目大纲",
+                    createdAt: fragment.createdAt,
+                    updatedAt: now,
+                    savedWithAppVersion: "0.1.3",
+                    revision: 1,
+                    rootId: "n0",
+                    hasProtectedLinks: false,
+                    nodes: {
+                      n0: { id: "n0", parentId: null, sortKey: "00", text: "项目大纲", createdAt: fragment.createdAt, updatedAt: now },
+                      n1: { id: "n1", parentId: "n0", sortKey: "00", text: "第一步", createdAt: fragment.createdAt, updatedAt: now },
+                      n2: { id: "n2", parentId: "n0", sortKey: "01", text: "第二步", createdAt: fragment.createdAt, updatedAt: now },
+                    },
+                  }
+                  graphFiles[fragment.id] = graph
+                  fragment.content = graphBody(graph)
+                  fragment.updatedAt = now
+                  fragment.fileSha = `file-sha-${fragment.id}-upgraded`
+                  results.push({
+                    id: fragment.id,
+                    path: fragment.path,
+                    status: "upgraded",
+                    reason: null,
+                    issues: preflight.issues,
+                  })
+                }
+                return clone({
+                  results,
+                  backupPath: null,
+                  checkpointStatus: "committed",
+                  commitError: null,
+                } satisfies OutlineUpgradeRunResult)
+              }
               case "github_cli_status":
                 return { installed: true, authenticated: true, login: "shard-test", protocol: "https", error: null }
               case "create_fragment": {

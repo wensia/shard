@@ -6,6 +6,7 @@
 
 pub mod frontmatter;
 pub mod graph_region;
+pub mod outline_import;
 pub mod search;
 
 use chrono::{DateTime, Local};

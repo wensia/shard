@@ -7,10 +7,199 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { SelectControl } from "@/components/ui/select"
-import { emptyTrash, getApiErrorMessage, purgeFromTrash, restoreFromTrash } from "@/lib/api"
+import {
+  emptyTrash,
+  getApiErrorMessage,
+  preflightOutlineUpgrade,
+  purgeFromTrash,
+  restoreFromTrash,
+  runOutlineUpgrade,
+} from "@/lib/api"
 import { CONTENT_KIND_LABELS, isTypeTag } from "@/lib/content-kind"
 import { libraryDirectoryOptions, type FragmentFilterKind, type FragmentFilters } from "@/lib/fragment-space"
-import type { Fragment, LibraryMutationResult, LibraryTreeEntry } from "@/types"
+import type {
+  Fragment,
+  LibraryMutationResult,
+  LibraryTreeEntry,
+  OutlineUpgradeIssue,
+  OutlineUpgradePreflightItem,
+  OutlineUpgradeRunResult,
+} from "@/types"
+
+export function OutlineUpgradeContext({ count, onDismiss, onOpen }: {
+  count: number
+  onDismiss: () => void
+  onOpen: () => void
+}) {
+  if (count < 1) return null
+  return <div className="shard-content-inset shrink-0 pb-2" role="region" aria-label="旧格式大纲升级提示">
+    <div className="shard-content-measure flex items-center gap-2 text-[length:var(--text-meta)] text-muted-foreground">
+      <span className="min-w-0 flex-1">有 {count} 篇旧格式大纲，升级后可用导图编辑</span>
+      <Button size="sm" variant="outline" onClick={onOpen}>查看并升级</Button>
+      <Button size="sm" variant="ghost" onClick={onDismiss}>暂不</Button>
+    </div>
+  </div>
+}
+
+const OUTLINE_UPGRADE_GROUPS = [
+  { status: "lossless", title: "可无损升级" },
+  { status: "lossy", title: "有损" },
+  { status: "blocked", title: "无法升级" },
+] as const
+
+const OUTLINE_ISSUE_LABELS: Record<OutlineUpgradeIssue["kind"], string> = {
+  discardedNonListLine: "丢弃非列表行",
+  continuationLine: "丢弃续行",
+  codeFence: "丢弃代码围栏",
+  truncatedNodeText: "截断超长节点文字",
+}
+
+function outlineIssueSummary(issues: OutlineUpgradeIssue[]) {
+  return issues
+    .map((issue) => `${OUTLINE_ISSUE_LABELS[issue.kind]} ${issue.count} 处${issue.samples.length ? `（如：${issue.samples.join("；")}）` : ""}`)
+    .join("；")
+}
+
+export function OutlineUpgradeDialog({ open, preselectedIds, onClose, onComplete }: {
+  open: boolean
+  preselectedIds: string[] | null
+  onClose: () => void
+  onComplete: (result: OutlineUpgradeRunResult) => Promise<void> | void
+}) {
+  const [items, setItems] = useState<OutlineUpgradePreflightItem[]>([])
+  const [selectedIds, setSelectedIds] = useState<string[]>([])
+  const [includeLossy, setIncludeLossy] = useState(false)
+  const [loading, setLoading] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [result, setResult] = useState<OutlineUpgradeRunResult | null>(null)
+
+  useEffect(() => {
+    if (!open) return
+    let cancelled = false
+    setLoading(true)
+    setBusy(false)
+    setError(null)
+    setResult(null)
+    setItems([])
+    setSelectedIds([])
+    setIncludeLossy(false)
+    void preflightOutlineUpgrade()
+      .then((nextItems) => {
+        if (cancelled) return
+        setItems(nextItems)
+        const requested = preselectedIds ? new Set(preselectedIds) : null
+        setSelectedIds(nextItems
+          .filter((item) => item.status === "lossless" && (!requested || requested.has(item.id)))
+          .map((item) => item.id))
+      })
+      .catch((failure) => {
+        if (!cancelled) setError(getApiErrorMessage(failure))
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => { cancelled = true }
+  }, [open, preselectedIds])
+
+  const locked = loading || busy
+  const selectedItems = items.filter((item) =>
+    selectedIds.includes(item.id) && item.status !== "blocked" && (item.status !== "lossy" || includeLossy)
+  )
+
+  function setLossyIncluded(checked: boolean) {
+    setIncludeLossy(checked)
+    const requested = preselectedIds ? new Set(preselectedIds) : null
+    setSelectedIds((current) => {
+      const next = new Set(current)
+      for (const item of items) {
+        if (item.status !== "lossy") continue
+        if (checked && (!requested || requested.has(item.id))) next.add(item.id)
+        else next.delete(item.id)
+      }
+      return Array.from(next)
+    })
+  }
+
+  function toggleItem(item: OutlineUpgradePreflightItem, checked: boolean) {
+    setSelectedIds((current) => checked
+      ? Array.from(new Set([...current, item.id]))
+      : current.filter((id) => id !== item.id))
+  }
+
+  async function submit() {
+    if (busy || selectedItems.length === 0) return
+    setBusy(true)
+    setError(null)
+    try {
+      const next = await runOutlineUpgrade(selectedItems.map((item) => ({
+        id: item.id,
+        fileSha: item.fileSha,
+      })))
+      setResult(next)
+      await onComplete(next)
+    } catch (failure) {
+      setError(getApiErrorMessage(failure))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return <Dialog open={open} onOpenChange={next => { if (!next && !locked) onClose() }} disablePointerDismissal={locked}>
+    <DialogContent aria-busy={locked} showCloseButton={!locked} className="sm:max-w-2xl">
+      <DialogHeader>
+        <DialogTitle>升级旧格式大纲</DialogTitle>
+        <DialogDescription>升级前会先建立可恢复点；有损项需明确允许后才会执行。</DialogDescription>
+      </DialogHeader>
+      {loading ? <p role="status" className="text-[length:var(--text-body)] text-muted-foreground">正在检查旧格式大纲…</p> : null}
+      {!loading && !result ? <div className="flex min-h-0 flex-col gap-4 overflow-auto">
+        {OUTLINE_UPGRADE_GROUPS.map((group) => {
+          const groupItems = items.filter((item) => item.status === group.status)
+          return <section key={group.status} aria-label={group.title} className="flex flex-col gap-2">
+            <h3 className="text-[length:var(--text-section-title)] font-semibold">{group.title}（{groupItems.length}）</h3>
+            {groupItems.length === 0 ? <p className="text-[length:var(--text-meta)] text-muted-foreground">无</p> : groupItems.map((item) => {
+              const disabled = item.status === "blocked" || (item.status === "lossy" && !includeLossy)
+              return <label key={`${item.path}:${item.id}`} className="flex items-start gap-2 text-[length:var(--text-body)]">
+                {item.status === "blocked" ? null : <Checkbox
+                  aria-label={`选择 ${item.title}`}
+                  checked={selectedIds.includes(item.id)}
+                  disabled={disabled || locked}
+                  onCheckedChange={(checked) => toggleItem(item, checked === true)}
+                />}
+                <span className="min-w-0">
+                  <span className="block font-medium">{item.title || item.path}</span>
+                  <span className="block text-[length:var(--text-meta)] text-muted-foreground">{item.path} · {item.nodeCount} 个节点</span>
+                  {item.reason ? <span className="block text-[length:var(--text-meta)] text-destructive">{item.reason}</span> : null}
+                  {item.issues.length ? <span className="block text-[length:var(--text-meta)] text-warning">{outlineIssueSummary(item.issues)}</span> : null}
+                </span>
+              </label>
+            })}
+          </section>
+        })}
+        <label className="flex items-center gap-2 text-[length:var(--text-body)]">
+          <Checkbox checked={includeLossy} disabled={locked || !items.some((item) => item.status === "lossy")} onCheckedChange={(checked) => setLossyIncluded(checked === true)} />
+          包含有损项
+        </label>
+      </div> : null}
+      {busy ? <p role="status" aria-live="polite" className="text-[length:var(--text-body)] text-muted-foreground">正在升级 {selectedItems.length} 篇…</p> : null}
+      {result ? <div className="flex min-h-0 flex-col gap-3 overflow-auto" aria-label="升级结果">
+        <p className="text-[length:var(--text-body)]">
+          成功 {result.results.filter((item) => item.status === "upgraded").length} 篇，跳过 {result.results.filter((item) => item.status === "skipped").length} 篇，失败 {result.results.filter((item) => item.status === "failed").length} 篇。
+        </p>
+        <p className="text-[length:var(--text-meta)] text-muted-foreground">
+          {result.backupPath ? `备份位置：${result.backupPath}` : result.checkpointStatus ? "已先保存 Git 检查点" : "未生成恢复信息"}
+        </p>
+        {result.results.filter((item) => item.status !== "upgraded").map((item) => <p key={`${item.id}:${item.path ?? "missing"}`} className="text-[length:var(--text-meta)] text-muted-foreground">{item.path ?? item.id}：{item.reason ?? item.status}</p>)}
+        {result.commitError ? <p role="alert" className="text-[length:var(--text-body)] text-destructive">语义提交失败：{result.commitError}</p> : null}
+      </div> : null}
+      {error ? <p role="alert" className="text-[length:var(--text-body)] text-destructive">{error}</p> : null}
+      <DialogFooter>
+        <Button variant="outline" disabled={locked} onClick={onClose}>{result ? "关闭" : "取消"}</Button>
+        {!result ? <Button disabled={locked || selectedItems.length === 0} onClick={() => void submit()}>{busy ? "正在升级…" : `升级 ${selectedItems.length} 篇`}</Button> : null}
+      </DialogFooter>
+    </DialogContent>
+  </Dialog>
+}
 
 /** The home stream has no filter chrome until the user applies a condition. */
 export function FragmentFilterContext({ filters, onClear }: {

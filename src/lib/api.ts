@@ -16,6 +16,9 @@ import type {
   LibraryTreeSnapshot,
   MindMapReadResult,
   MindMapSummary,
+  OutlineUpgradePreflightItem,
+  OutlineUpgradeRunResult,
+  OutlineUpgradeSelection,
   ShardMapFile,
   VaultState,
 } from "@/types"
@@ -119,6 +122,18 @@ function invokeVaultState(command: string, args?: Record<string, unknown>) {
 
 export function listFragments() {
   return invokeVaultState("list_fragments")
+}
+
+export function preflightOutlineUpgrade() {
+  return desktopInvoke<OutlineUpgradePreflightItem[]>(
+    "preflight_outline_upgrade"
+  )
+}
+
+export function runOutlineUpgrade(items: OutlineUpgradeSelection[]) {
+  return desktopInvoke<OutlineUpgradeRunResult>("run_outline_upgrade", {
+    items,
+  })
 }
 
 export function listMindMaps() {

@@ -63,6 +63,49 @@ export interface CheckpointResult {
   git: GitInfo
 }
 
+export type OutlineUpgradeStatus = "lossless" | "lossy" | "blocked"
+
+export interface OutlineUpgradeIssue {
+  kind:
+    | "discardedNonListLine"
+    | "continuationLine"
+    | "codeFence"
+    | "truncatedNodeText"
+  count: number
+  samples: string[]
+}
+
+export interface OutlineUpgradePreflightItem {
+  id: string
+  path: string
+  title: string
+  fileSha: string
+  nodeCount: number
+  status: OutlineUpgradeStatus
+  issues: OutlineUpgradeIssue[]
+  reason: string | null
+}
+
+export interface OutlineUpgradeSelection {
+  id: string
+  fileSha: string
+}
+
+export interface OutlineUpgradeItemResult {
+  id: string
+  path: string | null
+  status: "upgraded" | "skipped" | "failed"
+  reason: string | null
+  issues: OutlineUpgradeIssue[]
+}
+
+export interface OutlineUpgradeRunResult {
+  results: OutlineUpgradeItemResult[]
+  backupPath: string | null
+  checkpointStatus: "committed" | "no_changes" | null
+  commitError: string | null
+}
+
 export interface CsvFileSummary {
   name: string
   path: string

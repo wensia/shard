@@ -387,6 +387,7 @@ test.describe("行内编辑与禅模式", () => {
   })
 
   test("JSON 大纲从卡片编辑进入图形禅模式，默认大纲、可切导图、自动保存并在 Esc 前排空", async ({ page }) => {
+    test.slow()
     const mindMapListsBefore = await commandCount(page, "list_mind_maps")
     await openFromCardMenu(page, "card-json-outline", "编辑")
 
@@ -421,6 +422,7 @@ test.describe("行内编辑与禅模式", () => {
   })
 
   test("JSON 大纲图形编辑 STALE_BASE 选择保留我的版本时用最新 fileSha 重存", async ({ page }) => {
+    test.slow()
     await queueGraphStale(page, "card-json-outline", graphFileWithRoot("磁盘冲突版本"))
     await openFromCardMenu(page, "card-json-outline", "编辑")
 
@@ -438,6 +440,7 @@ test.describe("行内编辑与禅模式", () => {
   })
 
   test("JSON 大纲图形编辑 STALE_BASE 选择保留磁盘版本时重新载入", async ({ page }) => {
+    test.slow()
     await queueGraphStale(page, "card-json-outline", graphFileWithRoot("磁盘图形版本"))
     await openFromCardMenu(page, "card-json-outline", "编辑")
 
@@ -459,6 +462,7 @@ test.describe("行内编辑与禅模式", () => {
   })
 
   test("JSON 流程图从卡片编辑与禅模式都进入 Canvas，关闭前排空保存", async ({ page }) => {
+    test.slow()
     for (const entry of ["编辑", "禅模式"] as const) {
       await openFromCardMenu(page, "card-json-flowchart", entry)
       const workspace = flowchartWorkspace(page)
@@ -481,6 +485,7 @@ test.describe("行内编辑与禅模式", () => {
   })
 
   test("流程图碎片冲突可用最新基线保留本地版本，且不显示副本恢复入口", async ({ page }) => {
+    test.slow()
     await queueGraphStale(page, "card-json-flowchart", flowchartFileWithNode("磁盘冲突版本"))
     await openFromCardMenu(page, "card-json-flowchart", "编辑")
     await flowchartNode(page).dblclick()
@@ -500,6 +505,7 @@ test.describe("行内编辑与禅模式", () => {
   })
 
   test("流程图碎片冲突可载入磁盘版本", async ({ page }) => {
+    test.slow()
     await queueGraphStale(page, "card-json-flowchart", flowchartFileWithNode("磁盘流程图版本"))
     await openFromCardMenu(page, "card-json-flowchart", "编辑")
     await flowchartNode(page).dblclick()

@@ -43,6 +43,7 @@ interface FragmentTimelineProps {
   ) => Promise<void>
   onPin?: (fragment: Fragment) => void
   onRefreshFragments?: () => Promise<void> | void
+  onRequestOutlineUpgrade?: (fragmentId: string) => Promise<void> | void
   onNavigateToFragment?: (fragmentId: string) => void
   onScrollDown?: () => void
   onScrollToFragmentComplete?: (
@@ -101,6 +102,7 @@ export function FragmentTimeline({
   onOrganize,
   onPin,
   onRefreshFragments,
+  onRequestOutlineUpgrade,
   onScrollDown,
   onScrollToFragmentComplete,
   onSelectionModeChange,
@@ -613,6 +615,7 @@ export function FragmentTimeline({
                     onOpenZen={onOpenZen}
                     onPin={onPin}
                     onRefreshFragments={onRefreshFragments}
+                    onRequestOutlineUpgrade={onRequestOutlineUpgrade}
                     onSave={onSave}
                     onSelectChange={handleSelectChange}
                     onStartSelection={onOrganize ? enterSelectionMode : undefined}
