@@ -735,7 +735,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     id: string,
     content: string,
     tags: string[],
-    expectedSha?: string
+    expectedFileSha?: string
   ) {
     recordContentActivity()
     const currentFragment =
@@ -755,7 +755,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
       }
     }
 
-    let updated = await updateFragment(id, content, tags, expectedSha)
+    let updated = await updateFragment(id, content, tags, expectedFileSha)
     setFragments((current) =>
       current.map((fragment) => (fragment.id === id ? updated : fragment))
     )

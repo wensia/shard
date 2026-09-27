@@ -14,6 +14,7 @@ async function installLibraryMock(page: Page, includeNotes = true) {
     const fragments = [
       {
         id: "fragment-1",
+        fileSha: "fragment-1-file-sha",
         content: "普通碎片",
         createdAt: "2026-08-30T08:00:00.000Z",
         updatedAt: "2026-08-30T08:00:00.000Z",
@@ -30,6 +31,7 @@ async function installLibraryMock(page: Page, includeNotes = true) {
         ? [
             {
               id: "note-new",
+              fileSha: "note-new-file-sha",
               content: "# 最近更新的笔记\n正文 #work",
               createdAt: "2026-08-29T08:00:00.000Z",
               updatedAt: "2026-08-30T10:00:00.000Z",
@@ -44,6 +46,7 @@ async function installLibraryMock(page: Page, includeNotes = true) {
             },
             {
               id: "note-old",
+              fileSha: "note-old-file-sha",
               content: "没有标题的旧笔记 #notes",
               createdAt: "2026-08-28T08:00:00.000Z",
               updatedAt: "2026-08-29T10:00:00.000Z",
@@ -100,6 +103,7 @@ async function installLibraryMock(page: Page, includeNotes = true) {
             if (staleWindow.__SHARD_STALE_ONCE__) {
               delete staleWindow.__SHARD_STALE_ONCE__
               fragment.content = "# 远端更新版本"
+              fragment.fileSha = "note-new-remote-file-sha"
               fragment.updatedAt = "2026-08-31T09:00:00.000Z"
               throw new Error(
                 "STALE_BASE:磁盘上的笔记内容已变化（可能来自同步或外部编辑），保存已中止"
@@ -110,11 +114,13 @@ async function installLibraryMock(page: Page, includeNotes = true) {
               ? (args.tags as string[])
               : fragment.tags
             fragment.updatedAt = "2026-08-30T12:00:00.000Z"
+            fragment.fileSha = `${fragment.id}-saved-file-sha-${calls.length}`
             return clone(fragment)
           }
           if (command === "create_fragment") {
             const created = {
               id: "fragment-created",
+              fileSha: "fragment-created-file-sha",
               content: String(args.content ?? ""),
               createdAt: "2026-08-30T12:00:00.000Z",
               updatedAt: "2026-08-30T12:00:00.000Z",
@@ -294,6 +300,7 @@ test("资料库第三栏选择笔记，并在切笔记、切空间与捕捉时�
   await oldestNote.click()
   await expect.poll(() => getUpdateCalls(page)).toHaveLength(1)
   expect((await getUpdateCalls(page))[0].args).toMatchObject({
+    expectedFileSha: "note-new-file-sha",
     id: "note-new",
     tags: ["inbox", "note", "work"],
   })
@@ -365,6 +372,10 @@ test("保存基线过期：取消对话框后载入磁盘最新版本", async ({
   page.once("dialog", (dialog) => void dialog.dismiss())
 
   await fillEditor(page, "library:note-new", "# 本地草稿版本")
+  await expect.poll(() => getUpdateCalls(page).then((calls) => calls.length)).toBe(1)
+  expect((await getUpdateCalls(page))[0].args).toMatchObject({
+    expectedFileSha: "note-new-file-sha",
+  })
   // 放弃草稿 → 刷新后编辑器换入远端版本
   await expect
     .poll(() => readEditor(page, "library:note-new"))
@@ -391,8 +402,9 @@ test("保存基线过期：确认对话框后强制覆盖磁盘版本", async ({
   // 覆盖：冲突后立即重存（不带基线哈希），草稿保留
   await expect.poll(() => getUpdateCalls(page).then((calls) => calls.length)).toBe(2)
   const calls = await getUpdateCalls(page)
+  expect(calls[0].args).toMatchObject({ expectedFileSha: "note-new-file-sha" })
   expect(calls[1].args).toMatchObject({ id: "note-new" })
-  expect((calls[1].args as { expectedSha?: string }).expectedSha).toBeUndefined()
+  expect((calls[1].args as { expectedFileSha?: string }).expectedFileSha).toBeUndefined()
   await expect
     .poll(() => readEditor(page, "library:note-new"))
     .toBe("# 本地草稿版本")

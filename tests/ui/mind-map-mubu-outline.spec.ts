@@ -115,10 +115,11 @@ async function sampleGuidePaint(page: Page, guideX: number, rowTop: number, rowB
 
 for (const browserName of ["webkit", "chromium"] as const) {
   const engineTest = test.extend({
-    page: async ({}, use) => {
+    page: async ({ baseURL }, use) => {
+      if (!baseURL) throw new Error("Playwright baseURL 未配置")
       const browser = await ({ webkit, chromium })[browserName].launch()
       try {
-        await use(await browser.newPage({ baseURL: "http://127.0.0.1:1420", viewport: { width: 1280, height: 760 } }))
+        await use(await browser.newPage({ baseURL, viewport: { width: 1280, height: 760 } }))
       } finally { await browser.close() }
     },
   })
@@ -864,7 +865,7 @@ for (const browserName of ["webkit", "chromium"] as const) {
         evidence.push({ width, focusAndPortal: { backgroundImage: portalBackgroundImage } })
       }
       // Exercise the coarse-pointer CSS in a separate browser context; this is not native touch-device acceptance.
-      const touchPage = await page.context().browser()!.newPage({ baseURL: "http://127.0.0.1:1420", viewport: { width: 640, height: 760 }, hasTouch: true })
+      const touchPage = await page.context().browser()!.newPage({ baseURL: new URL(page.url()).origin, viewport: { width: 640, height: 760 }, hasTouch: true })
       try {
         await openOutline(touchPage, true)
         await touchPage.getByRole("tab", { name: "大纲", exact: true }).focus()

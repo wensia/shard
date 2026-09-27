@@ -13,13 +13,14 @@ use rsa::{
 use serde::{Deserialize, Serialize};
 use shard_core::{
     contains_lockbox_tag, create_public_fragment_in_vault, default_vault_path,
-    ensure_vault_layout, is_false, new_fragment_id, normalize_tag, normalize_tags,
+    derive_type, ensure_vault_layout, is_false, new_fragment_id, normalize_tag, normalize_tags,
+    normalize_type_tags,
     frontmatter::{
         apply_frontmatter, parse_fragment, raw_from_frontmatter, write_fragment_update,
     },
     temporary_filename, unique_suffix, write_bytes_atomically, write_fragment_file,
     write_text_atomically, AppConfig, FragmentFrontmatter, FragmentRelation, LOCKBOX_TAG,
-    LIBRARY_FILENAME_MAX_BYTES,
+    LIBRARY_FILENAME_MAX_BYTES, PROTECTED_TYPE_TAGS, TYPE_TAGS,
 };
 use sha2::{Digest, Sha256};
 use std::{
@@ -83,24 +84,39 @@ const MANAGED_VAULT_ROOTS: &[&str] = &[
 /// 前端识别该前缀进入冲突流程（覆盖 / 载入磁盘版）。
 const STALE_BASE_ERROR: &str =
     "STALE_BASE:磁盘上的笔记内容已变化（可能来自同步或外部编辑），保存已中止";
+const LOCKBOX_TYPE_ERROR: &str = "大纲与流程图不能放入密匣。";
 
 fn content_sha256_hex(content: &str) -> String {
     let digest = Sha256::digest(content.as_bytes());
     digest.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
-/// expected_sha 为调用方上次读到/存下的正文哈希；不带则跳过校验（兼容旧调用与显式覆盖）。
-fn ensure_expected_content_sha(
-    current_content: &str,
-    expected_sha: Option<&str>,
-) -> Result<(), String> {
-    let Some(expected) = expected_sha else {
+/// expected_file_sha 为调用方上次读到/存下的完整文件哈希；不带则跳过校验。
+fn ensure_expected_file_sha(current_file: &str, expected_file_sha: Option<&str>) -> Result<(), String> {
+    let Some(expected) = expected_file_sha else {
         return Ok(());
     };
-    if content_sha256_hex(current_content) != expected {
+    if content_sha256_hex(current_file) != expected {
         return Err(STALE_BASE_ERROR.to_string());
     }
     Ok(())
+}
+
+fn is_protected_type(tags: &[String]) -> bool {
+    derive_type(tags).is_some_and(|kind| PROTECTED_TYPE_TAGS.contains(&kind))
+}
+
+fn normalize_updated_type_tags(current_tags: &[String], tags: Vec<String>) -> Vec<String> {
+    let mut next = normalize_type_tags(normalize_tags(tags, false));
+    if let Some(current) = derive_type(current_tags).filter(|kind| PROTECTED_TYPE_TAGS.contains(kind)) {
+        next.retain(|tag| !TYPE_TAGS.contains(&tag.as_str()));
+        next.push(current.to_string());
+        next.sort();
+        next.dedup();
+    } else {
+        next.retain(|tag| !PROTECTED_TYPE_TAGS.contains(&tag.as_str()));
+    }
+    next
 }
 
 fn managed_pathspecs() -> Vec<String> {
@@ -151,6 +167,7 @@ fn managed_exclusion_pathspecs() -> Vec<String> {
 struct Fragment {
     id: String,
     content: String,
+    file_sha: String,
     created_at: String,
     updated_at: String,
     tags: Vec<String>,
@@ -1538,8 +1555,11 @@ async fn create_fragment(
 
         let vault = ensure_vault_dirs(&app)?;
         let _gate = lock_vault_gate(&vault);
-        let normalized_tags = normalize_tags(tags.unwrap_or_default(), true);
+        let normalized_tags = normalize_type_tags(normalize_tags(tags.unwrap_or_default(), true));
         if contains_lockbox_tag(&normalized_tags) {
+            if is_protected_type(&normalized_tags) {
+                return Err(LOCKBOX_TYPE_ERROR.to_string());
+            }
             return create_lockbox_fragment_in_vault(
                 &vault,
                 &lockbox_runtime,
@@ -1574,22 +1594,32 @@ async fn update_fragment_tags(
     run_blocking(move || {
         let vault = ensure_vault_dirs(&app)?;
         let gate = lock_vault_gate(&vault);
-        let normalized_tags = normalize_tags(tags, false);
-
         if let Some(lockbox_path) = find_lockbox_fragment_path(&vault, &id)? {
             let read_keys = require_unlocked_lockbox_read_keys(&vault, &lockbox_runtime)?;
             return update_lockbox_fragment_tags_in_vault(
                 &vault,
                 &lockbox_path,
                 &read_keys,
-                normalized_tags,
+                tags,
             );
         }
 
         let path = find_fragment_path(&vault, &id)?.ok_or_else(|| format!("找不到片段 {}", id))?;
+        let text = fs::read_to_string(&path).map_err(|error| error.to_string())?;
+        let parsed = parse_fragment(&text)?;
+        let normalized_tags = normalize_updated_type_tags(&parsed.frontmatter.tags, tags);
         if contains_lockbox_tag(&normalized_tags) {
-            let result =
-                move_public_fragment_to_lockbox_in_vault(&vault, &lockbox_runtime, &gate, &path);
+            if is_protected_type(&parsed.frontmatter.tags) {
+                return Err(LOCKBOX_TYPE_ERROR.to_string());
+            }
+            let result = move_public_fragment_content_to_lockbox_in_vault(
+                &vault,
+                &lockbox_runtime,
+                &gate,
+                &path,
+                parsed.body.trim_start_matches('\n'),
+                normalized_tags,
+            );
             drop(gate);
             forget_moved_public_index(&index_registry, &vault, &path);
             return result;
@@ -1607,7 +1637,7 @@ async fn update_fragment(
     id: String,
     content: String,
     tags: Option<Vec<String>>,
-    expected_sha: Option<String>,
+    expected_file_sha: Option<String>,
 ) -> Result<Fragment, String> {
     let lockbox_runtime = lockbox_runtime.inner().clone();
     let index_registry = app
@@ -1621,8 +1651,6 @@ async fn update_fragment(
 
         let vault = ensure_vault_dirs(&app)?;
         let gate = lock_vault_gate(&vault);
-        let normalized_tags = normalize_tags(tags.unwrap_or_default(), false);
-
         if let Some(lockbox_path) = find_lockbox_fragment_path(&vault, &id)? {
             let read_keys = require_unlocked_lockbox_read_keys(&vault, &lockbox_runtime)?;
             return update_lockbox_fragment_in_vault(
@@ -1630,20 +1658,21 @@ async fn update_fragment(
                 &lockbox_path,
                 &read_keys,
                 content.trim(),
-                normalized_tags,
-                expected_sha.as_deref(),
+                tags.unwrap_or_default(),
+                expected_file_sha.as_deref(),
             );
         }
 
         let path = find_fragment_path(&vault, &id)?.ok_or_else(|| format!("找不到片段 {}", id))?;
+        let text = fs::read_to_string(&path).map_err(|error| error.to_string())?;
+        let parsed = parse_fragment(&text)?;
+        let normalized_tags =
+            normalize_updated_type_tags(&parsed.frontmatter.tags, tags.unwrap_or_default());
         if contains_lockbox_tag(&normalized_tags) {
-            let text = fs::read_to_string(&path).map_err(|error| error.to_string())?;
-            let parsed = parse_fragment(&text)?;
-            // 与 read_fragment 的 content 归一化保持一致，否则哈希永不相等
-            ensure_expected_content_sha(
-                parsed.body.trim_start_matches('\n'),
-                expected_sha.as_deref(),
-            )?;
+            if is_protected_type(&parsed.frontmatter.tags) {
+                return Err(LOCKBOX_TYPE_ERROR.to_string());
+            }
+            ensure_expected_file_sha(&text, expected_file_sha.as_deref())?;
             let result = move_public_fragment_content_to_lockbox_in_vault(
                 &vault,
                 &lockbox_runtime,
@@ -1662,7 +1691,7 @@ async fn update_fragment(
             &path,
             &content,
             normalized_tags,
-            expected_sha.as_deref(),
+            expected_file_sha.as_deref(),
         )
     })
     .await
@@ -1749,8 +1778,13 @@ async fn move_fragment_to_lockbox(
     run_blocking(move || {
         let vault = ensure_vault_dirs(&app)?;
         let gate = lock_vault_gate(&vault);
-        checkpoint_before_structural_locked(&vault);
         let path = find_fragment_path(&vault, &id)?.ok_or_else(|| format!("找不到片段 {}", id))?;
+        let text = fs::read_to_string(&path).map_err(|error| error.to_string())?;
+        let parsed = parse_fragment(&text)?;
+        if is_protected_type(&parsed.frontmatter.tags) {
+            return Err(LOCKBOX_TYPE_ERROR.to_string());
+        }
+        checkpoint_before_structural_locked(&vault);
         let result = move_public_fragment_to_lockbox_in_vault(&vault, &lockbox_runtime, &gate, &path)
             .and_then(|_| list_fragments_in_vault(&vault, &lockbox_runtime));
         drop(gate);
@@ -4547,6 +4581,7 @@ fn read_fragment(
     override_status: Option<(String, Option<String>)>,
 ) -> Result<Fragment, String> {
     let text = fs::read_to_string(path).map_err(|error| error.to_string())?;
+    let file_sha = content_sha256_hex(&text);
     let (frontmatter, body) = parse_fragment_text(&text)?;
     let rel_path = relative_path(vault, path)?;
     let (git_status, error) = override_status.unwrap_or_else(|| {
@@ -4563,6 +4598,7 @@ fn read_fragment(
     Ok(Fragment {
         id: frontmatter.id,
         content: body.trim_start_matches('\n').to_string(),
+        file_sha,
         created_at: frontmatter.created_at,
         updated_at: frontmatter.updated_at,
         tags: if frontmatter.tags.is_empty() {
@@ -4605,6 +4641,7 @@ fn update_public_fragment_tags_in_vault(
     let text = fs::read_to_string(path).map_err(|error| error.to_string())?;
     let parsed = parse_fragment(&text)?;
     let mut frontmatter = parsed.frontmatter;
+    let tags = normalize_updated_type_tags(&frontmatter.tags, tags);
     frontmatter.tags = if tags.is_empty() {
         vec!["inbox".to_string()]
     } else {
@@ -4625,12 +4662,13 @@ fn update_public_fragment_in_vault(
     path: &Path,
     content: &str,
     tags: Vec<String>,
-    expected_sha: Option<&str>,
+    expected_file_sha: Option<&str>,
 ) -> Result<Fragment, String> {
     let text = fs::read_to_string(path).map_err(|error| error.to_string())?;
+    ensure_expected_file_sha(&text, expected_file_sha)?;
     let parsed = parse_fragment(&text)?;
-    ensure_expected_content_sha(parsed.body.trim_start_matches('\n'), expected_sha)?;
     let mut frontmatter = parsed.frontmatter;
+    let tags = normalize_updated_type_tags(&frontmatter.tags, tags);
     frontmatter.tags = if tags.is_empty() {
         vec!["inbox".to_string()]
     } else {
@@ -4765,6 +4803,10 @@ fn create_lockbox_fragment_in_vault(
     tags: Vec<String>,
 ) -> Result<Fragment, String> {
     reject_lockbox_images(content)?;
+    let tags = normalize_type_tags(normalize_lockbox_tags(tags));
+    if is_protected_type(&tags) {
+        return Err(LOCKBOX_TYPE_ERROR.to_string());
+    }
     let write_key = lockbox_write_key(vault, lockbox_runtime)?;
     let now = Local::now();
     let id = new_fragment_id(&now);
@@ -4781,7 +4823,7 @@ fn create_lockbox_fragment_in_vault(
         id,
         created_at: created_at.clone(),
         updated_at: created_at,
-        tags: normalize_lockbox_tags(tags),
+        tags,
         category: None,
         ai_status: Some("none".to_string()),
         pinned: false,
@@ -4816,17 +4858,21 @@ fn update_lockbox_fragment_in_vault(
     read_keys: &LockboxReadKeys,
     content: &str,
     tags: Vec<String>,
-    expected_sha: Option<&str>,
+    expected_file_sha: Option<&str>,
 ) -> Result<Fragment, String> {
     reject_lockbox_images(content)?;
+    let encrypted_text = fs::read_to_string(path).map_err(|error| error.to_string())?;
+    ensure_expected_file_sha(&encrypted_text, expected_file_sha)?;
     let mut payload = read_lockbox_payload(path, read_keys)?;
-    ensure_expected_content_sha(&payload.body, expected_sha)?;
     let raw = payload
         .frontmatter_raw
         .clone()
         .map(Ok)
         .unwrap_or_else(|| raw_from_frontmatter(&payload.frontmatter))?;
-    payload.frontmatter.tags = normalize_lockbox_tags(tags);
+    payload.frontmatter.tags = normalize_lockbox_tags(normalize_updated_type_tags(
+        &payload.frontmatter.tags,
+        tags,
+    ));
     payload.frontmatter.updated_at = Local::now().to_rfc3339();
     payload.frontmatter_raw = Some(apply_frontmatter(&raw, &payload.frontmatter)?);
     payload.body = content.to_string();
@@ -4852,7 +4898,10 @@ fn update_lockbox_fragment_tags_in_vault(
         .clone()
         .map(Ok)
         .unwrap_or_else(|| raw_from_frontmatter(&payload.frontmatter))?;
-    payload.frontmatter.tags = normalize_lockbox_tags(tags);
+    payload.frontmatter.tags = normalize_lockbox_tags(normalize_updated_type_tags(
+        &payload.frontmatter.tags,
+        tags,
+    ));
     payload.frontmatter.updated_at = Local::now().to_rfc3339();
     payload.frontmatter_raw = Some(apply_frontmatter(&raw, &payload.frontmatter)?);
     let write_key = LockboxWriteKey::Master(read_keys.master_key.clone());
@@ -4903,6 +4952,9 @@ fn move_public_fragment_to_lockbox_in_vault(
 ) -> Result<Fragment, String> {
     let text = fs::read_to_string(path).map_err(|error| error.to_string())?;
     let parsed = parse_fragment(&text)?;
+    if is_protected_type(&parsed.frontmatter.tags) {
+        return Err(LOCKBOX_TYPE_ERROR.to_string());
+    }
     move_public_fragment_payload_to_lockbox_in_vault(
         vault,
         lockbox_runtime,
@@ -4925,6 +4977,9 @@ fn move_public_fragment_content_to_lockbox_in_vault(
 ) -> Result<Fragment, String> {
     let text = fs::read_to_string(path).map_err(|error| error.to_string())?;
     let parsed = parse_fragment(&text)?;
+    if is_protected_type(&parsed.frontmatter.tags) {
+        return Err(LOCKBOX_TYPE_ERROR.to_string());
+    }
     move_public_fragment_payload_to_lockbox_in_vault(
         vault,
         lockbox_runtime,
@@ -4948,6 +5003,12 @@ fn move_public_fragment_payload_to_lockbox_in_vault(
     existing_frontmatter_raw: Option<String>,
 ) -> Result<Fragment, String> {
     reject_lockbox_images(content)?;
+    if existing_frontmatter
+        .as_ref()
+        .is_some_and(|frontmatter| is_protected_type(&frontmatter.tags))
+    {
+        return Err(LOCKBOX_TYPE_ERROR.to_string());
+    }
     let write_key = lockbox_write_key(vault, lockbox_runtime)?;
     let mut frontmatter = existing_frontmatter.ok_or_else(|| "片段缺少 frontmatter".to_string())?;
     frontmatter.tags = normalize_lockbox_tags(tags);
@@ -5082,6 +5143,7 @@ fn lockbox_fragment_from_parts(
     body: String,
     override_status: Option<(String, Option<String>)>,
 ) -> Result<Fragment, String> {
+    let encrypted_text = fs::read_to_string(path).map_err(|error| error.to_string())?;
     let rel_path = relative_path(vault, path)?;
     let (git_status, error) = override_status.unwrap_or_else(|| {
         if !vault.join(".git").exists() {
@@ -5097,6 +5159,7 @@ fn lockbox_fragment_from_parts(
     Ok(Fragment {
         id: frontmatter.id,
         content: body.trim_start_matches('\n').to_string(),
+        file_sha: content_sha256_hex(&encrypted_text),
         created_at: frontmatter.created_at,
         updated_at: frontmatter.updated_at,
         tags: frontmatter.tags,
@@ -6903,15 +6966,238 @@ mod tests {
     }
 
     #[test]
-    fn expected_sha_guard_detects_stale_base() {
-        let body = "第一版正文";
-        let sha = content_sha256_hex(body);
+    fn expected_file_sha_guard_detects_stale_base() {
+        let file = "---\nid: one\n---\n\n第一版正文\n";
+        let sha = content_sha256_hex(file);
 
-        assert!(ensure_expected_content_sha(body, None).is_ok());
-        assert!(ensure_expected_content_sha(body, Some(&sha)).is_ok());
+        assert!(ensure_expected_file_sha(file, None).is_ok());
+        assert!(ensure_expected_file_sha(file, Some(&sha)).is_ok());
 
-        let error = ensure_expected_content_sha("已被同步改写的正文", Some(&sha)).unwrap_err();
+        let error = ensure_expected_file_sha(
+            "---\nid: one\nauthor: 外部修改\n---\n\n第一版正文\n",
+            Some(&sha),
+        )
+        .unwrap_err();
         assert!(error.starts_with("STALE_BASE:"), "实际：{error}");
+    }
+
+    #[test]
+    fn public_fragment_updates_use_the_complete_file_as_the_save_baseline() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let vault = tempdir.path();
+        ensure_vault_layout(vault).unwrap();
+        let id = write_public_test_fragment(vault, "第一版正文");
+        let path = find_fragment_path(vault, &id).unwrap().unwrap();
+        let original = fs::read_to_string(&path).unwrap();
+        let stale_sha = content_sha256_hex(&original);
+        let externally_edited = original.replacen("source: test", "source: test\nauthor: 外部修改", 1);
+        fs::write(&path, &externally_edited).unwrap();
+        let before_failed_save = fs::read(&path).unwrap();
+
+        let error = update_public_fragment_in_vault(
+            vault,
+            &path,
+            "第二版正文",
+            vec!["inbox".into()],
+            Some(&stale_sha),
+        )
+        .unwrap_err();
+        assert_eq!(error, STALE_BASE_ERROR);
+        assert_eq!(fs::read(&path).unwrap(), before_failed_save);
+
+        let fresh_sha = content_sha256_hex(&fs::read_to_string(&path).unwrap());
+        let updated = update_public_fragment_in_vault(
+            vault,
+            &path,
+            "第二版正文",
+            vec!["inbox".into()],
+            Some(&fresh_sha),
+        )
+        .unwrap();
+        assert_eq!(updated.content, "第二版正文\n");
+        assert!(fs::read_to_string(&path).unwrap().contains("author: 外部修改"));
+
+        let updated = update_public_fragment_in_vault(
+            vault,
+            &path,
+            "无基线保存",
+            vec!["inbox".into()],
+            None,
+        )
+        .unwrap();
+        assert_eq!(updated.content, "无基线保存\n");
+    }
+
+    #[test]
+    fn lockbox_fragment_updates_use_the_encrypted_file_as_the_save_baseline() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let vault = tempdir.path();
+        let runtime = LockboxRuntime::default();
+        ensure_vault_layout(vault).unwrap();
+        setup_lockbox_in_vault(vault, &runtime, "correct horse").unwrap();
+        let fragment = create_lockbox_fragment_in_vault(
+            vault,
+            &runtime,
+            "第一版正文",
+            vec![LOCKBOX_TAG.into()],
+        )
+        .unwrap();
+        let path = find_lockbox_fragment_path(vault, &fragment.id)
+            .unwrap()
+            .unwrap();
+        let read_keys = require_unlocked_lockbox_read_keys(vault, &runtime).unwrap();
+        let stale_sha = content_sha256_hex(&fs::read_to_string(&path).unwrap());
+        let mut payload = read_lockbox_payload(&path, &read_keys).unwrap();
+        payload.frontmatter_raw = Some(format!(
+            "{}\nexternal: true\n",
+            payload.frontmatter_raw.as_deref().unwrap()
+        ));
+        let write_key = LockboxWriteKey::Master(read_keys.master_key.clone());
+        write_lockbox_payload(&path, &write_key, &payload).unwrap();
+        let before_failed_save = fs::read(&path).unwrap();
+
+        let error = update_lockbox_fragment_in_vault(
+            vault,
+            &path,
+            &read_keys,
+            "第二版正文",
+            vec![],
+            Some(&stale_sha),
+        )
+        .unwrap_err();
+        assert_eq!(error, STALE_BASE_ERROR);
+        assert_eq!(fs::read(&path).unwrap(), before_failed_save);
+
+        let fresh_sha = content_sha256_hex(&fs::read_to_string(&path).unwrap());
+        let updated = update_lockbox_fragment_in_vault(
+            vault,
+            &path,
+            &read_keys,
+            "第二版正文",
+            vec![],
+            Some(&fresh_sha),
+        )
+        .unwrap();
+        assert_eq!(updated.content, "第二版正文");
+
+        let updated = update_lockbox_fragment_in_vault(
+            vault,
+            &path,
+            &read_keys,
+            "无基线保存",
+            vec![],
+            None,
+        )
+        .unwrap();
+        assert_eq!(updated.content, "无基线保存");
+    }
+
+    #[test]
+    fn fragment_updates_enforce_protected_type_rules() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let vault = tempdir.path();
+        ensure_vault_layout(vault).unwrap();
+
+        let ordinary = vault.join("fragments/tests/ordinary.md");
+        fs::create_dir_all(ordinary.parent().unwrap()).unwrap();
+        write_t6_fragment(&ordinary, "ordinary", vec!["inbox"], "普通正文");
+        let updated = update_public_fragment_in_vault(
+            vault,
+            &ordinary,
+            "正文带 #outline",
+            vec!["inbox".into(), "outline".into()],
+            None,
+        )
+        .unwrap();
+        assert_eq!(derive_type(&updated.tags), None);
+
+        let outline = vault.join("fragments/tests/outline.md");
+        write_t6_fragment(&outline, "outline", vec!["inbox", "outline"], "- 根节点");
+        let updated = update_public_fragment_in_vault(
+            vault,
+            &outline,
+            "- 修改后的根节点",
+            vec!["inbox".into(), "document".into()],
+            None,
+        )
+        .unwrap();
+        assert_eq!(derive_type(&updated.tags), Some("outline"));
+        assert!(!updated.tags.iter().any(|tag| tag == "document"));
+    }
+
+    #[test]
+    fn protected_types_are_rejected_by_all_lockbox_entry_paths_without_changes() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let vault = tempdir.path();
+        let runtime = LockboxRuntime::default();
+        ensure_vault_layout(vault).unwrap();
+        setup_lockbox_in_vault(vault, &runtime, "correct horse").unwrap();
+        ensure_git_repo(vault).unwrap();
+        run_git(vault, &["config", "commit.gpgsign", "false"]).unwrap();
+        run_git(vault, &["add", "."]).unwrap();
+        run_git(vault, &["commit", "-m", "fixture"]).unwrap();
+
+        let status_before_create = run_git(vault, &["status", "--porcelain"]).unwrap();
+        let error = create_lockbox_fragment_in_vault(
+            vault,
+            &runtime,
+            "受保护内容",
+            vec![LOCKBOX_TAG.into(), "outline".into()],
+        )
+        .unwrap_err();
+        assert_eq!(error, LOCKBOX_TYPE_ERROR);
+        assert_eq!(run_git(vault, &["status", "--porcelain"]).unwrap(), status_before_create);
+
+        let update_source = vault.join("fragments/tests/update-outline.md");
+        fs::create_dir_all(update_source.parent().unwrap()).unwrap();
+        write_t6_fragment(
+            &update_source,
+            "update-outline",
+            vec!["inbox", "outline"],
+            "- 更新入口",
+        );
+        run_git(vault, &["add", "."]).unwrap();
+        run_git(vault, &["commit", "-m", "update fixture"]).unwrap();
+        let update_bytes = fs::read(&update_source).unwrap();
+        let update_status = run_git(vault, &["status", "--porcelain"]).unwrap();
+        let gate = lock_vault_gate(vault);
+        let error = move_public_fragment_content_to_lockbox_in_vault(
+            vault,
+            &runtime,
+            &gate,
+            &update_source,
+            "- 更新入口",
+            vec![LOCKBOX_TAG.into(), "outline".into()],
+        )
+        .unwrap_err();
+        drop(gate);
+        assert_eq!(error, LOCKBOX_TYPE_ERROR);
+        assert_eq!(fs::read(&update_source).unwrap(), update_bytes);
+        assert_eq!(run_git(vault, &["status", "--porcelain"]).unwrap(), update_status);
+
+        let move_source = vault.join("fragments/tests/move-flowchart.md");
+        write_t6_fragment(
+            &move_source,
+            "move-flowchart",
+            vec!["inbox", "flowchart"],
+            "A --> B",
+        );
+        run_git(vault, &["add", "."]).unwrap();
+        run_git(vault, &["commit", "-m", "move fixture"]).unwrap();
+        let move_bytes = fs::read(&move_source).unwrap();
+        let move_status = run_git(vault, &["status", "--porcelain"]).unwrap();
+        let gate = lock_vault_gate(vault);
+        let error = move_public_fragment_to_lockbox_in_vault(
+            vault,
+            &runtime,
+            &gate,
+            &move_source,
+        )
+        .unwrap_err();
+        drop(gate);
+        assert_eq!(error, LOCKBOX_TYPE_ERROR);
+        assert_eq!(fs::read(&move_source).unwrap(), move_bytes);
+        assert_eq!(run_git(vault, &["status", "--porcelain"]).unwrap(), move_status);
     }
 
     #[test]
@@ -7638,7 +7924,7 @@ mod tests {
             &path,
             "更新正文",
             vec!["alpha".to_string()],
-            Some(&content_sha256_hex("原正文\n")),
+            Some(&content_sha256_hex(&fs::read_to_string(&path).unwrap())),
         )
         .unwrap();
         assert_eq!(updated.content, "更新正文\n");

@@ -44,6 +44,7 @@ import {
   CONTENT_KIND_LABELS,
   countPlainTextCharacters,
   deriveKind,
+  stripProtectedTypeTags,
 } from "@/lib/content-kind"
 import { hasMarkdownImage, wantsLockbox } from "@/lib/lockbox"
 import { parseMindMapOutline } from "@/lib/mind-map-outline"
@@ -501,7 +502,10 @@ export function FragmentEditor({
     try {
       // type 是受保护的单值标签，正文里没有它：保存时必须把碎片原有的 type
       // 原样带回去，否则一次行内编辑就会把大纲 / 文档 / 笔记降级成普通碎片。
-      const extracted = normalizeTagList(["inbox", ...extractTags(nextContent)])
+      const extracted = stripProtectedTypeTags(
+        normalizeTagList(["inbox", ...extractTags(nextContent)]),
+        kind
+      )
       const tags = kind === "fragment" ? extracted : applyTypeTag(extracted, kind)
       const editsLockbox = Boolean(fragment?.lockbox)
       if ((editsLockbox || wantsLockbox(nextContent, tags)) && hasMarkdownImage(nextContent)) {
@@ -651,7 +655,10 @@ export function FragmentEditor({
   const characterCount = Array.from(content.replace(/\s/g, "")).length
   // 公开笔记里出现 #密匣 意味着保存时会加密搬家，提前亮出目的地
   const willRouteToLockbox =
-    !fragment?.lockbox && wantsLockbox(content, fragment?.tags ?? [])
+    !fragment?.lockbox &&
+    kind !== "outline" &&
+    kind !== "flowchart" &&
+    wantsLockbox(content, fragment?.tags ?? [])
   const lineCount = content.length > 0 ? content.split(/\r\n?|\n/).length : 0
   /** 大纲的只读导图视图：同一棵树的另一种读法，不是另一种文件。 */
   const outlineFile = isOutlineSurface

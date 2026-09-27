@@ -855,6 +855,7 @@ fn load_public_markdown_text(
         archived,
         frontmatter,
         body,
+        revision.clone(),
         revision,
     ))
 }
@@ -867,6 +868,9 @@ fn load_lockbox_markdown(
     lease.validate_session()?;
     let relative = crate::relative_path(vault, path).map_err(io_error)?;
     let safe_path = resolve_target_file(vault, &relative, &SearchScope::Lockbox)?;
+    note_source_read();
+    let encrypted_text = fs::read_to_string(&safe_path).map_err(fs_error)?;
+    let file_sha = crate::content_sha256_hex(&encrypted_text);
     let payload = crate::read_lockbox_payload(&safe_path, lease.read_keys())
         .map_err(|_| SearchError::Io { retryable: false })?;
     let revision = serde_json::to_vec(&payload)
@@ -881,6 +885,7 @@ fn load_lockbox_markdown(
         payload.frontmatter,
         &payload.body,
         revision,
+        file_sha,
     ))
 }
 
@@ -893,6 +898,7 @@ fn markdown_document(
     frontmatter: FragmentFrontmatter,
     body: &str,
     revision: String,
+    file_sha: String,
 ) -> LoadedSearchDocument {
     let content = body.trim_start_matches('\n').to_string();
     let kind = markdown_kind(&frontmatter.tags);
@@ -927,6 +933,7 @@ fn markdown_document(
     let fragment = Fragment {
         id: frontmatter.id,
         content,
+        file_sha,
         created_at: frontmatter.created_at,
         updated_at: frontmatter.updated_at,
         tags,

@@ -21,6 +21,10 @@ use std::{
 pub const LOCKBOX_TAG: &str = "密匣";
 /// 未整理碎片的默认标签，创建时总会带上。
 pub const INBOX_TAG: &str = "inbox";
+/// 内容类型标签，顺序即冲突时的判定优先级。
+pub const TYPE_TAGS: [&str; 4] = ["note", "outline", "flowchart", "document"];
+/// 只能由专用编辑器创建和维护的内容类型。
+pub const PROTECTED_TYPE_TAGS: [&str; 2] = ["outline", "flowchart"];
 pub const LIBRARY_FILENAME_MAX_BYTES: usize = 255;
 
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
@@ -186,7 +190,7 @@ pub fn create_public_fragment_in_vault(
         id,
         created_at: created_at.clone(),
         updated_at: created_at,
-        tags: normalize_tags(tags, true),
+        tags: normalize_type_tags(normalize_tags(tags, true)),
         category: None,
         ai_status: Some("none".to_string()),
         pinned: false,
@@ -227,6 +231,22 @@ pub fn normalize_tags(tags: Vec<String>, include_inbox: bool) -> Vec<String> {
     next_tags.sort();
     next_tags.dedup();
     next_tags
+}
+
+pub fn derive_type(tags: &[String]) -> Option<&'static str> {
+    TYPE_TAGS
+        .iter()
+        .copied()
+        .find(|type_tag| tags.iter().any(|tag| tag == type_tag))
+}
+
+pub fn normalize_type_tags(tags: Vec<String>) -> Vec<String> {
+    let selected = derive_type(&tags);
+    tags.into_iter()
+        .filter(|tag| {
+            !TYPE_TAGS.contains(&tag.as_str()) || selected.is_some_and(|kind| tag == kind)
+        })
+        .collect()
 }
 
 fn is_tag_edge_punctuation(char: char) -> bool {
@@ -377,6 +397,22 @@ mod tests {
     fn normalizes_tags_with_inbox() {
         let tags = normalize_tags(vec!["#备忘".into(), "备忘，".into()], true);
         assert_eq!(tags, vec!["inbox", "备忘"]);
+    }
+
+    #[test]
+    fn derives_and_normalizes_type_tags_by_priority() {
+        let tags = vec![
+            "topic".to_string(),
+            "document".to_string(),
+            "flowchart".to_string(),
+            "outline".to_string(),
+            "note".to_string(),
+        ];
+
+        assert_eq!(derive_type(&tags), Some("note"));
+        assert_eq!(normalize_type_tags(tags), vec!["topic", "note"]);
+        assert_eq!(derive_type(&["flowchart".into(), "document".into()]), Some("flowchart"));
+        assert_eq!(derive_type(&["topic".into()]), None);
     }
 
     #[test]

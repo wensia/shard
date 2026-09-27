@@ -14,6 +14,7 @@ import {
   Share2Icon,
   ShardZenIcon,
   Trash2Icon,
+  WorkflowIcon,
   type ShardIcon,
 } from "@/components/icons"
 import { useMemo, useState, type ReactNode } from "react"
@@ -403,7 +404,7 @@ export function FragmentCard({
                   openNextSurface(() => onExportImage?.(fragment))
                 }
               />
-              {!fragment.lockbox ? (
+              {!fragment.lockbox && fragment.kind !== "outline" && fragment.kind !== "flowchart" ? (
                 <CardMenuItem
                   disabled={fragment.archived}
                   icon={<LockKeyholeIcon aria-hidden="true" />}
@@ -452,9 +453,10 @@ export function FragmentCard({
   )
 }
 
-/** type 徽标：缺省的碎片没有徽标，其余三种各占一枚。 */
+/** type 徽标：缺省的碎片没有徽标，其余类型各占一枚。 */
 const TYPE_BADGES: Partial<Record<ContentKind, { icon: ShardIcon; label: string }>> = {
   document: { icon: FileTextIcon, label: CONTENT_KIND_LABELS.document },
+  flowchart: { icon: WorkflowIcon, label: CONTENT_KIND_LABELS.flowchart },
   note: { icon: FileTextIcon, label: CONTENT_KIND_LABELS.note },
   outline: { icon: GitBranchIcon, label: CONTENT_KIND_LABELS.outline },
 }

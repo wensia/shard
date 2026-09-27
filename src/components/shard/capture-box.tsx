@@ -41,6 +41,7 @@ import {
   CONTENT_KIND_LABELS,
   DOCUMENT_TYPE_TAG,
   OUTLINE_TYPE_TAG,
+  stripProtectedTypeTags,
 } from "@/lib/content-kind"
 import { wantsLockbox } from "@/lib/lockbox"
 import {
@@ -311,6 +312,11 @@ export const CaptureBox = forwardRef<CaptureBoxHandle, CaptureBoxProps>(function
       normalizeTagList(["inbox", ...extractTags(draft)]),
       OUTLINE_TYPE_TAG
     )
+    if (wantsLockbox(draft, tags)) {
+      toast.error("大纲不能放入密匣")
+      setIsEditorExpanded(true)
+      return
+    }
 
     try {
       await onCreate(draft, tags)
@@ -334,7 +340,10 @@ export const CaptureBox = forwardRef<CaptureBoxHandle, CaptureBoxProps>(function
     // `#标签` / `[[双链]]` 收敛成节点（getMarkdown 负责），收敛产生的 onChange
     // 要等下一次渲染才回到 content 上，直接用 content 会漏掉这一步。
     const draft = getCurrentEditorValue()
-    const draftTags = normalizeTagList(["inbox", ...extractTags(draft)])
+    const draftTags = stripProtectedTypeTags(
+      normalizeTagList(["inbox", ...extractTags(draft)]),
+      isDocumentType ? "document" : "fragment"
+    )
     if (wantsLockbox(draft, draftTags) && pendingImages.length > 0) {
       toast.error("密匣暂不支持图片附件：请先移除图片，再保存到密匣，避免附件写入公开 assets 目录。", { duration: Infinity })
       setIsEditorExpanded(true)
@@ -355,7 +364,10 @@ export const CaptureBox = forwardRef<CaptureBoxHandle, CaptureBoxProps>(function
       const next = buildContentWithPendingImages(draft, savedImages)
       if (!next) return
 
-      const nextTags = normalizeTagList(["inbox", ...extractTags(next)])
+      const nextTags = stripProtectedTypeTags(
+        normalizeTagList(["inbox", ...extractTags(next)]),
+        isDocumentType ? "document" : "fragment"
+      )
       const wasDocumentType = isDocumentType
       const created = await onCreate(
         next,

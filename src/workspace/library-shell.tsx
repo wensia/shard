@@ -182,7 +182,7 @@ interface LibraryShellProps {
     id: string,
     content: string,
     tags: string[],
-    expectedSha?: string
+    expectedFileSha?: string
   ) => Promise<Fragment>
   /** 冲突后「载入磁盘版本」需要父级重新拉取 fragments 才能拿到最新内容。 */
   onRefreshFragments?: () => Promise<unknown> | void
@@ -419,8 +419,8 @@ export function LibraryShell({
   }, [libraryTree, selection, trashDirectoryPath])
   const draftRef = useRef(draft)
   const lastSavedContentRef = useRef("")
-  /** 上次读到/存下正文的 SHA-256，保存时作为基线校验；null=暂缺（放行保存）。 */
-  const baseShaRef = useRef<string | null>(null)
+  /** 上次读到/存下完整文件的 SHA-256，保存时作为基线校验；null=暂缺（放行保存）。 */
+  const baseFileShaRef = useRef<string | null>(null)
   /** 用户在冲突提示里选择「放弃草稿」后，等待父级刷新换入磁盘版本。 */
   const pendingDiskReloadRef = useRef(false)
   const selectedNoteRef = useRef<Fragment | null>(selectedNote)
@@ -514,11 +514,7 @@ export function LibraryShell({
     draftRef.current = selectedNote.content
     lastSavedContentRef.current = selectedNote.content
     setSaveState("saved")
-    baseShaRef.current = null
-    const content = selectedNote.content
-    void sha256Hex(content).then((sha) => {
-      if (lastSavedContentRef.current === content) baseShaRef.current = sha
-    })
+    baseFileShaRef.current = selectedNote.fileSha ?? null
   }, [selectedNote?.id])
 
   // 磁盘版本变化（同步 pull / 外部编辑 / 冲突后放弃草稿）时换入新内容：
@@ -526,31 +522,24 @@ export function LibraryShell({
   useEffect(() => {
     const note = selectedNote
     if (!note) return
+    const clean =
+      draftRef.current === lastSavedContentRef.current &&
+      savePromiseRef.current === null
     if (
       note.content === lastSavedContentRef.current ||
       note.content === draftRef.current
     ) {
       pendingDiskReloadRef.current = false
+      if (clean) baseFileShaRef.current = note.fileSha ?? null
       return
     }
-    const clean =
-      draftRef.current === lastSavedContentRef.current &&
-      savePromiseRef.current === null
     if (!clean && !pendingDiskReloadRef.current) return
     pendingDiskReloadRef.current = false
     setDraft(note.content)
     draftRef.current = note.content
     lastSavedContentRef.current = note.content
     setSaveState("saved")
-    baseShaRef.current = null
-    void sha256Hex(note.content).then((sha) => {
-      if (
-        selectedNoteRef.current?.id === note.id &&
-        lastSavedContentRef.current === note.content
-      ) {
-        baseShaRef.current = sha
-      }
-    })
+    baseFileShaRef.current = note.fileSha ?? null
   }, [selectedNote])
 
   useEffect(() => {
@@ -606,15 +595,10 @@ export function LibraryShell({
           note.id,
           content,
           tags,
-          baseShaRef.current ?? undefined
+          baseFileShaRef.current ?? undefined
         )
         lastSavedContentRef.current = updated.content
-        baseShaRef.current = null
-        void sha256Hex(updated.content).then((sha) => {
-          if (lastSavedContentRef.current === updated.content) {
-            baseShaRef.current = sha
-          }
-        })
+        baseFileShaRef.current = updated.fileSha ?? null
         // 自动保存可能在用户继续输入时完成：只有草稿仍等于送出的内容才回写，
         // 否则会覆盖保存期间的新键入
         if (
@@ -637,7 +621,7 @@ export function LibraryShell({
           )
           if (keepMine) {
             // 清掉基线哈希放行一次强制保存；外层排空循环会立即重存
-            baseShaRef.current = null
+            baseFileShaRef.current = null
             setSaveState("dirty")
             return true
           }
@@ -896,7 +880,7 @@ export function LibraryShell({
       setDraft(note.content)
       draftRef.current = note.content
       lastSavedContentRef.current = note.content
-      baseShaRef.current = null
+      baseFileShaRef.current = note.fileSha ?? null
       setSaveState("saved")
       return
     }
@@ -2367,16 +2351,6 @@ function LibraryEmptyState({ message }: { message: string }) {
 
 function escapeMarkdownImageAlt(alt: string) {
   return alt.replace(/\\/g, "\\\\").replace(/]/g, "\\]")
-}
-
-async function sha256Hex(text: string): Promise<string> {
-  const digest = await crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(text)
-  )
-  return Array.from(new Uint8Array(digest))
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("")
 }
 
 export function formatSaveState(state: SaveState) {

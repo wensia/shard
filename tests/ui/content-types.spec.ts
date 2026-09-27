@@ -102,6 +102,17 @@ test.describe("速记框内容类型", () => {
     await expect(submitButton(page)).toBeDisabled()
   })
 
+  test("大纲含密匣标签时保留草稿并提示，不创建内容", async ({ page }) => {
+    await runOutlineCommand(page, "composer")
+    await page.keyboard.type("私密大纲 #密匣")
+    await page.keyboard.press("ControlOrMeta+Enter")
+
+    await expect(page.getByText("大纲不能放入密匣", { exact: true })).toBeVisible()
+    await expect.poll(() => createdFragments(page)).toEqual([])
+    await expect(outlineComposer(page)).toHaveCount(1)
+    await expect(outlineComposer(page).locator(OUTLINE_ROOT)).toHaveValue("私密大纲 #密匣")
+  })
+
   test("退出大纲恢复进入前的草稿，两边互不转换", async ({ page }) => {
     await fillEditor(page, "composer", "原有草稿")
     await focusEditor(page, "composer")
@@ -190,6 +201,14 @@ test.describe("时间线与瀑布流的类型卡片", () => {
     await expect(body.getByRole("img", { name: "思维导图预览" })).toBeVisible()
     // 卡片上看不到缩进列表的原文。
     await expect(target).not.toContainText("- 第一步")
+  })
+
+  test("大纲卡片操作菜单不提供移入密匣", async ({ page }) => {
+    const target = card(page, "card-outline")
+    await revealCard(target)
+    await target.getByRole("button", { name: "片段操作" }).click()
+
+    await expect(page.getByRole("menuitem", { name: "移入密匣", exact: true })).toHaveCount(0)
   })
 
   test("文档卡片只给标题、摘要与徽标，不渲染全文", async ({ page }) => {

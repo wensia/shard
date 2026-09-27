@@ -222,9 +222,9 @@ export function updateFragment(
   id: string,
   content: string,
   tags: string[],
-  expectedSha?: string
+  expectedFileSha?: string
 ) {
-  return invokeFragment("update_fragment", { id, content, tags, expectedSha })
+  return invokeFragment("update_fragment", { id, content, tags, expectedFileSha })
 }
 
 export function updateFragmentTags(id: string, tags: string[]) {

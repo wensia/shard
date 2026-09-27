@@ -3,11 +3,12 @@
  *
  * - `note`：资料库笔记的历史值，文件落在 `notes/`，不在碎片流里。
  * - `outline`：大纲，整篇正文是一棵树，存为纯缩进列表（不加围栏）。
+ * - `flowchart`：流程图，H2 之前仍按普通碎片正文渲染和编辑。
  * - `document`：文档，任意 Markdown，卡片只给标题与摘要。
  *
  * 顺序即 `deriveKind` 的判定顺序：一个碎片只能有一个 type，多写时取第一个。
  */
-export const TYPE_TAGS = ["note", "outline", "document"] as const
+export const TYPE_TAGS = ["note", "outline", "flowchart", "document"] as const
 
 export type TypeTag = (typeof TYPE_TAGS)[number]
 
@@ -19,6 +20,7 @@ export const DOCUMENT_TYPE_TAG: TypeTag = "document"
 /** 中文显示名：卡片徽标、速记框徽标与提示共用这一份，不各写各的。 */
 export const CONTENT_KIND_LABELS: Record<ContentKind, string> = {
   document: "文档",
+  flowchart: "流程图",
   fragment: "碎片",
   note: "笔记",
   outline: "大纲",
@@ -46,8 +48,20 @@ export function applyTypeTag(tags: readonly string[], typeTag: TypeTag): string[
   return [...tags.filter((tag) => !isTypeTag(tag)), typeTag]
 }
 
+export function stripProtectedTypeTags(
+  tags: readonly string[],
+  currentKind: ContentKind
+): string[] {
+  const nextKind = deriveKind(tags)
+  const normalized = nextKind === "fragment" ? [...tags] : applyTypeTag(tags, nextKind)
+  if (currentKind === "outline" || currentKind === "flowchart") {
+    return applyTypeTag(normalized, currentKind)
+  }
+  return normalized.filter((tag) => tag !== "outline" && tag !== "flowchart")
+}
+
 /**
- * 碎片流承载碎片、大纲、文档三种类型（产品框架 §3「只有一条时间线」）；
+ * 碎片流承载碎片、大纲、流程图、文档四种类型（产品框架 §3「只有一条时间线」）；
  * 资料库笔记仍由资料库负责，不进碎片流。
  */
 export function isStreamKind(kind: ContentKind) {

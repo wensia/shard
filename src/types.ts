@@ -23,6 +23,7 @@ export interface FragmentRelation {
 export interface Fragment {
   id: string
   content: string
+  fileSha?: string
   kind: ContentKind
   createdAt: string
   updatedAt: string
