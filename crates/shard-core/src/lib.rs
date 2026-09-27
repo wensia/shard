@@ -5,6 +5,7 @@
 //! 本 crate 不依赖 Tauri，也不碰 git：提交由 App 的检查点聚合接管。
 
 pub mod frontmatter;
+pub mod graph_region;
 pub mod search;
 
 use chrono::{DateTime, Local};
@@ -171,13 +172,24 @@ pub fn create_public_fragment_in_vault(
     tags: Vec<String>,
     source: &str,
 ) -> Result<PathBuf, String> {
+    let now = Local::now();
+    let id = new_fragment_id(&now);
+    create_public_fragment_with_id_in_vault(vault, content, tags, source, &now, &id)
+}
+
+pub fn create_public_fragment_with_id_in_vault(
+    vault: &Path,
+    content: &str,
+    tags: Vec<String>,
+    source: &str,
+    now: &DateTime<Local>,
+    id: &str,
+) -> Result<PathBuf, String> {
     let content = content.trim();
     if content.is_empty() {
         return Err("片段内容不能为空".to_string());
     }
 
-    let now = Local::now();
-    let id = new_fragment_id(&now);
     let created_at = now.to_rfc3339();
     let dir = vault
         .join("fragments")
@@ -186,8 +198,11 @@ pub fn create_public_fragment_in_vault(
     fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
 
     let path = dir.join(format!("{id}.md"));
+    if path.exists() {
+        return Err(format!("片段 {id} 已存在。"));
+    }
     let frontmatter = FragmentFrontmatter {
-        id,
+        id: id.to_string(),
         created_at: created_at.clone(),
         updated_at: created_at,
         tags: normalize_type_tags(normalize_tags(tags, true)),

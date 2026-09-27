@@ -12,11 +12,15 @@ use rsa::{
 };
 use serde::{Deserialize, Serialize};
 use shard_core::{
-    contains_lockbox_tag, create_public_fragment_in_vault, default_vault_path,
+    contains_lockbox_tag, create_public_fragment_in_vault,
+    create_public_fragment_with_id_in_vault, default_vault_path,
     derive_type, ensure_vault_layout, is_false, new_fragment_id, normalize_tag, normalize_tags,
     normalize_type_tags,
     frontmatter::{
         apply_frontmatter, parse_fragment, raw_from_frontmatter, write_fragment_update,
+    },
+    graph_region::{
+        find_region, render_region, replace_region, GraphRegionKind, MISSING_REGION_ERROR,
     },
     temporary_filename, unique_suffix, write_bytes_atomically, write_fragment_file,
     write_text_atomically, AppConfig, FragmentFrontmatter, FragmentRelation, LOCKBOX_TAG,
@@ -24,7 +28,7 @@ use shard_core::{
 };
 use sha2::{Digest, Sha256};
 use std::{
-    collections::{BTreeMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet, VecDeque},
     env, fs,
     fs::File,
     io::{BufRead, BufReader, Read, Write},
@@ -73,6 +77,7 @@ const CSV_GIT_PATHSPEC: &str = ":(glob,icase)**/*.csv";
 /// Per-vault write gates cannot serialize two concurrent switches to different paths.
 static VAULT_SELECTION_GATE: Mutex<()> = Mutex::new(());
 static LIBRARY_INDEX_REGISTRY: OnceLock<Arc<search_index::IndexRegistry>> = OnceLock::new();
+static GRAPH_CREATE_RECEIPTS: OnceLock<Mutex<GraphCreateReceiptCache>> = OnceLock::new();
 
 /// Shard 托管的 vault 根目录。提交、脏检测、检查点、计数必须共用这一份清单——
 /// 目录在多处手写曾造成 notes 完全不入 git 状态的盲区。
@@ -182,6 +187,55 @@ struct Fragment {
     related: Vec<FragmentRelation>,
     #[serde(skip_serializing_if = "Option::is_none")]
     conflict_of: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GraphFragmentResult {
+    fragment: Fragment,
+    graph: serde_json::Value,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum GraphFragmentKind {
+    Outline,
+    Flowchart,
+}
+
+impl GraphFragmentKind {
+    fn parse(value: &str) -> Result<Self, String> {
+        match value {
+            "outline" => Ok(Self::Outline),
+            "flowchart" => Ok(Self::Flowchart),
+            _ => Err("图形内容类型只能是 outline 或 flowchart。".to_string()),
+        }
+    }
+
+    fn type_tag(self) -> &'static str {
+        match self {
+            Self::Outline => "outline",
+            Self::Flowchart => "flowchart",
+        }
+    }
+
+    fn region_kind(self) -> GraphRegionKind {
+        match self {
+            Self::Outline => GraphRegionKind::Outline,
+            Self::Flowchart => GraphRegionKind::Flowchart,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct GraphCreateReceipt {
+    kind: GraphFragmentKind,
+    fragment_id: String,
+}
+
+#[derive(Default)]
+struct GraphCreateReceiptCache {
+    entries: HashMap<String, GraphCreateReceipt>,
+    order: VecDeque<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -1537,6 +1591,49 @@ fn delete_mind_map_in_vault(vault: &Path, id: &str, expected_revision: u64) -> R
         fs::remove_file(&last_good).map_err(|error| error.to_string())?;
     }
     Ok(())
+}
+
+#[tauri::command]
+async fn create_graph_fragment(
+    app: tauri::AppHandle,
+    kind: String,
+    operation_id: String,
+    graph: Option<serde_json::Value>,
+    tags: Vec<String>,
+) -> Result<GraphFragmentResult, String> {
+    run_blocking(move || {
+        let vault = ensure_vault_dirs(&app)?;
+        let _gate = lock_vault_gate(&vault);
+        create_graph_fragment_in_vault(&vault, &kind, &operation_id, graph, tags)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn read_graph_fragment(
+    app: tauri::AppHandle,
+    id: String,
+) -> Result<GraphFragmentResult, String> {
+    run_blocking(move || {
+        let vault = configured_vault_path(&app)?;
+        read_graph_fragment_in_vault(&vault, &id)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn write_graph_fragment(
+    app: tauri::AppHandle,
+    id: String,
+    graph: serde_json::Value,
+    expected_file_sha: Option<String>,
+) -> Result<GraphFragmentResult, String> {
+    run_blocking(move || {
+        let vault = ensure_vault_dirs(&app)?;
+        let _gate = lock_vault_gate(&vault);
+        write_graph_fragment_in_vault(&vault, &id, graph, expected_file_sha.as_deref())
+    })
+    .await
 }
 
 #[tauri::command]
@@ -4574,6 +4671,290 @@ fn write_mind_map_conflict(vault: &Path, file: &ShardMapFile) -> Result<PathBuf,
     Ok(path)
 }
 
+fn graph_create_receipt_key(vault: &Path, operation_id: &str) -> String {
+    format!("{}\0{operation_id}", vault.display())
+}
+
+fn graph_create_receipt(
+    vault: &Path,
+    operation_id: &str,
+) -> Option<GraphCreateReceipt> {
+    let key = graph_create_receipt_key(vault, operation_id);
+    let cache = GRAPH_CREATE_RECEIPTS.get_or_init(|| Mutex::new(GraphCreateReceiptCache::default()));
+    cache
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .entries
+        .get(&key)
+        .cloned()
+}
+
+fn remember_graph_create(
+    vault: &Path,
+    operation_id: &str,
+    receipt: GraphCreateReceipt,
+) {
+    const MAX_RECEIPTS: usize = 256;
+
+    let key = graph_create_receipt_key(vault, operation_id);
+    let cache = GRAPH_CREATE_RECEIPTS.get_or_init(|| Mutex::new(GraphCreateReceiptCache::default()));
+    let mut cache = cache
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if cache.entries.contains_key(&key) {
+        return;
+    }
+    while cache.order.len() >= MAX_RECEIPTS {
+        if let Some(expired) = cache.order.pop_front() {
+            cache.entries.remove(&expired);
+        }
+    }
+    cache.order.push_back(key.clone());
+    cache.entries.insert(key, receipt);
+}
+
+fn graph_kind_from_frontmatter(
+    frontmatter: &FragmentFrontmatter,
+) -> Result<GraphFragmentKind, String> {
+    match derive_type(&frontmatter.tags) {
+        Some("outline") => Ok(GraphFragmentKind::Outline),
+        Some("flowchart") => Ok(GraphFragmentKind::Flowchart),
+        _ => Err("目标不是大纲或流程图。".to_string()),
+    }
+}
+
+fn canonical_flow_text(file: &canvas_commands::CanvasFile) -> Result<String, String> {
+    let bytes = canvas_commands::canonical(file)?;
+    String::from_utf8(bytes).map_err(|error| error.to_string())
+}
+
+fn validate_graph_value(
+    vault: &Path,
+    kind: GraphFragmentKind,
+    graph: serde_json::Value,
+) -> Result<(serde_json::Value, String), String> {
+    match kind {
+        GraphFragmentKind::Outline => {
+            let file = serde_json::from_value::<ShardMapFile>(graph)
+                .map_err(|error| format!("大纲 JSON 无法解析：{error}"))?;
+            validate_mind_map_file(vault, &file)?;
+            let text = canonical_mind_map_text(&file)?;
+            let value = serde_json::to_value(file).map_err(|error| error.to_string())?;
+            Ok((value, text))
+        }
+        GraphFragmentKind::Flowchart => {
+            let file = serde_json::from_value::<canvas_commands::CanvasFile>(graph)
+                .map_err(|error| format!("流程图 JSON 无法解析：{error}"))?;
+            if file.kind != "shard.flow" {
+                return Err("流程图片段只能包含 shard.flow 数据。".to_string());
+            }
+            canvas_commands::validate_file(vault, &file)?;
+            let text = canonical_flow_text(&file)?;
+            let value = serde_json::to_value(file).map_err(|error| error.to_string())?;
+            Ok((value, text))
+        }
+    }
+}
+
+fn graph_value_for_create(
+    vault: &Path,
+    kind: GraphFragmentKind,
+    id: &str,
+    graph: Option<serde_json::Value>,
+    timestamp: &str,
+) -> Result<(serde_json::Value, String), String> {
+    match kind {
+        GraphFragmentKind::Outline => {
+            let mut file = serde_json::from_value::<ShardMapFile>(
+                graph.ok_or_else(|| "创建大纲时必须提供 graph。".to_string())?,
+            )
+            .map_err(|error| format!("大纲 JSON 无法解析：{error}"))?;
+            file.kind = SHARD_MAP_KIND.to_string();
+            file.schema_version = SHARD_MAP_SCHEMA_VERSION;
+            file.id = id.to_string();
+            file.created_at = timestamp.to_string();
+            file.updated_at = timestamp.to_string();
+            file.saved_with_app_version = env!("CARGO_PKG_VERSION").to_string();
+            file.revision = 1;
+            validate_mind_map_file(vault, &file)?;
+            let text = canonical_mind_map_text(&file)?;
+            let value = serde_json::to_value(file).map_err(|error| error.to_string())?;
+            Ok((value, text))
+        }
+        GraphFragmentKind::Flowchart => {
+            let mut file = match graph {
+                Some(graph) => serde_json::from_value::<canvas_commands::CanvasFile>(graph)
+                    .map_err(|error| format!("流程图 JSON 无法解析：{error}"))?,
+                None => canvas_commands::CanvasFile {
+                    kind: "shard.flow".to_string(),
+                    schema_version: 1,
+                    id: id.to_string(),
+                    title: "未命名流程图".to_string(),
+                    created_at: timestamp.to_string(),
+                    updated_at: timestamp.to_string(),
+                    revision: 0,
+                    nodes: Vec::new(),
+                    edges: Vec::new(),
+                },
+            };
+            file.id = id.to_string();
+            if file.kind != "shard.flow" {
+                return Err("流程图片段只能包含 shard.flow 数据。".to_string());
+            }
+            canvas_commands::validate_file(vault, &file)?;
+            let text = canonical_flow_text(&file)?;
+            let value = serde_json::to_value(file).map_err(|error| error.to_string())?;
+            Ok((value, text))
+        }
+    }
+}
+
+fn create_graph_fragment_in_vault(
+    vault: &Path,
+    kind: &str,
+    operation_id: &str,
+    graph: Option<serde_json::Value>,
+    tags: Vec<String>,
+) -> Result<GraphFragmentResult, String> {
+    let kind = GraphFragmentKind::parse(kind)?;
+    let operation_id = operation_id.trim();
+    if operation_id.is_empty() {
+        return Err("operation_id 不能为空。".to_string());
+    }
+    if let Some(receipt) = graph_create_receipt(vault, operation_id) {
+        if receipt.kind != kind {
+            return Err("同一 operation_id 不能用于不同的图形内容类型。".to_string());
+        }
+        return read_graph_fragment_in_vault(vault, &receipt.fragment_id);
+    }
+
+    let mut tags = normalize_tags(tags, true);
+    if contains_lockbox_tag(&tags) {
+        return Err(LOCKBOX_TYPE_ERROR.to_string());
+    }
+    tags.retain(|tag| !TYPE_TAGS.contains(&tag.as_str()));
+    tags.push(kind.type_tag().to_string());
+    tags.sort();
+    tags.dedup();
+
+    let now = Local::now();
+    let id = new_fragment_id(&now);
+    let timestamp = now.to_rfc3339();
+    let (graph, json_text) = graph_value_for_create(vault, kind, &id, graph, &timestamp)?;
+    let body = render_region(kind.region_kind(), &json_text);
+    let path = create_public_fragment_with_id_in_vault(
+        vault, &body, tags, "desktop", &now, &id,
+    )?;
+    remember_graph_create(
+        vault,
+        operation_id,
+        GraphCreateReceipt {
+            kind,
+            fragment_id: id,
+        },
+    );
+    Ok(GraphFragmentResult {
+        fragment: read_fragment(&path, vault, &dirty_paths(vault), None)?,
+        graph,
+    })
+}
+
+fn read_graph_fragment_in_vault(
+    vault: &Path,
+    id: &str,
+) -> Result<GraphFragmentResult, String> {
+    let path = find_fragment_path(vault, id)?
+        .ok_or_else(|| format!("找不到公开片段 {id}"))?;
+    let text = fs::read_to_string(&path).map_err(|error| error.to_string())?;
+    let parsed = parse_fragment(&text)?;
+    let kind = graph_kind_from_frontmatter(&parsed.frontmatter)?;
+    let region = find_region(&parsed.body, kind.region_kind())?;
+    let (graph, _) = validate_graph_value(
+        vault,
+        kind,
+        serde_json::from_str(&region.json_text)
+            .map_err(|error| format!("受管区域 JSON 无法解析：{error}"))?,
+    )?;
+    Ok(GraphFragmentResult {
+        fragment: read_fragment(&path, vault, &dirty_paths(vault), None)?,
+        graph,
+    })
+}
+
+fn write_graph_fragment_in_vault(
+    vault: &Path,
+    id: &str,
+    graph: serde_json::Value,
+    expected_file_sha: Option<&str>,
+) -> Result<GraphFragmentResult, String> {
+    let path = find_fragment_path(vault, id)?
+        .ok_or_else(|| format!("找不到公开片段 {id}"))?;
+    let current_text = fs::read_to_string(&path).map_err(|error| error.to_string())?;
+    ensure_expected_file_sha(&current_text, expected_file_sha)?;
+    let parsed = parse_fragment(&current_text)?;
+    let kind = graph_kind_from_frontmatter(&parsed.frontmatter)?;
+    let current_region = find_region(&parsed.body, kind.region_kind())?;
+    let current_graph = serde_json::from_str::<serde_json::Value>(&current_region.json_text)
+        .map_err(|error| format!("受管区域 JSON 无法解析：{error}"))?;
+
+    let (graph, json_text) = match kind {
+        GraphFragmentKind::Outline => {
+            let current = serde_json::from_value::<ShardMapFile>(current_graph)
+                .map_err(|error| format!("大纲 JSON 无法解析：{error}"))?;
+            validate_mind_map_file(vault, &current)?;
+            let mut next = serde_json::from_value::<ShardMapFile>(graph)
+                .map_err(|error| format!("大纲 JSON 无法解析：{error}"))?;
+            if next.id != id || next.kind != SHARD_MAP_KIND {
+                return Err("大纲 graph 的 id 或类型与碎片不一致。".to_string());
+            }
+            next.revision = current
+                .revision
+                .checked_add(1)
+                .ok_or_else(|| "导图版本超过上限。".to_string())?;
+            next.updated_at = Local::now().to_rfc3339();
+            next.saved_with_app_version = env!("CARGO_PKG_VERSION").to_string();
+            validate_mind_map_file(vault, &next)?;
+            let text = canonical_mind_map_text(&next)?;
+            let value = serde_json::to_value(next).map_err(|error| error.to_string())?;
+            (value, text)
+        }
+        GraphFragmentKind::Flowchart => {
+            let current = serde_json::from_value::<canvas_commands::CanvasFile>(current_graph)
+                .map_err(|error| format!("流程图 JSON 无法解析：{error}"))?;
+            if current.kind != "shard.flow" {
+                return Err("流程图片段只能包含 shard.flow 数据。".to_string());
+            }
+            canvas_commands::validate_file(vault, &current)?;
+            let mut next = serde_json::from_value::<canvas_commands::CanvasFile>(graph)
+                .map_err(|error| format!("流程图 JSON 无法解析：{error}"))?;
+            if next.id != id || next.kind != "shard.flow" {
+                return Err("流程图 graph 的 id 或类型与碎片不一致。".to_string());
+            }
+            next.revision = current
+                .revision
+                .checked_add(1)
+                .ok_or_else(|| "画布版本超过上限。".to_string())?;
+            next.updated_at = Local::now().to_rfc3339();
+            canvas_commands::validate_file(vault, &next)?;
+            let text = canonical_flow_text(&next)?;
+            let value = serde_json::to_value(next).map_err(|error| error.to_string())?;
+            (value, text)
+        }
+    };
+
+    let next_body = replace_region(&parsed.body, kind.region_kind(), &json_text)?;
+    let mut frontmatter = parsed.frontmatter;
+    frontmatter.updated_at = Local::now().to_rfc3339();
+    let raw = apply_frontmatter(&parsed.raw, &frontmatter)?;
+    let next_text = format!("---\n{raw}\n---{next_body}");
+    write_text_atomically(&path, &next_text)?;
+
+    Ok(GraphFragmentResult {
+        fragment: read_fragment(&path, vault, &dirty_paths(vault), None)?,
+        graph,
+    })
+}
+
 fn read_fragment(
     path: &Path,
     vault: &Path,
@@ -4665,8 +5046,19 @@ fn update_public_fragment_in_vault(
     expected_file_sha: Option<&str>,
 ) -> Result<Fragment, String> {
     let text = fs::read_to_string(path).map_err(|error| error.to_string())?;
-    ensure_expected_file_sha(&text, expected_file_sha)?;
     let parsed = parse_fragment(&text)?;
+    for kind in [GraphRegionKind::Outline, GraphRegionKind::Flowchart] {
+        match find_region(&parsed.body, kind) {
+            Ok(_) => {
+                return Err("大纲与流程图请在专用编辑器中保存。".to_string());
+            }
+            Err(error) if error == MISSING_REGION_ERROR => {}
+            Err(_) => {
+                return Err("大纲与流程图请在专用编辑器中保存。".to_string());
+            }
+        }
+    }
+    ensure_expected_file_sha(&text, expected_file_sha)?;
     let mut frontmatter = parsed.frontmatter;
     let tags = normalize_updated_type_tags(&frontmatter.tags, tags);
     frontmatter.tags = if tags.is_empty() {
@@ -6702,6 +7094,9 @@ pub fn run() {
             lock_lockbox,
             change_lockbox_password,
             reset_lockbox_password,
+            create_graph_fragment,
+            read_graph_fragment,
+            write_graph_fragment,
             create_fragment,
             update_fragment,
             update_fragment_tags,
@@ -8133,6 +8528,386 @@ mod tests {
             related: Vec::new(),
         };
         write_fragment_file(path, &frontmatter, body).unwrap();
+    }
+
+    fn outline_graph_fixture(node_count: usize) -> serde_json::Value {
+        assert!(node_count > 0);
+        let timestamp = "2026-09-28T08:00:00+08:00".to_string();
+        let root_id = "root".to_string();
+        let mut nodes = BTreeMap::new();
+        nodes.insert(
+            root_id.clone(),
+            ShardMapNode {
+                id: root_id.clone(),
+                parent_id: None,
+                sort_key: "m".to_string(),
+                text: "中心主题".to_string(),
+                note: None,
+                collapsed: false,
+                width: None,
+                created_at: timestamp.clone(),
+                updated_at: timestamp.clone(),
+                links: Vec::new(),
+                style: None,
+            },
+        );
+        for index in 1..node_count {
+            let id = format!("node-{index}");
+            nodes.insert(
+                id.clone(),
+                ShardMapNode {
+                    id,
+                    parent_id: Some(root_id.clone()),
+                    sort_key: format!("{index:04}"),
+                    text: format!("节点 {index}"),
+                    note: None,
+                    collapsed: false,
+                    width: None,
+                    created_at: timestamp.clone(),
+                    updated_at: timestamp.clone(),
+                    links: Vec::new(),
+                    style: None,
+                },
+            );
+        }
+        serde_json::to_value(ShardMapFile {
+            kind: SHARD_MAP_KIND.to_string(),
+            schema_version: SHARD_MAP_SCHEMA_VERSION,
+            id: "incoming-outline".to_string(),
+            title: "测试大纲".to_string(),
+            created_at: timestamp.clone(),
+            updated_at: timestamp,
+            saved_with_app_version: "test".to_string(),
+            revision: 0,
+            root_id,
+            has_protected_links: false,
+            nodes,
+            viewport: None,
+        })
+        .unwrap()
+    }
+
+    fn unique_graph_operation_id() -> String {
+        format!("test-{}", new_fragment_id(&Local::now()))
+    }
+
+    fn markdown_file_count(vault: &Path) -> usize {
+        let mut files = Vec::new();
+        collect_markdown_files(&vault.join("fragments"), &mut files).unwrap();
+        files.len()
+    }
+
+    fn without_updated_at(raw: &str) -> String {
+        raw.split('\n')
+            .filter(|line| !line.starts_with("updated_at:"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn creates_and_reads_outline_graph_fragments() {
+        let directory = tempfile::tempdir().unwrap();
+        let vault = directory.path();
+        ensure_vault_layout(vault).unwrap();
+
+        let created = create_graph_fragment_in_vault(
+            vault,
+            "outline",
+            &unique_graph_operation_id(),
+            Some(outline_graph_fixture(3)),
+            vec!["项目".into()],
+        )
+        .unwrap();
+        assert!(created.fragment.path.starts_with("fragments/"));
+        assert!(created.fragment.tags.iter().any(|tag| tag == "outline"));
+        assert!(created.fragment.tags.iter().any(|tag| tag == "inbox"));
+        assert_eq!(created.graph["id"], created.fragment.id);
+
+        let path = vault.join(&created.fragment.path);
+        let text = fs::read_to_string(path).unwrap();
+        let parsed = parse_fragment(&text).unwrap();
+        let region = find_region(&parsed.body, GraphRegionKind::Outline).unwrap();
+        assert_eq!(parsed.body.matches("```shardmap").count(), 1);
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&region.json_text).unwrap(),
+            created.graph
+        );
+
+        let read = read_graph_fragment_in_vault(vault, &created.fragment.id).unwrap();
+        assert_eq!(read.fragment.id, created.fragment.id);
+        assert_eq!(read.graph, created.graph);
+    }
+
+    #[test]
+    fn creates_and_reads_empty_flowchart_graph_fragments() {
+        let directory = tempfile::tempdir().unwrap();
+        let vault = directory.path();
+        ensure_vault_layout(vault).unwrap();
+
+        let created = create_graph_fragment_in_vault(
+            vault,
+            "flowchart",
+            &unique_graph_operation_id(),
+            None,
+            Vec::new(),
+        )
+        .unwrap();
+        let file = serde_json::from_value::<canvas_commands::CanvasFile>(created.graph.clone())
+            .unwrap();
+        canvas_commands::validate_file(vault, &file).unwrap();
+        assert_eq!(file.kind, "shard.flow");
+        assert_eq!(file.title, "未命名流程图");
+        assert!(file.nodes.is_empty());
+        assert!(file.edges.is_empty());
+
+        let read = read_graph_fragment_in_vault(vault, &created.fragment.id).unwrap();
+        assert_eq!(read.graph, created.graph);
+    }
+
+    #[test]
+    fn graph_fragment_creation_is_idempotent_by_operation_id() {
+        let directory = tempfile::tempdir().unwrap();
+        let vault = directory.path();
+        ensure_vault_layout(vault).unwrap();
+        let operation_id = unique_graph_operation_id();
+        let graph = outline_graph_fixture(2);
+
+        let first = create_graph_fragment_in_vault(
+            vault,
+            "outline",
+            &operation_id,
+            Some(graph.clone()),
+            Vec::new(),
+        )
+        .unwrap();
+        let second = create_graph_fragment_in_vault(
+            vault,
+            "outline",
+            &operation_id,
+            Some(graph),
+            vec!["ignored-on-retry".into()],
+        )
+        .unwrap();
+        assert_eq!(first.fragment.id, second.fragment.id);
+        assert_eq!(markdown_file_count(vault), 1);
+
+        let error = create_graph_fragment_in_vault(
+            vault,
+            "flowchart",
+            &operation_id,
+            None,
+            Vec::new(),
+        )
+        .unwrap_err();
+        assert!(error.contains("不同的图形内容类型"));
+        assert_eq!(markdown_file_count(vault), 1);
+    }
+
+    #[test]
+    fn graph_writes_preserve_frontmatter_and_body_outside_the_region() {
+        let directory = tempfile::tempdir().unwrap();
+        let vault = directory.path();
+        ensure_vault_layout(vault).unwrap();
+        let created = create_graph_fragment_in_vault(
+            vault,
+            "outline",
+            &unique_graph_operation_id(),
+            Some(outline_graph_fixture(2)),
+            Vec::new(),
+        )
+        .unwrap();
+        let path = vault.join(&created.fragment.path);
+        let original = fs::read_to_string(&path).unwrap();
+        let parsed = parse_fragment(&original).unwrap();
+        let region = find_region(&parsed.body, GraphRegionKind::Outline).unwrap();
+        let graph_region = &parsed.body[region.range.clone()];
+        let raw = format!("# 自定义注释\nauthor: 张三\n{}", parsed.raw);
+        let body = format!("\n\n区域前  \r\n{graph_region}\r\n区域后\t\n");
+        fs::write(&path, format!("---\n{raw}\n---{body}")).unwrap();
+        let before = fs::read_to_string(&path).unwrap();
+        let before_parsed = parse_fragment(&before).unwrap();
+        let before_region = find_region(&before_parsed.body, GraphRegionKind::Outline).unwrap();
+        let before_sha = content_sha256_hex(&before);
+        let mut next_graph = created.graph;
+        next_graph["title"] = serde_json::Value::String("修改后的大纲".into());
+
+        let written = write_graph_fragment_in_vault(
+            vault,
+            &created.fragment.id,
+            next_graph,
+            Some(&before_sha),
+        )
+        .unwrap();
+        let after = fs::read_to_string(&path).unwrap();
+        let after_parsed = parse_fragment(&after).unwrap();
+        let after_region = find_region(&after_parsed.body, GraphRegionKind::Outline).unwrap();
+
+        assert_eq!(without_updated_at(&before_parsed.raw), without_updated_at(&after_parsed.raw));
+        assert_eq!(
+            &before_parsed.body[..before_region.range.start],
+            &after_parsed.body[..after_region.range.start]
+        );
+        assert_eq!(
+            &before_parsed.body[before_region.range.end..],
+            &after_parsed.body[after_region.range.end..]
+        );
+        assert!(after.contains("# 自定义注释\nauthor: 张三"));
+        assert_ne!(written.fragment.file_sha, before_sha);
+        assert_eq!(written.graph["title"], "修改后的大纲");
+    }
+
+    #[test]
+    fn graph_writes_reject_stale_file_baselines_without_changes() {
+        let directory = tempfile::tempdir().unwrap();
+        let vault = directory.path();
+        ensure_vault_layout(vault).unwrap();
+        let created = create_graph_fragment_in_vault(
+            vault,
+            "outline",
+            &unique_graph_operation_id(),
+            Some(outline_graph_fixture(2)),
+            Vec::new(),
+        )
+        .unwrap();
+        let path = vault.join(&created.fragment.path);
+        let before = fs::read(&path).unwrap();
+
+        let error = write_graph_fragment_in_vault(
+            vault,
+            &created.fragment.id,
+            created.graph,
+            Some(&"0".repeat(64)),
+        )
+        .unwrap_err();
+        assert_eq!(error, STALE_BASE_ERROR);
+        assert_eq!(fs::read(path).unwrap(), before);
+    }
+
+    #[test]
+    fn oversized_outlines_are_rejected_before_create_or_write() {
+        let directory = tempfile::tempdir().unwrap();
+        let vault = directory.path();
+        ensure_vault_layout(vault).unwrap();
+
+        let error = create_graph_fragment_in_vault(
+            vault,
+            "outline",
+            &unique_graph_operation_id(),
+            Some(outline_graph_fixture(401)),
+            Vec::new(),
+        )
+        .unwrap_err();
+        assert!(error.contains("400"));
+        assert_eq!(markdown_file_count(vault), 0);
+
+        let created = create_graph_fragment_in_vault(
+            vault,
+            "outline",
+            &unique_graph_operation_id(),
+            Some(outline_graph_fixture(2)),
+            Vec::new(),
+        )
+        .unwrap();
+        let path = vault.join(&created.fragment.path);
+        let before = fs::read(&path).unwrap();
+        let mut oversized = outline_graph_fixture(401);
+        oversized["id"] = serde_json::Value::String(created.fragment.id.clone());
+        let error = write_graph_fragment_in_vault(
+            vault,
+            &created.fragment.id,
+            oversized,
+            Some(&created.fragment.file_sha),
+        )
+        .unwrap_err();
+        assert!(error.contains("400"));
+        assert_eq!(fs::read(path).unwrap(), before);
+    }
+
+    #[test]
+    fn text_saves_reject_managed_regions_but_allow_legacy_outlines() {
+        let directory = tempfile::tempdir().unwrap();
+        let vault = directory.path();
+        ensure_vault_layout(vault).unwrap();
+        let created = create_graph_fragment_in_vault(
+            vault,
+            "outline",
+            &unique_graph_operation_id(),
+            Some(outline_graph_fixture(2)),
+            Vec::new(),
+        )
+        .unwrap();
+        let graph_path = vault.join(&created.fragment.path);
+        let before = fs::read(&graph_path).unwrap();
+        let error = update_public_fragment_in_vault(
+            vault,
+            &graph_path,
+            "错误的文本覆盖",
+            created.fragment.tags,
+            None,
+        )
+        .unwrap_err();
+        assert_eq!(error, "大纲与流程图请在专用编辑器中保存。");
+        assert_eq!(fs::read(graph_path).unwrap(), before);
+
+        for (id, body) in [
+            (
+                "multiple-regions",
+                "```shardmap\n{}\n```\n```shardmap\n{}\n```",
+            ),
+            ("unclosed-region", "```shardmap\n{}"),
+        ] {
+            let path = vault.join(format!("fragments/tests/{id}.md"));
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            write_t6_fragment(&path, id, vec!["inbox", "outline"], body);
+            let before = fs::read(&path).unwrap();
+            let error = update_public_fragment_in_vault(
+                vault,
+                &path,
+                "错误的文本覆盖",
+                vec!["inbox".into(), "outline".into()],
+                None,
+            )
+            .unwrap_err();
+            assert_eq!(error, "大纲与流程图请在专用编辑器中保存。");
+            assert_eq!(fs::read(path).unwrap(), before);
+        }
+
+        let legacy_path = vault.join("fragments/tests/legacy-outline.md");
+        fs::create_dir_all(legacy_path.parent().unwrap()).unwrap();
+        write_t6_fragment(
+            &legacy_path,
+            "legacy-outline",
+            vec!["inbox", "outline"],
+            "- 根节点\n  - 子节点",
+        );
+        let updated = update_public_fragment_in_vault(
+            vault,
+            &legacy_path,
+            "- 新根节点\n  - 新子节点",
+            vec!["inbox".into()],
+            None,
+        )
+        .unwrap();
+        assert!(updated.content.contains("新根节点"));
+        assert!(updated.tags.iter().any(|tag| tag == "outline"));
+    }
+
+    #[test]
+    fn graph_creation_rejects_lockbox_tags_without_files() {
+        let directory = tempfile::tempdir().unwrap();
+        let vault = directory.path();
+        ensure_vault_layout(vault).unwrap();
+
+        let error = create_graph_fragment_in_vault(
+            vault,
+            "outline",
+            &unique_graph_operation_id(),
+            Some(outline_graph_fixture(2)),
+            vec![LOCKBOX_TAG.into()],
+        )
+        .unwrap_err();
+        assert_eq!(error, LOCKBOX_TYPE_ERROR);
+        assert_eq!(markdown_file_count(vault), 0);
     }
 
     #[test]

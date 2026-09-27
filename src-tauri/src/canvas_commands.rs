@@ -207,7 +207,7 @@ fn read_bytes(path: &Path) -> CanvasResult<Vec<u8>> {
     Ok(bytes)
 }
 
-fn canonical<T: Serialize>(value: &T) -> CanvasResult<Vec<u8>> {
+pub(crate) fn canonical<T: Serialize>(value: &T) -> CanvasResult<Vec<u8>> {
     let mut bytes = serde_json::to_vec_pretty(value).map_err(io)?;
     bytes.push(b'\n');
     if bytes.len() > MAX_BYTES {
@@ -335,7 +335,7 @@ pub(crate) fn validate_public_link(vault: &Path, link: &ShardDocumentLink) -> Ca
     validate_link(vault, link, &protected)
 }
 
-fn validate_file(vault: &Path, file: &CanvasFile) -> CanvasResult<()> {
+pub(crate) fn validate_file(vault: &Path, file: &CanvasFile) -> CanvasResult<()> {
     if !matches!(file.kind.as_str(), "shard.canvas" | "shard.flow") || file.schema_version != 1 {
         return Err("不支持的画布格式或版本。".into());
     }

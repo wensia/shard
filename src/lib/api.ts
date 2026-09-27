@@ -1,6 +1,7 @@
 import { invoke, isTauri } from "@tauri-apps/api/core"
 
 import { deriveKind } from "@/lib/content-kind"
+import type { CanvasFile } from "@/features/canvas/model"
 import type {
   CheckpointResult,
   CsvFileSummary,
@@ -28,6 +29,21 @@ type StoredLockboxSetupResult = Omit<LockboxSetupResult, "vault"> & {
 }
 type StoredLibraryMutationResult = Omit<LibraryMutationResult, "fragment"> & {
   fragment?: StoredFragment
+}
+
+export type GraphFragmentKind = "outline" | "flowchart"
+export type GraphFile = ShardMapFile | CanvasFile
+
+export interface GraphFragmentResult<TGraph extends GraphFile = GraphFile> {
+  fragment: Fragment
+  graph: TGraph
+}
+
+type StoredGraphFragmentResult<TGraph extends GraphFile = GraphFile> = Omit<
+  GraphFragmentResult<TGraph>,
+  "fragment"
+> & {
+  fragment: StoredFragment
 }
 
 export const DESKTOP_RUNTIME_MESSAGE =
@@ -83,6 +99,18 @@ function hydrateVaultState(state: StoredVaultState): VaultState {
 
 function invokeFragment(command: string, args?: Record<string, unknown>) {
   return desktopInvoke<StoredFragment>(command, args).then(hydrateFragment)
+}
+
+function invokeGraphFragment<TGraph extends GraphFile>(
+  command: string,
+  args?: Record<string, unknown>
+) {
+  return desktopInvoke<StoredGraphFragmentResult<TGraph>>(command, args).then(
+    (result): GraphFragmentResult<TGraph> => ({
+      ...result,
+      fragment: hydrateFragment(result.fragment),
+    })
+  )
 }
 
 function invokeVaultState(command: string, args?: Record<string, unknown>) {
@@ -216,6 +244,48 @@ export function deleteMindMap(id: string, expectedRevision: number) {
 
 export function createFragment(content: string, tags: string[]) {
   return invokeFragment("create_fragment", { content, tags })
+}
+
+export function createGraphFragment(
+  kind: "outline",
+  operationId: string,
+  graph: ShardMapFile,
+  tags: string[]
+): Promise<GraphFragmentResult<ShardMapFile>>
+export function createGraphFragment(
+  kind: "flowchart",
+  operationId: string,
+  graph: CanvasFile | null,
+  tags: string[]
+): Promise<GraphFragmentResult<CanvasFile>>
+export function createGraphFragment(
+  kind: GraphFragmentKind,
+  operationId: string,
+  graph: GraphFile | null,
+  tags: string[]
+) {
+  return invokeGraphFragment("create_graph_fragment", {
+    kind,
+    operationId,
+    graph,
+    tags,
+  })
+}
+
+export function readGraphFragment(id: string) {
+  return invokeGraphFragment("read_graph_fragment", { id })
+}
+
+export function writeGraphFragment<TGraph extends GraphFile>(
+  id: string,
+  graph: TGraph,
+  expectedFileSha?: string
+) {
+  return invokeGraphFragment<TGraph>("write_graph_fragment", {
+    id,
+    graph,
+    expectedFileSha,
+  })
 }
 
 export function updateFragment(
