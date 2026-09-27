@@ -20,7 +20,7 @@
 | **H1** | 受管 JSON 区域编解码（Rust + TS）与后端读写命令：幂等创建（稳定操作 ID）、读取、只替换区域的原子写、完整文件基线 | P1 | 已完成，施工令见 §5 |
 | **H2** | 大纲端到端：`/大纲` 提交创建 JSON 大纲（用编辑会话里的树，上限 400 节点，超限报错不截断）；打开大纲进入禅模式外壳中的现有导图编辑器（大纲/导图两视图）；卡片、搜索标题、快速打开识别 JSON 大纲；`FragmentEditor` 接入文件级基线；修正 H1 保护条件 | H1 | 已完成，施工令见 §6 |
 | **H2b** | 流程图端到端：`/流程图` 创建；`CanvasWorkspace` 存储适配后在禅模式外壳中打开；流程图卡片 | H2 | 已完成，施工令见 §7 |
-| H3 | type 筛选含流程图；后端搜索图内容投影（不索引 JSON 键名、坐标、ID）与搜索契约的 kind | H2b | 待细化 |
+| **H3** | 时间线按类型筛选；后端搜索的图内容投影、标题与 kind 修正（不索引 JSON 键名、坐标、ID） | H2b | 执行中，施工令见 §8 |
 | H4 | 旧 md 大纲批量升级（预检报告、正式导入器、确认成功的备份）；资料库时代 `notes/` 下 `.shardmap.json`/`.shardflow.json` 显式加入时间线；CLI 原生 JSON 读写与节点级修改 | H2 | 待细化 |
 | G1–G3 | 属性面板与 `.shard/properties.json`；SQLite 属性表与筛选；标签主题页表格视图 | P1 | 待细化 |
 
@@ -376,3 +376,78 @@ UI 改动遵守 AGENTS.md 与 `vendor/kiln`，复用现有组件与 token。
 ### 7.6 交付
 
 不提交 Git；测试改写的 `tests/evidence` 图片结束前恢复。报告写 `docs/dev/content-model-tasks-log/H2b.md`：改动文件与要点、开工前 UI 基线、验收结果（含测试数与偶发项复跑）、偏差及原因、遗留问题。
+
+## 8. H3 施工令：搜索投影与类型筛选
+
+前置：P0–H2b 已在本分支。调研结论（行号以当前分支为准）：
+
+- 后端 `src-tauri/src/search_sources.rs` 的 `markdown_kind`（约 1122 行）只认 note / outline / document，**带 `flowchart` 标签的 md 被判成 `Fragment`**。
+- `markdown_title`（约 1134 行）对大纲取首个非空行、其他类型也取首行。JSON 大纲和 JSON 流程图正文的首行是 ```` ```shardmap ```` / ```` ```shardflow ````，**搜索结果的标题就显示成这一行**。
+- `markdown_document` 把正文原样交给通用 Markdown 投影（`crates/shard-core/src/search/projection.rs`），围栏内的整段 JSON（`kind`、`id`、`sortKey`、时间戳、坐标）都进入可搜索文本（DocumentOnly 块）。
+- 独立 `.shardmap.json` 用 `mind_map_search_text`（只取节点 `text`），`.shardflow.json` 用 `canvas_commands::search_text`（节点文字、内嵌导图标题与节点、连线 `label`）。
+- `read_search_document_from_disk`（约 778 行）的白名单只允许 Fragment / Note / Outline / Document。
+- SQLite 派生索引（`src-tauri/src/search_index.rs`）缓存了标题与投影块；只改投影代码、文件内容不变时缓存**不会**失效。`INDEX_FORMAT` 变化会触发删库重建。
+- 契约 `SearchKind` 在 Rust 与 TS 两侧都已有 `flowchart`，搜索面板已有流程图图标和标签。
+- 时间线筛选 `FragmentFilters` 只有 tag / month / pinned，没有类型维度（`src/lib/fragment-space.ts`、`src/components/shard/fragment-workspace-controls.tsx`）。
+
+### 8.0 加固 H2b 的偶发用例
+
+`tests/ui/rich-surfaces.spec.ts` 中「流程图碎片冲突可载入磁盘版本」在高负载并行下失败、串行通过。改为等待可观察条件，不依赖固定延时；不改业务代码。
+
+### 8.1 后端：md 的类型与标题
+
+- `markdown_kind` 改用 `shard_core::derive_type` 判定，优先级与 `TYPE_TAGS` 一致（note > outline > flowchart > document），加入 `Flowchart`。公开与密匣两条 md 路径都用同一函数。
+- `markdown_title`：
+  - JSON 大纲：根节点文字（`nodes[rootId].text`），为空时「未命名大纲」；
+  - JSON 流程图：JSON 的 `title`，为空时「未命名流程图」；
+  - 旧式缩进列表大纲与其它类型保持现有规则。
+  - 区域用 `crates/shard-core/src/graph_region.rs` 的 `find_region` 识别；区域缺失、多个或 JSON 无法解析时退回现有规则，不报错、不丢结果。
+
+### 8.2 后端：图内容投影
+
+- JSON 大纲与 JSON 流程图的 md 不再把正文交给通用 Markdown 投影，而是生成图内容投影：
+  - 大纲：每个节点的 `text` 与 `note`；
+  - 流程图：复用 `canvas_commands::search_text` 的抽取规则（节点文字、连线标签、内嵌导图标题与节点）；
+  - 不含任何 JSON 键名、id、`sortKey`、时间戳、坐标。
+- 投影块用 DocumentOnly（卡片与编辑器都没有可高亮的正文），命中后按现有 `map_hit` 规则给出 `documentOnly`，前端直接打开对应宿主（H2/H2b 已接好）。
+- 保留 md 的标签、`objectId`（碎片 id）、`path`、`updatedAt` 等元数据，标签搜索照常可用。
+- 区域缺失或无法解析时退回通用 Markdown 投影（与现在一致）。
+- `read_search_document_from_disk` 的白名单对 `.md` 路径加入 `Flowchart`；`validate_loaded_identity` 等按 kind 比对的逻辑随之一致。
+- 把 `INDEX_FORMAT` 升为 `search-projection-assets-v3`，让已有缓存在升级后重建。同步更新被忽略的 5k 基准里按 kind 计数的断言，使其认得流程图。
+
+### 8.3 前端
+
+- `src/lib/fragment-search.ts` 的旧提供者（`markdownToSearchText`）对 JSON 大纲与流程图改用节点文字（经 `readOutlineContent` / `readFlowchartContent`），不再索引 JSON 原文。
+- `tests/ui/search-ipc-mock.ts` 的 `kindOf` 与 `titleOf` 跟后端规则对齐（认得流程图，JSON 标题同 8.1）。
+- **时间线按类型筛选**：
+  - `FragmentFilters` 增加 `kind`（全部、碎片、大纲、流程图、文档）；`matchesFragmentFilters` 按 `deriveKind` 过滤；筛选对话框增加一组类型选项，复用对话框里现有控件与 Kiln token，不新增视觉样式。
+  - 激活的类型筛选与现有筛选一样显示在筛选状态里，可清除。
+  - 筛选只影响碎片空间时间线，不改路由。
+
+### 8.4 测试
+
+- Rust（`search_sources.rs` 测试模块）：
+  - JSON 大纲 md：kind 为 Outline，标题是根节点文字，节点文字与备注可被搜到，`schemaVersion`、`sortKey`、节点 id 搜不到；
+  - JSON 流程图 md：kind 为 Flowchart，标题是 JSON `title`，节点文字与连线标签可被搜到，坐标与 id 搜不到；
+  - 旧式缩进列表大纲的 kind、标题、投影与现在一致；
+  - 带多个 type 标签的 md 按优先级判定；
+  - 区域损坏时退回通用投影且结果不丢。
+- TS 单元：`fragment-search.ts` 对两种图碎片的文本；`fragment-space.ts` 的类型筛选。
+- UI：时间线按类型筛选（选中「流程图」只剩流程图卡片，清除后恢复）；搜索 mock 下流程图结果显示 JSON 标题并打开流程图宿主。
+
+### 8.5 验收命令
+
+沿用 `playwright.worktree.config.ts`（1422，不提交），开工前先跑一遍下表 UI 用例记录基线。本机负载可能很高，偶发失败一律用 `--workers=1 --retries=0` 单独复跑并在报告中注明。
+
+| 命令 | 要求 |
+| --- | --- |
+| `cargo test -p shard-core -p shard -p shard-cli` | 全部通过 |
+| `pnpm test:unit` | 除 golden 夹具那一项既有失败外全部通过（quick-open 性能若波动须单独复跑，并确认「参考结果对照」那项通过） |
+| `pnpm build` | 通过 |
+| `pnpm build:markdown && pnpm exec playwright test -c playwright.worktree.config.ts tests/ui/search-editor-reveal.spec.ts tests/ui/search-fragment-reveal.spec.ts tests/ui/search-integration.spec.ts tests/ui/search-ipc.spec.ts tests/ui/search-navigation.spec.ts tests/ui/search-palette.spec.ts tests/ui/search-scope.spec.ts tests/ui/content-types.spec.ts tests/ui/rich-surfaces.spec.ts tests/ui/fragment-masonry.spec.ts tests/ui/fragment-create-motion.spec.ts tests/ui/organize-fragments.spec.ts tests/ui/wikilink.spec.ts` | 相对基线没有新增失败；新增用例全部通过 |
+| `rustfmt --edition 2021 --check crates/shard-core/src/frontmatter.rs crates/shard-core/src/graph_region.rs` | 通过 |
+| `git diff --check` | 通过 |
+
+### 8.6 交付
+
+不提交 Git；测试改写的 `tests/evidence` 图片结束前恢复。报告写 `docs/dev/content-model-tasks-log/H3.md`：改动文件与要点、开工前 UI 基线、验收结果（含测试数与偶发项复跑）、偏差及原因、遗留问题。
