@@ -62,6 +62,12 @@
   white-space: nowrap;
 }
 
+.hint {
+  color: var(--warning);
+  font-size: var(--text-tiny);
+  white-space: nowrap;
+}
+
 .controls {
   display: flex;
   min-width: 0;

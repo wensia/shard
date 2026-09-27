@@ -70,7 +70,10 @@ async function installMock(page: Page, withLockbox = false) {
               state.sha = `sha-${calls.filter(call => call.command === "apply_dataset_ops").length}`
               return snapshot()
             }
-            case "create_dataset": return snapshot()
+            case "create_dataset": {
+              state.table = { header: clone(args.header as string[]), rows: clone(args.rows as string[][]) }
+              return snapshot()
+            }
             default: throw new Error(`Unhandled Tauri test command: ${command}`)
           }
         },
@@ -119,6 +122,57 @@ async function dropCsv(page: Page, name: string, bytes: number[]) {
     element.dispatchEvent(new DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer: transfer }))
   }, { name, bytes })
 }
+
+test("内联表提取为 CSV 后只保留 src，原始编号和视图映射保持正确", async ({ page }) => {
+  const inline = [FENCE + "datatable", JSON.stringify({
+    title: "编号表",
+    columns: [{ key: "code", label: "编号", type: "number" }, { key: "name", label: "名称" }],
+    rows: [{ code: "00123", name: "张三" }],
+    view: { sort: { key: "code", direction: "asc" }, group: "name", filter: "张" },
+  }), FENCE].join("\n")
+  await fillEditor(page, "composer", inline)
+  const block = page.locator('[data-shard-editor="composer"] [data-datatable="block"]')
+  await expect(block).toHaveAttribute("data-datatable-editable", "true")
+  await block.getByRole("button", { name: "更多操作" }).click()
+  await page.getByRole("menuitem", { name: "提取为 CSV" }).click()
+  const dialog = page.getByRole("dialog", { name: "提取为 CSV" })
+  await expect(dialog).toContainText("编号表.csv · 1 行 · 2 列")
+  await dialog.getByRole("button", { name: "确认提取" }).click()
+  await expect.poll(() => calls(page, "create_dataset")).toHaveLength(1)
+  expect((await calls(page, "create_dataset"))[0].args).toEqual({
+    title: "编号表", header: ["编号", "名称"], rows: [["00123", "张三"]], primaryKey: null,
+  })
+  await expect.poll(() => readEditor(page, "composer")).toContain('"src": "datasets/阅读记录.csv"')
+  const source = await readEditor(page, "composer")
+  expect(source).not.toContain('"rows"')
+  expect(source).not.toContain('"columns"')
+  expect(source).toContain('"key": "c0"')
+  expect(source).toContain('"group": "c1"')
+  await expect(block).toContainText("00123")
+})
+
+test("私密速记框的内联表不显示提取入口", async ({ page }) => {
+  const inline = ["#密匣", "", FENCE + "datatable", JSON.stringify({
+    columns: [{ key: "a", label: "名称" }], rows: [{ a: "私密" }],
+  }), FENCE].join("\n")
+  await fillEditor(page, "composer", inline)
+  const block = page.locator('[data-shard-editor="composer"] [data-datatable="block"]')
+  await expect(block).toBeVisible()
+  await expect(block.getByRole("button", { name: "更多操作" })).toHaveCount(0)
+})
+
+test("超过软阈值的内联表提示提取，但仍可编辑", async ({ page }) => {
+  const inline = [FENCE + "datatable", JSON.stringify({
+    columns: [{ key: "a", label: "名称" }],
+    rows: Array.from({ length: 201 }, (_, index) => ({ a: `记录 ${index + 1}` })),
+  }), FENCE].join("\n")
+  await fillEditor(page, "composer", inline)
+  const block = page.locator('[data-shard-editor="composer"] [data-datatable="block"]')
+  await expect(block).toHaveAttribute("data-datatable-editable", "true")
+  const hint = block.getByText("数据较多，建议提取为 CSV")
+  await expect(hint).toBeVisible()
+  expect(await hint.evaluate((element) => getComputedStyle(element).color)).toBeTruthy()
+})
 
 test("拖放 GBK CSV 显示编码预览并导入带稳定 ID 的中文数据", async ({ page }) => {
   await dropCsv(page, "通讯录.csv", [0xD0, 0xD5, 0xC3, 0xFB, 0x0A, 0xD5, 0xC5, 0xC8, 0xFD, 0x0A])

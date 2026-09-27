@@ -30,6 +30,7 @@ export interface ShardBlockEditorProps {
   onExit: () => void
   /** 宿主编辑器 id，组件需要区分多实例时用。 */
   editorId: string
+  allowDatasetActions: () => boolean
 }
 
 export interface ShardBlockPreviewProps {
@@ -157,8 +158,8 @@ registerBlockUI(MIND_MAP_FENCE_LANGUAGE, {
 // 数据表
 // ---------------------------------------------------------------------------
 
-function DatatableBlockEditor({ onChange, readOnly, source }: ShardBlockEditorProps) {
-  return <DatatableBlock onChange={onChange} readOnly={readOnly} source={source} />
+function DatatableBlockEditor({ allowDatasetActions, onChange, readOnly, source }: ShardBlockEditorProps) {
+  return <DatatableBlock allowDatasetActions={allowDatasetActions} onChange={onChange} readOnly={readOnly} source={source} />
 }
 
 function DatatableBlockPreview({ source }: ShardBlockPreviewProps) {

@@ -458,6 +458,7 @@ export const ShardRichEditor = forwardRef<ShardRichEditorHandle, ShardRichEditor
     if (editor) {
       editor.storage.csvEmbed.maxRows =
         variant === "zen" || variant === "library" ? 50 : 10
+      editor.storage.shardBlock.allowDatasetActions = () => allowDatasetActionsRef.current
     }
 
     useEffect(() => {

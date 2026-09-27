@@ -11,15 +11,29 @@ export interface ShardBlockAttributes {
   source: string
 }
 
+export interface ShardBlockStorage {
+  allowDatasetActions: () => boolean
+}
+
+declare module "@tiptap/core" {
+  interface Storage {
+    shardBlock: ShardBlockStorage
+  }
+}
+
 /**
  * 通用围栏块：大纲块、数据表以及未来插件的块都走这一个节点，
  * NodeView 与卡片渲染按 `lang` 从块注册表分派（技术方案 §4.4）。
  */
-export const ShardBlock = Node.create({
+export const ShardBlock = Node.create<Record<string, never>, ShardBlockStorage>({
   name: "shardBlock",
   group: "block",
   atom: true,
   draggable: true,
+
+  addStorage() {
+    return { allowDatasetActions: () => true }
+  },
 
   addAttributes() {
     return {

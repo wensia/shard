@@ -6,6 +6,7 @@ import {
   datatableColumnsFromCsv,
   datatableRowsFromCsv,
   datatableToCsv,
+  datatableToDatasetExtraction,
   filterDatatableEntries,
   formatDatatableCell,
   groupDatatableEntries,
@@ -154,6 +155,12 @@ describe("数据表格式化与写回", () => {
 
   it("输入框文本按列类型收敛", () => {
     expect(coerceDatatableValue("12", "number")).toBe(12)
+    for (const value of ["00123", "1.20", "9007199254740993", "1e3", "Infinity"]) {
+      expect(coerceDatatableValue(value, "number")).toBe(value)
+    }
+    expect(coerceDatatableValue(" 12 ", "number")).toBe(12)
+    expect(coerceDatatableValue("0.5", "percent")).toBe(0.5)
+    expect(coerceDatatableValue("-0", "currency")).toBe("-0")
     expect(coerceDatatableValue("abc", "number")).toBe("abc")
     expect(coerceDatatableValue("是", "boolean")).toBe(true)
     expect(coerceDatatableValue("  ", "text")).toBe("")
@@ -189,6 +196,29 @@ describe("数据表格式化与写回", () => {
       { key: "c1", label: "列 2" },
     ])
     expect(datatableRowsFromCsv([["张三"]], csvColumns)).toEqual([{ c0: "张三", c1: "" }])
+  })
+
+  it("提取保留原始字符串与行序，并把保存的视图键映射到 CSV 列序号", () => {
+    const extraction = datatableToDatasetExtraction({
+      title: "账本",
+      columns: [{ key: "a", label: "编号" }, { key: "b", label: "金额" }, { key: "c", label: "金额" }],
+      rows: [{ a: "00123", b: 1.2, c: false }, { a: null, c: true }],
+      view: { sort: { key: "b", direction: "desc" }, group: "a", filter: "001" },
+    })
+    expect(extraction).toEqual({
+      header: ["编号", "b", "c"], rows: [["00123", "1.2", "false"], ["", "", "true"]],
+      view: { sort: { key: "c1", direction: "desc" }, group: "c0", filter: "001" },
+    })
+  })
+
+  it("表头回退后仍冲突或含对象时阻止提取并标明位置", () => {
+    expect(() => datatableToDatasetExtraction({
+      columns: [{ key: "a", label: "重复" }, { key: "b", label: "重复" }, { key: "c", label: "a" }], rows: [],
+    })).toThrow("表头名称为空或重复")
+    expect(() => datatableToDatasetExtraction({
+      columns: [{ key: "a", label: "甲" }, { key: "b", label: "乙" }],
+      rows: [{ a: [], b: {} }],
+    })).toThrow("第 1 行第 1 列（甲）、第 1 行第 2 列（乙）")
   })
 })
 
