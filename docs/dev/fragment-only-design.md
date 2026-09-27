@@ -211,7 +211,7 @@ Hermes 与 OpenClaw 可以同时连接同一个库，各自有连接身份与操
 - 主字体使用本地打包的 Noto Sans SC，消费现有字体 token；断网冷启动不依赖 CDN 才能正常排版。
 - 消费 `--background`、`--card`、`--foreground`、`--muted-foreground`、`--primary`、`--success`、`--info`、`--warning` 与 `--destructive`，间距、控件和表面圆角复用 Kiln token，不另写原始值。
 - 主动作、普通动作、低频元信息保持三层；一个视图只有一个主要动作。控件使用项目共享组件，hover/busy 不改变尺寸。
-- 保持 Shard 已确定的 pointer-first 选择：无全局 Tab 轮转与焦点框，保留编辑器局部 Tab、鼠标输入、程序化焦点恢复、中文输入法与业务选中状态。
+- 保持 Shard 的 managed-navigation 焦点策略：Tab 归编辑器，F6 切换工作区域，指针操作后不画焦点框；保留鼠标输入、程序化焦点恢复、中文输入法与业务选中状态。
 - 设置内容区内部滚动，头尾操作保持可见；窄窗和短窗口保留退出及保存入口，不让列表数量撑大对话框。
 
 ## 7. 实施与验收

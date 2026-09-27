@@ -19,7 +19,7 @@
 
 /* 格子：--card 底色铺在画布上，靠格间距露出的画布分隔（kiln：白色表面靠留白分隔，不画线）；
  * 整页月历里透明格会让日与日之间失去边界。非本月格整体退到 muted。 */
-.cell { display: flex; min-width: 0; min-height: 0; flex-direction: column; gap: var(--space-1); padding: var(--space-1); border-radius: var(--radius-control); background: var(--card); overflow: hidden; }
+.cell { --shard-focus-offset: -2px; display: flex; min-width: 0; min-height: 0; flex-direction: column; gap: var(--space-1); padding: var(--space-1); border-radius: var(--radius-control); background: var(--card); overflow: hidden; }
 .cell[data-outside="true"] { opacity: var(--shard-alpha-55); }
 .dayButton { align-self: flex-start; display: inline-flex; min-width: var(--space-6); height: var(--space-6); align-items: center; justify-content: center; padding: 0 var(--space-1); border-radius: var(--radius-control); background: transparent; color: var(--foreground); cursor: default; }
 .cell[data-outside="true"] .dayButton { color: var(--muted-foreground); }

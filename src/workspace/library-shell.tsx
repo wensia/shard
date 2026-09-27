@@ -1753,6 +1753,7 @@ export function LibraryShell({
           aria-busy={busyAction !== null || isLoading ? true : undefined}
           aria-label="资料库目录"
           className={styles.noteListPane}
+          data-focus-region="library-tree"
           data-mobile-hidden={mobilePane === "editor" ? "true" : undefined}
         >
           {/* 标题栏工具条：根目录 + 新建操作直接放进 Overlay 标题栏，空白处保持可拖拽 */}
@@ -1909,6 +1910,7 @@ export function LibraryShell({
           aria-label="资料库查看器"
           aria-busy={saveState === "saving" || busyAction !== null ? true : undefined}
           className={styles.editorPane}
+          data-focus-region="library-viewer"
           data-mobile-hidden={mobilePane === "list" ? "true" : undefined}
           onKeyDown={directoryScope ? fileSelection.onKeyDown : undefined}
         >
@@ -2082,6 +2084,7 @@ export function LibraryShell({
         <aside
           aria-label="文档检查器"
           className={styles.inspectorSlot}
+          data-focus-region="library-inspector"
           data-library-inspector-slot
         >
           <div

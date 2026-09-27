@@ -1,5 +1,6 @@
 /* 幕布式文档排版；字号与阅读宽度局限在内容编辑器，壳层继续消费 Kiln 控件规格。 */
 .viewport {
+  --shard-focus-offset: -2px;
   container-type: inline-size;
   flex: 1 1 auto;
   min-width: 0;

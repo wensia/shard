@@ -2504,7 +2504,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
         className={styles.appShell}
         data-sidebar-collapsed={isSidebarCollapsed}
       >
-        <div className={styles.sidebarSlot}>
+        <div className={styles.sidebarSlot} data-focus-region="sidebar">
           {isSidebarCollapsed ? null : (
             <SidebarNav
               fragments={publicOnlyFragments}
@@ -2523,6 +2523,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
           {isSidebarCollapsed && route.space !== "calendar" ? (
             <div
               className={styles.collapsedTitlebar}
+              data-focus-region="sidebar-toggle"
               data-sidebar-collapsed-titlebar
               data-tauri-drag-region="true"
             >
@@ -2534,7 +2535,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
               />
             </div>
           ) : null}
-          <div className={styles.workspaceContent}>
+          <div className={styles.workspaceContent} data-focus-region="content">
             <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
             {navigationOrigin && !isSearchModeActive && !searchSession ? (
               <div className="shard-content-inset shrink-0 py-1">
@@ -2661,7 +2662,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
             </div>
           </div>
         </div>
-        <div className={styles.bottomTabsSlot}>
+        <div className={styles.bottomTabsSlot} data-focus-region="bottom-tabs">
           <BottomTabs
             fragments={publicOnlyFragments}
             onHelp={showHelp}
@@ -2675,7 +2676,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
           />
         </div>
 
-        <div className={styles.statusBarSlot}>
+        <div className={styles.statusBarSlot} data-focus-region="status-bar">
           <StatusBar
             git={git}
             isCreating={isCreating}

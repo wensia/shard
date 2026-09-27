@@ -1526,11 +1526,11 @@ test("mind map workspace suppresses default Tab traversal without creating topic
   await expect(page.getByLabel("思维导图编辑器")).toBeVisible()
 
   const initialCount = await page.locator("[data-mind-map-node]").count()
-  // 无节点选择时不再通过 Tab 轮转全局工作区控件。
+  // managed-navigation：工具栏控件恢复原生 Tab 轮转，不触发导图命令。
   const exitButton = page.getByRole("button", { name: "退出思维导图", exact: true })
   await exitButton.focus()
   await page.keyboard.press("Tab")
-  await expect(exitButton).toBeFocused()
+  await expect(exitButton).not.toBeFocused()
   await page.keyboard.press("Shift+Tab")
   await expect(exitButton).toBeFocused()
   await expect(page.locator("[data-mind-map-node]")).toHaveCount(initialCount)

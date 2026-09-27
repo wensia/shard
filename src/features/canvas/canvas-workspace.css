@@ -216,7 +216,7 @@
 .shard-canvas-tone-option:focus-visible { outline: 1px solid var(--ring); outline-offset: 1px; }
 .shard-canvas-tone-option:disabled { opacity: 0.5; }
 .shard-canvas-tone-options span { display: flex; justify-content: center; align-items: center; height: var(--control-height-sm); border: 1px solid var(--border-visible); border-radius: var(--radius-control); background: var(--card); }
-.shard-canvas-tone-options [data-tone="accent"] span { color: var(--primary); border-color: var(--primary); background: var(--primary-subtle); }
+.shard-canvas-tone-options [data-tone="accent"] span { color: var(--primary-text); border-color: var(--primary); background: var(--primary-subtle); }
 .shard-canvas-tone-options [data-tone="success"] span { color: var(--success); border-color: var(--success); background: var(--success-bg); }
 .shard-canvas-tone-options [data-tone="warning"] span { color: var(--warning); border-color: var(--warning); background: var(--warning-bg); }
 .shard-canvas-tone-options svg { width: var(--shard-icon-size-sm); height: var(--shard-icon-size-sm); }
@@ -259,7 +259,7 @@
 .shard-canvas-outline-toggle:focus-visible { outline: 1px solid var(--ring); outline-offset: -1px; }
 .shard-canvas-outline-toggle svg { width: var(--shard-icon-size-sm); height: var(--shard-icon-size-sm); }
 .shard-canvas-outline-row { display: block; flex: 1; min-width: 0; height: var(--control-height-sm); padding-inline: var(--space-2); text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border-radius: var(--radius-control); }
-.shard-canvas-outline-row.is-selected { color: var(--primary); background: var(--primary-subtle); }
+.shard-canvas-outline-row.is-selected { color: var(--primary-text); background: var(--primary-subtle); }
 .shard-canvas-zoom { position: absolute; left: var(--space-3); bottom: var(--space-3); gap: var(--space-1); }
 .shard-canvas-zoom-value { min-width: calc(var(--control-height-sm) * 2); font-variant-numeric: tabular-nums; }
 .shard-canvas-empty { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); color: var(--muted-foreground); text-align: center; pointer-events: none; max-width: 24rem; }

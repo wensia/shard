@@ -1,4 +1,5 @@
-.table-workspace { display: flex; flex-direction: column; width: 100%; height: 100%; min-width: 0; min-height: 0; overflow: hidden; background: var(--background); color: var(--foreground); font-family: "Noto Sans SC", var(--font-sans); font-size: var(--text-body); }
+/* 工具栏、视图标签、数据行都贴着 overflow 容器，键盘焦点环整体内收 */
+.table-workspace { --shard-focus-offset: -2px; display: flex; flex-direction: column; width: 100%; height: 100%; min-width: 0; min-height: 0; overflow: hidden; background: var(--background); color: var(--foreground); font-family: "Noto Sans SC", var(--font-sans); font-size: var(--text-body); }
 .table-workspace-header, .table-group-bar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-4); border-bottom: 1px solid var(--border); flex-shrink: 0; }
 .table-workspace-header { justify-content: space-between; min-height: var(--space-12); }
 .table-workspace-header > strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--text-page-title); font-weight: var(--weight-semibold); }
@@ -9,8 +10,8 @@
 .table-toolbar-divider { width: 1px; height: var(--space-4); background: var(--border); flex-shrink: 0; margin-inline: var(--space-1); }
 .table-workspace-toolbar [data-slot="button"], .table-view-bar [data-slot="button"] { border-color: transparent; box-shadow: none; background: transparent; color: var(--muted-foreground); }
 .table-workspace-toolbar [data-slot="button"]:hover, .table-new-view:hover { background: var(--muted); color: var(--foreground); }
-.table-workspace-toolbar [data-slot="button"][aria-pressed="true"], .table-workspace-toolbar [data-slot="button"][aria-expanded="true"] { color: var(--primary); background: var(--table-row-selected); }
-.table-workspace-toolbar .table-add-record { color: var(--primary); }
+.table-workspace-toolbar [data-slot="button"][aria-pressed="true"], .table-workspace-toolbar [data-slot="button"][aria-expanded="true"] { color: var(--primary-text); background: var(--table-row-selected); }
+.table-workspace-toolbar .table-add-record { color: var(--primary-text); }
 .table-workspace-toolbar svg, .table-view-bar svg { width: var(--space-4); height: var(--space-4); }
 .table-workspace-toolbar [data-slot="button"]:focus-visible, .table-view-bar [data-slot="button"]:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
 .table-view-bar { display: flex; flex-shrink: 0; align-items: center; gap: 0; min-width: 0; padding-inline: var(--space-3); background: var(--table-header); border-bottom: 1px solid var(--border); }
@@ -20,7 +21,7 @@
 .table-view-tab-group[data-active="false"]:is(:hover, :focus-within):not(:has(.table-view-tab:disabled)) { background: var(--table-row-hover); color: var(--foreground); }
 .table-view-tab-group[data-active="true"], .table-view-tab-group:has(.table-view-menu[aria-expanded="true"]) { background: var(--card); color: var(--foreground); }
 .table-view-tab { display: flex; align-items: center; gap: var(--space-2); position: relative; flex-shrink: 0; max-width: calc(var(--space-12) * 5); height: var(--table-pagination-height); padding-inline: var(--space-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 0; border-radius: 0; background: transparent; color: inherit; font: inherit; font-weight: var(--weight-medium); cursor: pointer; }
-.table-view-tab[aria-selected="true"] > svg { color: var(--primary); }
+.table-view-tab[aria-selected="true"] > svg { color: var(--primary-text); }
 .table-view-tab > span { overflow: hidden; text-overflow: ellipsis; }
 .table-view-bar .table-view-menu, .table-view-bar .table-view-menu:hover, .table-view-bar .table-view-menu[aria-expanded="true"] { flex-shrink: 0; height: var(--table-pagination-height); border-radius: 0; background: transparent; color: inherit; cursor: pointer; }
 .table-view-tab:focus-visible, .table-view-bar .table-view-menu:focus-visible { outline: calc(var(--space-1) / 2) solid var(--ring); outline-offset: calc(var(--space-1) / -2); box-shadow: none; }
@@ -56,7 +57,7 @@
 .table-option-list { display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; }
 .table-option-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--space-2); padding-bottom: var(--space-3); border-bottom: 1px solid var(--border); }
 .table-option-row .table-inline-actions { grid-column: 1 / -1; }
-.table-option-checks { display: flex; flex-direction: column; gap: var(--space-2); max-height: calc(var(--space-12) * 5); overflow-y: auto; padding-block: var(--space-1); scrollbar-gutter: stable; }
+.table-option-checks { --shard-focus-offset: -2px; display: flex; flex-direction: column; gap: var(--space-2); max-height: calc(var(--space-12) * 5); overflow-y: auto; padding-block: var(--space-1); scrollbar-gutter: stable; }
 .table-option-checks label, .table-column-setting > label { display: flex; align-items: center; gap: var(--space-2); overflow-wrap: anywhere; }
 .table-filter-condition, .table-column-setting { display: flex; flex-direction: column; gap: var(--space-2); padding-bottom: var(--space-3); border-bottom: 1px solid var(--border); }
 .table-width-setting input { max-width: calc(var(--space-12) * 3); }
@@ -79,7 +80,7 @@
 @media (max-width: 900px) { .table-workspace-body > .table-record-panel { width: 100%; min-width: 0; } }
 
 .table-record-title { font-size: var(--text-page-title); font-weight: var(--weight-semibold); line-height: var(--leading-normal); overflow-wrap: anywhere; }
-.table-record-section-label { color: var(--primary); font-weight: var(--weight-medium); border-bottom: 1px solid var(--border); padding-block: var(--space-2); }
+.table-record-section-label { color: var(--primary-text); font-weight: var(--weight-medium); border-bottom: 1px solid var(--border); padding-block: var(--space-2); }
 .table-record-property { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); gap: var(--space-4); align-items: start; }
 .table-record-property-label { display: flex; gap: var(--space-2); align-items: center; min-width: 0; padding-block: var(--space-2); color: var(--muted-foreground); overflow-wrap: anywhere; }
 .table-record-property-value { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; }

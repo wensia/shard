@@ -111,7 +111,7 @@
 .scopeButton[aria-pressed="true"] {
   background: var(--card);
   box-shadow: var(--shadow-card);
-  color: var(--primary);
+  color: var(--primary-text);
 }
 
 .statusRow,
@@ -249,7 +249,7 @@
   border-radius: 2px;
   background: var(--primary-subtle);
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--primary) 12%, transparent);
-  color: var(--primary);
+  color: var(--primary-text);
 }
 
 .metadata {
@@ -292,7 +292,7 @@
 }
 
 .matchedTag {
-  color: var(--primary);
+  color: var(--primary-text);
   font-weight: 500;
 }
 
@@ -315,7 +315,7 @@
 
 .resultRow:hover .openHint,
 .resultRow[data-selected="true"] .openHint {
-  color: var(--primary);
+  color: var(--primary-text);
   opacity: 1;
 }
 
@@ -337,7 +337,7 @@
 
 .introIndex {
   margin-bottom: var(--shard-space-3);
-  color: var(--primary);
+  color: var(--primary-text);
   font-size: var(--text-tiny);
   font-weight: 600;
   letter-spacing: 0.18em;

@@ -72,7 +72,7 @@ export function MindMapDocumentInspector({ file, selectedNodeIds, fragments, onC
     return sources.find(source => source.link.targetType === link.targetType && source.link.targetId === link.targetId)?.title ?? "文档暂不可用"
   }
 
-  return <aside aria-label="思维导图检查器" className={styles.inspector} data-mind-map-inspector data-mind-map-side-panel data-density="compact">
+  return <aside aria-label="思维导图检查器" className={styles.inspector} data-focus-region="mind-map-panel" data-mind-map-inspector data-mind-map-side-panel data-density="compact">
     <header className={styles.inspectorHeader} data-mind-map-panel-header><strong>主题属性</strong><Button variant="ghost" size="icon-sm" aria-label="关闭检查器" onClick={onClose}><XIcon /></Button></header>
     <div className={styles.inspectorTabs} role="tablist" aria-label="导图检查器视图">
       {(["properties", "outline"] as const).map((value, index) => <button className={styles.inspectorTab} key={value} type="button" role="tab" id={`map-${value}-tab`} aria-controls={`map-${value}-panel`}

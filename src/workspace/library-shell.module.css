@@ -110,7 +110,7 @@
 }
 
 .editorTitleButton:hover:not(:disabled) {
-  color: var(--primary);
+  color: var(--primary-text);
 }
 
 .editorHeading {
@@ -257,7 +257,7 @@
 .navigationButton[aria-current="page"],
 .treeRow[data-selected="true"] {
   background: var(--primary-subtle);
-  color: var(--primary);
+  color: var(--primary-text);
 }
 
 .treeButton {

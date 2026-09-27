@@ -13,9 +13,12 @@
 }
 
 .toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); padding: var(--space-2) var(--space-3); flex-shrink: 0; border-bottom: 1px solid var(--border); }
-.viewTabs { display: inline-flex; align-items: center; gap: var(--space-1); padding: var(--space-1); border: 1px solid color-mix(in srgb, var(--border-visible) 50%, transparent); border-radius: var(--radius-control); background: color-mix(in srgb, var(--muted) 40%, transparent); flex-shrink: 0; }
-.viewTab { border-color: transparent; background: transparent; color: var(--muted-foreground); }
-.viewTab[aria-selected="true"] { background: var(--card); box-shadow: var(--shadow-card); color: var(--primary); font-weight: 500; }
+.viewTabs { display: inline-flex; align-items: center; gap: var(--space-1); padding: var(--space-1); border: 1px solid color-mix(in srgb, var(--border-visible) 50%, transparent); border-radius: var(--radius-control); background: var(--segment-track-bg); flex-shrink: 0; }
+.viewTab { position: relative; border-color: transparent; background: transparent; color: var(--muted-foreground); }
+.viewTab:not([aria-selected="true"]):hover { background: var(--segment-hover-bg); }
+.viewTab[aria-selected="true"] { background: var(--segment-active-bg); box-shadow: var(--segment-active-shadow); color: var(--segment-active-fg); font-weight: 500; }
+/* 选中标记：见 kiln --segment-active-mark（亮色透明，暗色为品牌文字色） */
+.viewTab[aria-selected="true"]::after { content: ""; position: absolute; bottom: 2px; left: 50%; width: var(--space-3); height: 2px; border-radius: 1px; background: var(--segment-active-mark); translate: -50% 0; }
 .viewTab:focus-visible { outline: 1px solid var(--ring); outline-offset: 1px; }
 .toolbarActions { display: flex; gap: var(--space-2); align-items: center; }
 .saveControls { display: flex; align-items: center; gap: var(--space-2); margin-inline-start: auto; }
@@ -39,14 +42,14 @@
 .tones > div { display: flex; gap: var(--space-2); }
 .toneButton { display: flex; flex: 1; align-items: center; flex-direction: column; gap: var(--space-1); font-size: var(--text-meta); border-radius: var(--radius-control); padding-block: var(--space-1); }
 .toneButton > span { display: grid; place-items: center; width: var(--space-6); height: var(--space-6); border: 1px solid var(--border-visible); border-radius: var(--radius-control); background: var(--card); }
-.toneButton[data-tone="accent"] > span { background: var(--primary-subtle); color: var(--primary); border-color: var(--primary); }
+.toneButton[data-tone="accent"] > span { background: var(--primary-subtle); color: var(--primary-text); border-color: var(--primary); }
 .toneButton[data-tone="success"] > span { background: var(--success-bg); color: var(--success); border-color: var(--success); }
 .toneButton[data-tone="warning"] > span { background: var(--warning-bg); color: var(--warning); border-color: var(--warning); }
 .toneButton[aria-pressed="true"] { background: var(--muted); }
 .tones svg { width: var(--icon-size-sm); height: var(--icon-size-sm); }
 .sectionHeader, .referenceRow { display: flex; align-items: center; gap: var(--space-2); justify-content: space-between; }
 .sectionHeader strong { font-weight: 500; }
-.documentLink { color: var(--primary); flex: 1; min-width: 0; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.documentLink { color: var(--primary-text); flex: 1; min-width: 0; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .referencePicker { display: flex; flex-direction: column; gap: var(--space-2); margin-top: var(--space-2); }
 .referencePicker input { font-size: var(--text-body); }
 .referenceResults { max-height: calc(var(--control-height-sm) * 6); overflow: auto; }
@@ -63,7 +66,7 @@
 .outlineToggle svg { width: var(--space-3); height: var(--space-3); }
 .outlineLabel { flex: 1; min-width: 0; padding: var(--space-2); border-radius: var(--radius-control); text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .outlineLabel:hover { background: var(--muted); }
-.outlineLabel[aria-pressed="true"] { background: var(--primary-subtle); color: var(--primary); }
+.outlineLabel[aria-pressed="true"] { background: var(--primary-subtle); color: var(--primary-text); }
 
 @container mind-map-body (max-width: 480px) {
   .inspector { position: absolute; inset: 0 0 0 auto; z-index: 40; width: min(calc(var(--space-12) * 6), calc(100% - var(--space-12))); max-width: none; box-shadow: var(--shadow-popover); }

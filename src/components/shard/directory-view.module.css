@@ -8,6 +8,8 @@
 }
 
 .directorySurface {
+  /* 列表贴满滚动容器，外扩的键盘焦点环会被裁掉，改为内收 */
+  --shard-focus-offset: -2px;
   display: flex;
   min-width: 0;
   min-height: 0;
@@ -34,6 +36,7 @@
 }
 
 .breadcrumbs {
+  --shard-focus-offset: -2px;
   overflow: hidden;
 }
 
@@ -169,7 +172,7 @@
 }
 
 .sortButton[data-active="true"] svg {
-  color: var(--primary);
+  color: var(--primary-text);
 }
 
 .sortButton:active {

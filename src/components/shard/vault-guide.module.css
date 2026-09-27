@@ -265,6 +265,37 @@
   border: 1px solid color-mix(in srgb, var(--foreground) 13%, transparent);
 }
 
+/* 色板显示「当前明暗下实际生效的釉色」：深色里是提亮后的暗色釉。 */
+.themeSwatch[data-accent="clay"] { background: var(--palette-clay); }
+.themeSwatch[data-accent="teal"] { background: var(--palette-teal); }
+.themeSwatch[data-accent="peacock"] { background: var(--palette-peacock); }
+.themeSwatch[data-accent="amber"] { background: var(--palette-amber); }
+:global(.dark) .themeSwatch[data-accent="clay"] { background: var(--palette-dark-clay); }
+:global(.dark) .themeSwatch[data-accent="teal"] { background: var(--palette-dark-teal); }
+:global(.dark) .themeSwatch[data-accent="peacock"] { background: var(--palette-dark-peacock); }
+:global(.dark) .themeSwatch[data-accent="amber"] { background: var(--palette-dark-amber); }
+
+.modeGrid {
+  display: grid;
+  gap: var(--shard-space-2);
+  margin-top: var(--shard-space-3);
+}
+
+@media (min-width: 640px) {
+  .modeGrid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+.modeIcon {
+  justify-self: center;
+  color: var(--muted-foreground);
+}
+
+.themeButton[aria-pressed="true"] .modeIcon {
+  color: var(--primary-text);
+}
+
 .themeLabel {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -275,7 +306,7 @@
 }
 
 .themeCheck {
-  color: var(--shard-sapphire);
+  color: var(--primary-text);
 }
 
 @media (min-width: 640px) {

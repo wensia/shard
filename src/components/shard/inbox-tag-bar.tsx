@@ -131,7 +131,7 @@ export function InboxTagBar({
               />
               <button
                 className="shard-chip-text"
-                style={{ flexShrink: 0, fontWeight: 500, color: "var(--primary)" }}
+                style={{ flexShrink: 0, fontWeight: 500, color: "var(--primary-text)" }}
                 type="submit"
               >
                 新建

@@ -542,7 +542,7 @@ export const MindMapCanvas = forwardRef<
       onCompositionStartCapture={() => { composingRef.current = true; setIsComposing(true) }}
       onCompositionEndCapture={() => { composingRef.current = false; setIsComposing(false) }}
     >
-      <div className={styles.toolbar} data-mind-map-workspace-toolbar inert={interactionBlocked}>
+      <div className={styles.toolbar} data-focus-region="mind-map-toolbar" data-mind-map-workspace-toolbar inert={interactionBlocked}>
         {toolbarLeading}
         <div className={styles.viewTabs} role="tablist" aria-label="思维导图视图">
           {(["outline", "map"] as const).map((mode, index) => <Button
@@ -579,6 +579,7 @@ export const MindMapCanvas = forwardRef<
       <div className={styles.editorBody} inert={interactionBlocked}>
       <main
         role="tabpanel" id={`${viewId}-panel`} aria-labelledby={`${viewId}-${view}-tab`}
+        data-focus-region="mind-map-editor"
         data-mind-map-editor-region
         onBlurCapture={event => rememberEditorFocus(event.target)}
         style={{

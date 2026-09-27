@@ -93,7 +93,7 @@
 }
 
 .openButton:hover {
-  color: var(--primary);
+  color: var(--primary-text);
 }
 
 .openButton:focus-visible {
@@ -112,7 +112,7 @@
   padding: 0;
   border: 0;
   background: transparent;
-  color: var(--primary);
+  color: var(--primary-text);
   cursor: pointer;
   font: inherit;
   text-decoration: underline;

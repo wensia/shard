@@ -37,7 +37,7 @@ export function ZenSurface({
   }, [onRequestClose])
 
   return (
-    <section aria-label={ariaLabel} className={styles.surface}>
+    <section aria-label={ariaLabel} className={styles.surface} data-focus-scope>
       <div
         aria-hidden="true"
         className={styles.dragRegion}

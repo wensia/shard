@@ -18,7 +18,7 @@ const TextCellEditor: ProvideEditorComponent<TextCell> = ({ value, onChange, onF
     });
     return () => cancelAnimationFrame(frame);
   }, [isHighlighted]);
-  return <textarea ref={input} className="gdg-input table-native-cell-editor" aria-label="编辑单元格" value={value.data} readOnly={value.readonly} rows={Math.min(8, value.data.split("\n").length)}
+  return <textarea ref={input} className="gdg-input table-native-cell-editor" aria-label="编辑单元格" data-focus-editor value={value.data} readOnly={value.readonly} rows={Math.min(8, value.data.split("\n").length)}
     onCompositionStart={() => { composing.current = true; }}
     onCompositionEnd={() => { composing.current = false; }}
     onChange={(event) => { const next = { ...value, data: event.target.value, displayData: event.target.value }; latest.current = next; onChange(next); }}

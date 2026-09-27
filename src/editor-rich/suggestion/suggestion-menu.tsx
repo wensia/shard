@@ -15,7 +15,7 @@ interface SuggestionMenuProps {
  * overflow:hidden 的，浮层作为编辑器后代会被那条裁切链切断，候选一多就只露出
  * 上半截——旧 CodeMirror 弹层踩过同样的坑（见 tag-autocomplete.ts:188-191）。
  *
- * pointer-first：选中态只用 `aria-selected` + `--accent` 底色表达，不画焦点环。
+ * 选中态只用 `aria-selected` + `--accent` 底色表达，不画焦点环：DOM 焦点始终留在编辑器里。
  */
 export function SuggestionMenu({ host, state }: SuggestionMenuProps) {
   const elementRef = useRef<HTMLDivElement>(null)

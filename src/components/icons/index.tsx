@@ -28,6 +28,9 @@ import {
   BookOpenIcon as LBookOpen,
   CalendarDaysIcon as LCalendarDays,
   CheckIcon as LCheck,
+  MonitorIcon as LMonitor,
+  MoonIcon as LMoon,
+  SunIcon as LSun,
   ChevronDownIcon as LChevronDown,
   ChevronLeftIcon as LChevronLeft,
   ChevronRightIcon as LChevronRight,
@@ -120,6 +123,9 @@ export const BoldIcon = /*#__PURE__*/ withIconDefaults(LBold)
 export const BookOpenIcon = /*#__PURE__*/ withIconDefaults(LBookOpen)
 export const CalendarDaysIcon = /*#__PURE__*/ withIconDefaults(LCalendarDays)
 export const CheckIcon = /*#__PURE__*/ withIconDefaults(LCheck)
+export const MonitorIcon = /*#__PURE__*/ withIconDefaults(LMonitor)
+export const MoonIcon = /*#__PURE__*/ withIconDefaults(LMoon)
+export const SunIcon = /*#__PURE__*/ withIconDefaults(LSun)
 export const ChevronDownIcon = /*#__PURE__*/ withIconDefaults(LChevronDown)
 export const ChevronLeftIcon = /*#__PURE__*/ withIconDefaults(LChevronLeft)
 export const ChevronRightIcon = /*#__PURE__*/ withIconDefaults(LChevronRight)

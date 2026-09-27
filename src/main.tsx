@@ -3,19 +3,18 @@ import ReactDOM from "react-dom/client";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import App from "./App";
-import { initAccentTheme } from "./lib/theme";
+import { installFocusNavigation } from "./lib/focus-navigation";
+import { initAccentTheme, initColorMode } from "./lib/theme";
 import "./index.css";
 import "@fontsource/noto-sans-sc/400.css";
 import "@fontsource/noto-sans-sc/500.css";
 import "@fontsource/noto-sans-sc/600.css";
 
 initAccentTheme();
+initColorMode();
 
-// Let editors handle Tab (indentation / cell navigation) before suppressing
-// the browser's default page-wide focus traversal, including Shift+Tab.
-document.addEventListener("keydown", (event) => {
-  if (event.key === "Tab") event.preventDefault();
-});
+// managed-navigation：Tab 只在编辑区边界兜底，外壳控件恢复原生轮转；F6 切换工作区域。
+installFocusNavigation();
 
 function suppressEvent(event: Event) {
   event.preventDefault();

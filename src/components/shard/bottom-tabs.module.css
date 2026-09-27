@@ -81,7 +81,7 @@
 
 .secondaryTabActive {
   background: var(--primary-subtle);
-  color: var(--primary);
+  color: var(--primary-text);
   font-weight: 500;
 }
 

@@ -79,7 +79,7 @@ Markdown 转换层有两个候选，阶段 0 评估后二选一：
 
 ### 4.1 基础层（Tiptap 现成扩展，只定样式）
 
-段落、标题、无序/有序/任务列表、引用、分割线、代码块、粗体、下划线、高亮、链接、占位符、撤销。样式全部消费 Kiln token，密度沿用 `docs/design/frontend.md` 的 pointer-first 约定。
+段落、标题、无序/有序/任务列表、引用、分割线、代码块、粗体、下划线、高亮、链接、占位符、撤销。样式全部消费 Kiln token，密度与焦点沿用 `docs/design/frontend.md` 的约定（焦点策略现为 managed-navigation）。
 
 ### 4.2 Shard 层（自造 NodeView）
 

@@ -1374,6 +1374,7 @@ export function MindMapCanvasEditor({
             ? `${styles.canvasRoot} ${styles.canvasRootDragging}`
             : styles.canvasRoot
         }
+        data-focus-editor
         data-mind-map-context-menu="true"
         onKeyDown={handleCanvasKeyDown}
         ref={containerRef}
@@ -1656,6 +1657,7 @@ export function MindMapCanvasEditor({
         <textarea
           aria-label={selectedNode.id === file.rootId ? "根节点" : "导图节点"}
           className={styles.nodeInput}
+          data-focus-editor
           onChange={(event) =>
             onChange(
               updateMindMapNodeText(

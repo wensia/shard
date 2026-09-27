@@ -530,7 +530,7 @@ export function LockboxHeader({
                 borderRadius: "var(--shard-radius-control)",
                 border: "1px solid var(--border)",
                 background: "var(--card)",
-                color: "var(--shard-sapphire)",
+                color: "var(--primary-text)",
               }}
             >
               <LockKeyholeIcon className="size-(--shard-icon-size-md)" />

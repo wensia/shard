@@ -51,7 +51,7 @@ export function MindMapShortcuts({ view, onClose }: Props) {
   ]
 
   return (
-    <aside className={styles.panel} aria-label="思维导图快捷键" data-mind-map-shortcuts data-mind-map-side-panel data-density="compact">
+    <aside className={styles.panel} aria-label="思维导图快捷键" data-focus-region="mind-map-panel" data-mind-map-shortcuts data-mind-map-side-panel data-density="compact">
       <header className={styles.header} data-mind-map-panel-header>
         <h2>快捷键</h2>
         <Button type="button" variant="ghost" size="icon-sm" aria-label="关闭快捷键" onClick={onClose}><XIcon /></Button>
@@ -118,6 +118,7 @@ export function MindMapShortcuts({ view, onClose }: Props) {
           { action: "撤销", keys: `${command} + Z` },
           { action: "重做", keys: `${command} + Shift + Z` },
           { action: "全选 / 复制 / 粘贴文字", keys: `${command} + A / C / V`, detail: "文字输入框内使用原生文字选区" },
+          { action: "切换到下一/上一工作区域", keys: "F6 / Shift + F6", detail: "在工具栏、编辑区和右栏之间移动；Mac 上可能需要同时按 Fn" },
         ]} />
         <p className={styles.note}>中文输入法选字期间，Enter 和方向键用于确认候选词。工具栏、属性和快捷键面板中的 Tab 用于切换控件。</p>
       </div>

@@ -229,21 +229,28 @@ for (const variant of ["inline", "zen"] as const) {
   })
 }
 
-test("全局 Tab 不轮转焦点，工具栏在明暗主题下没有焦点框且仍可点击编辑", async ({ page }) => {
+test("工具栏 Tab 按原生轮转，指针焦点无焦点框、键盘导航在明暗主题下有焦点框且仍可点击编辑", async ({ page }) => {
   const button = page.getByRole("button", { name: "禅模式", exact: true })
   for (const dark of [false, true]) {
     await page.evaluate(value => document.documentElement.classList.toggle("dark", value), dark)
+    // 指针模式：程序化焦点不画 outline／ring。
+    await page.evaluate(() => document.dispatchEvent(new PointerEvent("pointerdown")))
     await button.focus()
-    await page.keyboard.press("Tab")
-    await expect(button).toBeFocused()
-    await page.keyboard.press("Shift+Tab")
-    await expect(button).toBeFocused()
+    await expect(page.locator("html")).toHaveAttribute("data-focus-mode", "pointer")
     await expect(button).toHaveCSS("outline-style", "none")
     await expect(button).toHaveCSS("--tw-ring-color", "transparent")
     const visibleShadows = await button.evaluate(element =>
       getComputedStyle(element).boxShadow.replace(/rgba\(0, 0, 0, 0\)/g, "transparent")
     )
     expect(visibleShadows === "none" || !/rgba?\(/.test(visibleShadows)).toBe(true)
+    // managed-navigation：外壳控件间 Tab 原生轮转并进入键盘模式，焦点框可见。
+    await page.keyboard.press("Tab")
+    await expect(button).not.toBeFocused()
+    await page.keyboard.press("Shift+Tab")
+    await expect(button).toBeFocused()
+    await expect(page.locator("html")).toHaveAttribute("data-focus-mode", "keyboard")
+    await expect(button).toHaveCSS("outline-style", "solid")
+    await expect(button).toHaveCSS("outline-width", "2px")
   }
   await fillEditor(page, "composer", "焦点测试")
   await selectEditorText(page, "composer", "焦点测试")

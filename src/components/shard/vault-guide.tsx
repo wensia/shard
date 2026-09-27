@@ -6,8 +6,11 @@ import {
   GitBranchIcon,
   KeyboardIcon,
   Loader2Icon,
+  MonitorIcon,
+  MoonIcon,
   PaletteIcon,
   RefreshCwIcon,
+  SunIcon,
   XIcon,
 } from "@/components/icons"
 import { useEffect, useRef, useState, type CSSProperties } from "react"
@@ -28,9 +31,13 @@ import {
 } from "@/lib/app-settings"
 import {
   ACCENT_THEMES,
+  COLOR_MODES,
   applyAccentTheme,
+  applyColorMode,
   getStoredAccentTheme,
+  getStoredColorMode,
   type AccentTheme,
+  type ColorMode,
 } from "@/lib/theme"
 import {
   createGithubVaultRepo,
@@ -155,6 +162,8 @@ interface SettingsCopy {
   syncNow: string
   syncNowBusy: string
   syncSetupTitle: string
+  colorModeDescription: string
+  colorModeTitle: string
   themeDescription: string
   themeTitle: string
   toastGithubCreated: string
@@ -173,6 +182,12 @@ interface SettingsCopy {
   autoSyncMinutes(minutes: number): string
   githubAuthenticated(account: string, protocol: string): string
   githubProtocol(protocol: string): string
+}
+
+const COLOR_MODE_ICONS: Record<ColorMode, typeof SunIcon> = {
+  system: MonitorIcon,
+  light: SunIcon,
+  dark: MoonIcon,
 }
 
 const settingsCopy: Record<SettingsLocale, SettingsCopy> = {
@@ -249,6 +264,9 @@ const settingsCopy: Record<SettingsLocale, SettingsCopy> = {
     syncNow: "Sync now",
     syncNowBusy: "Syncing",
     syncSetupTitle: "Set up sync",
+    colorModeDescription:
+      "Follow the system appearance, or keep Shard light or dark.",
+    colorModeTitle: "Appearance",
     themeDescription:
       "Choose the restrained accent used for focus, selection, links, and primary actions.",
     themeTitle: "Accent color",
@@ -338,6 +356,8 @@ const settingsCopy: Record<SettingsLocale, SettingsCopy> = {
     syncNow: "立即同步",
     syncNowBusy: "同步中",
     syncSetupTitle: "配置同步",
+    colorModeDescription: "跟随系统外观，或固定使用浅色、深色。",
+    colorModeTitle: "明暗",
     themeDescription: "选择用于焦点、选中、链接和主要操作的克制强调色。",
     themeTitle: "主题色",
     toastGithubCreated: "Git 同步已配置",
@@ -373,6 +393,7 @@ const shortcutRows: Record<
     { keys: ["⌘", "⇧", "F"], label: "Zen mode (in composer)" },
     { keys: ["Enter"], label: "New line" },
     { keys: ["Esc"], label: "Exit editing" },
+    { keys: ["F6 / ⇧F6"], label: "Next / previous work area" },
   ],
   zh: [
     { keys: ["⌘", "Enter"], label: "保存片段" },
@@ -382,6 +403,7 @@ const shortcutRows: Record<
     { keys: ["⌘", "⇧", "F"], label: "禅模式（输入框内）" },
     { keys: ["Enter"], label: "换行" },
     { keys: ["Esc"], label: "退出编辑" },
+    { keys: ["F6 / ⇧F6"], label: "切换到下一/上一工作区域" },
   ],
 }
 
@@ -416,6 +438,7 @@ export function VaultGuide({
   const [section, setSection] = useState<SettingsSection>(initialSection)
   const [accentTheme, setAccentTheme] =
     useState<AccentTheme>(getStoredAccentTheme)
+  const [colorMode, setColorMode] = useState<ColorMode>(getStoredColorMode)
   const dialogRef = useRef<HTMLDivElement>(null)
   const locale = getPreferredSettingsLocale()
   const copy = settingsCopy[locale]
@@ -799,42 +822,80 @@ export function VaultGuide({
   )
 
   const appearanceSection = (
-    <section className={styles.sectionPad}>
-      <h3 style={sectionTitleStyle}>{copy.themeTitle}</h3>
-      <p style={sectionDescriptionStyle}>{copy.themeDescription}</p>
-      <div className={styles.themeGrid}>
-        {ACCENT_THEMES.map((theme) => {
-          const isActive = accentTheme === theme.id
-          const label = locale === "zh" ? theme.labelZh : theme.labelEn
+    <>
+      <section className={styles.sectionPad}>
+        <h3 style={sectionTitleStyle}>{copy.colorModeTitle}</h3>
+        <p style={sectionDescriptionStyle}>{copy.colorModeDescription}</p>
+        <div className={styles.modeGrid}>
+          {COLOR_MODES.map((mode) => {
+            const isActive = colorMode === mode.id
+            const label = locale === "zh" ? mode.labelZh : mode.labelEn
+            const ModeIcon = COLOR_MODE_ICONS[mode.id]
 
-          return (
-            <button
-              aria-pressed={isActive}
-              className={styles.themeButton}
-              key={theme.id}
-              onClick={() => {
-                applyAccentTheme(theme.id)
-                setAccentTheme(theme.id)
-              }}
-              type="button"
-            >
-              <span
-                aria-hidden="true"
-                className={styles.themeSwatch}
-                style={{ background: theme.hex }}
-              />
-              <span className={styles.themeLabel}>{label}</span>
-              {isActive ? (
-                <CheckIcon
+            return (
+              <button
+                aria-pressed={isActive}
+                className={styles.themeButton}
+                key={mode.id}
+                onClick={() => {
+                  applyColorMode(mode.id)
+                  setColorMode(mode.id)
+                }}
+                type="button"
+              >
+                <ModeIcon
                   aria-hidden="true"
-                  className={`${styles.themeCheck} size-(--shard-icon-size-md)`}
+                  className={`${styles.modeIcon} size-(--shard-icon-size-md)`}
                 />
-              ) : null}
-            </button>
-          )
-        })}
-      </div>
-    </section>
+                <span className={styles.themeLabel}>{label}</span>
+                {isActive ? (
+                  <CheckIcon
+                    aria-hidden="true"
+                    className={`${styles.themeCheck} size-(--shard-icon-size-md)`}
+                  />
+                ) : null}
+              </button>
+            )
+          })}
+        </div>
+      </section>
+      <section className={styles.sectionPad}>
+        <h3 style={sectionTitleStyle}>{copy.themeTitle}</h3>
+        <p style={sectionDescriptionStyle}>{copy.themeDescription}</p>
+        <div className={styles.themeGrid}>
+          {ACCENT_THEMES.map((theme) => {
+            const isActive = accentTheme === theme.id
+            const label = locale === "zh" ? theme.labelZh : theme.labelEn
+
+            return (
+              <button
+                aria-pressed={isActive}
+                className={styles.themeButton}
+                key={theme.id}
+                onClick={() => {
+                  applyAccentTheme(theme.id)
+                  setAccentTheme(theme.id)
+                }}
+                type="button"
+              >
+                <span
+                  aria-hidden="true"
+                  className={styles.themeSwatch}
+                  data-accent={theme.id}
+                />
+                <span className={styles.themeLabel}>{label}</span>
+                {isActive ? (
+                  <CheckIcon
+                    aria-hidden="true"
+                    className={`${styles.themeCheck} size-(--shard-icon-size-md)`}
+                  />
+                ) : null}
+              </button>
+            )
+          })}
+        </div>
+      </section>
+    </>
   )
 
   const directorySection = (

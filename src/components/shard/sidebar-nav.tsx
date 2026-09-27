@@ -311,7 +311,7 @@ export function SidebarNav({
                     borderRadius: "calc(var(--shard-radius-control) / 2)",
                     background: HEATMAP_LEVEL_BACKGROUNDS[cell.level],
                     boxShadow: cell.isToday
-                      ? "0 0 0 1px rgb(0 0 0 / var(--shard-alpha-21))"
+                      ? "0 0 0 1px rgb(var(--shard-ink-rgb) / var(--shard-alpha-21))"
                       : undefined,
                   }}
                   title={formatHeatmapCellLabel(cell, language)}

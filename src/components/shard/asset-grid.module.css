@@ -167,7 +167,7 @@ button.cardBody {
 }
 
 .fileIcon[data-kind="directory"] {
-  color: var(--primary);
+  color: var(--primary-text);
 }
 
 .asyncPreview {

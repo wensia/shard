@@ -180,7 +180,7 @@
 
 .headerButton[data-direction="asc"] .sortMark,
 .headerButton[data-direction="desc"] .sortMark {
-  color: var(--primary);
+  color: var(--primary-text);
   opacity: 1;
 }
 

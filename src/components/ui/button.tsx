@@ -11,7 +11,7 @@ const buttonVariants = cva(
         default:
           "bg-solid text-solid-foreground hover:bg-[color-mix(in_oklch,var(--solid),var(--background)_12%)]",
         primary:
-          "bg-primary text-primary-foreground hover:bg-[color-mix(in_oklch,var(--primary),var(--primary-foreground)_11%)]",
+          "bg-primary text-primary-foreground hover:bg-primary-hover",
         outline:
           "border-border-visible bg-card text-foreground hover:bg-muted aria-expanded:bg-muted",
         secondary:
@@ -20,7 +20,7 @@ const buttonVariants = cva(
           "bg-transparent text-foreground hover:bg-muted aria-expanded:bg-muted",
         destructive:
           "bg-destructive/[var(--shard-alpha-8)] text-destructive hover:bg-destructive/[var(--shard-alpha-21)] focus-visible:ring-destructive/[var(--shard-alpha-21)]",
-        link: "bg-transparent text-primary underline-offset-4 hover:underline",
+        link: "bg-transparent text-primary-text underline-offset-4 hover:underline",
       },
       // 高度一律绑 kiln 的控件高度 token，不写死 h-9 —— 写死等于让该控件
       // 静默退出密度档（见 vendor/kiln/references/components.md 的按钮尺寸表）。

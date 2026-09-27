@@ -654,7 +654,7 @@
   cursor: pointer;
 }
 
-/* pointer-first：键盘与指针的当前项都只用底色表达，不画焦点环。 */
+/* 菜单当前项：键盘与指针都只用底色表达，不画焦点环（焦点仍留在编辑器）。 */
 .shard-rich-suggestion-popover li[role="option"][aria-selected="true"] {
   background: var(--accent);
   color: var(--accent-foreground);
@@ -692,7 +692,7 @@
   white-space: normal;
 }
 
-/* pointer-first：节点被选中只用 --accent 表达，不画焦点环。 */
+/* 节点被选中只用 --accent 表达，不画焦点环：它是编辑器内的选区，不是键盘焦点。 */
 .shard-rich-editor .ProseMirror .shard-rich-block[data-selected="true"] {
   border-color: var(--accent);
 }

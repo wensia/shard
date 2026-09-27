@@ -183,7 +183,7 @@ const CanvasObject = memo(function CanvasObject({ data, selected }: NodeProps<Fl
         </div>
       ) : <div className="shard-canvas-node-content">
         <div className="shard-canvas-node-label" aria-hidden={editing || undefined}>{item.text.length > 1000 ? `${item.text.slice(0, 1000)}…` : item.text || NODE_LABELS[item.kind]}</div>
-        {editing && <textarea ref={textareaRef} aria-label="节点文字" rows={1} className="shard-canvas-node-editor nodrag nopan nowheel"
+        {editing && <textarea ref={textareaRef} aria-label="节点文字" rows={1} className="shard-canvas-node-editor nodrag nopan nowheel" data-focus-editor
           value={item.text} disabled={data.blocked} onChange={(event) => data.onText(item.id, event.target.value)}
           onBlur={(event) => {
             data.onTextEnd()

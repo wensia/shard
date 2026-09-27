@@ -144,7 +144,7 @@
    read as two stacked selections. Mirrors bottom-tabs' secondaryTabActive. */
 .navSubItemActive {
   background: var(--primary-subtle);
-  color: var(--primary);
+  color: var(--primary-text);
   font-weight: 500;
 }
 
@@ -193,7 +193,7 @@
 
 .navSubItemActive .navCount {
   background: color-mix(in oklab, var(--primary) 20%, var(--sidebar));
-  color: var(--primary);
+  color: var(--primary-text);
 }
 
 .collapsedGroupMarker {

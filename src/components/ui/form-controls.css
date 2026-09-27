@@ -35,7 +35,7 @@
 .kiln-select-list { max-height: min(var(--available-height), calc(var(--control-height) * 8)); overflow-y: auto; overscroll-behavior: contain; padding: var(--space-1); }
 .kiln-select-item { position: relative; display: flex; align-items: center; min-height: var(--control-height-sm); padding: var(--space-1) var(--space-2) var(--space-1) var(--space-8); border-radius: var(--radius-control); font-size: var(--text-body); line-height: var(--leading-normal); cursor: pointer; outline: none; overflow-wrap: anywhere; }
 .kiln-select-item[data-highlighted] { background: var(--muted); }
-.kiln-select-item[data-selected] { color: var(--primary); font-weight: 500; }
+.kiln-select-item[data-selected] { color: var(--primary-text); font-weight: 500; }
 .kiln-select-item[data-disabled] { color: var(--muted-foreground); cursor: not-allowed; opacity: var(--shard-alpha-55); }
 .kiln-select-indicator { position: absolute; left: var(--space-2); display: inline-flex; align-items: center; }
 /* 选择器对话框（kiln Date / Time Picker 的 Dialog 形态）：DialogContent 的紧凑版。 */

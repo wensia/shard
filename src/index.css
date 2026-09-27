@@ -37,6 +37,7 @@
     --color-chart-1: var(--chart-1);
     --color-ring: var(--ring);
     --color-input: var(--input);
+    --color-control-boundary: var(--control-boundary);
     --color-border-visible: var(--border-visible);
     --color-border: var(--border);
     --color-destructive: var(--destructive);
@@ -50,6 +51,8 @@
     --color-secondary-foreground: var(--secondary-foreground);
     --color-secondary: var(--secondary);
     --color-primary-foreground: var(--primary-foreground);
+    --color-primary-text: var(--primary-text);
+    --color-primary-hover: var(--primary-hover);
     --color-primary-subtle: var(--primary-subtle);
     --color-primary: var(--primary);
     --color-solid-foreground: var(--solid-foreground);
@@ -75,56 +78,37 @@
 }
 
 :root {
-    --background: var(--palette-canvas);
-    --foreground: var(--palette-ink);
-    --card: var(--palette-white);
-    --card-foreground: var(--palette-ink);
-    --popover: var(--palette-white);
-    --popover-foreground: var(--palette-ink);
-    --shard-accent: var(--palette-peacock);
+    /* 只声明 Shard 相对 kiln 的偏离项；与 kiln 相同的语义 token 不在这里重复。
+       这里的声明与 kiln 暗色层（vendor/kiln/tokens/dark.css 的 `.dark`）同为
+       单类优先级且排在其后，重复一条就会把暗色值钉回亮色。偏离项因此只用
+       语义 token 表达（--card / --border-visible / --muted …），随明暗自动切换；
+       确实只属于亮色的值，在下方 `.dark` 块里重新声明。 */
+    /* 强调色走 kiln 品牌入口（--kiln-brand-*，见下方主题块），primary /
+       sidebar-primary / ring 由 kiln 解析，这里只取用。 */
+    --shard-accent: var(--kiln-brand-fill);
     --shard-accent-hover: color-mix(in srgb, var(--shard-accent), black 12%);
-    --shard-accent-soft: color-mix(in srgb, var(--shard-accent) 14%, white);
-    --shard-accent-text: var(--shard-accent);
-    --primary: var(--shard-accent);
-    --primary-foreground: var(--palette-white);
+    --shard-accent-soft: color-mix(in srgb, var(--shard-accent) 14%, var(--card));
+    --shard-accent-text: var(--primary-text);
     --primary-subtle: var(--shard-accent-soft);
-    --solid: var(--palette-ink);
-    --solid-foreground: var(--palette-white);
-    --secondary: var(--palette-surface);
-    --secondary-foreground: var(--palette-ink);
-    --muted: var(--palette-surface);
-    --muted-foreground: var(--palette-muted-ink);
+    --secondary: var(--muted);
     --accent: var(--shard-accent-soft);
     --accent-foreground: var(--shard-accent-text);
-    --success: var(--palette-teal);
     --info: var(--shard-accent);
-    --warning: var(--palette-amber);
-    --destructive: var(--palette-clay);
-    --border: color-mix(in srgb, var(--palette-line) 45%, var(--palette-white));
-    --border-visible: var(--palette-line);
-    --input: color-mix(in srgb, var(--palette-line) 82%, var(--palette-white));
-    --ring: var(--shard-accent);
+    --info-bg: color-mix(in srgb, var(--info) 12%, var(--card));
+    --border: color-mix(in srgb, var(--border-visible) 45%, var(--card));
+    --input: color-mix(in srgb, var(--border-visible) 82%, var(--card));
     --chart-1: var(--shard-accent);
-    --chart-2: var(--palette-teal);
-    --chart-3: var(--palette-peacock);
-    --chart-4: var(--palette-amber);
     --chart-5: var(--muted-foreground);
     --radius: var(--radius-card);
     --sidebar: var(--card);
-    --sidebar-foreground: var(--palette-ink);
-    --sidebar-primary: var(--shard-accent);
-    --sidebar-primary-foreground: var(--palette-white);
-    --sidebar-accent: color-mix(in srgb, var(--palette-surface) 70%, var(--palette-white));
-    --sidebar-accent-foreground: var(--palette-ink);
     --sidebar-border: var(--border);
-    --sidebar-ring: var(--shard-accent);
     --shard-sapphire: var(--shard-accent);
     --shard-sapphire-hover: var(--shard-accent-hover);
     --shard-sapphire-soft: var(--shard-accent-soft);
     --shard-sapphire-text: var(--shard-accent-text);
     --shard-ink-rgb: 47 47 47;
-    --shard-primary-rgb: 182 83 60;
-    --shard-primary-soft-rgb: 222 150 129;
+    --shard-primary-rgb: 46 110 121;
+    --shard-primary-soft-rgb: 130 168 175;
     --shard-success: var(--success);
     --shard-success-rgb: 62 140 125;
     --shard-info: var(--info);
@@ -237,6 +221,8 @@
     --shard-icon-size-xl: 32px;
     --shard-icon-stroke: 1.5;
     --shard-icon-stroke-sm: 1.75;
+    /* 键盘焦点环外扩距离；overflow 裁切的容器设为负值（内收），见焦点块 */
+    --shard-focus-offset: 2px;
 }
 
 [data-shard-selection-band]::selection,
@@ -261,104 +247,148 @@
     background: color-mix(in srgb, var(--primary) 22%, transparent);
 }
 
+/* 强调色主题 = kiln 品牌入口三件套（fill / on-fill / text）+ Shard 自己的 rgb 镜像。
+   亮色块用 :root，暗色块用 .dark 且排在后面：同名主题下暗色块优先级相同、顺序靠后而胜出。
+   窑青绿、暖琥珀的亮色实心底上白字不足 4.5:1，改用深色前景；文字色取加深档。 */
+:root,
+:root[data-shard-theme="peacock"] {
+    --kiln-brand-fill: var(--palette-peacock);
+    --kiln-brand-on-fill: var(--palette-white);
+    --kiln-brand-text: var(--palette-peacock);
+    --shard-primary-rgb: 46 110 121;
+    --shard-primary-soft-rgb: 130 168 175;
+}
+
 :root[data-shard-theme="clay"] {
-    --shard-accent: var(--palette-clay);
+    --kiln-brand-fill: var(--palette-clay);
+    --kiln-brand-on-fill: var(--palette-white);
+    --kiln-brand-text: var(--palette-clay-deep);
     --shard-primary-rgb: 182 83 60;
     --shard-primary-soft-rgb: 211 152 138;
 }
 
 :root[data-shard-theme="teal"] {
-    --shard-accent: var(--palette-teal);
+    --kiln-brand-fill: var(--palette-teal);
+    --kiln-brand-on-fill: var(--palette-dark-canvas);
+    --kiln-brand-text: var(--palette-teal-deep);
+    --kiln-brand-fill-hover: color-mix(in srgb, var(--kiln-brand-fill) 88%, var(--palette-white));
     --shard-primary-rgb: 62 140 125;
     --shard-primary-soft-rgb: 139 186 177;
 }
 
-:root[data-shard-theme="peacock"] {
-    --shard-accent: var(--palette-peacock);
-    --shard-primary-rgb: 46 110 121;
-    --shard-primary-soft-rgb: 130 168 175;
-}
-
 :root[data-shard-theme="amber"] {
-    --shard-accent: var(--palette-amber);
+    --kiln-brand-fill: var(--palette-amber);
+    --kiln-brand-on-fill: var(--palette-dark-canvas);
+    --kiln-brand-text: var(--palette-amber-deep);
+    --kiln-brand-fill-hover: color-mix(in srgb, var(--kiln-brand-fill) 88%, var(--palette-white));
     --shard-primary-rgb: 190 124 50;
     --shard-primary-soft-rgb: 216 176 132;
 }
 
+/* 暗色：kiln 的语义 token 由 vendor/kiln/tokens/dark.css 提供，这里只处理
+   Shard 自己的偏离项 —— 强调色换成提亮釉色、rgb 三元组跟着换，以及几处
+   写死了「往黑里压」的亮色派生。四种暗色釉实心底上一律用深色前景。 */
 .dark {
-    --background: oklch(0.145 0 0);
-    --foreground: oklch(0.985 0 0);
-    --card: oklch(0.205 0 0);
-    --card-foreground: oklch(0.985 0 0);
-    --popover: oklch(0.205 0 0);
-    --popover-foreground: oklch(0.985 0 0);
-    --primary: #de9681;
-    --primary-foreground: oklch(0.145 0 0);
-    --primary-subtle: rgb(222 150 129 / var(--shard-alpha-21));
-    --solid: oklch(0.985 0 0);
-    --solid-foreground: oklch(0.205 0 0);
-    --secondary: oklch(0.269 0 0);
-    --secondary-foreground: oklch(0.985 0 0);
-    --muted: oklch(0.269 0 0);
-    --muted-foreground: oklch(0.708 0 0);
-    --accent: oklch(0.269 0 0);
-    --accent-foreground: oklch(0.985 0 0);
-    --success: #78b4a8;
-    --info: #78b4bd;
-    --warning: #d0a15f;
-    --destructive: #de9681;
-    --border: oklch(1 0 0 / 10%);
-    --border-visible: oklch(1 0 0 / 18%);
-    --input: oklch(1 0 0 / 15%);
-    --ring: #de9681;
-    --chart-1: #de9681;
-    --chart-2: #3e8c7d;
-    --chart-3: #2e6e79;
-    --chart-4: #be7c32;
-    --chart-5: oklch(0.708 0 0);
-    --sidebar: var(--background);
-    --sidebar-foreground: oklch(0.985 0 0);
-    --sidebar-primary: #de9681;
-    --sidebar-primary-foreground: oklch(0.145 0 0);
-    --sidebar-accent: oklch(0.269 0 0);
-    --sidebar-accent-foreground: oklch(0.985 0 0);
-    --sidebar-border: oklch(1 0 0 / 10%);
-    --sidebar-ring: #de9681;
-    --shard-composer-shadow: none;
-    --shard-memo-content-color: oklch(0.985 0 0);
-    --shard-tag-bg: rgb(var(--shard-primary-rgb) / var(--shard-alpha-21));
-    --shard-tag-hover: rgb(var(--shard-primary-rgb) / var(--shard-alpha-34));
+    --kiln-brand-on-fill: var(--palette-dark-canvas);
+    --shard-accent-hover: color-mix(in srgb, var(--shard-accent), white 12%);
+    --shard-accent-soft: color-mix(in srgb, var(--shard-accent) 16%, var(--card));
+    --info-bg: color-mix(in srgb, var(--info) 16%, var(--card));
+    --shard-ink-rgb: 235 229 222;
+    --shard-success-rgb: 105 181 165;
+    --shard-info-rgb: 110 177 189;
+    --shard-warning-rgb: 224 158 91;
+    --shard-danger-rgb: 222 129 107;
+    --shard-emerald-rgb: 105 181 165;
+    --shard-amber-rgb: 224 158 91;
+    --shard-ruby-rgb: 222 129 107;
+    --shard-tag-bg: rgb(var(--shard-primary-rgb) / var(--shard-alpha-13));
+    --shard-tag-hover: rgb(var(--shard-primary-rgb) / var(--shard-alpha-21));
     --shard-tag-fg: rgb(var(--shard-primary-soft-rgb) / var(--shard-alpha-89));
     --shard-tag-fg-strong: rgb(var(--shard-primary-soft-rgb) / 1);
-    --shard-editor-tag-fg: var(--shard-tag-fg);
-    --shard-tag-ring: rgb(var(--shard-primary-soft-rgb) / var(--shard-alpha-13));
-    --shard-tag-active-bg: rgb(var(--shard-primary-rgb) / var(--shard-alpha-34));
-    --shard-tag-active-ring: rgb(var(--shard-primary-soft-rgb) / var(--shard-alpha-21));
-    --shard-tag-muted-bg: oklch(0.269 0 0);
-    --shard-tag-muted-fg: oklch(0.708 0 0);
-    --shard-chip-bg: oklch(0.269 0 0);
-    --shard-chip-fg: oklch(0.985 0 0);
-    --shard-chip-hover: oklch(0.32 0 0);
+    --shard-tag-ring: rgb(var(--shard-primary-rgb) / var(--shard-alpha-21));
+    --shard-tag-active-bg: rgb(var(--shard-primary-rgb) / var(--shard-alpha-21));
+    --shard-tag-active-ring: rgb(var(--shard-primary-rgb) / var(--shard-alpha-34));
+    --shard-chip-hover: color-mix(in srgb, var(--muted), white 6%);
 }
 
-/* Shard uses pointer focus instead of page-wide Tab traversal. Keep control
-   surfaces and selected/invalid states; suppress only focus rings. Zero-length
-   shadows also remain valid in consumers that prepend `inset`. */
-:root,
-.dark {
+.dark,
+.dark[data-shard-theme="peacock"] {
+    --kiln-brand-fill: var(--palette-dark-peacock);
+    --kiln-brand-on-fill: var(--palette-dark-canvas);
+    --kiln-brand-text: var(--palette-dark-peacock);
+    --shard-primary-rgb: 110 177 189;
+    --shard-primary-soft-rgb: 154 207 216;
+}
+
+.dark[data-shard-theme="clay"] {
+    --kiln-brand-fill: var(--palette-dark-clay);
+    --kiln-brand-on-fill: var(--palette-dark-canvas);
+    --kiln-brand-text: var(--palette-dark-clay);
+    --shard-primary-rgb: 222 129 107;
+    --shard-primary-soft-rgb: 252 174 155;
+}
+
+.dark[data-shard-theme="teal"] {
+    --kiln-brand-fill: var(--palette-dark-teal);
+    --kiln-brand-on-fill: var(--palette-dark-canvas);
+    --kiln-brand-text: var(--palette-dark-teal);
+    --kiln-brand-fill-hover: color-mix(in srgb, var(--kiln-brand-fill) 88%, var(--palette-dark-solid));
+    --shard-primary-rgb: 105 181 165;
+    --shard-primary-soft-rgb: 151 210 197;
+}
+
+.dark[data-shard-theme="amber"] {
+    --kiln-brand-fill: var(--palette-dark-amber);
+    --kiln-brand-on-fill: var(--palette-dark-canvas);
+    --kiln-brand-text: var(--palette-dark-amber);
+    --kiln-brand-fill-hover: color-mix(in srgb, var(--kiln-brand-fill) 88%, var(--palette-dark-solid));
+    --shard-primary-rgb: 224 158 91;
+    --shard-primary-soft-rgb: 238 184 132;
+}
+
+/* managed-navigation（src/lib/focus-navigation.ts）：<html data-focus-mode> 决定焦点装饰。
+   pointer（默认）：只抑制焦点环，保留控件表面、选中与校验态；零长度阴影在前置
+   `inset` 的消费方中同样合法。keyboard（F6 或外壳 Tab 导航后）：恢复 kiln 焦点环，
+   非编辑器控件加 outline。正文编辑器始终只靠光标和选区表达焦点，不画整块焦点框。 */
+:root:not([data-focus-mode="keyboard"]) {
   --ring: transparent;
   --sidebar-ring: transparent;
   --ring-focus: 0 0 0 0 transparent;
   --shadow-primary-focus: 0 0 0 0 transparent;
 }
 
-:focus,
-:focus-visible {
-  outline: none !important;
+:root:not([data-focus-mode="keyboard"]) :focus,
+:root:not([data-focus-mode="keyboard"]) :focus-visible {
+  outline: none;
 }
 
-:focus-visible:not([aria-invalid="true"]) {
-  --tw-ring-color: transparent !important;
+:root:not([data-focus-mode="keyboard"]) :focus-visible:not([aria-invalid="true"]) {
+  --tw-ring-color: transparent;
+}
+
+/* --shadow-primary-focus 不覆盖，沿用 kiln elevation.css / dark.css 的明暗公式。 */
+:root[data-focus-mode="keyboard"] {
+  --ring: var(--primary-text);
+  --sidebar-ring: var(--primary-text);
+  --ring-focus: 0 0 0 1px var(--primary-text);
+}
+
+/* 非交互元素上的 tabindex="-1" 是程序化焦点容器（画布根、面板），不画 outline；
+   按钮、标签页、网格单元等方向键轮转控件同样用 -1 表示「非当前项」，必须保留焦点环。
+   --shard-focus-offset 可继承：overflow 裁切的容器把它设为负值，焦点环改画在控件内侧。 */
+:root[data-focus-mode="keyboard"] :focus-visible:not([contenteditable]:not([contenteditable="false"]), [data-focus-editor], [data-mind-map-outline] textarea, [tabindex="-1"]:not(button, a[href], [role="tab"], [role="treeitem"], [role="gridcell"], [role="row"], [role="radio"], [role="checkbox"])) {
+  outline: 2px solid var(--primary-text);
+  outline-offset: var(--shard-focus-offset);
+}
+
+/* 贴着 overflow 边缘的通用容器：焦点环内收（业务容器在各自模块里设置） */
+[data-sonner-toaster],
+.shard-tag-filters {
+  --shard-focus-offset: -2px;
+}
+
+:root[data-focus-mode="keyboard"] :is([contenteditable]:not([contenteditable="false"]), [data-focus-editor], [data-mind-map-outline] textarea, [tabindex="-1"]:not(button, a[href], [role="tab"], [role="treeitem"], [role="gridcell"], [role="row"], [role="radio"], [role="checkbox"])):focus {
+  outline: none;
 }
 
 @layer base {
