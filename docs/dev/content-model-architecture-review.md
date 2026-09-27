@@ -4,7 +4,7 @@
 
 来源：ChatGPT Pro（6 Pro 档）一轮评审（[会话](https://chatgpt.com/c/6ab957b1-53c4-83ea-864b-bc3fed48eeda)），源码经只读工作区连接器（`workspace: shard`）读取，未打包 ZIP、未读取用户 vault。Claude 对照本地源码逐条核实；下表只收录核实过的结论。
 
-状态：评审完成；**容器方案 A/B 待用户裁决**（§2）。
+状态：评审完成。**2026-09-28 用户裁决采用方案 B**（§2），已写入 [产品框架](product-framework.md) §2.1。
 
 ## 1. 结论
 
