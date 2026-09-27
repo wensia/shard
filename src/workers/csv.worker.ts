@@ -1,16 +1,19 @@
 import {
   parseCsvBytes,
+  inspectCsvImport,
   type CsvWorkerRequest,
   type CsvWorkerResponse,
 } from "@/lib/csv"
 
 self.onmessage = (event: MessageEvent<CsvWorkerRequest>) => {
   const request = event.data
-  if (request.type !== "parse") return
+  if (request.type !== "parse" && request.type !== "inspect") return
 
   try {
+    const document = parseCsvBytes(request.bytes)
+    if (request.type === "inspect") document.importInspection = inspectCsvImport(document.records)
     postMessage({
-      document: parseCsvBytes(request.bytes),
+      document,
       requestId: request.requestId,
       type: "parsed",
     } satisfies CsvWorkerResponse)

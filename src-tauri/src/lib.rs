@@ -788,6 +788,31 @@ async fn read_csv_file(app: tauri::AppHandle, path: String) -> Result<Vec<u8>, S
     .await
 }
 
+#[tauri::command]
+async fn read_import_csv_file(path: String) -> Result<Vec<u8>, String> {
+    run_blocking(move || {
+        let source = Path::new(&path);
+        if !source.is_absolute() || !source.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("csv")) {
+            return Err("只能导入 CSV 文件".to_string());
+        }
+        let resolved = source.canonicalize().map_err(|error| error.to_string())?;
+        if resolved.components().any(|component| matches!(component, Component::Normal(name) if name.to_string_lossy().eq_ignore_ascii_case("lockbox"))) {
+            return Err("私密碎片不支持数据集".to_string());
+        }
+        let file = File::open(resolved).map_err(|error| error.to_string())?;
+        // UTF-16 输入可能占用规范化 UTF-8 输出两倍的空间。
+        if file.metadata().map_err(|error| error.to_string())?.len() > 128 * 1024 * 1024 {
+            return Err("LIMIT_EXCEEDED:CSV 文件超过导入上限".to_string());
+        }
+        let mut bytes = Vec::new();
+        file.take(128 * 1024 * 1024 + 1).read_to_end(&mut bytes).map_err(|error| error.to_string())?;
+        if bytes.len() > 128 * 1024 * 1024 {
+            return Err("LIMIT_EXCEEDED:CSV 文件超过导入上限".to_string());
+        }
+        Ok(bytes)
+    }).await
+}
+
 fn read_dataset_in_vault(vault: &Path, path: &str) -> Result<DatasetSnapshot, String> {
     dataset::read_dataset(vault, path, &DatasetLimits::default()).map_err(|error| error.to_string())
 }
@@ -6613,6 +6638,7 @@ pub fn run() {
             convert_fragment_to_note,
             convert_note_to_fragment,
             read_csv_file,
+            read_import_csv_file,
             read_dataset,
             apply_dataset_ops,
             create_dataset,

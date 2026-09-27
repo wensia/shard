@@ -112,6 +112,51 @@ async function editCell(page: Page, column: number, row: number, value: string) 
 
 test.beforeEach(async ({ page }) => { await page.context().grantPermissions(["clipboard-read", "clipboard-write"]); await installMock(page); await page.goto("/") })
 
+async function dropCsv(page: Page, name: string, bytes: number[]) {
+  await page.locator('[data-shard-editor="composer"]').evaluate((element, { name, bytes }) => {
+    const transfer = new DataTransfer()
+    transfer.items.add(new File([new Uint8Array(bytes)], name, { type: "text/csv" }))
+    element.dispatchEvent(new DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer: transfer }))
+  }, { name, bytes })
+}
+
+test("拖放 GBK CSV 显示编码预览并导入带稳定 ID 的中文数据", async ({ page }) => {
+  await dropCsv(page, "通讯录.csv", [0xD0, 0xD5, 0xC3, 0xFB, 0x0A, 0xD5, 0xC5, 0xC8, 0xFD, 0x0A])
+  const dialog = page.getByRole("dialog", { name: "导入 CSV 为数据集" })
+  await expect(dialog).toContainText("GBK")
+  await expect(dialog).toContainText("张三")
+  await dialog.getByRole("button", { name: "导入", exact: true }).click()
+  await expect.poll(() => calls(page, "create_dataset")).toHaveLength(1)
+  const args = (await calls(page, "create_dataset"))[0].args
+  expect(args).toMatchObject({ title: "通讯录", header: ["id", "姓名"], primaryKey: "id" })
+  expect(args.rows).toEqual([[expect.stringMatching(/^r_[0-9a-f]{12}$/u), "张三"]])
+  await expect.poll(() => readEditor(page, "composer")).toContain('"src":"datasets/阅读记录.csv"')
+})
+
+test("拖放重复表头 CSV 时禁止导入", async ({ page }) => {
+  await dropCsv(page, "重复.csv", Array.from(new TextEncoder().encode("姓名,姓名\n张三,李四\n")))
+  const dialog = page.getByRole("dialog", { name: "导入 CSV 为数据集" })
+  await expect(dialog).toContainText("表头名称不能为空且不能重复")
+  await expect(dialog.getByRole("button", { name: "导入", exact: true })).toBeDisabled()
+  expect(await calls(page, "create_dataset")).toHaveLength(0)
+})
+
+test("已有 id 列不唯一时只能按无主键导入", async ({ page }) => {
+  await dropCsv(page, "重复ID.csv", Array.from(new TextEncoder().encode("id,姓名\n1,张三\n1,李四\n")))
+  const dialog = page.getByRole("dialog", { name: "导入 CSV 为数据集" })
+  await expect(dialog.getByText("用 id 列作为主键")).toBeVisible()
+  await expect(dialog.getByRole("checkbox")).toBeDisabled()
+  await dialog.getByRole("button", { name: "导入", exact: true }).click()
+  expect((await calls(page, "create_dataset"))[0].args).toMatchObject({ header: ["id", "姓名"], primaryKey: null })
+})
+
+test("私密速记框拒绝 CSV 拖放", async ({ page }) => {
+  await fillEditor(page, "composer", "#密匣 ")
+  await dropCsv(page, "私密.csv", Array.from(new TextEncoder().encode("姓名\n张三\n")))
+  await expect(page.getByRole("dialog", { name: "导入 CSV 为数据集" })).toHaveCount(0)
+  expect(await calls(page, "create_dataset")).toHaveLength(0)
+})
+
 test("碎片禅模式通过 /数据集 新建 CSV 并插入说明围栏", async ({ page }) => {
   await page.locator('[data-shard-fragment-id="dataset-card"]').getByRole("button", { name: "片段操作" }).click()
   await page.getByRole("menuitem", { name: "禅模式", exact: true }).click()

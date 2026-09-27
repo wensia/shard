@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -48,6 +49,7 @@ import {
 import { hasMarkdownImage, wantsLockbox } from "@/lib/lockbox"
 import { parseMindMapOutline } from "@/lib/mind-map-outline"
 import { useTableDocumentDrop } from "@/lib/use-table-document-drop"
+import { CsvImportDialog } from "@/features/datasets/csv-import-dialog"
 import {
   buildCsvWikilinkCandidates,
   buildWikilinkCandidates,
@@ -140,6 +142,7 @@ export function FragmentEditor({
     EditorImageAttachment[]
   >([])
   const [saveState, setSaveState] = useState<SaveState>("saved")
+  const [importFile, setImportFile] = useState<{ name: string; bytes: Uint8Array } | null>(null)
   const imageAttachmentsRef = useRef<EditorImageAttachment[]>([])
   const lastSavedContentRef = useRef("")
   const onCreateRef = useRef(onCreate)
@@ -369,9 +372,18 @@ export function FragmentEditor({
   }, [outlineView])
 
   // 与其他 hooks 一样，必须位于关闭编辑器的提前 return 之前。
-  const { isDropTarget: isTableDropTarget } = useTableDocumentDrop({
+  const onCsvDrop = useCallback((file: { name: string; bytes: Uint8Array }) => {
+    if (fragment?.lockbox || wantsLockbox(richEditorRef.current?.getMarkdown() ?? content, fragment?.tags ?? [])) {
+      toast.error("私密碎片不支持数据集")
+      return
+    }
+    setImportFile(file)
+  }, [content, fragment?.lockbox, fragment?.tags])
+  const { dropKind } = useTableDocumentDrop({
     enabled: isOpen && !readOnly,
+    allowCsv: !fragment?.lockbox && !wantsLockbox(content, fragment?.tags ?? []),
     frameRef: editorFrameRef,
+    onCsv: onCsvDrop,
   })
   const { uploadPastedImages } = useImageUpload({
     getContent: getCurrentDraftContent,
@@ -742,11 +754,12 @@ export function FragmentEditor({
           />
         </div>
       )}
-      {isTableDropTarget ? (
+      {dropKind ? (
         <div className="shard-editor-drop-hint">
-          请在资料库中导入为多维表格
+          {dropKind === "csv" ? fragment?.lockbox || willRouteToLockbox ? "私密碎片不支持数据集" : "松开以导入为数据集" : "请先另存为 CSV 再导入"}
         </div>
       ) : null}
+      <CsvImportDialog file={importFile} allowed={!fragment?.lockbox && !willRouteToLockbox} onClose={() => setImportFile(null)} onImported={(path) => richEditorRef.current?.insertDatasetReference(path)} />
     </div>
   )
 

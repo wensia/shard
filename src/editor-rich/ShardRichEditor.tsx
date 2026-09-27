@@ -122,6 +122,7 @@ export interface ShardRichEditorProps {
 
 export interface ShardRichEditorHandle extends SearchRevealHandle {
   focus(): void
+  insertDatasetReference(path: string): void
   getMarkdown(): string
   /**
    * 自动保存取值：与 getMarkdown 同一套收敛口径，但只算不改——编辑器里的字面
@@ -598,6 +599,13 @@ export const ShardRichEditor = forwardRef<ShardRichEditorHandle, ShardRichEditor
           const instance = editorRef.current
           if (instance) {
             runRichSlashCommand(instance, id, callbacks.current.onImageFiles, hostCommands())
+          }
+        },
+        insertDatasetReference(path) {
+          const instance = editorRef.current
+          const slash = findBlockSlashItem("datatable")
+          if (instance && !instance.isDestroyed && instance.isEditable && allowDatasetActionsRef.current && slash) {
+            insertRichShardBlock(instance, slash.lang, slash.slash, JSON.stringify({ src: path }))
           }
         },
         insertHorizontalRule() {
