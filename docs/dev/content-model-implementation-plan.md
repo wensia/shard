@@ -19,7 +19,7 @@
 | **P1** | 共用前置合同：保存基线覆盖完整文件（前端拿到文件级哈希）；type 合同（新增 `flowchart`，多个 type 标签的冲突规则在后端与 CLI 统一执行）；大纲、流程图拒绝进密匣 | P0 | 执行中，施工令见 §4 |
 | **H1** | 受管 JSON 区域编解码（Rust + TS）与后端读写命令：幂等创建（稳定操作 ID）、读取、只替换区域的原子写、完整文件基线 | P1 | 已完成，施工令见 §5 |
 | **H2** | 大纲端到端：`/大纲` 提交创建 JSON 大纲（用编辑会话里的树，上限 400 节点，超限报错不截断）；打开大纲进入禅模式外壳中的现有导图编辑器（大纲/导图两视图）；卡片、搜索标题、快速打开识别 JSON 大纲；`FragmentEditor` 接入文件级基线；修正 H1 保护条件 | H1 | 已完成，施工令见 §6 |
-| H2b | 流程图端到端：`/流程图` 创建；`CanvasWorkspace` 存储适配后在禅模式外壳中打开；流程图卡片 | H2 | 待细化 |
+| **H2b** | 流程图端到端：`/流程图` 创建；`CanvasWorkspace` 存储适配后在禅模式外壳中打开；流程图卡片 | H2 | 执行中，施工令见 §7 |
 | H3 | type 筛选含流程图；后端搜索图内容投影（不索引 JSON 键名、坐标、ID）与搜索契约的 kind | H2b | 待细化 |
 | H4 | 旧 md 大纲批量升级（预检报告、正式导入器、确认成功的备份）；资料库时代 `notes/` 下 `.shardmap.json`/`.shardflow.json` 显式加入时间线；CLI 原生 JSON 读写与节点级修改 | H2 | 待细化 |
 | G1–G3 | 属性面板与 `.shard/properties.json`；SQLite 属性表与筛选；标签主题页表格视图 | P1 | 待细化 |
@@ -317,3 +317,62 @@ UI 改动遵守 AGENTS.md 与 `vendor/kiln`：不新增视觉样式，冲突条�
 ### 6.9 交付
 
 不提交 Git；测试改写的 `tests/evidence` 图片结束前恢复。报告写 `docs/dev/content-model-tasks-log/H2.md`：改动文件与要点、开工前 UI 基线、验收结果（含测试数）、偏差及原因、遗留问题。
+
+## 7. H2b 施工令：流程图端到端
+
+前置：P0–H2 已在本分支。「JSON 流程图」指 type 为 `flowchart` 且正文恰好有一个 `shardflow` 区域的碎片。本批的做法与 H2 的大纲一一对应，能照搬 H2 的结构就照搬（宿主状态、打开入口、排空保存、搜索打开、时间线回灌、mock 写法）。
+
+现状要点：`CanvasWorkspace`（`src/features/canvas/canvas-workspace.tsx`）按 `path` 读写，加载用 `readCanvas(path)`，保存经 `CanvasSaveQueue`，它通过注入的 transport（`CanvasSaveTransport = (request: { path, file, expectedRevision, lastSavedHash }) => Promise<CanvasReadResult>`）写入，并校验返回的 path、id、createdAt 与 `revision === expected + 1`；保存失败时的恢复入口是「另存流程图副本」（`recoverAsCopy`，会在资料库父目录新建文件）；旧格式有 `splitLegacy`。它只挂在资料库，没有禅模式。
+
+### 7.0 先加固 H2 的偶发用例
+
+`tests/ui/rich-surfaces.spec.ts` 中「JSON 大纲从卡片编辑进入图形禅模式……」在并行负载下偶发失败、重试通过。改为等待可观察条件（例如 mock 里记录到 `write_graph_fragment` 调用、保存状态文字变化），不依赖固定延时；不改业务代码。
+
+### 7.1 `/流程图` 宿主命令
+
+- 在斜杠命令体系中新增内容类型命令「流程图」，与 `/大纲`、`/文档` 同级，只在速记框出现（与现有宿主命令一样按宿主是否提供回调过滤）。需要改的位置：`src/lib/slash-commands.ts`（命令 id、命令表、`isContentTypeSlashCommand`）、`src/editor-rich/commands.ts`（命令 id 集合、`ShardRichHostCommands` 增加回调、分派）、`src/editor-rich/extensions/slash-suggestion.ts`（把现在「是 outline 就看 onEnterOutline，否则看 onMarkDocument」的二选一改为按命令逐一对应回调）、`src/editor-rich/ShardRichEditor.tsx`（props、回调 ref、`hostCommands`）。`content-kind.ts` 补 `FLOWCHART_TYPE_TAG`。
+- 速记框行为：选中 `/流程图` 后立即调用 `createGraphFragment("flowchart", operationId, null, tags)` 新建空流程图，标签为 `["inbox"]` 经现有规范化；速记框里已有的草稿文字保留不动（只去掉斜杠命令本身）；创建成功后把新碎片插入时间线，并直接打开流程图编辑宿主（与 `/文档` 提交后直接进禅模式的体验一致）；失败时 toast，不改动草稿。
+- 同步更新写死命令数量或顺序的测试：`src/lib/slash-commands.test.ts`、`tests/ui/rich-composer.spec.ts`、`tests/ui/slash-commands.spec.ts`、`tests/ui/content-types.spec.ts`（`/大纲` 候选数）等。
+
+### 7.2 `CanvasWorkspace` 存储适配
+
+- 增加可选的 IO 注入（读取函数与 `CanvasSaveTransport`），**默认就是现有 `readCanvas` / `writeCanvas`**，资料库调用方与现有 canvas 用例行为不变。
+- 碎片 IO：读取用 `readGraphFragment(id)`，组装成 `CanvasReadResult` 形状——`path` 用碎片的 `path`（保持稳定，满足保存队列校验），`file` 是区域里的 `CanvasFile`，`lastSavedHash` 用 `fragment.fileSha`。写入 transport 用 `writeGraphFragment(id, request.file, request.lastSavedHash)`，同样组装返回；后端写入会把 revision 加 1、保留 createdAt，保存队列现有校验不改。每次读写返回的 `fragment` 交给宿主回灌时间线。
+- 碎片模式下隐藏「另存流程图副本」和旧格式拆分入口。保存返回 `STALE_BASE` 时，用现有按钮组件提供两个选择：「保留我的版本」（重新读取拿最新 `fileSha` 后用当前草稿写入）、「载入磁盘版本」（放弃草稿重新载入）。文案风格与大纲冲突条一致。
+- 节点引用（`fragments`、`onOpenLink`）：宿主传入当前碎片列表；打开引用时先排空保存再导航，沿用 H2 大纲宿主的做法。
+
+### 7.3 打开 JSON 流程图与卡片
+
+- `workbench-shell.tsx`：卡片「编辑」「禅模式」、搜索结果打开遇到 JSON 流程图时，打开流程图编辑宿主——`ZenSurface` 包 `CanvasWorkspace`（碎片 IO）。关闭前排空保存，失败不关闭并提示；纳入 `saveLibraryDraftBeforeNavigation` 等排空入口。`FragmentEditor` 不再承载 JSON 流程图。
+- 卡片：新增流程图卡片正文——标题取 JSON 的 `title`，下面一行显示节点数与连线数（例如「6 个节点 · 5 条连线」）；复用现有卡片排版与 token，不新增视觉样式。解析失败时退回显示原正文。
+- 在 `src/lib/` 增加 `readFlowchartContent(content)`（与 `readOutlineContent` 对应）；`search-provider.ts`、`quick-open-catalog.ts` 中流程图的标题改用 JSON 的 `title`。
+
+### 7.4 测试
+
+- TS 单元：`readFlowchartContent`；斜杠命令表更新后的顺序与过滤。
+- UI（mock 补 `flowchart` 分支，样本带 `fileSha`）：
+  1. 速记框 `/流程图` 调用 `create_graph_fragment`（kind 为 flowchart、graph 为 null），新卡片出现并直接打开流程图宿主；速记框原草稿保留。
+  2. 流程图卡片显示标题与节点/连线计数。
+  3. 从卡片「编辑」打开 JSON 流程图进入禅模式宿主；修改后保存调用 `write_graph_fragment` 且带基线；Esc 关闭前排空。
+  4. 流程图保存遇到 STALE_BASE 时出现两个选择，各自生效；碎片模式下没有「另存流程图副本」。
+  5. 行内编辑与禅模式对普通碎片、文档、大纲的现有行为不变。
+- 现有 canvas 用例（`canvas-*.spec.ts`）全部通过，证明默认 IO 行为不变。
+
+### 7.5 验收命令
+
+沿用 `playwright.worktree.config.ts`（1422，不提交），开工前先跑一遍下表 UI 用例记录基线。
+
+| 命令 | 要求 |
+| --- | --- |
+| `cargo test -p shard-core -p shard -p shard-cli` | 全部通过 |
+| `pnpm test:unit` | 除 golden 夹具那一项既有失败外全部通过（quick-open 性能若在全套中波动须单独复跑通过） |
+| `pnpm build` | 通过 |
+| `pnpm build:markdown && pnpm exec playwright test -c playwright.worktree.config.ts tests/ui/content-types.spec.ts tests/ui/rich-surfaces.spec.ts tests/ui/rich-composer.spec.ts tests/ui/slash-commands.spec.ts tests/ui/canvas-workspace.spec.ts tests/ui/canvas-inspector.spec.ts tests/ui/canvas-keyboard.spec.ts tests/ui/canvas-multidrag.spec.ts tests/ui/canvas-polish.spec.ts tests/ui/canvas-recovery.spec.ts tests/ui/canvas-text-center.spec.ts tests/ui/mind-map-workspace.spec.ts tests/ui/search-fragment-reveal.spec.ts tests/ui/search-editor-reveal.spec.ts tests/ui/search-integration.spec.ts` | 相对基线没有新增失败；新增用例全部通过；对偶发项用 `--workers=1` 单独复跑并在报告中注明 |
+| `rustfmt --edition 2021 --check crates/shard-core/src/frontmatter.rs crates/shard-core/src/graph_region.rs` | 通过 |
+| `git diff --check` | 通过 |
+
+UI 改动遵守 AGENTS.md 与 `vendor/kiln`，复用现有组件与 token。
+
+### 7.6 交付
+
+不提交 Git；测试改写的 `tests/evidence` 图片结束前恢复。报告写 `docs/dev/content-model-tasks-log/H2b.md`：改动文件与要点、开工前 UI 基线、验收结果（含测试数与偶发项复跑）、偏差及原因、遗留问题。
