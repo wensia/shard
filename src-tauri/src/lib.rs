@@ -14,6 +14,9 @@ use serde::{Deserialize, Serialize};
 use shard_core::{
     contains_lockbox_tag, create_public_fragment_in_vault, default_vault_path,
     ensure_vault_layout, is_false, new_fragment_id, normalize_tag, normalize_tags,
+    frontmatter::{
+        apply_frontmatter, parse_fragment, raw_from_frontmatter, write_fragment_update,
+    },
     temporary_filename, unique_suffix, write_bytes_atomically, write_fragment_file,
     write_text_atomically, AppConfig, FragmentFrontmatter, FragmentRelation, LOCKBOX_TAG,
     LIBRARY_FILENAME_MAX_BYTES,
@@ -439,6 +442,8 @@ struct LockboxEncryptedFragment {
 #[derive(Debug, Serialize, Deserialize)]
 struct LockboxFragmentPayload {
     frontmatter: FragmentFrontmatter,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    frontmatter_raw: Option<String>,
     body: String,
 }
 
@@ -1582,9 +1587,6 @@ async fn update_fragment_tags(
         }
 
         let path = find_fragment_path(&vault, &id)?.ok_or_else(|| format!("找不到片段 {}", id))?;
-        let text = fs::read_to_string(&path).map_err(|error| error.to_string())?;
-        let (mut frontmatter, body) = parse_fragment_text(&text)?;
-
         if contains_lockbox_tag(&normalized_tags) {
             let result =
                 move_public_fragment_to_lockbox_in_vault(&vault, &lockbox_runtime, &gate, &path);
@@ -1593,21 +1595,7 @@ async fn update_fragment_tags(
             return result;
         }
 
-        let mut next_tags = normalized_tags;
-        if next_tags.is_empty() {
-            next_tags.push("inbox".to_string());
-        }
-
-        frontmatter.tags = next_tags;
-        frontmatter.updated_at = Local::now().to_rfc3339();
-        write_fragment_file(&path, &frontmatter, body.trim_start_matches('\n'))?;
-
-
-        let dirty = dirty_paths(&vault);
-        // 内容保存只落盘，提交由聚合检查点接管（docs/design/commit-coalescing-plan.md §7 A2）
-        let override_status = None;
-
-        read_fragment(&path, &vault, &dirty, override_status)
+        update_public_fragment_tags_in_vault(&vault, &path, normalized_tags)
     })
     .await
 }
@@ -1648,15 +1636,14 @@ async fn update_fragment(
         }
 
         let path = find_fragment_path(&vault, &id)?.ok_or_else(|| format!("找不到片段 {}", id))?;
-        let text = fs::read_to_string(&path).map_err(|error| error.to_string())?;
-        let (mut frontmatter, current_body) = parse_fragment_text(&text)?;
-        // 与 read_fragment 的 content 归一化保持一致，否则哈希永不相等
-        ensure_expected_content_sha(
-            current_body.trim_start_matches('\n'),
-            expected_sha.as_deref(),
-        )?;
-
         if contains_lockbox_tag(&normalized_tags) {
+            let text = fs::read_to_string(&path).map_err(|error| error.to_string())?;
+            let parsed = parse_fragment(&text)?;
+            // 与 read_fragment 的 content 归一化保持一致，否则哈希永不相等
+            ensure_expected_content_sha(
+                parsed.body.trim_start_matches('\n'),
+                expected_sha.as_deref(),
+            )?;
             let result = move_public_fragment_content_to_lockbox_in_vault(
                 &vault,
                 &lockbox_runtime,
@@ -1670,20 +1657,13 @@ async fn update_fragment(
             return result;
         }
 
-        let mut next_tags = normalized_tags;
-        if next_tags.is_empty() {
-            next_tags.push("inbox".to_string());
-        }
-
-        frontmatter.tags = next_tags;
-        frontmatter.updated_at = Local::now().to_rfc3339();
-        write_fragment_file(&path, &frontmatter, &content)?;
-
-        let dirty = dirty_paths(&vault);
-        // 内容保存只落盘，提交由聚合检查点接管（docs/design/commit-coalescing-plan.md §7 A2）
-        let override_status = None;
-
-        read_fragment(&path, &vault, &dirty, override_status)
+        update_public_fragment_in_vault(
+            &vault,
+            &path,
+            &content,
+            normalized_tags,
+            expected_sha.as_deref(),
+        )
     })
     .await
 }
@@ -3784,6 +3764,8 @@ where
 {
     let source_rel = relative_path(vault, source)?;
     let destination_rel = relative_path(vault, destination)?;
+    let source_text = fs::read_to_string(source).map_err(|error| error.to_string())?;
+    let source_fragment = parse_fragment(&source_text)?;
     let rewrite = |text: &str| {
         let mut next = text.to_string();
         let mut count = 0;
@@ -3816,9 +3798,8 @@ where
     }
     // Keep the exact body boundary, whitespace and content. The chosen document
     // title names its file and never inserts or replaces a Markdown heading.
-    let yaml = serde_yaml::to_string(frontmatter).map_err(|error| error.to_string())?;
-    let yaml = yaml.strip_prefix("---\n").unwrap_or(&yaml);
-    let (destination_text, self_link_count) = rewrite(&format!("---\n{yaml}---{body}"));
+    let raw = apply_frontmatter(&source_fragment.raw, frontmatter)?;
+    let (destination_text, self_link_count) = rewrite(&format!("---\n{raw}\n---{body}"));
     let mut written = Vec::new();
     let mut destination_written = false;
     let result: Result<(Fragment, usize), String> = (|| {
@@ -4616,6 +4597,50 @@ fn parse_fragment_text(text: &str) -> Result<(FragmentFrontmatter, &str), String
     Ok((frontmatter, body))
 }
 
+fn update_public_fragment_tags_in_vault(
+    vault: &Path,
+    path: &Path,
+    tags: Vec<String>,
+) -> Result<Fragment, String> {
+    let text = fs::read_to_string(path).map_err(|error| error.to_string())?;
+    let parsed = parse_fragment(&text)?;
+    let mut frontmatter = parsed.frontmatter;
+    frontmatter.tags = if tags.is_empty() {
+        vec!["inbox".to_string()]
+    } else {
+        tags
+    };
+    frontmatter.updated_at = Local::now().to_rfc3339();
+    write_fragment_update(
+        path,
+        &parsed.raw,
+        &frontmatter,
+        parsed.body.trim_start_matches('\n'),
+    )?;
+    read_fragment(path, vault, &dirty_paths(vault), None)
+}
+
+fn update_public_fragment_in_vault(
+    vault: &Path,
+    path: &Path,
+    content: &str,
+    tags: Vec<String>,
+    expected_sha: Option<&str>,
+) -> Result<Fragment, String> {
+    let text = fs::read_to_string(path).map_err(|error| error.to_string())?;
+    let parsed = parse_fragment(&text)?;
+    ensure_expected_content_sha(parsed.body.trim_start_matches('\n'), expected_sha)?;
+    let mut frontmatter = parsed.frontmatter;
+    frontmatter.tags = if tags.is_empty() {
+        vec!["inbox".to_string()]
+    } else {
+        tags
+    };
+    frontmatter.updated_at = Local::now().to_rfc3339();
+    write_fragment_update(path, &parsed.raw, &frontmatter, content)?;
+    read_fragment(path, vault, &dirty_paths(vault), None)
+}
+
 fn link_fragments_in_vault(
     vault: &Path,
     source_id: &str,
@@ -4635,7 +4660,8 @@ fn link_fragments_in_vault(
     let path = find_fragment_path(vault, source_id)?
         .ok_or_else(|| format!("找不到公开片段 {source_id}"))?;
     let text = fs::read_to_string(&path).map_err(|error| error.to_string())?;
-    let (mut frontmatter, body) = parse_fragment_text(&text)?;
+    let parsed = parse_fragment(&text)?;
+    let mut frontmatter = parsed.frontmatter;
     if frontmatter
         .related
         .iter()
@@ -4653,7 +4679,12 @@ fn link_fragments_in_vault(
         note,
     });
     frontmatter.updated_at = now;
-    write_fragment_file(&path, &frontmatter, body.trim_start_matches('\n'))?;
+    write_fragment_update(
+        &path,
+        &parsed.raw,
+        &frontmatter,
+        parsed.body.trim_start_matches('\n'),
+    )?;
 
     let dirty = dirty_paths(vault);
 
@@ -4674,7 +4705,8 @@ fn unlink_fragments_in_vault(
     let path = find_fragment_path(vault, source_id)?
         .ok_or_else(|| format!("找不到公开片段 {source_id}"))?;
     let text = fs::read_to_string(&path).map_err(|error| error.to_string())?;
-    let (mut frontmatter, body) = parse_fragment_text(&text)?;
+    let parsed = parse_fragment(&text)?;
+    let mut frontmatter = parsed.frontmatter;
     let previous_len = frontmatter.related.len();
     frontmatter
         .related
@@ -4685,7 +4717,12 @@ fn unlink_fragments_in_vault(
     }
 
     frontmatter.updated_at = Local::now().to_rfc3339();
-    write_fragment_file(&path, &frontmatter, body.trim_start_matches('\n'))?;
+    write_fragment_update(
+        &path,
+        &parsed.raw,
+        &frontmatter,
+        parsed.body.trim_start_matches('\n'),
+    )?;
 
     let dirty = dirty_paths(vault);
 
@@ -4703,10 +4740,16 @@ fn set_public_fragment_pinned_in_vault(
     }
 
     let text = fs::read_to_string(path).map_err(|error| error.to_string())?;
-    let (mut frontmatter, body) = parse_fragment_text(&text)?;
+    let parsed = parse_fragment(&text)?;
+    let mut frontmatter = parsed.frontmatter;
     frontmatter.pinned = pinned;
     frontmatter.updated_at = Local::now().to_rfc3339();
-    write_fragment_file(path, &frontmatter, body.trim_start_matches('\n'))?;
+    write_fragment_update(
+        path,
+        &parsed.raw,
+        &frontmatter,
+        parsed.body.trim_start_matches('\n'),
+    )?;
 
     let dirty = dirty_paths(vault);
     // 内容保存只落盘，提交由聚合检查点接管（docs/design/commit-coalescing-plan.md §7 A2）
@@ -4747,7 +4790,7 @@ fn create_lockbox_fragment_in_vault(
         related: Vec::new(),
     };
 
-    write_lockbox_fragment_file(&path, &write_key, &frontmatter, content)?;
+    write_lockbox_fragment_file(&path, &write_key, &frontmatter, None, content)?;
 
     let dirty = dirty_paths(vault);
     // 内容保存只落盘，提交由聚合检查点接管（docs/design/commit-coalescing-plan.md §7 A2）
@@ -4778,8 +4821,14 @@ fn update_lockbox_fragment_in_vault(
     reject_lockbox_images(content)?;
     let mut payload = read_lockbox_payload(path, read_keys)?;
     ensure_expected_content_sha(&payload.body, expected_sha)?;
+    let raw = payload
+        .frontmatter_raw
+        .clone()
+        .map(Ok)
+        .unwrap_or_else(|| raw_from_frontmatter(&payload.frontmatter))?;
     payload.frontmatter.tags = normalize_lockbox_tags(tags);
     payload.frontmatter.updated_at = Local::now().to_rfc3339();
+    payload.frontmatter_raw = Some(apply_frontmatter(&raw, &payload.frontmatter)?);
     payload.body = content.to_string();
     let write_key = LockboxWriteKey::Master(read_keys.master_key.clone());
     write_lockbox_payload(path, &write_key, &payload)?;
@@ -4798,8 +4847,14 @@ fn update_lockbox_fragment_tags_in_vault(
     tags: Vec<String>,
 ) -> Result<Fragment, String> {
     let mut payload = read_lockbox_payload(path, read_keys)?;
+    let raw = payload
+        .frontmatter_raw
+        .clone()
+        .map(Ok)
+        .unwrap_or_else(|| raw_from_frontmatter(&payload.frontmatter))?;
     payload.frontmatter.tags = normalize_lockbox_tags(tags);
     payload.frontmatter.updated_at = Local::now().to_rfc3339();
+    payload.frontmatter_raw = Some(apply_frontmatter(&raw, &payload.frontmatter)?);
     let write_key = LockboxWriteKey::Master(read_keys.master_key.clone());
     write_lockbox_payload(path, &write_key, &payload)?;
 
@@ -4822,8 +4877,14 @@ fn set_lockbox_fragment_pinned_in_vault(
     }
 
     let mut payload = read_lockbox_payload(path, read_keys)?;
+    let raw = payload
+        .frontmatter_raw
+        .clone()
+        .map(Ok)
+        .unwrap_or_else(|| raw_from_frontmatter(&payload.frontmatter))?;
     payload.frontmatter.pinned = pinned;
     payload.frontmatter.updated_at = Local::now().to_rfc3339();
+    payload.frontmatter_raw = Some(apply_frontmatter(&raw, &payload.frontmatter)?);
     let write_key = LockboxWriteKey::Master(read_keys.master_key.clone());
     write_lockbox_payload(path, &write_key, &payload)?;
 
@@ -4841,15 +4902,16 @@ fn move_public_fragment_to_lockbox_in_vault(
     path: &Path,
 ) -> Result<Fragment, String> {
     let text = fs::read_to_string(path).map_err(|error| error.to_string())?;
-    let (frontmatter, body) = parse_fragment_text(&text)?;
+    let parsed = parse_fragment(&text)?;
     move_public_fragment_payload_to_lockbox_in_vault(
         vault,
         lockbox_runtime,
         gate,
         path,
-        body.trim_start_matches('\n'),
-        frontmatter.tags.clone(),
-        Some(frontmatter),
+        parsed.body.trim_start_matches('\n'),
+        parsed.frontmatter.tags.clone(),
+        Some(parsed.frontmatter),
+        Some(parsed.raw),
     )
 }
 
@@ -4862,7 +4924,7 @@ fn move_public_fragment_content_to_lockbox_in_vault(
     tags: Vec<String>,
 ) -> Result<Fragment, String> {
     let text = fs::read_to_string(path).map_err(|error| error.to_string())?;
-    let (frontmatter, _) = parse_fragment_text(&text)?;
+    let parsed = parse_fragment(&text)?;
     move_public_fragment_payload_to_lockbox_in_vault(
         vault,
         lockbox_runtime,
@@ -4870,7 +4932,8 @@ fn move_public_fragment_content_to_lockbox_in_vault(
         path,
         content,
         tags,
-        Some(frontmatter),
+        Some(parsed.frontmatter),
+        Some(parsed.raw),
     )
 }
 
@@ -4882,6 +4945,7 @@ fn move_public_fragment_payload_to_lockbox_in_vault(
     content: &str,
     tags: Vec<String>,
     existing_frontmatter: Option<FragmentFrontmatter>,
+    existing_frontmatter_raw: Option<String>,
 ) -> Result<Fragment, String> {
     reject_lockbox_images(content)?;
     let write_key = lockbox_write_key(vault, lockbox_runtime)?;
@@ -4889,6 +4953,7 @@ fn move_public_fragment_payload_to_lockbox_in_vault(
     frontmatter.tags = normalize_lockbox_tags(tags);
     frontmatter.updated_at = Local::now().to_rfc3339();
     frontmatter.source = "desktop-lockbox".to_string();
+    frontmatter.related.clear();
 
     let public_path_mapping = [
         ("notes", vault.join("lockbox").join("notes")),
@@ -4910,7 +4975,13 @@ fn move_public_fragment_payload_to_lockbox_in_vault(
         fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
     gate.invalidate_public_snapshot();
-    write_lockbox_fragment_file(&lockbox_path, &write_key, &frontmatter, content)?;
+    write_lockbox_fragment_file(
+        &lockbox_path,
+        &write_key,
+        &frontmatter,
+        existing_frontmatter_raw.as_deref(),
+        content,
+    )?;
     fs::remove_file(public_path).map_err(|error| error.to_string())?;
 
     let commit_result = commit_paths_if_git(
@@ -5046,21 +5117,18 @@ fn write_lockbox_fragment_file(
     path: &Path,
     write_key: &LockboxWriteKey,
     frontmatter: &FragmentFrontmatter,
+    frontmatter_raw: Option<&str>,
     body: &str,
 ) -> Result<(), String> {
+    let mut next = frontmatter.clone();
+    next.related.clear();
+    let raw = match frontmatter_raw {
+        Some(raw) => apply_frontmatter(raw, &next)?,
+        None => raw_from_frontmatter(&next)?,
+    };
     let payload = LockboxFragmentPayload {
-        frontmatter: FragmentFrontmatter {
-            id: frontmatter.id.clone(),
-            created_at: frontmatter.created_at.clone(),
-            updated_at: frontmatter.updated_at.clone(),
-            tags: frontmatter.tags.clone(),
-            category: frontmatter.category.clone(),
-            ai_status: frontmatter.ai_status.clone(),
-            pinned: frontmatter.pinned,
-            source: frontmatter.source.clone(),
-            conflict_of: frontmatter.conflict_of.clone(),
-            related: Vec::new(),
-        },
+        frontmatter: next,
+        frontmatter_raw: Some(raw),
         body: body.trim_end().to_string(),
     };
     write_lockbox_payload(path, write_key, &payload)
@@ -5139,7 +5207,13 @@ fn read_lockbox_payload(
             &encrypted.ciphertext,
         )?
     };
-    serde_json::from_slice(&plaintext).map_err(|error| error.to_string())
+    let mut payload =
+        serde_json::from_slice::<LockboxFragmentPayload>(&plaintext).map_err(|error| error.to_string())?;
+    if let Some(raw) = payload.frontmatter_raw.as_deref() {
+        payload.frontmatter =
+            serde_yaml::from_str(raw).map_err(|error| format!("密匣 frontmatter 无效：{error}"))?;
+    }
+    Ok(payload)
 }
 
 fn find_lockbox_fragment_path(vault: &Path, id: &str) -> Result<Option<PathBuf>, String> {
@@ -7485,6 +7559,254 @@ mod tests {
         assert!(frontmatter.related.is_empty());
         write_fragment_file(&path, &frontmatter, body.trim_start_matches('\n')).unwrap();
 
+        assert_eq!(fs::read(path).unwrap(), before);
+    }
+
+    fn fidelity_raw(id: &str, related_target: Option<&str>) -> String {
+        let related = related_target
+            .map(|target| {
+                format!(
+                    "\nrelated:\n- targetId: {target}\n  origin: manual\n  createdAt: 2026-09-28T08:30:00+08:00"
+                )
+            })
+            .unwrap_or_default();
+        format!(
+            concat!(
+                "# 自定义顶部注释\n",
+                "author: 张三\n",
+                "id: {id}\n",
+                "created_at: 2026-09-28T08:00:00+08:00\n",
+                "rating: 5 # 自定义行尾注释\n",
+                "updated_at: 2026-09-28T08:00:00+08:00\n",
+                "tags: [inbox, 自定义]\n",
+                "category: null\n",
+                "custom_list:\n",
+                "  - first\n",
+                "  - second\n",
+                "\n",
+                "ai_status: none\n",
+                "source: test # 系统键未变化时也保留\n",
+                "isbn: '00123'\n",
+                "description: |\n",
+                "  第一行\n",
+                "  第二行\n",
+                "# 自定义尾部注释{related}"
+            ),
+            id = id,
+            related = related
+        )
+    }
+
+    fn write_fidelity_fragment(vault: &Path, id: &str, related_target: Option<&str>) -> PathBuf {
+        let path = vault.join("fragments/tests").join(format!("{id}.md"));
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(
+            &path,
+            format!(
+                "---\n{}\n---\n\n原正文\n",
+                fidelity_raw(id, related_target)
+            ),
+        )
+        .unwrap();
+        path
+    }
+
+    fn assert_fidelity_markers(path: &Path) {
+        let text = fs::read_to_string(path).unwrap();
+        for marker in [
+            "# 自定义顶部注释\nauthor: 张三\n",
+            "rating: 5 # 自定义行尾注释",
+            "custom_list:\n  - first\n  - second\n\n",
+            "isbn: '00123'",
+            "description: |\n  第一行\n  第二行\n# 自定义尾部注释",
+        ] {
+            assert!(text.contains(marker), "missing preserved marker: {marker}");
+        }
+    }
+
+    #[test]
+    fn public_write_paths_preserve_unknown_frontmatter() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let vault = tempdir.path();
+        ensure_vault_layout(vault).unwrap();
+        let target_id = write_public_test_fragment(vault, "关联目标");
+        let id = "fidelity-public";
+        let mut path = write_fidelity_fragment(vault, id, None);
+
+        let updated = update_public_fragment_in_vault(
+            vault,
+            &path,
+            "更新正文",
+            vec!["alpha".to_string()],
+            Some(&content_sha256_hex("原正文\n")),
+        )
+        .unwrap();
+        assert_eq!(updated.content, "更新正文\n");
+        assert_fidelity_markers(&path);
+
+        let updated =
+            update_public_fragment_tags_in_vault(vault, &path, vec!["beta".to_string()])
+                .unwrap();
+        assert_eq!(updated.tags, vec!["beta"]);
+        assert_fidelity_markers(&path);
+
+        let linked =
+            link_fragments_in_vault(vault, id, &target_id, "manual", Some("保真".into()))
+                .unwrap();
+        assert_eq!(linked.related.len(), 1);
+        assert_fidelity_markers(&path);
+
+        let unlinked = unlink_fragments_in_vault(vault, id, &target_id).unwrap();
+        assert!(unlinked.related.is_empty());
+        assert_fidelity_markers(&path);
+
+        let pinned = set_public_fragment_pinned_in_vault(vault, &path, true).unwrap();
+        assert!(pinned.pinned);
+        assert_fidelity_markers(&path);
+
+        let (note, _) =
+            convert_fragment_to_note_in_vault(vault, id, None, Some("保真笔记")).unwrap();
+        path = vault.join(&note.path);
+        assert!(note.tags.iter().any(|tag| tag == "note"));
+        assert_fidelity_markers(&path);
+
+        let (fragment, _) = convert_note_to_fragment_in_vault(vault, id).unwrap();
+        path = vault.join(&fragment.path);
+        assert!(!fragment.tags.iter().any(|tag| tag == "note"));
+        assert_fidelity_markers(&path);
+    }
+
+    #[test]
+    fn lockbox_roundtrip_preserves_unknown_frontmatter() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let vault = tempdir.path();
+        let runtime = LockboxRuntime::default();
+        ensure_vault_layout(vault).unwrap();
+        setup_lockbox_in_vault(vault, &runtime, "correct horse").unwrap();
+        let target_id = write_public_test_fragment(vault, "关联目标");
+        let source = write_fidelity_fragment(vault, "fidelity-lockbox", Some(&target_id));
+        let gate = lock_vault_gate(vault);
+        let moved =
+            move_public_fragment_to_lockbox_in_vault(vault, &runtime, &gate, &source).unwrap();
+        drop(gate);
+        let path = vault.join(&moved.path);
+        let read_keys = require_unlocked_lockbox_read_keys(vault, &runtime).unwrap();
+
+        let payload = read_lockbox_payload(&path, &read_keys).unwrap();
+        let raw = payload.frontmatter_raw.as_deref().unwrap();
+        assert!(raw.contains("# 自定义顶部注释\nauthor: 张三"));
+        assert!(raw.contains("isbn: '00123'"));
+        assert!(!raw.contains("related:"));
+        assert!(payload.frontmatter.related.is_empty());
+
+        update_lockbox_fragment_tags_in_vault(
+            vault,
+            &path,
+            &read_keys,
+            vec!["密匣".into(), "private".into()],
+        )
+        .unwrap();
+        let visible =
+            set_lockbox_fragment_pinned_in_vault(vault, &path, &read_keys, true).unwrap();
+        assert_eq!(visible.tags, vec!["private"]);
+        assert!(visible.pinned);
+        assert!(visible.related.is_empty());
+
+        let payload = read_lockbox_payload(&path, &read_keys).unwrap();
+        let raw = payload.frontmatter_raw.as_deref().unwrap();
+        assert!(raw.contains("# 自定义顶部注释\nauthor: 张三"));
+        assert!(raw.contains("rating: 5 # 自定义行尾注释"));
+        assert!(raw.contains("description: |\n  第一行\n  第二行\n# 自定义尾部注释"));
+        assert!(!raw.contains("related:"));
+    }
+
+    #[test]
+    fn legacy_lockbox_payload_is_upgraded_with_raw() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let vault = tempdir.path();
+        let runtime = LockboxRuntime::default();
+        ensure_vault_layout(vault).unwrap();
+        setup_lockbox_in_vault(vault, &runtime, "correct horse").unwrap();
+        let read_keys = require_unlocked_lockbox_read_keys(vault, &runtime).unwrap();
+        let path = vault.join("lockbox/fragments/tests/legacy.shard");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let frontmatter = FragmentFrontmatter {
+            id: "legacy-lockbox".into(),
+            created_at: "2026-09-28T08:00:00+08:00".into(),
+            updated_at: "2026-09-28T08:00:00+08:00".into(),
+            tags: vec!["private".into()],
+            category: None,
+            ai_status: Some("none".into()),
+            pinned: false,
+            source: "legacy".into(),
+            conflict_of: None,
+            related: Vec::new(),
+        };
+        let legacy = LockboxFragmentPayload {
+            frontmatter,
+            frontmatter_raw: None,
+            body: "旧正文".into(),
+        };
+        let write_key = LockboxWriteKey::Master(read_keys.master_key.clone());
+        write_lockbox_payload(&path, &write_key, &legacy).unwrap();
+        assert!(read_lockbox_payload(&path, &read_keys)
+            .unwrap()
+            .frontmatter_raw
+            .is_none());
+
+        let visible = update_lockbox_fragment_tags_in_vault(
+            vault,
+            &path,
+            &read_keys,
+            vec!["upgraded".into()],
+        )
+        .unwrap();
+        assert_eq!(visible.tags, vec!["upgraded"]);
+        let upgraded = read_lockbox_payload(&path, &read_keys).unwrap();
+        assert!(upgraded.frontmatter_raw.is_some());
+        assert_eq!(
+            serde_yaml::from_str::<FragmentFrontmatter>(
+                upgraded.frontmatter_raw.as_deref().unwrap()
+            )
+            .unwrap()
+            .tags,
+            vec!["upgraded"]
+        );
+    }
+
+    #[test]
+    fn failed_frontmatter_update_leaves_file_unchanged() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let vault = tempdir.path();
+        ensure_vault_layout(vault).unwrap();
+        let path = vault.join("fragments/tests/unsafe.md");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let raw = raw_from_frontmatter(&FragmentFrontmatter {
+            id: "unsafe".into(),
+            created_at: "2026-09-28T08:00:00+08:00".into(),
+            updated_at: "2026-09-28T08:00:00+08:00".into(),
+            tags: vec!["inbox".into()],
+            category: None,
+            ai_status: Some("none".into()),
+            pinned: false,
+            source: "test".into(),
+            conflict_of: None,
+            related: Vec::new(),
+        })
+        .unwrap()
+        .replacen("tags:\n- inbox", "tags: &shared\n- inbox\nmirror: *shared", 1);
+        fs::write(&path, format!("---\n{raw}\n---\n\n原正文\n")).unwrap();
+        let before = fs::read(&path).unwrap();
+
+        let error = update_public_fragment_in_vault(
+            vault,
+            &path,
+            "新正文",
+            vec!["changed".into()],
+            None,
+        )
+        .unwrap_err();
+        assert!(error.contains("YAML 别名引用"));
         assert_eq!(fs::read(path).unwrap(), before);
     }
 
