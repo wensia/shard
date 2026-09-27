@@ -1,13 +1,16 @@
-import { deriveKind, deriveNoteTitle, isStreamKind } from "@/lib/content-kind"
+import { deriveKind, deriveNoteTitle, isStreamKind, type ContentKind } from "@/lib/content-kind"
 import type { Fragment, LibraryTreeEntry } from "@/types"
 
+export type FragmentFilterKind = Exclude<ContentKind, "note"> | null
+
 export interface FragmentFilters {
+  kind: FragmentFilterKind
   tag: string | null
   month: string | null
   pinned: boolean
 }
 
-export const EMPTY_FRAGMENT_FILTERS: FragmentFilters = { tag: null, month: null, pinned: false }
+export const EMPTY_FRAGMENT_FILTERS: FragmentFilters = { kind: null, tag: null, month: null, pinned: false }
 
 export function isPublicStreamFragment(fragment: Fragment) {
   // 碎片、大纲、文档同在一条时间线（产品框架 §3）；资料库笔记仍归资料库。
@@ -16,6 +19,7 @@ export function isPublicStreamFragment(fragment: Fragment) {
 
 export function matchesFragmentFilters(fragment: Fragment, filters: FragmentFilters) {
   return isPublicStreamFragment(fragment)
+    && (!filters.kind || deriveKind(fragment.tags) === filters.kind)
     && (!filters.tag || fragment.tags.includes(filters.tag))
     && (!filters.month || fragment.createdAt.slice(0, 7) === filters.month)
     && (!filters.pinned || fragment.pinned)

@@ -217,7 +217,7 @@ function expectFilterDialogGeometry(geometry: Awaited<ReturnType<typeof readFilt
   expect(geometry.font).toBe(geometry.fontToken)
   expect(geometry.font).toContain('"Noto Sans SC"')
   expect(geometry.notoLoaded).toBe(true)
-  expect(geometry.controls).toHaveLength(4)
+  expect(geometry.controls).toHaveLength(5)
   for (const control of geometry.controls) {
     expect(control.radius).toBe("4px")
     expect(control.height).toBeCloseTo(control.kind === "select" ? 28 : 32, 1)
@@ -228,8 +228,10 @@ function expectFilterDialogGeometry(geometry: Awaited<ReturnType<typeof readFilt
     expect(control.bottom).toBeLessThan(geometry.bounds.bottom)
   }
   const selects = geometry.controls.filter(control => control.kind === "select")
-  expect(selects[0].left).toBeCloseTo(selects[1].left, 1)
-  expect(selects[0].right).toBeCloseTo(selects[1].right, 1)
+  for (const select of selects.slice(1)) {
+    expect(select.left).toBeCloseTo(selects[0].left, 1)
+    expect(select.right).toBeCloseTo(selects[0].right, 1)
+  }
 }
 
 test.beforeEach(async ({ page }) => {
@@ -315,7 +317,7 @@ test("窄窗低高度仍可从搜索打开筛选，弹层与下拉菜单不越�
   expectFilterDialogGeometry(geometry)
   const tag = dialog.getByRole("combobox", { name: "标签", exact: true })
   await tag.press("Space")
-  const popup = page.locator('[data-slot="select-content"]')
+  const popup = page.locator('[data-slot="select-content"][data-open]')
   await expect(popup).toBeVisible()
   const popupBounds = (await popup.boundingBox())!
   expect(popupBounds.x).toBeGreaterThanOrEqual(8)

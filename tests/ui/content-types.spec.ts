@@ -14,6 +14,8 @@ import {
   readEditor,
   typeEditor,
 } from "./editor-helpers"
+import { openFragmentFilters } from "./fragment-filter-helpers"
+import { selectOption } from "./select-helpers"
 
 const COMPOSER = '[data-shard-editor="composer"]'
 const OUTLINE = '[data-capture-outline="editor"]'
@@ -340,7 +342,26 @@ test.describe("时间线与瀑布流的类型卡片", () => {
     await page.keyboard.press("Control+k")
     dialog = page.getByRole("dialog", { name: "搜索", exact: true })
     await dialog.getByRole("combobox", { name: "搜索内容" }).fill("发布流程")
-    await expect(dialog).toContainText("发布流程")
+    await expect(dialog.getByRole("option")).toContainText("发布流程")
+    await dialog.getByRole("option").click()
+    await expect(page.locator('section[aria-label="流程图工作区"]')).toHaveCount(1)
+  })
+
+  test("时间线按类型筛选流程图，清除后恢复全部卡片", async ({ page }) => {
+    const dialog = await openFragmentFilters(page)
+    await selectOption(dialog.getByRole("combobox", { name: "类型", exact: true }), "flowchart")
+    await dialog.getByRole("button", { name: "查看碎片", exact: true }).click()
+
+    const summary = page.getByRole("region", { name: "当前碎片筛选", exact: true })
+    await expect(summary).toContainText("流程图")
+    await expect(page.locator(".shard-timeline-item")).toHaveCount(2)
+    await expect(card(page, "card-json-flowchart")).toBeVisible()
+    await expect(card(page, "card-invalid-flowchart")).toBeVisible()
+    await expect(card(page, "card-fragment")).toHaveCount(0)
+
+    await summary.getByRole("button", { name: "清除筛选", exact: true }).click()
+    await expect(summary).toHaveCount(0)
+    await expect(page.locator(".shard-timeline-item")).toHaveCount(6)
   })
 
   test("搜索 mock 为 JSON 大纲提取根节点标题", async ({ page }) => {

@@ -8,8 +8,8 @@ import { Input } from "@/components/ui/input"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { SelectControl } from "@/components/ui/select"
 import { emptyTrash, getApiErrorMessage, purgeFromTrash, restoreFromTrash } from "@/lib/api"
-import { isTypeTag } from "@/lib/content-kind"
-import { libraryDirectoryOptions, type FragmentFilters } from "@/lib/fragment-space"
+import { CONTENT_KIND_LABELS, isTypeTag } from "@/lib/content-kind"
+import { libraryDirectoryOptions, type FragmentFilterKind, type FragmentFilters } from "@/lib/fragment-space"
 import type { Fragment, LibraryMutationResult, LibraryTreeEntry } from "@/types"
 
 /** The home stream has no filter chrome until the user applies a condition. */
@@ -17,7 +17,7 @@ export function FragmentFilterContext({ filters, onClear }: {
   filters: FragmentFilters
   onClear: () => void
 }) {
-  const labels = [filters.tag ? `#${filters.tag}` : null, filters.month, filters.pinned ? "只看置顶" : null].filter(Boolean)
+  const labels = [filters.kind ? CONTENT_KIND_LABELS[filters.kind] : null, filters.tag ? `#${filters.tag}` : null, filters.month, filters.pinned ? "只看置顶" : null].filter(Boolean)
   if (!labels.length) return null
   return <div className="shard-content-inset shrink-0 pb-2" role="region" aria-label="当前碎片筛选">
     <div className="shard-content-measure flex items-center gap-2 text-[length:var(--text-meta)] text-muted-foreground">
@@ -43,9 +43,21 @@ export function FragmentFilterDialog({ open, fragments, filters, onClose, onAppl
     <DialogContent>
       <DialogHeader>
         <DialogTitle>筛选碎片</DialogTitle>
-        <DialogDescription>按标签、记录时间和置顶状态查看碎片。</DialogDescription>
+        <DialogDescription>按类型、标签、记录时间和置顶状态查看碎片。</DialogDescription>
       </DialogHeader>
       <div className="flex flex-col gap-[var(--field-rhythm)]">
+        <label className="flex flex-col gap-2 text-[length:var(--text-body)]" htmlFor="filter-fragment-kind">
+          类型
+          <SelectControl id="filter-fragment-kind" aria-label="类型" value={draft.kind ?? ""}
+            options={[
+              { value: "", label: "全部类型" },
+              { value: "fragment", label: "碎片" },
+              { value: "outline", label: "大纲" },
+              { value: "flowchart", label: "流程图" },
+              { value: "document", label: "文档" },
+            ]}
+            onValueChange={kind => setDraft(current => ({ ...current, kind: (kind || null) as FragmentFilterKind }))} />
+        </label>
         <label className="flex flex-col gap-2 text-[length:var(--text-body)]" htmlFor="filter-fragment-tag">
           标签
           <SelectControl id="filter-fragment-tag" aria-label="标签" value={draft.tag ?? ""}

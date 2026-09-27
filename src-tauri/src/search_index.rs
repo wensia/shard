@@ -21,7 +21,7 @@ use sha2::{Digest, Sha256};
 use shard_core::search::SearchProjectionBlock;
 
 const SCHEMA_VERSION: i64 = 2;
-const INDEX_FORMAT: &str = "search-projection-assets-v2";
+const INDEX_FORMAT: &str = "search-projection-assets-v3";
 const BATCH_SIZE: usize = 1_000;
 
 #[derive(Default)]

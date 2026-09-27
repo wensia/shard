@@ -507,7 +507,10 @@ test.describe("行内编辑与禅模式", () => {
     await page.getByRole("textbox", { name: "节点文字", exact: true }).press("ControlOrMeta+Enter")
 
     await expect(page.getByText(/检测到保存冲突/u)).toBeVisible()
+    const readsBeforeReload = await commandCount(page, "read_graph_fragment")
     await page.getByRole("button", { name: "载入磁盘版本", exact: true }).click()
+    await expect.poll(() => commandCount(page, "read_graph_fragment"))
+      .toBe(readsBeforeReload + 1)
     await expect(flowchartNode(page)).toContainText("磁盘流程图版本")
     await expect(page.getByText(/检测到保存冲突/u)).toHaveCount(0)
     expect(await graphWrites(page, "card-json-flowchart")).toHaveLength(1)

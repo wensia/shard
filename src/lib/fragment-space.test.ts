@@ -23,10 +23,27 @@ describe("fragment space ownership", () => {
     expect(matchesFragmentFilters(sample(), { ...EMPTY_FRAGMENT_FILTERS, month: "2026-09" })).toBe(false)
   })
   it("combines tags and pinned without changing ownership", () => {
-    const filters = { tag: "想法", month: "2024-03", pinned: true }
+    const filters = { ...EMPTY_FRAGMENT_FILTERS, tag: "想法", month: "2024-03", pinned: true }
     expect(matchesFragmentFilters(sample({ pinned: true }), filters)).toBe(true)
     expect(matchesFragmentFilters(sample(), filters)).toBe(false)
     expect(matchesFragmentFilters(sample({ tags: ["别的标签"], pinned: true }), filters)).toBe(false)
+  })
+  it("filters every stream content kind from type tags and keeps all as the default", () => {
+    const fixtures = [
+      sample(),
+      sample({ id: "outline", kind: "outline", tags: ["outline"] }),
+      sample({ id: "flowchart", kind: "flowchart", tags: ["flowchart"] }),
+      sample({ id: "document", kind: "document", tags: ["document"] }),
+    ]
+    expect(fixtures.filter(fragment => matchesFragmentFilters(fragment, EMPTY_FRAGMENT_FILTERS))).toHaveLength(4)
+    for (const kind of ["fragment", "outline", "flowchart", "document"] as const) {
+      expect(fixtures.filter(fragment => matchesFragmentFilters(fragment, { ...EMPTY_FRAGMENT_FILTERS, kind })).map(fragment => fragment.id))
+        .toEqual([kind === "fragment" ? "fragment" : kind])
+    }
+    expect(matchesFragmentFilters(
+      sample({ tags: ["document", "flowchart"] }),
+      { ...EMPTY_FRAGMENT_FILTERS, kind: "flowchart" }
+    )).toBe(true)
   })
   it("uses a document title without turning an image URL into a file name", () => {
     expect(conversionTitle(sample({ content: "![图片](assets/photo.png)" }))).toBe("未命名文档")
