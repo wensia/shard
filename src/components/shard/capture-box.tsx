@@ -46,7 +46,6 @@ import {
 import { wantsLockbox } from "@/lib/lockbox"
 import {
   EMPTY_MIND_MAP_OUTLINE_SOURCE,
-  parseMindMapOutline,
   serializeMindMapOutline,
 } from "@/lib/mind-map-outline"
 import { useTableDocumentDrop } from "@/lib/use-table-document-drop"
@@ -57,7 +56,7 @@ import {
   isCsvWikilinkTarget,
   resolveWikilinkTarget,
 } from "@/lib/wikilink"
-import type { CsvFileSummary, Fragment, MindMapSummary } from "@/types"
+import type { CsvFileSummary, Fragment, MindMapSummary, ShardMapFile } from "@/types"
 
 import styles from "./capture-box.module.css"
 
@@ -74,6 +73,11 @@ interface CaptureBoxProps {
   mindMaps?: MindMapSummary[]
   /** 返回创建后的碎片，`/文档` 提交后据此直接进禅模式（产品框架 §2）。 */
   onCreate: (content: string, tags: string[]) => Promise<Fragment | void>
+  onCreateOutline: (
+    operationId: string,
+    file: ShardMapFile,
+    tags: string[]
+  ) => Promise<Fragment | void>
   onNavigateToFragment?: (fragmentId: string) => void
   onOpenMindMap?: (map: MindMapSummary) => void
   /** 用创建好的碎片打开禅模式；两套编辑器共用这一条路径。 */
@@ -97,6 +101,7 @@ export const CaptureBox = forwardRef<CaptureBoxHandle, CaptureBoxProps>(function
   knownTags,
   mindMaps = [],
   onCreate,
+  onCreateOutline,
   onNavigateToFragment,
   onOpenMindMap,
   onOpenFragmentZen,
@@ -109,6 +114,7 @@ export const CaptureBox = forwardRef<CaptureBoxHandle, CaptureBoxProps>(function
    * 两者互不转换，这样「进大纲、想想又退出来」的结果永远可预期。
    */
   const [outlineCode, setOutlineCode] = useState<string | null>(null)
+  const [outlineFile, setOutlineFile] = useState<ShardMapFile | null>(null)
   /** `/文档` 打下的类型标记：提交时写入文档 type 标签。 */
   const [isDocumentType, setIsDocumentType] = useState(false)
   const [isEditorExpanded, setIsEditorExpanded] = useState(false)
@@ -120,6 +126,7 @@ export const CaptureBox = forwardRef<CaptureBoxHandle, CaptureBoxProps>(function
   const richEditorRef = useRef<ShardRichEditorHandle>(null)
   const hasSkippedInitialFocusRef = useRef(false)
   const pendingImagesRef = useRef<PendingImage[]>([])
+  const outlineOperationIdRef = useRef<string | null>(null)
 
   const normalizedKnownTags = useMemo(
     () => normalizeTagList(knownTags.filter((tag) => tag !== "inbox")),
@@ -177,10 +184,6 @@ export const CaptureBox = forwardRef<CaptureBoxHandle, CaptureBoxProps>(function
     toast(`待建链接「${target}」尚不存在，可在资料库新建笔记`)
   }, [])
   const isOutlineMode = outlineCode !== null
-  const outlineFile = useMemo(
-    () => (outlineCode === null ? null : parseMindMapOutline(outlineCode).file),
-    [outlineCode]
-  )
   /** 根节点为空的大纲没有中心主题，不允许提交。 */
   const hasOutlineRoot = Boolean(
     outlineFile && (outlineFile.nodes[outlineFile.rootId]?.text ?? "").trim()
@@ -281,6 +284,8 @@ export const CaptureBox = forwardRef<CaptureBoxHandle, CaptureBoxProps>(function
 
     setContent(getCurrentEditorValue())
     setOutlineCode(EMPTY_MIND_MAP_OUTLINE_SOURCE)
+    setOutlineFile(null)
+    outlineOperationIdRef.current = null
     setIsEditorExpanded(true)
   }
 
@@ -288,6 +293,8 @@ export const CaptureBox = forwardRef<CaptureBoxHandle, CaptureBoxProps>(function
     if (outlineCode === null) return
 
     setOutlineCode(null)
+    setOutlineFile(null)
+    outlineOperationIdRef.current = null
     setIsEditorExpanded(true)
   }
 
@@ -307,6 +314,13 @@ export const CaptureBox = forwardRef<CaptureBoxHandle, CaptureBoxProps>(function
       return
     }
 
+    const nodeCount = Object.keys(outlineFile.nodes).length
+    if (nodeCount > 400) {
+      toast("大纲最多 400 个节点")
+      setIsEditorExpanded(true)
+      return
+    }
+
     const draft = serializeMindMapOutline(outlineFile)
     const tags = applyTypeTag(
       normalizeTagList(["inbox", ...extractTags(draft)]),
@@ -319,9 +333,13 @@ export const CaptureBox = forwardRef<CaptureBoxHandle, CaptureBoxProps>(function
     }
 
     try {
-      await onCreate(draft, tags)
+      const operationId = outlineOperationIdRef.current ?? crypto.randomUUID()
+      outlineOperationIdRef.current = operationId
+      await onCreateOutline(operationId, outlineFile, tags)
       // 回到普通速记：进入大纲前的草稿原样还在 content 里。
       setOutlineCode(null)
+      setOutlineFile(null)
+      outlineOperationIdRef.current = null
       setIsEditorExpanded(false)
     } catch {
       // 创建失败时保持大纲态，用户刚写的树不能丢。
@@ -485,6 +503,7 @@ export const CaptureBox = forwardRef<CaptureBoxHandle, CaptureBoxProps>(function
         <OutlineComposer
           code={outlineCode ?? ""}
           onChange={setOutlineCode}
+          onFileChange={setOutlineFile}
           onExit={exitOutlineMode}
           onSubmit={() => void submit()}
         />

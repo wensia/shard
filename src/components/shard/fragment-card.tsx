@@ -41,7 +41,7 @@ import {
   isTypeTag,
   type ContentKind,
 } from "@/lib/content-kind"
-import { parseMindMapOutline } from "@/lib/mind-map-outline"
+import { readOutlineContent } from "@/lib/mind-map-outline"
 import type { RelatedFragment } from "@/lib/relations"
 import { cn } from "@/lib/utils"
 import type { CsvFileSummary, Fragment } from "@/types"
@@ -70,7 +70,13 @@ interface FragmentCardProps {
   onNavigateToFragment?: (fragmentId: string) => void
   onOpenZen?: (fragment: Fragment) => void
   onPin?: (fragment: Fragment) => void
-  onSave?: (id: string, content: string, tags: string[]) => Promise<Fragment>
+  onRefreshFragments?: () => Promise<void> | void
+  onSave?: (
+    id: string,
+    content: string,
+    tags: string[],
+    expectedFileSha?: string
+  ) => Promise<Fragment>
   onSelectChange?: (fragmentId: string, selected: boolean) => void
   onStartSelection?: (fragment: Fragment) => Promise<void> | void
   onToggleKind?: (fragment: Fragment) => void
@@ -112,6 +118,7 @@ export function FragmentCard({
   onMoveToLockbox,
   onOpenZen,
   onPin,
+  onRefreshFragments,
   onNavigateToFragment,
   onSave,
   onSelectChange,
@@ -172,6 +179,7 @@ export function FragmentCard({
           onNavigateToFragment={onNavigateToFragment}
           // 文档类型不做行内编辑，由编辑器转交禅模式（产品框架 §2）。
           onRequestZen={onOpenZen ? () => onOpenZen(fragment) : undefined}
+          onRefreshFragments={onRefreshFragments}
           onSave={onSave}
           variant="inline"
           vaultPath={vaultPath}
@@ -467,7 +475,7 @@ const TYPE_BADGES: Partial<Record<ContentKind, { icon: ShardIcon; label: string 
  */
 function OutlineCardBody({ content }: { content: string }) {
   const title = useMemo(() => {
-    const file = parseMindMapOutline(content).file
+    const file = readOutlineContent(content)?.file
     return (file ? file.nodes[file.rootId]?.text ?? "" : "").trim()
   }, [content])
 

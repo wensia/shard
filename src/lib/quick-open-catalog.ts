@@ -5,7 +5,7 @@ import {
   isTypeTag,
 } from "@/lib/content-kind"
 import { libraryEntryName } from "@/lib/library-entry"
-import { parseMindMapOutline } from "@/lib/mind-map-outline"
+import { readOutlineContent } from "@/lib/mind-map-outline"
 import {
   searchTargetKey,
   type SearchHit,
@@ -195,7 +195,7 @@ function fragmentTitle(
 ) {
   if (kind === "note") return deriveNoteTitle(fragment.content)
   if (kind === "document") return deriveDocumentDigest(fragment.content).title
-  const outline = parseMindMapOutline(fragment.content).file
+  const outline = readOutlineContent(fragment.content)?.file
   return outline?.nodes[outline.rootId]?.text.trim() ?? ""
 }
 

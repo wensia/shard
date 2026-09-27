@@ -85,10 +85,10 @@ async function zoomAndPan(page: Page) {
 
 for (const browserName of ["webkit", "chromium"] as const) {
   const engineTest = test.extend({
-    page: async ({}, use) => {
+    page: async ({ baseURL }, use) => {
       const browser = await ({ webkit, chromium })[browserName].launch()
       try {
-        await use(await browser.newPage({ baseURL: "http://127.0.0.1:1420", viewport: { width: 1280, height: 760 } }))
+        await use(await browser.newPage({ baseURL: baseURL!, viewport: { width: 1280, height: 760 } }))
       } finally { await browser.close() }
     },
   })

@@ -48,10 +48,12 @@ export interface MindMapWorkspaceProps {
   contextBar?: ReactNode
   mapId: string
   initialRead?: MindMapReadResult | null
+  initialView?: MindMapWorkspaceView
   onClose: () => void
   onReady?: (revision: string) => void
   onLoadError?: (error: unknown) => void
   onMapsChange?: (maps: MindMapSummary[]) => void
+  storage?: MindMapCanvasStorage
 }
 
 export interface MindMapWorkspaceHandle {
@@ -61,6 +63,7 @@ export interface MindMapWorkspaceHandle {
 export interface MindMapCanvasProps {
   mapId: string
   initialRead?: MindMapReadResult | null
+  initialView?: MindMapWorkspaceView
   onMapsChange?: (maps: MindMapSummary[]) => void
   surface?: (canvas: ReactNode) => ReactNode
   toolbarLeading?: ReactNode
@@ -70,6 +73,7 @@ export interface MindMapCanvasProps {
   onReady?: (revision: string) => void
   onLoadError?: (error: unknown) => void
   readOnly?: boolean
+  storage?: MindMapCanvasStorage
 }
 
 export interface MindMapCanvasHandle {
@@ -79,9 +83,27 @@ export interface MindMapCanvasHandle {
   setInteractionBlocked: (blocked: boolean) => void
 }
 
-type MindMapWorkspaceView = "map" | "outline"
+export type MindMapWorkspaceView = "map" | "outline"
 type MindMapSidePanel = "properties" | "shortcuts" | null
 type SaveMode = "manual" | "auto"
+
+export interface MindMapCanvasStorageSnapshot {
+  baseline: unknown
+  file: ShardMapFile
+  fragment?: Fragment
+}
+
+export interface MindMapCanvasStorage {
+  afterRead?: (snapshot: MindMapCanvasStorageSnapshot) => Promise<void> | void
+  afterSave?: (snapshot: MindMapCanvasStorageSnapshot) => Promise<void> | void
+  isConflict: (error: unknown) => boolean
+  read: (id: string) => Promise<MindMapCanvasStorageSnapshot>
+  write: (
+    id: string,
+    file: ShardMapFile,
+    baseline: unknown
+  ) => Promise<MindMapCanvasStorageSnapshot>
+}
 
 type ConflictState = {
   draft: ShardMapFile
@@ -97,6 +119,7 @@ export const MindMapCanvas = forwardRef<
 >(function MindMapCanvas({
   mapId,
   initialRead = null,
+  initialView = "map",
   onMapsChange,
   surface,
   toolbarLeading,
@@ -106,10 +129,11 @@ export const MindMapCanvas = forwardRef<
   onReady,
   onLoadError,
   readOnly = false,
+  storage,
 }, ref) {
-  const [readResult, setReadResult] = useState<MindMapReadResult | null>(null)
+  const [readResult, setReadResult] = useState<MindMapCanvasStorageSnapshot | null>(null)
   const [draftFile, setDraftFile] = useState<ShardMapFile | null>(null)
-  const [view, setView] = useState<MindMapWorkspaceView>("map")
+  const [view, setView] = useState<MindMapWorkspaceView>(initialView)
   const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([])
   const [focusNodeId, setFocusNodeId] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(true)
@@ -131,12 +155,14 @@ export const MindMapCanvas = forwardRef<
   } | null>(null)
   const restoreEditorFocusRef = useRef(false)
   const interactionBlockedRef = useRef(false)
-  const readResultRef = useRef<MindMapReadResult | null>(null)
+  const readResultRef = useRef<MindMapCanvasStorageSnapshot | null>(null)
   const pendingSaveRef = useRef<Promise<boolean> | null>(null)
   const initialReadRef = useRef(initialRead)
   const onLoadErrorRef = useRef(onLoadError)
+  const onMapsChangeRef = useRef(onMapsChange)
   const onReadyRef = useRef(onReady)
   onLoadErrorRef.current = onLoadError
+  onMapsChangeRef.current = onMapsChange
   onReadyRef.current = onReady
 
   useEffect(() => {
@@ -155,6 +181,29 @@ export const MindMapCanvas = forwardRef<
   draftFileRef.current = draftFile
   readResultRef.current = readResult
   const isSaving = saveMode !== null
+
+  const defaultStorage = useMemo<MindMapCanvasStorage>(() => ({
+    async afterSave() {
+      try {
+        onMapsChangeRef.current?.(await listMindMaps())
+      } catch {
+        // 保存后的列表刷新失败不影响当前编辑态；下次打开会重新读取。
+      }
+    },
+    isConflict(error) {
+      return getApiErrorMessage(error).includes("冲突副本")
+    },
+    async read(id) {
+      return mindMapReadToStorageSnapshot(await readMindMap(id))
+    },
+    async write(id, file, baseline) {
+      const current = baseline as { expectedRevision: number; lastSavedHash: string }
+      return mindMapReadToStorageSnapshot(
+        await writeMindMap(id, file, current.expectedRevision, current.lastSavedHash)
+      )
+    },
+  }), [])
+  const activeStorage = storage ?? defaultStorage
 
   function rememberEditorFocus(element: Element | null = document.activeElement) {
     if (!(element instanceof HTMLElement) || !element.closest("[data-mind-map-editor-region]")) return
@@ -237,9 +286,9 @@ export const MindMapCanvas = forwardRef<
     setIsLoading(true)
     setError(null)
     try {
-      const next = initialReadRef.current?.file.id === mapId
-        ? initialReadRef.current
-        : await readMindMap(mapId)
+      const next = !storage && initialReadRef.current?.file.id === mapId
+        ? mindMapReadToStorageSnapshot(initialReadRef.current)
+        : await activeStorage.read(mapId)
       initialReadRef.current = null
       setReadResult(next)
       setDraftFile(next.file)
@@ -251,21 +300,14 @@ export const MindMapCanvas = forwardRef<
       undoStackRef.current = []
       redoStackRef.current = []
       lastMergeKeyRef.current = null
+      await activeStorage.afterRead?.(next)
     } catch (unknownError) {
       setError(getApiErrorMessage(unknownError))
       onLoadErrorRef.current?.(unknownError)
     } finally {
       setIsLoading(false)
     }
-  }, [mapId])
-
-  const refreshSummaries = useCallback(async () => {
-    try {
-      onMapsChange?.(await listMindMaps())
-    } catch {
-      // 保存后的列表刷新失败不影响当前编辑态；下次打开会重新读取。
-    }
-  }, [onMapsChange])
+  }, [activeStorage, mapId, storage])
 
   const save = useCallback(
     async (mode: SaveMode = "manual") => {
@@ -286,7 +328,11 @@ export const MindMapCanvas = forwardRef<
             if (composingRef.current) return false
             const baseline = readResultRef.current
             const draft = draftFileRef.current
-            const saved = await writeMindMap(baseline.file.id, draft, baseline.file.revision, baseline.lastSavedHash)
+            const saved = await activeStorage.write(
+              baseline.file.id,
+              draft,
+              baseline.baseline
+            )
             readResultRef.current = saved
             setReadResult(saved)
             if (draftFileRef.current === draft) {
@@ -297,13 +343,13 @@ export const MindMapCanvas = forwardRef<
             lastMergeKeyRef.current = null
           }
           if (composingRef.current) return false
-          void refreshSummaries()
+          void activeStorage.afterSave?.(readResultRef.current!)
           if (mode === "manual") toast("思维导图已保存", { duration: 5000 })
           return true
         } catch (unknownError) {
           const message = getApiErrorMessage(unknownError)
           setAutoSaveError(message)
-          if (message.includes("冲突副本") && draftFileRef.current) {
+          if (activeStorage.isConflict(unknownError) && draftFileRef.current) {
             setConflict({ draft: draftFileRef.current, message })
           }
           if (mode === "manual") toast.error(`保存思维导图失败：${message}`, { duration: Infinity })
@@ -319,7 +365,7 @@ export const MindMapCanvas = forwardRef<
         if (pendingSaveRef.current === operation) pendingSaveRef.current = null
       }
     },
-    [refreshSummaries]
+    [activeStorage]
   )
 
   const requestClose = useCallback(() => {
@@ -423,12 +469,11 @@ export const MindMapCanvas = forwardRef<
     setSaveMode("manual")
     setAutoSaveError(null)
     try {
-      const latest = await readMindMap(readResult.file.id)
-      const saved = await writeMindMap(
+      const latest = await activeStorage.read(readResult.file.id)
+      const saved = await activeStorage.write(
         latest.file.id,
         conflict.draft,
-        latest.file.revision,
-        latest.lastSavedHash
+        latest.baseline
       )
       setReadResult(saved)
       setDraftFile(saved.file)
@@ -436,7 +481,7 @@ export const MindMapCanvas = forwardRef<
       undoStackRef.current = []
       redoStackRef.current = []
       lastMergeKeyRef.current = null
-      await refreshSummaries()
+      await activeStorage.afterSave?.(saved)
       toast("已保存我的版本", { duration: 5000 })
     } catch (unknownError) {
       toast.error(`保存我的版本失败：${getApiErrorMessage(unknownError)}`, {
@@ -445,7 +490,7 @@ export const MindMapCanvas = forwardRef<
     } finally {
       setSaveMode(null)
     }
-  }, [conflict, isSaving, readResult, refreshSummaries])
+  }, [activeStorage, conflict, isSaving, readResult])
 
   useEffect(() => {
     void loadMap()
@@ -512,6 +557,11 @@ export const MindMapCanvas = forwardRef<
     if (isMindMapWorkspaceTarget(rootRef.current, document.activeElement)) return
     rootRef.current?.focus({ preventScroll: true })
   }, [draftFile, surface])
+
+  useEffect(() => {
+    if (isLoading || error || !draftFile || view !== "outline") return
+    onReadyRef.current?.(String(draftFile.revision))
+  }, [draftFile?.id, draftFile?.revision, error, isLoading, view])
 
   const canvas = (
     <section
@@ -733,14 +783,28 @@ function isMindMapWorkspaceTarget(root: HTMLElement | null, target: EventTarget 
   return owner instanceof Node && Boolean(root?.contains(owner))
 }
 
+function mindMapReadToStorageSnapshot(
+  result: MindMapReadResult
+): MindMapCanvasStorageSnapshot {
+  return {
+    baseline: {
+      expectedRevision: result.file.revision,
+      lastSavedHash: result.lastSavedHash,
+    },
+    file: result.file,
+  }
+}
+
 export const MindMapWorkspace = forwardRef<MindMapWorkspaceHandle, MindMapWorkspaceProps>(function MindMapWorkspace({
   contextBar,
   mapId,
   initialRead = null,
+  initialView = "map",
   onClose,
   onReady,
   onLoadError,
   onMapsChange,
+  storage,
 }, ref) {
   const canvasRef = useRef<MindMapCanvasHandle>(null)
 
@@ -748,17 +812,21 @@ export const MindMapWorkspace = forwardRef<MindMapWorkspaceHandle, MindMapWorksp
     flush: async () => (await canvasRef.current?.save()) ?? true,
   }), [])
 
-  const closeWorkspace = useCallback(() => {
-    if (canvasRef.current?.requestClose() ?? true) {
-      onClose()
-    }
-  }, [onClose])
-
   const saveAndCloseWorkspace = useCallback(async () => {
     if (await canvasRef.current?.save()) {
       onClose()
     }
   }, [onClose])
+
+  const closeWorkspace = useCallback(() => {
+    if (storage) {
+      void saveAndCloseWorkspace()
+      return
+    }
+    if (canvasRef.current?.requestClose() ?? true) {
+      onClose()
+    }
+  }, [onClose, saveAndCloseWorkspace, storage])
 
   useEffect(() => {
     if (!isTauri()) return
@@ -807,11 +875,13 @@ export const MindMapWorkspace = forwardRef<MindMapWorkspaceHandle, MindMapWorksp
         <div style={{ flex: "1 1 auto", minHeight: 0 }}>
           <MindMapCanvas
             initialRead={initialRead}
+            initialView={initialView}
             mapId={mapId}
             onLoadError={onLoadError}
             onMapsChange={onMapsChange}
             onReady={onReady}
             ref={canvasRef}
+            storage={storage}
             toolbarLeading={
               <Button
                 aria-label="退出思维导图"

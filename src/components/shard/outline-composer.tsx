@@ -1,6 +1,7 @@
 import { useEffect, useRef, type KeyboardEvent } from "react"
 
 import { MindMapFenceWidget } from "@/components/shard/mind-map-fence-widget"
+import type { ShardMapFile } from "@/types"
 
 import styles from "./outline-composer.module.css"
 
@@ -14,6 +15,7 @@ interface OutlineComposerProps {
   /** 大纲正文：纯缩进列表，不含围栏标记（产品框架 §2）。 */
   code: string
   onChange: (code: string) => void
+  onFileChange?: (file: ShardMapFile) => void
   /** Escape：退出大纲态，回到普通速记。 */
   onExit: () => void
   onSubmit: () => void
@@ -30,6 +32,7 @@ interface OutlineComposerProps {
 export function OutlineComposer({
   code,
   onChange,
+  onFileChange,
   onExit,
   onSubmit,
   readOnly = false,
@@ -83,6 +86,7 @@ export function OutlineComposer({
       <MindMapFenceWidget
         code={code}
         onChange={onChange}
+        onFileChange={onFileChange}
         onExit={onExit}
         readOnly={readOnly}
         sourceStart={0}

@@ -42,6 +42,7 @@ interface FragmentTimelineProps {
     template: OrganizeTemplate
   ) => Promise<void>
   onPin?: (fragment: Fragment) => void
+  onRefreshFragments?: () => Promise<void> | void
   onNavigateToFragment?: (fragmentId: string) => void
   onScrollDown?: () => void
   onScrollToFragmentComplete?: (
@@ -50,7 +51,12 @@ interface FragmentTimelineProps {
     reveal?: SearchRevealHandle | null
   ) => void
   onSelectionModeChange?: (active: boolean) => void
-  onSave?: (id: string, content: string, tags: string[]) => Promise<Fragment>
+  onSave?: (
+    id: string,
+    content: string,
+    tags: string[],
+    expectedFileSha?: string
+  ) => Promise<Fragment>
   onToggleKind?: (fragment: Fragment) => void
   onToggleTask?: (fragment: Fragment, lineIndex: number) => void
   onUnlinkFragment?: (
@@ -94,6 +100,7 @@ export function FragmentTimeline({
   onOpenZen,
   onOrganize,
   onPin,
+  onRefreshFragments,
   onScrollDown,
   onScrollToFragmentComplete,
   onSelectionModeChange,
@@ -605,6 +612,7 @@ export function FragmentTimeline({
                     onNavigateToFragment={onNavigateToFragment}
                     onOpenZen={onOpenZen}
                     onPin={onPin}
+                    onRefreshFragments={onRefreshFragments}
                     onSave={onSave}
                     onSelectChange={handleSelectChange}
                     onStartSelection={onOrganize ? enterSelectionMode : undefined}

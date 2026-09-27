@@ -3,6 +3,7 @@ import { expect, test, type Page } from "@playwright/test"
 import {
   card,
   createdFragments,
+  createdGraphFragments,
   installContentTypesMock,
   revealCard,
 } from "./content-types-mock"
@@ -32,6 +33,30 @@ function submitButton(page: Page) {
 
 function zenSurface(page: Page) {
   return page.locator('section[aria-label="禅模式"]')
+}
+
+async function addEmptyOutlineNodes(page: Page, count: number) {
+  await page.evaluate(async (nodeCount) => {
+    for (let index = 0; index < nodeCount; index += 1) {
+      const inputs = document.querySelectorAll<HTMLTextAreaElement>(
+        '[data-capture-outline="editor"] [data-outline-node] textarea[data-outline-field="text"]'
+      )
+      const target = document.activeElement instanceof HTMLTextAreaElement
+        ? document.activeElement
+        : inputs.item(inputs.length - 1)
+      if (!(target instanceof HTMLTextAreaElement)) {
+        throw new Error(`第 ${index + 1} 个节点前没有活动的大纲输入框`)
+      }
+      target.focus()
+      target.dispatchEvent(new KeyboardEvent("keydown", {
+        bubbles: true,
+        cancelable: true,
+        code: "Enter",
+        key: "Enter",
+      }))
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+    }
+  }, count)
 }
 
 /**
@@ -66,7 +91,7 @@ test.describe("速记框内容类型", () => {
     await expect(page.locator(`${COMPOSER} .ProseMirror`)).toBeFocused()
   })
 
-  test("/大纲 把速记框切成幕布态，两级节点提交为纯缩进列表与大纲 type", async ({ page }) => {
+  test("/大纲 提交会话树与标签到 create_graph_fragment，不调用 create_fragment", async ({ page }) => {
     await runOutlineCommand(page, "composer")
 
     // 编辑区整块换成幕布式大纲，富文本正文让位。
@@ -76,17 +101,52 @@ test.describe("速记框内容类型", () => {
     await expect(page.locator('[data-capture-type-badge="outline"]')).toBeVisible()
     await expect(page.getByRole("button", { name: "退出大纲", exact: true })).toBeVisible()
 
-    await page.keyboard.type("项目大纲")
+    await page.keyboard.type("项目大纲 #计划")
     await page.keyboard.press("Enter")
     await page.keyboard.type("第一步")
     await page.keyboard.press("ControlOrMeta+Enter")
 
-    await expect.poll(() => createdFragments(page)).toEqual([
-      { content: "- 项目大纲\n  - 第一步", tags: ["inbox", "outline"] },
-    ])
+    await expect.poll(() => createdGraphFragments(page)).toHaveLength(1)
+    const [created] = await createdGraphFragments(page)
+    expect(created.kind).toBe("outline")
+    expect(created.operationId).toMatch(/^[0-9a-f-]{20,}$/u)
+    expect(created.tags).toEqual(["inbox", "计划", "outline"])
+    expect(created.graph.nodes[created.graph.rootId].text).toBe("项目大纲 #计划")
+    expect(Object.values(created.graph.nodes).map((node) => node.text)).toContain("第一步")
+    expect(await createdFragments(page)).toEqual([])
+    await expect(card(page, "typed-graph-created-1")).toHaveCount(1)
     // 提交后退出大纲态，回到普通速记。
     await expect(outlineComposer(page)).toHaveCount(0)
     await expect(page.locator(`${COMPOSER} .ProseMirror`)).toHaveCount(1)
+  })
+
+  test("201 节点大纲完整提交，不沿用旧的 200 节点截断", async ({ page }) => {
+    test.setTimeout(60_000)
+    await runOutlineCommand(page, "composer")
+    await page.keyboard.type("二百零一节点")
+    await addEmptyOutlineNodes(page, 200)
+    await expect(outlineComposer(page).locator("[data-outline-node]")).toHaveCount(201)
+
+    await page.keyboard.press("ControlOrMeta+Enter")
+
+    await expect.poll(() => createdGraphFragments(page)).toHaveLength(1)
+    const [created] = await createdGraphFragments(page)
+    expect(Object.keys(created.graph.nodes)).toHaveLength(201)
+  })
+
+  test("超过 400 节点时拦截提交、提示并保留完整草稿", async ({ page }) => {
+    test.setTimeout(120_000)
+    await runOutlineCommand(page, "composer")
+    await page.keyboard.type("超限大纲")
+    await addEmptyOutlineNodes(page, 400)
+    await expect(outlineComposer(page).locator("[data-outline-node]")).toHaveCount(401)
+
+    await page.keyboard.press("ControlOrMeta+Enter")
+
+    await expect(page.getByText("大纲最多 400 个节点", { exact: true })).toBeVisible()
+    expect(await createdGraphFragments(page)).toEqual([])
+    await expect(outlineComposer(page)).toHaveCount(1)
+    await expect(outlineComposer(page).locator("[data-outline-node]")).toHaveCount(401)
   })
 
   test("根节点为空时不能提交，写下中心主题后才放行", async ({ page }) => {
@@ -187,7 +247,7 @@ test.describe("时间线与瀑布流的类型卡片", () => {
   test.beforeEach(async ({ page }) => {
     await installContentTypesMock(page)
     await page.goto("/")
-    await expect(page.locator(".shard-timeline-item")).toHaveCount(3)
+    await expect(page.locator(".shard-timeline-item")).toHaveCount(4)
   })
 
   test("大纲卡片渲染导图缩略加根节点标题，不铺原始列表", async ({ page }) => {
@@ -201,6 +261,29 @@ test.describe("时间线与瀑布流的类型卡片", () => {
     await expect(body.getByRole("img", { name: "思维导图预览" })).toBeVisible()
     // 卡片上看不到缩进列表的原文。
     await expect(target).not.toContainText("- 第一步")
+  })
+
+  test("JSON 大纲卡片从受管区域显示根节点标题与缩略导图", async ({ page }) => {
+    const target = card(page, "card-json-outline")
+    await revealCard(target)
+
+    await expect(target.locator('[data-fragment-type-badge="outline"]')).toHaveText("大纲")
+    const body = target.locator('[data-fragment-card-kind="outline"]')
+    await expect(body.locator("p").first()).toHaveText("JSON 项目大纲")
+    await expect(body.getByRole("img", { name: "思维导图预览" })).toBeVisible()
+    await expect(target).not.toContainText("```shardmap")
+  })
+
+  test("搜索 mock 为 JSON 大纲提取根节点标题", async ({ page }) => {
+    await page.keyboard.press("Control+k")
+    const search = page.getByRole("dialog", { name: "搜索", exact: true })
+    await search.getByRole("combobox", { name: "搜索内容" }).fill("JSON 项目大纲")
+    await expect(search).toContainText("JSON 项目大纲")
+    await search.getByRole("option").click()
+    await expect(page.locator('section[aria-label="思维导图工作区"]')).toHaveCount(1)
+    await expect(
+      page.getByRole("tab", { name: "大纲", exact: true })
+    ).toHaveAttribute("aria-selected", "true")
   })
 
   test("大纲卡片操作菜单不提供移入密匣", async ({ page }) => {

@@ -72,7 +72,26 @@ export async function installSearchIpcMock(page: Page) {
       fragment.lockbox || fragment.path.startsWith("lockbox/")
         ? "lockbox"
         : "public"
+    const jsonOutlineTitle = (content: string) => {
+      const match = /(?:^|\n)```shardmap\r?\n([\s\S]*?)\r?\n```(?:\n|$)/u.exec(content)
+      if (!match) return null
+      try {
+        const file = JSON.parse(match[1]) as {
+          nodes?: Record<string, { text?: unknown }>
+          rootId?: unknown
+        }
+        if (typeof file.rootId !== "string") return null
+        const text = file.nodes?.[file.rootId]?.text
+        return typeof text === "string" && text.trim() ? text.trim() : null
+      } catch {
+        return null
+      }
+    }
     const titleOf = (fragment: Fragment) => {
+      const outlineTitle = fragment.tags.includes("outline")
+        ? jsonOutlineTitle(fragment.content)
+        : null
+      if (outlineTitle) return outlineTitle
       const first = fragment.content
         .split(/\r?\n/u)
         .map((line) => line.trim())

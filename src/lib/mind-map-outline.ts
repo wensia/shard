@@ -1,3 +1,8 @@
+import { validateCanvasMindMap } from "@/features/canvas/model"
+import {
+  findGraphRegion,
+  MISSING_GRAPH_REGION_ERROR,
+} from "@/lib/graph-region"
 import { getMindMapChildren } from "@/lib/mind-map-tree"
 import type { ShardMapFile, ShardMapNode } from "@/types"
 
@@ -20,6 +25,29 @@ export interface MindMapOutlineResult {
   file: ShardMapFile | null
   nodeCount: number
   truncated: boolean
+}
+
+export type OutlineContent =
+  | { format: "json"; file: ShardMapFile }
+  | { format: "legacy"; file: ShardMapFile; truncated: boolean }
+
+/** 读取新式受管 JSON 大纲，并对没有区域的旧式缩进列表保持原有解析语义。 */
+export function readOutlineContent(content: string): OutlineContent | null {
+  try {
+    const region = findGraphRegion(content, "outline")
+    const file: unknown = JSON.parse(region.jsonText)
+    validateCanvasMindMap(file)
+    return { format: "json", file }
+  } catch (error) {
+    if (!(error instanceof Error) || error.message !== MISSING_GRAPH_REGION_ERROR) {
+      return null
+    }
+  }
+
+  const legacy = parseMindMapOutline(content)
+  return legacy.file
+    ? { format: "legacy", file: legacy.file, truncated: legacy.truncated }
+    : null
 }
 
 export function isMindMapFenceLanguage(language: string): boolean {

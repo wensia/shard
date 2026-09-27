@@ -1,12 +1,13 @@
 import { expect, type Locator, type Page } from "@playwright/test"
+import type { ShardMapFile } from "../../src/types"
 
 import { installSearchIpcMock } from "./search-ipc-mock"
 
 /**
- * 三种内容类型共用的工作台 mock（产品框架 §2）。
+ * 内容类型工作台共用 mock（产品框架 §2）。
  *
- * content-types.spec.ts 与 rich-surfaces.spec.ts 共用这一份：样本含碎片、大纲、
- * 文档三条，Tauri command 清单只有一处，新增命令时不会漏掉某个 spec。
+ * content-types.spec.ts 与 rich-surfaces.spec.ts 共用这一份：样本同时保留旧式大纲
+ * 与 JSON 大纲，Tauri command 清单只有一处，新增命令时不会漏掉某个 spec。
  * 跑真实工作台路由 + 内存 vault；不写用户的任何文件。
  */
 
@@ -18,6 +19,42 @@ export interface TestCall {
 /** 非规范的 `*` 列表：打开富文本再保存时应被归一为 `- `。 */
 export const CARD_FRAGMENT = ["#灵感 随手记的碎片", "", "* 非规范列表"].join("\n")
 export const CARD_OUTLINE = ["- 项目大纲", "  - 第一步", "  - 第二步"].join("\n")
+const OUTLINE_STAMP = "2026-09-10T08:00:00.000Z"
+export const CARD_JSON_OUTLINE_FILE: ShardMapFile = {
+  kind: "shard.map",
+  schemaVersion: 1,
+  id: "card-json-outline",
+  title: "JSON 项目大纲",
+  createdAt: OUTLINE_STAMP,
+  updatedAt: OUTLINE_STAMP,
+  savedWithAppVersion: "0.1.3",
+  revision: 1,
+  rootId: "json-root",
+  hasProtectedLinks: false,
+  nodes: {
+    "json-root": {
+      id: "json-root",
+      parentId: null,
+      sortKey: "00",
+      text: "JSON 项目大纲",
+      createdAt: OUTLINE_STAMP,
+      updatedAt: OUTLINE_STAMP,
+    },
+    "json-child": {
+      id: "json-child",
+      parentId: "json-root",
+      sortKey: "00",
+      text: "JSON 第一步",
+      createdAt: OUTLINE_STAMP,
+      updatedAt: OUTLINE_STAMP,
+    },
+  },
+}
+export const CARD_JSON_OUTLINE = [
+  "```shardmap",
+  JSON.stringify(CARD_JSON_OUTLINE_FILE),
+  "```",
+].join("\n")
 export const CARD_DOCUMENT = [
   "# 季度复盘",
   "",
@@ -29,13 +66,27 @@ export const CARD_DOCUMENT = [
 interface MockBodies {
   documentBody: string
   fragmentBody: string
+  jsonOutlineBody: string
+  jsonOutlineFile: ShardMapFile
   outlineBody: string
+}
+
+interface ContentTypesMockControl {
+  nextFragmentWriteStale: null | {
+    content: string
+    id: string
+    tags?: string[]
+  }
+  nextGraphWriteStale: null | {
+    file: ShardMapFile
+    id: string
+  }
 }
 
 export async function installContentTypesMock(page: Page) {
   await installSearchIpcMock(page)
   await page.addInitScript(
-    ({ documentBody, fragmentBody, outlineBody }: MockBodies) => {
+    ({ documentBody, fragmentBody, jsonOutlineBody, jsonOutlineFile, outlineBody }: MockBodies) => {
       const now = "2026-09-10T08:00:00.000Z"
       const fragments = [
         {
@@ -47,13 +98,17 @@ export async function installContentTypesMock(page: Page) {
           content: outlineBody, tags: ["inbox", "outline"],
         },
         {
+          id: "card-json-outline", path: "fragments/card-json-outline.md",
+          content: jsonOutlineBody, tags: ["inbox", "outline"],
+        },
+        {
           id: "card-document", path: "fragments/card-document.md",
           content: documentBody, tags: ["inbox", "document"],
         },
       ].map((fragment) => ({
         ...fragment, createdAt: now, updatedAt: now, category: null,
         gitStatus: "committed", error: null, archived: false, lockbox: false,
-        pinned: false, related: [],
+        pinned: false, related: [], fileSha: `file-sha-${fragment.id}-1`,
       }))
       const git = {
         branch: "main", shortCommit: "abc1234", hasRemote: false,
@@ -69,11 +124,23 @@ export async function installContentTypesMock(page: Page) {
       }
       const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T
       const calls: TestCall[] = []
+      const graphFiles: Record<string, ShardMapFile> = {
+        "card-json-outline": clone(jsonOutlineFile),
+      }
+      const control: ContentTypesMockControl = {
+        nextFragmentWriteStale: null,
+        nextGraphWriteStale: null,
+      }
       let callbackId = 0
       let createdCount = 0
+      let createdGraphCount = 0
+      let savedRevision = 1
+      const graphBody = (file: ShardMapFile) =>
+        ["```shardmap", JSON.stringify(file), "```"].join("\n")
       Object.assign(globalThis, {
         isTauri: true,
         __SHARD_TYPE_CALLS__: calls,
+        __SHARD_TYPE_CONTROL__: control,
         __TAURI_EVENT_PLUGIN_INTERNALS__: { unregisterListener() {} },
         __TAURI_INTERNALS__: {
           metadata: { currentWindow: { label: "main" }, currentWebview: { label: "main" } },
@@ -83,6 +150,8 @@ export async function installContentTypesMock(page: Page) {
             switch (command) {
               case "plugin:event|listen": return ++callbackId
               case "plugin:event|unlisten":
+              case "set_canvas_grab_cursor":
+              case "set_reminder_schedule":
               case "unhide_pointer":
               case "set_window_controls_hidden": return null
               case "plugin:app|version": return "0.1.3"
@@ -103,15 +172,70 @@ export async function installContentTypesMock(page: Page) {
                   tags: (args.tags as string[]) ?? [], createdAt: now, updatedAt: now,
                   category: null, gitStatus: "saved", error: null,
                   archived: false, lockbox: false, pinned: false, related: [],
+                  fileSha: `file-sha-${id}-1`,
                 }
                 fragments.unshift(created)
                 return clone(created)
               }
+              case "create_graph_fragment": {
+                const id = `typed-graph-created-${++createdGraphCount}`
+                const graph = clone(args.graph as ShardMapFile)
+                graph.id = id
+                const created = {
+                  id, path: `fragments/2026/09/${id}.md`, content: graphBody(graph),
+                  tags: (args.tags as string[]) ?? [], createdAt: now, updatedAt: now,
+                  category: null, gitStatus: "saved", error: null,
+                  archived: false, lockbox: false, pinned: false, related: [],
+                  fileSha: `file-sha-${id}-1`,
+                }
+                graphFiles[id] = graph
+                fragments.unshift(created)
+                return clone({ fragment: created, graph })
+              }
+              case "read_graph_fragment": {
+                const fragment = fragments.find((item) => item.id === args.id)
+                const graph = graphFiles[String(args.id)]
+                if (!fragment || !graph) throw new Error("Graph fragment not found")
+                return clone({ fragment, graph })
+              }
+              case "write_graph_fragment": {
+                const id = String(args.id)
+                const fragment = fragments.find((item) => item.id === id)
+                if (!fragment || !graphFiles[id]) throw new Error("Graph fragment not found")
+                if (control.nextGraphWriteStale?.id === id) {
+                  const remote = clone(control.nextGraphWriteStale.file)
+                  control.nextGraphWriteStale = null
+                  graphFiles[id] = remote
+                  fragment.content = graphBody(remote)
+                  fragment.fileSha = `file-sha-${id}-remote`
+                  throw new Error("STALE_BASE:磁盘上的笔记内容已变化（可能来自同步或外部编辑），保存已中止")
+                }
+                if (args.expectedFileSha !== undefined && args.expectedFileSha !== fragment.fileSha) {
+                  throw new Error("STALE_BASE:磁盘上的笔记内容已变化（可能来自同步或外部编辑），保存已中止")
+                }
+                const graph = clone(args.graph as ShardMapFile)
+                graphFiles[id] = graph
+                fragment.content = graphBody(graph)
+                fragment.fileSha = `file-sha-${id}-${++savedRevision}`
+                return clone({ fragment, graph })
+              }
               case "update_fragment": {
                 const fragment = fragments.find((item) => item.id === args.id)
                 if (!fragment) throw new Error("Fragment not found")
+                if (control.nextFragmentWriteStale?.id === fragment.id) {
+                  const remote = control.nextFragmentWriteStale
+                  control.nextFragmentWriteStale = null
+                  fragment.content = remote.content
+                  fragment.tags = remote.tags ?? fragment.tags
+                  fragment.fileSha = `file-sha-${fragment.id}-remote`
+                  throw new Error("STALE_BASE:磁盘上的笔记内容已变化（可能来自同步或外部编辑），保存已中止")
+                }
+                if (args.expectedFileSha !== undefined && args.expectedFileSha !== fragment.fileSha) {
+                  throw new Error("STALE_BASE:磁盘上的笔记内容已变化（可能来自同步或外部编辑），保存已中止")
+                }
                 fragment.content = String(args.content ?? fragment.content)
                 fragment.tags = (args.tags as string[]) ?? fragment.tags
+                fragment.fileSha = `file-sha-${fragment.id}-${++savedRevision}`
                 return clone(fragment)
               }
               default: throw new Error(`Unhandled Tauri test command: ${command}`)
@@ -120,7 +244,13 @@ export async function installContentTypesMock(page: Page) {
         },
       })
     },
-    { documentBody: CARD_DOCUMENT, fragmentBody: CARD_FRAGMENT, outlineBody: CARD_OUTLINE }
+    {
+      documentBody: CARD_DOCUMENT,
+      fragmentBody: CARD_FRAGMENT,
+      jsonOutlineBody: CARD_JSON_OUTLINE,
+      jsonOutlineFile: CARD_JSON_OUTLINE_FILE,
+      outlineBody: CARD_OUTLINE,
+    }
   )
 }
 
@@ -140,6 +270,62 @@ export async function createdFragments(page: Page) {
       content: String(call.args.content ?? ""),
       tags: (call.args.tags as string[]) ?? [],
     }))
+}
+
+export async function createdGraphFragments(page: Page) {
+  const calls = await readTypeCalls(page)
+  return calls
+    .filter((call) => call.command === "create_graph_fragment")
+    .map((call) => ({
+      graph: call.args.graph as ShardMapFile,
+      kind: String(call.args.kind ?? ""),
+      operationId: String(call.args.operationId ?? ""),
+      tags: (call.args.tags as string[]) ?? [],
+    }))
+}
+
+export async function lastGraphWrite(page: Page, fragmentId: string) {
+  const calls = await readTypeCalls(page)
+  return calls
+    .filter((call) => call.command === "write_graph_fragment" && call.args.id === fragmentId)
+    .at(-1) ?? null
+}
+
+export async function graphWrites(page: Page, fragmentId: string) {
+  const calls = await readTypeCalls(page)
+  return calls.filter(
+    (call) => call.command === "write_graph_fragment" && call.args.id === fragmentId
+  )
+}
+
+export async function lastFragmentWrite(page: Page, fragmentId: string) {
+  const calls = await readTypeCalls(page)
+  return calls
+    .filter((call) => call.command === "update_fragment" && call.args.id === fragmentId)
+    .at(-1) ?? null
+}
+
+export async function queueFragmentStale(
+  page: Page,
+  id: string,
+  content: string,
+  tags?: string[]
+) {
+  await page.evaluate(({ content, id, tags }) => {
+    const root = globalThis as typeof globalThis & {
+      __SHARD_TYPE_CONTROL__: ContentTypesMockControl
+    }
+    root.__SHARD_TYPE_CONTROL__.nextFragmentWriteStale = { content, id, tags }
+  }, { content, id, tags })
+}
+
+export async function queueGraphStale(page: Page, id: string, file: ShardMapFile) {
+  await page.evaluate(({ file, id }) => {
+    const root = globalThis as typeof globalThis & {
+      __SHARD_TYPE_CONTROL__: ContentTypesMockControl
+    }
+    root.__SHARD_TYPE_CONTROL__.nextGraphWriteStale = { file, id }
+  }, { file, id })
 }
 
 /** 某条碎片最近一次落盘的正文与标签。 */

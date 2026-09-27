@@ -5047,7 +5047,11 @@ fn update_public_fragment_in_vault(
 ) -> Result<Fragment, String> {
     let text = fs::read_to_string(path).map_err(|error| error.to_string())?;
     let parsed = parse_fragment(&text)?;
-    for kind in [GraphRegionKind::Outline, GraphRegionKind::Flowchart] {
+    if let Some(kind) = match derive_type(&parsed.frontmatter.tags) {
+        Some("outline") => Some(GraphRegionKind::Outline),
+        Some("flowchart") => Some(GraphRegionKind::Flowchart),
+        _ => None,
+    } {
         match find_region(&parsed.body, kind) {
             Ok(_) => {
                 return Err("大纲与流程图请在专用编辑器中保存。".to_string());
@@ -8890,6 +8894,24 @@ mod tests {
         .unwrap();
         assert!(updated.content.contains("新根节点"));
         assert!(updated.tags.iter().any(|tag| tag == "outline"));
+
+        let fragment_path = vault.join("fragments/tests/ordinary-fragment.md");
+        write_t6_fragment(
+            &fragment_path,
+            "ordinary-fragment",
+            vec!["inbox"],
+            "```shardmap\n{\"pasted\":true}\n```",
+        );
+        let updated = update_public_fragment_in_vault(
+            vault,
+            &fragment_path,
+            "普通碎片更新后的正文",
+            vec!["inbox".into()],
+            None,
+        )
+        .unwrap();
+        assert_eq!(updated.content.trim_end(), "普通碎片更新后的正文");
+        assert_eq!(derive_type(&updated.tags), None);
     }
 
     #[test]

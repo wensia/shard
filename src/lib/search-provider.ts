@@ -6,7 +6,7 @@ import {
   type FragmentSearchWorkerRequest,
   type FragmentSearchWorkerResponse,
 } from "@/lib/fragment-search"
-import { parseMindMapOutline } from "@/lib/mind-map-outline"
+import { readOutlineContent } from "@/lib/mind-map-outline"
 import { searchVault } from "@/lib/search-api"
 import {
   searchTargetKey,
@@ -244,7 +244,7 @@ function fragmentSearchTitle(fragment: Fragment) {
     return deriveDocumentDigest(fragment.content).title || "未命名文档"
   }
   if (kind === "outline") {
-    const file = parseMindMapOutline(fragment.content).file
+    const file = readOutlineContent(fragment.content)?.file
     return file?.nodes[file.rootId]?.text.trim() || "未命名大纲"
   }
 

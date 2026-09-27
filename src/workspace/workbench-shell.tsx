@@ -22,6 +22,8 @@ import {
 } from "@/components/shard/lockbox-dialog"
 import {
   MindMapWorkspace,
+  type MindMapCanvasStorage,
+  type MindMapCanvasStorageSnapshot,
   type MindMapWorkspaceHandle,
 } from "@/components/shard/mind-map-workspace"
 import {
@@ -53,6 +55,7 @@ import {
   changeLockboxPassword,
   convertFragmentToNote,
   convertNoteToFragment,
+  createGraphFragment,
   createFragment,
   DESKTOP_RUNTIME_MESSAGE,
   getApiErrorMessage,
@@ -67,15 +70,18 @@ import {
   organizeFragments,
   pinFragment,
   resetLockboxPassword,
+  readGraphFragment,
   setupLockbox,
   checkpointVault,
   syncVault,
   unlockLockbox,
   unlinkFragments,
   updateFragment,
+  writeGraphFragment,
   type OrganizeTemplate,
 } from "@/lib/api"
 import { deriveKind, isTypeTag } from "@/lib/content-kind"
+import { readOutlineContent } from "@/lib/mind-map-outline"
 import { toggleTaskLine } from "@/lib/editor-format"
 import {
   buildWikilinkCandidates,
@@ -119,6 +125,7 @@ import type {
   MindMapSummary,
   LibraryMutationResult,
   LibraryTreeSnapshot,
+  ShardMapFile,
   VaultState,
 } from "@/types"
 import { FragmentsWorkspace } from "@/workspace/fragments-workspace"
@@ -153,6 +160,13 @@ const GLOBAL_CAPTURE_EVENT = "shard:capture"
 const SIDEBAR_COLLAPSED_STORAGE_KEY = "shard.sidebar-collapsed"
 /** 切回窗口时对账碎片列表的最小间隔，避免频繁切换反复全量读取 vault。 */
 const FOCUS_REFRESH_INTERVAL_MS = 5_000
+
+function isJsonOutlineFragment(fragment: Fragment) {
+  return (
+    deriveKind(fragment.tags) === "outline" &&
+    readOutlineContent(fragment.content)?.format === "json"
+  )
+}
 const DEFAULT_PROJECT_TAGS: readonly string[] = ["日程"]
 const LOCKBOX_SEARCH_PROVIDER = createRustSearchProvider("lockbox")
 type EditingVariant = "inline" | "zen"
@@ -247,6 +261,10 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
   const [searchSession, setSearchSession] = useState<SearchSession | null>(null)
   const [isMindMapViewActive, setIsMindMapViewActive] = useState(false)
   const [activeMindMapId, setActiveMindMapId] = useState<string | null>(null)
+  const [activeOutlineEditor, setActiveOutlineEditor] = useState<{
+    fragmentId: string
+    searchRequestId?: string
+  } | null>(null)
   const [searchMindMapNavigation, setSearchMindMapNavigation] = useState<{
     requestId: string
     result: import("@/types").MindMapReadResult
@@ -299,6 +317,57 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     requestId: string
     targetKey: string
   } | null>(null)
+  const recordContentActivityRef = useRef<() => void>(() => {})
+
+  const syncOutlineFragment = useCallback((snapshot: MindMapCanvasStorageSnapshot) => {
+    if (!snapshot.fragment) return
+    setFragments((current) =>
+      sortFragmentsForDisplay(
+        current.map((fragment) =>
+          fragment.id === snapshot.fragment!.id
+            ? snapshot.fragment!
+            : fragment
+        )
+      )
+    )
+  }, [])
+
+  const outlineFragmentStorage = useMemo<MindMapCanvasStorage>(() => ({
+    afterRead(snapshot) {
+      syncOutlineFragment(snapshot)
+    },
+    afterSave(snapshot) {
+      if (!snapshot.fragment) return
+      syncOutlineFragment(snapshot)
+      setGit((current) => current?.status === "ready"
+        ? { ...current, status: "dirty" }
+        : current)
+      recordContentActivityRef.current()
+    },
+    isConflict(error) {
+      return getApiErrorMessage(error).includes("STALE_BASE")
+    },
+    async read(id) {
+      const result = await readGraphFragment(id)
+      return {
+        baseline: result.fragment.fileSha ?? null,
+        file: result.graph as ShardMapFile,
+        fragment: result.fragment,
+      }
+    },
+    async write(id, file, baseline) {
+      const result = await writeGraphFragment(
+        id,
+        file,
+        typeof baseline === "string" ? baseline : undefined
+      )
+      return {
+        baseline: result.fragment.fileSha ?? null,
+        file: result.graph,
+        fragment: result.fragment,
+      }
+    },
+  }), [syncOutlineFragment])
 
   vaultPathRef.current = vaultPath
   searchSessionRef.current = searchSession
@@ -363,10 +432,10 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
 
   const saveLibraryDraftBeforeNavigation = useCallback(async () => {
     if (fragmentFlushRef.current && !(await fragmentFlushRef.current())) return false
-    if (activeMindMapId && !((await mindMapWorkspaceRef.current?.flush()) ?? true)) return false
+    if ((activeMindMapId || activeOutlineEditor) && !((await mindMapWorkspaceRef.current?.flush()) ?? true)) return false
     if (routeRef.current.space !== "library") return true
     return (await librarySaveHandlerRef.current?.flush()) ?? true
-  }, [activeMindMapId])
+  }, [activeMindMapId, activeOutlineEditor])
 
   useLockboxSecurityEffects({
     autoLock: (options) => {
@@ -661,6 +730,43 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     }
   }
 
+  async function handleCreateOutline(
+    operationId: string,
+    file: ShardMapFile,
+    tags: string[]
+  ): Promise<Fragment> {
+    recordContentActivity()
+    setIsCreating(true)
+    try {
+      const { fragment } = await createGraphFragment(
+        "outline",
+        operationId,
+        file,
+        tags
+      )
+      setFragments((current) =>
+        sortFragmentsForDisplay([fragment, ...current])
+      )
+      setGit((current) => current?.status === "ready"
+        ? { ...current, status: "dirty" }
+        : current)
+      if (!matchesFragmentFilters(fragment, fragmentFilters)) {
+        toast("已记录，当前筛选下不可见", {
+          action: { label: "查看碎片", onClick: () => showFragmentTarget(fragment) },
+        })
+      } else {
+        toast("碎片已保存")
+      }
+      return fragment
+    } catch (error) {
+      const message = getApiErrorMessage(error)
+      toast.error(`创建大纲失败：${message}`, { duration: Infinity })
+      throw new Error(message)
+    } finally {
+      setIsCreating(false)
+    }
+  }
+
   async function handleSync() {
     // 同步会先提交磁盘版本再 pull——不 flush 的话，旧磁盘内容被提交，
     // 之后迟到的自动保存还会把旧基线草稿盖回刚拉取的版本
@@ -816,15 +922,32 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
   }
 
   function openInlineEditor(fragment: Fragment) {
+    if (isJsonOutlineFragment(fragment)) {
+      openOutlineEditor(fragment)
+      return
+    }
     setZenDraft(null)
     setEditingVariant("inline")
     setEditingFragmentId(fragment.id)
   }
 
   function openZenEditor(fragment: Fragment) {
+    if (isJsonOutlineFragment(fragment)) {
+      openOutlineEditor(fragment)
+      return
+    }
     setZenDraft(null)
     setEditingVariant("zen")
     setEditingFragmentId(fragment.id)
+  }
+
+  function openOutlineEditor(fragment: Fragment, searchRequestId?: string) {
+    setZenDraft(null)
+    setEditingFragmentId(null)
+    setSearchEditorNavigation(null)
+    setActiveMindMapId(null)
+    setSearchMindMapNavigation(null)
+    setActiveOutlineEditor({ fragmentId: fragment.id, searchRequestId })
   }
 
   function openZenDraft(content: string) {
@@ -1412,6 +1535,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
 
   async function returnToOrigin() {
     if (!navigationOrigin || !(await saveLibraryDraftBeforeNavigation())) return
+    setActiveOutlineEditor(null)
     revokeSearchSession("spaceChanged")
     setFragmentFilters(navigationOrigin.filters)
     setRoute(navigationOrigin.route)
@@ -1482,6 +1606,15 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     setEditingFragmentId(null)
     setSelectedLockboxTag(null)
     setIsMindMapViewActive(false)
+
+    if (isJsonOutlineFragment(fragment) && !fragment.archived && !fragment.lockbox) {
+      openOutlineEditor(fragment)
+      setIsSearchModeActive(false)
+      if (!completeNavigation()) return
+      searchReturnFocusRef.current = null
+      return
+    }
+    setActiveOutlineEditor(null)
 
     if (fragment.lockbox) {
       if (!lockbox?.unlocked) {
@@ -1626,6 +1759,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
 
   async function applyFragmentFilters(filters: FragmentFilters) {
     if (!(await saveLibraryDraftBeforeNavigation())) return
+    setActiveOutlineEditor(null)
     setFragmentFilters(filters)
     setIsFragmentFilterOpen(false)
     fragmentFilterReturnFocusRef.current = null
@@ -1683,6 +1817,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
   async function openMindMap(map?: MindMapSummary) {
     if (!(await saveLibraryDraftBeforeNavigation())) return
 
+    setActiveOutlineEditor(null)
     revokeSearchSession("spaceChanged")
     if (!map) {
       if (route.space !== "fragments") {
@@ -1705,6 +1840,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     }
     if (!(await saveLibraryDraftBeforeNavigation())) return
 
+    setActiveOutlineEditor(null)
     setIsMindMapViewActive(false)
     setNavigationOrigin(null)
     setFragmentSelectionActive(false)
@@ -1832,6 +1968,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
         openMarkdown: (response, requestId, signal) =>
           openMarkdownSearchTarget(response, requestId, signal),
         openMindMap: async (_target, result, requestId, signal) => {
+          setActiveOutlineEditor(null)
           setPendingLibrarySearchTarget(null)
           setSearchEditorNavigation(null)
           setSearchMindMapNavigation({ requestId, result })
@@ -1840,6 +1977,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
           return { reveal: null }
         },
         openCanvas: async (target, result, requestId, signal) => {
+          setActiveOutlineEditor(null)
           setActiveMindMapId(null)
           setSearchEditorNavigation(null)
           setPendingLibrarySearchTarget({
@@ -1853,6 +1991,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
           return { reveal: null }
         },
         openTable: async (target, result, requestId, signal) => {
+          setActiveOutlineEditor(null)
           setActiveMindMapId(null)
           setSearchEditorNavigation(null)
           setPendingLibrarySearchTarget({
@@ -1943,6 +2082,17 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     const { fragment, target } = response
     setActiveMindMapId(null)
     setSearchMindMapNavigation(null)
+
+    if (
+      target.scope === "public" &&
+      !target.archived &&
+      isJsonOutlineFragment(fragment)
+    ) {
+      setPendingLibrarySearchTarget(null)
+      openOutlineEditor(fragment, requestId)
+      return waitForSearchHost(requestId, signal)
+    }
+    setActiveOutlineEditor(null)
 
     if (target.scope === "lockbox") {
       if (!lockbox?.unlocked) throw { code: "locked" }
@@ -2211,6 +2361,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     async function handleGlobalCapture() {
       if (isModalBusy || !(await saveLibraryDraftBeforeNavigation())) return
 
+      setActiveOutlineEditor(null)
       revokeSearchSession("spaceChanged")
       setIsMindMapViewActive(false)
       setRoute({ space: "fragments", params: {} })
@@ -2231,6 +2382,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
       isCreating ||
       isBlockingDialogOpen ||
       activeMindMapId !== null ||
+      activeOutlineEditor !== null ||
       editingFragmentId !== null ||
       (librarySaveHandlerRef.current?.isDirty() ?? false)
     ) {
@@ -2283,6 +2435,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
       !isBlockingDialogOpen &&
       editingFragmentId === null &&
       activeMindMapId === null &&
+      activeOutlineEditor === null &&
       !(librarySaveHandlerRef.current?.isDirty() ?? false),
     checkpoint: async (trigger) => {
       try {
@@ -2303,6 +2456,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
       await librarySaveHandlerRef.current?.flush().catch(() => false)
     },
   })
+  recordContentActivityRef.current = recordContentActivity
 
   // 启动恢复识别：上次会话（或外部编辑）留下的未提交变更，纳入首次安全
   // idle 检查点，而不是启动瞬间就 commit（外部半成品不该被立即固化）。
@@ -2391,6 +2545,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     onMoveToLockbox: handleMoveFragmentToLockbox,
     onOpenZen: openZenEditor,
     onPin: handlePinFragment,
+    onRefreshFragments: refreshFragments,
     onNavigateToFragment: (fragmentId: string) => {
       void handleNavigateToFragment(fragmentId)
     },
@@ -2463,6 +2618,34 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
       open={isFragmentFilterOpen}
     />
   )
+
+  if (activeOutlineEditor) {
+    return (
+      <>
+        <MindMapWorkspace
+          contextBar={searchContextBarProps ? <SearchContextBar {...searchContextBarProps} /> : null}
+          initialView="outline"
+          key={`outline:${activeOutlineEditor.fragmentId}:${activeOutlineEditor.searchRequestId ?? "browse"}`}
+          mapId={activeOutlineEditor.fragmentId}
+          onClose={() => setActiveOutlineEditor(null)}
+          onLoadError={(error) => {
+            if (activeOutlineEditor.searchRequestId) {
+              settleSearchHost(activeOutlineEditor.searchRequestId, error)
+            }
+          }}
+          onReady={() => {
+            if (activeOutlineEditor.searchRequestId) {
+              settleSearchHost(activeOutlineEditor.searchRequestId)
+            }
+          }}
+          ref={mindMapWorkspaceRef}
+          storage={outlineFragmentStorage}
+        />
+        {searchPalette}
+        {fragmentFilterDialog}
+      </>
+    )
+  }
 
   if (activeMindMapId) {
     return (
@@ -2553,6 +2736,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
               knownTags,
               mindMaps,
               onCreate: handleCreate,
+              onCreateOutline: handleCreateOutline,
               onNavigateToFragment: (fragmentId) => {
                 void handleNavigateToFragment(fragmentId)
               },
@@ -2710,6 +2894,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
             settleSearchHost(searchEditorNavigation.requestId)
           }
         }}
+        onRefreshFragments={refreshFragments}
         onSave={handleUpdateFragment}
         readOnly={searchEditorNavigation?.readOnly ?? false}
         vaultPath={vaultPath}
