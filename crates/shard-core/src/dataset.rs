@@ -571,6 +571,36 @@ pub fn create_dataset(
 mod tests {
     use super::*;
 
+    #[test]
+    fn operations_match_shared_frontend_cases() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/datasets/ops-cases.json"
+        ))
+        .unwrap();
+        for case in fixture["cases"].as_array().unwrap() {
+            let table: CsvTable = serde_json::from_value(case["table"].clone()).unwrap();
+            let schema: Option<DatasetSchema> =
+                serde_json::from_value(case["schema"].clone()).unwrap();
+            let ops: Vec<DatasetOp> = serde_json::from_value(case["ops"].clone()).unwrap();
+            let result = apply_ops(&table, schema.as_ref(), &ops, &DatasetLimits::default());
+            if let Some(expected) = case.get("expected") {
+                assert_eq!(
+                    serde_json::to_value(result.unwrap()).unwrap(),
+                    *expected,
+                    "{}",
+                    case["id"]
+                );
+            } else {
+                assert_eq!(
+                    result.unwrap_err().code,
+                    case["error"].as_str().unwrap(),
+                    "{}",
+                    case["id"]
+                );
+            }
+        }
+    }
+
     fn table() -> CsvTable {
         CsvTable {
             header: vec!["id".into(), "内容".into()],
