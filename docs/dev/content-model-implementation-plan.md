@@ -22,7 +22,7 @@
 | **H2b** | 流程图端到端：`/流程图` 创建；`CanvasWorkspace` 存储适配后在禅模式外壳中打开；流程图卡片 | H2 | 已完成，施工令见 §7 |
 | **H3** | 时间线按类型筛选；后端搜索的图内容投影、标题与 kind 修正（不索引 JSON 键名、坐标、ID） | H2b | 已完成，施工令见 §8 |
 | **H4a** | 旧格式 md 大纲批量升级：正式导入器（Rust）、预检报告、必须成功的检查点或独立备份、逐篇原子升级；加固偏重 UI 用例 | H3 | 已完成，施工令见 §9 |
-| H4b | 资料库独立 `.shardmap.json`/`.shardflow.json` 显式加入时间线（沿用旧图 id 作为碎片 id，原文件移入回收站）；`shard://map|flow/<id>` 与节点引用找不到独立文件时回退到同 id 碎片 | H4a | 待细化 |
+| **H4b** | 资料库独立 `.shardmap.json`/`.shardflow.json` 显式加入时间线（沿用旧图 id 作为碎片 id，原文件移入回收站）；`shard://map|flow/<id>` 与节点引用找不到独立文件时回退到同 id 碎片 | H4a | 执行中，施工令见 §10 |
 | H4c | CLI 原生 JSON 读写、缩进列表只读导出、按节点 id 修改（需把图模型与校验移入 shard-core） | H4b | 待细化 |
 | G1–G3 | 属性面板与 `.shard/properties.json`；SQLite 属性表与筛选；标签主题页表格视图 | P1 | 待细化 |
 
@@ -514,3 +514,51 @@ UI 改动遵守 AGENTS.md 与 `vendor/kiln`，复用现有组件与 token。
 ### 9.7 交付
 
 不提交 Git；测试改写的 `tests/evidence` 图片结束前恢复。报告写 `docs/dev/content-model-tasks-log/H4a.md`：改动文件与要点、开工前 UI 基线、验收结果（含测试数与偶发项复跑）、偏差及原因、遗留问题。
+
+## 10. H4b 施工令：资料库独立图文件加入时间线
+
+前置：P0–H4a 已在本分支。调研要点：
+- 资料库条目菜单 `src/components/shard/library-entry-menu.tsx` 对 mindmap / flowchart 条目有「打开、复制文档链接、重命名、移动、删除」；删除走 `delete_library_entry` → `checkpoint_before_structural_locked` → `move_to_trash_in_vault`（`fs::rename` 到 `.trash/<原相对路径>`，重名加时间戳，自带一次 best-effort 提交）。
+- 旧图 id 形如 `map-YYYYMMDD-HHMMSS-xxxx`、`map-<uuid>`、`flow-<uuid>` 或 UUID，只含 `[0-9a-z-]`；碎片 id 没有格式校验，`find_fragment_path` 按 frontmatter 的 `id` 匹配，扫描 `fragments/`、`.trash/fragments/`、`notes/`。`create_public_fragment_with_id_in_vault` 只检查同月目录下同名文件。H1 的图命令要求 `graph.id == 碎片 id`。
+- 链接 `shard://map/<id>`、`shard://flow/<id>` 由 `src/lib/document-link.ts` 解析；打开走 `library-shell.tsx` 的 `openCanvasLink` 与 `workbench-shell.tsx` 的 `openFlowchartLink`，都按 `listDiagramDocuments`（只扫 `notes/`）查 id，找不到提示「引用的图文档已不存在」。Rust 侧目标缺失的链接仍合法（`canvas_commands::validate_public_link`）。
+- 搜索只枚举 `notes/`、`maps/` 下的独立图文件，回收站里的不进搜索。
+
+### 10.0 加固 toast 断言
+
+`tests/ui/content-types.spec.ts` 中「超过 400 节点时拦截提交…」「大纲含密匣标签时保留草稿并提示…」断言的是会自动消失的 toast，高负载下 5 秒内等不到。给这两处以及本分支新增用例里其它断言 toast 的 `expect` 单独放宽超时（如 15 秒），并在 toast 之外同时断言持久状态（草稿仍在、没有创建调用）。不改业务代码。
+
+### 10.1 后端命令 `import_graph_file_to_timeline(path)`
+
+- 只接受资料库 `notes/` 下的 `.shardmap.json`（大纲）与 `.shardflow.json`（流程图）；路径校验沿用现有资料库路径规则。读取并用现有校验函数校验；流程图要求 `kind == "shard.flow"`，旧混合画布（`shard.canvas`）拒绝。
+- **碎片 id 沿用旧图 id**。要求 id 只含 `[0-9A-Za-z._-]` 且非空；全库（`fragments/`、`.trash/fragments/`、`notes/` 的 md，以及密匣）不得已有同 id 碎片，否则报错且不改任何文件。**幂等**：已存在同 id、同类型、正文有有效区域的碎片时，视为之前已导入——不重复创建，只在原文件还在时完成「移入回收站」这一步，并返回该碎片。
+- 新碎片：`created_at` 取图 JSON 的 `createdAt`（解析失败时用当前时间），目录按它落到 `fragments/YYYY/MM/`；标签 `inbox` 加对应 type；正文为 `render_region` 生成的唯一区域，图 JSON 原样保留（id、节点 id、`createdAt`、`updatedAt`、`revision` 都不改）。
+- 顺序：拿写门 → `checkpoint_before_structural_locked` → 写新碎片 → 把原文件移入 `.trash/`（路径规则与 `move_to_trash_in_vault` 相同）→ **一次**路径级语义提交，包含新碎片、原路径与回收站路径。为此最小提取一个不自带提交的移动函数，现有 `move_to_trash_in_vault` 与删除命令的行为不变。移入回收站失败时删除刚写的新碎片并返回错误，原文件不动。
+- 返回新碎片（带 `fileSha`）。last-good 副本、冲突副本不处理。
+
+### 10.2 前端
+
+- 资料库条目菜单：mindmap / flowchart 条目（非批量）增加「加入时间线」，图标从现有图标注册表选用。点击后弹确认对话框（复用资料库现有确认对话框结构）：说明会生成一篇同名的大纲或流程图、原文件移入回收站、可从回收站恢复，按钮「加入时间线」「取消」。成功后刷新资料库树与碎片列表，toast「已加入时间线」并提供「打开」动作（打开对应的图形宿主）；失败显示错误，不改变列表。
+- **链接回退**：打开 `shard://map/<id>` 或 `shard://flow/<id>`，以及导图检查器、流程图引用节点里的 Map / Flow 引用时，`listDiagramDocuments` 找不到该 id 就在已加载碎片里找同 id、对应类型的 JSON 大纲或流程图，找到则打开 H2/H2b 的图形宿主；都找不到才提示「引用的图文档已不存在」。资料库里触发时通过 workbench 提供的回调打开宿主，不在 library-shell 里复制宿主逻辑。
+
+### 10.3 测试
+
+- Rust：导入大纲与流程图（id 等于旧图 id、`created_at` 与月份目录来自图 JSON、正文恰好一个区域、`read_graph_fragment` 可读、原文件已在 `.trash/`、只有一次提交）；id 冲突、图校验失败、旧混合画布三种拒绝都不改任何文件；重复调用幂等；非 Git 库照常工作。
+- UI（mock 补新命令与 `listDiagramDocuments` 缺失场景）：菜单项只对导图和流程图条目出现；确认后调用命令、列表刷新、toast 带「打开」；链接回退打开图形宿主；两处都找不到时仍提示已不存在。
+- 现有资料库删除、重命名、移动、打开导图与流程图的用例不回退。
+
+### 10.4 验收命令
+
+沿用 `playwright.worktree.config.ts`（1422，不提交），开工前先跑一遍下表 UI 用例记录基线（`library-tree.spec.ts` 已知有既有失败，以基线为准）；偶发失败用 `--workers=1 --retries=0` 单独复跑并在报告注明。
+
+| 命令 | 要求 |
+| --- | --- |
+| `cargo test -p shard-core -p shard -p shard-cli` | 全部通过 |
+| `pnpm test:unit` | 除 golden 夹具那一项既有失败外全部通过（quick-open 性能若波动须单独复跑，并确认「参考结果对照」通过） |
+| `pnpm build` | 通过 |
+| `pnpm build:markdown && pnpm exec playwright test -c playwright.worktree.config.ts tests/ui/library-workspace.spec.ts tests/ui/library-tree.spec.ts tests/ui/content-types.spec.ts tests/ui/rich-surfaces.spec.ts tests/ui/mind-map-workspace.spec.ts tests/ui/canvas-workspace.spec.ts tests/ui/wikilink.spec.ts` | 相对基线没有新增失败；新增用例全部通过 |
+| `rustfmt --edition 2021 --check crates/shard-core/src/frontmatter.rs crates/shard-core/src/graph_region.rs crates/shard-core/src/outline_import.rs` | 通过 |
+| `git diff --check` | 通过 |
+
+### 10.5 交付
+
+不提交 Git；测试改写的 `tests/evidence` 图片结束前恢复。报告写 `docs/dev/content-model-tasks-log/H4b.md`：改动文件与要点、开工前 UI 基线、验收结果（含测试数与偶发项复跑）、偏差及原因、遗留问题。
