@@ -15,8 +15,8 @@
 
 | 批次 | 内容 | 依赖 | 状态 |
 | --- | --- | --- | --- |
-| **P0** | frontmatter 保真读写：修改既有 md 时只局部改写系统键；密匣载荷保存原始 frontmatter | 无 | 本批，施工令见 §3 |
-| P1 | 共用前置合同：保存基线覆盖完整文件（前端拿到文件级哈希）；type 合同（新增 `flowchart`，多个 type 标签的冲突规则在后端与 CLI 统一执行）；大纲、流程图拒绝进密匣 | P0 | 待细化 |
+| **P0** | frontmatter 保真读写：修改既有 md 时只局部改写系统键；密匣载荷保存原始 frontmatter | 无 | 已完成（`ba55dc5`），施工令见 §3 |
+| **P1** | 共用前置合同：保存基线覆盖完整文件（前端拿到文件级哈希）；type 合同（新增 `flowchart`，多个 type 标签的冲突规则在后端与 CLI 统一执行）；大纲、流程图拒绝进密匣 | P0 | 执行中，施工令见 §4 |
 | H1 | 受管 JSON 区域编解码（Rust + TS）与后端读写命令：幂等创建（稳定操作 ID）、读取、只替换区域的原子写、完整文件基线 | P1 | 待细化 |
 | H2 | `/大纲` 提交改为创建 JSON 大纲（正式导入器，上限 400 节点，超限报错不截断）；打开大纲进入现有导图编辑器（大纲/导图两视图）；`/流程图` 创建与打开；大纲与流程图不进 Tiptap | H1 | 待细化 |
 | H3 | 时间线卡片（缩略 + 标题）、type 筛选、搜索图内容投影（不索引 JSON 键名、坐标、ID） | H1 | 待细化 |
@@ -109,3 +109,73 @@
 
 - 不提交 Git，改动留在 worktree，由 Claude 验收后提交。
 - 写报告 `docs/dev/content-model-tasks-log/P0.md`：改动文件与要点、验收命令与结果表（含测试数）、与本施工令的偏差及原因、遗留问题。
+
+## 4. P1 施工令：文件级保存基线、type 合同、密匣边界
+
+前置：P0 已合入本分支（`ba55dc5`）。现状调研要点：只有资料库编辑器（`src/workspace/library-shell.tsx`）会传 `expectedSha`，而且是对正文算的 SHA-256；行内编辑、禅模式、密匣编辑都不带基线。后端只有 `update_fragment` 接收 `expected_sha`，三个分支（公开保存、公开转入密匣、密匣保存）都用 `ensure_expected_content_sha` 对正文比对。Rust 侧没有任何 type 标签识别（`normalize_tags` 只做规范化与排序去重）；CLI 不过滤 type 标签。进密匣的入口都不区分内容类型。
+
+### 4.1 A：文件级保存基线
+
+- Rust `Fragment` DTO（`src-tauri/src/lib.rs`）增加 `file_sha: String`（前端字段名 `fileSha`）：公开条目是磁盘文件完整文本的 SHA-256（小写 hex，用现有 `content_sha256_hex` 对整份文件文本计算）；密匣条目是加密文件完整文本的 SHA-256。构造 `Fragment` 的三处都要填：`read_fragment`、`lockbox_fragment_from_parts`、`search_sources.rs` 的 `markdown_document`。
+- `update_fragment` 命令把参数 `expected_sha` 换成 `expected_file_sha: Option<String>`：有值时在拿到 vault 门之后、任何写入之前，与目标文件（公开文件或密匣文件）当前完整文本的哈希比对，不一致返回现有 `STALE_BASE_ERROR`（文案不变）。三个分支都适用。删除对正文哈希的比对（`ensure_expected_content_sha` 若不再有调用方就删掉）。
+- 前端 `src/lib/api.ts` 的 `updateFragment` 第 4 个参数改为 `expectedFileSha`；TS `Fragment` 增加 `fileSha?: string`（可选：旧测试 mock 可能没有，缺省时视为没有基线）。
+- `library-shell.tsx`：基线直接取 `fileSha`——切换文档取 `selectedNote.fileSha`，保存成功取返回值的 `fileSha`，载入磁盘版后取新 note 的 `fileSha`；删除异步 `sha256Hex` 计算。STALE_BASE 冲突流程（覆盖 / 载入磁盘版）不变。
+- **不做**：行内编辑、禅模式、密匣编辑（`FragmentEditor`）接入基线，留到 H2。
+
+### 4.2 B：type 合同
+
+- `crates/shard-core/src/lib.rs` 增加：`TYPE_TAGS = ["note", "outline", "flowchart", "document"]`（顺序即判定优先级，与前端 `deriveKind` 一致）、`PROTECTED_TYPE_TAGS = ["outline", "flowchart"]`、`derive_type(tags) -> Option<&str>`、`normalize_type_tags(tags) -> Vec<String>`（只保留优先级最高的一个 type 标签，其余 type 标签删除，非 type 标签不动）。
+- 后端写入规则（`src-tauri/src/lib.rs`）：
+  1. `create_fragment`（公开与密匣）：对传入标签做 `normalize_type_tags`；允许 `outline`、`flowchart`（显式创建，如 `/大纲`）。
+  2. `update_fragment`、`update_fragment_tags`（公开与密匣）：先 `normalize_type_tags`，再按磁盘上当前文件的 type 执行**受保护规则**——磁盘 type 是 `outline` 或 `flowchart` 时，结果必须保留该 type（缺了补回，其它 type 标签去掉）；磁盘 type 不是这两者时，从传入标签里去掉 `outline`、`flowchart`。`note`、`document` 与缺省碎片之间的现有行为不变。
+  3. `crates/shard-cli`：标签含 `outline` 或 `flowchart` 时报错「终端不支持直接创建大纲或流程图。」（与现有密匣拦截同一位置、同一风格）；其余标签经 `normalize_type_tags`。
+- 前端 `src/lib/content-kind.ts`：`TYPE_TAGS` 按上面的顺序加入 `flowchart`，显示名「流程图」；新增 `stripProtectedTypeTags(tags, currentKind)`，与后端受保护规则一致。
+  - 速记框普通提交（`capture-box.tsx`）与 `FragmentEditor` 保存（`fragment-editor.tsx`）：当前内容不是大纲或流程图时，用它去掉正文 `#outline`、`#flowchart` 提取出的标签。
+  - `flowchart` 在 H2 之前没有专属卡片和编辑器：卡片显示「流程图」徽标，正文按普通碎片渲染和编辑；多选、转换菜单等沿用现有 `kind === "fragment"` 判断，自然排除。按 TypeScript 编译错误补齐 `Record<ContentKind, …>` 等穷举位置，不做额外 UI。
+  - 搜索的 `markdown_kind` 与搜索契约不改（H3 处理）。
+
+### 4.3 C：密匣边界（只加密 md 文档）
+
+- 后端统一拒绝，错误文案「大纲与流程图不能放入密匣。」：
+  1. `create_fragment` 带密匣标签且 type 为 `outline` 或 `flowchart`；
+  2. `update_fragment`、`update_fragment_tags` 对磁盘 type 为 `outline` 或 `flowchart` 的公开文件带密匣标签；
+  3. `move_fragment_to_lockbox` 目标的 type 为 `outline` 或 `flowchart`。
+  拒绝时文件与 Git 状态都不变。已经在密匣里的旧大纲照常可读可改，不迁移。
+- 前端：
+  - `fragment-card.tsx` 的「移入密匣」菜单项对 `outline`、`flowchart` 不显示；
+  - 速记框大纲态提交时，若大纲文字提取出密匣标签，不提交，用现有 toast 提示「大纲不能放入密匣」，草稿保留；
+  - `FragmentEditor` 的「将移入密匣 / 将保存到密匣」徽标对 `outline`、`flowchart` 不显示。
+
+### 4.4 必须新增或更新的测试
+
+- Rust：
+  - `update_fragment`：只改 frontmatter（例如外部加一个未知键）后用旧 `fileSha` 保存返回 STALE_BASE 且文件不变；用新 `fileSha` 保存成功；密匣分支同样校验；不带基线照常保存。
+  - `normalize_type_tags` 与受保护规则：多 type 取最高优先级；普通碎片正文带 `#outline` 保存后仍是普通碎片；大纲保存时丢了 `outline` 会被补回。
+  - 三条密匣拒绝路径，拒绝后文件字节与位置不变。
+  - `shard-cli` 解析测试：`#outline`、`#flowchart` 报错；`#document #note` 只保留 `note`。
+- TS 单元测试：`content-kind.test.ts` 覆盖新的 `TYPE_TAGS` 顺序、`deriveKind` 的流程图、`stripProtectedTypeTags`。
+- UI（Playwright）：
+  - `tests/ui/library-workspace.spec.ts` 里 STALE_BASE 相关用例改为 `expectedFileSha`、mock 数据带 `fileSha`，覆盖与载入磁盘版两个分支都要通过；
+  - 新增：大纲卡片菜单里没有「移入密匣」；速记框大纲态含 `#密匣` 时不提交并提示。
+
+### 4.5 验收命令
+
+先在 worktree 执行 `pnpm install --frozen-lockfile --prefer-offline`。
+
+**Playwright 不能用默认配置**：1420 端口被用户主工作区的 vite 占用，`reuseExistingServer: true` 会让测试跑到主工作区的代码上。复制 `playwright.config.ts` 为 `playwright.worktree.config.ts`（不提交），把 `baseURL`、`webServer.url` 改为 `http://127.0.0.1:1422`，`webServer.command` 改为 `node node_modules/vite/bin/vite.js --host 127.0.0.1 --port 1422 --strictPort`，`reuseExistingServer: false`。
+
+**开工前**先在未改动的代码上跑一遍下面的 UI 用例，把已有失败记为基线；完工后不得新增失败。
+
+| 命令 | 要求 |
+| --- | --- |
+| `cargo test -p shard-core -p shard -p shard-cli` | 全部通过 |
+| `pnpm test:unit` | 全部通过 |
+| `pnpm build` | 通过 |
+| `pnpm build:markdown && pnpm exec playwright test -c playwright.worktree.config.ts tests/ui/library-workspace.spec.ts tests/ui/content-types.spec.ts tests/ui/lockbox-space.spec.ts tests/ui/rich-composer.spec.ts tests/ui/slash-commands.spec.ts tests/ui/mind-map-outline.spec.ts tests/ui/mind-map-mubu-outline.spec.ts tests/ui/rich-surfaces.spec.ts tests/ui/search-fragment-reveal.spec.ts tests/ui/search-integration.spec.ts` | 相对开工前基线没有新增失败；新增用例全部通过 |
+| `rustfmt --edition 2021 --check crates/shard-core/src/frontmatter.rs` 及本批新建的 Rust 文件 | 通过 |
+| `git diff --check` | 通过 |
+
+### 4.6 交付
+
+- 不提交 Git；`playwright.worktree.config.ts` 不纳入改动。
+- 报告写 `docs/dev/content-model-tasks-log/P1.md`：改动文件与要点、开工前 UI 基线、验收命令与结果（含测试数）、偏差及原因、遗留问题。
