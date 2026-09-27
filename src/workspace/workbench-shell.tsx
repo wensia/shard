@@ -1120,7 +1120,19 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
           (candidate) => candidate.id === link.targetId && candidate.kind === kind
         )
         if (!document) {
-          toast.error("引用的图文档已不存在")
+          const fragment = publicActiveFragments.find((candidate) =>
+            candidate.id === link.targetId && (
+              link.targetType === "map"
+                ? isJsonOutlineFragment(candidate)
+                : isJsonFlowchartFragment(candidate)
+            )
+          )
+          if (!fragment) {
+            toast.error("引用的图文档已不存在")
+            return
+          }
+          if (link.targetType === "map") openOutlineEditor(fragment)
+          else openFlowchartEditor(fragment)
           return
         }
         setActiveFlowchartEditor(null)
@@ -2929,6 +2941,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
       <>
         <MindMapWorkspace
           contextBar={searchContextBarProps ? <SearchContextBar {...searchContextBarProps} /> : null}
+          fragments={publicOnlyFragments}
           initialView="outline"
           key={`outline:${activeOutlineEditor.fragmentId}:${activeOutlineEditor.searchRequestId ?? "browse"}`}
           mapId={activeOutlineEditor.fragmentId}
@@ -2938,6 +2951,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
               settleSearchHost(activeOutlineEditor.searchRequestId, error)
             }
           }}
+          onOpenLink={openFlowchartLink}
           onReady={() => {
             if (activeOutlineEditor.searchRequestId) {
               settleSearchHost(activeOutlineEditor.searchRequestId)
@@ -3161,6 +3175,11 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
             onRefreshLibrary={refreshLibraryTree}
             onTableSaved={recordContentActivity}
             onMoveToLockbox={handleMoveFragmentToLockbox}
+            onOpenGraphFragment={(fragment) => {
+              setFragments(current => sortFragmentsForDisplay([fragment, ...current.filter(item => item.id !== fragment.id)]))
+              if (isJsonOutlineFragment(fragment)) openOutlineEditor(fragment)
+              else if (isJsonFlowchartFragment(fragment)) openFlowchartEditor(fragment)
+            }}
             onOpenLockbox={enterLockboxSpace}
             onRefreshFragments={refreshFragments}
             onRegisterSaveHandler={registerLibrarySaveHandler}

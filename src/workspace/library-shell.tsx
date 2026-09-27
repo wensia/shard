@@ -72,6 +72,7 @@ import {
   createLibraryDirectory,
   createLibraryNote,
   createMindMap,
+  importGraphFileToTimeline,
   listDiagramDocuments,
   listLibraryTree,
   listFragments,
@@ -86,8 +87,10 @@ import {
   restoreFromTrash,
 } from "@/lib/api"
 import { deriveKind } from "@/lib/content-kind"
+import { readFlowchartContent } from "@/lib/flowchart-content"
 import { extractTags, normalizeTagList } from "@/lib/editor-format"
 import { libraryEntryName, libraryNameError, type LibrarySort } from "@/lib/library-entry"
+import { readOutlineContent } from "@/lib/mind-map-outline"
 import { useLibraryFileSelection } from "@/lib/use-library-file-selection"
 import { useImageUpload } from "@/hooks/use-image-upload"
 import { useFragmentRelations } from "@/lib/use-fragment-relations"
@@ -174,6 +177,7 @@ interface LibraryShellProps {
   onConvertedToFragment?: (fragment: Fragment) => void
   onLibraryMutation: (result: LibraryMutationResult) => void
   onMoveToLockbox: (fragment: Fragment) => Promise<void>
+  onOpenGraphFragment?: (fragment: Fragment) => void
   /** 点击树上的密匣挂载点：解锁并进入密匣一级空间（传送门）。 */
   onOpenLockbox: () => void
   onRegisterSaveHandler: (handle: LibraryDraftHandle | null) => void
@@ -197,6 +201,7 @@ type TreeDialogState =
   | { kind: "delete"; entry: LibraryTreeEntry }
   | { kind: "batchDelete"; entries: LibraryTreeEntry[] }
   | { kind: "purge"; entry: LibraryTreeEntry }
+  | { kind: "importGraph"; entry: LibraryTreeEntry }
   | { kind: "emptyTrash" }
 type LibrarySelection =
   | { kind: "note"; id: string }
@@ -254,6 +259,7 @@ export function LibraryShell({
   onConvertedToFragment,
   onLibraryMutation,
   onMoveToLockbox,
+  onOpenGraphFragment,
   onOpenLockbox,
   onRegisterSaveHandler,
   onRefreshLibrary,
@@ -793,7 +799,16 @@ export function LibraryShell({
       try {
         const documents = await listDiagramDocuments()
         const document = documents.find(item => item.id === link.targetId && item.kind === (link.targetType === "map" ? "mindmap" : "flowchart"))
-        if (!document) { toast.error("引用的图文档已不存在"); return }
+        if (!document) {
+          const fragment = fragments.find(item => item.id === link.targetId && (
+            link.targetType === "map"
+              ? deriveKind(item.tags) === "outline" && readOutlineContent(item.content)?.format === "json"
+              : deriveKind(item.tags) === "flowchart" && readFlowchartContent(item.content)?.format === "json"
+          ))
+          if (!fragment || !onOpenGraphFragment) { toast.error("引用的图文档已不存在"); return }
+          onOpenGraphFragment(fragment)
+          return
+        }
         if (document.kind === "mindmap") await selectMindMap(document.path)
         else await selectCanvas(document.path, "flowchart")
       } catch (error) { toast.error(`打开图文档失败：${getApiErrorMessage(error)}`) }
@@ -1376,6 +1391,34 @@ export function LibraryShell({
       setTreeDialog(null)
       return
     }
+    if (treeDialog.kind === "importGraph") {
+      const entry = treeDialog.entry
+      setBusyAction("加入时间线")
+      let fragment: Fragment
+      try {
+        fragment = await importGraphFileToTimeline(entry.path)
+      } catch (error) {
+        toast.error(`加入时间线失败：${getApiErrorMessage(error)}`, { duration: Infinity })
+        setBusyAction(null)
+        return
+      }
+      setTreeDialog(null)
+      try {
+        await onRefreshLibrary?.()
+        await onRefreshFragments?.()
+      } catch (error) {
+        toast.error(`已加入时间线，但列表刷新失败：${getApiErrorMessage(error)}`, { duration: Infinity })
+        setBusyAction(null)
+        return
+      }
+      toast("已加入时间线", {
+        action: onOpenGraphFragment
+          ? { label: "打开", onClick: () => onOpenGraphFragment(fragment) }
+          : undefined,
+      })
+      setBusyAction(null)
+      return
+    }
     const deletedPath = treeDialog.entry.path
     const result =
       treeDialog.kind === "purge"
@@ -1511,6 +1554,7 @@ export function LibraryShell({
             onCopyDocumentLink={copyDiagramLink}
             onDelete={requestDelete}
             onImportTable={(entry) => void importLibraryTable(entry)}
+            onImportGraphToTimeline={(entry) => setTreeDialog({ kind: "importGraph", entry })}
             onMove={moveEntry}
             onMoveToLockbox={moveEntryToLockbox}
             onOpenEntry={handleDirectoryEntryClick}
@@ -1715,13 +1759,17 @@ export function LibraryShell({
   }
 
   const dialogTitle =
-    treeDialog?.kind === "emptyTrash"
+    treeDialog?.kind === "importGraph"
+      ? "确认加入时间线"
+      : treeDialog?.kind === "emptyTrash"
       ? "确认清空资料库回收站"
       : treeDialog?.kind === "purge"
         ? "确认彻底删除"
         : "确认删除"
   const dialogDescription =
-    treeDialog?.kind === "emptyTrash"
+    treeDialog?.kind === "importGraph"
+      ? `将生成一篇同名的${treeDialog.entry.kind === "mindmap" ? "大纲" : "流程图"}，原文件移入回收站，之后仍可从回收站恢复。`
+      : treeDialog?.kind === "emptyTrash"
       ? "资料库回收站中的文档和文件将被永久删除，此操作不可恢复。"
       : treeDialog?.kind === "purge"
         ? `「${treeDialog.entry.name}」将被永久删除，此操作不可恢复。`
@@ -1731,7 +1779,9 @@ export function LibraryShell({
           ? `「${treeDialog.entry.name}」将移入回收站，之后仍可恢复。`
           : ""
   const dialogConfirmLabel =
-    treeDialog?.kind === "emptyTrash"
+    treeDialog?.kind === "importGraph"
+      ? "加入时间线"
+      : treeDialog?.kind === "emptyTrash"
       ? "清空回收站"
       : treeDialog?.kind === "purge"
         ? "彻底删除"
@@ -2147,7 +2197,7 @@ export function LibraryShell({
               disabled={busyAction !== null}
               onClick={() => void submitTreeDialog()}
               type="button"
-              variant="destructive"
+              variant={treeDialog?.kind === "importGraph" ? "default" : "destructive"}
             >
               {busyAction ?? dialogConfirmLabel}
             </Button>

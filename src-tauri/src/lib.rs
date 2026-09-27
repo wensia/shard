@@ -2030,6 +2030,19 @@ async fn read_graph_fragment(
 }
 
 #[tauri::command]
+async fn import_graph_file_to_timeline(
+    app: tauri::AppHandle,
+    path: String,
+) -> Result<Fragment, String> {
+    run_blocking(move || {
+        let vault = ensure_vault_dirs(&app)?;
+        let _gate = lock_vault_gate(&vault);
+        import_graph_file_to_timeline_in_vault(&vault, &path)
+    })
+    .await
+}
+
+#[tauri::command]
 async fn write_graph_fragment(
     app: tauri::AppHandle,
     id: String,
@@ -4042,7 +4055,7 @@ fn ensure_canonical_trash_root(vault: &Path) -> Result<PathBuf, String> {
     Ok(canonical_trash)
 }
 
-fn move_to_trash_in_vault(vault: &Path, rel_path: &str) -> Result<PathBuf, String> {
+fn move_to_trash_without_commit_in_vault(vault: &Path, rel_path: &str) -> Result<PathBuf, String> {
     let source = trashable_vault_path(vault, rel_path)?;
     let trash_root = ensure_canonical_trash_root(vault)?;
     let destination = timestamped_collision_path(&vault.join(".trash").join(rel_path))?;
@@ -4054,6 +4067,11 @@ fn move_to_trash_in_vault(vault: &Path, rel_path: &str) -> Result<PathBuf, Strin
         }
     }
     fs::rename(&source, &destination).map_err(|error| error.to_string())?;
+    Ok(destination)
+}
+
+fn move_to_trash_in_vault(vault: &Path, rel_path: &str) -> Result<PathBuf, String> {
+    let destination = move_to_trash_without_commit_in_vault(vault, rel_path)?;
     let destination_rel = relative_path(vault, &destination)?;
     commit_paths_best_effort(
         vault,
@@ -5287,6 +5305,135 @@ fn read_graph_fragment_in_vault(
         fragment: read_fragment(&path, vault, &dirty_paths(vault), None)?,
         graph,
     })
+}
+
+fn import_graph_file_to_timeline_in_vault(
+    vault: &Path,
+    rel_path: &str,
+) -> Result<Fragment, String> {
+    let source = existing_library_path(vault, rel_path)?;
+    if !source.is_file() {
+        return Err("只能导入资料库中的图文件。".to_string());
+    }
+
+    let raw_json = fs::read_to_string(&source).map_err(|error| error.to_string())?;
+    let (kind, id, created_at) = if is_mind_map_file(&source) {
+        let file = serde_json::from_str::<ShardMapFile>(&raw_json)
+            .map_err(|error| format!("大纲 JSON 无法解析：{error}"))?;
+        validate_mind_map_file(vault, &file)?;
+        (GraphFragmentKind::Outline, file.id, file.created_at)
+    } else if canvas_commands::is_flow(&source) {
+        let file = serde_json::from_str::<canvas_commands::CanvasFile>(&raw_json)
+            .map_err(|error| format!("流程图 JSON 无法解析：{error}"))?;
+        if file.kind != "shard.flow" {
+            return Err("只能把 shard.flow 流程图加入时间线。".to_string());
+        }
+        canvas_commands::validate_file(vault, &file)?;
+        (GraphFragmentKind::Flowchart, file.id, file.created_at)
+    } else {
+        return Err("只能导入 .shardmap.json 或 .shardflow.json 图文件。".to_string());
+    };
+
+    if id.is_empty()
+        || !id.chars().all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '.' | '_' | '-')
+        })
+    {
+        return Err("图文件 id 只能包含字母、数字、点、下划线和连字符。".to_string());
+    }
+    if find_lockbox_fragment_path(vault, &id)?.is_some() {
+        return Err(format!("片段 id {id} 已存在。"));
+    }
+
+    let existing = find_fragment_path(vault, &id)?;
+    if let Some(existing_path) = existing.as_ref() {
+        let existing_rel = relative_path(vault, existing_path)?;
+        let text = fs::read_to_string(existing_path).map_err(|error| error.to_string())?;
+        let parsed = parse_fragment(&text)?;
+        let existing_kind = graph_kind_from_frontmatter(&parsed.frontmatter)?;
+        let region = find_region(&parsed.body, kind.region_kind())?;
+        let graph_id = serde_json::from_str::<serde_json::Value>(&region.json_text)
+            .map_err(|error| format!("受管区域 JSON 无法解析：{error}"))?
+            .get("id")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        if existing_kind != kind || graph_id != id || !existing_rel.starts_with("fragments/") {
+            return Err(format!("片段 id {id} 已存在。"));
+        }
+        validate_graph_value(
+            vault,
+            kind,
+            serde_json::from_str(&region.json_text)
+                .map_err(|error| format!("受管区域 JSON 无法解析：{error}"))?,
+        )?;
+
+        checkpoint_before_structural_locked(vault);
+        let trashed = move_to_trash_without_commit_in_vault(vault, rel_path)?;
+        commit_paths_best_effort(
+            vault,
+            &[rel_path.to_string(), relative_path(vault, &trashed)?],
+            "import graph file to timeline",
+        );
+        return read_fragment(existing_path, vault, &dirty_paths(vault), None);
+    }
+
+    let (fragment_created_at, year, month) = match DateTime::parse_from_rfc3339(&created_at) {
+        Ok(timestamp) => (
+            created_at,
+            timestamp.format("%Y").to_string(),
+            timestamp.format("%m").to_string(),
+        ),
+        Err(_) => {
+            let now = Local::now();
+            (
+                now.to_rfc3339(),
+                now.format("%Y").to_string(),
+                now.format("%m").to_string(),
+            )
+        }
+    };
+    let directory = vault.join("fragments").join(year).join(month);
+    fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
+    let fragment_path = directory.join(format!("{id}.md"));
+    if fragment_path.exists() {
+        return Err(format!("片段 {id} 已存在。"));
+    }
+    let frontmatter = FragmentFrontmatter {
+        id: id.clone(),
+        created_at: fragment_created_at.clone(),
+        updated_at: fragment_created_at,
+        tags: vec!["inbox".to_string(), kind.type_tag().to_string()],
+        category: None,
+        ai_status: Some("none".to_string()),
+        pinned: false,
+        source: "desktop".to_string(),
+        conflict_of: None,
+        related: Vec::new(),
+    };
+    let body = render_region(kind.region_kind(), &raw_json);
+
+    checkpoint_before_structural_locked(vault);
+    write_fragment_file(&fragment_path, &frontmatter, &body)?;
+    let trashed = match move_to_trash_without_commit_in_vault(vault, rel_path) {
+        Ok(path) => path,
+        Err(error) => {
+            if let Err(rollback_error) = fs::remove_file(&fragment_path) {
+                return Err(format!("{error}；回滚新碎片失败：{rollback_error}"));
+            }
+            return Err(error);
+        }
+    };
+    commit_paths_best_effort(
+        vault,
+        &[
+            relative_path(vault, &fragment_path)?,
+            rel_path.to_string(),
+            relative_path(vault, &trashed)?,
+        ],
+        "import graph file to timeline",
+    );
+    read_fragment(&fragment_path, vault, &dirty_paths(vault), None)
 }
 
 fn write_graph_fragment_in_vault(
@@ -7510,6 +7657,7 @@ pub fn run() {
             reset_lockbox_password,
             create_graph_fragment,
             read_graph_fragment,
+            import_graph_file_to_timeline,
             write_graph_fragment,
             create_fragment,
             update_fragment,
@@ -9318,6 +9466,188 @@ mod tests {
 
         let read = read_graph_fragment_in_vault(vault, &created.fragment.id).unwrap();
         assert_eq!(read.graph, created.graph);
+    }
+
+    #[test]
+    fn imports_outline_graph_file_to_timeline_without_git() {
+        let directory = tempfile::tempdir().unwrap();
+        let vault = directory.path();
+        ensure_vault_layout(vault).unwrap();
+        let mut graph = outline_graph_fixture(3);
+        graph["id"] = serde_json::json!("map-20260405-123456-abcd");
+        graph["createdAt"] = serde_json::json!("2024-05-06T23:30:00-07:00");
+        graph["updatedAt"] = serde_json::json!("2026-09-28T08:00:00+08:00");
+        let raw = serde_json::to_string_pretty(&graph).unwrap();
+        let source = vault.join("notes/项目导图.shardmap.json");
+        fs::write(&source, format!("{raw}\n")).unwrap();
+
+        let imported =
+            import_graph_file_to_timeline_in_vault(vault, "notes/项目导图.shardmap.json").unwrap();
+
+        assert_eq!(imported.id, "map-20260405-123456-abcd");
+        assert_eq!(imported.created_at, "2024-05-06T23:30:00-07:00");
+        assert_eq!(
+            imported.path,
+            "fragments/2024/05/map-20260405-123456-abcd.md"
+        );
+        assert_eq!(imported.tags, vec!["inbox", "outline"]);
+        assert!(!source.exists());
+        assert!(vault.join(".trash/notes/项目导图.shardmap.json").is_file());
+        let text = fs::read_to_string(vault.join(&imported.path)).unwrap();
+        let parsed = parse_fragment(&text).unwrap();
+        let region = find_region(&parsed.body, GraphRegionKind::Outline).unwrap();
+        assert_eq!(parsed.body.matches("```shardmap").count(), 1);
+        assert_eq!(region.json_text, raw);
+        let read = read_graph_fragment_in_vault(vault, &imported.id).unwrap();
+        assert_eq!(read.graph, graph);
+    }
+
+    #[test]
+    fn imports_flowchart_with_one_semantic_git_commit() {
+        let directory = tempfile::tempdir().unwrap();
+        let vault = directory.path();
+        ensure_vault_layout(vault).unwrap();
+        ensure_git_repo(vault).unwrap();
+        run_git(vault, &["config", "commit.gpgsign", "false"]).unwrap();
+        let file = serde_json::from_value::<canvas_commands::CanvasFile>(serde_json::json!({
+            "kind": "shard.flow",
+            "schemaVersion": 1,
+            "id": "flow-import-1",
+            "title": "审批流程",
+            "createdAt": "2025-02-03T04:05:06+08:00",
+            "updatedAt": "2026-09-28T08:00:00+08:00",
+            "revision": 3,
+            "nodes": [
+                { "id": "start", "kind": "process", "x": 0, "y": 0, "text": "开始" }
+            ],
+            "edges": []
+        }))
+        .unwrap();
+        let raw = serde_json::to_string_pretty(&file).unwrap();
+        fs::write(vault.join("notes/审批.shardflow.json"), &raw).unwrap();
+        run_git(vault, &["add", "notes/审批.shardflow.json"]).unwrap();
+        run_git(vault, &["commit", "-m", "fixture"]).unwrap();
+        let before = run_git(vault, &["rev-list", "--all", "--count"])
+            .unwrap()
+            .trim()
+            .parse::<usize>()
+            .unwrap();
+
+        let imported =
+            import_graph_file_to_timeline_in_vault(vault, "notes/审批.shardflow.json").unwrap();
+
+        let after = run_git(vault, &["rev-list", "--all", "--count"])
+            .unwrap()
+            .trim()
+            .parse::<usize>()
+            .unwrap();
+        assert_eq!(after, before + 1);
+        assert_eq!(imported.id, "flow-import-1");
+        assert_eq!(imported.path, "fragments/2025/02/flow-import-1.md");
+        assert!(vault.join(".trash/notes/审批.shardflow.json").is_file());
+        let changed = run_git(vault, &["show", "--format=", "--name-only", "-z", "HEAD"])
+            .unwrap();
+        assert!(changed.contains("fragments/2025/02/flow-import-1.md"));
+        assert!(changed.contains(".trash/notes/审批.shardflow.json"));
+        assert!(!changed
+            .split('\0')
+            .any(|line| line == "notes/审批.shardflow.json"));
+        let text = fs::read_to_string(vault.join(&imported.path)).unwrap();
+        let parsed = parse_fragment(&text).unwrap();
+        let region = find_region(&parsed.body, GraphRegionKind::Flowchart).unwrap();
+        assert_eq!(region.json_text, raw);
+        let read = read_graph_fragment_in_vault(vault, &imported.id).unwrap();
+        assert_eq!(read.graph["kind"], "shard.flow");
+    }
+
+    #[test]
+    fn graph_file_import_rejects_conflicts_invalid_graphs_and_legacy_canvas_without_changes() {
+        let conflict_directory = tempfile::tempdir().unwrap();
+        let conflict_vault = conflict_directory.path();
+        ensure_vault_layout(conflict_vault).unwrap();
+        let mut conflict_graph = outline_graph_fixture(2);
+        conflict_graph["id"] = serde_json::json!("duplicate-id");
+        let conflict_source = conflict_vault.join("notes/冲突.shardmap.json");
+        fs::write(
+            &conflict_source,
+            serde_json::to_string_pretty(&conflict_graph).unwrap(),
+        )
+        .unwrap();
+        let existing = conflict_vault.join("notes/已有.md");
+        write_t6_fragment(&existing, "duplicate-id", vec!["note"], "已有文档");
+        let conflict_before = fs::read(&conflict_source).unwrap();
+        let existing_before = fs::read(&existing).unwrap();
+        let error =
+            import_graph_file_to_timeline_in_vault(conflict_vault, "notes/冲突.shardmap.json")
+                .unwrap_err();
+        assert!(error.contains("duplicate-id") || error.contains("大纲或流程图"));
+        assert_eq!(fs::read(&conflict_source).unwrap(), conflict_before);
+        assert_eq!(fs::read(&existing).unwrap(), existing_before);
+        assert_eq!(markdown_file_count(conflict_vault), 0);
+        assert!(!conflict_vault
+            .join(".trash/notes/冲突.shardmap.json")
+            .exists());
+
+        for (name, suffix, value) in [
+            (
+                "无效",
+                ".shardmap.json",
+                serde_json::json!({
+                    "kind": "shard.map", "schemaVersion": 1, "id": "invalid-map",
+                    "title": "无效", "createdAt": "2026-09-28T08:00:00+08:00",
+                    "updatedAt": "2026-09-28T08:00:00+08:00", "savedWithAppVersion": "test",
+                    "revision": 0, "rootId": "missing", "hasProtectedLinks": false, "nodes": {}
+                }),
+            ),
+            (
+                "旧画布",
+                ".shardflow.json",
+                serde_json::json!({
+                    "kind": "shard.canvas", "schemaVersion": 1, "id": "legacy-canvas",
+                    "title": "旧画布", "createdAt": "2026-09-28T08:00:00+08:00",
+                    "updatedAt": "2026-09-28T08:00:00+08:00", "revision": 0,
+                    "nodes": [], "edges": []
+                }),
+            ),
+        ] {
+            let directory = tempfile::tempdir().unwrap();
+            let vault = directory.path();
+            ensure_vault_layout(vault).unwrap();
+            let rel_path = format!("notes/{name}{suffix}");
+            let bytes = serde_json::to_vec_pretty(&value).unwrap();
+            fs::write(vault.join(&rel_path), &bytes).unwrap();
+            assert!(import_graph_file_to_timeline_in_vault(vault, &rel_path).is_err());
+            assert_eq!(fs::read(vault.join(&rel_path)).unwrap(), bytes);
+            assert_eq!(markdown_file_count(vault), 0);
+            assert!(!vault.join(".trash").exists());
+        }
+    }
+
+    #[test]
+    fn graph_file_import_resumes_after_fragment_creation() {
+        let directory = tempfile::tempdir().unwrap();
+        let vault = directory.path();
+        ensure_vault_layout(vault).unwrap();
+        let mut graph = outline_graph_fixture(2);
+        graph["id"] = serde_json::json!("map-resume-1");
+        let raw = serde_json::to_string_pretty(&graph).unwrap();
+        fs::write(vault.join("notes/待恢复.shardmap.json"), &raw).unwrap();
+        let fragment_path = vault.join("fragments/2026/09/map-resume-1.md");
+        fs::create_dir_all(fragment_path.parent().unwrap()).unwrap();
+        write_t6_fragment(
+            &fragment_path,
+            "map-resume-1",
+            vec!["inbox", "outline"],
+            &render_region(GraphRegionKind::Outline, &raw),
+        );
+
+        let imported =
+            import_graph_file_to_timeline_in_vault(vault, "notes/待恢复.shardmap.json").unwrap();
+
+        assert_eq!(imported.id, "map-resume-1");
+        assert_eq!(markdown_file_count(vault), 1);
+        assert!(!vault.join("notes/待恢复.shardmap.json").exists());
+        assert!(vault.join(".trash/notes/待恢复.shardmap.json").is_file());
     }
 
     #[test]

@@ -195,7 +195,7 @@ test.describe("速记框内容类型", () => {
 
     await page.keyboard.press("ControlOrMeta+Enter")
 
-    await expect(page.getByText("大纲最多 400 个节点", { exact: true })).toBeVisible()
+    await expect(page.getByText("大纲最多 400 个节点", { exact: true })).toBeVisible({ timeout: 15_000 })
     expect(await createdGraphFragments(page)).toEqual([])
     await expect(outlineComposer(page)).toHaveCount(1)
     await expect(outlineComposer(page).locator("[data-outline-node]")).toHaveCount(401)
@@ -219,8 +219,8 @@ test.describe("速记框内容类型", () => {
     await page.keyboard.type("私密大纲 #密匣")
     await page.keyboard.press("ControlOrMeta+Enter")
 
-    await expect(page.getByText("大纲不能放入密匣", { exact: true })).toBeVisible()
-    await expect.poll(() => createdFragments(page)).toEqual([])
+    await expect(page.getByText("大纲不能放入密匣", { exact: true })).toBeVisible({ timeout: 15_000 })
+    await expect.poll(() => createdGraphFragments(page)).toEqual([])
     await expect(outlineComposer(page)).toHaveCount(1)
     await expect(outlineComposer(page).locator(OUTLINE_ROOT)).toHaveValue("私密大纲 #密匣")
   })

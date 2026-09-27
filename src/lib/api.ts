@@ -291,6 +291,10 @@ export function readGraphFragment(id: string) {
   return invokeGraphFragment("read_graph_fragment", { id })
 }
 
+export function importGraphFileToTimeline(path: string) {
+  return invokeFragment("import_graph_file_to_timeline", { path })
+}
+
 export function writeGraphFragment<TGraph extends GraphFile>(
   id: string,
   graph: TGraph,

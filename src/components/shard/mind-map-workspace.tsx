@@ -46,6 +46,7 @@ import styles from "./mind-map-workspace.module.css"
 
 export interface MindMapWorkspaceProps {
   contextBar?: ReactNode
+  fragments?: Fragment[]
   mapId: string
   initialRead?: MindMapReadResult | null
   initialView?: MindMapWorkspaceView
@@ -53,6 +54,7 @@ export interface MindMapWorkspaceProps {
   onReady?: (revision: string) => void
   onLoadError?: (error: unknown) => void
   onMapsChange?: (maps: MindMapSummary[]) => void
+  onOpenLink?: (link: ShardDocumentLink) => Promise<void> | void
   storage?: MindMapCanvasStorage
 }
 
@@ -797,6 +799,7 @@ function mindMapReadToStorageSnapshot(
 
 export const MindMapWorkspace = forwardRef<MindMapWorkspaceHandle, MindMapWorkspaceProps>(function MindMapWorkspace({
   contextBar,
+  fragments = [],
   mapId,
   initialRead = null,
   initialView = "map",
@@ -804,6 +807,7 @@ export const MindMapWorkspace = forwardRef<MindMapWorkspaceHandle, MindMapWorksp
   onReady,
   onLoadError,
   onMapsChange,
+  onOpenLink,
   storage,
 }, ref) {
   const canvasRef = useRef<MindMapCanvasHandle>(null)
@@ -874,11 +878,13 @@ export const MindMapWorkspace = forwardRef<MindMapWorkspaceHandle, MindMapWorksp
         {contextBar}
         <div style={{ flex: "1 1 auto", minHeight: 0 }}>
           <MindMapCanvas
+            fragments={fragments}
             initialRead={initialRead}
             initialView={initialView}
             mapId={mapId}
             onLoadError={onLoadError}
             onMapsChange={onMapsChange}
+            onOpenLink={onOpenLink}
             onReady={onReady}
             ref={canvasRef}
             storage={storage}

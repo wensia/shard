@@ -585,6 +585,97 @@ async function commandCalls(page: Page, command: string) {
   command)
 }
 
+async function installGraphImportMock(
+  page: Page,
+  preloaded: { map?: boolean; flow?: boolean } = {}
+) {
+  await page.addInitScript(({ preloaded }) => {
+    const runtime = window as unknown as {
+      __TAURI_INTERNALS__: { invoke(command: string, args?: Record<string, unknown>): Promise<any> }
+      __SHARD_LIBRARY_TREE_CALLS__: LibraryCall[]
+      __graphImport: { fail: boolean; importedMap: boolean; importedFlow: boolean }
+    }
+    const original = runtime.__TAURI_INTERNALS__.invoke
+    const now = "2026-09-28T08:00:00.000Z"
+    const mapFile = {
+      kind: "shard.map", schemaVersion: 1, id: "map-project", title: "项目导图",
+      createdAt: now, updatedAt: now, savedWithAppVersion: "0.1.3-test", revision: 1,
+      rootId: "root", hasProtectedLinks: false,
+      nodes: { root: { id: "root", parentId: null, sortKey: "a", text: "项目导图", createdAt: now, updatedAt: now } },
+    }
+    const flowFile = {
+      kind: "shard.flow", schemaVersion: 1, id: "flow-project", title: "审批流程",
+      createdAt: now, updatedAt: now, revision: 1,
+      nodes: [{ id: "start", kind: "process", x: 0, y: 0, text: "开始" }], edges: [],
+    }
+    const fragment = (kind: "outline" | "flowchart") => {
+      const file = kind === "outline" ? mapFile : flowFile
+      return {
+        id: file.id,
+        content: `\`\`\`${kind === "outline" ? "shardmap" : "shardflow"}\n${JSON.stringify(file, null, 2)}\n\`\`\``,
+        fileSha: `${kind}-sha`, createdAt: now, updatedAt: now,
+        tags: ["inbox", kind], category: null,
+        path: `fragments/2026/09/${file.id}.md`, gitStatus: "committed", error: null,
+        aiStatus: "none", archived: false, lockbox: false, pinned: false, related: [],
+      }
+    }
+    const state = {
+      fail: false,
+      importedMap: Boolean(preloaded.map),
+      importedFlow: Boolean(preloaded.flow),
+    }
+    runtime.__graphImport = state
+    const filterEntries = (items: any[]): any[] => items
+      .filter(entry => !(state.importedMap && entry.path === "notes/项目导图.shardmap.json"))
+      .filter(entry => !(state.importedFlow && entry.path === "notes/审批流程.shardflow.json"))
+      .map(entry => ({ ...entry, ...(entry.children ? { children: filterEntries(entry.children) } : {}) }))
+    runtime.__TAURI_INTERNALS__.invoke = async (command, args = {}) => {
+      if (command === "list_diagram_documents") return []
+      if (command === "import_graph_file_to_timeline") {
+        runtime.__SHARD_LIBRARY_TREE_CALLS__.push({ command, args: structuredClone(args) })
+        if (state.fail) throw new Error("模拟加入时间线失败")
+        const isMap = String(args.path).endsWith(".shardmap.json")
+        if (isMap) state.importedMap = true
+        else state.importedFlow = true
+        return structuredClone(fragment(isMap ? "outline" : "flowchart"))
+      }
+      if (command === "read_graph_fragment") {
+        const kind = args.id === "map-project" ? "outline" : "flowchart"
+        return { fragment: structuredClone(fragment(kind)), graph: structuredClone(kind === "outline" ? mapFile : flowFile) }
+      }
+      const result = await original(command, args)
+      if (command === "list_fragments") {
+        const next = structuredClone(result)
+        if (state.importedMap && !next.fragments.some((item: any) => item.id === mapFile.id)) next.fragments.push(fragment("outline"))
+        if (state.importedFlow && !next.fragments.some((item: any) => item.id === flowFile.id)) next.fragments.push(fragment("flowchart"))
+        return next
+      }
+      if (command === "list_library_tree") {
+        const next = structuredClone(result)
+        if (!next.entries.some((entry: any) => entry.path === "notes/审批流程.shardflow.json") && !state.importedFlow) {
+          next.entries.push({ name: "审批流程.shardflow.json", path: "notes/审批流程.shardflow.json", kind: "flowchart", size: 512, modifiedAt: now })
+        }
+        if (!next.entries.some((entry: any) => entry.path === "notes/旧画布.shardcanvas.json")) {
+          next.entries.push({ name: "旧画布.shardcanvas.json", path: "notes/旧画布.shardcanvas.json", kind: "canvas", size: 512, modifiedAt: now })
+        }
+        next.entries = filterEntries(next.entries)
+        const trashNotes = next.trashEntries.find((entry: any) => entry.path === ".trash/notes")
+        if (trashNotes) {
+          if (state.importedMap && !trashNotes.children.some((entry: any) => entry.path === ".trash/notes/项目导图.shardmap.json")) {
+            trashNotes.children.push({ name: "项目导图.shardmap.json", path: ".trash/notes/项目导图.shardmap.json", kind: "mindmap", size: 768, modifiedAt: now })
+          }
+          if (state.importedFlow && !trashNotes.children.some((entry: any) => entry.path === ".trash/notes/审批流程.shardflow.json")) {
+            trashNotes.children.push({ name: "审批流程.shardflow.json", path: ".trash/notes/审批流程.shardflow.json", kind: "flowchart", size: 512, modifiedAt: now })
+          }
+        }
+        return next
+      }
+      return result
+    }
+  }, { preloaded })
+  await page.reload()
+}
+
 interface MindMapRenameMock {
   disk: MindMapReadResult
   failSave: boolean
@@ -2932,4 +3023,89 @@ test("流程图重命名并移动后，笔记中的 ID 链接仍打开新路径"
   await expect(page.locator(".shard-canvas-workspace")).toBeVisible()
   await expect(page.getByRole("button", { name: "重命名文件", exact: true })).toHaveText("审批流程")
   expect(await page.evaluate(() => (window as any).__canvasLibrary.disk.path)).toBe("notes/项目/审批流程.shardflow.json")
+})
+
+test("独立导图与流程图菜单可确认加入时间线并从 toast 打开图形宿主", async ({ page }) => {
+  await installGraphImportMock(page)
+  await page.getByRole("button", { name: "资料库", exact: true }).click()
+  await page.getByRole("button", { name: /^文件（/u, exact: true }).click()
+
+  await page.getByRole("button", { name: "项目导图.shardmap.json 操作", exact: true }).click()
+  await expect(page.getByRole("menuitem", { name: "加入时间线", exact: true })).toBeVisible()
+  await page.getByRole("menuitem", { name: "加入时间线", exact: true }).click()
+  const dialog = page.getByRole("dialog", { name: "确认加入时间线", exact: true })
+  await expect(dialog).toContainText("将生成一篇同名的大纲，原文件移入回收站，之后仍可从回收站恢复。")
+  await dialog.getByRole("button", { name: "取消", exact: true }).click()
+  await expect.poll(() => commandCalls(page, "import_graph_file_to_timeline")).toHaveLength(0)
+
+  await page.getByRole("button", { name: "项目导图.shardmap.json 操作", exact: true }).click()
+  await page.getByRole("menuitem", { name: "加入时间线", exact: true }).click()
+  await dialog.getByRole("button", { name: "加入时间线", exact: true }).click()
+  await expect.poll(() => commandCalls(page, "import_graph_file_to_timeline")).toEqual([
+    { command: "import_graph_file_to_timeline", args: { path: "notes/项目导图.shardmap.json" } },
+  ])
+  await expect(page.getByText("已加入时间线", { exact: true })).toBeVisible({ timeout: 15_000 })
+  await expect(page.getByRole("button", { name: "项目导图.shardmap.json 操作", exact: true })).toHaveCount(0)
+  await page.getByRole("button", { name: "打开", exact: true }).click()
+  await expect(page.getByRole("region", { name: "思维导图工作区", exact: true })).toBeVisible()
+  await expect(page.getByRole("textbox", { name: "根节点", exact: true })).toHaveValue("项目导图")
+})
+
+test("加入时间线失败保留资料库图文件且普通文件没有菜单项", async ({ page }) => {
+  await installGraphImportMock(page)
+  await page.getByRole("button", { name: "资料库", exact: true }).click()
+  await page.getByRole("button", { name: /^文件（/u, exact: true }).click()
+
+  for (const name of ["旧笔记.md", "清单.csv", "旧画布.shardcanvas.json"]) {
+    await page.getByRole("button", { name: `${name} 操作`, exact: true }).click()
+    await expect(page.getByRole("menuitem", { name: "加入时间线", exact: true })).toHaveCount(0)
+    await page.keyboard.press("Escape")
+    await expect(page.getByRole("menu")).toHaveCount(0)
+  }
+  await page.getByRole("button", { name: "审批流程.shardflow.json 操作", exact: true }).click()
+  await expect(page.getByRole("menuitem", { name: "加入时间线", exact: true })).toBeVisible()
+  await page.keyboard.press("Escape")
+  await expect(page.getByRole("menuitem", { name: "加入时间线", exact: true })).toHaveCount(0)
+
+  await page.getByRole("button", { name: "多选文件", exact: true }).click()
+  await page.getByRole("checkbox", { name: "选择 项目导图.shardmap.json", exact: true }).click()
+  await page.getByRole("checkbox", { name: "选择 审批流程.shardflow.json", exact: true }).click()
+  await page.getByRole("button", { name: "项目导图.shardmap.json 操作", exact: true }).click()
+  await expect(page.getByRole("menuitem", { name: "加入时间线", exact: true })).toHaveCount(0)
+  await page.keyboard.press("Escape")
+  await page.getByRole("toolbar", { name: "文件批量操作", exact: true })
+    .getByRole("button", { name: "完成", exact: true }).click()
+
+  await page.evaluate(() => { (window as any).__graphImport.fail = true })
+  await page.getByRole("button", { name: "项目导图.shardmap.json 操作", exact: true }).click()
+  await page.getByRole("menuitem", { name: "加入时间线", exact: true }).click()
+  await page.getByRole("dialog", { name: "确认加入时间线", exact: true })
+    .getByRole("button", { name: "加入时间线", exact: true }).click()
+  await expect(page.getByText("加入时间线失败：模拟加入时间线失败", { exact: true })).toBeVisible({ timeout: 15_000 })
+  const failedDialog = page.getByRole("dialog", { name: "确认加入时间线", exact: true })
+  await expect(failedDialog).toBeVisible()
+  await failedDialog.getByRole("button", { name: "取消", exact: true }).click()
+  await expect(page.getByRole("button", { name: "项目导图.shardmap.json 操作", exact: true })).toBeVisible()
+})
+
+test("独立图缺失时链接回退到同 ID 的时间线图，全部缺失仍提示", async ({ page }) => {
+  await installGraphImportMock(page, { map: true, flow: true })
+  await page.getByRole("button", { name: "资料库", exact: true }).click()
+  await page.getByRole("button", { name: /^文件（/u, exact: true }).click()
+  await page.getByRole("button", { name: "打开文件 旧笔记.md", exact: true }).click()
+  const content = "# 图引用\n\n[时间线大纲](shard://map/map-project)\n\n[时间线流程](shard://flow/flow-project)\n\n[缺失图](shard://map/missing-map)"
+  await fillEditor(page, "library:note-old", content)
+
+  await page.locator('[data-shard-editor="library:note-old"] a[href="shard://map/map-project"]').click()
+  await expect(page.getByRole("region", { name: "思维导图工作区", exact: true })).toBeVisible()
+  await page.getByRole("button", { name: "退出思维导图", exact: true }).click()
+  await expect(page.getByRole("textbox", { name: "资料库文档编辑器", exact: true })).toBeVisible()
+
+  await page.locator('[data-shard-editor="library:note-old"] a[href="shard://flow/flow-project"]').click()
+  await expect(page.locator(".shard-canvas-workspace")).toBeVisible()
+  await page.getByRole("button", { name: "退出流程图", exact: true }).click()
+  await expect(page.getByRole("textbox", { name: "资料库文档编辑器", exact: true })).toBeVisible()
+
+  await page.locator('[data-shard-editor="library:note-old"] a[href="shard://map/missing-map"]').click()
+  await expect(page.getByText("引用的图文档已不存在", { exact: true })).toBeVisible({ timeout: 15_000 })
 })
