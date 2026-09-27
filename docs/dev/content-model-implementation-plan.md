@@ -18,8 +18,9 @@
 | **P0** | frontmatter 保真读写：修改既有 md 时只局部改写系统键；密匣载荷保存原始 frontmatter | 无 | 已完成（`ba55dc5`），施工令见 §3 |
 | **P1** | 共用前置合同：保存基线覆盖完整文件（前端拿到文件级哈希）；type 合同（新增 `flowchart`，多个 type 标签的冲突规则在后端与 CLI 统一执行）；大纲、流程图拒绝进密匣 | P0 | 执行中，施工令见 §4 |
 | **H1** | 受管 JSON 区域编解码（Rust + TS）与后端读写命令：幂等创建（稳定操作 ID）、读取、只替换区域的原子写、完整文件基线 | P1 | 已完成，施工令见 §5 |
-| H2 | `/大纲` 提交改为创建 JSON 大纲（正式导入器，上限 400 节点，超限报错不截断）；打开大纲进入现有导图编辑器（大纲/导图两视图）；`/流程图` 创建与打开；大纲与流程图不进 Tiptap | H1 | 待细化 |
-| H3 | 时间线卡片（缩略 + 标题）、type 筛选、搜索图内容投影（不索引 JSON 键名、坐标、ID） | H1 | 待细化 |
+| **H2** | 大纲端到端：`/大纲` 提交创建 JSON 大纲（用编辑会话里的树，上限 400 节点，超限报错不截断）；打开大纲进入禅模式外壳中的现有导图编辑器（大纲/导图两视图）；卡片、搜索标题、快速打开识别 JSON 大纲；`FragmentEditor` 接入文件级基线；修正 H1 保护条件 | H1 | 执行中，施工令见 §6 |
+| H2b | 流程图端到端：`/流程图` 创建；`CanvasWorkspace` 存储适配后在禅模式外壳中打开；流程图卡片 | H2 | 待细化 |
+| H3 | type 筛选含流程图；后端搜索图内容投影（不索引 JSON 键名、坐标、ID）与搜索契约的 kind | H2b | 待细化 |
 | H4 | 旧 md 大纲批量升级（预检报告、正式导入器、确认成功的备份）；资料库时代 `notes/` 下 `.shardmap.json`/`.shardflow.json` 显式加入时间线；CLI 原生 JSON 读写与节点级修改 | H2 | 待细化 |
 | G1–G3 | 属性面板与 `.shard/properties.json`；SQLite 属性表与筛选；标签主题页表格视图 | P1 | 待细化 |
 
@@ -238,3 +239,81 @@
 ### 5.5 交付
 
 - 不提交 Git。报告写 `docs/dev/content-model-tasks-log/H1.md`（该目录被 `.gitignore` 的 `docs/dev/*` 覆盖，写文件即可，由验收方 `git add -f`）：改动文件与要点、验收命令与结果、偏差及原因、遗留问题。
+
+## 6. H2 施工令：大纲端到端
+
+前置：P0、P1、H1 已在本分支。本批只做**大纲**；流程图在 H2b。旧式缩进列表大纲（正文没有 ```` ```shardmap ```` 区域）在 H4 迁移前保持现有全部行为（行内幕布编辑、禅模式只读导图、`update_fragment` 保存），本批不得破坏。下文「JSON 大纲」指 type 为 `outline` 且正文恰好有一个 `shardmap` 区域的碎片。
+
+现状要点（调研结论，行号以当前分支为准）：
+- 速记框大纲态的树只存在于 `MindMapFenceWidget` 内部会话，外部只拿到缩进文本；`capture-box.tsx` 提交时再用 `parseMindMapOutline` 解析，超过 200 节点会**静默截断**后提交。
+- 可编辑的两视图导图只有 `MindMapCanvas`（`mind-map-workspace.tsx`），按 `mapId` 通过 `readMindMap` / `writeMindMap(expectedRevision, lastSavedHash)` 读写独立 `.shardmap.json`；有排空式保存、1200ms 自动保存、组合输入保护、撤销栈、冲突条（「冲突副本」错误触发）。挂载在 `workbench-shell`（`MindMapWorkspace`）与 `library-shell`。
+- 禅模式外壳是通用的 `ZenSurface`；`FragmentEditor` 在其中按 kind 切换编辑面；大纲的禅模式导图视图目前只读。
+- 卡片 `OutlineCardBody`、`search-provider.ts`、`quick-open-catalog.ts`、`fragment-editor.tsx` 都按缩进列表解析大纲。
+- `FragmentEditor` 保存不带基线，`onSave` 返回值被丢弃，catch 只 toast。
+
+### 6.1 修正 H1 保护条件（后端）
+
+`update_public_fragment_in_vault` 里「正文含受管区域就拒绝」改为：**磁盘 type 为 `outline` 或 `flowchart`，且正文含对应区域（或该区域报多个/未闭合）时**才拒绝。普通碎片正文里即使粘贴了 ```` ```shardmap ```` 行也照常保存。补一条 Rust 测试覆盖后者。
+
+### 6.2 大纲数据辅助（TS）
+
+在 `src/lib/mind-map-outline.ts`（或同目录新文件）提供 `readOutlineContent(content)`：正文有 `shardmap` 区域时解析 JSON 返回 `{ format: "json", file }`；否则按旧逻辑返回 `{ format: "legacy", file, truncated }`；都失败返回 `null`。卡片、`search-provider.ts`、`quick-open-catalog.ts`、`fragment-editor.tsx` 中按缩进列表解析大纲的地方都改用它，JSON 大纲的标题取根节点文字。
+
+### 6.3 速记框 `/大纲` 提交
+
+- `MindMapFenceWidget` 与 `OutlineComposer` 增加可选回调，把会话中的 `ShardMapFile` 同步给宿主（现有文本回调保留，其他使用方不受影响）。
+- `capture-box.tsx` 的大纲提交改为：用会话里的 `ShardMapFile`（不再从文本重新解析）；节点数超过 400 时不提交，toast「大纲最多 400 个节点」并保留草稿；标签仍从序列化文本提取并做现有处理，含密匣标签照旧拦截；调用 `createGraphFragment("outline", operationId, file, tags)`。
+- `operationId` 用 `crypto.randomUUID()`，同一份草稿的重试沿用同一个 ID，成功或退出大纲态后重置。
+- `workbench-shell.tsx` 增加对应的创建处理：把返回的 `fragment` 按现有 `handleCreate` 的方式插入时间线、滚动与动效；失败时 toast 并保留大纲态草稿。大纲提交不再调用 `create_fragment`。
+
+### 6.4 两视图编辑器的存储适配
+
+- `MindMapCanvas` 增加可选 `storage` 适配器（读取、写入、冲突判定、保存后通知），**默认实现就是现有的 `readMindMap` / `writeMindMap` / `listMindMaps` 行为**，资料库与独立导图的现有调用方不改参数、行为不变。
+- 增加可选 `initialView`（默认仍为 `"map"`）。
+- 碎片适配器：读取用 `readGraphFragment(id)`，基线是返回的 `fragment.fileSha`；写入用 `writeGraphFragment(id, draft, fileSha)`，成功后以返回的 `graph` 与 `fileSha` 更新基线，并把返回的 `fragment` 交给宿主更新时间线；`STALE_BASE` 错误进入现有冲突条——「保留我的版本」先重新读取拿最新 `fileSha` 再写入，「保留磁盘版本」重新载入。碎片模式下不调用 `listMindMaps`。排空保存、自动保存、组合输入保护、撤销栈全部沿用。
+
+### 6.5 打开 JSON 大纲
+
+- `workbench-shell.tsx`：卡片菜单的「编辑」「禅模式」、以及搜索结果打开碎片的路径（`search-target-router.ts` 相关处理），遇到 JSON 大纲时打开图形编辑宿主——`ZenSurface` 里挂 `MindMapCanvas`（碎片适配器，`initialView="outline"`），不进入 `FragmentEditor`。不新建全屏外壳组件，复用 `ZenSurface`。
+- 关闭（Esc、关闭按钮、切换空间或打开别的内容前）先排空保存，沿用现有 `saveLibraryDraftBeforeNavigation` 一类的排空入口；保存失败时不关闭并提示。
+- 卡片 `OutlineCardBody`：JSON 大纲用 `readOutlineContent` 的结果渲染缩略导图与根节点标题，外观与现有大纲卡片一致。
+
+### 6.6 `FragmentEditor` 文件级基线
+
+- `onSave` 增加第 4 个参数 `expectedFileSha`，调用链 `fragment-editor.tsx` → `fragment-card.tsx` → `fragment-timeline.tsx` → `workbench-shell.tsx`（含全局禅模式、密匣时间线）一并透传；`handleUpdateFragment` 已支持。
+- 基线取 `fragment.fileSha`；保存成功后用 `onSave` 返回的 fragment 更新基线；编辑器干净时随刷新更新基线，有未保存草稿时保留旧基线（与 `library-shell.tsx` 的 P1 做法一致）。
+- `STALE_BASE` 时沿用 `library-shell.tsx` 的冲突处理方式与文案（覆盖 = 清空基线后重存；载入磁盘版 = 放弃草稿并刷新），期间停止自动保存重试，不重复弹出 toast。
+- 卡片任务勾选（`handleToggleFragmentTask`）本批不改。
+
+### 6.7 测试
+
+- Rust：6.1 的普通碎片保存用例。
+- TS 单元：`readOutlineContent` 覆盖 JSON、旧式列表、截断标记、非法 JSON。
+- UI（mock 中为 `create_graph_fragment`、`read_graph_fragment`、`write_graph_fragment` 增加处理，样本带 `fileSha`；所有会走到新路径的 spec 的 mock 都要补）：
+  1. `/大纲` 提交调用 `create_graph_fragment`（带会话树与标签），不再调用 `create_fragment`；新卡片出现在时间线。
+  2. 超过 400 节点的大纲不提交、提示并保留草稿；201–400 节点完整提交，不截断。
+  3. JSON 大纲卡片显示根节点标题与缩略导图。
+  4. 从卡片「编辑」打开 JSON 大纲进入禅模式外壳，默认幕布视图，可切到导图；修改后自动保存调用 `write_graph_fragment` 且带 `expectedFileSha`；Esc 关闭前排空保存。
+  5. 图形编辑器收到 STALE_BASE 时出现冲突条，两种选择各自生效。
+  6. `FragmentEditor`（禅模式普通碎片）保存带 `expectedFileSha`；STALE_BASE 时按 6.6 处理。
+  7. 旧式缩进列表大纲的行内编辑、禅模式行为不变（现有用例全部通过）。
+- 现有 `mind-map-workspace.spec.ts`、`mind-map-outline.spec.ts`、`mind-map-mubu-outline.spec.ts` 必须全部通过，证明默认适配器行为不变。
+
+### 6.8 验收命令
+
+沿用 §4.5 的 `playwright.worktree.config.ts`（1422，不提交）。开工前先跑一遍下表的 UI 用例记录基线。
+
+| 命令 | 要求 |
+| --- | --- |
+| `cargo test -p shard-core -p shard -p shard-cli` | 全部通过 |
+| `pnpm test:unit` | 除 golden 夹具那一项既有失败外全部通过（quick-open 性能若在全套中波动须单独复跑通过） |
+| `pnpm build` | 通过 |
+| `pnpm build:markdown && pnpm exec playwright test -c playwright.worktree.config.ts tests/ui/content-types.spec.ts tests/ui/rich-surfaces.spec.ts tests/ui/rich-composer.spec.ts tests/ui/slash-commands.spec.ts tests/ui/library-workspace.spec.ts tests/ui/lockbox-space.spec.ts tests/ui/mind-map-fence.spec.ts tests/ui/mind-map-workspace.spec.ts tests/ui/mind-map-outline.spec.ts tests/ui/mind-map-mubu-outline.spec.ts tests/ui/search-fragment-reveal.spec.ts tests/ui/search-editor-reveal.spec.ts tests/ui/search-integration.spec.ts` | 相对基线没有新增失败；新增用例全部通过 |
+| `rustfmt --edition 2021 --check crates/shard-core/src/frontmatter.rs crates/shard-core/src/graph_region.rs` | 通过 |
+| `git diff --check` | 通过 |
+
+UI 改动遵守 AGENTS.md 与 `vendor/kiln`：不新增视觉样式，冲突条、toast、按钮复用现有组件与文案风格。
+
+### 6.9 交付
+
+不提交 Git；测试改写的 `tests/evidence` 图片结束前恢复。报告写 `docs/dev/content-model-tasks-log/H2.md`：改动文件与要点、开工前 UI 基线、验收结果（含测试数）、偏差及原因、遗留问题。
