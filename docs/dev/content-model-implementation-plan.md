@@ -17,7 +17,7 @@
 | --- | --- | --- | --- |
 | **P0** | frontmatter 保真读写：修改既有 md 时只局部改写系统键；密匣载荷保存原始 frontmatter | 无 | 已完成（`ba55dc5`），施工令见 §3 |
 | **P1** | 共用前置合同：保存基线覆盖完整文件（前端拿到文件级哈希）；type 合同（新增 `flowchart`，多个 type 标签的冲突规则在后端与 CLI 统一执行）；大纲、流程图拒绝进密匣 | P0 | 执行中，施工令见 §4 |
-| H1 | 受管 JSON 区域编解码（Rust + TS）与后端读写命令：幂等创建（稳定操作 ID）、读取、只替换区域的原子写、完整文件基线 | P1 | 待细化 |
+| **H1** | 受管 JSON 区域编解码（Rust + TS）与后端读写命令：幂等创建（稳定操作 ID）、读取、只替换区域的原子写、完整文件基线 | P1 | 执行中，施工令见 §5 |
 | H2 | `/大纲` 提交改为创建 JSON 大纲（正式导入器，上限 400 节点，超限报错不截断）；打开大纲进入现有导图编辑器（大纲/导图两视图）；`/流程图` 创建与打开；大纲与流程图不进 Tiptap | H1 | 待细化 |
 | H3 | 时间线卡片（缩略 + 标题）、type 筛选、搜索图内容投影（不索引 JSON 键名、坐标、ID） | H1 | 待细化 |
 | H4 | 旧 md 大纲批量升级（预检报告、正式导入器、确认成功的备份）；资料库时代 `notes/` 下 `.shardmap.json`/`.shardflow.json` 显式加入时间线；CLI 原生 JSON 读写与节点级修改 | H2 | 待细化 |
@@ -179,3 +179,62 @@
 
 - 不提交 Git；`playwright.worktree.config.ts` 不纳入改动。
 - 报告写 `docs/dev/content-model-tasks-log/P1.md`：改动文件与要点、开工前 UI 基线、验收命令与结果（含测试数）、偏差及原因、遗留问题。
+
+## 5. H1 施工令：受管 JSON 区域与后端读写命令
+
+前置：P0、P1 已在本分支。本批只做存储层与后端命令，**不改任何 UI**（打开、编辑、卡片、搜索分别在 H2、H3）。现有可复用：导图 `ShardMapFile`、`validate_mind_map_file`、`canonical_mind_map_text`（`src-tauri/src/lib.rs`）；流程图 `CanvasFile`（`kind = "shard.flow"`）、`validate_file`、`canonical`（`src-tauri/src/canvas_commands.rs`）；frontmatter 保真函数（`crates/shard-core/src/frontmatter.rs`）；P1 的 `fileSha` 与 `STALE_BASE_ERROR`。
+
+### 5.1 区域编解码（Rust：`crates/shard-core/src/graph_region.rs`；TS：`src/lib/graph-region.ts`）
+
+- 两种围栏：大纲 ```` ```shardmap ````，流程图 ```` ```shardflow ````。开围栏行恰好是三个反引号加围栏名（行尾空白可忽略），闭围栏行恰好是三个反引号；两行都在第 0 列。区域内容是 JSON 文本。
+- `find_region(body, kind)`：返回区域在 body 中的字节范围与 JSON 文本。没有区域、有多个同名区域、开围栏未闭合，分别返回不同的错误（中文文案，区分三种情况）。同一 body 里同时出现两种围栏也算错误。
+- `render_region(kind, json_text)`：生成 ```` ```shardmap\n{json}\n``` ````（JSON 末尾不重复换行）。
+- `replace_region(body, kind, json_text)`：只替换区域，区域前后的字节原样保留。
+- TS 版提供同样的 `findGraphRegion` / `replaceGraphRegion`，供 H2/H3 使用，规则与 Rust 完全一致；本批只加单元测试，不接 UI。
+
+### 5.2 后端命令（`src-tauri/src/lib.rs`，按现有惯例注册、`async` + 后台线程、拿到 vault 后立刻 `lock_vault_gate`；内容写入只落盘，不内嵌 Git 提交）
+
+1. `create_graph_fragment(kind, operation_id, graph, tags)`：`kind` 为 `outline` 或 `flowchart`。
+   - 在 `fragments/YYYY/MM/<id>.md` 新建一篇 md（路径与 id 规则同 `create_public_fragment_in_vault`，需要时在 shard-core 增加可指定 id 的最小变体）；标签经现有规范化并带上对应 type 标签；密匣标签按 P1 规则拒绝。
+   - 大纲：`graph` 必填，是 `ShardMapFile` JSON；后端把 `id` 设为碎片 id，补齐 `kind`、`schemaVersion`、`savedWithAppVersion`、`revision`、时间戳，按 `validate_mind_map_file` 校验（节点上限 400，超限报错，不截断），用 `canonical_mind_map_text` 的格式写入区域。
+   - 流程图：`graph` 可空；为空时生成空流程图（字段与现有新建流程图一致，`nodes`、`edges` 为空，标题「未命名流程图」），非空时同样设置 id 并按 `validate_file` 校验。
+   - **幂等**：`operation_id` 必填。进程内记录「操作 ID → 碎片 id」（有界，例如最近 256 条）；同一操作 ID 重试时返回已创建的条目，不重复建文件；同一操作 ID 但 `kind` 不同则报错。
+   - 返回 `{ fragment, graph }`，`fragment` 带 P1 的 `fileSha`。
+2. `read_graph_fragment(id)`：读取公开碎片，要求 type 是 `outline` 或 `flowchart` 且正文恰好有一个对应区域；解析并校验 JSON 后返回 `{ fragment, graph }`。区域缺失、多个或无法解析时返回明确错误，不生成空图。
+3. `write_graph_fragment(id, graph, expected_file_sha)`：
+   - 拿门后读当前完整文件，`expected_file_sha` 有值且不一致返回 `STALE_BASE_ERROR`，文件不变。
+   - 校验 `graph` 的 id 与碎片 id 一致、类型与碎片 type 一致，再按对应校验函数校验；导图 `revision` 在写入时加 1，`updatedAt` 更新。
+   - 只替换区域：区域外的正文字节、frontmatter 中未涉及的内容都保持不变；frontmatter 只通过 `apply_frontmatter` 更新 `updated_at`。
+   - 原子写入，返回 `{ fragment, graph }`（新的 `fileSha`）。
+4. **保护区域不被文本保存覆盖**：`update_fragment` 对正文含受管区域（`find_region` 找到任一种区域，或报「多个」「未闭合」）的公开碎片直接返回错误「大纲与流程图请在专用编辑器中保存。」，文件不变。`update_fragment_tags`、置顶、关联这类只改 frontmatter 的操作照常可用。现有纯缩进列表的旧大纲不含区域，行为不变。
+5. 前端 `src/lib/api.ts` 增加三个命令的类型化封装（`createGraphFragment`、`readGraphFragment`、`writeGraphFragment`），本批没有 UI 调用方。
+
+### 5.3 必须新增的测试
+
+- Rust `graph_region`：两种围栏的查找与替换；区域前后有额外正文时逐字节保留；无区域、多个区域、两种围栏并存、未闭合分别报对应错误；闭围栏必须在第 0 列。
+- Rust 集成测试（临时 vault）：
+  1. 创建大纲：文件位置、frontmatter 带 `outline` 与 `inbox`、正文恰好一个区域、JSON 的 id 等于碎片 id、`read_graph_fragment` 读回一致。
+  2. 创建空流程图，读回后通过 `validate_file`。
+  3. 同一 `operation_id` 连续创建两次只产生一个文件、返回同一 id。
+  4. 在 frontmatter 加未知键并在区域前后加额外正文后，用正确 `fileSha` 调 `write_graph_fragment`：只有区域和 `updated_at` 变化，其余字节不变；返回新 `fileSha`。
+  5. 用旧 `fileSha` 写入返回 STALE_BASE，文件字节不变。
+  6. 超过 400 节点的大纲创建与写入都报错且不产生或改动文件。
+  7. `update_fragment` 对含区域的碎片报错且文件不变；对旧式缩进列表大纲照常保存。
+  8. 创建时带密匣标签被拒绝。
+- TS 单元测试：`src/lib/graph-region.test.ts` 覆盖与 Rust 相同的查找、替换与错误情形。
+
+### 5.4 验收命令
+
+| 命令 | 要求 |
+| --- | --- |
+| `cargo test -p shard-core -p shard -p shard-cli` | 全部通过 |
+| `pnpm test:unit` | 除两项既有失败外全部通过：`roundtrip.test.ts` 的 golden 目录检查（`.gitignore` 全局忽略 `*.md` 导致夹具未入库）、`quick-open-perf.test.ts`（并行负载波动，需单独复跑通过） |
+| `pnpm build` | 通过 |
+| `rustfmt --edition 2021 --check crates/shard-core/src/frontmatter.rs crates/shard-core/src/graph_region.rs` | 通过 |
+| `git diff --check` | 通过 |
+
+本批不改 UI，不需要跑 Playwright。
+
+### 5.5 交付
+
+- 不提交 Git。报告写 `docs/dev/content-model-tasks-log/H1.md`（该目录被 `.gitignore` 的 `docs/dev/*` 覆盖，写文件即可，由验收方 `git add -f`）：改动文件与要点、验收命令与结果、偏差及原因、遗留问题。
