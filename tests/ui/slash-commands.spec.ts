@@ -112,13 +112,13 @@ test.beforeEach(async ({ page }) => {
   await expect(page.locator('[data-shard-editor="composer"] .ProseMirror')).toBeFocused()
 })
 
-// composer 面由富文本用例覆盖：tests/ui/rich-composer.spec.ts「斜杠弹出十二项命令菜单，可过滤、应用与 Esc 关闭」
+// composer 面由富文本用例覆盖：tests/ui/rich-composer.spec.ts「斜杠弹出十三项命令菜单，可过滤、应用与 Esc 关闭」
 // 与「composer 输入斜杠弹出命令菜单并写回选中的命令」。
 for (const surface of ["inline", "zen", "library"] as const) {
-  // 围栏块（导图块、数据表）排在前面，八条行格式命令跟在后面；`/大纲`、`/文档`
-  // 只在能创建新碎片的速记框出现，其余编辑面是十项。资料库文档是文档档，
-  // 另有标题 1–4、引用、代码块六项，共十六项。
-  const expectedCount = surface === "library" ? 16 : 10
+  // 围栏块（导图块、数据表）和数据集动作排在前面，八条行格式命令跟在后面；
+  // `/大纲`、`/文档` 只在速记框出现，其余编辑面是十一项。资料库文档
+  // 另有标题 1–4、引用、代码块六项，共十七项。
+  const expectedCount = surface === "library" ? 17 : 11
   test(`${surface} 输入斜杠弹出 ${expectedCount} 项命令菜单并写回选中的命令`, async ({ page }) => {
     const id = await openSurface(page, surface)
     await typeSlash(page, id, "/")
@@ -130,13 +130,15 @@ for (const surface of ["inline", "zen", "library"] as const) {
       surface === "library" ? 4 : 0
     )
     await expect(menu.getByRole("option").first()).toContainText("导图块")
+    await expect(menu.getByRole("option").nth(2)).toContainText("数据集")
     await expect(menu).not.toContainText("文档")
     await expect(menu.getByRole("option").filter({ hasText: /^大纲/u })).toHaveCount(0)
 
-    // 导图块 → 数据表 → 任务列表
+    // 导图块 → 数据表 → 数据集 → 任务列表
     await page.keyboard.press("ArrowDown")
     await page.keyboard.press("ArrowDown")
-    await expect(menu.getByRole("option").nth(2)).toHaveAttribute("aria-selected", "true")
+    await page.keyboard.press("ArrowDown")
+    await expect(menu.getByRole("option").nth(3)).toHaveAttribute("aria-selected", "true")
     await page.keyboard.press("Enter")
     await expect.poll(() => readEditor(page, id)).toBe("- [ ]")
     await expect(menu).toHaveCount(0)
@@ -145,7 +147,7 @@ for (const surface of ["inline", "zen", "library"] as const) {
 
 // 以下用例已由富文本用例覆盖，删除：
 // - 「命令菜单支持拼音首字母过滤，Esc 关闭后焦点留在编辑器」→ rich-composer.spec.ts
-//   「斜杠弹出十二项命令菜单，可过滤、应用与 Esc 关闭」（rw 拼音首字母过滤、Esc 后焦点与正文）。
+//   「斜杠弹出十三项命令菜单，可过滤、应用与 Esc 关闭」（rw 拼音首字母过滤、Esc 后焦点与正文）。
 // - 「表格命令写回 3 列 2 行 Markdown 表格」→ rich-blocks.spec.ts「/表格 插入 3 列 2 行 GFM 表格，Tab 在单元格之间走格」。
 // - 「标签命令写下井号并立刻交给标签建议」→ rich-composer.spec.ts 同名用例。
 // - 「组合输入期间不弹命令菜单，上屏后按拼音过滤」→ rich-composer.spec.ts「组合输入期间不弹命令菜单，且不重建正文节点」。
