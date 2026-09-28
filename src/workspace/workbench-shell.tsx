@@ -2928,6 +2928,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
             <div className="min-h-0 flex-1">
               <CanvasWorkspace
                 fragmentMode
+                fragment={activeFlowchartFragment}
                 fragments={publicOnlyFragments}
                 key={`flowchart:${activeFlowchartEditor.fragmentId}:${activeFlowchartEditor.searchRequestId ?? "browse"}`}
                 onLoadError={(error) => {
@@ -2936,6 +2937,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
                   }
                 }}
                 onOpenLink={openFlowchartLink}
+                onFragmentUpdated={handleFragmentPropertyUpdated}
                 onReady={() => {
                   if (activeFlowchartEditor.searchRequestId) {
                     settleSearchHost(activeFlowchartEditor.searchRequestId)

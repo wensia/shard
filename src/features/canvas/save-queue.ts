@@ -27,6 +27,12 @@ export class CanvasSaveQueue {
 
   getDraft(): CanvasFile { return cloneCanvasFile(this.draft) }
   getBaseline(): CanvasReadResult { return { ...this.baseline, file: cloneCanvasFile(this.baseline.file) } }
+  replaceBaseline(lastSavedHash: string): void {
+    if (!lastSavedHash) throw new Error("流程图片段缺少文件保存基线。")
+    if (this.running || this.pending || this.getState().dirty) throw new Error("流程图保存尚未排空，不能替换保存基线。")
+    this.baseline = { ...this.baseline, lastSavedHash }
+    this.emit()
+  }
   getState(): CanvasSaveState {
     const dirty = !isCanvasContentEqual(this.draft, this.baseline.file) || this.pending !== null
     return { status: this.error ? "error" : this.saving ? "saving" : dirty ? "dirty" : "saved", dirty, saving: this.saving, error: this.error }

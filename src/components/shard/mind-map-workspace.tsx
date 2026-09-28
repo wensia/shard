@@ -13,6 +13,7 @@ import {
 import { isTauri } from "@tauri-apps/api/core"
 import {
   TriangleAlertIcon,
+  FileTextIcon,
   GitBranchIcon,
   ListTreeIcon,
   KeyboardIcon,
@@ -22,12 +23,19 @@ import {
 } from "@/components/icons"
 
 import { Button } from "@/components/ui/button"
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import { toast } from "sonner"
 
 import { MindMapCanvasEditor, type MindMapCanvasSessionState } from "@/components/shard/mind-map-canvas-editor"
 import { MindMapOutlineEditor, type MindMapOutlineSessionState } from "@/components/shard/mind-map-outline-editor"
 import { MindMapDocumentInspector } from "@/components/shard/mind-map-document-inspector"
 import { MindMapShortcuts } from "@/components/shard/mind-map-shortcuts"
+import { PropertiesPanel } from "@/components/shard/properties-panel"
 import { ZenSurface } from "@/components/shard/zen-surface"
 import {
   getApiErrorMessage,
@@ -82,6 +90,7 @@ export interface MindMapCanvasHandle {
   requestClose: () => boolean
   save: () => Promise<boolean>
   isDirty: () => boolean
+  replaceBaseline: (fileSha: string) => void
   setInteractionBlocked: (blocked: boolean) => void
 }
 
@@ -144,6 +153,7 @@ export const MindMapCanvas = forwardRef<
   const [autoSaveError, setAutoSaveError] = useState<string | null>(null)
   const [conflict, setConflict] = useState<ConflictState | null>(null)
   const [interactionBlocked, setInteractionBlocked] = useState(false)
+  const [documentPropertiesOpen, setDocumentPropertiesOpen] = useState(false)
   const [sidePanel, setSidePanel] = useState<MindMapSidePanel>(null)
   const inspectorOpen = sidePanel === "properties"
   const viewId = useId()
@@ -377,18 +387,55 @@ export const MindMapCanvas = forwardRef<
     return true
   }, [isDirty])
 
+  const replaceBaseline = useCallback((fileSha: string) => {
+    if (!storage || !readResultRef.current) return
+    const next = { ...readResultRef.current, baseline: fileSha }
+    readResultRef.current = next
+    setReadResult(next)
+  }, [storage])
+
+  const openDocumentProperties = useCallback(async () => {
+    if (!readResultRef.current?.fragment || interactionBlockedRef.current) return
+    rememberEditorFocus()
+    interactionBlockedRef.current = true
+    setInteractionBlocked(true)
+    if (!(await save("auto"))) {
+      interactionBlockedRef.current = readOnly
+      setInteractionBlocked(readOnly)
+      toast.error("无法打开文档属性：请先处理图内容的保存问题。", { duration: Infinity })
+      return
+    }
+    setDocumentPropertiesOpen(true)
+  }, [readOnly, save])
+
+  const closeDocumentProperties = useCallback(() => {
+    setDocumentPropertiesOpen(false)
+    interactionBlockedRef.current = readOnly
+    setInteractionBlocked(readOnly)
+  }, [readOnly])
+
+  const handleDocumentFragmentUpdated = useCallback((fragment: Fragment) => {
+    if (!storage || !fragment.fileSha || !readResultRef.current) return
+    replaceBaseline(fragment.fileSha)
+    const next = { ...readResultRef.current, fragment }
+    readResultRef.current = next
+    setReadResult(next)
+    void activeStorage.afterSave?.(next)
+  }, [activeStorage, replaceBaseline, storage])
+
   useImperativeHandle(
     ref,
     () => ({
       requestClose,
       save: () => save("manual"),
       isDirty: () => Boolean(readResultRef.current && draftFileRef.current && !isMindMapFileContentEqual(readResultRef.current.file, draftFileRef.current)),
+      replaceBaseline,
       setInteractionBlocked: (blocked) => {
         interactionBlockedRef.current = readOnly || blocked
         setInteractionBlocked(readOnly || blocked)
       },
     }),
-    [readOnly, requestClose, save]
+    [readOnly, replaceBaseline, requestClose, save]
   )
 
   const updateDraft = useCallback(
@@ -614,6 +661,12 @@ export const MindMapCanvas = forwardRef<
           </Button>)}
         </div>
         <div className={styles.toolbarActions}>
+          {readResult?.fragment ? <Button
+            disabled={!draftFile || isLoading || isComposing || interactionBlocked}
+            onClick={() => void openDocumentProperties()}
+            size="sm"
+            variant="ghost"
+          ><FileTextIcon />文档属性</Button> : null}
           <Button aria-label={inspectorOpen ? "隐藏检查器" : "显示检查器"} aria-pressed={inspectorOpen}
             disabled={!draftFile || isLoading || isComposing || interactionBlocked} onClick={() => toggleSidePanel("properties")} size="sm" variant="ghost">主题属性</Button>
           <Button aria-pressed={sidePanel === "shortcuts"} disabled={!draftFile || isLoading || isComposing || interactionBlocked}
@@ -771,6 +824,23 @@ export const MindMapCanvas = forwardRef<
           </div>
         </div>
       ) : null}
+
+      <Dialog open={documentPropertiesOpen} onOpenChange={(open) => { if (!open) closeDocumentProperties() }}>
+        <DialogContent className="sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>文档属性</DialogTitle>
+          </DialogHeader>
+          {readResult?.fragment ? (
+            <div className="min-h-0 overflow-auto">
+              <PropertiesPanel
+                fragment={readResult.fragment}
+                inset={false}
+                onFragmentUpdated={handleDocumentFragmentUpdated}
+              />
+            </div>
+          ) : null}
+        </DialogContent>
+      </Dialog>
 
     </section>
   )

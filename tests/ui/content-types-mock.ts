@@ -99,6 +99,7 @@ interface MockBodies {
 
 interface ContentTypesMockControl {
   nextGraphCreateError: boolean
+  nextGraphWriteError: boolean
   nextFragmentWriteStale: null | {
     content: string
     id: string
@@ -144,6 +145,9 @@ export async function installContentTypesMock(page: Page) {
         ...fragment, createdAt: now, updatedAt: now, category: null,
         gitStatus: "committed", error: null, archived: false, lockbox: false,
         pinned: false, related: [], fileSha: `file-sha-${fragment.id}-1`,
+        properties: fragment.id === "card-json-outline" || fragment.id === "card-json-flowchart"
+          ? [{ key: "阶段", value: { kind: "text", text: "初稿" }, editable: true }]
+          : [],
       }))
       const git = {
         branch: "main", shortCommit: "abc1234", hasRemote: false,
@@ -165,9 +169,15 @@ export async function installContentTypesMock(page: Page) {
       }
       const control: ContentTypesMockControl = {
         nextGraphCreateError: false,
+        nextGraphWriteError: false,
         nextFragmentWriteStale: null,
         nextGraphWriteStale: null,
       }
+      const propertyRegistry = {
+        version: 1,
+        properties: { 阶段: { type: "text" } } as Record<string, { type: string }>,
+      }
+      let propertyRegistrySha = "property-registry-sha-1"
       let callbackId = 0
       let createdCount = 0
       let createdGraphCount = 0
@@ -361,6 +371,10 @@ export async function installContentTypesMock(page: Page) {
                 const id = String(args.id)
                 const fragment = fragments.find((item) => item.id === id)
                 if (!fragment || !graphFiles[id]) throw new Error("Graph fragment not found")
+                if (control.nextGraphWriteError) {
+                  control.nextGraphWriteError = false
+                  throw new Error("模拟图保存失败")
+                }
                 if (control.nextGraphWriteStale?.id === id) {
                   const remote = clone(control.nextGraphWriteStale.file)
                   control.nextGraphWriteStale = null
@@ -386,6 +400,39 @@ export async function installContentTypesMock(page: Page) {
                 fragment.content = graphBody(graph)
                 fragment.fileSha = `file-sha-${id}-${++savedRevision}`
                 return clone({ fragment, graph })
+              }
+              case "read_property_registry":
+                return clone({ registry: propertyRegistry, sha: propertyRegistrySha })
+              case "register_property_type": {
+                if (args.expectedSha !== propertyRegistrySha) throw new Error("登记表已变化")
+                propertyRegistry.properties[String(args.key)] = { type: String(args.propertyType) }
+                propertyRegistrySha = `property-registry-sha-${++savedRevision}`
+                return clone({ registry: propertyRegistry, sha: propertyRegistrySha })
+              }
+              case "set_fragment_property":
+              case "remove_fragment_property": {
+                const fragment = fragments.find((item) => item.id === args.id)
+                if (!fragment) throw new Error("Fragment not found")
+                const index = fragment.properties.findIndex((property) => property.key === args.key)
+                if (command === "remove_fragment_property") {
+                  if (index >= 0) fragment.properties.splice(index, 1)
+                } else {
+                  const input = args.value as { type: string; value: unknown }
+                  const value = input.value === null
+                    ? { kind: "null" }
+                    : input.type === "checkbox"
+                      ? { kind: "bool", value: Boolean(input.value) }
+                      : input.type === "list"
+                        ? { kind: "list", items: input.value }
+                        : input.type === "number"
+                          ? { kind: "number", text: String(input.value) }
+                          : { kind: "text", text: String(input.value) }
+                  const property = { key: String(args.key), value, editable: true }
+                  if (index >= 0) fragment.properties[index] = property
+                  else fragment.properties.push(property)
+                }
+                fragment.fileSha = `file-sha-${fragment.id}-property-${++savedRevision}`
+                return clone(fragment)
               }
               case "update_fragment": {
                 const fragment = fragments.find((item) => item.id === args.id)
@@ -504,6 +551,15 @@ export async function failNextGraphCreate(page: Page) {
       __SHARD_TYPE_CONTROL__: ContentTypesMockControl
     }
     root.__SHARD_TYPE_CONTROL__.nextGraphCreateError = true
+  })
+}
+
+export async function failNextGraphWrite(page: Page) {
+  await page.evaluate(() => {
+    const root = globalThis as typeof globalThis & {
+      __SHARD_TYPE_CONTROL__: ContentTypesMockControl
+    }
+    root.__SHARD_TYPE_CONTROL__.nextGraphWriteError = true
   })
 }
 

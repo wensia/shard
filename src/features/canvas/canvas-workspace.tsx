@@ -9,9 +9,11 @@ import {
   type NodeProps, type ReactFlowInstance,
 } from "@xyflow/react"
 import "@xyflow/react/dist/style.css"
+import { PropertiesPanel } from "@/components/shard/properties-panel"
 import { Button } from "@/components/ui/button"
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
-import { CheckIcon, ChevronDownIcon, ChevronRightIcon, MoreHorizontalIcon, XIcon } from "@/components/icons"
+import { CheckIcon, ChevronDownIcon, ChevronRightIcon, FileTextIcon, MoreHorizontalIcon, XIcon } from "@/components/icons"
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
@@ -33,11 +35,13 @@ import {
 } from "./mutations"
 import { CanvasSaveQueue, type CanvasSaveState } from "./save-queue"
 import type { CanvasSaveTransport } from "./save-queue"
+import { toast } from "sonner"
 import "./canvas-workspace.css"
 
 export interface CanvasWorkspaceHandle {
   flush: () => Promise<boolean>
   isDirty: () => boolean
+  replaceBaseline: (fileSha: string) => void
   setInteractionBlocked: (blocked: boolean) => void
 }
 
@@ -47,7 +51,9 @@ export interface CanvasWorkspaceProps {
   readFromStorage?: (path: string) => Promise<CanvasReadResult>
   saveTransport?: CanvasSaveTransport
   fragmentMode?: boolean
+  fragment?: Fragment
   fragments: Fragment[]
+  onFragmentUpdated?: (fragment: Fragment) => void
   onOpenLink: (link: ShardDocumentLink) => void | Promise<void>
   onRequestClose?: () => void | Promise<void>
   onSaved?: () => void
@@ -211,7 +217,7 @@ const CanvasObject = memo(function CanvasObject({ data, selected }: NodeProps<Fl
 const NODE_TYPES = { shardCanvas: CanvasObject }
 
 export const CanvasWorkspace = forwardRef<CanvasWorkspaceHandle, CanvasWorkspaceProps>(function CanvasWorkspace({
-  path, initialRead = null, fragments, onOpenLink, onSaved, onRecovered,
+  path, initialRead = null, fragment, fragments, onFragmentUpdated, onOpenLink, onSaved, onRecovered,
   onSaveStateChange, onSplit, onReady, onLoadError,
   readFromStorage = readCanvas, saveTransport = writeCanvas, fragmentMode = false,
   onRequestClose, readOnly = false, toolbarLeading,
@@ -222,6 +228,7 @@ export const CanvasWorkspace = forwardRef<CanvasWorkspaceHandle, CanvasWorkspace
   const [loadAttempt, setLoadAttempt] = useState(0)
   const [saveState, setSaveState] = useState<CanvasSaveState | null>(null)
   const [blocked, setBlocked] = useState(false)
+  const [documentPropertiesOpen, setDocumentPropertiesOpen] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
   const [selectedNodes, setSelectedNodes] = useState<string[]>([])
   const [selectedEdges, setSelectedEdges] = useState<string[]>([])
@@ -249,6 +256,7 @@ export const CanvasWorkspace = forwardRef<CanvasWorkspaceHandle, CanvasWorkspace
   const [recoveryError, setRecoveryError] = useState<string | null>(null)
   const recoveryAttemptRef = useRef<RecoveryAttempt | null>(null)
   const recoveringRef = useRef(false)
+  const documentPropertiesOpenRef = useRef(false)
   const externalBlockedRef = useRef(false)
   const pendingTextRef = useRef<PendingText | null>(null)
   const composingRef = useRef(false)
@@ -270,14 +278,18 @@ export const CanvasWorkspace = forwardRef<CanvasWorkspaceHandle, CanvasWorkspace
   const [flowReady, setFlowReady] = useState(false)
   const blockedRef = useRef(false)
   const draggingRef = useRef(false)
-  const callbacksRef = useRef({ onSaved, onRecovered, onSaveStateChange, onOpenLink, onRequestClose, onReady, onLoadError })
-  callbacksRef.current = { onSaved, onRecovered, onSaveStateChange, onOpenLink, onRequestClose, onReady, onLoadError }
+  const callbacksRef = useRef({ onSaved, onRecovered, onFragmentUpdated, onSaveStateChange, onOpenLink, onRequestClose, onReady, onLoadError })
+  callbacksRef.current = { onSaved, onRecovered, onFragmentUpdated, onSaveStateChange, onOpenLink, onRequestClose, onReady, onLoadError }
+
+  const syncBlockedState = useCallback(() => {
+    blockedRef.current = readOnly || externalBlockedRef.current || recoveringRef.current || documentPropertiesOpenRef.current
+    setBlocked(blockedRef.current)
+  }, [readOnly])
 
   useEffect(() => {
     externalBlockedRef.current = readOnly
-    blockedRef.current = readOnly || recoveringRef.current
-    setBlocked(blockedRef.current)
-  }, [readOnly])
+    syncBlockedState()
+  }, [readOnly, syncBlockedState])
   const workerRef = useRef<Worker | null>(null)
   const requestIdRef = useRef(0)
   const layoutPendingRef = useRef(new Map<number, LayoutRequest>())
@@ -290,6 +302,7 @@ export const CanvasWorkspace = forwardRef<CanvasWorkspaceHandle, CanvasWorkspace
     setSelectedNodes([]); setSelectedEdges([]); setEditing(null); setTreeSelection(null); setPositions({})
     setMeasurements({})
     setSaveState(null); setActionError(null); setPicker(null); setPendingText(null); pendingTextRef.current = null
+    setDocumentPropertiesOpen(false); documentPropertiesOpenRef.current = false
     setInspectorPinned(false); setInspectorTab("properties")
     recoveryAttemptRef.current = null; setRecoveryError(null); setSplitResult(null)
     const initial = initialReadRef.current?.path === path ? initialReadRef.current : null
@@ -385,12 +398,46 @@ export const CanvasWorkspace = forwardRef<CanvasWorkspaceHandle, CanvasWorkspace
   useImperativeHandle(ref, () => ({
     flush,
     isDirty: () => !!queueRef.current?.getState().dirty || !!pendingTextRef.current || draggingRef.current || recoveringRef.current,
+    replaceBaseline(fileSha) {
+      if (fragmentMode) queueRef.current?.replaceBaseline(fileSha)
+    },
     setInteractionBlocked(value) {
       externalBlockedRef.current = readOnly || value
-      blockedRef.current = readOnly || value || recoveringRef.current
-      setBlocked(blockedRef.current)
+      syncBlockedState()
     },
-  }), [flush, readOnly])
+  }), [flush, fragmentMode, readOnly, syncBlockedState])
+
+  const openDocumentProperties = useCallback(async () => {
+    if (!fragmentMode || !fragment || blockedRef.current) return
+    documentPropertiesOpenRef.current = true
+    syncBlockedState()
+    if (!(await flush())) {
+      documentPropertiesOpenRef.current = false
+      syncBlockedState()
+      const message = "无法打开文档属性：请先处理图内容的保存问题。"
+      setActionError(message)
+      toast.error(message, { duration: Infinity })
+      return
+    }
+    setActionError(null)
+    setDocumentPropertiesOpen(true)
+  }, [flush, fragment, fragmentMode, syncBlockedState])
+
+  const closeDocumentProperties = useCallback(() => {
+    setDocumentPropertiesOpen(false)
+    documentPropertiesOpenRef.current = false
+    syncBlockedState()
+  }, [syncBlockedState])
+
+  const handleDocumentFragmentUpdated = useCallback((updated: Fragment) => {
+    if (!fragmentMode || !updated.fileSha) return
+    try {
+      queueRef.current?.replaceBaseline(updated.fileSha)
+      callbacksRef.current.onFragmentUpdated?.(updated)
+    } catch (error) {
+      setActionError(getApiErrorMessage(error))
+    }
+  }, [fragmentMode])
 
   useEffect(() => {
     if (readOnly || (!saveState?.dirty && !pendingText) || saveState?.saving || saveState?.status === "error" || draggingRef.current || composing) return
@@ -503,7 +550,7 @@ export const CanvasWorkspace = forwardRef<CanvasWorkspaceHandle, CanvasWorkspace
       setRecoveryError(getApiErrorMessage(error))
     } finally {
       recoveringRef.current = false; setRecovering(false)
-      blockedRef.current = externalBlockedRef.current; setBlocked(externalBlockedRef.current)
+      syncBlockedState()
     }
   }
 
@@ -530,7 +577,7 @@ export const CanvasWorkspace = forwardRef<CanvasWorkspaceHandle, CanvasWorkspace
       setActionError(getApiErrorMessage(error))
     } finally {
       recoveringRef.current = false; setRecovering(false)
-      blockedRef.current = externalBlockedRef.current; setBlocked(externalBlockedRef.current)
+      syncBlockedState()
     }
   }
 
@@ -825,8 +872,8 @@ export const CanvasWorkspace = forwardRef<CanvasWorkspaceHandle, CanvasWorkspace
       await onSplit?.(result)
     } catch (error) { setActionError(getApiErrorMessage(error)) }
     finally {
-      recoveringRef.current = false; blockedRef.current = externalBlockedRef.current
-      setRecovering(false); setBlocked(externalBlockedRef.current)
+      recoveringRef.current = false
+      setRecovering(false); syncBlockedState()
     }
   }
 
@@ -972,6 +1019,8 @@ export const CanvasWorkspace = forwardRef<CanvasWorkspaceHandle, CanvasWorkspace
       <Button size="sm" variant="outline" disabled={blocked || composing || !!recoveryAttemptRef.current || saveState?.saving || (!saveState?.dirty && !pendingText)}
         onClick={() => { if (!finalizeText()) return; if (saveState?.status === "error") void queueRef.current?.retry().then((ok) => { if (ok) callbacksRef.current.onSaved?.() }); else void flush() }}>
         {saveState?.status === "error" ? "重试保存" : "保存"}</Button>
+      {fragmentMode && fragment ? <Button size="sm" variant="outline" disabled={blocked || composing}
+        onClick={() => { void openDocumentProperties() }}><FileTextIcon />文档属性</Button> : null}
       <Button size="sm" variant="outline" aria-label="对象面板" aria-expanded={inspectorVisible} aria-controls={inspectorId}
         onClick={() => {
           if (inspectorVisible) closeInspector()
@@ -1189,5 +1238,15 @@ export const CanvasWorkspace = forwardRef<CanvasWorkspaceHandle, CanvasWorkspace
         </div>
       </aside>}
     </div>
+    <Dialog open={documentPropertiesOpen} onOpenChange={(open) => { if (!open) closeDocumentProperties() }}>
+      <DialogContent className="sm:max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>文档属性</DialogTitle>
+        </DialogHeader>
+        {fragment ? <div className="min-h-0 overflow-auto">
+          <PropertiesPanel fragment={fragment} inset={false} onFragmentUpdated={handleDocumentFragmentUpdated} readOnly={readOnly} />
+        </div> : null}
+      </DialogContent>
+    </Dialog>
   </div>
 })

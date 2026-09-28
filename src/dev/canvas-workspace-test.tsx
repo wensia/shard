@@ -1,13 +1,13 @@
 // Isolated development harness. Native mode always uses the real Tauri commands.
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { createRoot } from "react-dom/client"
 import { isTauri } from "@tauri-apps/api/core"
 import { Button } from "@/components/ui/button"
 import { CanvasWorkspace, type CanvasWorkspaceHandle } from "@/features/canvas/canvas-workspace"
 import { createCanvas } from "@/features/canvas/api"
 import { createCanvasFile, createCanvasMindMap, createCanvasNode, type CanvasReadResult, type CanvasFile } from "@/features/canvas/model"
-import { listFragments } from "@/lib/api"
-import type { Fragment, ShardDocumentLink } from "@/types"
+import { listFragments, readGraphFragment, writeGraphFragment } from "@/lib/api"
+import type { Fragment, PropertyRegistry, ShardDocumentLink } from "@/types"
 import "../index.css"
 import "@fontsource/noto-sans-sc/400.css"
 import "@fontsource/noto-sans-sc/500.css"
@@ -15,7 +15,7 @@ import "@fontsource/noto-sans-sc/600.css"
 
 type CanvasMock = {
   disk: CanvasReadResult; calls: { command: string; request: Record<string, unknown> }[]
-  failSave: boolean; hold: boolean; release(): void; missing: boolean
+  failSave: boolean; fragment: Fragment; hold: boolean; release(): void; missing: boolean
 }
 declare global {
   interface Window {
@@ -30,18 +30,33 @@ const fragments: Fragment[] = [
 ].map(item => ({ ...item, kind: item.tags.includes("note") ? "note" : "fragment", createdAt: stamp, updatedAt: stamp, category: null, gitStatus: "committed", error: null, archived: false, lockbox: false, pinned: false, related: [] }))
 
 function installMock() {
+  const params = new URLSearchParams(location.search)
   const waiters: (() => void)[] = []
   const file = createCanvasFile("验收画布")
   file.revision = 1
-  if (new URLSearchParams(location.search).has("legacy")) {
+  if (params.has("legacy")) {
     file.kind = "shard.canvas"
     file.nodes = [createCanvasNode("mindmap", { x: 0, y: 0 }), createCanvasNode("process", { x: 500, y: 0 })]
     file.edges = [{ id: "cross-link", source: file.nodes[0].id, target: file.nodes[1].id, label: "依据" }]
   }
   const map = createCanvasMindMap("现有导图")
+  const fragment: Fragment = {
+    ...fragments[0],
+    id: "flowchart-fragment",
+    content: "---\ntags:\n  - flowchart\n阶段: 草稿\n---\n\n```shardflow\n{}\n```",
+    fileSha: "a".repeat(64),
+    kind: "flowchart",
+    path: "fragments/2026/09/flowchart-fragment.md",
+    properties: [{ key: "阶段", value: { kind: "text", text: "草稿" }, editable: true }],
+    tags: ["flowchart"],
+  }
+  const registry: PropertyRegistry = { version: 1, properties: { 阶段: { type: "text" } } }
+  let registrySha = "registry-sha-1"
+  let revision = 1
   const mock: CanvasMock = {
-    disk: { file, path: file.kind === "shard.canvas" ? "notes/验收画布.shardcanvas.json" : "notes/验收流程.shardflow.json", lastSavedHash: "a".repeat(64) }, calls: [], failSave: false, hold: false,
-    missing: new URLSearchParams(location.search).has("missing"),
+    disk: { file, path: params.has("fragment") ? fragment.path : file.kind === "shard.canvas" ? "notes/验收画布.shardcanvas.json" : "notes/验收流程.shardflow.json", lastSavedHash: "a".repeat(64) },
+    calls: [], failSave: false, fragment, hold: false,
+    missing: params.has("missing"),
     release() { mock.hold = false; waiters.splice(0).forEach(resolve => resolve()) },
   }
   window.__canvasMock = mock
@@ -53,6 +68,8 @@ function installMock() {
     if (command === "read_canvas") {
       if (mock.missing) throw new Error("画布文件不存在")
       response = structuredClone(mock.disk)
+    } else if (command === "read_graph_fragment") {
+      response = { fragment: structuredClone(mock.fragment), graph: structuredClone(mock.disk.file) }
     } else if (command === "write_canvas") {
       if (mock.hold) await new Promise<void>(resolve => waiters.push(resolve))
       if (mock.failSave) throw new Error("测试保存失败，草稿已保留")
@@ -60,6 +77,43 @@ function installMock() {
       const revision = mock.disk.file.revision + 1
       mock.disk = { ...mock.disk, file: { ...structuredClone(request.file as CanvasFile), revision, updatedAt: new Date().toISOString() }, lastSavedHash: revision.toString(16).padStart(64, "0") }
       response = structuredClone(mock.disk)
+    } else if (command === "write_graph_fragment") {
+      if (mock.hold) await new Promise<void>(resolve => waiters.push(resolve))
+      if (mock.failSave) throw new Error("测试保存失败，草稿已保留")
+      if (request.expectedFileSha !== mock.fragment.fileSha) throw new Error("STALE_BASE:保存基线过期")
+      const nextRevision = mock.disk.file.revision + 1
+      mock.fragment.fileSha = `graph-sha-${++revision}`
+      mock.disk = {
+        ...mock.disk,
+        file: { ...structuredClone(request.graph as CanvasFile), revision: nextRevision, updatedAt: new Date().toISOString() },
+        lastSavedHash: mock.fragment.fileSha,
+      }
+      response = { fragment: structuredClone(mock.fragment), graph: structuredClone(mock.disk.file) }
+    } else if (command === "read_property_registry") {
+      response = { registry: structuredClone(registry), sha: registrySha }
+    } else if (command === "register_property_type") {
+      if (request.expectedSha !== registrySha) throw new Error("登记表已变化")
+      registry.properties[String(request.key)] = { type: String(request.propertyType) as "text" }
+      registrySha = `registry-sha-${++revision}`
+      response = { registry: structuredClone(registry), sha: registrySha }
+    } else if (command === "set_fragment_property" || command === "remove_fragment_property") {
+      const index = mock.fragment.properties!.findIndex(item => item.key === request.key)
+      if (command === "remove_fragment_property") {
+        if (index >= 0) mock.fragment.properties!.splice(index, 1)
+      } else {
+        const input = request.value as { type: string; value: unknown }
+        const value = input.value === null ? { kind: "null" as const }
+          : input.type === "checkbox" ? { kind: "bool" as const, value: Boolean(input.value) }
+          : input.type === "list" ? { kind: "list" as const, items: input.value as string[] }
+          : input.type === "number" ? { kind: "number" as const, text: String(input.value) }
+          : { kind: "text" as const, text: String(input.value) }
+        const property = { key: String(request.key), value, editable: true }
+        if (index >= 0) mock.fragment.properties![index] = property
+        else mock.fragment.properties!.push(property)
+      }
+      mock.fragment.fileSha = `property-sha-${++revision}`
+      mock.disk.lastSavedHash = mock.fragment.fileSha
+      response = structuredClone(mock.fragment)
     } else if (command === "list_diagram_documents") {
       response = [{ id: map.id, title: map.title, kind: "mindmap", nodeCount: 1, path: "notes/现有导图.shardmap.json" },
         { id: "linked-flow", title: "关联流程", kind: "flowchart", nodeCount: 2, path: "notes/关联流程.shardflow.json" }]
@@ -78,12 +132,27 @@ function installMock() {
 function Harness() {
   const handle = useRef<CanvasWorkspaceHandle>(null)
   const params = new URLSearchParams(location.search)
+  const fragmentMode = params.has("fragment")
   const [path, setPath] = useState(window.__canvasMock?.disk.path ?? params.get("path") ?? localStorage.getItem("shard.canvas-acceptance-path"))
   const [sources, setSources] = useState<Fragment[]>(window.__canvasMock ? fragments : [])
+  const [fragment, setFragment] = useState<Fragment | undefined>(fragmentMode ? window.__canvasMock?.fragment : undefined)
   const [generation, setGeneration] = useState(0)
   const [message, setMessage] = useState("")
   const [state, setState] = useState("saved")
   const [closed, setClosed] = useState(false)
+  const fragmentStorage = useMemo(() => fragmentMode ? {
+    async readFromStorage() {
+      const result = await readGraphFragment("flowchart-fragment")
+      if (!result.fragment.fileSha) throw new Error("流程图片段缺少文件保存基线。")
+      return { file: result.graph as CanvasFile, lastSavedHash: result.fragment.fileSha, path: result.fragment.path }
+    },
+    async saveTransport(request: { file: CanvasFile; lastSavedHash: string }) {
+      const result = await writeGraphFragment<CanvasFile>("flowchart-fragment", request.file, request.lastSavedHash)
+      if (!result.fragment.fileSha) throw new Error("流程图片段缺少文件保存基线。")
+      setFragment(result.fragment)
+      return { file: result.graph, lastSavedHash: result.fragment.fileSha, path: result.fragment.path }
+    },
+  } : null, [fragmentMode])
   useEffect(() => { if (!window.__canvasMock) void listFragments().then(result => setSources(result.fragments), error => setMessage(String(error))) }, [])
   window.__canvasHarness = {
     flush: () => handle.current?.flush() ?? Promise.resolve(true), dirty: () => handle.current?.isDirty() ?? false,
@@ -99,7 +168,9 @@ function Harness() {
       <Button onClick={() => { void (async () => { if (await window.__canvasHarness.flush()) { window.__canvasHarness.closed++; setClosed(true) } })() }}>离开画布</Button>
       <output aria-label="验收保存状态">{state}</output>
     </div>
-    {path && !closed && <CanvasWorkspace key={`${path}:${generation}`} ref={handle} path={path} fragments={sources}
+    {path && !closed && <CanvasWorkspace key={`${path}:${generation}`} ref={handle} path={path} fragment={fragment} fragmentMode={fragmentMode} fragments={sources}
+      onFragmentUpdated={setFragment}
+      readFromStorage={fragmentStorage?.readFromStorage} saveTransport={fragmentStorage?.saveTransport}
       onRecovered={nextPath => { setPath(nextPath); if (!window.__canvasMock) localStorage.setItem("shard.canvas-acceptance-path", nextPath) }}
       onSplit={result => { setMessage(`已打开关联说明：${result.indexPath}`) }}
       onSaveStateChange={setState} onOpenLink={link => { window.__canvasHarness.opened.push(link); setMessage("已打开引用来源") }} />}

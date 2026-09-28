@@ -111,6 +111,9 @@ pub fn validate_property_key(key: &str) -> Result<(), String> {
     if length > 64 {
         return Err("属性名不能超过 64 个字符。".to_string());
     }
+    if !matches!(serde_yaml::from_str::<Value>(key), Ok(Value::String(_))) {
+        return Err("属性名不能是数字、布尔或空值写法".to_string());
+    }
     if key.starts_with('-')
         || !key
             .chars()
@@ -744,9 +747,9 @@ source: test"#;
         assert!(!removed.contains("项目-阶段:"));
         assert_eq!(remove_custom_property(&removed, "不存在").unwrap(), removed);
 
-        let numeric =
-            set_custom_property(&removed, "123", &Value::String("数字键".into())).unwrap();
-        let document = format!("---\n{numeric}\n---\n正文");
+        let numbered =
+            set_custom_property(&removed, "编号123", &Value::String("数字键".into())).unwrap();
+        let document = format!("---\n{numbered}\n---\n正文");
         assert!(parse_fragment(&document).is_ok());
     }
 
@@ -759,7 +762,7 @@ source: test"#;
             );
         }
         assert!(validate_property_key(&"字".repeat(65)).is_err());
-        for key in ["作者", "项目-阶段", "123", "_内部"] {
+        for key in ["作者", "项目-阶段", "编号123", "_内部"] {
             assert!(validate_property_key(key).is_ok(), "key should pass: {key}");
         }
 
@@ -771,6 +774,26 @@ source: test"#;
         assert!(set_custom_property(duplicate, "作者", &Value::String("王五".into())).is_err());
         let anchored = "作者: &shared 张三\n镜像: *shared";
         assert!(remove_custom_property(anchored, "作者").is_err());
+    }
+
+    #[test]
+    fn custom_properties_reject_yaml_non_string_keys() {
+        let invalid = [
+            "123", "+123", "-123", "1.5", "+1.5", "-1.5", "1e3", "+1E3", "-1e-3", "0xF0", "+0xF0",
+            "-0xF0", "0o70", "+0o70", "-0o70", "true", "True", "TRUE", "false", "False", "FALSE",
+            "null", "Null", "NULL", "~",
+        ];
+        for key in invalid {
+            assert_eq!(
+                validate_property_key(key).unwrap_err(),
+                "属性名不能是数字、布尔或空值写法",
+                "key should be rejected as a YAML non-string scalar: {key}"
+            );
+        }
+
+        for key in ["property123", "trueValue", "null_value", "编号123", "_内部"] {
+            assert!(validate_property_key(key).is_ok(), "key should pass: {key}");
+        }
     }
 
     #[test]

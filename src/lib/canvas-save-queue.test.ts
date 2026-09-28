@@ -57,6 +57,18 @@ describe("canvas serialized saves", () => {
     expect(write).not.toHaveBeenCalled()
   })
 
+  it("replaces the fragment file baseline without reloading the canvas draft", async () => {
+    const base = initial(); const write = vi.fn(async (request: CanvasSaveRequest) => ack(request))
+    const queue = new CanvasSaveQueue(base, write)
+    const draftBefore = queue.getDraft()
+    queue.replaceBaseline("property-sha")
+    expect(queue.getDraft()).toEqual(draftBefore)
+    expect(queue.getBaseline()).toMatchObject({ lastSavedHash: "property-sha", file: draftBefore })
+    queue.update(edit(base, "属性写入后继续编辑"))
+    await expect(queue.flush()).resolves.toBe(true)
+    expect(write).toHaveBeenCalledWith(expect.objectContaining({ lastSavedHash: "property-sha" }))
+  })
+
   it("freezes failed requests, stops automatic saves, then explicitly retries before draining later edits", async () => {
     const base = initial(); const write = vi.fn().mockRejectedValueOnce(new Error("磁盘暂时不可用"))
       .mockImplementation(async request => ack(request))
