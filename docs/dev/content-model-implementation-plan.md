@@ -29,6 +29,7 @@
 | **G2** | 属性进入时间线筛选（前端计算；SQLite 属性派生表推迟，见 §14 开头） | G1 | 已完成，施工令见 §14 |
 | **G3** | 标签主题页（该标签下的碎片、大纲、流程图、文档与反链）与属性表格视图 | G2 | 已完成，施工令见 §15 |
 | **Z1** | 收尾：密匣 fileSha 单次读取；搜索面板 `#标签` 主题页候选；修复主线既有失败的 6 项 UI 用例 | G3、集成（`5351c09`） | 已完成，施工令见 §17 |
+| **Z2** | 真实应用冒烟发现的两个缺陷：筛选下拉列表关闭对话框后残留；资料库导图有未保存修改时改名框被自动保存冲掉 | Z1、真实应用冒烟 | 执行中，施工令见 §18 |
 
 ## 3. P0 施工令：frontmatter 保真读写
 
@@ -931,3 +932,41 @@ UI 改动遵守 AGENTS.md 与 `vendor/kiln`，复用现有组件与 token。
 ### 17.5 交付
 
 不提交 Git；测试改写的 `tests/evidence` 图片结束前恢复。报告写 `docs/dev/content-model-tasks-log/Z1.md`：改动文件与要点、每项失败用例的根因与处理、验收结果、偏差及原因、遗留问题。
+
+## 18. Z2 施工令：真实应用冒烟发现的缺陷
+
+前置：主线 `astryx-migration` 为 `5ce1ed4`；本批在 worktree `shard-wt-z2`、分支 `fix/gui-smoke-z2` 进行。2026-09-29 在真实 Tauri 打包应用（WKWebView，computer use 操作）上做了冒烟测试，11 项中 9 项通过，报告与截图在 `docs/dev/content-model-tasks-log/gui-smoke/`（`report.md`、`shots/`）。本批只修报告中的两个失败项。遵守主线约束：通知一律用 `notify.*`，不直接 import `sonner`。
+
+### 18.1 缺陷一：筛选对话框关闭后下拉列表残留
+
+现象（报告第 6、11 项，截图 `shots/06-filter-outline-number.png`）：在时间线筛选对话框（`src/components/shard/fragment-workspace-controls.tsx` 的 `FragmentFilterDialog`，入口在搜索面板「筛选碎片」）里依次使用类型、属性、运算等下拉选择后，对话框已关闭、筛选状态条已生效，但多个下拉列表的弹层仍叠在屏幕上；切到资料库后继续遮挡，Esc 与点击外部都清除不了，只能重启应用。
+
+要求：
+- 先复现并查明根因，在报告中写清楚（例如：弹层的挂载/卸载与对话框生命周期、受控 `open` 状态、退出动画在 WKWebView 中未结束导致弹层未卸载等）。现有 Playwright 只有 chromium 项目；若 chromium 复现不了，可在未跟踪的 `playwright.worktree.config.ts` 里临时增加一个 webkit 项目复现（该文件不提交）。
+- 修复要保证：对话框关闭（含确认、取消、Esc、点外部）时，其中所有下拉弹层都一并关闭并卸载；弹层打开时按 Esc 只关弹层、再按 Esc 关对话框（与现有 Kiln 规范一致）。优先在共享的下拉控件或对话框层面修根因，而不是只在这一个对话框里打补丁；若根因在共享控件，要检查其它使用同一控件的对话框是否同样受益、有无回归。
+- 补 UI 用例：依次打开并选择多个下拉后关闭对话框，断言页面上不存在任何打开的下拉弹层（chromium 必跑；若根因与 WebKit 相关，webkit 项目也跑并在报告中注明）。
+
+### 18.2 缺陷二：导图有未保存修改时改名，改名框被自动保存冲掉
+
+现象（报告第 9 项）：在资料库打开一个导图，改一个节点文字后未等保存，立即点击标题的改名按钮；改名输入框出现后很快消失（此时界面显示「已自动保存」），需等保存完成后再次点改名才能成功。节点修改没有丢，编辑器未重建。
+
+要求：
+- 查明根因（例如：改名前的保存排空完成后刷新资料库树或选中项，导致改名状态被重置；或保存状态回调引起标题区重新挂载），报告中写清楚调用链。相关位置：`src/workspace/library-shell.tsx` 的导图改名流程与编辑区标题、`MindMapCanvas` 的 `onSaveStateChange` / `onMapsChange` 回调、资料库树刷新。
+- 修复后：有未保存修改时点改名，改名输入框持续可用直到用户确认或取消；改名前的草稿落盘语义保持（现有用例「思维导图标题改名前等待草稿落盘，改名后继续编辑并按新路径重开」必须仍通过）；Z1 的「改名不重建编辑器」行为不回退。
+- 补 UI 用例复现该时序：先制造未保存修改，立刻进入改名，模拟自动保存完成后断言改名输入框仍在、可输入并确认成功。
+
+### 18.3 验收命令
+
+使用 worktree 内未跟踪的 `playwright.worktree.config.ts`（**端口 1424**，`reuseExistingServer: false`，不提交）；必须显式 `-c playwright.worktree.config.ts`，不得用 `pnpm test:ui`；绝不能连接 1420（用户正在运行的开发环境）或 1422。开工前先跑一遍下表 UI 用例记录基线。Rust 测试前先 `cargo build -p shard-cli`（主线 `build.rs` 的占位 sidecar 会让 CLI 集成测试调到占位脚本）。
+
+| 命令 | 要求 |
+| --- | --- |
+| `cargo build -p shard-cli && cargo test -p shard-core -p shard -p shard-cli` | 全部通过（本批预计不改 Rust） |
+| `pnpm test:unit` | 除 golden 夹具那一项既有失败外全部通过 |
+| `pnpm build` | 通过（含 verify-tokens 的 sonner 约束） |
+| `pnpm build:markdown && pnpm exec playwright test -c playwright.worktree.config.ts tests/ui/fragment-masonry.spec.ts tests/ui/properties.spec.ts tests/ui/library-tree.spec.ts tests/ui/library-workspace.spec.ts tests/ui/mind-map-workspace.spec.ts tests/ui/form-controls.spec.ts tests/ui/search-palette.spec.ts` 及本批新增用例 | 相对基线没有新增失败；新增用例全部通过 |
+| `git diff --check` | 通过 |
+
+### 18.4 交付
+
+不提交 Git；测试改写的 `tests/evidence` 图片结束前恢复。报告写 `docs/dev/content-model-tasks-log/Z2.md`：两个缺陷各自的根因与调用链、修复要点、改动文件、验收结果（含测试数）、偏差及原因、遗留问题。
