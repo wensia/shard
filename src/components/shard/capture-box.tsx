@@ -16,6 +16,7 @@ import {
   SendHorizontalIcon,
 } from "@/components/icons"
 import { toast } from "sonner"
+import { CsvImportDialog } from "@/features/datasets/csv-import-dialog"
 
 import { EditorToolbar } from "@/components/shard/editor-toolbar"
 import { FragmentImageAttachment } from "@/components/shard/fragment-content"
@@ -128,6 +129,7 @@ export const CaptureBox = forwardRef<CaptureBoxHandle, CaptureBoxProps>(function
   const [isDocumentType, setIsDocumentType] = useState(false)
   const [isEditorExpanded, setIsEditorExpanded] = useState(false)
   const [pendingImages, setPendingImages] = useState<PendingImage[]>([])
+  const [importFile, setImportFile] = useState<{ name: string; bytes: Uint8Array } | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const editorFrameRef = useRef<HTMLDivElement>(null)
   const codeMirrorViewportRef = useRef<HTMLDivElement>(null)
@@ -442,8 +444,17 @@ export const CaptureBox = forwardRef<CaptureBoxHandle, CaptureBoxProps>(function
     }
   }
 
-  const { isDropTarget: isTableDropTarget } = useTableDocumentDrop({
+  const onCsvDrop = useCallback((file: { name: string; bytes: Uint8Array }) => {
+    if (wantsLockbox(richEditorRef.current?.getMarkdown() ?? content, [])) {
+      toast.error("私密碎片不支持数据集")
+      return
+    }
+    setImportFile(file)
+  }, [content])
+  const { dropKind } = useTableDocumentDrop({
+    allowCsv: !willSaveToLockbox,
     frameRef: editorFrameRef,
+    onCsv: onCsvDrop,
   })
 
   function openZenEditor() {
@@ -554,6 +565,7 @@ export const CaptureBox = forwardRef<CaptureBoxHandle, CaptureBoxProps>(function
           ref={codeMirrorViewportRef}
         >
           <ShardRichEditor
+            allowDatasetActions={!willSaveToLockbox}
             ariaLabel="快速记录"
             autoFocus
             editorId="composer"
@@ -580,11 +592,12 @@ export const CaptureBox = forwardRef<CaptureBoxHandle, CaptureBoxProps>(function
             variant="composer"
           />
         </div>
-        {isTableDropTarget ? (
+        {dropKind ? (
           <div className="shard-editor-drop-hint">
-            请在资料库中导入为多维表格
+            {dropKind === "csv" ? willSaveToLockbox ? "私密碎片不支持数据集" : "松开以导入为数据集" : "请先另存为 CSV 再导入"}
           </div>
         ) : null}
+        <CsvImportDialog file={importFile} allowed={!willSaveToLockbox} onClose={() => setImportFile(null)} onImported={(path) => richEditorRef.current?.insertDatasetReference(path)} />
       </div>
       )}
       {!isOutlineMode && pendingImages.length > 0 ? (

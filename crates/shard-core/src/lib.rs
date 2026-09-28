@@ -4,10 +4,12 @@
 //! 桌面 App（`src-tauri`）与终端 CLI（`crates/shard-cli`）共用，避免两边落盘格式漂移。
 //! 本 crate 不依赖 Tauri，也不碰 git：提交由 App 的检查点聚合接管。
 
+pub mod dataset;
 pub mod frontmatter;
 pub mod graph_region;
 pub mod outline_import;
 pub mod search;
+pub mod vault_lock;
 
 use chrono::{DateTime, Local};
 use rand::{rngs::OsRng, RngCore};
@@ -15,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     fs::{self, File},
     io::Write,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -74,11 +76,116 @@ pub fn default_vault_path() -> Result<PathBuf, String> {
     Ok(PathBuf::from(home).join("Documents").join("ShardVault"))
 }
 
+pub fn normalized_vault_key(vault: &Path) -> PathBuf {
+    if let Ok(canonical) = vault.canonicalize() {
+        return canonical;
+    }
+
+    let absolute = if vault.is_absolute() {
+        vault.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map(|current| current.join(vault))
+            .unwrap_or_else(|_| vault.to_path_buf())
+    };
+    let mut normalized = PathBuf::new();
+    for component in absolute.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            other => normalized.push(other.as_os_str()),
+        }
+    }
+
+    // A newly selected vault may not exist yet. Resolve the nearest existing ancestor
+    // so a symlinked parent cannot produce one gate before creation and another after it.
+    let mut ancestor = normalized.as_path();
+    let mut suffix = Vec::new();
+    loop {
+        if let Ok(mut canonical) = ancestor.canonicalize() {
+            for component in suffix.iter().rev() {
+                canonical.push(component);
+            }
+            return canonical;
+        }
+        let Some(name) = ancestor.file_name() else {
+            break;
+        };
+        suffix.push(name.to_os_string());
+        let Some(parent) = ancestor.parent() else {
+            break;
+        };
+        ancestor = parent;
+    }
+    normalized
+}
+
+pub fn ensure_public_csv_path(vault: &Path, rel_path: &str) -> Result<PathBuf, String> {
+    let trimmed = rel_path.trim();
+    if trimmed.is_empty() {
+        return Err("CSV 路径不能为空。".to_string());
+    }
+    if trimmed.contains('\\') {
+        return Err("CSV 路径必须使用 / 分隔。".to_string());
+    }
+    let path = Path::new(trimmed);
+    if path.is_absolute() {
+        return Err("CSV 路径必须是 vault 内相对路径。".to_string());
+    }
+    for component in path.components() {
+        match component {
+            Component::Normal(value) => {
+                let value = value.to_string_lossy();
+                if value.eq_ignore_ascii_case("lockbox") {
+                    return Err("当前版本不允许读取密匣路径。".to_string());
+                }
+                if value == ".git" || value == ".shard" {
+                    return Err("当前版本不允许读取 Shard 内部路径。".to_string());
+                }
+            }
+            _ => return Err("CSV 路径不能包含 . 或 ..。".to_string()),
+        }
+    }
+    if !path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("csv"))
+    {
+        return Err("只能读取 CSV 文件。".to_string());
+    }
+    let full_path = vault.join(path);
+    if !full_path.is_file() {
+        return Err(format!("找不到 CSV 文件 {trimmed}"));
+    }
+    let canonical_vault = vault.canonicalize().map_err(|error| error.to_string())?;
+    let canonical_path = full_path
+        .canonicalize()
+        .map_err(|error| error.to_string())?;
+    if !canonical_path.starts_with(&canonical_vault) {
+        return Err("CSV 路径不能越出 vault。".to_string());
+    }
+    let relative = canonical_path.strip_prefix(&canonical_vault).expect("已检查 vault 边界");
+    if relative.components().any(|component| {
+        matches!(component, Component::Normal(value) if value.to_string_lossy().eq_ignore_ascii_case("lockbox"))
+    }) {
+        return Err("当前版本不允许读取密匣路径。".to_string());
+    }
+    Ok(canonical_path)
+}
+
 pub fn ensure_vault_layout(vault: &Path) -> Result<(), String> {
     fs::create_dir_all(vault.join("fragments")).map_err(|error| error.to_string())?;
     fs::create_dir_all(vault.join("notes")).map_err(|error| error.to_string())?;
     fs::create_dir_all(vault.join("assets")).map_err(|error| error.to_string())?;
     fs::create_dir_all(vault.join("maps")).map_err(|error| error.to_string())?;
+    let datasets = vault.join("datasets");
+    fs::create_dir_all(&datasets).map_err(|error| error.to_string())?;
+    let attributes = datasets.join(".gitattributes");
+    if !attributes.exists() {
+        fs::write(attributes, "*.csv merge=binary\n").map_err(|error| error.to_string())?;
+    }
     fs::create_dir_all(vault.join(".shard")).map_err(|error| error.to_string())?;
     Ok(())
 }
@@ -397,6 +504,19 @@ fn is_cjk_script(char: char) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn vault_layout_creates_dataset_attributes_without_overwriting_them() {
+        let vault = tempfile::tempdir().unwrap();
+        let attributes = vault.path().join("datasets/.gitattributes");
+
+        ensure_vault_layout(vault.path()).unwrap();
+        assert_eq!(fs::read_to_string(&attributes).unwrap(), "*.csv merge=binary\n");
+
+        fs::write(&attributes, "*.csv merge=ours\n").unwrap();
+        ensure_vault_layout(vault.path()).unwrap();
+        assert_eq!(fs::read_to_string(attributes).unwrap(), "*.csv merge=ours\n");
+    }
 
     #[test]
     fn extracts_tags_like_the_editor() {

@@ -11,11 +11,12 @@ use rsa::{
     Oaep, RsaPrivateKey, RsaPublicKey,
 };
 use serde::{Deserialize, Serialize};
+use shard_core::dataset::{self, DatasetLimits, DatasetOp, DatasetSnapshot};
 use shard_core::{
     contains_lockbox_tag, create_public_fragment_in_vault,
-    create_public_fragment_with_id_in_vault, default_vault_path,
-    derive_type, ensure_vault_layout, is_false, new_fragment_id, normalize_tag, normalize_tags,
-    normalize_type_tags,
+    create_public_fragment_with_id_in_vault, default_vault_path, derive_type,
+    ensure_public_csv_path, ensure_vault_layout, is_false, new_fragment_id, normalize_tag,
+    normalize_tags, normalize_type_tags,
     frontmatter::{
         apply_frontmatter, parse_fragment, raw_from_frontmatter, write_fragment_update,
     },
@@ -29,6 +30,7 @@ use shard_core::{
     write_text_atomically, AppConfig, FragmentFrontmatter, FragmentRelation, LOCKBOX_TAG,
     LIBRARY_FILENAME_MAX_BYTES, PROTECTED_TYPE_TAGS, TYPE_TAGS,
 };
+use shard_core::vault_lock::{VaultProcessLock, LOCKS_DIR_NAME};
 use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, HashMap, HashSet, VecDeque},
@@ -37,6 +39,7 @@ use std::{
     io::{BufRead, BufReader, Read, Write},
     path::{Component, Path, PathBuf},
     process::{Command, Stdio},
+    ops::Deref,
     sync::{
         atomic::AtomicBool,
         Arc, Condvar, LockResult, Mutex, MutexGuard, OnceLock,
@@ -79,13 +82,14 @@ const CSV_GIT_PATHSPEC: &str = ":(glob,icase)**/*.csv";
 /// Vault selection changes the persisted path and the active search context as one unit.
 /// Per-vault write gates cannot serialize two concurrent switches to different paths.
 static VAULT_SELECTION_GATE: Mutex<()> = Mutex::new(());
+static VAULT_LOCK_DIR: OnceLock<PathBuf> = OnceLock::new();
 static LIBRARY_INDEX_REGISTRY: OnceLock<Arc<search_index::IndexRegistry>> = OnceLock::new();
 static GRAPH_CREATE_RECEIPTS: OnceLock<Mutex<GraphCreateReceiptCache>> = OnceLock::new();
 
 /// Shard 托管的 vault 根目录。提交、脏检测、检查点、计数必须共用这一份清单——
 /// 目录在多处手写曾造成 notes 完全不入 git 状态的盲区。
 const MANAGED_VAULT_ROOTS: &[&str] = &[
-    "fragments", "notes", ".trash", "assets", "maps", "lockbox", ".shard",
+    "fragments", "notes", ".trash", "assets", "maps", "datasets", "lockbox", ".shard",
 ];
 
 /// 保存基线过期（磁盘内容已被同步或外部编辑改写）的错误标记；
@@ -133,6 +137,7 @@ fn managed_pathspecs() -> Vec<String> {
         .map(|root| (*root).to_string())
         .collect();
     specs.push(CSV_GIT_PATHSPEC.to_string());
+    specs.push(":(exclude,glob)datasets/**/.?*.tmp-[0-9a-f][0-9a-f][0-9a-f][0-9a-f]".to_string());
     // Only native-table atomic-write leftovers: a nonempty name and exactly
     // 32 lowercase hex characters. Do not ignore arbitrary hidden/temporary files.
     specs.push(format!(
@@ -644,9 +649,28 @@ where
 /// 门内不可重入：持门代码不得再调用本函数（会自死锁）。
 /// 惯例：只在命令体最外层与 push_vault/checkpoint 的临界段取门，内部 helper 一律不取。
 /// guard 在真正拿到物理门后把搜索写代次置奇数，并在所有返回路径 RAII 恢复偶数。
-fn lock_vault_gate(vault: &Path) -> search_runtime::VaultWriteGuard {
-    search_runtime::acquire_write_guard(vault)
-        .unwrap_or_else(|error| panic!("无法获取 vault 写门：{error:?}"))
+struct VaultGate {
+    #[allow(dead_code)] // Held for RAII; declaration order releases it before the inner gate.
+    process: Option<VaultProcessLock>,
+    inner: search_runtime::VaultWriteGuard,
+}
+
+impl Deref for VaultGate {
+    type Target = search_runtime::VaultWriteGuard;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+fn lock_vault_gate(vault: &Path) -> VaultGate {
+    let inner = search_runtime::acquire_write_guard(vault)
+        .unwrap_or_else(|error| panic!("无法获取 vault 写门：{error:?}"));
+    let process = VAULT_LOCK_DIR.get().map(|dir| {
+        VaultProcessLock::acquire(dir, vault, None)
+            .unwrap_or_else(|error| panic!("无法获取跨进程 vault 写锁：{error}"))
+    });
+    VaultGate { process, inner }
 }
 
 #[tauri::command]
@@ -915,6 +939,118 @@ async fn read_csv_file(app: tauri::AppHandle, path: String) -> Result<Vec<u8>, S
         let vault = ensure_vault_dirs(&app)?;
         let csv_path = ensure_public_csv_path(&vault, &path)?;
         fs::read(csv_path).map_err(|error| error.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
+async fn read_import_csv_file(path: String) -> Result<Vec<u8>, String> {
+    run_blocking(move || {
+        let source = Path::new(&path);
+        if !source.is_absolute() || !source.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("csv")) {
+            return Err("只能导入 CSV 文件".to_string());
+        }
+        let resolved = source.canonicalize().map_err(|error| error.to_string())?;
+        if resolved.components().any(|component| matches!(component, Component::Normal(name) if name.to_string_lossy().eq_ignore_ascii_case("lockbox"))) {
+            return Err("私密碎片不支持数据集".to_string());
+        }
+        let file = File::open(resolved).map_err(|error| error.to_string())?;
+        // UTF-16 输入可能占用规范化 UTF-8 输出两倍的空间。
+        if file.metadata().map_err(|error| error.to_string())?.len() > 128 * 1024 * 1024 {
+            return Err("LIMIT_EXCEEDED:CSV 文件超过导入上限".to_string());
+        }
+        let mut bytes = Vec::new();
+        file.take(128 * 1024 * 1024 + 1).read_to_end(&mut bytes).map_err(|error| error.to_string())?;
+        if bytes.len() > 128 * 1024 * 1024 {
+            return Err("LIMIT_EXCEEDED:CSV 文件超过导入上限".to_string());
+        }
+        Ok(bytes)
+    }).await
+}
+
+fn read_dataset_in_vault(vault: &Path, path: &str) -> Result<DatasetSnapshot, String> {
+    dataset::read_dataset(vault, path, &DatasetLimits::default()).map_err(|error| error.to_string())
+}
+
+fn apply_dataset_ops_in_vault(
+    vault: &Path,
+    path: &str,
+    expected_sha: &str,
+    expected_schema_sha: Option<&str>,
+    ops: &[DatasetOp],
+) -> Result<DatasetSnapshot, String> {
+    let _gate = lock_vault_gate(vault);
+    dataset::write_dataset_ops(
+        vault,
+        path,
+        expected_sha,
+        expected_schema_sha,
+        ops,
+        &DatasetLimits::default(),
+    )
+    .map_err(|error| error.to_string())
+}
+
+fn create_dataset_in_vault(
+    vault: &Path,
+    title: &str,
+    header: Vec<String>,
+    rows: Vec<Vec<String>>,
+    primary_key: Option<String>,
+) -> Result<DatasetSnapshot, String> {
+    let _gate = lock_vault_gate(vault);
+    dataset::create_dataset(
+        vault,
+        title,
+        header,
+        rows,
+        primary_key,
+        &DatasetLimits::default(),
+    )
+    .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn read_dataset(app: tauri::AppHandle, path: String) -> Result<DatasetSnapshot, String> {
+    run_blocking(move || {
+        let vault = ensure_vault_dirs(&app)?;
+        read_dataset_in_vault(&vault, &path)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn apply_dataset_ops(
+    app: tauri::AppHandle,
+    path: String,
+    expected_sha: String,
+    expected_schema_sha: Option<String>,
+    ops: Vec<DatasetOp>,
+) -> Result<DatasetSnapshot, String> {
+    run_blocking(move || {
+        let vault = ensure_vault_dirs(&app)?;
+        apply_dataset_ops_in_vault(
+            &vault,
+            &path,
+            &expected_sha,
+            expected_schema_sha.as_deref(),
+            &ops,
+        )
+    })
+    .await
+}
+
+#[tauri::command]
+async fn create_dataset(
+    app: tauri::AppHandle,
+    title: String,
+    header: Vec<String>,
+    rows: Vec<Vec<String>>,
+    primary_key: Option<String>,
+) -> Result<DatasetSnapshot, String> {
+    run_blocking(move || {
+        let vault = ensure_vault_dirs(&app)?;
+        create_dataset_in_vault(&vault, &title, header, rows, primary_key)
     })
     .await
 }
@@ -2955,9 +3091,10 @@ fn ensure_vault_dirs(app: &tauri::AppHandle) -> Result<PathBuf, String> {
 }
 
 fn vault_layout_is_complete(vault: &Path) -> bool {
-    ["fragments", "notes", "assets", "maps", ".shard"]
+    ["fragments", "notes", "assets", "maps", "datasets", ".shard"]
         .iter()
         .all(|directory| vault.join(directory).is_dir())
+        && vault.join("datasets/.gitattributes").is_file()
 }
 
 fn configured_vault_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
@@ -3989,7 +4126,7 @@ fn safe_vault_relative_path(rel_path: &str) -> Result<&Path, String> {
 fn trashable_vault_path(vault: &Path, rel_path: &str) -> Result<PathBuf, String> {
     let rel_path = safe_vault_relative_path(rel_path)?;
     let first = rel_path.components().next();
-    if !matches!(first, Some(Component::Normal(root)) if matches!(root.to_str(), Some("fragments" | "notes" | "assets" | "maps")))
+    if !matches!(first, Some(Component::Normal(root)) if matches!(root.to_str(), Some("fragments" | "notes" | "assets" | "maps" | "datasets")))
     {
         return Err("只能把公开内容移入回收站。".to_string());
     }
@@ -4111,7 +4248,7 @@ fn restore_from_trash_in_vault(vault: &Path, trash_rel_path: &str) -> Result<Pat
         .strip_prefix(".trash/")
         .ok_or_else(|| "只能恢复回收站内的条目。".to_string())?;
     let original_path = safe_vault_relative_path(original_rel)?;
-    if !matches!(original_path.components().next(), Some(Component::Normal(root)) if matches!(root.to_str(), Some("fragments" | "notes" | "assets" | "maps")))
+    if !matches!(original_path.components().next(), Some(Component::Normal(root)) if matches!(root.to_str(), Some("fragments" | "notes" | "assets" | "maps" | "datasets")))
     {
         return Err("回收站条目没有可恢复的公开原位置。".to_string());
     }
@@ -4946,54 +5083,6 @@ fn ensure_public_markdown_path(vault: &Path, rel_path: &str) -> Result<PathBuf, 
         return Err(format!("找不到 Markdown 文件 {}", trimmed));
     }
     Ok(full_path)
-}
-
-fn ensure_public_csv_path(vault: &Path, rel_path: &str) -> Result<PathBuf, String> {
-    let trimmed = rel_path.trim();
-    if trimmed.is_empty() {
-        return Err("CSV 路径不能为空。".to_string());
-    }
-    if trimmed.contains('\\') {
-        return Err("CSV 路径必须使用 / 分隔。".to_string());
-    }
-
-    let path = Path::new(trimmed);
-    if path.is_absolute() {
-        return Err("CSV 路径必须是 vault 内相对路径。".to_string());
-    }
-    for component in path.components() {
-        match component {
-            Component::Normal(value) => {
-                let value = value.to_string_lossy();
-                if value.eq_ignore_ascii_case("lockbox") {
-                    return Err("当前版本不允许读取密匣路径。".to_string());
-                }
-                if value == ".git" || value == ".shard" {
-                    return Err("当前版本不允许读取 Shard 内部路径。".to_string());
-                }
-            }
-            _ => return Err("CSV 路径不能包含 . 或 ..。".to_string()),
-        }
-    }
-    if !path
-        .extension()
-        .and_then(|extension| extension.to_str())
-        .map(|extension| extension.eq_ignore_ascii_case("csv"))
-        .unwrap_or(false)
-    {
-        return Err("只能读取 CSV 文件。".to_string());
-    }
-
-    let full_path = vault.join(path);
-    if !full_path.is_file() {
-        return Err(format!("找不到 CSV 文件 {trimmed}"));
-    }
-    let canonical_vault = vault.canonicalize().map_err(|error| error.to_string())?;
-    let canonical_path = full_path.canonicalize().map_err(|error| error.to_string())?;
-    if !canonical_path.starts_with(&canonical_vault) {
-        return Err("CSV 路径不能越出 vault。".to_string());
-    }
-    Ok(canonical_path)
 }
 
 fn list_csv_files_in_vault(vault: &Path) -> Result<Vec<CsvFileSummary>, String> {
@@ -7591,6 +7680,8 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
+            let lock_dir = app.path().app_config_dir()?.join(LOCKS_DIR_NAME);
+            VAULT_LOCK_DIR.set(lock_dir).expect("vault 锁目录只能初始化一次");
             if let Ok(root) = app.path().app_cache_dir() {
                 app.state::<Arc<search_index::IndexRegistry>>().set_root(root);
             }
@@ -7637,6 +7728,10 @@ pub fn run() {
             convert_fragment_to_note,
             convert_note_to_fragment,
             read_csv_file,
+            read_import_csv_file,
+            read_dataset,
+            apply_dataset_ops,
+            create_dataset,
             open_csv_file,
             create_mind_map,
             read_mind_map,
@@ -7685,6 +7780,86 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dataset_commands_create_read_apply_and_reject_stale_base() {
+        let directory = tempfile::tempdir().unwrap();
+        let vault = directory.path();
+        ensure_vault_layout(vault).unwrap();
+
+        let created = create_dataset_in_vault(
+            vault,
+            "阅读记录",
+            vec!["id".into(), "书名".into()],
+            vec![vec!["r_000000000001".into(), "第一本".into()]],
+            Some("id".into()),
+        )
+        .unwrap();
+        assert_eq!(created.path, "datasets/阅读记录.csv");
+        assert_eq!(read_dataset_in_vault(vault, &created.path).unwrap(), created);
+        let json = serde_json::to_value(&created).unwrap();
+        assert!(json.get("schemaSha").is_some());
+        assert!(json.get("readOnlyReason").is_some());
+
+        let ops = vec![DatasetOp::SetCells {
+            cells: vec![dataset::CellEdit {
+                row: 0,
+                column: 1,
+                value: "第二本".into(),
+            }],
+        }];
+        let updated = apply_dataset_ops_in_vault(
+            vault,
+            &created.path,
+            &created.sha,
+            created.schema_sha.as_deref(),
+            &ops,
+        )
+        .unwrap();
+        assert_eq!(updated.table.rows[0][1], "第二本");
+        assert_ne!(updated.sha, created.sha);
+        assert_eq!(read_dataset_in_vault(vault, &created.path).unwrap(), updated);
+
+        let error = apply_dataset_ops_in_vault(
+            vault,
+            &created.path,
+            &created.sha,
+            created.schema_sha.as_deref(),
+            &ops,
+        )
+        .unwrap_err();
+        assert_eq!(error, "STALE_BASE:数据文件已在别处被修改");
+        assert_eq!(read_dataset_in_vault(vault, &created.path).unwrap(), updated);
+    }
+
+    #[test]
+    fn managed_pathspecs_include_datasets_and_exclude_atomic_leftovers() {
+        let specs = managed_pathspecs();
+        assert!(specs.contains(&"datasets".to_string()));
+        assert!(specs.contains(&":(exclude,glob)datasets/**/.?*.tmp-[0-9a-f][0-9a-f][0-9a-f][0-9a-f]".to_string()));
+    }
+
+    #[test]
+    fn cli_and_app_share_lock_directory_contract() {
+        let tauri_config: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        assert_eq!(
+            tauri_config["identifier"],
+            shard_core::vault_lock::APP_IDENTIFIER
+        );
+        let dir = shard_core::vault_lock::cli_lock_dir().unwrap();
+        assert_eq!(dir.file_name().unwrap(), LOCKS_DIR_NAME);
+        assert_eq!(
+            dir.parent().unwrap().file_name().unwrap(),
+            shard_core::vault_lock::APP_IDENTIFIER
+        );
+        assert_eq!(
+            dir,
+            shard_core::vault_lock::app_config_dir()
+                .unwrap()
+                .join(LOCKS_DIR_NAME)
+        );
+    }
 
     #[test]
     fn external_save_target_rejects_vault_and_symlink_destinations() {
@@ -8173,16 +8348,35 @@ mod tests {
 
         let result = checkpoint_vault_locked(vault, Some("测试")).unwrap();
         assert_eq!(result.status, "committed");
-        assert_eq!(result.changes, 2);
+        assert_eq!(result.changes, 3);
 
         let committed = run_git(vault, &["show", "--format=%B", "--name-only", "HEAD"]).unwrap();
-        assert!(committed.contains("检查点：更新 2 个文件"));
+        assert!(committed.contains("检查点：更新 3 个文件"));
         assert!(committed.contains("触发：测试"));
         // 提交 body 的清单里应有未转义的中文路径（--name-only 段会被 quotepath 转义）
         assert!(committed.contains("A notes/方案笔记.md"));
 
         let result = checkpoint_vault_locked(vault, None).unwrap();
         assert_eq!(result.status, "no_changes");
+    }
+
+    #[test]
+    fn checkpoint_commits_dataset_without_atomic_leftover() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let vault = tempdir.path();
+        ensure_vault_layout(vault).unwrap();
+        ensure_git_repo(vault).unwrap();
+        fs::write(vault.join("datasets/a.csv"), "name\nvalue\n").unwrap();
+        fs::write(vault.join("datasets/.a.csv.tmp-abcd"), "incomplete").unwrap();
+
+        let result = checkpoint_vault_locked(vault, None).unwrap();
+        assert_eq!(result.status, "committed");
+        let committed = run_git(vault, &["ls-tree", "-r", "--name-only", "HEAD"]).unwrap();
+        assert!(committed.lines().any(|path| path == "datasets/a.csv"));
+        assert!(committed.lines().any(|path| path == "datasets/.gitattributes"));
+        assert!(!committed.lines().any(|path| path == "datasets/.a.csv.tmp-abcd"));
+        assert!(vault.join("datasets/.a.csv.tmp-abcd").is_file());
+        assert!(managed_dirty_paths(vault).unwrap().is_empty());
     }
 
     #[test]
@@ -9306,7 +9500,8 @@ mod tests {
         run_git(vault, &["config", "commit.gpgsign", "false"]).unwrap();
         let path =
             write_legacy_outline_fixture(vault, "blocked-checkpoint", "- 根节点\n  - 子节点");
-        run_git(vault, &["add", "fragments/tests/blocked-checkpoint.md"]).unwrap();
+        // 布局文件（如 datasets/.gitattributes）一并入夹具提交，保证开工前工作区干净。
+        run_git(vault, &["add", "-A"]).unwrap();
         run_git(vault, &["commit", "-m", "fixture"]).unwrap();
         let item = preflight_outline_upgrade_in_vault(vault)
             .unwrap()
@@ -9525,7 +9720,8 @@ mod tests {
         .unwrap();
         let raw = serde_json::to_string_pretty(&file).unwrap();
         fs::write(vault.join("notes/审批.shardflow.json"), &raw).unwrap();
-        run_git(vault, &["add", "notes/审批.shardflow.json"]).unwrap();
+        // 布局文件（如 datasets/.gitattributes）一并入夹具提交，结构操作前的检查点才无事可提交。
+        run_git(vault, &["add", "-A"]).unwrap();
         run_git(vault, &["commit", "-m", "fixture"]).unwrap();
         let before = run_git(vault, &["rev-list", "--all", "--count"])
             .unwrap()
@@ -11045,6 +11241,20 @@ mod tests {
         );
         assert_ne!(restored, vault.join("notes/collision.md"));
         assert_eq!(fs::read_to_string(restored).unwrap(), "deleted version");
+    }
+
+    #[test]
+    fn moves_and_restores_dataset_through_trash() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let vault = tempdir.path();
+        ensure_vault_layout(vault).unwrap();
+        fs::write(vault.join("datasets/a.csv"), "name\nvalue\n").unwrap();
+
+        let trashed = move_to_trash_in_vault(vault, "datasets/a.csv").unwrap();
+        assert_eq!(relative_path(vault, &trashed).unwrap(), ".trash/datasets/a.csv");
+        let restored = restore_from_trash_in_vault(vault, ".trash/datasets/a.csv").unwrap();
+        assert_eq!(restored, vault.join("datasets/a.csv"));
+        assert_eq!(fs::read_to_string(restored).unwrap(), "name\nvalue\n");
     }
 
     #[test]

@@ -3,28 +3,36 @@
 
 mod parse;
 
-use shard_core::{create_public_fragment_in_vault, default_vault_path, AppConfig};
+use serde::Deserialize;
+use shard_core::{
+    create_public_fragment_in_vault,
+    dataset::{read_dataset, write_dataset_ops, DatasetLimits, DatasetOp},
+    default_vault_path,
+    vault_lock::{app_settings_path, cli_lock_dir, VaultProcessLock},
+    AppConfig,
+};
 use std::{
+    collections::HashMap,
     env, fs,
     io::{self, IsTerminal, Read},
     path::{Path, PathBuf},
     process::ExitCode,
+    time::Duration,
 };
-
-/// 与 `src-tauri/tauri.conf.json` 的 `identifier` 一致，决定 App 的配置目录。
-const APP_IDENTIFIER: &str = "dev.shard.desktop";
 
 const HELP: &str = "\
 shard — 在终端里记一条 Shard 碎片
 
 用法:
   shard [选项] [#标签…] [/块命令] 内容
+  shard [--vault <路径>] --append-dataset <vault 相对路径> < records.json
 
 示例:
   shard 今天心情很好
   shard #备忘 /任务列表 买咖啡
   shard /待办 买咖啡            # 斜杠命令同编辑器，拼音缩写也可：/db
   pbpaste | shard #摘录         # 没有内容参数时从标准输入读取
+  shard --append-dataset datasets/阅读记录.csv < records.json
 
 块命令:
   /任务列表 /待办 /备忘   → - [ ] 任务项
@@ -35,6 +43,7 @@ shard — 在终端里记一条 Shard 碎片
 
 选项:
   --vault <路径>   指定资料库（默认读 Shard 设置，或环境变量 SHARD_VAULT）
+  --append-dataset <路径>  从标准输入读取 JSON，按主键幂等追加记录
   -h, --help       显示帮助
   -V, --version    显示版本
 
@@ -46,15 +55,40 @@ fn main() -> ExitCode {
     match run() {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("shard: {error}");
-            ExitCode::FAILURE
+            eprintln!("shard: {}", error.message);
+            ExitCode::from(error.code)
         }
     }
 }
 
-fn run() -> Result<(), String> {
+struct CliError {
+    code: u8,
+    message: String,
+}
+
+impl From<String> for CliError {
+    fn from(message: String) -> Self {
+        Self { code: 1, message }
+    }
+}
+
+impl From<&str> for CliError {
+    fn from(message: &str) -> Self {
+        message.to_string().into()
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct AppendInput {
+    expected_header: Vec<String>,
+    records: Vec<HashMap<String, String>>,
+}
+
+fn run() -> Result<(), CliError> {
     let mut args = env::args().skip(1).peekable();
     let mut vault_arg = None;
+    let mut append_path = None;
 
     // 选项只认内容之前的部分，正文里的 `--xxx` 原样保留。
     while let Some(arg) = args.peek() {
@@ -71,6 +105,10 @@ fn run() -> Result<(), String> {
                 args.next();
                 vault_arg = Some(args.next().ok_or("--vault 需要一个路径")?);
             }
+            "--append-dataset" => {
+                args.next();
+                append_path = Some(args.next().ok_or("--append-dataset 需要 vault 相对路径")?);
+            }
             "--" => {
                 args.next();
                 break;
@@ -83,7 +121,15 @@ fn run() -> Result<(), String> {
         }
     }
 
-    let mut capture = parse::parse_capture(&args.collect::<Vec<_>>().join(" "));
+    let content = args.collect::<Vec<_>>().join(" ");
+    if let Some(path) = append_path {
+        if !content.is_empty() {
+            return Err("--append-dataset 不能与碎片内容同时使用".into());
+        }
+        return append_dataset(&path, vault_arg);
+    }
+
+    let mut capture = parse::parse_capture(&content);
     if capture.text.is_empty() && !io::stdin().is_terminal() {
         let mut input = String::new();
         io::stdin()
@@ -94,10 +140,130 @@ fn run() -> Result<(), String> {
 
     let (body, tags) = parse::compose(&capture)?;
     let vault = resolve_vault(vault_arg)?;
+    let lock_dir = lock_dir()?;
+    let timeout = lock_timeout()?;
+    let _lock = VaultProcessLock::acquire(&lock_dir, &vault, Some(timeout))?;
     let path = create_public_fragment_in_vault(&vault, &body, tags, "cli")?;
 
     let shown = path.strip_prefix(&vault).unwrap_or(&path);
     println!("{}", shown.display());
+    Ok(())
+}
+
+fn lock_dir() -> Result<PathBuf, CliError> {
+    env::var_os("SHARD_LOCK_DIR")
+        .map(PathBuf::from)
+        .or_else(cli_lock_dir)
+        .ok_or_else(|| "无法确定资料库锁目录".into())
+}
+
+fn lock_timeout() -> Result<Duration, CliError> {
+    let millis = env::var("SHARD_LOCK_TIMEOUT_MS")
+        .ok()
+        .map(|value| {
+            value
+                .parse::<u64>()
+                .map_err(|_| "SHARD_LOCK_TIMEOUT_MS 必须是非负整数")
+        })
+        .transpose()?
+        .unwrap_or(30_000);
+    Ok(Duration::from_millis(millis))
+}
+
+fn append_dataset(path: &str, vault_arg: Option<String>) -> Result<(), CliError> {
+    let mut input = String::new();
+    io::stdin()
+        .read_to_string(&mut input)
+        .map_err(|error| format!("读取标准输入失败：{error}"))?;
+    let request: AppendInput =
+        serde_json::from_str(&input).map_err(|error| format!("追加记录 JSON 无效：{error}"))?;
+    let vault = resolve_vault(vault_arg)?;
+    let _lock = VaultProcessLock::acquire(&lock_dir()?, &vault, Some(lock_timeout()?))?;
+    let limits = DatasetLimits::default();
+    let current = read_dataset(&vault, path, &limits).map_err(|error| error.to_string())?;
+    if current.table.header != request.expected_header {
+        return Err(CliError {
+            code: 2,
+            message: "表头已变化".into(),
+        });
+    }
+    if !current.editable {
+        return Err(current
+            .read_only_reason
+            .unwrap_or_else(|| "数据集不可编辑".into())
+            .into());
+    }
+    let key = current
+        .schema
+        .as_ref()
+        .and_then(|schema| schema.primary_key.as_ref())
+        .ok_or("数据集必须有主键")?;
+    let key_column = current
+        .table
+        .header
+        .iter()
+        .position(|column| column == key)
+        .ok_or("数据集主键列不存在")?;
+    let mut known: HashMap<String, Vec<String>> = current
+        .table
+        .rows
+        .iter()
+        .map(|row| (row[key_column].clone(), row.clone()))
+        .collect();
+    let mut new_rows = Vec::new();
+    let mut skipped = 0usize;
+    for record in request.records {
+        if record
+            .keys()
+            .any(|column| !current.table.header.contains(column))
+        {
+            return Err("记录含有表头之外的列".into());
+        }
+        let row: Vec<String> = current
+            .table
+            .header
+            .iter()
+            .map(|column| record.get(column).cloned().unwrap_or_default())
+            .collect();
+        let id = &row[key_column];
+        if id.is_empty() {
+            return Err("每条记录必须提供非空主键".into());
+        }
+        if let Some(existing) = known.get(id) {
+            if existing != &row {
+                return Err(CliError {
+                    code: 3,
+                    message: "主键冲突".into(),
+                });
+            }
+            skipped += 1;
+        } else {
+            known.insert(id.clone(), row.clone());
+            new_rows.push(row);
+        }
+    }
+    let appended = new_rows.len();
+    let sha = if appended == 0 {
+        current.sha
+    } else {
+        write_dataset_ops(
+            &vault,
+            path,
+            &current.sha,
+            current.schema_sha.as_deref(),
+            &[DatasetOp::InsertRows {
+                at: current.table.rows.len(),
+                rows: new_rows,
+            }],
+            &limits,
+        )
+        .map_err(|error| error.to_string())?
+        .sha
+    };
+    println!(
+        "{}",
+        serde_json::json!({ "appended": appended, "skipped": skipped, "sha": sha })
+    );
     Ok(())
 }
 
@@ -138,20 +304,6 @@ fn configured_vault_path() -> Result<Option<PathBuf>, String> {
     let config: AppConfig = serde_json::from_str(&text)
         .map_err(|error| format!("解析 {} 失败：{error}", settings.display()))?;
     Ok(config.vault_path.map(PathBuf::from))
-}
-
-/// Tauri `app_config_dir()` 在各平台的位置 + `settings.json`。
-fn app_settings_path() -> Option<PathBuf> {
-    let base = if cfg!(target_os = "macos") {
-        home_dir()?.join("Library").join("Application Support")
-    } else if cfg!(target_os = "windows") {
-        PathBuf::from(env::var_os("APPDATA")?)
-    } else {
-        env::var_os("XDG_CONFIG_HOME")
-            .map(PathBuf::from)
-            .or_else(|| home_dir().map(|home| home.join(".config")))?
-    };
-    Some(base.join(APP_IDENTIFIER).join("settings.json"))
 }
 
 fn home_dir() -> Option<PathBuf> {

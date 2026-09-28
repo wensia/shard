@@ -4,6 +4,7 @@ import { toast } from "sonner"
 import { getApiErrorMessage, openCsvFile, readCsvFile } from "@/lib/api"
 import { isNonUtf8CsvEncoding, type CsvDocument } from "@/lib/csv"
 import { parseCsvBytesInWorker } from "@/lib/csv-worker"
+import { openDatasetEditor } from "@/features/datasets/open-dataset"
 
 import styles from "./csv-preview.module.css"
 
@@ -40,18 +41,24 @@ export function CsvPreview({ maxRows, path }: CsvPreviewProps) {
   useEffect(() => {
     let cancelled = false
     setLoadState({ state: "loading" })
-    void readCsvFile(path)
-      .then((bytes) => parseCsvBytesInWorker(Uint8Array.from(bytes)))
-      .then((document) => {
-        if (!cancelled) setLoadState({ document, state: "ready" })
-      })
-      .catch((error) => {
-        if (!cancelled) {
-          setLoadState({ message: getApiErrorMessage(error), state: "error" })
-        }
-      })
+    const reload = () => {
+      void readCsvFile(path)
+        .then((bytes) => parseCsvBytesInWorker(Uint8Array.from(bytes)))
+        .then((document) => {
+          if (!cancelled) setLoadState({ document, state: "ready" })
+        })
+        .catch((error) => {
+          if (!cancelled) {
+            setLoadState({ message: getApiErrorMessage(error), state: "error" })
+          }
+        })
+    }
+    reload()
+    const changed = (event: Event) => { if ((event as CustomEvent<{ path: string }>).detail.path === path) reload() }
+    window.addEventListener("shard:dataset-changed", changed)
     return () => {
       cancelled = true
+      window.removeEventListener("shard:dataset-changed", changed)
     }
   }, [path])
 
@@ -129,6 +136,7 @@ export function CsvPreview({ maxRows, path }: CsvPreviewProps) {
       <footer className={styles.footer}>
         <span>共 {rows.length} 行</span>
         <span aria-hidden="true">·</span>
+        <button className={styles.openButton} onClick={() => openDatasetEditor(path)} type="button">编辑</button>
         <button
           className={styles.openButton}
           disabled={isOpening}

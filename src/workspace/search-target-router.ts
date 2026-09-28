@@ -2,7 +2,8 @@ import { readCanvas } from "@/features/canvas/api"
 import type { CanvasReadResult } from "@/features/canvas/model"
 import { readTable } from "@/features/tables/api"
 import type { TableReadResult } from "@/features/tables/model"
-import { openCsvFile, readGraphFragment, readMindMap, type GraphFragmentResult } from "@/lib/api"
+import { readGraphFragment, readMindMap, type GraphFragmentResult } from "@/lib/api"
+import { openDatasetEditor } from "@/features/datasets/open-dataset"
 import { readSearchTarget } from "@/lib/search-api"
 import type {
   ReadSearchTargetResponse,
@@ -148,7 +149,7 @@ export function createSearchTargetRouter({
       }
 
       if (target.kind === "csv") {
-        await openCsvFile(target.path)
+        openDatasetEditor(target.path)
         throwIfAborted(signal)
         return { status: "externalAccepted" }
       }

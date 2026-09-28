@@ -1,0 +1,71 @@
+{
+  "cases": [
+    {
+      "id": "set-cells-and-insert-rows",
+      "table": { "header": ["id", "内容"], "rows": [["r_000000000001", "原文"]] },
+      "schema": { "schemaVersion": 1, "datasetId": "ds_00000000000000000000000000000001", "title": "示例", "primaryKey": "id" },
+      "ops": [
+        { "op": "insertRows", "at": 1, "rows": [["r_000000000002", "第二行"]] },
+        { "op": "setCells", "cells": [{ "row": 0, "column": 1, "value": "改后" }] }
+      ],
+      "expected": { "header": ["id", "内容"], "rows": [["r_000000000001", "改后"], ["r_000000000002", "第二行"]] }
+    },
+    {
+      "id": "delete-rows-deduplicated",
+      "table": { "header": ["值"], "rows": [["a"], ["b"], ["c"], ["d"]] },
+      "schema": null,
+      "ops": [{ "op": "deleteRows", "rows": [1, 3, 1] }],
+      "expected": { "header": ["值"], "rows": [["a"], ["c"]] }
+    },
+    {
+      "id": "column-batch-order",
+      "table": { "header": ["a", "b"], "rows": [["1", "2"]] },
+      "schema": null,
+      "ops": [
+        { "op": "insertColumn", "at": 1, "name": "中" },
+        { "op": "setCells", "cells": [{ "row": 0, "column": 1, "value": "新" }] },
+        { "op": "renameColumn", "column": 2, "name": "末" },
+        { "op": "deleteColumn", "column": 0 }
+      ],
+      "expected": { "header": ["中", "末"], "rows": [["新", "2"]] }
+    },
+    {
+      "id": "preserve-raw-text",
+      "table": { "header": ["text"], "rows": [["00123"]] },
+      "schema": null,
+      "ops": [{ "op": "setCells", "cells": [{ "row": 0, "column": 0, "value": " =SUM(1,2)\n\"字\"" }] }],
+      "expected": { "header": ["text"], "rows": [[" =SUM(1,2)\n\"字\""]] }
+    },
+    {
+      "id": "protect-primary-key",
+      "table": { "header": ["id", "值"], "rows": [["r_000000000001", "a"]] },
+      "schema": { "schemaVersion": 1, "datasetId": "ds_00000000000000000000000000000001", "title": "示例", "primaryKey": "id" },
+      "ops": [{ "op": "setCells", "cells": [{ "row": 0, "column": 0, "value": "different" }] }],
+      "error": "PRIMARY_KEY_INVALID"
+    },
+    {
+      "id": "reject-duplicate-header-between-ops",
+      "table": { "header": ["a", "b"], "rows": [] },
+      "schema": null,
+      "ops": [
+        { "op": "renameColumn", "column": 1, "name": "a" },
+        { "op": "renameColumn", "column": 1, "name": "c" }
+      ],
+      "error": "HEADER_INVALID"
+    },
+    {
+      "id": "reject-duplicate-inserted-key",
+      "table": { "header": ["id", "v"], "rows": [["one", "a"]] },
+      "schema": { "schemaVersion": 1, "datasetId": "ds_00000000000000000000000000000001", "title": "示例", "primaryKey": "id" },
+      "ops": [{ "op": "insertRows", "at": 1, "rows": [["one", "b"]] }],
+      "error": "PRIMARY_KEY_INVALID"
+    },
+    {
+      "id": "reject-last-column-delete",
+      "table": { "header": ["a"], "rows": [["x"]] },
+      "schema": null,
+      "ops": [{ "op": "deleteColumn", "column": 0 }],
+      "error": "OP_INVALID"
+    }
+  ]
+}
