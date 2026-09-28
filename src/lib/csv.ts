@@ -3,12 +3,21 @@ export type CsvEncoding = "gbk" | "utf-16be" | "utf-16le" | "utf-8" | "utf-8-bom
 export interface CsvDocument {
   encoding: CsvEncoding
   records: string[][]
+  importInspection?: CsvImportInspection
+}
+
+export interface CsvImportInspection {
+  headerInvalid: boolean
+  ragged: boolean
+  idValid: boolean
+  baseLimit: string | null
+  withIdLimit: string | null
 }
 
 export type CsvWorkerRequest = {
   bytes: Uint8Array
   requestId: string
-  type: "parse"
+  type: "parse" | "inspect"
 }
 
 export type CsvWorkerResponse =
@@ -140,6 +149,38 @@ export function decodeCsvBytes(bytes: Uint8Array): { encoding: CsvEncoding; text
 export function parseCsvBytes(bytes: Uint8Array): CsvDocument {
   const decoded = decodeCsvBytes(bytes)
   return { encoding: decoded.encoding, records: parseCsv(decoded.text) }
+}
+
+/** 在 CSV worker 中执行，避免大文件上限检查占用编辑器线程。 */
+export function inspectCsvImport(records: string[][]): CsvImportInspection {
+  const header = records[0] ?? []
+  const rows = records.slice(1)
+  const headerInvalid = header.length === 0 || header.some((name) => !name) || new Set(header).size !== header.length
+  const ragged = rows.some((row) => row.length !== header.length)
+  const idColumn = header.indexOf("id")
+  const idValues = idColumn < 0 ? [] : rows.map((row) => row[idColumn])
+  const idValid = idColumn < 0 || (idValues.every(Boolean) && new Set(idValues).size === rows.length)
+  let baseLimit: string | null = null
+  if (rows.length > 10_000) baseLimit = "超过 10,000 行上限"
+  else if (header.length > 128) baseLimit = "超过 128 列上限"
+  else if (rows.length * header.length > 300_000) baseLimit = "超过 300,000 个单元格上限"
+  let bytes = 0
+  if (!baseLimit) {
+    const encoder = new TextEncoder()
+    for (const record of records) {
+      for (const value of record) {
+        if ([...value].length > 16_384) { baseLimit = "单元格超过 16,384 字符上限"; break }
+        const quoted = /[",\r\n]/u.test(value) || (record.length === 1 && value === "")
+        bytes += encoder.encode(value).length + (quoted ? 2 + (value.match(/"/gu)?.length ?? 0) : 0) + 1
+      }
+      if (baseLimit || bytes > 64 * 1024 * 1024) break
+    }
+    if (!baseLimit && bytes > 64 * 1024 * 1024) baseLimit = "超过 64 MiB 文件上限"
+  }
+  const withIdLimit = baseLimit ?? (header.length + 1 > 128 ? "超过 128 列上限"
+    : rows.length * (header.length + 1) > 300_000 ? "超过 300,000 个单元格上限"
+      : bytes + 3 + rows.length * 15 > 64 * 1024 * 1024 ? "超过 64 MiB 文件上限" : null)
+  return { headerInvalid, ragged, idValid, baseLimit, withIdLimit }
 }
 
 export function isNonUtf8CsvEncoding(encoding: CsvEncoding) {

@@ -33,6 +33,7 @@ export function ShardBlockNodeView({
     >
       {ui ? (
         <ui.Editor
+          allowDatasetActions={editor.storage.shardBlock.allowDatasetActions}
           editorId={hostEditorId(editor)}
           onChange={(next) => {
             // 走 updateAttributes 而不是自建事务：改动天然进撤销历史，

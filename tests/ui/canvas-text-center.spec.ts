@@ -56,10 +56,10 @@ async function prepare(page: Page) {
 
 for (const browserName of ["webkit", "chromium"] as const) {
   const engineTest = test.extend({
-    page: async ({}, use) => {
+    page: async ({ baseURL }, use) => {
       const browser = await ({ webkit, chromium })[browserName].launch()
       try {
-        const page = await browser.newPage({ baseURL: "http://127.0.0.1:1420", viewport: { width: 1800, height: 1600 }, deviceScaleFactor: 2 })
+        const page = await browser.newPage({ baseURL, viewport: { width: 1800, height: 1600 }, deviceScaleFactor: 2 })
         await use(page)
       } finally { await browser.close() }
     },

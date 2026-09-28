@@ -2,7 +2,7 @@ import { Menu } from "@base-ui/react/menu"
 import { cloneElement, createContext, type HTMLAttributes, type KeyboardEvent, type MouseEvent, type ReactElement, type ReactNode, useContext, useId, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 
-import { ArchiveRestoreIcon, FileTextIcon, FolderIcon, LockKeyholeIcon, MoreHorizontalIcon, PencilLineIcon, Trash2Icon } from "@/components/icons"
+import { ArchiveRestoreIcon, FileTextIcon, FolderIcon, InboxIcon, LockKeyholeIcon, MoreHorizontalIcon, PencilLineIcon, Trash2Icon } from "@/components/icons"
 import { Button } from "@/components/ui/button"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import type { LibraryTreeEntry } from "@/types"
@@ -38,6 +38,7 @@ export interface LibraryEntryMenuProps extends MenuControl {
   onCopyDocumentLink?: (entry: LibraryTreeEntry) => void
   onDelete: (entry: LibraryTreeEntry) => void
   onImportTable?: (entry: LibraryTreeEntry) => void
+  onImportGraphToTimeline?: (entry: LibraryTreeEntry) => void
   onMove: (entry: LibraryTreeEntry, destinationDirectory: string) => void
   onMoveToLockbox: (entry: LibraryTreeEntry) => void
   onOpenEntry?: (entry: LibraryTreeEntry) => void
@@ -74,6 +75,11 @@ function LibraryEntryMenuItems({ entry, destinations, batch, run, ...actions }: 
       ) : null}
       {actions.onCopyDocumentLink && (entry.kind === "mindmap" || entry.kind === "flowchart") ? (
         <DropdownMenuItem onClick={() => actions.onCopyDocumentLink?.(entry)}>复制文档链接</DropdownMenuItem>
+      ) : null}
+      {actions.onImportGraphToTimeline && (entry.kind === "mindmap" || entry.kind === "flowchart") ? (
+        <DropdownMenuItem onClick={() => run(() => actions.onImportGraphToTimeline?.(entry))}>
+          <InboxIcon />加入时间线
+        </DropdownMenuItem>
       ) : null}
       <DropdownMenuItem onClick={() => run(() => actions.onRename(entry))}><PencilLineIcon />重命名</DropdownMenuItem>
     </>}

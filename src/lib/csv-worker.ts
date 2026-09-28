@@ -1,5 +1,6 @@
 import {
   parseCsvBytes,
+  inspectCsvImport,
   type CsvDocument,
   type CsvWorkerRequest,
   type CsvWorkerResponse,
@@ -14,8 +15,12 @@ let worker: Worker | null = null
 let nextRequestId = 0
 const pending = new Map<string, PendingParse>()
 
-export function parseCsvBytesInWorker(bytes: Uint8Array) {
-  if (typeof Worker === "undefined") return Promise.resolve(parseCsvBytes(bytes))
+export function parseCsvBytesInWorker(bytes: Uint8Array, inspect = false) {
+  if (typeof Worker === "undefined") {
+    const document = parseCsvBytes(bytes)
+    if (inspect) document.importInspection = inspectCsvImport(document.records)
+    return Promise.resolve(document)
+  }
 
   const activeWorker = getWorker()
   const requestId = `csv:${nextRequestId + 1}`
@@ -23,7 +28,7 @@ export function parseCsvBytesInWorker(bytes: Uint8Array) {
 
   return new Promise<CsvDocument>((resolve, reject) => {
     pending.set(requestId, { reject, resolve })
-    activeWorker.postMessage({ bytes, requestId, type: "parse" } satisfies CsvWorkerRequest)
+    activeWorker.postMessage({ bytes, requestId, type: inspect ? "inspect" : "parse" } satisfies CsvWorkerRequest)
   })
 }
 

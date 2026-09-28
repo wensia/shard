@@ -36,10 +36,11 @@ async function expectUnclipped(editor: Locator) {
 
 for (const browserName of ["webkit", "chromium"] as const) {
   const engineTest = test.extend({
-    page: async ({}, use) => {
+    page: async ({ baseURL }, use) => {
+      if (!baseURL) throw new Error("Playwright baseURL 未配置")
       const browser = await ({ webkit, chromium })[browserName].launch()
       try {
-        await use(await browser.newPage({ baseURL: "http://127.0.0.1:1420", viewport: { width: 1280, height: 720 } }))
+        await use(await browser.newPage({ baseURL, viewport: { width: 1280, height: 720 } }))
       } finally { await browser.close() }
     },
   })

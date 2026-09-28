@@ -28,6 +28,7 @@ import {
 } from "@/components/icons"
 
 import { FragmentBacklinksPanel } from "@/components/shard/fragment-related"
+import { PropertiesPanel } from "@/components/shard/properties-panel"
 import { AssetGrid, AssetViewer } from "@/components/shard/asset-grid"
 import { DirectorySelectionToolbar } from "@/components/shard/directory-selection-toolbar"
 import { TrashEntryContextMenu } from "@/components/shard/library-entry-menu"
@@ -71,6 +72,7 @@ import {
   createLibraryDirectory,
   createLibraryNote,
   createMindMap,
+  importGraphFileToTimeline,
   listDiagramDocuments,
   listLibraryTree,
   listFragments,
@@ -85,9 +87,12 @@ import {
   restoreFromTrash,
 } from "@/lib/api"
 import { deriveKind } from "@/lib/content-kind"
+import { readFlowchartContent } from "@/lib/flowchart-content"
+import { openDatasetEditor } from "@/features/datasets/open-dataset"
 import { extractTags, normalizeTagList } from "@/lib/editor-format"
 import { libraryEntryName, libraryNameError, type LibrarySort } from "@/lib/library-entry"
 import { notify } from "@/lib/notify"
+import { readOutlineContent } from "@/lib/mind-map-outline"
 import { useLibraryFileSelection } from "@/lib/use-library-file-selection"
 import { useImageUpload } from "@/hooks/use-image-upload"
 import { useFragmentRelations } from "@/lib/use-fragment-relations"
@@ -127,6 +132,7 @@ export interface LibraryDraftHandle {
 export type LibraryNavigationTarget =
   | { kind: "note"; id: string; requestId: number; edit?: boolean }
   | { kind: "trash"; requestId: number }
+  | { kind: "mindmap" | "flowchart"; path: string; requestId: number }
 
 export type LibrarySearchNavigationTarget =
   | {
@@ -173,6 +179,8 @@ interface LibraryShellProps {
   onConvertedToFragment?: (fragment: Fragment) => void
   onLibraryMutation: (result: LibraryMutationResult) => void
   onMoveToLockbox: (fragment: Fragment) => Promise<void>
+  onFragmentUpdated?: (fragment: Fragment) => void
+  onOpenGraphFragment?: (fragment: Fragment) => void
   /** 点击树上的密匣挂载点：解锁并进入密匣一级空间（传送门）。 */
   onOpenLockbox: () => void
   onRegisterSaveHandler: (handle: LibraryDraftHandle | null) => void
@@ -182,7 +190,7 @@ interface LibraryShellProps {
     id: string,
     content: string,
     tags: string[],
-    expectedSha?: string
+    expectedFileSha?: string
   ) => Promise<Fragment>
   /** 冲突后「载入磁盘版本」需要父级重新拉取 fragments 才能拿到最新内容。 */
   onRefreshFragments?: () => Promise<unknown> | void
@@ -196,6 +204,7 @@ type TreeDialogState =
   | { kind: "delete"; entry: LibraryTreeEntry }
   | { kind: "batchDelete"; entries: LibraryTreeEntry[] }
   | { kind: "purge"; entry: LibraryTreeEntry }
+  | { kind: "importGraph"; entry: LibraryTreeEntry }
   | { kind: "emptyTrash" }
 type LibrarySelection =
   | { kind: "note"; id: string }
@@ -263,6 +272,8 @@ export function LibraryShell({
   onConvertedToFragment,
   onLibraryMutation,
   onMoveToLockbox,
+  onFragmentUpdated,
+  onOpenGraphFragment,
   onOpenLockbox,
   onRegisterSaveHandler,
   onRefreshLibrary,
@@ -429,8 +440,8 @@ export function LibraryShell({
   }, [libraryTree, selection, trashDirectoryPath])
   const draftRef = useRef(draft)
   const lastSavedContentRef = useRef("")
-  /** 上次读到/存下正文的 SHA-256，保存时作为基线校验；null=暂缺（放行保存）。 */
-  const baseShaRef = useRef<string | null>(null)
+  /** 上次读到/存下完整文件的 SHA-256，保存时作为基线校验；null=暂缺（放行保存）。 */
+  const baseFileShaRef = useRef<string | null>(null)
   /** 用户在冲突提示里选择「放弃草稿」后，等待父级刷新换入磁盘版本。 */
   const pendingDiskReloadRef = useRef(false)
   const selectedNoteRef = useRef<Fragment | null>(selectedNote)
@@ -524,11 +535,7 @@ export function LibraryShell({
     draftRef.current = selectedNote.content
     lastSavedContentRef.current = selectedNote.content
     setSaveState("saved")
-    baseShaRef.current = null
-    const content = selectedNote.content
-    void sha256Hex(content).then((sha) => {
-      if (lastSavedContentRef.current === content) baseShaRef.current = sha
-    })
+    baseFileShaRef.current = selectedNote.fileSha ?? null
   }, [selectedNote?.id])
 
   // 磁盘版本变化（同步 pull / 外部编辑 / 冲突后放弃草稿）时换入新内容：
@@ -536,31 +543,24 @@ export function LibraryShell({
   useEffect(() => {
     const note = selectedNote
     if (!note) return
+    const clean =
+      draftRef.current === lastSavedContentRef.current &&
+      savePromiseRef.current === null
     if (
       note.content === lastSavedContentRef.current ||
       note.content === draftRef.current
     ) {
       pendingDiskReloadRef.current = false
+      if (clean) baseFileShaRef.current = note.fileSha ?? null
       return
     }
-    const clean =
-      draftRef.current === lastSavedContentRef.current &&
-      savePromiseRef.current === null
     if (!clean && !pendingDiskReloadRef.current) return
     pendingDiskReloadRef.current = false
     setDraft(note.content)
     draftRef.current = note.content
     lastSavedContentRef.current = note.content
     setSaveState("saved")
-    baseShaRef.current = null
-    void sha256Hex(note.content).then((sha) => {
-      if (
-        selectedNoteRef.current?.id === note.id &&
-        lastSavedContentRef.current === note.content
-      ) {
-        baseShaRef.current = sha
-      }
-    })
+    baseFileShaRef.current = note.fileSha ?? null
   }, [selectedNote])
 
   useEffect(() => {
@@ -616,15 +616,10 @@ export function LibraryShell({
           note.id,
           content,
           tags,
-          baseShaRef.current ?? undefined
+          baseFileShaRef.current ?? undefined
         )
         lastSavedContentRef.current = updated.content
-        baseShaRef.current = null
-        void sha256Hex(updated.content).then((sha) => {
-          if (lastSavedContentRef.current === updated.content) {
-            baseShaRef.current = sha
-          }
-        })
+        baseFileShaRef.current = updated.fileSha ?? null
         // 自动保存可能在用户继续输入时完成：只有草稿仍等于送出的内容才回写，
         // 否则会覆盖保存期间的新键入
         if (
@@ -647,7 +642,7 @@ export function LibraryShell({
           )
           if (keepMine) {
             // 清掉基线哈希放行一次强制保存；外层排空循环会立即重存
-            baseShaRef.current = null
+            baseFileShaRef.current = null
             setSaveState("dirty")
             return true
           }
@@ -675,6 +670,15 @@ export function LibraryShell({
       }
     }
   }, [onSave, selectedNoteReadOnly])
+
+  function handlePropertyUpdated(updated: Fragment) {
+    if (updated.content === lastSavedContentRef.current) {
+      baseFileShaRef.current = updated.fileSha ?? null
+    }
+    selectedNoteRef.current = updated
+    if (searchNote?.id === updated.id) setSearchNote(updated)
+    onFragmentUpdated?.(updated)
+  }
 
   const saveStateRef = useRef<SaveState>("saved")
   saveStateRef.current = saveState
@@ -818,7 +822,16 @@ export function LibraryShell({
       try {
         const documents = await listDiagramDocuments()
         const document = documents.find(item => item.id === link.targetId && item.kind === (link.targetType === "map" ? "mindmap" : "flowchart"))
-        if (!document) { notify.error("引用的图文档已不存在"); return }
+        if (!document) {
+          const fragment = fragments.find(item => item.id === link.targetId && (
+            link.targetType === "map"
+              ? deriveKind(item.tags) === "outline" && readOutlineContent(item.content)?.format === "json"
+              : deriveKind(item.tags) === "flowchart" && readFlowchartContent(item.content)?.format === "json"
+          ))
+          if (!fragment || !onOpenGraphFragment) { notify.error("引用的图文档已不存在"); return }
+          onOpenGraphFragment(fragment)
+          return
+        }
         if (document.kind === "mindmap") await selectMindMap(document.path)
         else await selectCanvas(document.path, "flowchart")
       } catch (error) { notify.failure("图文档打开失败", error) }
@@ -883,8 +896,16 @@ export function LibraryShell({
       void selectTrashView().then((selected) => {
         if (selected) consumedNavigationRef.current = navigateTo.requestId
       })
+      return
     }
-  }, [navigateTo, notes])
+    if (!findTreeEntry(libraryTree?.entries ?? [], navigateTo.path)) return
+    const selection = navigateTo.kind === "mindmap"
+      ? selectMindMap(navigateTo.path)
+      : selectCanvas(navigateTo.path, "flowchart")
+    void selection.then((selected) => {
+      if (selected) consumedNavigationRef.current = navigateTo.requestId
+    })
+  }, [libraryTree, navigateTo, notes])
 
   useEffect(() => {
     if (
@@ -906,7 +927,7 @@ export function LibraryShell({
       setDraft(note.content)
       draftRef.current = note.content
       lastSavedContentRef.current = note.content
-      baseShaRef.current = null
+      baseFileShaRef.current = note.fileSha ?? null
       setSaveState("saved")
       return
     }
@@ -1393,6 +1414,34 @@ export function LibraryShell({
       setTreeDialog(null)
       return
     }
+    if (treeDialog.kind === "importGraph") {
+      const entry = treeDialog.entry
+      setBusyAction("加入时间线")
+      let fragment: Fragment
+      try {
+        fragment = await importGraphFileToTimeline(entry.path)
+      } catch (error) {
+        notify.failure("加入时间线失败", error)
+        setBusyAction(null)
+        return
+      }
+      setTreeDialog(null)
+      try {
+        await onRefreshLibrary?.()
+        await onRefreshFragments?.()
+      } catch (error) {
+        notify.failure("已加入时间线，但列表刷新失败", error)
+        setBusyAction(null)
+        return
+      }
+      notify.success("已加入时间线", {
+        action: onOpenGraphFragment
+          ? { label: "打开", onClick: () => onOpenGraphFragment(fragment) }
+          : undefined,
+      })
+      setBusyAction(null)
+      return
+    }
     const deletedPath = treeDialog.entry.path
     const result =
       treeDialog.kind === "purge"
@@ -1438,9 +1487,7 @@ export function LibraryShell({
     }
     if (entry.kind === "csv") {
       setSelectedTreePath(entry.path)
-      void openCsvFile(entry.path).catch((error) =>
-        notify.failure("CSV 文件打开失败", error)
-      )
+      openDatasetEditor(entry.path)
       return
     }
     const note = notes.find((candidate) => candidate.path === entry.path)
@@ -1526,6 +1573,7 @@ export function LibraryShell({
             onCopyDocumentLink={copyDiagramLink}
             onDelete={requestDelete}
             onImportTable={(entry) => void importLibraryTable(entry)}
+            onImportGraphToTimeline={(entry) => setTreeDialog({ kind: "importGraph", entry })}
             onMove={moveEntry}
             onMoveToLockbox={moveEntryToLockbox}
             onOpenEntry={handleDirectoryEntryClick}
@@ -1657,39 +1705,49 @@ export function LibraryShell({
 
     if (selectedNote) {
       return (
-        <div className={zen ? styles.zenNoteViewport : styles.editorViewport}>
-          <ShardRichEditor
-            ref={richNoteEditor}
-            ariaLabel="资料库文档编辑器"
-            autoFocus={zen || mobilePane === "editor"}
-            editorId={`library:${selectedNote.id}`}
-            getKnownTags={() => knownTagsRef.current}
-            getWikilinkCandidates={() => wikilinkCandidatesRef.current}
-            // 换一篇文档就换一个编辑器实例：正文与撤销历史一起重置。
-            key={`${selectedNote.id}:${activeSearchNavigation?.kind === "note" ? activeSearchNavigation.requestId : "browse"}`}
-            onChange={selectedNoteReadOnly ? () => undefined : (content) => {
-              setDraft(content)
-              draftRef.current = content
-              setSaveState(
-                content === lastSavedContentRef.current ? "saved" : "dirty"
-              )
-            }}
-            onDropFiles={selectedNoteReadOnly ? undefined : (files) => void uploadPastedImages(files)}
-            // ProseMirror 对 Esc 一律 preventDefault，ZenSurface 挂在 window 上的
-            // 监听因此等不到这个键；由编辑器转交回宿主（见 shard-host.ts）。
-            onEscape={zen ? () => setIsZen(false) : undefined}
-            onImageFiles={selectedNoteReadOnly ? undefined : (files) => void uploadPastedImages(files)}
-            onNavigateWikilink={navigateWikilink}
-            onOpenDocumentLink={(link) => void openCanvasLink(link)}
-            onPasteFiles={selectedNoteReadOnly ? undefined : (files) => void uploadPastedImages(files)}
-            onSubmit={selectedNoteReadOnly ? undefined : () => void saveCurrentNote()}
-            placeholder="开始写文档…"
+        <div
+          className={`${zen ? styles.zenNoteViewport : styles.editorViewport} flex flex-col`}
+        >
+          <PropertiesPanel
+            fragment={selectedNote}
+            inset={false}
+            onFragmentUpdated={handlePropertyUpdated}
             readOnly={selectedNoteReadOnly || interactionBlocked || tableStructureBusy || busyAction !== null}
-            // 资料库里全是文档：工具集合按文档档开放（产品框架 §2）。
-            tier="document"
-            value={draft}
-            variant="library"
           />
+          <div className="min-h-0 flex-1">
+            <ShardRichEditor
+              ref={richNoteEditor}
+              ariaLabel="资料库文档编辑器"
+              autoFocus={zen || mobilePane === "editor"}
+              editorId={`library:${selectedNote.id}`}
+              getKnownTags={() => knownTagsRef.current}
+              getWikilinkCandidates={() => wikilinkCandidatesRef.current}
+              // 换一篇文档就换一个编辑器实例：正文与撤销历史一起重置。
+              key={`${selectedNote.id}:${activeSearchNavigation?.kind === "note" ? activeSearchNavigation.requestId : "browse"}`}
+              onChange={selectedNoteReadOnly ? () => undefined : (content) => {
+                setDraft(content)
+                draftRef.current = content
+                setSaveState(
+                  content === lastSavedContentRef.current ? "saved" : "dirty"
+                )
+              }}
+              onDropFiles={selectedNoteReadOnly ? undefined : (files) => void uploadPastedImages(files)}
+              // ProseMirror 对 Esc 一律 preventDefault，ZenSurface 挂在 window 上的
+              // 监听因此等不到这个键；由编辑器转交回宿主（见 shard-host.ts）。
+              onEscape={zen ? () => setIsZen(false) : undefined}
+              onImageFiles={selectedNoteReadOnly ? undefined : (files) => void uploadPastedImages(files)}
+              onNavigateWikilink={navigateWikilink}
+              onOpenDocumentLink={(link) => void openCanvasLink(link)}
+              onPasteFiles={selectedNoteReadOnly ? undefined : (files) => void uploadPastedImages(files)}
+              onSubmit={selectedNoteReadOnly ? undefined : () => void saveCurrentNote()}
+              placeholder="开始写文档…"
+              readOnly={selectedNoteReadOnly || interactionBlocked || tableStructureBusy || busyAction !== null}
+              // 资料库里全是文档：工具集合按文档档开放（产品框架 §2）。
+              tier="document"
+              value={draft}
+              variant="library"
+            />
+          </div>
         </div>
       )
     }
@@ -1730,13 +1788,17 @@ export function LibraryShell({
   }
 
   const dialogTitle =
-    treeDialog?.kind === "emptyTrash"
+    treeDialog?.kind === "importGraph"
+      ? "确认加入时间线"
+      : treeDialog?.kind === "emptyTrash"
       ? "确认清空资料库回收站"
       : treeDialog?.kind === "purge"
         ? "确认彻底删除"
         : "确认删除"
   const dialogDescription =
-    treeDialog?.kind === "emptyTrash"
+    treeDialog?.kind === "importGraph"
+      ? `将生成一篇同名的${treeDialog.entry.kind === "mindmap" ? "大纲" : "流程图"}，原文件移入回收站，之后仍可从回收站恢复。`
+      : treeDialog?.kind === "emptyTrash"
       ? "资料库回收站中的文档和文件将被永久删除，此操作不可恢复。"
       : treeDialog?.kind === "purge"
         ? `「${treeDialog.entry.name}」将被永久删除，此操作不可恢复。`
@@ -1746,7 +1808,9 @@ export function LibraryShell({
           ? `「${treeDialog.entry.name}」将移入回收站，之后仍可恢复。`
           : ""
   const dialogConfirmLabel =
-    treeDialog?.kind === "emptyTrash"
+    treeDialog?.kind === "importGraph"
+      ? "加入时间线"
+      : treeDialog?.kind === "emptyTrash"
       ? "清空回收站"
       : treeDialog?.kind === "purge"
         ? "彻底删除"
@@ -2165,7 +2229,7 @@ export function LibraryShell({
               disabled={busyAction !== null}
               onClick={() => void submitTreeDialog()}
               type="button"
-              variant="destructive"
+              variant={treeDialog?.kind === "importGraph" ? "default" : "destructive"}
             >
               {busyAction ?? dialogConfirmLabel}
             </Button>
@@ -2378,16 +2442,6 @@ function LibraryEmptyState({ message }: { message: string }) {
 
 function escapeMarkdownImageAlt(alt: string) {
   return alt.replace(/\\/g, "\\\\").replace(/]/g, "\\]")
-}
-
-async function sha256Hex(text: string): Promise<string> {
-  const digest = await crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(text)
-  )
-  return Array.from(new Uint8Array(digest))
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("")
 }
 
 export function formatSaveState(state: SaveState) {

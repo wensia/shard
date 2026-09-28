@@ -4,7 +4,13 @@
 //! 桌面 App（`src-tauri`）与终端 CLI（`crates/shard-cli`）共用，避免两边落盘格式漂移。
 //! 本 crate 不依赖 Tauri，也不碰 git：提交由 App 的检查点聚合接管。
 
+pub mod dataset;
+pub mod frontmatter;
+pub mod graph_model;
+pub mod graph_region;
+pub mod outline_import;
 pub mod search;
+pub mod vault_lock;
 
 use chrono::{DateTime, Local};
 use rand::{rngs::OsRng, RngCore};
@@ -12,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     fs::{self, File},
     io::Write,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -20,6 +26,10 @@ use std::{
 pub const LOCKBOX_TAG: &str = "密匣";
 /// 未整理碎片的默认标签，创建时总会带上。
 pub const INBOX_TAG: &str = "inbox";
+/// 内容类型标签，顺序即冲突时的判定优先级。
+pub const TYPE_TAGS: [&str; 4] = ["note", "outline", "flowchart", "document"];
+/// 只能由专用编辑器创建和维护的内容类型。
+pub const PROTECTED_TYPE_TAGS: [&str; 2] = ["outline", "flowchart"];
 pub const LIBRARY_FILENAME_MAX_BYTES: usize = 255;
 
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
@@ -69,11 +79,116 @@ pub fn default_vault_path() -> Result<PathBuf, String> {
     Ok(PathBuf::from(home).join("Documents").join("ShardVault"))
 }
 
+pub fn normalized_vault_key(vault: &Path) -> PathBuf {
+    if let Ok(canonical) = vault.canonicalize() {
+        return canonical;
+    }
+
+    let absolute = if vault.is_absolute() {
+        vault.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map(|current| current.join(vault))
+            .unwrap_or_else(|_| vault.to_path_buf())
+    };
+    let mut normalized = PathBuf::new();
+    for component in absolute.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            other => normalized.push(other.as_os_str()),
+        }
+    }
+
+    // A newly selected vault may not exist yet. Resolve the nearest existing ancestor
+    // so a symlinked parent cannot produce one gate before creation and another after it.
+    let mut ancestor = normalized.as_path();
+    let mut suffix = Vec::new();
+    loop {
+        if let Ok(mut canonical) = ancestor.canonicalize() {
+            for component in suffix.iter().rev() {
+                canonical.push(component);
+            }
+            return canonical;
+        }
+        let Some(name) = ancestor.file_name() else {
+            break;
+        };
+        suffix.push(name.to_os_string());
+        let Some(parent) = ancestor.parent() else {
+            break;
+        };
+        ancestor = parent;
+    }
+    normalized
+}
+
+pub fn ensure_public_csv_path(vault: &Path, rel_path: &str) -> Result<PathBuf, String> {
+    let trimmed = rel_path.trim();
+    if trimmed.is_empty() {
+        return Err("CSV 路径不能为空。".to_string());
+    }
+    if trimmed.contains('\\') {
+        return Err("CSV 路径必须使用 / 分隔。".to_string());
+    }
+    let path = Path::new(trimmed);
+    if path.is_absolute() {
+        return Err("CSV 路径必须是 vault 内相对路径。".to_string());
+    }
+    for component in path.components() {
+        match component {
+            Component::Normal(value) => {
+                let value = value.to_string_lossy();
+                if value.eq_ignore_ascii_case("lockbox") {
+                    return Err("当前版本不允许读取密匣路径。".to_string());
+                }
+                if value == ".git" || value == ".shard" {
+                    return Err("当前版本不允许读取 Shard 内部路径。".to_string());
+                }
+            }
+            _ => return Err("CSV 路径不能包含 . 或 ..。".to_string()),
+        }
+    }
+    if !path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("csv"))
+    {
+        return Err("只能读取 CSV 文件。".to_string());
+    }
+    let full_path = vault.join(path);
+    if !full_path.is_file() {
+        return Err(format!("找不到 CSV 文件 {trimmed}"));
+    }
+    let canonical_vault = vault.canonicalize().map_err(|error| error.to_string())?;
+    let canonical_path = full_path
+        .canonicalize()
+        .map_err(|error| error.to_string())?;
+    if !canonical_path.starts_with(&canonical_vault) {
+        return Err("CSV 路径不能越出 vault。".to_string());
+    }
+    let relative = canonical_path.strip_prefix(&canonical_vault).expect("已检查 vault 边界");
+    if relative.components().any(|component| {
+        matches!(component, Component::Normal(value) if value.to_string_lossy().eq_ignore_ascii_case("lockbox"))
+    }) {
+        return Err("当前版本不允许读取密匣路径。".to_string());
+    }
+    Ok(canonical_path)
+}
+
 pub fn ensure_vault_layout(vault: &Path) -> Result<(), String> {
     fs::create_dir_all(vault.join("fragments")).map_err(|error| error.to_string())?;
     fs::create_dir_all(vault.join("notes")).map_err(|error| error.to_string())?;
     fs::create_dir_all(vault.join("assets")).map_err(|error| error.to_string())?;
     fs::create_dir_all(vault.join("maps")).map_err(|error| error.to_string())?;
+    let datasets = vault.join("datasets");
+    fs::create_dir_all(&datasets).map_err(|error| error.to_string())?;
+    let attributes = datasets.join(".gitattributes");
+    if !attributes.exists() {
+        fs::write(attributes, "*.csv merge=binary\n").map_err(|error| error.to_string())?;
+    }
     fs::create_dir_all(vault.join(".shard")).map_err(|error| error.to_string())?;
     Ok(())
 }
@@ -168,13 +283,24 @@ pub fn create_public_fragment_in_vault(
     tags: Vec<String>,
     source: &str,
 ) -> Result<PathBuf, String> {
+    let now = Local::now();
+    let id = new_fragment_id(&now);
+    create_public_fragment_with_id_in_vault(vault, content, tags, source, &now, &id)
+}
+
+pub fn create_public_fragment_with_id_in_vault(
+    vault: &Path,
+    content: &str,
+    tags: Vec<String>,
+    source: &str,
+    now: &DateTime<Local>,
+    id: &str,
+) -> Result<PathBuf, String> {
     let content = content.trim();
     if content.is_empty() {
         return Err("片段内容不能为空".to_string());
     }
 
-    let now = Local::now();
-    let id = new_fragment_id(&now);
     let created_at = now.to_rfc3339();
     let dir = vault
         .join("fragments")
@@ -183,11 +309,14 @@ pub fn create_public_fragment_in_vault(
     fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
 
     let path = dir.join(format!("{id}.md"));
+    if path.exists() {
+        return Err(format!("片段 {id} 已存在。"));
+    }
     let frontmatter = FragmentFrontmatter {
-        id,
+        id: id.to_string(),
         created_at: created_at.clone(),
         updated_at: created_at,
-        tags: normalize_tags(tags, true),
+        tags: normalize_type_tags(normalize_tags(tags, true)),
         category: None,
         ai_status: Some("none".to_string()),
         pinned: false,
@@ -228,6 +357,22 @@ pub fn normalize_tags(tags: Vec<String>, include_inbox: bool) -> Vec<String> {
     next_tags.sort();
     next_tags.dedup();
     next_tags
+}
+
+pub fn derive_type(tags: &[String]) -> Option<&'static str> {
+    TYPE_TAGS
+        .iter()
+        .copied()
+        .find(|type_tag| tags.iter().any(|tag| tag == type_tag))
+}
+
+pub fn normalize_type_tags(tags: Vec<String>) -> Vec<String> {
+    let selected = derive_type(&tags);
+    tags.into_iter()
+        .filter(|tag| {
+            !TYPE_TAGS.contains(&tag.as_str()) || selected.is_some_and(|kind| tag == kind)
+        })
+        .collect()
 }
 
 fn is_tag_edge_punctuation(char: char) -> bool {
@@ -364,6 +509,19 @@ mod tests {
     use super::*;
 
     #[test]
+    fn vault_layout_creates_dataset_attributes_without_overwriting_them() {
+        let vault = tempfile::tempdir().unwrap();
+        let attributes = vault.path().join("datasets/.gitattributes");
+
+        ensure_vault_layout(vault.path()).unwrap();
+        assert_eq!(fs::read_to_string(&attributes).unwrap(), "*.csv merge=binary\n");
+
+        fs::write(&attributes, "*.csv merge=ours\n").unwrap();
+        ensure_vault_layout(vault.path()).unwrap();
+        assert_eq!(fs::read_to_string(attributes).unwrap(), "*.csv merge=ours\n");
+    }
+
+    #[test]
     fn extracts_tags_like_the_editor() {
         assert_eq!(extract_tags("#备忘 今天心情很好"), vec!["备忘"]);
         assert_eq!(extract_tags("读完了#书 很好"), vec!["书"]);
@@ -378,6 +536,22 @@ mod tests {
     fn normalizes_tags_with_inbox() {
         let tags = normalize_tags(vec!["#备忘".into(), "备忘，".into()], true);
         assert_eq!(tags, vec!["inbox", "备忘"]);
+    }
+
+    #[test]
+    fn derives_and_normalizes_type_tags_by_priority() {
+        let tags = vec![
+            "topic".to_string(),
+            "document".to_string(),
+            "flowchart".to_string(),
+            "outline".to_string(),
+            "note".to_string(),
+        ];
+
+        assert_eq!(derive_type(&tags), Some("note"));
+        assert_eq!(normalize_type_tags(tags), vec!["topic", "note"]);
+        assert_eq!(derive_type(&["flowchart".into(), "document".into()]), Some("flowchart"));
+        assert_eq!(derive_type(&["topic".into()]), None);
     }
 
     #[test]

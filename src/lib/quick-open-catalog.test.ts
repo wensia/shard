@@ -5,6 +5,8 @@ import {
   getOpenCatalogLoadState,
   type OpenCatalogInput,
 } from "@/lib/quick-open-catalog"
+import { parseMindMapOutline } from "@/lib/mind-map-outline"
+import type { CanvasFile } from "@/features/canvas/model"
 import type { Fragment, LibraryTreeEntry, LibraryTreeSnapshot } from "@/types"
 
 const vaultPath = "/vault"
@@ -135,6 +137,72 @@ describe("buildOpenCatalog", () => {
       { id: "outline-id", kind: "outline", title: "产品路线" },
       { id: "document-id", kind: "document", title: "搜索设计" },
     ])
+  })
+
+  it("uses JSON outline roots and preserves legacy fallback semantics", () => {
+    const jsonFile = parseMindMapOutline("- JSON 根标题\n  - 子节点").file
+    expect(jsonFile).not.toBeNull()
+
+    const oversizedLegacy = [
+      "- 旧式根标题",
+      ...Array.from({ length: 201 }, (_, index) => `  - 子节点 ${index}`),
+    ].join("\n")
+    const hits = buildOpenCatalog(input({
+      fragments: [
+        fragment({
+          content: `- 不能当标题的前置正文\n\n\`\`\`shardmap\n${JSON.stringify(jsonFile)}\n\`\`\``,
+          id: "json-outline",
+          path: "fragments/2026/09/json-outline.md",
+          tags: ["outline"],
+        }),
+        fragment({
+          content: "```shardmap\n{not json}\n```",
+          id: "invalid-outline",
+          path: "fragments/2026/09/非法大纲.md",
+          tags: ["outline"],
+        }),
+        fragment({
+          content: oversizedLegacy,
+          id: "legacy-outline",
+          path: "fragments/2026/09/legacy-outline.md",
+          tags: ["outline"],
+        }),
+      ],
+    }))
+
+    expect(Object.fromEntries(hits.map(({ target, title }) => [target.objectId, title])))
+      .toEqual({
+        "invalid-outline": "非法大纲",
+        "json-outline": "JSON 根标题",
+        "legacy-outline": "旧式根标题",
+      })
+  })
+
+  it("uses the embedded JSON flowchart title", () => {
+    const file: CanvasFile = {
+      kind: "shard.flow",
+      schemaVersion: 1,
+      id: "flow-file",
+      title: "发布流程",
+      createdAt: "2026-09-01T00:00:00.000Z",
+      updatedAt: "2026-09-01T00:00:00.000Z",
+      revision: 0,
+      nodes: [],
+      edges: [],
+    }
+    const [hit] = buildOpenCatalog(input({
+      fragments: [fragment({
+        content: `\`\`\`shardflow\n${JSON.stringify(file)}\n\`\`\``,
+        id: "flowchart-id",
+        path: "fragments/2026/09/flowchart.md",
+        tags: ["flowchart"],
+      })],
+    }))
+
+    expect(hit).toMatchObject({
+      target: { kind: "flowchart", objectId: "flowchart-id" },
+      title: "发布流程",
+    })
   })
 
   it("deduplicates summaries by vault, scope and path without losing semantic metadata", () => {

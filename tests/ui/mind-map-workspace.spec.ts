@@ -22,6 +22,12 @@ async function openWorkspace(page: Page) {
   await page.evaluate(() => document.fonts.ready)
 }
 
+async function openFragmentWorkspace(page: Page) {
+  await page.goto("/mind-map-document-test.html?mock=1&fragment=1")
+  await expect(canvas(page)).toBeVisible()
+  await page.evaluate(() => document.fonts.ready)
+}
+
 async function save(page: Page) {
   expect(await page.evaluate(() => (window as Harness).__mindMapDocumentHarness.save())).toBe(true)
   return page.evaluate(() => structuredClone((window as Harness).__mindMapDocumentMock.disk.file))
@@ -83,12 +89,71 @@ async function zoomAndPan(page: Page) {
   return svg.getAttribute("viewBox")
 }
 
+test("独立导图不显示文档属性入口", async ({ page }) => {
+  await openWorkspace(page)
+  await expect(page.getByRole("button", { name: "文档属性", exact: true })).toHaveCount(0)
+})
+
+test("碎片大纲打开属性前排空图保存，属性写入替换基线且不重载草稿", async ({ page }) => {
+  await openFragmentWorkspace(page)
+  const documentProperties = page.getByRole("button", { name: "文档属性", exact: true })
+  await expect(documentProperties).toBeVisible()
+  await outlineTab(page).click()
+  await branch(page).fill("打开属性前的草稿")
+
+  await documentProperties.click()
+  const dialog = page.getByRole("dialog", { name: "文档属性", exact: true })
+  await expect(dialog).toBeVisible()
+  expect(await page.evaluate(() => (window as Harness).__mindMapDocumentMock.writes)).toBe(1)
+  await expect(page.locator('[aria-label="思维导图画布"]')).toHaveAttribute("aria-busy", "true")
+  await expect(branch(page)).toHaveValue("打开属性前的草稿")
+
+  const panel = dialog.getByRole("region", { name: "属性", exact: true })
+  await panel.getByLabel("客户 属性值").fill("乙")
+  await panel.getByLabel("客户 属性值").press("Enter")
+  await expect.poll(() => page.evaluate(() => (window as Harness).__mindMapDocumentMock.propertyWrites)).toBe(1)
+  await panel.getByRole("button", { name: "添加属性", exact: true }).click()
+  await panel.getByLabel("属性名").fill("状态")
+  await panel.getByRole("button", { name: "添加", exact: true }).click()
+  await expect(panel.getByLabel("状态 属性值")).toBeVisible()
+  await expect.poll(() => page.evaluate(() => (window as Harness).__mindMapDocumentMock.propertyWrites)).toBe(2)
+
+  await dialog.getByRole("button", { name: "关闭", exact: true }).click()
+  await expect(dialog).toHaveCount(0)
+  await expect(branch(page)).toHaveValue("打开属性前的草稿")
+  await branch(page).fill("属性后的新草稿")
+  await expect.poll(() => page.evaluate(() => (window as Harness).__mindMapDocumentMock.writes)).toBe(2)
+  const state = await page.evaluate(() => {
+    const mock = (window as Harness).__mindMapDocumentMock
+    return {
+      baseline: mock.writeBaselines.at(-1),
+      fileSha: mock.fragment.fileSha,
+      text: mock.disk.file.nodes["branch-1"].text,
+    }
+  })
+  expect(state.baseline).toBe("property-sha-2")
+  expect(state.fileSha).toMatch(/^graph-sha-/)
+  expect(state.text).toBe("属性后的新草稿")
+  await expect(page.getByText(/保存冲突|STALE_BASE/)).toHaveCount(0)
+})
+
+test("碎片大纲排空保存失败时不打开文档属性", async ({ page }) => {
+  await openFragmentWorkspace(page)
+  await outlineTab(page).click()
+  await branch(page).fill("无法保存的草稿")
+  await page.evaluate(() => { (window as Harness).__mindMapDocumentMock.failSave = true })
+  await page.getByRole("button", { name: "文档属性", exact: true }).click()
+  await expect(page.getByRole("dialog", { name: "文档属性", exact: true })).toHaveCount(0)
+  await expect(page.getByText("无法打开文档属性：请先处理图内容的保存问题。", { exact: true })).toBeVisible()
+  await expect(page.locator('[aria-label="思维导图画布"]')).not.toHaveAttribute("aria-busy", "true")
+})
+
 for (const browserName of ["webkit", "chromium"] as const) {
   const engineTest = test.extend({
-    page: async ({}, use) => {
+    page: async ({ baseURL }, use) => {
       const browser = await ({ webkit, chromium })[browserName].launch()
       try {
-        await use(await browser.newPage({ baseURL: "http://127.0.0.1:1420", viewport: { width: 1280, height: 760 } }))
+        await use(await browser.newPage({ baseURL: baseURL!, viewport: { width: 1280, height: 760 } }))
       } finally { await browser.close() }
     },
   })

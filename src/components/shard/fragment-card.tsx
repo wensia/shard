@@ -14,6 +14,7 @@ import {
   Share2Icon,
   ShardZenIcon,
   Trash2Icon,
+  WorkflowIcon,
   type ShardIcon,
 } from "@/components/icons"
 import { useMemo, useState, type ReactNode } from "react"
@@ -38,7 +39,8 @@ import {
   isTypeTag,
   type ContentKind,
 } from "@/lib/content-kind"
-import { parseMindMapOutline } from "@/lib/mind-map-outline"
+import { readOutlineContent } from "@/lib/mind-map-outline"
+import { readFlowchartContent } from "@/lib/flowchart-content"
 import { notify } from "@/lib/notify"
 import type { RelatedFragment } from "@/lib/relations"
 import { cn } from "@/lib/utils"
@@ -61,6 +63,7 @@ interface FragmentCardProps {
   onEdit?: (fragment: Fragment) => void
   onExportImage?: (fragment: Fragment) => void
   onMoveToLockbox?: (fragment: Fragment) => void
+  onOpenTag?: (tag: string) => void
   onLinkFragment?: (
     sourceId: string,
     targetId: string
@@ -68,7 +71,14 @@ interface FragmentCardProps {
   onNavigateToFragment?: (fragmentId: string) => void
   onOpenZen?: (fragment: Fragment) => void
   onPin?: (fragment: Fragment) => void
-  onSave?: (id: string, content: string, tags: string[]) => Promise<Fragment>
+  onRefreshFragments?: () => Promise<void> | void
+  onRequestOutlineUpgrade?: (fragmentId: string) => Promise<void> | void
+  onSave?: (
+    id: string,
+    content: string,
+    tags: string[],
+    expectedFileSha?: string
+  ) => Promise<Fragment>
   onSelectChange?: (fragmentId: string, selected: boolean) => void
   onStartSelection?: (fragment: Fragment) => Promise<void> | void
   onToggleKind?: (fragment: Fragment) => void
@@ -108,8 +118,11 @@ export function FragmentCard({
   onExportImage,
   onLinkFragment,
   onMoveToLockbox,
+  onOpenTag,
   onOpenZen,
   onPin,
+  onRefreshFragments,
+  onRequestOutlineUpgrade,
   onNavigateToFragment,
   onSave,
   onSelectChange,
@@ -170,6 +183,8 @@ export function FragmentCard({
           onNavigateToFragment={onNavigateToFragment}
           // 文档类型不做行内编辑，由编辑器转交禅模式（产品框架 §2）。
           onRequestZen={onOpenZen ? () => onOpenZen(fragment) : undefined}
+          onRefreshFragments={onRefreshFragments}
+          onRequestOutlineUpgrade={onRequestOutlineUpgrade}
           onSave={onSave}
           variant="inline"
           vaultPath={vaultPath}
@@ -282,12 +297,18 @@ export function FragmentCard({
                 </span>
               ) : null}
               {displayTags.map((tag) => (
-                <TagBadge key={tag} tag={tag} />
+                <TagBadge key={tag} onOpen={onOpenTag} tag={tag} />
               ))}
             </div>
           ) : null}
           {fragment.kind === "outline" ? (
             <OutlineCardBody content={displayContent} />
+          ) : fragment.kind === "flowchart" ? (
+            <FlowchartCardBody
+              content={displayContent}
+              onTaskToggle={(lineIndex) => onToggleTask?.(fragment, lineIndex)}
+              vaultPath={vaultPath}
+            />
           ) : fragment.kind === "document" ? (
             <DocumentCardBody content={displayContent} />
           ) : (
@@ -402,7 +423,7 @@ export function FragmentCard({
                   openNextSurface(() => onExportImage?.(fragment))
                 }
               />
-              {!fragment.lockbox ? (
+              {!fragment.lockbox && fragment.kind !== "outline" && fragment.kind !== "flowchart" ? (
                 <CardMenuItem
                   disabled={fragment.archived}
                   icon={<LockKeyholeIcon aria-hidden="true" />}
@@ -451,9 +472,10 @@ export function FragmentCard({
   )
 }
 
-/** type 徽标：缺省的碎片没有徽标，其余三种各占一枚。 */
+/** type 徽标：缺省的碎片没有徽标，其余类型各占一枚。 */
 const TYPE_BADGES: Partial<Record<ContentKind, { icon: ShardIcon; label: string }>> = {
   document: { icon: FileTextIcon, label: CONTENT_KIND_LABELS.document },
+  flowchart: { icon: WorkflowIcon, label: CONTENT_KIND_LABELS.flowchart },
   note: { icon: FileTextIcon, label: CONTENT_KIND_LABELS.note },
   outline: { icon: GitBranchIcon, label: CONTENT_KIND_LABELS.outline },
 }
@@ -464,7 +486,7 @@ const TYPE_BADGES: Partial<Record<ContentKind, { icon: ShardIcon; label: string 
  */
 function OutlineCardBody({ content }: { content: string }) {
   const title = useMemo(() => {
-    const file = parseMindMapOutline(content).file
+    const file = readOutlineContent(content)?.file
     return (file ? file.nodes[file.rootId]?.text ?? "" : "").trim()
   }, [content])
 
@@ -481,6 +503,49 @@ function OutlineCardBody({ content }: { content: string }) {
         {title || "未命名大纲"}
       </p>
       <MindMapFenceEmbed code={content} />
+    </div>
+  )
+}
+
+function FlowchartCardBody({
+  content,
+  onTaskToggle,
+  vaultPath,
+}: {
+  content: string
+  onTaskToggle: (lineIndex: number) => void
+  vaultPath?: string
+}) {
+  const flowchart = useMemo(() => readFlowchartContent(content), [content])
+  if (!flowchart) {
+    return (
+      <FragmentBody
+        content={content}
+        contentClassName="shard-fragment-card-content"
+        downloadableImages
+        hideTags
+        onTaskToggle={onTaskToggle}
+        renderImages
+        vaultPath={vaultPath}
+      />
+    )
+  }
+
+  const { file } = flowchart
+  return (
+    <div data-fragment-card-kind="flowchart">
+      <p
+        className="shard-memo-body"
+        style={{ margin: 0, fontWeight: "var(--font-weight-semibold)" }}
+      >
+        {file.title.trim() || "未命名流程图"}
+      </p>
+      <p
+        className="shard-memo-meta"
+        style={{ color: "var(--muted-foreground)", margin: 0 }}
+      >
+        {file.nodes.length} 个节点 · {file.edges.length} 条连线
+      </p>
     </div>
   )
 }

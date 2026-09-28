@@ -1,6 +1,8 @@
 import { invoke, isTauri } from "@tauri-apps/api/core"
 
 import { deriveKind } from "@/lib/content-kind"
+import type { PropertyRequestValue, PropertyType } from "@/lib/properties"
+import type { CanvasFile } from "@/features/canvas/model"
 import type {
   CheckpointResult,
   CliInstallStatus,
@@ -16,6 +18,10 @@ import type {
   LibraryTreeSnapshot,
   MindMapReadResult,
   MindMapSummary,
+  OutlineUpgradePreflightItem,
+  OutlineUpgradeRunResult,
+  OutlineUpgradeSelection,
+  PropertyRegistryRead,
   ShardMapFile,
   VaultState,
 } from "@/types"
@@ -29,6 +35,21 @@ type StoredLockboxSetupResult = Omit<LockboxSetupResult, "vault"> & {
 }
 type StoredLibraryMutationResult = Omit<LibraryMutationResult, "fragment"> & {
   fragment?: StoredFragment
+}
+
+export type GraphFragmentKind = "outline" | "flowchart"
+export type GraphFile = ShardMapFile | CanvasFile
+
+export interface GraphFragmentResult<TGraph extends GraphFile = GraphFile> {
+  fragment: Fragment
+  graph: TGraph
+}
+
+type StoredGraphFragmentResult<TGraph extends GraphFile = GraphFile> = Omit<
+  GraphFragmentResult<TGraph>,
+  "fragment"
+> & {
+  fragment: StoredFragment
 }
 
 export const DESKTOP_RUNTIME_MESSAGE =
@@ -96,12 +117,36 @@ function invokeFragment(command: string, args?: Record<string, unknown>) {
   return desktopInvoke<StoredFragment>(command, args).then(hydrateFragment)
 }
 
+function invokeGraphFragment<TGraph extends GraphFile>(
+  command: string,
+  args?: Record<string, unknown>
+) {
+  return desktopInvoke<StoredGraphFragmentResult<TGraph>>(command, args).then(
+    (result): GraphFragmentResult<TGraph> => ({
+      ...result,
+      fragment: hydrateFragment(result.fragment),
+    })
+  )
+}
+
 function invokeVaultState(command: string, args?: Record<string, unknown>) {
   return desktopInvoke<StoredVaultState>(command, args).then(hydrateVaultState)
 }
 
 export function listFragments() {
   return invokeVaultState("list_fragments")
+}
+
+export function preflightOutlineUpgrade() {
+  return desktopInvoke<OutlineUpgradePreflightItem[]>(
+    "preflight_outline_upgrade"
+  )
+}
+
+export function runOutlineUpgrade(items: OutlineUpgradeSelection[]) {
+  return desktopInvoke<OutlineUpgradeRunResult>("run_outline_upgrade", {
+    items,
+  })
 }
 
 export function listMindMaps() {
@@ -229,13 +274,87 @@ export function createFragment(content: string, tags: string[]) {
   return invokeFragment("create_fragment", { content, tags })
 }
 
+export function createGraphFragment(
+  kind: "outline",
+  operationId: string,
+  graph: ShardMapFile,
+  tags: string[]
+): Promise<GraphFragmentResult<ShardMapFile>>
+export function createGraphFragment(
+  kind: "flowchart",
+  operationId: string,
+  graph: CanvasFile | null,
+  tags: string[]
+): Promise<GraphFragmentResult<CanvasFile>>
+export function createGraphFragment(
+  kind: GraphFragmentKind,
+  operationId: string,
+  graph: GraphFile | null,
+  tags: string[]
+) {
+  return invokeGraphFragment("create_graph_fragment", {
+    kind,
+    operationId,
+    graph,
+    tags,
+  })
+}
+
+export function readGraphFragment(id: string) {
+  return invokeGraphFragment("read_graph_fragment", { id })
+}
+
+export function importGraphFileToTimeline(path: string) {
+  return invokeFragment("import_graph_file_to_timeline", { path })
+}
+
+export function writeGraphFragment<TGraph extends GraphFile>(
+  id: string,
+  graph: TGraph,
+  expectedFileSha?: string
+) {
+  return invokeGraphFragment<TGraph>("write_graph_fragment", {
+    id,
+    graph,
+    expectedFileSha,
+  })
+}
+
 export function updateFragment(
   id: string,
   content: string,
   tags: string[],
-  expectedSha?: string
+  expectedFileSha?: string
 ) {
-  return invokeFragment("update_fragment", { id, content, tags, expectedSha })
+  return invokeFragment("update_fragment", { id, content, tags, expectedFileSha })
+}
+
+export function readPropertyRegistry() {
+  return desktopInvoke<PropertyRegistryRead>("read_property_registry")
+}
+
+export function registerPropertyType(
+  key: string,
+  type: PropertyType,
+  expectedSha: string
+) {
+  return desktopInvoke<PropertyRegistryRead>("register_property_type", {
+    key,
+    propertyType: type,
+    expectedSha,
+  })
+}
+
+export function setFragmentProperty(
+  id: string,
+  key: string,
+  value: PropertyRequestValue
+) {
+  return invokeFragment("set_fragment_property", { id, key, value })
+}
+
+export function removeFragmentProperty(id: string, key: string) {
+  return invokeFragment("remove_fragment_property", { id, key })
 }
 
 export function updateFragmentTags(id: string, tags: string[]) {

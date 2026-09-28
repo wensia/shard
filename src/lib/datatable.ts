@@ -422,7 +422,7 @@ export function coerceDatatableValue(text: string, type?: DatatableColumnType): 
   if (!trimmed) return ""
   if (type && NUMERIC_TYPES.has(type)) {
     const amount = Number(trimmed)
-    return Number.isFinite(amount) ? amount : text
+    return Number.isFinite(amount) && String(amount) === trimmed ? amount : text
   }
   if (type === "boolean") {
     if (/^(true|是|yes|1)$/iu.test(trimmed)) return true
@@ -430,6 +430,47 @@ export function coerceDatatableValue(text: string, type?: DatatableColumnType): 
     return text
   }
   return text
+}
+
+/** 内联表提取时只转换数据，不使用展示格式或当前筛选后的行。 */
+export function datatableToDatasetExtraction(spec: DatatableSpec): {
+  header: string[]
+  rows: string[][]
+  view?: DatatableView
+} {
+  const labels = spec.columns.map((column) => column.label.trim())
+  const counts = new Map<string, number>()
+  for (const label of labels) counts.set(label, (counts.get(label) ?? 0) + 1)
+  const header = spec.columns.map((column, index) =>
+    labels[index] && counts.get(labels[index]) === 1 ? column.label : column.key
+  )
+  if (header.some((name) => !name.trim()) || new Set(header).size !== header.length) {
+    throw new Error("表头名称为空或重复，无法提取为 CSV")
+  }
+
+  const invalid: string[] = []
+  const rows = spec.rows.map((row, rowIndex) => spec.columns.map((column, columnIndex) => {
+    const value = row[column.key]
+    if (value === null || value === undefined) return ""
+    if (typeof value === "string") return value
+    if (typeof value === "number" || typeof value === "boolean") return String(value)
+    invalid.push(`第 ${rowIndex + 1} 行第 ${columnIndex + 1} 列（${header[columnIndex]}）`)
+    return ""
+  }))
+  if (invalid.length) throw new Error(`${invalid.join("、")}含数组或对象，无法提取为 CSV`)
+
+  const columnIndex = new Map(spec.columns.map((column, index) => [column.key, index]))
+  const view: DatatableView = {}
+  if (spec.view?.sort) {
+    const index = columnIndex.get(spec.view.sort.key)
+    if (index !== undefined) view.sort = { ...spec.view.sort, key: `c${index}` }
+  }
+  if (spec.view?.group) {
+    const index = columnIndex.get(spec.view.group)
+    if (index !== undefined) view.group = `c${index}`
+  }
+  if (spec.view?.filter) view.filter = spec.view.filter
+  return { header, rows, ...(Object.keys(view).length ? { view } : {}) }
 }
 
 /** 导出：表头 + 当前可见行的显示文本，复用 `src/lib/csv.ts` 的 CSV 序列化。 */

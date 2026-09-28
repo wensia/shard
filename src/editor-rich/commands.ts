@@ -36,6 +36,7 @@ export const RICH_SLASH_COMMAND_IDS: ReadonlySet<SlashCommandId> = new Set([
   "image",
   "memo",
   "outline",
+  "flowchart",
   "document",
   "heading1",
   "heading2",
@@ -51,7 +52,9 @@ export const RICH_SLASH_COMMAND_IDS: ReadonlySet<SlashCommandId> = new Set([
  */
 export interface ShardRichHostCommands {
   onEnterOutline?: () => void
+  onCreateFlowchart?: () => void
   onMarkDocument?: () => void
+  onCreateDataset?: (position: number) => void
 }
 
 const TABLE_COLUMNS = 3
@@ -250,11 +253,12 @@ export function pickRichImageFiles(onImageFiles: (files: File[]) => void) {
  * 插入一个围栏块。编辑器不认识具体的块：模板与「插入后聚焦哪个元素」
  * 都由注册项自带（`ShardBlockSlashItem`）。
  */
-export function insertRichShardBlock(editor: Editor, lang: string, slash: ShardBlockSlashItem) {
+export function insertRichShardBlock(editor: Editor, lang: string, slash: ShardBlockSlashItem, source = slash.template, position?: number) {
   editor
     .chain()
     .focus()
-    .insertContent({ attrs: { lang, source: slash.template }, type: "shardBlock" })
+    .setTextSelection(position ?? editor.state.selection.from)
+    .insertContent({ attrs: { lang, source }, type: "shardBlock" })
     .run()
 
   const pos = findInsertedShardBlock(editor, lang)
@@ -335,6 +339,10 @@ export function runRichSlashCommand(
   onImageFiles?: (files: File[]) => void,
   host?: ShardRichHostCommands
 ) {
+  if (id === "dataset") {
+    host?.onCreateDataset?.(editor.state.selection.from)
+    return
+  }
   const block = findBlockSlashItem(id)
   if (block) {
     insertRichShardBlock(editor, block.lang, block.slash)
@@ -344,6 +352,9 @@ export function runRichSlashCommand(
   switch (id) {
     case "outline":
       host?.onEnterOutline?.()
+      return
+    case "flowchart":
+      host?.onCreateFlowchart?.()
       return
     case "document":
       host?.onMarkDocument?.()

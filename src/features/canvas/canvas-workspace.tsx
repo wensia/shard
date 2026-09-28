@@ -1,7 +1,7 @@
 import { SelectControl } from "@/components/ui/select"
 import {
   forwardRef, memo, useCallback, useEffect, useId, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState,
-  type KeyboardEvent,
+  type KeyboardEvent, type ReactNode,
 } from "react"
 import {
   Background, BackgroundVariant, ConnectionMode, Handle, MarkerType, Position, ReactFlow,
@@ -9,9 +9,11 @@ import {
   type NodeProps, type ReactFlowInstance,
 } from "@xyflow/react"
 import "@xyflow/react/dist/style.css"
+import { PropertiesPanel } from "@/components/shard/properties-panel"
 import { Button } from "@/components/ui/button"
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
-import { CheckIcon, ChevronDownIcon, ChevronRightIcon, MoreHorizontalIcon, XIcon } from "@/components/icons"
+import { CheckIcon, ChevronDownIcon, ChevronRightIcon, FileTextIcon, MoreHorizontalIcon, XIcon } from "@/components/icons"
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
@@ -32,19 +34,28 @@ import {
   updateCanvasNode,
 } from "./mutations"
 import { CanvasSaveQueue, type CanvasSaveState } from "./save-queue"
+import type { CanvasSaveTransport } from "./save-queue"
+import { notify } from "@/lib/notify"
 import "./canvas-workspace.css"
 
 export interface CanvasWorkspaceHandle {
   flush: () => Promise<boolean>
   isDirty: () => boolean
+  replaceBaseline: (fileSha: string) => void
   setInteractionBlocked: (blocked: boolean) => void
 }
 
 export interface CanvasWorkspaceProps {
   path: string
   initialRead?: CanvasReadResult | null
+  readFromStorage?: (path: string) => Promise<CanvasReadResult>
+  saveTransport?: CanvasSaveTransport
+  fragmentMode?: boolean
+  fragment?: Fragment
   fragments: Fragment[]
+  onFragmentUpdated?: (fragment: Fragment) => void
   onOpenLink: (link: ShardDocumentLink) => void | Promise<void>
+  onRequestClose?: () => void | Promise<void>
   onSaved?: () => void
   onRecovered?: (path: string) => void | Promise<void>
   onSplit?: (result: CanvasSplitResult) => void | Promise<void>
@@ -52,6 +63,7 @@ export interface CanvasWorkspaceProps {
   onReady?: (revision: string) => void
   onLoadError?: (error: unknown) => void
   readOnly?: boolean
+  toolbarLeading?: ReactNode
 }
 
 type TreeSelection = { nodeId: string; treeNodeId: string }
@@ -205,9 +217,10 @@ const CanvasObject = memo(function CanvasObject({ data, selected }: NodeProps<Fl
 const NODE_TYPES = { shardCanvas: CanvasObject }
 
 export const CanvasWorkspace = forwardRef<CanvasWorkspaceHandle, CanvasWorkspaceProps>(function CanvasWorkspace({
-  path, initialRead = null, fragments, onOpenLink, onSaved, onRecovered,
+  path, initialRead = null, fragment, fragments, onFragmentUpdated, onOpenLink, onSaved, onRecovered,
   onSaveStateChange, onSplit, onReady, onLoadError,
-  readOnly = false,
+  readFromStorage = readCanvas, saveTransport = writeCanvas, fragmentMode = false,
+  onRequestClose, readOnly = false, toolbarLeading,
 }, ref) {
   const [draft, setDraft] = useState<CanvasFile | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -215,6 +228,7 @@ export const CanvasWorkspace = forwardRef<CanvasWorkspaceHandle, CanvasWorkspace
   const [loadAttempt, setLoadAttempt] = useState(0)
   const [saveState, setSaveState] = useState<CanvasSaveState | null>(null)
   const [blocked, setBlocked] = useState(false)
+  const [documentPropertiesOpen, setDocumentPropertiesOpen] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
   const [selectedNodes, setSelectedNodes] = useState<string[]>([])
   const [selectedEdges, setSelectedEdges] = useState<string[]>([])
@@ -242,6 +256,7 @@ export const CanvasWorkspace = forwardRef<CanvasWorkspaceHandle, CanvasWorkspace
   const [recoveryError, setRecoveryError] = useState<string | null>(null)
   const recoveryAttemptRef = useRef<RecoveryAttempt | null>(null)
   const recoveringRef = useRef(false)
+  const documentPropertiesOpenRef = useRef(false)
   const externalBlockedRef = useRef(false)
   const pendingTextRef = useRef<PendingText | null>(null)
   const composingRef = useRef(false)
@@ -263,14 +278,18 @@ export const CanvasWorkspace = forwardRef<CanvasWorkspaceHandle, CanvasWorkspace
   const [flowReady, setFlowReady] = useState(false)
   const blockedRef = useRef(false)
   const draggingRef = useRef(false)
-  const callbacksRef = useRef({ onSaved, onRecovered, onSaveStateChange, onOpenLink, onReady, onLoadError })
-  callbacksRef.current = { onSaved, onRecovered, onSaveStateChange, onOpenLink, onReady, onLoadError }
+  const callbacksRef = useRef({ onSaved, onRecovered, onFragmentUpdated, onSaveStateChange, onOpenLink, onRequestClose, onReady, onLoadError })
+  callbacksRef.current = { onSaved, onRecovered, onFragmentUpdated, onSaveStateChange, onOpenLink, onRequestClose, onReady, onLoadError }
+
+  const syncBlockedState = useCallback(() => {
+    blockedRef.current = readOnly || externalBlockedRef.current || recoveringRef.current || documentPropertiesOpenRef.current
+    setBlocked(blockedRef.current)
+  }, [readOnly])
 
   useEffect(() => {
     externalBlockedRef.current = readOnly
-    blockedRef.current = readOnly || recoveringRef.current
-    setBlocked(blockedRef.current)
-  }, [readOnly])
+    syncBlockedState()
+  }, [readOnly, syncBlockedState])
   const workerRef = useRef<Worker | null>(null)
   const requestIdRef = useRef(0)
   const layoutPendingRef = useRef(new Map<number, LayoutRequest>())
@@ -283,14 +302,16 @@ export const CanvasWorkspace = forwardRef<CanvasWorkspaceHandle, CanvasWorkspace
     setSelectedNodes([]); setSelectedEdges([]); setEditing(null); setTreeSelection(null); setPositions({})
     setMeasurements({})
     setSaveState(null); setActionError(null); setPicker(null); setPendingText(null); pendingTextRef.current = null
+    setDocumentPropertiesOpen(false); documentPropertiesOpenRef.current = false
     setInspectorPinned(false); setInspectorTab("properties")
     recoveryAttemptRef.current = null; setRecoveryError(null); setSplitResult(null)
     const initial = initialReadRef.current?.path === path ? initialReadRef.current : null
     initialReadRef.current = null
-    void (initial ? Promise.resolve(initial) : readCanvas(path)).then((result) => {
+    void (initial ? Promise.resolve(initial) : readFromStorage(path)).then((result) => {
       if (!active) return
-      const queue = new CanvasSaveQueue(result, writeCanvas, (state) => {
-        if (!active) return
+      let queue: CanvasSaveQueue
+      queue = new CanvasSaveQueue(result, saveTransport, (state) => {
+        if (!active || queueRef.current !== queue) return
         setSaveState(state); callbacksRef.current.onSaveStateChange?.(state.status === "error" ? "error" : pendingTextRef.current ? "dirty" : state.status)
       })
       queueRef.current = queue
@@ -300,7 +321,7 @@ export const CanvasWorkspace = forwardRef<CanvasWorkspaceHandle, CanvasWorkspace
     }).catch((error) => { if (active) { setLoadError(getApiErrorMessage(error)); callbacksRef.current.onLoadError?.(error) } })
       .finally(() => { if (active) setLoading(false) })
     return () => { active = false }
-  }, [path, loadAttempt])
+  }, [path, loadAttempt, readFromStorage, saveTransport])
 
   useEffect(() => {
     if (!draft || !flowReady) return
@@ -377,12 +398,46 @@ export const CanvasWorkspace = forwardRef<CanvasWorkspaceHandle, CanvasWorkspace
   useImperativeHandle(ref, () => ({
     flush,
     isDirty: () => !!queueRef.current?.getState().dirty || !!pendingTextRef.current || draggingRef.current || recoveringRef.current,
+    replaceBaseline(fileSha) {
+      if (fragmentMode) queueRef.current?.replaceBaseline(fileSha)
+    },
     setInteractionBlocked(value) {
       externalBlockedRef.current = readOnly || value
-      blockedRef.current = readOnly || value || recoveringRef.current
-      setBlocked(blockedRef.current)
+      syncBlockedState()
     },
-  }), [flush, readOnly])
+  }), [flush, fragmentMode, readOnly, syncBlockedState])
+
+  const openDocumentProperties = useCallback(async () => {
+    if (!fragmentMode || !fragment || blockedRef.current) return
+    documentPropertiesOpenRef.current = true
+    syncBlockedState()
+    if (!(await flush())) {
+      documentPropertiesOpenRef.current = false
+      syncBlockedState()
+      const message = "无法打开文档属性：请先处理图内容的保存问题。"
+      setActionError(message)
+      notify.error(message)
+      return
+    }
+    setActionError(null)
+    setDocumentPropertiesOpen(true)
+  }, [flush, fragment, fragmentMode, syncBlockedState])
+
+  const closeDocumentProperties = useCallback(() => {
+    setDocumentPropertiesOpen(false)
+    documentPropertiesOpenRef.current = false
+    syncBlockedState()
+  }, [syncBlockedState])
+
+  const handleDocumentFragmentUpdated = useCallback((updated: Fragment) => {
+    if (!fragmentMode || !updated.fileSha) return
+    try {
+      queueRef.current?.replaceBaseline(updated.fileSha)
+      callbacksRef.current.onFragmentUpdated?.(updated)
+    } catch (error) {
+      setActionError(getApiErrorMessage(error))
+    }
+  }, [fragmentMode])
 
   useEffect(() => {
     if (readOnly || (!saveState?.dirty && !pendingText) || saveState?.saving || saveState?.status === "error" || draggingRef.current || composing) return
@@ -495,8 +550,40 @@ export const CanvasWorkspace = forwardRef<CanvasWorkspaceHandle, CanvasWorkspace
       setRecoveryError(getApiErrorMessage(error))
     } finally {
       recoveringRef.current = false; setRecovering(false)
-      blockedRef.current = externalBlockedRef.current; setBlocked(externalBlockedRef.current)
+      syncBlockedState()
     }
+  }
+
+  async function keepLocalAfterConflict() {
+    if (recoveringRef.current || externalBlockedRef.current || draggingRef.current || !finalizeText()) return
+    const current = draftRef.current
+    if (!current) return
+    recoveringRef.current = true; blockedRef.current = true; setRecovering(true); setBlocked(true); setActionError(null)
+    try {
+      const latest = await readFromStorage(path)
+      let queue: CanvasSaveQueue
+      queue = new CanvasSaveQueue(latest, saveTransport, (state) => {
+        if (queueRef.current !== queue) return
+        setSaveState(state)
+        callbacksRef.current.onSaveStateChange?.(state.status === "error" ? "error" : pendingTextRef.current ? "dirty" : state.status)
+      })
+      queueRef.current = queue
+      queue.update(current)
+      const saved = await queue.flush()
+      const next = queue.getDraft()
+      draftRef.current = next; setDraft(next); setSaveState(queue.getState())
+      if (saved) callbacksRef.current.onSaved?.()
+    } catch (error) {
+      setActionError(getApiErrorMessage(error))
+    } finally {
+      recoveringRef.current = false; setRecovering(false)
+      syncBlockedState()
+    }
+  }
+
+  function loadDiskAfterConflict() {
+    if (recoveringRef.current || externalBlockedRef.current) return
+    setLoadAttempt((value) => value + 1)
   }
   const onText = useCallback((id: string, text: string) => stageText({ kind: "node", id, text }), [stageText])
   const editNode = useCallback((id: string | null) => {
@@ -701,6 +788,9 @@ export const CanvasWorkspace = forwardRef<CanvasWorkspaceHandle, CanvasWorkspace
       else deleteSelection()
     }
     if (event.key === "Escape") {
+      if (callbacksRef.current.onRequestClose && !editing && !picker && !selectedNodes.length && !selectedEdges.length && !treeSelection) {
+        consume(); void callbacksRef.current.onRequestClose(); return
+      }
       consume()
       setSelectedNodes([]); setSelectedEdges([]); setTreeSelection(null); setEditing(null); setPicker(null)
       rootRef.current?.focus({ preventScroll: true })
@@ -782,8 +872,8 @@ export const CanvasWorkspace = forwardRef<CanvasWorkspaceHandle, CanvasWorkspace
       await onSplit?.(result)
     } catch (error) { setActionError(getApiErrorMessage(error)) }
     finally {
-      recoveringRef.current = false; blockedRef.current = externalBlockedRef.current
-      setRecovering(false); setBlocked(externalBlockedRef.current)
+      recoveringRef.current = false
+      setRecovering(false); syncBlockedState()
     }
   }
 
@@ -885,6 +975,7 @@ export const CanvasWorkspace = forwardRef<CanvasWorkspaceHandle, CanvasWorkspace
   if (!draft) return <div className="shard-canvas-loading" role="alert"><p>{loadError || "画布无法打开"}</p>
     <Button variant="outline" onClick={() => setLoadAttempt((value) => value + 1)}>重新打开</Button></div>
 
+  if (draft.kind === "shard.canvas" && fragmentMode) return <div className="shard-canvas-loading" role="alert">流程图片段格式无效</div>
   if (draft.kind === "shard.canvas") return <div className="shard-canvas-legacy" aria-label="旧画布拆分" aria-busy={recovering}>
     <strong>{draft.title}</strong>
     <p>这是一份旧版混合画布。思维导图和流程图现在分别保存在独立文档中。</p>
@@ -902,6 +993,7 @@ export const CanvasWorkspace = forwardRef<CanvasWorkspaceHandle, CanvasWorkspace
     onCompositionStartCapture={() => { composingRef.current = true; setComposing(true) }}
     onCompositionEndCapture={() => { composingRef.current = false; setComposing(false) }}>
     <header className="shard-canvas-toolbar" aria-label="画布工具栏">
+      {toolbarLeading}
       <DropdownMenu onOpenChange={(open) => { if (open) { skipMenuFocusRef.current = false; menuActionRef.current = null } }}
         onOpenChangeComplete={(open) => {
           if (open) return
@@ -927,6 +1019,8 @@ export const CanvasWorkspace = forwardRef<CanvasWorkspaceHandle, CanvasWorkspace
       <Button size="sm" variant="outline" disabled={blocked || composing || !!recoveryAttemptRef.current || saveState?.saving || (!saveState?.dirty && !pendingText)}
         onClick={() => { if (!finalizeText()) return; if (saveState?.status === "error") void queueRef.current?.retry().then((ok) => { if (ok) callbacksRef.current.onSaved?.() }); else void flush() }}>
         {saveState?.status === "error" ? "重试保存" : "保存"}</Button>
+      {fragmentMode && fragment ? <Button size="sm" variant="outline" disabled={blocked || composing}
+        onClick={() => { void openDocumentProperties() }}><FileTextIcon />文档属性</Button> : null}
       <Button size="sm" variant="outline" aria-label="对象面板" aria-expanded={inspectorVisible} aria-controls={inspectorId}
         onClick={() => {
           if (inspectorVisible) closeInspector()
@@ -934,7 +1028,14 @@ export const CanvasWorkspace = forwardRef<CanvasWorkspaceHandle, CanvasWorkspace
         }}>对象面板</Button>
     </header>
     {(actionError || saveState?.error) && <div className="shard-canvas-error" role="alert">{actionError || saveState?.error}</div>}
-    {(saveState?.status === "error" || recoveryError) && <div className="shard-canvas-recovery" aria-busy={recovering}>
+    {fragmentMode && saveState?.error?.includes("STALE_BASE") && <div className="shard-canvas-recovery" aria-busy={recovering}>
+      <span>检测到保存冲突。请选择保留当前草稿，或载入磁盘上的版本。</span>
+      <Button size="sm" variant="outline" disabled={externalBlockedRef.current || recovering || composing}
+        onClick={() => { void keepLocalAfterConflict() }}>保留我的版本</Button>
+      <Button size="sm" variant="outline" disabled={externalBlockedRef.current || recovering || composing}
+        onClick={loadDiskAfterConflict}>载入磁盘版本</Button>
+    </div>}
+    {!fragmentMode && (saveState?.status === "error" || recoveryError) && <div className="shard-canvas-recovery" aria-busy={recovering}>
       <span>{recoveryError || "当前草稿可以另存为新流程图，原文件和冲突副本都会保留。"}</span>
       <Button size="sm" variant="outline" disabled={externalBlockedRef.current || recovering || composing}
         onClick={() => { void recoverAsCopy() }}>{recovering ? "正在另存副本…" : recoveryAttemptRef.current ? "重试另存副本" : "另存流程图副本"}</Button>
@@ -1137,5 +1238,15 @@ export const CanvasWorkspace = forwardRef<CanvasWorkspaceHandle, CanvasWorkspace
         </div>
       </aside>}
     </div>
+    <Dialog open={documentPropertiesOpen} onOpenChange={(open) => { if (!open) closeDocumentProperties() }}>
+      <DialogContent className="sm:max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>文档属性</DialogTitle>
+        </DialogHeader>
+        {fragment ? <div className="min-h-0 overflow-auto">
+          <PropertiesPanel fragment={fragment} inset={false} onFragmentUpdated={handleDocumentFragmentUpdated} readOnly={readOnly} />
+        </div> : null}
+      </DialogContent>
+    </Dialog>
   </div>
 })

@@ -1,4 +1,6 @@
 import { LOCKBOX_TAG } from "@/lib/lockbox"
+import { readFlowchartContent } from "@/lib/flowchart-content"
+import { readOutlineContent } from "@/lib/mind-map-outline"
 import type { Fragment } from "@/types"
 
 export type FragmentSearchScope = "all" | "active" | "archive"
@@ -233,6 +235,32 @@ function findHighlightRanges(
 }
 
 export function markdownToSearchText(markdown: string) {
+  if (/(?:^|\n)```shardmap[^\S\r\n]*(?:\r?\n)/u.test(markdown)) {
+    const outline = readOutlineContent(markdown)
+    if (outline?.format === "json") {
+      return Object.values(outline.file.nodes)
+        .flatMap((node) => [node.text.trim(), node.note?.trim() ?? ""])
+        .filter(Boolean)
+        .join(" ")
+    }
+  }
+
+  if (/(?:^|\n)```shardflow[^\S\r\n]*(?:\r?\n)/u.test(markdown)) {
+    const flowchart = readFlowchartContent(markdown)
+    if (flowchart) {
+      const file = flowchart.file
+      return [
+        file.title.trim(),
+        ...file.nodes.flatMap((node) => [
+          node.text.trim(),
+          node.mindMap?.title.trim() ?? "",
+          ...Object.values(node.mindMap?.nodes ?? {}).map((entry) => entry.text.trim()),
+        ]),
+        ...file.edges.map((edge) => edge.label.trim()),
+      ].filter(Boolean).join(" ")
+    }
+  }
+
   return markdown
     .replace(/!\[([^\]]*)\]\([^)]*\)/gu, "$1")
     .replace(/\[([^\]]+)\]\([^)]*\)/gu, "$1")

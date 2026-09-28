@@ -16,6 +16,13 @@ import type { SlashCommandId } from "@/lib/slash-commands"
 import type { SearchRevealHandle } from "@/lib/search-contract"
 import type { WikilinkCandidate } from "@/lib/wikilink"
 import type { ShardDocumentLink } from "@/types"
+import { Button } from "@/components/ui/button"
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Input } from "@/components/ui/input"
+import { createDataset } from "@/features/datasets/api"
+import { openDatasetEditor } from "@/features/datasets/open-dataset"
+import { notify } from "@/lib/notify"
+import { findBlockSlashItem } from "./blocks/registry-ui"
 import { registerShardRichEditorTest } from "./test-bridge"
 
 import {
@@ -25,6 +32,7 @@ import {
   insertRichHorizontalRule,
   insertRichTable,
   runRichSlashCommand,
+  insertRichShardBlock,
   toggleRichBlockquote,
   toggleRichCodeBlock,
   type ShardRichHeadingLevel,
@@ -87,6 +95,7 @@ export interface ShardRichEditorProps {
   placeholder?: string
   ariaLabel?: string
   readOnly?: boolean
+  allowDatasetActions?: boolean
   autoFocus?: boolean
   onSubmit?: () => void
   onToggleZen?: () => void
@@ -100,6 +109,8 @@ export interface ShardRichEditorProps {
   onImageFiles?: (files: File[]) => void
   /** `/大纲`：宿主把整个速记框切成幕布式大纲态。不传即不提供该命令。 */
   onEnterOutline?: () => void
+  /** `/流程图`：宿主立即创建空流程图。不传即不提供该命令。 */
+  onCreateFlowchart?: () => void
   /** `/文档`：宿主把当前草稿标记为文档类型。不传即不提供该命令。 */
   onMarkDocument?: () => void
   /** `[[` 建议的候选，也是双链芯片判断断链的依据。 */
@@ -112,6 +123,7 @@ export interface ShardRichEditorProps {
 
 export interface ShardRichEditorHandle extends SearchRevealHandle {
   focus(): void
+  insertDatasetReference(path: string): void
   getMarkdown(): string
   /**
    * 自动保存取值：与 getMarkdown 同一套收敛口径，但只算不改——编辑器里的字面
@@ -177,6 +189,7 @@ export const ShardRichEditor = forwardRef<ShardRichEditorHandle, ShardRichEditor
       placeholder,
       ariaLabel,
       readOnly = false,
+      allowDatasetActions = true,
       autoFocus = false,
       onSubmit,
       onToggleZen,
@@ -188,6 +201,7 @@ export const ShardRichEditor = forwardRef<ShardRichEditorHandle, ShardRichEditor
       getKnownTags,
       onImageFiles,
       onEnterOutline,
+      onCreateFlowchart,
       onMarkDocument,
       getWikilinkCandidates,
       onNavigateWikilink,
@@ -196,6 +210,11 @@ export const ShardRichEditor = forwardRef<ShardRichEditorHandle, ShardRichEditor
     forwardedRef
   ) {
     const [menuState, setMenuState] = useState<SuggestionMenuState | null>(null)
+    const [datasetPosition, setDatasetPosition] = useState<number | null>(null)
+    const [datasetTitle, setDatasetTitle] = useState("数据集")
+    const [datasetCreating, setDatasetCreating] = useState(false)
+    const allowDatasetActionsRef = useRef(allowDatasetActions)
+    allowDatasetActionsRef.current = allowDatasetActions
     const menu = useMemo(() => new SuggestionMenuHost(setMenuState), [])
 
     // 回调走 ref：Tiptap 扩展在创建时固化闭包，扩展数组一变就重建整个
@@ -211,6 +230,7 @@ export const ShardRichEditor = forwardRef<ShardRichEditorHandle, ShardRichEditor
       onDropFiles,
       onImageFiles,
       onEnterOutline,
+      onCreateFlowchart,
       onMarkDocument,
       getKnownTags,
       getWikilinkCandidates,
@@ -228,6 +248,7 @@ export const ShardRichEditor = forwardRef<ShardRichEditorHandle, ShardRichEditor
       onDropFiles,
       onImageFiles,
       onEnterOutline,
+      onCreateFlowchart,
       onMarkDocument,
       getKnownTags,
       getWikilinkCandidates,
@@ -268,10 +289,41 @@ export const ShardRichEditor = forwardRef<ShardRichEditorHandle, ShardRichEditor
     tierRef.current = tier
 
     function hostCommands() {
-      const { onEnterOutline: enterOutline, onMarkDocument: markDocument } = callbacks.current
+      const {
+        onCreateFlowchart: createFlowchart,
+        onEnterOutline: enterOutline,
+        onMarkDocument: markDocument,
+      } = callbacks.current
       return {
+        ...(createFlowchart ? { onCreateFlowchart: () => callbacks.current.onCreateFlowchart?.() } : {}),
         ...(enterOutline ? { onEnterOutline: () => callbacks.current.onEnterOutline?.() } : {}),
         ...(markDocument ? { onMarkDocument: () => callbacks.current.onMarkDocument?.() } : {}),
+        onCreateDataset: (position: number) => {
+          if (!allowDatasetActionsRef.current) return
+          setDatasetTitle("数据集")
+          setDatasetPosition(position)
+        },
+      }
+    }
+
+    async function submitDataset() {
+      if (datasetPosition === null || datasetCreating || !allowDatasetActionsRef.current) return
+      const title = datasetTitle.trim()
+      if (!title) return
+      setDatasetCreating(true)
+      try {
+        const snapshot = await createDataset(title, ["id", "名称"], [], "id")
+        const instance = editorRef.current
+        const slash = findBlockSlashItem("datatable")
+        if (instance && !instance.isDestroyed && slash) {
+          insertRichShardBlock(instance, slash.lang, slash.slash, JSON.stringify({ title, src: snapshot.path }), datasetPosition)
+        }
+        setDatasetPosition(null)
+        openDatasetEditor(snapshot.path)
+      } catch (error) {
+        notify.failure("创建数据集失败", error)
+      } finally {
+        setDatasetCreating(false)
       }
     }
 
@@ -365,6 +417,7 @@ export const ShardRichEditor = forwardRef<ShardRichEditorHandle, ShardRichEditor
           // 宿主命令按「有没有传回调」进菜单：没接大纲/文档的编辑面不展示它们。
           getHostCommands: () => hostCommands(),
           isDocumentTier: () => tierRef.current === "document",
+          allowDatasetActions: () => allowDatasetActionsRef.current,
         }),
         ShardWikilinkSuggestion.configure({
           getCandidates: () =>
@@ -429,6 +482,7 @@ export const ShardRichEditor = forwardRef<ShardRichEditorHandle, ShardRichEditor
     if (editor) {
       editor.storage.csvEmbed.maxRows =
         variant === "zen" || variant === "library" ? 50 : 10
+      editor.storage.shardBlock.allowDatasetActions = () => allowDatasetActionsRef.current
     }
 
     useEffect(() => {
@@ -580,6 +634,13 @@ export const ShardRichEditor = forwardRef<ShardRichEditorHandle, ShardRichEditor
             runRichSlashCommand(instance, id, callbacks.current.onImageFiles, hostCommands())
           }
         },
+        insertDatasetReference(path) {
+          const instance = editorRef.current
+          const slash = findBlockSlashItem("datatable")
+          if (instance && !instance.isDestroyed && instance.isEditable && allowDatasetActionsRef.current && slash) {
+            insertRichShardBlock(instance, slash.lang, slash.slash, JSON.stringify({ src: path }))
+          }
+        },
         insertHorizontalRule() {
           const instance = editorRef.current
           if (instance) insertRichHorizontalRule(instance)
@@ -622,6 +683,16 @@ export const ShardRichEditor = forwardRef<ShardRichEditorHandle, ShardRichEditor
         </div>
         {menuState ? <SuggestionMenu host={menu} state={menuState} /> : null}
         {editor ? <SelectionToolbar editor={editor} suppressed={menuState !== null} /> : null}
+        <Dialog open={datasetPosition !== null} onOpenChange={(open) => { if (!open && !datasetCreating) setDatasetPosition(null) }}>
+          <DialogContent>
+            <DialogHeader><DialogTitle>新建数据集</DialogTitle></DialogHeader>
+            <Input aria-label="数据集标题" autoFocus value={datasetTitle} disabled={datasetCreating} onChange={(event) => setDatasetTitle(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void submitDataset() } }} />
+            <DialogFooter>
+              <Button variant="outline" disabled={datasetCreating} onClick={() => setDatasetPosition(null)}>取消</Button>
+              <Button disabled={datasetCreating || !datasetTitle.trim()} onClick={() => void submitDataset()}>{datasetCreating ? "创建中…" : "创建"}</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </>
     )
   }

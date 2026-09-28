@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -20,6 +21,7 @@ import { EditorToolbar } from "@/components/shard/editor-toolbar"
 import { FragmentImageAttachment } from "@/components/shard/fragment-content"
 import { MindMapPreview } from "@/components/shard/mind-map-preview"
 import { OutlineComposer } from "@/components/shard/outline-composer"
+import { PropertiesPanel } from "@/components/shard/properties-panel"
 import { ZenSurface } from "@/components/shard/zen-surface"
 import { Button } from "@/components/ui/button"
 import { ToolbarIconButton } from "@/components/ui/toolbar-icon-button"
@@ -34,6 +36,7 @@ import {
   parseMarkdownImageLine,
 } from "@/lib/editor-format"
 import {
+  getApiErrorMessage,
   openCsvFile,
   setWindowControlsHidden,
 } from "@/lib/api"
@@ -42,11 +45,13 @@ import {
   CONTENT_KIND_LABELS,
   countPlainTextCharacters,
   deriveKind,
+  stripProtectedTypeTags,
 } from "@/lib/content-kind"
 import { hasMarkdownImage, wantsLockbox } from "@/lib/lockbox"
 import { notify } from "@/lib/notify"
-import { parseMindMapOutline } from "@/lib/mind-map-outline"
+import { readOutlineContent } from "@/lib/mind-map-outline"
 import { useTableDocumentDrop } from "@/lib/use-table-document-drop"
+import { CsvImportDialog } from "@/features/datasets/csv-import-dialog"
 import {
   buildCsvWikilinkCandidates,
   buildWikilinkCandidates,
@@ -72,13 +77,21 @@ interface FragmentEditorProps {
   onRegisterFlush?: (flush: (() => Promise<boolean>) | null) => void
   onCreate?: (content: string, tags: string[]) => Promise<Fragment | void>
   onNavigateToFragment?: (fragmentId: string) => void
+  onFragmentUpdated?: (fragment: Fragment) => void
   onReady?: (fragmentId: string) => void
+  onRefreshFragments?: () => Promise<void> | void
+  onRequestOutlineUpgrade?: (fragmentId: string) => Promise<void> | void
   /**
    * 行内编辑遇到文档类型时改开禅模式（产品框架 §2「文档……直接进入禅模式」）。
    * 不传就照常行内编辑。
    */
   onRequestZen?: () => void
-  onSave: (id: string, content: string, tags: string[]) => Promise<Fragment>
+  onSave: (
+    id: string,
+    content: string,
+    tags: string[],
+    expectedFileSha?: string
+  ) => Promise<Fragment>
   readOnly?: boolean
   variant?: "inline" | "zen"
   vaultPath?: string
@@ -127,7 +140,10 @@ export function FragmentEditor({
   onRegisterFlush,
   onCreate,
   onNavigateToFragment,
+  onFragmentUpdated,
   onReady,
+  onRefreshFragments,
+  onRequestOutlineUpgrade,
   onRequestZen,
   onSave,
   readOnly = false,
@@ -139,8 +155,11 @@ export function FragmentEditor({
     EditorImageAttachment[]
   >([])
   const [saveState, setSaveState] = useState<SaveState>("saved")
+  const [importFile, setImportFile] = useState<{ name: string; bytes: Uint8Array } | null>(null)
   const imageAttachmentsRef = useRef<EditorImageAttachment[]>([])
   const lastSavedContentRef = useRef("")
+  const baseFileShaRef = useRef<string | null>(null)
+  const pendingDiskReloadRef = useRef(false)
   const onCreateRef = useRef(onCreate)
   const onSaveRef = useRef(onSave)
   const blurCommitTimerRef = useRef<number | null>(null)
@@ -263,6 +282,8 @@ export function FragmentEditor({
       setImageAttachments([])
       setSaveState("saved")
       lastSavedContentRef.current = ""
+      baseFileShaRef.current = null
+      pendingDiskReloadRef.current = false
       return
     }
 
@@ -277,6 +298,8 @@ export function FragmentEditor({
       nextDraft.images
     )
     lastSavedContentRef.current = fragment ? initialContent : ""
+    baseFileShaRef.current = fragment?.fileSha ?? null
+    pendingDiskReloadRef.current = false
     setSaveState(fragment || !initialContent ? "saved" : "dirty")
   }, [draft?.id, fragment?.id])
 
@@ -306,18 +329,33 @@ export function FragmentEditor({
   // Navigation may re-read the same object ID at a newer revision. Refresh a
   // clean editor from that payload instead of relying on identity alone.
   useEffect(() => {
-    if (!fragment || fragment.content === lastSavedContentRef.current) return
-    if (draftContent !== lastSavedContentRef.current) return
-
+    if (!fragment) return
     const nextDraft = splitContentImageAttachments(fragment.content)
+    const nextContent = buildContentWithImageAttachments(
+      nextDraft.content,
+      nextDraft.images
+    )
+    const clean =
+      draftContent === lastSavedContentRef.current &&
+      savePromiseRef.current === null
+    const forceReload = pendingDiskReloadRef.current
+    if (
+      nextContent === lastSavedContentRef.current ||
+      nextContent === draftContent
+    ) {
+      pendingDiskReloadRef.current = false
+      if (clean || forceReload) baseFileShaRef.current = fragment.fileSha ?? null
+      return
+    }
+    if (!clean && !forceReload) return
+
+    pendingDiskReloadRef.current = false
     revokeEditorImagePreviewUrls(imageAttachmentsRef.current)
     imageAttachmentsRef.current = nextDraft.images
     setContent(nextDraft.content)
     setImageAttachments(nextDraft.images)
-    lastSavedContentRef.current = buildContentWithImageAttachments(
-      nextDraft.content,
-      nextDraft.images
-    )
+    lastSavedContentRef.current = nextContent
+    baseFileShaRef.current = fragment.fileSha ?? null
     setSaveState("saved")
   }, [draftContent, fragment])
 
@@ -368,9 +406,18 @@ export function FragmentEditor({
   }, [outlineView])
 
   // 与其他 hooks 一样，必须位于关闭编辑器的提前 return 之前。
-  const { isDropTarget: isTableDropTarget } = useTableDocumentDrop({
+  const onCsvDrop = useCallback((file: { name: string; bytes: Uint8Array }) => {
+    if (fragment?.lockbox || wantsLockbox(richEditorRef.current?.getMarkdown() ?? content, fragment?.tags ?? [])) {
+      notify.error("私密碎片不支持数据集")
+      return
+    }
+    setImportFile(file)
+  }, [content, fragment?.lockbox, fragment?.tags])
+  const { dropKind } = useTableDocumentDrop({
     enabled: isOpen && !readOnly,
+    allowCsv: !fragment?.lockbox && !wantsLockbox(content, fragment?.tags ?? []),
     frameRef: editorFrameRef,
+    onCsv: onCsvDrop,
   })
   const { uploadPastedImages } = useImageUpload({
     getContent: getCurrentDraftContent,
@@ -500,7 +547,10 @@ export function FragmentEditor({
     try {
       // type 是受保护的单值标签，正文里没有它：保存时必须把碎片原有的 type
       // 原样带回去，否则一次行内编辑就会把大纲 / 文档 / 笔记降级成普通碎片。
-      const extracted = normalizeTagList(["inbox", ...extractTags(nextContent)])
+      const extracted = stripProtectedTypeTags(
+        normalizeTagList(["inbox", ...extractTags(nextContent)]),
+        kind
+      )
       const tags = kind === "fragment" ? extracted : applyTypeTag(extracted, kind)
       const editsLockbox = Boolean(fragment?.lockbox)
       if ((editsLockbox || wantsLockbox(nextContent, tags)) && hasMarkdownImage(nextContent)) {
@@ -514,7 +564,13 @@ export function FragmentEditor({
         }
         await onCreateRef.current(nextContent, tags)
       } else if (fragment) {
-        await onSaveRef.current(fragment.id, nextContent, tags)
+        const updated = await onSaveRef.current(
+          fragment.id,
+          nextContent,
+          tags,
+          baseFileShaRef.current ?? undefined
+        )
+        baseFileShaRef.current = updated.fileSha ?? null
       } else {
         return false
       }
@@ -522,6 +578,22 @@ export function FragmentEditor({
       setSaveState("saved")
       return true
     } catch (error) {
+      const message = getApiErrorMessage(error)
+      if (!isDraft && message.includes("STALE_BASE")) {
+        const keepMine = window.confirm(
+          "这篇文档的磁盘内容已被修改（可能来自同步或外部编辑）。\n\n「确定」：用当前草稿覆盖磁盘版本\n「取消」：放弃当前草稿，载入磁盘最新版本"
+        )
+        if (keepMine) {
+          baseFileShaRef.current = null
+          setSaveState("dirty")
+          return persistDraft(nextContent)
+        }
+        pendingDiskReloadRef.current = true
+        lastSavedContentRef.current = nextContent
+        setSaveState("saved")
+        await onRefreshFragments?.()
+        return true
+      }
       setSaveState("error")
       notify.failure(isDraft ? "片段保存失败" : "片段自动保存失败", error)
       return false
@@ -652,14 +724,26 @@ export function FragmentEditor({
   const characterCount = Array.from(content.replace(/\s/g, "")).length
   // 公开笔记里出现 #密匣 意味着保存时会加密搬家，提前亮出目的地
   const willRouteToLockbox =
-    !fragment?.lockbox && wantsLockbox(content, fragment?.tags ?? [])
+    !fragment?.lockbox &&
+    kind !== "outline" &&
+    kind !== "flowchart" &&
+    wantsLockbox(content, fragment?.tags ?? [])
   const lineCount = content.length > 0 ? content.split(/\r\n?|\n/).length : 0
   /** 大纲的只读导图视图：同一棵树的另一种读法，不是另一种文件。 */
-  const outlineFile = isOutlineSurface
-    ? parseMindMapOutline(content).file
-    : null
+  const outlineContent = isOutlineSurface ? readOutlineContent(content) : null
+  const outlineFile = outlineContent?.file ?? null
+  const isLegacyOutline = outlineContent?.format === "legacy"
   const isMindMapView = isOutlineSurface && isZen && outlineView === "mindmap"
   const documentCharacterCount = countPlainTextCharacters(content)
+  const showProperties =
+    fragment !== null && (kind === "fragment" || kind === "document")
+
+  function handlePropertyUpdated(updated: Fragment) {
+    if (updated.content === lastSavedContentRef.current) {
+      baseFileShaRef.current = updated.fileSha ?? null
+    }
+    onFragmentUpdated?.(updated)
+  }
 
   const editorFrame = (
     <div
@@ -669,6 +753,21 @@ export function FragmentEditor({
         ...(isZen ? { display: "flex", flexDirection: "column", minHeight: 0, flex: "1 1 auto" } : {}),
       }}
     >
+      {isLegacyOutline && fragment ? (
+        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-[var(--shard-composer-padding)] py-2 text-[length:var(--text-meta)] text-muted-foreground">
+          <span>旧格式大纲，升级后可用导图编辑</span>
+          <Button
+            disabled={saveState === "saving"}
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => void onRequestOutlineUpgrade?.(fragment.id)}
+            size="sm"
+            type="button"
+            variant="outline"
+          >
+            升级
+          </Button>
+        </div>
+      ) : null}
       {isMindMapView ? (
         <div
           ref={mindMapViewRef}
@@ -708,6 +807,7 @@ export function FragmentEditor({
       ) : (
         <div style={richFieldStyle}>
           <ShardRichEditor
+            allowDatasetActions={!fragment?.lockbox && !willRouteToLockbox}
             ariaLabel={isZen ? "禅模式片段编辑器" : "片段编辑器"}
             autoFocus={!readOnly}
             editorId={editorId}
@@ -742,11 +842,12 @@ export function FragmentEditor({
           />
         </div>
       )}
-      {isTableDropTarget ? (
+      {dropKind ? (
         <div className="shard-editor-drop-hint">
-          请在资料库中导入为多维表格
+          {dropKind === "csv" ? fragment?.lockbox || willRouteToLockbox ? "私密碎片不支持数据集" : "松开以导入为数据集" : "请先另存为 CSV 再导入"}
         </div>
       ) : null}
+      <CsvImportDialog file={importFile} allowed={!fragment?.lockbox && !willRouteToLockbox} onClose={() => setImportFile(null)} onImported={(path) => richEditorRef.current?.insertDatasetReference(path)} />
     </div>
   )
 
@@ -1004,6 +1105,13 @@ export function FragmentEditor({
           flexDirection: "column",
         }}
       >
+        {showProperties ? (
+          <PropertiesPanel
+            fragment={fragment}
+            onFragmentUpdated={handlePropertyUpdated}
+            readOnly={readOnly}
+          />
+        ) : null}
         {editorFrame}
         {imageAttachmentRow}
       </div>

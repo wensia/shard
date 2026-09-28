@@ -8,14 +8,16 @@ import {
   deriveNoteTitle,
   isStreamKind,
   isTypeTag,
+  stripProtectedTypeTags,
   TYPE_TAGS,
 } from "@/lib/content-kind"
 
 describe("content kind", () => {
-  it("笔记、大纲与文档都是受保护的类型标签", () => {
-    expect(TYPE_TAGS).toEqual(["note", "outline", "document"])
+  it("type 标签顺序与后端冲突优先级一致", () => {
+    expect(TYPE_TAGS).toEqual(["note", "outline", "flowchart", "document"])
     expect(isTypeTag("note")).toBe(true)
     expect(isTypeTag("outline")).toBe(true)
+    expect(isTypeTag("flowchart")).toBe(true)
     expect(isTypeTag("document")).toBe(true)
     expect(isTypeTag("project")).toBe(false)
   })
@@ -25,7 +27,20 @@ describe("content kind", () => {
     expect(deriveKind(["inbox", "灵感"])).toBe("fragment")
     expect(deriveKind(["inbox", "note", "灵感"])).toBe("note")
     expect(deriveKind(["inbox", "outline"])).toBe("outline")
+    expect(deriveKind(["inbox", "flowchart"])).toBe("flowchart")
     expect(deriveKind(["inbox", "document"])).toBe("document")
+    expect(deriveKind(["document", "flowchart", "note"])).toBe("note")
+  })
+
+  it("受保护类型只由当前专用类型保留", () => {
+    expect(stripProtectedTypeTags(["inbox", "outline", "flowchart"], "fragment"))
+      .toEqual(["inbox"])
+    expect(stripProtectedTypeTags(["document", "outline"], "document"))
+      .toEqual([])
+    expect(stripProtectedTypeTags(["note", "flowchart", "topic"], "outline"))
+      .toEqual(["topic", "outline"])
+    expect(stripProtectedTypeTags(["outline", "document", "topic"], "flowchart"))
+      .toEqual(["topic", "flowchart"])
   })
 
   it("type 是单值：写入一个 type 标签会摘掉其余 type 标签", () => {
@@ -49,6 +64,7 @@ describe("content kind", () => {
   it("碎片流承载碎片、大纲与文档，资料库笔记除外", () => {
     expect(isStreamKind("fragment")).toBe(true)
     expect(isStreamKind("outline")).toBe(true)
+    expect(isStreamKind("flowchart")).toBe(true)
     expect(isStreamKind("document")).toBe(true)
     expect(isStreamKind("note")).toBe(false)
   })

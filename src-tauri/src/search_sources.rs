@@ -12,7 +12,12 @@ use std::os::unix::fs::MetadataExt;
 
 use chrono::{DateTime, Utc};
 use shard_core::{
-    search::{project_document, ProjectedDocument, SearchProjection, SourceDocument},
+    derive_type,
+    graph_region::{find_region, GraphRegionKind},
+    search::{
+        project_document, DocumentOnlyReason, ProjectedDocument, SearchProjection,
+        SearchProjectionBlock, SourceDocument,
+    },
     FragmentFrontmatter,
 };
 
@@ -775,10 +780,12 @@ fn read_search_document_from_disk(
     lease: Option<&LockboxReadLease>,
 ) -> Result<LoadedSearchDocument, SearchError> {
     let vault = Path::new(&context.vault_path);
-    if !matches!(
+    let markdown_kind = matches!(
         target.kind,
         SearchKind::Fragment | SearchKind::Note | SearchKind::Outline | SearchKind::Document
-    ) {
+    ) || matches!(target.kind, SearchKind::Flowchart)
+        && target.path.to_ascii_lowercase().ends_with(".md");
+    if !markdown_kind {
         return Err(SearchError::UnsupportedTarget);
     }
 
@@ -844,8 +851,7 @@ fn load_public_markdown_text(
     revision: String,
 ) -> Result<LoadedSearchDocument, SearchError> {
     let relative = crate::relative_path(vault, path).map_err(io_error)?;
-    let (frontmatter, body) =
-        crate::parse_fragment_text(text).map_err(|_| SearchError::UnsupportedTarget)?;
+    let parsed = crate::parse_fragment(text).map_err(|_| SearchError::UnsupportedTarget)?;
     let archived =
         relative.starts_with(".trash/fragments/") || relative.starts_with(".trash/notes/");
     Ok(markdown_document(
@@ -853,8 +859,10 @@ fn load_public_markdown_text(
         SearchScope::Public,
         relative,
         archived,
-        frontmatter,
-        body,
+        parsed.frontmatter,
+        Some(&parsed.raw),
+        &parsed.body,
+        revision.clone(),
         revision,
     ))
 }
@@ -867,20 +875,30 @@ fn load_lockbox_markdown(
     lease.validate_session()?;
     let relative = crate::relative_path(vault, path).map_err(io_error)?;
     let safe_path = resolve_target_file(vault, &relative, &SearchScope::Lockbox)?;
+    note_source_read();
+    let encrypted_text = fs::read_to_string(&safe_path).map_err(fs_error)?;
+    let file_sha = crate::content_sha256_hex(&encrypted_text);
     let payload = crate::read_lockbox_payload(&safe_path, lease.read_keys())
         .map_err(|_| SearchError::Io { retryable: false })?;
     let revision = serde_json::to_vec(&payload)
         .map(|bytes| crate::hash_bytes(&bytes))
         .map_err(|_| SearchError::Internal { retryable: false })?;
     lease.validate_session()?;
+    let crate::LockboxFragmentPayload {
+        frontmatter,
+        frontmatter_raw,
+        body,
+    } = payload;
     Ok(markdown_document(
         vault,
         SearchScope::Lockbox,
         relative.clone(),
         relative.starts_with("lockbox/archive/"),
-        payload.frontmatter,
-        &payload.body,
+        frontmatter,
+        frontmatter_raw.as_deref(),
+        &body,
         revision,
+        file_sha,
     ))
 }
 
@@ -891,12 +909,18 @@ fn markdown_document(
     relative: String,
     archived: bool,
     frontmatter: FragmentFrontmatter,
+    frontmatter_raw: Option<&str>,
     body: &str,
     revision: String,
+    file_sha: String,
 ) -> LoadedSearchDocument {
     let content = body.trim_start_matches('\n').to_string();
     let kind = markdown_kind(&frontmatter.tags);
-    let title = markdown_title(&kind, &content);
+    let graph = markdown_graph_content(&kind, &content);
+    let title = graph
+        .as_ref()
+        .map(|content| content.title.clone())
+        .unwrap_or_else(|| markdown_title(&kind, &content));
     let tags = if frontmatter.tags.is_empty() {
         vec!["inbox".to_string()]
     } else {
@@ -917,16 +941,28 @@ fn markdown_document(
         reveal_hint: SearchRevealHint::Text,
         read_only: true,
     };
-    let projected = project_document(&SourceDocument {
+    let source = SourceDocument {
         stable_key: target.key.clone(),
         title,
         tags: tags.clone(),
         body: content.clone(),
         modified_at: parse_modified_at(&frontmatter.updated_at),
-    });
+    };
+    let projected = if let Some(graph) = graph {
+        ProjectedDocument::from_projection(
+            &source,
+            SearchProjection::from_blocks(vec![SearchProjectionBlock::DocumentOnly {
+                reason: DocumentOnlyReason::CodeBlock,
+                text: graph.text,
+            }]),
+        )
+    } else {
+        project_document(&source)
+    };
     let fragment = Fragment {
         id: frontmatter.id,
         content,
+        file_sha,
         created_at: frontmatter.created_at,
         updated_at: frontmatter.updated_at,
         tags,
@@ -939,6 +975,9 @@ fn markdown_document(
         lockbox: matches!(scope, SearchScope::Lockbox),
         pinned: frontmatter.pinned,
         related: frontmatter.related,
+        properties: frontmatter_raw
+            .map(crate::fragment_properties)
+            .unwrap_or_default(),
         conflict_of: frontmatter.conflict_of,
     };
     LoadedSearchDocument {
@@ -952,7 +991,7 @@ fn load_mind_map(vault: &Path, path: &Path) -> Result<LoadedSearchDocument, Sear
     let relative = crate::relative_path(vault, path).map_err(io_error)?;
     let (file, text) = crate::read_mind_map_file(path).map_err(io_error)?;
     crate::validate_mind_map_file(vault, &file).map_err(io_error)?;
-    let body = mind_map_search_text(&file);
+    let body = shard_core::graph_model::mind_map_search_text(&file);
     Ok(structured_document(
         vault,
         relative,
@@ -964,15 +1003,6 @@ fn load_mind_map(vault: &Path, path: &Path) -> Result<LoadedSearchDocument, Sear
         body,
         SearchRevealHint::DocumentOnly,
     ))
-}
-
-fn mind_map_search_text(file: &ShardMapFile) -> String {
-    file.nodes
-        .values()
-        .map(|node| node.text.trim())
-        .filter(|text| !text.is_empty())
-        .collect::<Vec<_>>()
-        .join("\n")
 }
 
 fn load_canvas(vault: &Path, relative: &str) -> Result<LoadedSearchDocument, SearchError> {
@@ -1113,14 +1143,72 @@ fn scope_wire(scope: &SearchScope) -> &'static str {
 }
 
 fn markdown_kind(tags: &[String]) -> SearchKind {
-    if tags.iter().any(|tag| tag == "note") {
-        SearchKind::Note
-    } else if tags.iter().any(|tag| tag == "outline") {
-        SearchKind::Outline
-    } else if tags.iter().any(|tag| tag == "document") {
-        SearchKind::Document
-    } else {
-        SearchKind::Fragment
+    match derive_type(tags) {
+        Some("note") => SearchKind::Note,
+        Some("outline") => SearchKind::Outline,
+        Some("flowchart") => SearchKind::Flowchart,
+        Some("document") => SearchKind::Document,
+        _ => SearchKind::Fragment,
+    }
+}
+
+struct GraphSearchContent {
+    title: String,
+    text: String,
+}
+
+fn markdown_graph_content(kind: &SearchKind, body: &str) -> Option<GraphSearchContent> {
+    match kind {
+        SearchKind::Outline => {
+            let region = find_region(body, GraphRegionKind::Outline).ok()?;
+            let file = serde_json::from_str::<ShardMapFile>(&region.json_text).ok()?;
+            if file.kind != "shard.map" {
+                return None;
+            }
+            let title = file
+                .nodes
+                .get(&file.root_id)
+                .map(|node| node.text.trim())
+                .filter(|title| !title.is_empty())
+                .unwrap_or("未命名大纲")
+                .to_string();
+            let mut lines = Vec::new();
+            for node in file.nodes.values() {
+                push_graph_search_line(&mut lines, &node.text);
+                if let Some(note) = &node.note {
+                    push_graph_search_line(&mut lines, note);
+                }
+            }
+            Some(GraphSearchContent {
+                title,
+                text: lines.join("\n"),
+            })
+        }
+        SearchKind::Flowchart => {
+            let region = find_region(body, GraphRegionKind::Flowchart).ok()?;
+            let file =
+                serde_json::from_str::<canvas_commands::CanvasFile>(&region.json_text).ok()?;
+            if file.kind != "shard.flow" {
+                return None;
+            }
+            let title = if file.title.trim().is_empty() {
+                "未命名流程图".to_string()
+            } else {
+                file.title.trim().to_string()
+            };
+            Some(GraphSearchContent {
+                title,
+                text: canvas_commands::search_text(&file),
+            })
+        }
+        _ => None,
+    }
+}
+
+fn push_graph_search_line(lines: &mut Vec<String>, value: &str) {
+    let value = value.trim();
+    if !value.is_empty() {
+        lines.push(value.to_string());
     }
 }
 
@@ -1581,6 +1669,7 @@ mod tests {
     use std::{fs, time::Instant};
 
     use serde_json::json;
+    use shard_core::search::{scan_exact, MatchLocation, ParsedQuery};
 
     use super::*;
 
@@ -1599,6 +1688,17 @@ mod tests {
             related: Vec::new(),
         };
         shard_core::write_fragment_file(path, &frontmatter, body).unwrap();
+    }
+
+    fn search_document(
+        document: &LoadedSearchDocument,
+        query: &str,
+    ) -> shard_core::search::ScanResult {
+        scan_exact(
+            std::slice::from_ref(&document.projected),
+            &ParsedQuery::parse(query).unwrap(),
+            10,
+        )
     }
 
     fn context(vault: &Path) -> SearchContext {
@@ -2145,6 +2245,27 @@ mod tests {
         assert_eq!(fragment.path, ".trash/notes/旧笔记.md");
     }
 
+    #[test]
+    fn search_markdown_fragment_carries_custom_properties() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("notes/属性文档.md");
+        write_markdown(&path, "property-note", &["note"], "# 属性文档");
+        let text = fs::read_to_string(&path).unwrap();
+        let text = text.replacen("source: test", "source: test\n负责人: 张三", 1);
+        fs::write(&path, text).unwrap();
+
+        let loaded = load_public_markdown(directory.path(), &path).unwrap();
+        let fragment = loaded.fragment.unwrap();
+        assert_eq!(fragment.properties.len(), 1);
+        assert_eq!(fragment.properties[0].key, "负责人");
+        assert_eq!(
+            fragment.properties[0].value,
+            crate::PropertyValue::Text {
+                text: "张三".into()
+            }
+        );
+    }
+
     #[cfg(unix)]
     #[test]
     fn search_read_rejects_path_escape_and_symlink() {
@@ -2224,7 +2345,7 @@ mod tests {
             }
         }))
         .unwrap();
-        let map_text = mind_map_search_text(&mind_map);
+        let map_text = shard_core::graph_model::mind_map_search_text(&mind_map);
         assert!(map_text.contains("用户节点文本"));
         assert!(!map_text.contains("secret-root-id"));
         assert!(!map_text.contains("secret-sort-key"));
@@ -2298,6 +2419,189 @@ mod tests {
         assert!(!table_text.contains("secret-option-id"));
         assert!(!table_text.contains("secret-record-id"));
         assert!(!table_text.contains("secret-request"));
+    }
+
+    #[test]
+    fn search_markdown_json_outline_uses_root_title_and_user_text_only() {
+        let directory = tempfile::tempdir().unwrap();
+        let vault = directory.path();
+        let path = vault.join("fragments/outline.md");
+        let body = format!(
+            "```shardmap\n{}\n```",
+            json!({
+                "kind": "shard.map",
+                "schemaVersion": 1,
+                "id": "secret-map-id",
+                "title": "不作为 md 标题",
+                "createdAt": "2026-09-25T00:00:00Z",
+                "updatedAt": "2026-09-25T00:00:00Z",
+                "savedWithAppVersion": "internal-version",
+                "revision": 1,
+                "rootId": "secret-root-id",
+                "hasProtectedLinks": false,
+                "nodes": {
+                    "secret-root-id": {
+                        "id": "secret-root-id",
+                        "parentId": null,
+                        "sortKey": "secret-sort-key",
+                        "text": "路线规划",
+                        "note": "根节点备注",
+                        "createdAt": "2026-09-25T00:00:00Z",
+                        "updatedAt": "2026-09-25T00:00:00Z"
+                    },
+                    "secret-child-id": {
+                        "id": "secret-child-id",
+                        "parentId": "secret-root-id",
+                        "sortKey": "another-secret-sort-key",
+                        "text": "预订车票",
+                        "note": "确认乘车时间",
+                        "createdAt": "2026-09-25T00:00:00Z",
+                        "updatedAt": "2026-09-25T00:00:00Z"
+                    }
+                }
+            })
+        );
+        write_markdown(&path, "outline", &["outline"], &body);
+
+        let document = load_public_markdown(vault, &path).unwrap();
+        assert!(matches!(document.metadata.target.kind, SearchKind::Outline));
+        assert_eq!(document.projected.title, "路线规划");
+        assert!(matches!(
+            document.projected.projection.blocks.as_slice(),
+            [SearchProjectionBlock::DocumentOnly { .. }]
+        ));
+        let searchable = &document.projected.projection.searchable_text;
+        for text in ["路线规划", "根节点备注", "预订车票", "确认乘车时间"] {
+            assert!(searchable.contains(text), "missing user text: {text}");
+            let result = search_document(&document, text);
+            assert_eq!(result.total, 1);
+            assert_eq!(result.matches[0].location, MatchLocation::DocumentOnly);
+        }
+        for internal in ["schemaVersion", "secret-root-id", "secret-sort-key"] {
+            assert!(
+                !searchable.contains(internal),
+                "indexed internal text: {internal}"
+            );
+            assert_eq!(search_document(&document, internal).total, 0);
+        }
+    }
+
+    #[test]
+    fn search_markdown_json_flowchart_uses_json_title_and_canvas_text_only() {
+        let directory = tempfile::tempdir().unwrap();
+        let vault = directory.path();
+        let path = vault.join("fragments/flowchart.md");
+        let body = format!(
+            "```shardflow\n{}\n```",
+            json!({
+                "kind": "shard.flow",
+                "schemaVersion": 1,
+                "id": "secret-flow-id",
+                "title": "发布流程",
+                "createdAt": "2026-09-25T00:00:00Z",
+                "updatedAt": "2026-09-25T00:00:00Z",
+                "revision": 1,
+                "nodes": [
+                    {"id": "secret-start-id", "kind": "terminal", "x": 987654, "y": 123456, "text": "开始发布"},
+                    {"id": "secret-review-id", "kind": "process", "x": 10, "y": 20, "text": "审核内容"}
+                ],
+                "edges": [{
+                    "id": "secret-edge-id",
+                    "source": "secret-start-id",
+                    "target": "secret-review-id",
+                    "label": "审核通过"
+                }]
+            })
+        );
+        write_markdown(&path, "flowchart", &["flowchart"], &body);
+
+        let document = load_public_markdown(vault, &path).unwrap();
+        assert!(matches!(
+            document.metadata.target.kind,
+            SearchKind::Flowchart
+        ));
+        assert_eq!(document.projected.title, "发布流程");
+        assert!(matches!(
+            document.projected.projection.blocks.as_slice(),
+            [SearchProjectionBlock::DocumentOnly { .. }]
+        ));
+        let searchable = &document.projected.projection.searchable_text;
+        for text in ["开始发布", "审核内容", "审核通过"] {
+            assert!(searchable.contains(text), "missing user text: {text}");
+            let result = search_document(&document, text);
+            assert_eq!(result.total, 1);
+            assert_eq!(result.matches[0].location, MatchLocation::DocumentOnly);
+        }
+        for internal in ["schemaVersion", "secret-review-id", "987654"] {
+            assert!(
+                !searchable.contains(internal),
+                "indexed internal text: {internal}"
+            );
+            assert_eq!(search_document(&document, internal).total, 0);
+        }
+
+        let reread =
+            read_search_document_from_disk(&context(vault), &document.metadata.target, None)
+                .unwrap();
+        assert!(matches!(reread.metadata.target.kind, SearchKind::Flowchart));
+    }
+
+    #[test]
+    fn search_markdown_legacy_outline_keeps_existing_title_and_projection() {
+        let directory = tempfile::tempdir().unwrap();
+        let vault = directory.path();
+        let path = vault.join("fragments/legacy-outline.md");
+        let body = "- 旧式根节点\n  - 子节点\n\n补充说明";
+        write_markdown(&path, "legacy-outline", &["outline"], body);
+
+        let document = load_public_markdown(vault, &path).unwrap();
+        let expected = project_document(&SourceDocument {
+            stable_key: document.projected.stable_key.clone(),
+            title: "旧式根节点".to_string(),
+            tags: document.projected.tags.clone(),
+            body: body.to_string(),
+            modified_at: parse_modified_at("2026-09-25T01:00:00Z"),
+        });
+        assert!(matches!(document.metadata.target.kind, SearchKind::Outline));
+        assert_eq!(document.projected.title, "旧式根节点");
+        assert_eq!(document.projected.projection, expected.projection);
+    }
+
+    #[test]
+    fn search_markdown_type_priority_matches_core_contract() {
+        let tags = vec![
+            "document".to_string(),
+            "flowchart".to_string(),
+            "outline".to_string(),
+            "note".to_string(),
+        ];
+        assert!(matches!(markdown_kind(&tags), SearchKind::Note));
+        assert!(matches!(
+            markdown_kind(&["document".into(), "flowchart".into()]),
+            SearchKind::Flowchart
+        ));
+    }
+
+    #[test]
+    fn search_markdown_broken_graph_region_falls_back_without_dropping_result() {
+        let directory = tempfile::tempdir().unwrap();
+        let vault = directory.path();
+        let path = vault.join("fragments/broken-outline.md");
+        let body = "仍可搜索的前文\n\n```shardmap\n{not json}\n```\n\n仍可搜索的后文";
+        write_markdown(&path, "broken-outline", &["outline"], body);
+
+        let document = load_public_markdown(vault, &path).unwrap();
+        assert_eq!(document.projected.title, "仍可搜索的前文");
+        assert!(document
+            .projected
+            .projection
+            .searchable_text
+            .contains("仍可搜索的后文"));
+        assert!(document
+            .projected
+            .projection
+            .searchable_text
+            .contains("{not json}"));
     }
 
     #[test]

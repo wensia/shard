@@ -2,6 +2,7 @@ export type SlashCommandId =
   | "codeblock"
   | "divider"
   | "document"
+  | "flowchart"
   | "heading1"
   | "heading2"
   | "heading3"
@@ -104,6 +105,12 @@ export const SLASH_COMMANDS: readonly SlashCommand[] = [
     label: "大纲",
   },
   {
+    hint: "flowchart",
+    id: "flowchart",
+    keywords: ["流程图", "lct", "lc", "flowchart", "flow"],
+    label: "流程图",
+  },
+  {
     hint: "document",
     id: "document",
     keywords: ["文档", "wd", "doc", "document"],
@@ -169,7 +176,7 @@ export function isDocumentTierSlashCommand(id: SlashCommandId) {
  * 行内编辑、禅模式与资料库编辑器不展示。
  */
 export function isContentTypeSlashCommand(id: SlashCommandId) {
-  return id === "outline" || id === "document"
+  return id === "outline" || id === "flowchart" || id === "document"
 }
 
 /**

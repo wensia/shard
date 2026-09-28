@@ -8,6 +8,7 @@ import {
   createEmptyMindMapOutline,
   isMindMapFenceLanguage,
   parseMindMapOutline,
+  readOutlineContent,
   serializeMindMapOutline,
 } from "@/lib/mind-map-outline"
 import type { ShardMapFile } from "@/types"
@@ -157,6 +158,37 @@ describe("parseMindMapOutline", () => {
         truncated: false,
       })
     }
+  })
+})
+
+describe("readOutlineContent", () => {
+  it("读取 shardmap 区域里的 JSON 大纲", () => {
+    const file = requireFile("- JSON 根节点\n  - 子节点").file
+    const content = `区域前正文\n\n\`\`\`shardmap\n${JSON.stringify(file)}\n\`\`\`\n\n区域后正文`
+
+    expect(readOutlineContent(content)).toEqual({ format: "json", file })
+  })
+
+  it("没有 shardmap 区域时按旧式缩进列表读取", () => {
+    const result = readOutlineContent("- 旧式根节点\n  - 子节点")
+
+    expect(result?.format).toBe("legacy")
+    expect(result?.file.nodes[result.file.rootId]?.text).toBe("旧式根节点")
+    expect(result && "truncated" in result ? result.truncated : null).toBe(false)
+  })
+
+  it("保留旧式列表的截断标记", () => {
+    const rows = Array.from({ length: 201 }, (_, index) => `  - 子 ${index}`)
+    const result = readOutlineContent(["- 根", ...rows].join("\n"))
+
+    expect(result?.format).toBe("legacy")
+    expect(result && "truncated" in result ? result.truncated : null).toBe(true)
+  })
+
+  it("非法 JSON 返回 null，不回退到旧式列表", () => {
+    expect(
+      readOutlineContent("- 看似旧式根节点\n\n```shardmap\n{not json}\n```")
+    ).toBeNull()
   })
 })
 

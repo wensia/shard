@@ -16,6 +16,7 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
@@ -26,8 +27,11 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { getApiErrorMessage, readCsvFile } from "@/lib/api"
+import { openDatasetEditor } from "@/features/datasets/open-dataset"
+import { createDataset } from "@/features/datasets/api"
 import { parseCsvBytesInWorker } from "@/lib/csv-worker"
 import { notify } from "@/lib/notify"
+import { extractDatatableInWorker } from "@/lib/datatable-extraction-worker"
 import {
   addDatatableColumn,
   addDatatableRow,
@@ -64,6 +68,7 @@ export interface DatatableBlockProps {
   readOnly?: boolean
   /** 只有内联 rows 的可编辑表才会回调；视图状态变化不走这里。 */
   onChange?: (source: string) => void
+  allowDatasetActions?: () => boolean
 }
 
 type CsvState =
@@ -81,7 +86,7 @@ const DEFAULT_TITLE = "数据表"
  * 原生 table + React state，不引入 TanStack。视图状态（排序/分组/搜索）只活在
  * 组件里，除非用户点「保存视图」，否则不写回文件——浏览动作不该产生 Git 改动。
  */
-export function DatatableBlock({ source, readOnly = false, onChange }: DatatableBlockProps) {
+export function DatatableBlock({ source, readOnly = false, onChange, allowDatasetActions }: DatatableBlockProps) {
   const parsed = useMemo(() => parseDatatableSource(source), [source])
 
   if (isDatatableParseError(parsed)) {
@@ -104,6 +109,7 @@ export function DatatableBlock({ source, readOnly = false, onChange }: Datatable
       onChange={onChange}
       readOnly={readOnly}
       spec={parsed}
+      allowDatasetActions={allowDatasetActions}
     />
   )
 }
@@ -112,9 +118,10 @@ interface DatatableSurfaceProps {
   spec: DatatableSpec
   readOnly: boolean
   onChange?: (source: string) => void
+  allowDatasetActions?: () => boolean
 }
 
-function DatatableSurface({ spec, readOnly, onChange }: DatatableSurfaceProps) {
+function DatatableSurface({ spec, readOnly, onChange, allowDatasetActions }: DatatableSurfaceProps) {
   const [csv, setCsv] = useState<CsvState>({ state: spec.src ? "loading" : "idle" })
   const [sort, setSort] = useState<DatatableView["sort"] | null>(spec.view?.sort ?? null)
   const [group, setGroup] = useState<string | null>(spec.view?.group ?? null)
@@ -122,6 +129,9 @@ function DatatableSurface({ spec, readOnly, onChange }: DatatableSurfaceProps) {
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set())
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [isExporting, setIsExporting] = useState(false)
+  const [moreOpen, setMoreOpen] = useState(false)
+  const [extractOpen, setExtractOpen] = useState(false)
+  const [extracting, setExtracting] = useState(false)
   const [renamingKey, setRenamingKey] = useState<string | null>(null)
   const fullscreenButtonRef = useRef<HTMLButtonElement>(null)
   const blockRef = useRef<HTMLElement>(null)
@@ -135,18 +145,24 @@ function DatatableSurface({ spec, readOnly, onChange }: DatatableSurfaceProps) {
       return
     }
     let cancelled = false
+    const reload = () => {
+      // CSV 读取与解析都在后台：主线程只等 Promise（AGENTS.md Runtime Rules）。
+      void readCsvFile(src)
+        .then((bytes) => parseCsvBytesInWorker(Uint8Array.from(bytes)))
+        .then((document) => {
+          if (!cancelled) setCsv({ records: document.records, state: "ready" })
+        })
+        .catch((error: unknown) => {
+          if (!cancelled) setCsv({ message: getApiErrorMessage(error), state: "error" })
+        })
+    }
     setCsv({ state: "loading" })
-    // CSV 读取与解析都在后台：主线程只等 Promise（AGENTS.md Runtime Rules）。
-    void readCsvFile(src)
-      .then((bytes) => parseCsvBytesInWorker(Uint8Array.from(bytes)))
-      .then((document) => {
-        if (!cancelled) setCsv({ records: document.records, state: "ready" })
-      })
-      .catch((error: unknown) => {
-        if (!cancelled) setCsv({ message: getApiErrorMessage(error), state: "error" })
-      })
+    reload()
+    const changed = (event: Event) => { if ((event as CustomEvent<{ path: string }>).detail.path === src) reload() }
+    window.addEventListener("shard:dataset-changed", changed)
     return () => {
       cancelled = true
+      window.removeEventListener("shard:dataset-changed", changed)
     }
   }, [src])
 
@@ -260,6 +276,26 @@ function DatatableSurface({ spec, readOnly, onChange }: DatatableSurfaceProps) {
     }
   }
 
+  async function extractCsv() {
+    if (!editable || !onChange || !allowDatasetActions?.() || extracting) return
+    setExtracting(true)
+    try {
+      const { header, rows, view } = await extractDatatableInWorker(spec)
+      const snapshot = await createDataset(spec.title || "数据集", header, rows)
+      onChange(JSON.stringify({
+        ...(spec.title ? { title: spec.title } : {}),
+        src: snapshot.path,
+        ...(view ? { view } : {}),
+      }, null, 2))
+      setExtractOpen(false)
+      notify.success("已提取为 CSV 数据集")
+    } catch (error) {
+      notify.failure("提取失败", error)
+    } finally {
+      setExtracting(false)
+    }
+  }
+
   const title = spec.title || DEFAULT_TITLE
   const controls = (
     <div className={styles.controls}>
@@ -318,6 +354,17 @@ function DatatableSurface({ spec, readOnly, onChange }: DatatableSurfaceProps) {
         <DownloadIcon />
         <span className="sr-only">导出 CSV</span>
       </Button>
+      {spec.src && <Button size="sm" variant="outline" onClick={() => openDatasetEditor(spec.src!)}>编辑数据</Button>}
+      {editable && allowDatasetActions?.() && (
+        <DropdownMenu open={moreOpen} onOpenChange={setMoreOpen}>
+          <DropdownMenuTrigger render={<Button aria-label="更多操作" className={styles.controlButton} size="icon-sm" variant="ghost" />}>
+            <MoreHorizontalIcon /><span className="sr-only">更多操作</span>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            {allowDatasetActions() && <DropdownMenuItem onClick={() => setExtractOpen(true)}>提取为 CSV</DropdownMenuItem>}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
       {isFullscreen ? null : (
         <Button
           aria-label="全屏"
@@ -376,8 +423,11 @@ function DatatableSurface({ spec, readOnly, onChange }: DatatableSurfaceProps) {
         <span className={styles.title}>{title}</span>
         <span className={styles.meta}>
           {rowSummary}
-          {spec.src ? <span title={spec.src}> · 来自 {spec.src}（只读）</span> : null}
+          {spec.src ? <span title={spec.src}> · 来自 {spec.src}</span> : null}
         </span>
+        {!spec.src && (spec.rows.length > 200 || spec.rows.length * spec.columns.length > 5000) && (
+          <span className={styles.hint}>数据较多，建议提取为 CSV</span>
+        )}
         {controls}
       </header>
       {csv.state === "loading" ? (
@@ -401,6 +451,19 @@ function DatatableSurface({ spec, readOnly, onChange }: DatatableSurfaceProps) {
           </DialogHeader>
           {controls}
           <div className={styles.fullscreenScroll}>{table}</div>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={extractOpen} onOpenChange={(open) => { if (!extracting) setExtractOpen(open) }}>
+        <DialogContent aria-busy={extracting}>
+          <DialogHeader>
+            <DialogTitle>提取为 CSV</DialogTitle>
+            <DialogDescription>确认后会创建 CSV 数据集，并将当前围栏改为引用。</DialogDescription>
+          </DialogHeader>
+          <p className="text-[length:var(--text-body)]">将创建：{spec.title || "数据集"}.csv · {spec.rows.length} 行 · {spec.columns.length} 列</p>
+          <DialogFooter>
+            <Button variant="outline" disabled={extracting} onClick={() => setExtractOpen(false)}>取消</Button>
+            <Button disabled={extracting} onClick={() => void extractCsv()}>{extracting ? "提取中…" : "确认提取"}</Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </section>

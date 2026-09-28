@@ -171,6 +171,9 @@ async function installOrganizeMock(page: Page, mode: OrganizeMockMode) {
           }
 
           if (command === "list_csv_files") return []
+          if (command === "read_property_registry") {
+            return { registry: { version: 1, properties: {} }, sha: "property-registry-empty" }
+          }
           if (command === "list_library_tree") {
             return {
               entries: fragments

@@ -45,7 +45,7 @@ describe("getActiveSlashCommand", () => {
 })
 
 describe("filterSlashCommands", () => {
-  it("空 query 返回固定顺序的 17 项", () => {
+  it("空 query 返回固定顺序的 18 项", () => {
     expect(filterSlashCommands("").map((command) => command.id)).toEqual([
       "mindmap",
       "task",
@@ -57,6 +57,7 @@ describe("filterSlashCommands", () => {
       "image",
       "memo",
       "outline",
+      "flowchart",
       "document",
       "heading1",
       "heading2",
@@ -65,7 +66,7 @@ describe("filterSlashCommands", () => {
       "quote",
       "codeblock",
     ])
-    expect(SLASH_COMMANDS).toHaveLength(17)
+    expect(SLASH_COMMANDS).toHaveLength(18)
   })
 
   it.each([
@@ -88,6 +89,9 @@ describe("filterSlashCommands", () => {
     ["大纲", ["outline"]],
     ["outline", ["outline"]],
     ["dg", ["outline"]],
+    ["流程图", ["flowchart"]],
+    ["lct", ["flowchart"]],
+    ["flowchart", ["flowchart"]],
     ["标题", ["heading1", "heading2", "heading3", "heading4"]],
     ["h2", ["heading2"]],
     ["bt3", ["heading3"]],
@@ -105,8 +109,9 @@ describe("filterSlashCommands", () => {
 })
 
 describe("isContentTypeSlashCommand", () => {
-  it("大纲与文档是切换宿主创建模式的内容类型命令", () => {
+  it("大纲、流程图与文档是切换宿主创建模式的内容类型命令", () => {
     expect(isContentTypeSlashCommand("outline")).toBe(true)
+    expect(isContentTypeSlashCommand("flowchart")).toBe(true)
     expect(isContentTypeSlashCommand("document")).toBe(true)
     expect(isContentTypeSlashCommand("image")).toBe(false)
   })

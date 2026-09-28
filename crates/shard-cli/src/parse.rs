@@ -5,7 +5,10 @@
 //! shard #备忘 /任务列表 买咖啡
 //! ```
 
-use shard_core::{contains_lockbox_tag, extract_tags, normalize_tag, normalize_tags};
+use shard_core::{
+    contains_lockbox_tag, extract_tags, normalize_tag, normalize_tags, normalize_type_tags,
+    PROTECTED_TYPE_TAGS,
+};
 
 /// CLI 能表达的行格式，对应编辑器 `/` 菜单里的同名命令。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -136,6 +139,13 @@ pub fn compose(capture: &Capture) -> Result<(String, Vec<String>), String> {
     let mut tags = capture.tags.clone();
     tags.extend(extract_tags(&body));
     let tags = normalize_tags(tags, false);
+    if tags
+        .iter()
+        .any(|tag| PROTECTED_TYPE_TAGS.contains(&tag.as_str()))
+    {
+        return Err("终端不支持直接创建大纲或流程图。".to_string());
+    }
+    let tags = normalize_type_tags(tags);
     if contains_lockbox_tag(&tags) {
         return Err("终端不支持写入密匣，请在 Shard 中保存。".to_string());
     }
@@ -208,5 +218,21 @@ mod tests {
         assert!(run("随便 #密匣").is_err());
         assert!(run("#备忘 /任务列表").is_err());
         assert!(run("   ").is_err());
+    }
+
+    #[test]
+    fn rejects_protected_types_and_normalizes_other_type_conflicts() {
+        assert_eq!(
+            run("#outline 大纲").unwrap_err(),
+            "终端不支持直接创建大纲或流程图。"
+        );
+        assert_eq!(
+            run("正文 #flowchart").unwrap_err(),
+            "终端不支持直接创建大纲或流程图。"
+        );
+        assert_eq!(
+            run("#document #note 正文").unwrap().1,
+            vec!["note".to_string()]
+        );
     }
 }

@@ -1,4 +1,4 @@
-import { useRef, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 
 import { MindMapFenceEmbed } from "@/components/shard/mind-map-fence-embed"
 import { MindMapOutlineEditor } from "@/components/shard/mind-map-outline-editor"
@@ -15,6 +15,7 @@ export interface MindMapFenceWidgetProps {
   /** 围栏正文（不含 ``` 标记行）。 */
   code: string
   onChange: (code: string) => void
+  onFileChange?: (file: ShardMapFile) => void
   onExit: () => void
   readOnly: boolean
   /** 围栏在文档里的起点，宿主据此定位要聚焦的 widget。 */
@@ -25,6 +26,7 @@ export interface MindMapFenceWidgetProps {
 export function MindMapFenceWidget({
   code,
   onChange,
+  onFileChange,
   onExit,
   readOnly,
 }: MindMapFenceWidgetProps) {
@@ -36,7 +38,7 @@ export function MindMapFenceWidget({
     )
   }
 
-  return <MindMapFenceOutline code={code} onChange={onChange} onExit={onExit} />
+  return <MindMapFenceOutline code={code} onChange={onChange} onExit={onExit} onFileChange={onFileChange} />
 }
 
 function parseOutlineSession(code: string): ShardMapFile {
@@ -46,8 +48,9 @@ function parseOutlineSession(code: string): ShardMapFile {
 function MindMapFenceOutline({
   code,
   onChange,
+  onFileChange,
   onExit,
-}: Pick<MindMapFenceWidgetProps, "code" | "onChange" | "onExit">) {
+}: Pick<MindMapFenceWidgetProps, "code" | "onChange" | "onFileChange" | "onExit">) {
   // 会话树长期存活：树操作生成的节点 id 与 parseMindMapOutline 的 n0/n1 不同源，
   // 每次文档变更都重新解析会让输入框重建、丢掉焦点与组合态。
   const [session, setSession] = useState(() => parseOutlineSession(code))
@@ -66,6 +69,10 @@ function MindMapFenceOutline({
    */
   const lastWrittenRef = useRef<string | null>(null)
 
+  useEffect(() => {
+    onFileChange?.(session)
+  }, [onFileChange, session])
+
   if (lastCodeRef.current !== code) {
     lastCodeRef.current = code
     if (serializeMindMapOutline(session) === code || code === lastWrittenRef.current) {
@@ -80,6 +87,7 @@ function MindMapFenceOutline({
 
   function handleChange(nextFile: ShardMapFile) {
     setSession(nextFile)
+    onFileChange?.(nextFile)
     const nextCode = serializeMindMapOutline(nextFile)
     if (nextCode === lastCodeRef.current) {
       lastWrittenRef.current = null

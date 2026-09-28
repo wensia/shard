@@ -1,8 +1,9 @@
 import { expect, test, type Page } from "@playwright/test"
 import type { CanvasReadResult } from "../../src/features/canvas/model"
+import type { Fragment } from "../../src/types"
 
 type Harness = Window & {
-  __canvasMock: { disk: CanvasReadResult; hold: boolean; failSave: boolean; release(): void; calls: { command: string; request: unknown }[] }
+  __canvasMock: { disk: CanvasReadResult; fragment: Fragment; hold: boolean; failSave: boolean; release(): void; calls: { command: string; request: Record<string, unknown> }[] }
   __canvasHarness: { flush(): Promise<boolean>; dirty(): boolean; block(value: boolean): void; opened: unknown[]; closed: number }
 }
 async function open(page: Page, extra = "") {
@@ -19,9 +20,60 @@ async function add(page: Page, kind: string) {
   if (selector) await expect(selector).toHaveCount(previousCount + 1)
   else await expect(page.getByRole("textbox", { name: kind === "资料引用" ? "搜索资料" : "搜索思维导图", exact: true })).toBeVisible()
 }
+async function openFragment(page: Page) { await open(page, "&fragment=1") }
 const flush = (page: Page) => page.evaluate(() => (window as Harness).__canvasHarness.flush())
 const disk = (page: Page) => page.evaluate(() => (window as Harness).__canvasMock.disk)
 const object = (page: Page, kind = "process") => page.locator(`[data-canvas-kind="${kind}"]`).first()
+
+test("文档属性只在流程图片段宿主出现", async ({ page }) => {
+  await open(page)
+  await expect(page.getByRole("button", { name: "文档属性", exact: true })).toHaveCount(0)
+  await openFragment(page)
+  await expect(page.getByRole("button", { name: "文档属性", exact: true })).toBeVisible()
+})
+
+test("文档属性先排空流程图，写入新基线后继续保存草稿", async ({ page }) => {
+  await openFragment(page)
+  await add(page, "流程")
+  await page.getByRole("button", { name: "文档属性", exact: true }).click()
+
+  const dialog = page.getByRole("dialog")
+  await expect(dialog.getByRole("heading", { name: "文档属性", exact: true })).toBeVisible()
+  await expect(page.locator("[data-canvas-workspace]")).toHaveAttribute("aria-busy", "true")
+  await expect(page.locator(".shard-canvas-toolbar button").filter({ hasText: "添加对象" })).toBeDisabled()
+  const callOrder = await page.evaluate(() => (window as Harness).__canvasMock.calls.map(call => call.command))
+  expect(callOrder.indexOf("write_graph_fragment")).toBeGreaterThanOrEqual(0)
+  expect(callOrder.indexOf("write_graph_fragment")).toBeLessThan(callOrder.indexOf("read_property_registry"))
+
+  const panel = dialog.getByRole("region", { name: "属性" })
+  await panel.getByLabel("阶段 属性值").fill("评审")
+  await panel.getByLabel("阶段 属性值").press("Enter")
+  await panel.getByRole("button", { name: "添加属性", exact: true }).click()
+  await panel.getByLabel("属性名").fill("负责人")
+  await panel.getByRole("button", { name: "添加", exact: true }).click()
+  await panel.getByLabel("负责人 属性值").fill("甲")
+  await panel.getByLabel("负责人 属性值").press("Enter")
+  await expect.poll(() => page.evaluate(() => (window as Harness).__canvasMock.calls.filter(call => call.command === "set_fragment_property").length)).toBe(3)
+  const propertySha = await page.evaluate(() => (window as Harness).__canvasMock.fragment.fileSha)
+
+  await dialog.getByRole("button", { name: "关闭", exact: true }).click()
+  await expect(dialog).toHaveCount(0)
+  await add(page, "判断")
+  expect(await flush(page)).toBe(true)
+  const graphWrites = await page.evaluate(() => (window as Harness).__canvasMock.calls.filter(call => call.command === "write_graph_fragment"))
+  expect(graphWrites.at(-1)?.request.expectedFileSha).toBe(propertySha)
+  await expect(page.getByText(/保存基线过期|冲突/)).toHaveCount(0)
+})
+
+test("流程图排空失败时不打开文档属性", async ({ page }) => {
+  await openFragment(page)
+  await add(page, "流程")
+  await page.evaluate(() => { (window as Harness).__canvasMock.failSave = true })
+  await page.getByRole("button", { name: "文档属性", exact: true }).click()
+  await expect(page.getByRole("dialog")).toHaveCount(0)
+  await expect(page.getByRole("alert")).toContainText("无法打开文档属性：请先处理图内容的保存问题。")
+  await expect(page.getByRole("button", { name: "添加对象", exact: true })).toBeEnabled()
+})
 
 test("中文节点编辑、拖动与统一撤销保存后重新打开", async ({ page }) => {
   await open(page); await add(page, "流程")

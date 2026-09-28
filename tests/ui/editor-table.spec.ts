@@ -10,7 +10,7 @@ import {
 } from "./editor-helpers"
 import { installSearchIpcMock } from "./search-ipc-mock"
 
-/** 多维表格是唯一的表格导入入口；正文里的 GFM 表格在富文本里是表格节点，逐格编辑、只读渲染都不丢内容。 */
+/** 正文里的 GFM 表格在富文本里是表格节点，逐格编辑、只读渲染都不丢内容。 */
 const LEGACY_TABLE = "| 名称 | 状态 |\n| :--- | ---: |\n| A\\|B | 完成 |"
 /**
  * 富文本载入即按方言规范化（技术方案 §3「非规范输入首次保存后被规范化」）：
@@ -90,6 +90,8 @@ async function installTauriMock(page: Page) {
 
             case "list_mind_maps":
               return []
+            case "read_import_csv_file":
+              return Array.from(new TextEncoder().encode("名称,状态\n示例,完成\n"))
             case "list_csv_files":
               return []
             case "list_library_tree":
@@ -335,29 +337,33 @@ for (const count of [100, 1200]) {
 }
 
 for (const variant of ["composer", "inline", "zen"] as const) {
-  test(`${variant} 拖入 CSV/XLSX 只提示导入多维表格，保持草稿和源文件不变`, async ({ page }) => {
+  test(`${variant} 拖入 CSV 打开数据集导入对话框，XLSX 提示另存 CSV，草稿和源文件不变`, async ({ page }) => {
     const editorId = variant === "composer" ? "composer" : await openFragmentEditor(page, variant)
     await fillEditor(page, editorId, LEGACY_TABLE)
-    await emitDrag(page, editorId, "enter", ["/tmp/测试.csv", "/tmp/测试.xlsx"])
-    await expect(page.getByText("请在资料库中导入为多维表格", { exact: true })).toBeVisible()
-    await emitDrag(page, editorId, "drop", ["/tmp/测试.csv", "/tmp/测试.xlsx"])
-    const notice = page.locator("[data-sonner-toast]").filter({ hasText: "表格请从资料库导入" })
-    await expect(notice).toHaveAttribute("data-type", "info")
-    await expect(notice).toContainText("在「多维表格」菜单选择「从 CSV / Excel 导入…」。")
+    await emitDrag(page, editorId, "enter", ["/tmp/测试.xlsx"])
+    await expect(page.getByText("请先另存为 CSV 再导入", { exact: true })).toBeVisible()
+    await emitDrag(page, editorId, "drop", ["/tmp/测试.xlsx"])
+    await expect(page.getByText("请先另存为 CSV 再导入", { exact: true })).toBeVisible()
+    await emitDrag(page, editorId, "enter", ["/tmp/测试.csv"])
+    await expect(page.getByText("松开以导入为数据集", { exact: true })).toBeVisible()
+    await emitDrag(page, editorId, "drop", ["/tmp/测试.csv"])
+    const dialog = page.getByRole("dialog", { name: "导入 CSV 为数据集" })
+    await expect(dialog).toBeVisible()
+    await expect(dialog).toContainText("测试.csv")
     await expect.poll(() => readEditor(page, editorId)).toBe(LEGACY_TABLE_SAVED)
     const commands = await page.evaluate(() => (window as unknown as { __SHARD_TEST_COMMANDS__: string[] }).__SHARD_TEST_COMMANDS__)
+    expect(commands.filter(command => command === "read_import_csv_file")).toHaveLength(1)
+    expect(commands).not.toContain("create_dataset")
     expect(commands).not.toContain("convert_table_document_to_markdown")
     expect(commands).not.toContain("read_table_exchange_file")
     expect(commands).not.toContain("create_table")
   })
 }
 
-test("旧 XLS 文件提示先另存 XLSX，不承诺支持直接导入", async ({ page }) => {
+test("旧 XLS 文件提示先另存 CSV，不承诺支持直接导入", async ({ page }) => {
   await fillEditor(page, "composer", "尚未保存的正文")
   await emitDrag(page, "composer", "drop", ["/tmp/旧格式.xls"])
-  const notice = page.locator("[data-sonner-toast]").filter({ hasText: "旧版 Excel 需先转换" })
-  await expect(notice).toHaveAttribute("data-type", "info")
-  await expect(notice).toContainText("另存为 XLSX 后，从资料库「多维表格」菜单导入。")
+  await expect(page.getByText("请先另存为 CSV 再导入", { exact: true })).toBeVisible()
   await expect.poll(() => readEditor(page, "composer")).toBe("尚未保存的正文")
 })
 

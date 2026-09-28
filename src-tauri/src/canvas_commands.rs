@@ -1,5 +1,10 @@
 //! Public canvas documents. Commands do all validation, scanning and I/O off the UI thread.
-use crate::{ShardDocumentLink, ShardMapFile};
+pub(crate) use crate::{CanvasFile, CanvasNode};
+#[cfg(test)]
+pub(crate) use crate::CanvasEdge;
+use crate::ShardMapFile;
+#[cfg(test)]
+use crate::ShardDocumentLink;
 use rand::{rngs::OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -16,51 +21,6 @@ const MAX_REVISION: u64 = 9_007_199_254_740_991;
 const LEGACY_SUFFIX: &str = ".shardcanvas.json";
 const FLOW_SUFFIX: &str = ".shardflow.json";
 type CanvasResult<T> = Result<T, String>;
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct CanvasFile {
-    pub kind: String,
-    pub schema_version: u32,
-    pub id: String,
-    pub title: String,
-    pub created_at: String,
-    pub updated_at: String,
-    pub revision: u64,
-    pub nodes: Vec<CanvasNode>,
-    pub edges: Vec<CanvasEdge>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct CanvasNode {
-    id: String,
-    kind: String,
-    x: f64,
-    y: f64,
-    text: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    width: Option<f64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    height: Option<f64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    link: Option<ShardDocumentLink>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    mind_map: Option<ShardMapFile>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub(crate) struct CanvasEdge {
-    id: String,
-    source: String,
-    target: String,
-    label: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    source_handle: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    target_handle: Option<String>,
-}
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -103,12 +63,6 @@ fn identifier(value: &str) -> CanvasResult<()> {
     }
     Ok(())
 }
-fn timestamp(value: &str) -> CanvasResult<()> {
-    chrono::DateTime::parse_from_rfc3339(value)
-        .map(|_| ())
-        .map_err(|_| "画布时间必须是有效的 RFC3339 日期。".into())
-}
-
 pub(crate) fn is_canvas(path: &Path) -> bool {
     has_suffix(path, LEGACY_SUFFIX) || is_flow(path)
 }
@@ -207,13 +161,8 @@ fn read_bytes(path: &Path) -> CanvasResult<Vec<u8>> {
     Ok(bytes)
 }
 
-fn canonical<T: Serialize>(value: &T) -> CanvasResult<Vec<u8>> {
-    let mut bytes = serde_json::to_vec_pretty(value).map_err(io)?;
-    bytes.push(b'\n');
-    if bytes.len() > MAX_BYTES {
-        return Err("画布文件不能超过 8 MiB。".into());
-    }
-    Ok(bytes)
+pub(crate) fn canonical<T: Serialize>(value: &T) -> CanvasResult<Vec<u8>> {
+    shard_core::graph_model::canonical_json_bytes(value)
 }
 
 /// Bounded metadata probe for the Library and identity checks, without resolving references.
@@ -271,224 +220,15 @@ pub(crate) fn scan_files(
     Ok(())
 }
 
-fn protected_fragment_ids(vault: &Path) -> CanvasResult<HashSet<String>> {
-    let root = vault.join("lockbox");
-    let mut files = Vec::new();
-    scan_files(&root, ".shard", &mut files, &mut 0)?;
-    let mut ids = HashSet::new();
-    #[derive(Deserialize)]
-    struct Identity {
-        id: String,
-    }
-    for file in files {
-        // Only read encrypted envelope IDs; never decrypt protected content.
-        if let Ok(identity) = serde_json::from_slice::<Identity>(&read_bytes(&file)?) {
-            ids.insert(identity.id);
-        }
-    }
-    Ok(ids)
-}
-
-fn validate_link(
-    vault: &Path,
-    link: &ShardDocumentLink,
-    protected: &HashSet<String>,
-) -> CanvasResult<()> {
-    match link {
-        ShardDocumentLink::Fragment { id, target_id }
-        | ShardDocumentLink::Map { id, target_id }
-        | ShardDocumentLink::Flow { id, target_id } => {
-            identifier(id)?;
-            identifier(target_id)?;
-            if target_id.contains(['/', '\\']) {
-                return Err("画布引用目标 ID 不能包含路径分隔符。".into());
-            }
-            if matches!(link, ShardDocumentLink::Fragment { .. }) && protected.contains(target_id) {
-                return Err("公开画布不能引用密匣片段。".into());
-            }
-        }
-        ShardDocumentLink::MarkdownPath { id, path } => {
-            identifier(id)?;
-            let full = safe_relative(vault, path, &["notes", "fragments"], true)?;
-            if path.len() > 4096
-                || !full
-                    .extension()
-                    .and_then(|extension| extension.to_str())
-                    .is_some_and(|extension| extension.eq_ignore_ascii_case("md"))
-                || (full.exists() && !full.is_file())
-            {
-                return Err("画布资料卡片只能引用公开 Markdown 文件。".into());
-            }
-        }
-    }
-    Ok(())
-}
-
 /// Deleted public targets remain valid document links. Privacy and path boundaries
 /// still apply, so a missing link never turns a migrated diagram into an unreadable file.
+#[cfg(test)]
 pub(crate) fn validate_public_link(vault: &Path, link: &ShardDocumentLink) -> CanvasResult<()> {
-    let protected = if matches!(link, ShardDocumentLink::Fragment { .. }) {
-        protected_fragment_ids(vault)?
-    } else {
-        HashSet::new()
-    };
-    validate_link(vault, link, &protected)
+    shard_core::graph_model::validate_public_link(vault, link)
 }
 
-fn validate_file(vault: &Path, file: &CanvasFile) -> CanvasResult<()> {
-    if !matches!(file.kind.as_str(), "shard.canvas" | "shard.flow") || file.schema_version != 1 {
-        return Err("不支持的画布格式或版本。".into());
-    }
-    identifier(&file.id)?;
-    if file.title.trim().is_empty() || file.title.chars().count() > 500 {
-        return Err("画布标题必须非空且不超过 500 字。".into());
-    }
-    timestamp(&file.created_at)?;
-    timestamp(&file.updated_at)?;
-    if file.revision > MAX_REVISION || file.nodes.len() > 400 || file.edges.len() > 1600 {
-        return Err("画布版本或节点、连线数量超过限制。".into());
-    }
-    let has_fragment_links = file.nodes.iter().any(|node| {
-        matches!(node.link, Some(ShardDocumentLink::Fragment { .. }))
-            || node.mind_map.as_ref().is_some_and(|map| {
-                map.nodes.values().any(|node| {
-                    node.links
-                        .iter()
-                        .any(|link| matches!(link, ShardDocumentLink::Fragment { .. }))
-                })
-            })
-    });
-    let protected = if has_fragment_links {
-        protected_fragment_ids(vault)?
-    } else {
-        HashSet::new()
-    };
-    let mut node_ids = HashSet::new();
-    let mut total = file.nodes.len();
-    for node in &file.nodes {
-        identifier(&node.id)?;
-        if !node_ids.insert(node.id.as_str()) {
-            return Err("画布存在重复节点 ID。".into());
-        }
-        if !node.x.is_finite()
-            || !node.y.is_finite()
-            || node.x.abs() > 1_000_000.0
-            || node.y.abs() > 1_000_000.0
-            || node
-                .width
-                .is_some_and(|size| !size.is_finite() || size <= 0.0 || size > 10_000.0)
-            || node
-                .height
-                .is_some_and(|size| !size.is_finite() || size <= 0.0 || size > 10_000.0)
-            || node.text.chars().count() > 20_000
-        {
-            return Err("画布节点坐标、尺寸或文字超过限制。".into());
-        }
-        if !matches!(
-            node.kind.as_str(),
-            "process" | "decision" | "terminal" | "text" | "reference" | "mindmap"
-        ) {
-            return Err("不支持的画布节点类型。".into());
-        }
-        if file.kind == "shard.flow" && node.kind == "mindmap" {
-            return Err("流程图不能包含思维导图，请通过文档链接关联。".into());
-        }
-        if (node.kind == "reference") != node.link.is_some()
-            || (node.kind == "mindmap") != node.mind_map.is_some()
-        {
-            return Err(
-                "资料卡片必须包含链接，导图对象必须包含导图，其他对象不能混入该数据。".into(),
-            );
-        }
-        if let Some(link) = &node.link {
-            validate_link(vault, link, &protected)?;
-        }
-        if let Some(map) = &node.mind_map {
-            total += map.nodes.len();
-            identifier(&map.id)?;
-            if map.title.trim().is_empty() || map.title.chars().count() > 2000 {
-                return Err("内嵌导图标题无效。".into());
-            }
-            timestamp(&map.created_at)?;
-            timestamp(&map.updated_at)?;
-            if map.revision > MAX_REVISION {
-                return Err("内嵌导图版本无效。".into());
-            }
-            if map.viewport.as_ref().is_some_and(|view| {
-                !view.x.is_finite()
-                    || !view.y.is_finite()
-                    || !view.zoom.is_finite()
-                    || view.zoom <= 0.0
-            }) {
-                return Err("内嵌导图视口无效。".into());
-            }
-            // Reuse Shard's exact tree contract while allowing missing public links.
-            let mut tree = map.clone();
-            for node in tree.nodes.values_mut() {
-                node.links.clear();
-            }
-            crate::validate_mind_map_file(vault, &tree)?;
-            for node in map.nodes.values() {
-                identifier(&node.id)?;
-                timestamp(&node.created_at)?;
-                timestamp(&node.updated_at)?;
-                if !node
-                    .sort_key
-                    .chars()
-                    .all(|character| character.is_ascii_alphanumeric())
-                    || node.sort_key.len() > 1000
-                    || node
-                        .note
-                        .as_ref()
-                        .is_some_and(|note| note.chars().count() > 20_000)
-                {
-                    return Err("内嵌导图排序键或备注无效。".into());
-                }
-                if node
-                    .width
-                    .is_some_and(|width| !width.is_finite() || width <= 0.0 || width > 10_000.0)
-                    || node
-                        .style
-                        .as_ref()
-                        .and_then(|style| style.tone.as_deref())
-                        .is_some_and(|tone| {
-                            !matches!(tone, "default" | "accent" | "success" | "warning")
-                        })
-                {
-                    return Err("内嵌导图尺寸或样式无效。".into());
-                }
-                for link in &node.links {
-                    validate_link(vault, link, &protected)?;
-                }
-            }
-        }
-    }
-    if total > 2000 {
-        return Err("画布包含导图在内最多 2000 个节点。".into());
-    }
-    let mut edge_ids = HashSet::new();
-    for edge in &file.edges {
-        identifier(&edge.id)?;
-        if !edge_ids.insert(edge.id.as_str())
-            || !node_ids.contains(edge.source.as_str())
-            || !node_ids.contains(edge.target.as_str())
-        {
-            return Err("画布连线 ID 重复或端点不存在。".into());
-        }
-        if edge.label.chars().count() > 2000
-            || [&edge.source_handle, &edge.target_handle]
-                .iter()
-                .any(|handle| {
-                    handle
-                        .as_deref()
-                        .is_some_and(|value| !matches!(value, "top" | "right" | "bottom" | "left"))
-                })
-        {
-            return Err("画布连线标签或连接点无效。".into());
-        }
-    }
-    canonical(file)?;
-    Ok(())
+pub(crate) fn validate_file(vault: &Path, file: &CanvasFile) -> CanvasResult<()> {
+    shard_core::graph_model::validate_canvas_file(vault, file)
 }
 
 fn read_file(vault: &Path, path: &Path) -> CanvasResult<CanvasReadResult> {
@@ -522,27 +262,7 @@ pub(crate) fn read_search_document(
 }
 
 pub(crate) fn search_text(file: &CanvasFile) -> String {
-    let mut lines = Vec::new();
-    for node in &file.nodes {
-        push_search_line(&mut lines, &node.text);
-        if let Some(map) = &node.mind_map {
-            push_search_line(&mut lines, &map.title);
-            for map_node in map.nodes.values() {
-                push_search_line(&mut lines, &map_node.text);
-            }
-        }
-    }
-    for edge in &file.edges {
-        push_search_line(&mut lines, &edge.label);
-    }
-    lines.join("\n")
-}
-
-fn push_search_line(lines: &mut Vec<String>, value: &str) {
-    let value = value.trim();
-    if !value.is_empty() {
-        lines.push(value.to_string());
-    }
+    shard_core::graph_model::canvas_search_text(file)
 }
 
 fn identity_paths(vault: &Path, id: &str) -> CanvasResult<Vec<PathBuf>> {

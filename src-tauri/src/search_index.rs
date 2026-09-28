@@ -21,7 +21,7 @@ use sha2::{Digest, Sha256};
 use shard_core::search::SearchProjectionBlock;
 
 const SCHEMA_VERSION: i64 = 2;
-const INDEX_FORMAT: &str = "search-projection-assets-v2";
+const INDEX_FORMAT: &str = "search-projection-assets-v3";
 const BATCH_SIZE: usize = 1_000;
 
 #[derive(Default)]
@@ -37,7 +37,7 @@ impl IndexRegistry {
 
     pub(crate) fn open(&self, vault: &Path) -> Option<Arc<IndexStore>> {
         let root = self.root.get()?;
-        let vault = crate::search_runtime::normalized_vault_key(vault);
+        let vault = shard_core::normalized_vault_key(vault);
         let mut active = self
             .active
             .lock()

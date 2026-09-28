@@ -65,6 +65,7 @@ export async function installSearchIpcMock(page: Page) {
     const kindOf = (fragment: Fragment) => {
       if (fragment.tags.includes("note")) return "note"
       if (fragment.tags.includes("outline")) return "outline"
+      if (fragment.tags.includes("flowchart")) return "flowchart"
       if (fragment.tags.includes("document")) return "document"
       return "fragment"
     }
@@ -72,7 +73,68 @@ export async function installSearchIpcMock(page: Page) {
       fragment.lockbox || fragment.path.startsWith("lockbox/")
         ? "lockbox"
         : "public"
+    const graphJsonOf = (content: string, language: "outline" | "flowchart") => {
+      const matches = Array.from(content.matchAll(language === "outline"
+        ? /(?:^|\n)```shardmap[^\S\r\n]*\r?\n([\s\S]*?)\r?\n```(?=\n|$)/gu
+        : /(?:^|\n)```shardflow[^\S\r\n]*\r?\n([\s\S]*?)\r?\n```(?=\n|$)/gu))
+      if (matches.length !== 1) return null
+      try {
+        const file = JSON.parse(matches[0][1]) as unknown
+        return typeof file === "object" && file !== null ? file as Record<string, unknown> : null
+      } catch {
+        return null
+      }
+    }
+    const jsonOutlineTitle = (content: string) => {
+      const file = graphJsonOf(content, "outline")
+      if (!file || file.kind !== "shard.map" || typeof file.rootId !== "string" || typeof file.nodes !== "object" || file.nodes === null) return null
+      const root = (file.nodes as Record<string, unknown>)[file.rootId]
+      if (typeof root !== "object" || root === null) return ""
+      const text = (root as Record<string, unknown>).text
+      return typeof text === "string" ? text.trim() : ""
+    }
+    const jsonFlowchartTitle = (content: string) => {
+      const file = graphJsonOf(content, "flowchart")
+      if (!file || file.kind !== "shard.flow" || typeof file.title !== "string") return null
+      return file.title.trim()
+    }
+    const graphSearchBodyOf = (fragment: Fragment) => {
+      const kind = kindOf(fragment)
+      const file = kind === "outline" ? graphJsonOf(fragment.content, "outline")
+        : kind === "flowchart" ? graphJsonOf(fragment.content, "flowchart") : null
+      if (!file) return null
+      if (kind === "outline" && file.kind === "shard.map" && typeof file.nodes === "object" && file.nodes !== null) {
+        return Object.values(file.nodes as Record<string, unknown>).flatMap((value) => {
+          if (typeof value !== "object" || value === null) return []
+          const node = value as Record<string, unknown>
+          return [node.text, node.note].filter((text): text is string => typeof text === "string" && text.trim().length > 0)
+        }).join("\n")
+      }
+      if (kind === "flowchart" && file.kind === "shard.flow" && Array.isArray(file.nodes) && Array.isArray(file.edges)) {
+        const nodes = file.nodes.flatMap((value) => {
+          if (typeof value !== "object" || value === null) return []
+          const text = (value as Record<string, unknown>).text
+          return typeof text === "string" && text.trim() ? [text] : []
+        })
+        const edges = file.edges.flatMap((value) => {
+          if (typeof value !== "object" || value === null) return []
+          const label = (value as Record<string, unknown>).label
+          return typeof label === "string" && label.trim() ? [label] : []
+        })
+        return [typeof file.title === "string" ? file.title : "", ...nodes, ...edges].filter(Boolean).join("\n")
+      }
+      return null
+    }
     const titleOf = (fragment: Fragment) => {
+      const kind = kindOf(fragment)
+      if (kind === "outline") {
+        const title = jsonOutlineTitle(fragment.content)
+        if (title !== null) return title || "未命名大纲"
+      }
+      if (kind === "flowchart") {
+        const title = jsonFlowchartTitle(fragment.content)
+        if (title !== null) return title || "未命名流程图"
+      }
       const first = fragment.content
         .split(/\r?\n/u)
         .map((line) => line.trim())
@@ -238,10 +300,12 @@ export async function installSearchIpcMock(page: Page) {
           .filter((fragment) => includeTrash || !fragment.archived)
           .map((fragment) => {
             const title = titleOf(fragment)
+            const graphBody = graphSearchBodyOf(fragment)
+            const projectedBody = graphBody ?? fragment.content
             const fields = {
               title: title.toLocaleLowerCase("en-US"),
               tags: fragment.tags.join(" ").toLocaleLowerCase("en-US"),
-              body: fragment.content.toLocaleLowerCase("en-US"),
+              body: projectedBody.toLocaleLowerCase("en-US"),
             }
             if (
               terms.some(
@@ -263,8 +327,8 @@ export async function installSearchIpcMock(page: Page) {
               updatedAt: fragment.updatedAt ?? null,
               revision: revisionOf(fragment),
               matchedFields,
-              preview: parts(fragment.content.replace(/^#{1,6}\s+/u, ""), terms),
-              revealHint: "text",
+              preview: parts(projectedBody.replace(/^#{1,6}\s+/u, ""), terms),
+              revealHint: graphBody !== null && matchedFields.includes("body") ? "documentOnly" : "text",
             }
           })
           .filter((hit): hit is NonNullable<typeof hit> => hit !== null)

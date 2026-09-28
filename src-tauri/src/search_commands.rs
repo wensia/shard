@@ -509,7 +509,7 @@ mod tests {
             seed ^= seed >> 7;
             seed ^= seed << 17;
             let topic = ["研究", "设计", "工程", "阅读"][(seed as usize) % 4];
-            let kind = index % 4;
+            let kind = index % 5;
             let path = vault
                 .join(if kind == 0 { "fragments" } else { "notes" })
                 .join(format!("search-{index:05}.md"));
@@ -523,7 +523,8 @@ mod tests {
                 tags: match kind {
                     1 => vec!["note".into(), "work".into()],
                     2 => vec!["outline".into(), "work".into()],
-                    3 => vec!["document".into(), "work".into()],
+                    3 => vec!["flowchart".into(), "work".into()],
+                    4 => vec!["document".into(), "work".into()],
                     _ => vec!["work".into()],
                 },
                 category: None,
@@ -587,18 +588,19 @@ mod tests {
             .iter()
             .map(|document| document.projection.searchable_text.len())
             .sum();
-        let mut kind_counts = [0_usize; 4];
+        let mut kind_counts = [0_usize; 5];
         for metadata in snapshot.metadata.values() {
             let slot = match metadata.target.kind {
                 SearchKind::Fragment => 0,
                 SearchKind::Note => 1,
                 SearchKind::Outline => 2,
-                SearchKind::Document => 3,
+                SearchKind::Flowchart => 3,
+                SearchKind::Document => 4,
                 _ => panic!("unexpected 5k fixture kind"),
             };
             kind_counts[slot] += 1;
         }
-        assert_eq!(kind_counts, [1_250; 4]);
+        assert_eq!(kind_counts, [1_000; 5]);
         eprintln!(
             "search_5k initial_build={initial_build:?} files={DOCUMENTS} file_bytes={file_bytes} projection_bytes={projection_bytes} largest_file_bytes={largest_file} kinds={kind_counts:?}"
         );

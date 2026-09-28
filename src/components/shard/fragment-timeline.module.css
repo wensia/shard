@@ -1,4 +1,6 @@
 .root {
+  /* 时间线滚动视口溢出时可获得焦点，且贴着工作区外壳的 overflow 边缘：焦点环内收 */
+  --shard-focus-offset: -2px;
   position: relative;
   display: flex;
   min-height: 0;

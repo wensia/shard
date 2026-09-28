@@ -7,7 +7,7 @@
 | 文档 | 内容 | 状态 |
 | --- | --- | --- |
 | [产品框架](product-framework.md) | 定位与对标、四种内容类型、受管 JSON 区域、自定义属性、资源文件、主界面、无语法编辑、组件与插件、捕捉入口、类型转换、路线图 | 定稿，2026-09-28 修订（大纲存 JSON、流程图、单文件容器、属性） |
-| [内容模型实施方案](content-model-implementation-plan.md) | 批次 P0/P1/H1–H4/G1–G3 总览；P0 frontmatter 保真读写施工令 | P0 执行中（Codex gpt-5.6-sol） |
+| [内容模型实施方案](content-model-implementation-plan.md) | 批次 P0/P1/H1–H4/G1–G3 总览与各批施工令 | P0–H4b 已完成，后续执行中（Codex gpt-5.6-sol） |
 | [内容模型架构评审](content-model-architecture-review.md) | ChatGPT Pro 评审 e4600ea 修订：容器方案 A/B/C 对比、已核实的现状缺口、属性保真合同、路线顺序 | 评审完成，已裁决方案 B（单篇 md 内含受管 JSON） |
 | [CSV 数据存储层方案](csv-data-storage-plan.md) | CSV 作为结构化数据权威来源：分层、写入契约、跨进程并发、视图/查询演进、阶段路线 | 已确认，实施中 |
 | [富文本编辑器技术方案](rich-text-editor-plan.md) | Tiptap 内核、Shard Markdown 方言、自造组件清单、迁移阶段 | 技术方案，未实施 |

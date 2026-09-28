@@ -83,6 +83,7 @@ interface DirectoryViewProps extends DirectorySortProps {
   onCopyDocumentLink?: (entry: LibraryTreeEntry) => void
   onDelete: (entry: LibraryTreeEntry) => void
   onImportTable?: (entry: LibraryTreeEntry) => void
+  onImportGraphToTimeline?: (entry: LibraryTreeEntry) => void
   onMove: (entry: LibraryTreeEntry, destinationDirectory: string) => void
   onMoveToLockbox: (entry: LibraryTreeEntry) => void
   onOpenEntry: (entry: LibraryTreeEntry) => void
@@ -330,6 +331,7 @@ export function DirectoryView({
   onCopyDocumentLink,
   onDelete,
   onImportTable,
+  onImportGraphToTimeline,
   onMove,
   onMoveToLockbox,
   onOpenEntry,
@@ -375,7 +377,7 @@ export function DirectoryView({
     return {
       busy: busy || Boolean(renaming), entry, batch,
       destinations: targets.reduce((available, item) => libraryEntryDestinations(item, available), destinations),
-      onConvertToFragment, onCopyDocumentLink, onDelete, onImportTable, onMove, onMoveToLockbox, onRename,
+      onConvertToFragment, onCopyDocumentLink, onDelete, onImportGraphToTimeline, onImportTable, onMove, onMoveToLockbox, onRename,
       onOpenEntry: isEntryOpenable(entry) ? onOpenEntry : undefined,
       onPrepare: () => selection?.onMenuTarget(entry),
     }

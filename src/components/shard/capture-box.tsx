@@ -15,6 +15,7 @@ import {
   LockKeyholeIcon,
   SendHorizontalIcon,
 } from "@/components/icons"
+import { CsvImportDialog } from "@/features/datasets/csv-import-dialog"
 
 import { EditorToolbar } from "@/components/shard/editor-toolbar"
 import { FragmentImageAttachment } from "@/components/shard/fragment-content"
@@ -39,12 +40,12 @@ import {
   CONTENT_KIND_LABELS,
   DOCUMENT_TYPE_TAG,
   OUTLINE_TYPE_TAG,
+  stripProtectedTypeTags,
 } from "@/lib/content-kind"
 import { wantsLockbox } from "@/lib/lockbox"
 import { notify } from "@/lib/notify"
 import {
   EMPTY_MIND_MAP_OUTLINE_SOURCE,
-  parseMindMapOutline,
   serializeMindMapOutline,
 } from "@/lib/mind-map-outline"
 import { useTableDocumentDrop } from "@/lib/use-table-document-drop"
@@ -55,7 +56,7 @@ import {
   isCsvWikilinkTarget,
   resolveWikilinkTarget,
 } from "@/lib/wikilink"
-import type { CsvFileSummary, Fragment, MindMapSummary } from "@/types"
+import type { CsvFileSummary, Fragment, MindMapSummary, ShardMapFile } from "@/types"
 
 import styles from "./capture-box.module.css"
 
@@ -64,6 +65,7 @@ export interface CaptureBoxHandle {
 }
 
 interface CaptureBoxProps {
+  initialContent?: string
   secondarySubmit?: boolean
   csvFiles?: CsvFileSummary[]
   fragments: Fragment[]
@@ -72,6 +74,16 @@ interface CaptureBoxProps {
   mindMaps?: MindMapSummary[]
   /** 返回创建后的碎片，`/文档` 提交后据此直接进禅模式（产品框架 §2）。 */
   onCreate: (content: string, tags: string[]) => Promise<Fragment | void>
+  onCreateOutline: (
+    operationId: string,
+    file: ShardMapFile,
+    tags: string[]
+  ) => Promise<Fragment | void>
+  onCreateFlowchart: (
+    operationId: string,
+    tags: string[]
+  ) => Promise<Fragment | void>
+  onDraftChange?: (content: string) => void
   onNavigateToFragment?: (fragmentId: string) => void
   onOpenMindMap?: (map: MindMapSummary) => void
   /** 用创建好的碎片打开禅模式；两套编辑器共用这一条路径。 */
@@ -89,35 +101,46 @@ interface PendingImage {
 
 export const CaptureBox = forwardRef<CaptureBoxHandle, CaptureBoxProps>(function CaptureBox({
   secondarySubmit = false,
+  initialContent = "",
   csvFiles = [],
   fragments,
   isCreating,
   knownTags,
   mindMaps = [],
   onCreate,
+  onCreateOutline,
+  onCreateFlowchart,
+  onDraftChange,
   onNavigateToFragment,
   onOpenMindMap,
   onOpenFragmentZen,
   onOpenZen,
 }, ref) {
-  const [content, setContent] = useState("")
+  const [content, setContent] = useState(initialContent)
   /**
    * 大纲态的正文：非 null 即整个速记框切成幕布式大纲（产品框架 §2）。
    * 普通草稿留在 `content` 里原样不动，退出大纲态时按 value 恢复；
    * 两者互不转换，这样「进大纲、想想又退出来」的结果永远可预期。
    */
   const [outlineCode, setOutlineCode] = useState<string | null>(null)
+  const [outlineFile, setOutlineFile] = useState<ShardMapFile | null>(null)
   /** `/文档` 打下的类型标记：提交时写入文档 type 标签。 */
   const [isDocumentType, setIsDocumentType] = useState(false)
   const [isEditorExpanded, setIsEditorExpanded] = useState(false)
   const [pendingImages, setPendingImages] = useState<PendingImage[]>([])
+  const [importFile, setImportFile] = useState<{ name: string; bytes: Uint8Array } | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const editorFrameRef = useRef<HTMLDivElement>(null)
   const codeMirrorViewportRef = useRef<HTMLDivElement>(null)
   const codeMirrorContentHeightRef = useRef(0)
+
+  useEffect(() => {
+    onDraftChange?.(content)
+  }, [content, onDraftChange])
   const richEditorRef = useRef<ShardRichEditorHandle>(null)
   const hasSkippedInitialFocusRef = useRef(false)
   const pendingImagesRef = useRef<PendingImage[]>([])
+  const outlineOperationIdRef = useRef<string | null>(null)
 
   const normalizedKnownTags = useMemo(
     () => normalizeTagList(knownTags.filter((tag) => tag !== "inbox")),
@@ -175,10 +198,6 @@ export const CaptureBox = forwardRef<CaptureBoxHandle, CaptureBoxProps>(function
     notify.info(`「${target}」还没有文档`, { description: "可在资料库新建同名文档。" })
   }, [])
   const isOutlineMode = outlineCode !== null
-  const outlineFile = useMemo(
-    () => (outlineCode === null ? null : parseMindMapOutline(outlineCode).file),
-    [outlineCode]
-  )
   /** 根节点为空的大纲没有中心主题，不允许提交。 */
   const hasOutlineRoot = Boolean(
     outlineFile && (outlineFile.nodes[outlineFile.rootId]?.text ?? "").trim()
@@ -279,6 +298,8 @@ export const CaptureBox = forwardRef<CaptureBoxHandle, CaptureBoxProps>(function
 
     setContent(getCurrentEditorValue())
     setOutlineCode(EMPTY_MIND_MAP_OUTLINE_SOURCE)
+    setOutlineFile(null)
+    outlineOperationIdRef.current = null
     setIsEditorExpanded(true)
   }
 
@@ -286,12 +307,32 @@ export const CaptureBox = forwardRef<CaptureBoxHandle, CaptureBoxProps>(function
     if (outlineCode === null) return
 
     setOutlineCode(null)
+    setOutlineFile(null)
+    outlineOperationIdRef.current = null
     setIsEditorExpanded(true)
   }
 
   function markDocumentType() {
     setIsDocumentType(true)
     setIsEditorExpanded(true)
+  }
+
+  async function createFlowchart() {
+    if (isCreating) return
+    const draft = getCurrentEditorValue()
+    setContent(draft)
+    onDraftChange?.(draft)
+    setIsEditorExpanded(true)
+
+    try {
+      const created = await onCreateFlowchart(
+        crypto.randomUUID(),
+        normalizeTagList(["inbox"])
+      )
+      if (created) onOpenFragmentZen?.(created)
+    } catch {
+      requestAnimationFrame(() => focusActiveEditor())
+    }
   }
 
   /**
@@ -305,16 +346,32 @@ export const CaptureBox = forwardRef<CaptureBoxHandle, CaptureBoxProps>(function
       return
     }
 
+    const nodeCount = Object.keys(outlineFile.nodes).length
+    if (nodeCount > 400) {
+      notify.info("大纲最多 400 个节点")
+      setIsEditorExpanded(true)
+      return
+    }
+
     const draft = serializeMindMapOutline(outlineFile)
     const tags = applyTypeTag(
       normalizeTagList(["inbox", ...extractTags(draft)]),
       OUTLINE_TYPE_TAG
     )
+    if (wantsLockbox(draft, tags)) {
+      notify.error("大纲不能放入密匣")
+      setIsEditorExpanded(true)
+      return
+    }
 
     try {
-      await onCreate(draft, tags)
+      const operationId = outlineOperationIdRef.current ?? crypto.randomUUID()
+      outlineOperationIdRef.current = operationId
+      await onCreateOutline(operationId, outlineFile, tags)
       // 回到普通速记：进入大纲前的草稿原样还在 content 里。
       setOutlineCode(null)
+      setOutlineFile(null)
+      outlineOperationIdRef.current = null
       setIsEditorExpanded(false)
     } catch {
       // 创建失败时保持大纲态，用户刚写的树不能丢。
@@ -333,7 +390,10 @@ export const CaptureBox = forwardRef<CaptureBoxHandle, CaptureBoxProps>(function
     // `#标签` / `[[双链]]` 收敛成节点（getMarkdown 负责），收敛产生的 onChange
     // 要等下一次渲染才回到 content 上，直接用 content 会漏掉这一步。
     const draft = getCurrentEditorValue()
-    const draftTags = normalizeTagList(["inbox", ...extractTags(draft)])
+    const draftTags = stripProtectedTypeTags(
+      normalizeTagList(["inbox", ...extractTags(draft)]),
+      isDocumentType ? "document" : "fragment"
+    )
     if (wantsLockbox(draft, draftTags) && pendingImages.length > 0) {
       notify.error("密匣暂不支持图片", { description: "请先移除图片，再保存到密匣。" })
       setIsEditorExpanded(true)
@@ -354,7 +414,10 @@ export const CaptureBox = forwardRef<CaptureBoxHandle, CaptureBoxProps>(function
       const next = buildContentWithPendingImages(draft, savedImages)
       if (!next) return
 
-      const nextTags = normalizeTagList(["inbox", ...extractTags(next)])
+      const nextTags = stripProtectedTypeTags(
+        normalizeTagList(["inbox", ...extractTags(next)]),
+        isDocumentType ? "document" : "fragment"
+      )
       const wasDocumentType = isDocumentType
       const created = await onCreate(
         next,
@@ -380,8 +443,17 @@ export const CaptureBox = forwardRef<CaptureBoxHandle, CaptureBoxProps>(function
     }
   }
 
-  const { isDropTarget: isTableDropTarget } = useTableDocumentDrop({
+  const onCsvDrop = useCallback((file: { name: string; bytes: Uint8Array }) => {
+    if (wantsLockbox(richEditorRef.current?.getMarkdown() ?? content, [])) {
+      notify.error("私密碎片不支持数据集")
+      return
+    }
+    setImportFile(file)
+  }, [content])
+  const { dropKind } = useTableDocumentDrop({
+    allowCsv: !willSaveToLockbox,
     frameRef: editorFrameRef,
+    onCsv: onCsvDrop,
   })
 
   function openZenEditor() {
@@ -472,6 +544,7 @@ export const CaptureBox = forwardRef<CaptureBoxHandle, CaptureBoxProps>(function
         <OutlineComposer
           code={outlineCode ?? ""}
           onChange={setOutlineCode}
+          onFileChange={setOutlineFile}
           onExit={exitOutlineMode}
           onSubmit={() => void submit()}
         />
@@ -491,6 +564,7 @@ export const CaptureBox = forwardRef<CaptureBoxHandle, CaptureBoxProps>(function
           ref={codeMirrorViewportRef}
         >
           <ShardRichEditor
+            allowDatasetActions={!willSaveToLockbox}
             ariaLabel="快速记录"
             autoFocus
             editorId="composer"
@@ -503,6 +577,7 @@ export const CaptureBox = forwardRef<CaptureBoxHandle, CaptureBoxProps>(function
             onDropFiles={(files) => void uploadPastedImages(files)}
             onFocus={handleEditorFocus}
             onHeightChange={handleCodeMirrorHeightChange}
+            onCreateFlowchart={() => void createFlowchart()}
             onEnterOutline={enterOutlineMode}
             onImageFiles={(files) => void uploadPastedImages(files)}
             onMarkDocument={markDocumentType}
@@ -516,11 +591,12 @@ export const CaptureBox = forwardRef<CaptureBoxHandle, CaptureBoxProps>(function
             variant="composer"
           />
         </div>
-        {isTableDropTarget ? (
+        {dropKind ? (
           <div className="shard-editor-drop-hint">
-            请在资料库中导入为多维表格
+            {dropKind === "csv" ? willSaveToLockbox ? "私密碎片不支持数据集" : "松开以导入为数据集" : "请先另存为 CSV 再导入"}
           </div>
         ) : null}
+        <CsvImportDialog file={importFile} allowed={!willSaveToLockbox} onClose={() => setImportFile(null)} onImported={(path) => richEditorRef.current?.insertDatasetReference(path)} />
       </div>
       )}
       {!isOutlineMode && pendingImages.length > 0 ? (
