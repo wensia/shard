@@ -23,7 +23,7 @@
 | **H3** | 时间线按类型筛选；后端搜索的图内容投影、标题与 kind 修正（不索引 JSON 键名、坐标、ID） | H2b | 已完成，施工令见 §8 |
 | **H4a** | 旧格式 md 大纲批量升级：正式导入器（Rust）、预检报告、必须成功的检查点或独立备份、逐篇原子升级；加固偏重 UI 用例 | H3 | 已完成，施工令见 §9 |
 | **H4b** | 资料库独立 `.shardmap.json`/`.shardflow.json` 显式加入时间线（沿用旧图 id 作为碎片 id，原文件移入回收站）；`shard://map|flow/<id>` 与节点引用找不到独立文件时回退到同 id 碎片 | H4a | 已完成，施工令见 §10 |
-| H4c | CLI 原生 JSON 读写、缩进列表只读导出、按节点 id 修改（需把图模型与校验移入 shard-core） | H4b | 待细化 |
+| **H4c** | CLI 原生 JSON 读写、缩进列表只读导出、按节点 id 修改（需把图模型与校验移入 shard-core） | H4b、main 的跨进程写锁 | 执行中，施工令见 §11 |
 | G1–G3 | 属性面板与 `.shard/properties.json`；SQLite 属性表与筛选；标签主题页表格视图 | P1 | 待细化 |
 
 ## 3. P0 施工令：frontmatter 保真读写
@@ -562,3 +562,64 @@ UI 改动遵守 AGENTS.md 与 `vendor/kiln`，复用现有组件与 token。
 ### 10.5 交付
 
 不提交 Git；测试改写的 `tests/evidence` 图片结束前恢复。报告写 `docs/dev/content-model-tasks-log/H4b.md`：改动文件与要点、开工前 UI 基线、验收结果（含测试数与偶发项复跑）、偏差及原因、遗留问题。
+
+## 11. H4c 施工令：图模型移入 shard-core 与 CLI 图读写
+
+前置：P0–H4b 已在本分支，且已并入 `main`（`a636ef5`），带来 CSV 数据集与**跨进程 vault 写锁**：`crates/shard-core/src/vault_lock.rs` 的 `VaultProcessLock`（锁文件在 app 配置目录 `locks/` 下），桌面端 `lock_vault_gate` 先取进程内门再取进程锁；`shard-cli` 的 `--append-dataset` 是现成的「取锁（默认 30 秒超时）→ 校验 → 原子写」先例。
+
+现状要点（调研结论）：
+- 图模型全部在 src-tauri：`ShardMapFile`、`ShardMapNode`、`ShardMapNodeStyle`、`ShardMapViewport`、`ShardDocumentLink`（`src-tauri/src/lib.rs`，私有、`deny_unknown_fields`），`validate_mind_map_file`、`canonical_mind_map_text`；`CanvasFile`、`CanvasNode`、`CanvasEdge`、`validate_file`、`canonical`、`search_text`、`validate_public_link`、`protected_fragment_ids`（`src-tauri/src/canvas_commands.rs`）。依赖 vault 的只有链接校验（密匣片段 id 扫描、`MarkdownPath` 的符号链接检查），其余都是纯结构校验。
+- `find_fragment_path` 与 `read_fragment` 在 src-tauri，前者只依赖文件系统。shard-core 没有按 id 找碎片的函数，也没有 `serde_json` 依赖。
+- **src-tauri 的 `serde_json` 开了 `float_roundtrip`**（为了画布坐标精确往返），而 `shard-cli` 单独编译时不会继承这个特性。
+- CLI 是手写参数解析，选项风格为 `--xxx`，错误统一 `shard: <消息>` + 退出码 1；vault 解析顺序 `--vault` → `SHARD_VAULT` → App 设置 → 默认目录。
+- 桌面端没有文件监听：外部修改在窗口重新获得焦点时对账；已打开的图编辑器在下次保存时以 STALE_BASE 暴露冲突（H2/H2b 已有冲突处理）。
+
+### 11.0 改造 400 节点慢用例
+
+`tests/ui/content-types.spec.ts`「超过 400 节点时拦截提交…」现在用键盘逐个录入 401 个节点，单独运行就要约 56 秒，全套并行时超时。改为用粘贴、测试桥或其它现有手段一次性构造草稿，把单测耗时压到 10 秒以内，断言不变。同文件里「201–400 节点完整提交」若也是逐个录入，同样处理。不改业务代码。
+
+### 11.1 图模型与校验移入 shard-core
+
+- 新建 `crates/shard-core/src/graph_model.rs`（或按需拆两三个文件），迁入上述类型（字段改为 `pub`，serde 属性与 `deny_unknown_fields` 完全不变）、结构校验、链接校验（含密匣片段 id 扫描与 `MarkdownPath` 检查，它们只依赖 vault 路径与文件系统）、`canonical` 文本函数与 `search_text`。
+- shard-core 的 `serde_json` 依赖**显式开启 `float_roundtrip`**，与 src-tauri 保持一致。
+- src-tauri 改为使用 shard-core 的类型与函数，删掉自己的副本；现有函数名可保留为薄包装以减少改动。所有调用点（图碎片命令、独立导图与流程图读写、拆分、搜索、升级与导入）的行为与错误文案不变，现有 Rust 测试一律不改断言即可通过。
+- 同时把 `find_fragment_path` 的纯文件系统部分移入 shard-core（按 frontmatter id 查 `fragments/`、`.trash/fragments/`、`notes/`），src-tauri 改用它。
+
+### 11.2 CLI 图命令（`crates/shard-cli`）
+
+沿用现有选项风格与错误约定，与现有碎片快捷创建、`--append-dataset` 互斥：
+
+| 命令 | 行为 |
+| --- | --- |
+| `shard --graph-read <碎片id>` | 标准输出 JSON：`{ "id", "kind": "outline" \| "flowchart", "fileSha", "graph" }`。只读，不取锁。 |
+| `shard --graph-outline <碎片id>` | 仅大纲：标准输出缩进列表（两空格缩进、`- ` 标记，与前端 `serializeMindMapOutline` 规则一致），只读投影，不保证往返。 |
+| `shard --graph-write <碎片id> --expect <fileSha>` | 从标准输入读取完整图 JSON；取进程锁后比对完整文件哈希，不一致报「文件已被修改，请重新读取」；要求 `graph.id` 与碎片 id、类型与碎片 type 一致；按 shard-core 校验；导图 `revision` 加 1、更新 `updatedAt`；只替换受管区域，frontmatter 用 `apply_frontmatter` 只改 `updated_at`；原子写；标准输出新的 `fileSha`。 |
+| `shard --graph-set-text <碎片id> <节点id> <文字> --expect <fileSha>` | 改一个节点的文字（大纲节点或流程图节点），其余数据原样保留；写入规则同上。 |
+| `shard --graph-add-child <碎片id> <父节点id> <文字> --expect <fileSha>` | 仅大纲：在父节点末尾新增子节点（生成不冲突的节点 id 与 sortKey），写入规则同上；标准输出新节点 id 与新 `fileSha`。 |
+| `shard --graph-remove <碎片id> <节点id> --expect <fileSha>` | 仅大纲：删除该节点及其子树，不能删除根；写入规则同上。 |
+
+- 所有写命令都**必须**带 `--expect`，没有强制覆盖选项；只处理公开碎片，不碰密匣与回收站。
+- 取锁用 `VaultProcessLock`，超时与错误文案沿用 `--append-dataset`。
+- 帮助文本与 `README.md` 的 CLI 章节同步补充这些命令。
+
+### 11.3 测试
+
+- shard-core：迁入的校验测试（从 src-tauri 搬来或新增等价用例）；流程图坐标用无法用短小十进制精确表示的值（如 `0.1 + 0.2`）做「解析 → 规范化 → 解析」往返，数值逐位相等。
+- shard-cli（临时 vault，直接调用命令实现函数或跑二进制均可）：每个命令的成功路径；`--expect` 不一致时拒绝且文件字节不变；类型不符（对流程图用 `--graph-add-child`）报错；删除根报错；持锁时写命令按超时失败（沿用现有持锁测试写法）；写后 frontmatter 未知键与区域外正文逐字节保留；写后桌面端的 `read_graph_fragment_in_vault` 可读。
+- src-tauri：现有测试全部通过，不改断言。
+
+### 11.4 验收命令
+
+| 命令 | 要求 |
+| --- | --- |
+| `cargo test -p shard-core -p shard -p shard-cli` | 全部通过 |
+| `cargo build --release -p shard-cli` | 通过（单独编译 CLI，确认特性不依赖 src-tauri） |
+| `pnpm test:unit` | 除 golden 夹具那一项既有失败外全部通过 |
+| `pnpm build` | 通过 |
+| `pnpm build:markdown && pnpm exec playwright test -c playwright.worktree.config.ts tests/ui/content-types.spec.ts tests/ui/rich-surfaces.spec.ts tests/ui/mind-map-workspace.spec.ts tests/ui/canvas-workspace.spec.ts` | 相对开工前基线没有新增失败；11.0 的用例单独运行耗时低于 10 秒 |
+| `rustfmt --edition 2021 --check` 本批新建或整体迁移的 Rust 文件 | 通过 |
+| `git diff --check` | 通过 |
+
+### 11.5 交付
+
+不提交 Git；测试改写的 `tests/evidence` 图片结束前恢复。报告写 `docs/dev/content-model-tasks-log/H4c.md`：改动文件与要点、开工前 UI 基线、验收结果（含测试数）、偏差及原因、遗留问题。
