@@ -25,7 +25,7 @@
 | **H4b** | 资料库独立 `.shardmap.json`/`.shardflow.json` 显式加入时间线（沿用旧图 id 作为碎片 id，原文件移入回收站）；`shard://map|flow/<id>` 与节点引用找不到独立文件时回退到同 id 碎片 | H4a | 已完成，施工令见 §10 |
 | **H4c** | CLI 原生 JSON 读写、缩进列表只读导出、按节点 id 修改（需把图模型与校验移入 shard-core） | H4b、main 的跨进程写锁 | 已完成，施工令见 §11 |
 | **G1** | 自定义属性后端（保真设置/删除自定义键、DTO 携带属性、类型登记表）与碎片/文档禅模式、资料库文档的属性面板 | H4c | 已完成，施工令见 §12 |
-| G1b | 大纲、流程图宿主中的属性（与图编辑器基线协同） | G1 | 待细化 |
+| **G1b** | 大纲、流程图宿主中的属性（与图编辑器基线协同）；属性键名边界修正 | G1 | 执行中，施工令见 §13 |
 | G2 | 属性进入时间线筛选；SQLite 属性派生表 | G1 | 待细化 |
 | G3 | 标签主题页（该标签下的碎片、大纲、流程图、文档与反链）与属性表格视图 | G2 | 待细化 |
 
@@ -717,3 +717,48 @@ UI 改动遵守 AGENTS.md 与 `vendor/kiln`，复用现有组件与 token。
 ### 12.9 交付
 
 不提交 Git；测试改写的 `tests/evidence` 图片结束前恢复。报告写 `docs/dev/content-model-tasks-log/G1.md`：改动文件与要点、开工前 UI 基线、验收结果（含测试数）、偏差及原因、遗留问题。
+
+## 13. G1b 施工令：大纲与流程图宿主中的属性
+
+前置：G1 已在本分支（`8b04a55`）：`PropertiesPanel`、`set_fragment_property` / `remove_fragment_property`、`read_property_registry` / `register_property_type`、DTO `properties`。大纲宿主是 `MindMapWorkspace`（`MindMapCanvas` + 碎片 storage 适配器，基线为 `fileSha`，见 H2），流程图宿主是 `CanvasWorkspace` 碎片模式（`CanvasSaveQueue` 的 `lastSavedHash` 即 `fileSha`，见 H2b）。两个宿主的工具条里已有名为「主题属性」「属性」的面板（节点/对象属性），本批的入口必须与之区分。
+
+### 13.0 属性键名边界修正（shard-core）
+
+`validate_property_key` 追加规则：拒绝会被 YAML 解释为非字符串的键名——纯数字（含带符号、小数、科学计数、`0x`/`0o` 前缀）、`true`/`false`/`null`/`~` 及其大小写变体。判定方式可直接用「该键经 `serde_yaml` 解析后不是字符串」。错误文案「属性名不能是数字、布尔或空值写法」。补单测。已有文件里这类键仍按 G1 规则以只读或不可定位方式呈现，不改动。
+
+### 13.1 入口与对话框
+
+- 大纲宿主与流程图宿主的工具条各加一个按钮「文档属性」（图标从现有注册表选，文案与「主题属性」「属性」区分），点击打开 Kiln 对话框，内含 G1 的 `PropertiesPanel`（同一组件，不复制实现），显示当前碎片的属性。
+- 独立 `.shardmap.json` / `.shardflow.json`（资料库默认 IO）**不显示**该按钮——它们不是 md 碎片，没有 frontmatter。
+
+### 13.2 与图编辑器基线协同（必须做）
+
+- 打开对话框前先排空图编辑器保存（沿用各宿主现有 flush）；排空失败时不打开并提示。对话框打开期间阻塞图编辑交互（沿用 `setInteractionBlocked` 一类现有机制），关闭后恢复。
+- 每次属性写入成功后，用返回 fragment 的 `fileSha` 替换图编辑器的保存基线（大纲：`MindMapCanvas` 的 storage 基线；流程图：保存队列的 `lastSavedHash`），**不重新载入草稿**。为此给两个编辑器的 handle 各加一个最小方法（如 `replaceBaseline(fileSha)`），默认 IO 模式下不暴露或不生效。属性写入只改 frontmatter、不改受管区域，因此替换基线是安全的。
+- 返回的 fragment 同步回时间线（沿用 H2/H2b 的回灌函数）。
+
+### 13.3 测试
+
+- Rust：13.0 的键名单测。
+- UI（mock 补属性命令与带 `properties` 的图碎片样本）：
+  1. 大纲宿主与流程图宿主出现「文档属性」，独立图文件不出现；
+  2. 打开对话框会先排空保存；在对话框中新增与修改属性后关闭，继续编辑图并自动保存，`write_graph_fragment` 带的是属性写入后的新 `fileSha`，不出现冲突提示；
+  3. 排空失败时对话框不打开。
+- 现有 `mind-map-workspace.spec.ts`、`canvas-*.spec.ts`、`properties.spec.ts` 全部通过。
+
+### 13.4 验收命令
+
+沿用 `playwright.worktree.config.ts`（1422，不提交；**必须**用 `-c playwright.worktree.config.ts`，不得调用会回退默认配置的 `pnpm test:ui`），开工前先跑一遍下表 UI 用例记录基线。
+
+| 命令 | 要求 |
+| --- | --- |
+| `cargo test -p shard-core -p shard -p shard-cli` | 全部通过 |
+| `pnpm test:unit` | 除 golden 夹具那一项既有失败外全部通过 |
+| `pnpm build` | 通过 |
+| `pnpm build:markdown && pnpm exec playwright test -c playwright.worktree.config.ts tests/ui/properties.spec.ts tests/ui/rich-surfaces.spec.ts tests/ui/mind-map-workspace.spec.ts tests/ui/canvas-workspace.spec.ts tests/ui/canvas-inspector.spec.ts tests/ui/content-types.spec.ts` | 相对基线没有新增失败；新增用例全部通过 |
+| `rustfmt --edition 2021 --check crates/shard-core/src/frontmatter.rs` | 通过 |
+| `git diff --check` | 通过 |
+
+### 13.5 交付
+
+不提交 Git；测试改写的 `tests/evidence` 图片结束前恢复。报告写 `docs/dev/content-model-tasks-log/G1b.md`：改动文件与要点、开工前 UI 基线、验收结果（含测试数）、偏差及原因、遗留问题。
