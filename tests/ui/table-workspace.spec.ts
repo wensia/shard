@@ -300,9 +300,10 @@ test("visible view tabs preserve invalid drafts and require composition to finis
   const recovered = page.getByRole("tab", { name: "已恢复的视图：本季度重点事项", exact: true });
   await expect(recovered).toBeFocused(); await expect(original).toHaveAttribute("aria-selected", "true");
   await page.keyboard.press("Enter"); await expect(recovered).toHaveAttribute("aria-selected", "true");
-  const tabStyle = await recovered.evaluate(element => { const style = getComputedStyle(element); const group = element.closest(".table-view-tab-group")!; return { active: group.getAttribute("data-active"), background: getComputedStyle(group).backgroundColor, radius: style.borderRadius, shadow: style.boxShadow, weight: style.fontWeight, height: element.getBoundingClientRect().height, siblingHeight: element.closest(".table-view-bar")!.querySelector(":scope > button")!.getBoundingClientRect().height }; });
+  const tabStyle = await recovered.evaluate(element => { const style = getComputedStyle(element); const group = element.closest(".table-view-tab-group")!; return { active: group.getAttribute("data-active"), background: getComputedStyle(group).backgroundColor, underline: getComputedStyle(group, "::after").height, radius: style.borderRadius, shadow: style.boxShadow, weight: style.fontWeight, height: element.getBoundingClientRect().height, siblingHeight: element.closest(".table-view-bar")!.querySelector(":scope > button")!.getBoundingClientRect().height }; });
   expect(tabStyle).toMatchObject({ radius: "0px", shadow: "none", weight: "500" });
-  expect(tabStyle.active).toBe("true"); expect(tabStyle.background).not.toBe("rgba(0, 0, 0, 0)"); expect(tabStyle.height).toBe(tabStyle.siblingHeight);
+  // 墨迹页签：选中视图没有底板，靠覆盖名称与「…」的 2px 下划线表达。
+  expect(tabStyle.active).toBe("true"); expect(tabStyle.background).toBe("rgba(0, 0, 0, 0)"); expect(tabStyle.underline).toBe("2px"); expect(tabStyle.height).toBe(tabStyle.siblingHeight);
   await page.setViewportSize({ width: 320, height: 800 });
   expect(await page.locator(".table-view-tabs").evaluate(element => element.scrollWidth > element.clientWidth)).toBe(true);
   expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);

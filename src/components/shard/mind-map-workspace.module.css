@@ -13,13 +13,9 @@
 }
 
 .toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); padding: var(--space-2) var(--space-3); flex-shrink: 0; border-bottom: 1px solid var(--border); }
-.viewTabs { display: inline-flex; align-items: center; gap: var(--space-1); padding: var(--space-1); border: 1px solid color-mix(in srgb, var(--border-visible) 50%, transparent); border-radius: var(--radius-control); background: var(--segment-track-bg); flex-shrink: 0; }
-.viewTab { position: relative; border-color: transparent; background: transparent; color: var(--muted-foreground); }
-.viewTab:not([aria-selected="true"]):hover { background: var(--segment-hover-bg); }
-.viewTab[aria-selected="true"] { background: var(--segment-active-bg); box-shadow: var(--segment-active-shadow); color: var(--segment-active-fg); font-weight: 500; }
-/* 选中标记：见 kiln --segment-active-mark（亮色透明，暗色为品牌文字色） */
-.viewTab[aria-selected="true"]::after { content: ""; position: absolute; bottom: 2px; left: 50%; width: var(--space-3); height: 2px; border-radius: 1px; background: var(--segment-active-mark); translate: -50% 0; }
-.viewTab:focus-visible { outline: 1px solid var(--ring); outline-offset: 1px; }
+/* 视图页签：样式见 components/ui/tabs.css（墨迹）；这里只让它撑满工具栏高度、下划线落在工具栏底边，
+   并用一道贯穿竖线把「切换视图」与右侧的命令按钮分开——没有轨道后，命令会被误读成页签。 */
+.viewTabs { flex-shrink: 0; margin-block: calc(-1 * var(--space-2)); padding-inline-end: var(--space-4); border-inline-end: 1px solid var(--border); margin-inline-end: var(--space-2); }
 .toolbarActions { display: flex; gap: var(--space-2); align-items: center; }
 .saveControls { display: flex; align-items: center; gap: var(--space-2); margin-inline-start: auto; }
 .saveStatus { color: var(--muted-foreground); font-size: var(--text-meta); white-space: nowrap; }
@@ -27,10 +23,8 @@
 .inspector { display: flex; flex-direction: column; flex: 0 1 calc(var(--space-12) * 6); width: calc(var(--space-12) * 6); max-width: 45%; min-width: 0; min-height: 0; background: var(--card); border-left: 1px solid var(--border); overflow: hidden; font-size: var(--text-body); }
 .inspectorHeader { display: flex; align-items: center; justify-content: space-between; padding: var(--space-3); flex-shrink: 0; }
 .inspectorHeader strong { font-size: var(--text-section-title); font-weight: 500; }
-.inspectorTabs { display: flex; padding-inline: var(--space-3); border-bottom: 1px solid var(--border); flex-shrink: 0; }
-.inspectorTab { position: relative; flex: 1; height: var(--control-height-lg); color: var(--muted-foreground); }
-.inspectorTab[aria-selected="true"] { color: var(--foreground); font-weight: 500; }
-.inspectorTab[aria-selected="true"]::after { content: ""; position: absolute; bottom: 0; left: calc(50% - var(--space-4)); width: var(--space-8); height: 2px; background: var(--primary); }
+/* 检查器页签：样式见 components/ui/tabs.css（墨迹），靠左排列；这里只管内边距与底部分隔 */
+.inspectorTabs { padding-inline: var(--space-3); border-bottom: 1px solid var(--border); flex-shrink: 0; }
 .inspector button:focus-visible { outline: 1px solid var(--ring); outline-offset: -1px; }
 .inspectorBody { flex: 1; min-height: 0; padding: var(--space-3); overflow: auto; overscroll-behavior: contain; }
 .topicActions { display: flex; gap: var(--space-1); margin-bottom: var(--space-4); }

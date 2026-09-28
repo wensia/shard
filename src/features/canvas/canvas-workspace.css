@@ -190,17 +190,8 @@
 }
 .shard-canvas-inspector-heading { flex-shrink: 0; justify-content: space-between; padding: var(--space-3); }
 .shard-canvas-inspector-heading strong { font-size: var(--text-section-title); font-weight: 500; }
-.shard-canvas-inspector-tabs { display: flex; flex-shrink: 0; padding-inline: var(--space-3); border-bottom: 1px solid var(--border); }
-.shard-canvas-inspector-tab {
-  position: relative; flex: 1; height: var(--control-height-lg); color: var(--muted-foreground);
-  font-size: var(--text-body); font-weight: 400;
-}
-.shard-canvas-inspector-tab:hover { color: var(--foreground); }
-.shard-canvas-inspector-tab[aria-selected="true"] { color: var(--foreground); font-weight: 500; }
-.shard-canvas-inspector-tab[aria-selected="true"]::after {
-  content: ""; position: absolute; bottom: 0; left: calc(50% - var(--space-4)); width: var(--space-8); height: 2px; background: var(--primary);
-}
-.shard-canvas-inspector-tab:focus-visible { outline: 1px solid var(--ring); outline-offset: -2px; }
+/* 面板页签：样式见 components/ui/tabs.css（墨迹）；这里只管内边距与底部分隔 */
+.shard-canvas-inspector-tabs { flex-shrink: 0; padding-inline: var(--space-3); border-bottom: 1px solid var(--border); }
 .shard-canvas-inspector-body { flex: 1; min-height: 0; padding: var(--space-3); overflow: auto; overscroll-behavior: contain; }
 .shard-canvas-inspector-body > .shard-canvas-picker-list { padding: 0; margin-top: var(--space-2); }
 .shard-canvas-topic-context { display: flex; flex-direction: column; gap: var(--space-1); margin-bottom: var(--space-4); }

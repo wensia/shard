@@ -47,7 +47,7 @@ export function SelectControl({ value, onValueChange, options, disabled, id, nam
       <Select.Value className="kiln-control-value" />
       <Select.Icon className="kiln-control-icon"><ChevronDownIcon /></Select.Icon>
     </Select.Trigger>
-    <Select.Portal>
+    {open && !disabled ? <Select.Portal>
       <Select.Positioner align="start" sideOffset={4} collisionPadding={8} alignItemWithTrigger={false}
         className="kiln-control-positioner click-outside-ignore" data-slot="select-positioner"
         onKeyDown={event => event.stopPropagation()}>
@@ -64,6 +64,6 @@ export function SelectControl({ value, onValueChange, options, disabled, id, nam
           </Select.List>
         </Select.Popup>
       </Select.Positioner>
-    </Select.Portal>
+    </Select.Portal> : null}
   </Select.Root>
 }

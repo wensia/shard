@@ -31,6 +31,7 @@ import type {
   WorkspaceRoute,
 } from "@/workspace/route"
 
+import { TabLabel } from "@/components/ui/tabs"
 import styles from "./bottom-tabs.module.css"
 
 interface BottomTabsProps {
@@ -163,7 +164,7 @@ export function BottomTabs({
 
         <div className="flex items-end gap-2">
           <div className={styles.navigationStack}>
-            <nav aria-label="工作台" className={styles.primaryTabs}>
+            <nav aria-label="工作台" className="shard-tabs" data-size="nav">
               {SPACE_TABS.map((item) => {
                 const Icon = item.icon
                 const isActive = item.id === route.space
@@ -171,33 +172,31 @@ export function BottomTabs({
                 return (
                   <button
                     aria-current={isActive ? "page" : undefined}
-                    className={`${styles.tab} ${
-                      isActive ? styles.tabActive : styles.tabInactive
-                    }`}
+                    className="shard-tab"
                     key={item.id}
                     onClick={() => onRouteChange(item.route)}
                     type="button"
                   >
-                    <Icon aria-hidden="true" className="size-(--shard-icon-size-nav)" />
-                    <span className={styles.truncate}>{item.label}</span>
+                    <Icon aria-hidden="true" />
+                    <TabLabel>{item.label}</TabLabel>
                   </button>
                 )
               })}
             </nav>
 
             {route.space === "fragments" ? (
-              <nav aria-label="碎片视图" className={styles.secondaryTabs}>
+              <nav
+                aria-label="碎片视图"
+                className={`shard-tabs ${styles.secondaryTabs}`}
+                data-size="sub"
+              >
                 {FRAGMENT_TABS.map((item) => {
                   const Icon = item.icon
                   const isActive = (route.params.view ?? "all") === item.id
                   return (
                     <button
                       aria-current={isActive ? "page" : undefined}
-                      className={`${styles.secondaryTab} ${
-                        isActive
-                          ? styles.secondaryTabActive
-                          : styles.secondaryTabInactive
-                      }`}
+                      className="shard-tab"
                       key={item.id}
                       onClick={() =>
                         onRouteChange({
@@ -207,9 +206,9 @@ export function BottomTabs({
                       }
                       type="button"
                     >
-                      <Icon aria-hidden="true" className="size-(--shard-icon-size-sm)" />
-                      <span className={styles.truncate}>{item.label}</span>
-                      <span className={styles.count}>{counts[item.id]}</span>
+                      <Icon aria-hidden="true" />
+                      <TabLabel>{item.label}</TabLabel>
+                      <span className="shard-tab-count">{counts[item.id]}</span>
                     </button>
                   )
                 })}

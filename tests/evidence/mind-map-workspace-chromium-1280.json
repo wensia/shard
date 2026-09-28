@@ -1,35 +1,35 @@
 {
   "viewport": {
     "x": 0,
-    "y": 107,
+    "y": 97,
     "width": 944,
-    "height": 593,
+    "height": 603,
     "right": 944,
     "bottom": 700
   },
   "panel": {
     "x": 944,
-    "y": 107,
+    "y": 97,
     "width": 336,
-    "height": 593,
+    "height": 603,
     "right": 1280,
     "bottom": 700
   },
   "tabs": {
     "x": 12,
-    "y": 56,
-    "width": 176,
-    "height": 42,
-    "right": 188,
-    "bottom": 98
+    "y": 48,
+    "width": 155,
+    "height": 48,
+    "right": 167,
+    "bottom": 96
   },
   "input": {
     "x": 88,
-    "y": 387,
+    "y": 382,
     "width": 792,
     "height": 32,
     "right": 880,
-    "bottom": 419
+    "bottom": 414
   },
   "pageOverflow": 0,
   "windowScroll": 0,

@@ -1,4 +1,5 @@
 import { SelectControl } from "@/components/ui/select"
+import { TabLabel } from "@/components/ui/tabs"
 import {
   forwardRef, memo, useCallback, useEffect, useId, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState,
   type KeyboardEvent, type ReactNode,
@@ -1091,7 +1092,7 @@ export const CanvasWorkspace = forwardRef<CanvasWorkspaceHandle, CanvasWorkspace
           <Button size="icon-sm" variant="outline" aria-label="关闭" title="收起对象面板" onClick={closeInspector}><XIcon /></Button>
         </div>
         {!picker && selectedMap && <>
-          <div className="shard-canvas-inspector-tabs" role="tablist" aria-label="导图面板视图"
+          <div className="shard-tabs shard-canvas-inspector-tabs" role="tablist" aria-label="导图面板视图"
             onKeyDown={(event) => {
               if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return
               event.preventDefault(); event.stopPropagation()
@@ -1100,10 +1101,10 @@ export const CanvasWorkspace = forwardRef<CanvasWorkspaceHandle, CanvasWorkspace
               changeInspectorTab(tab)
               event.currentTarget.querySelector<HTMLButtonElement>(`[data-view="${tab}"]`)?.focus()
             }}>
-            {([['properties', '属性'], ['outline', '大纲']] as const).map(([tab, label]) => <button className="shard-canvas-inspector-tab" type="button" key={tab}
+            {([['properties', '属性'], ['outline', '大纲']] as const).map(([tab, label]) => <button className="shard-tab" type="button" key={tab}
               id={`${inspectorId}-${tab}`} data-view={tab} role="tab" aria-selected={inspectorTab === tab}
               aria-controls={`${inspectorId}-content`} tabIndex={inspectorTab === tab ? 0 : -1}
-              onClick={() => changeInspectorTab(tab)}>{label}</button>)}
+              onClick={() => changeInspectorTab(tab)}><TabLabel>{label}</TabLabel></button>)}
           </div>
           <div className="shard-canvas-tree-actions" aria-label="主题操作">
             <Button size="sm" variant="outline" title="新建子节点（Tab）" disabled={blocked} onClick={() => editTree("child")}>子节点</Button>
