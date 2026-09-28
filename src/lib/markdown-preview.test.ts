@@ -83,4 +83,13 @@ describe("parseMarkdownPreview", () => {
   it("内容为空时返回空数组", () => {
     expect(parseMarkdownPreview("\n  \r\n")).toEqual([])
   })
+
+  it("缩略图隐藏真正的硬换行，保留字面反斜杠", () => {
+    expect(parseMarkdownPreview("正文\\\n续行\n字面\\\\\\\\\n结束")).toEqual([
+      { kind: "text", text: "正文" },
+      { kind: "text", text: "续行" },
+      { kind: "text", text: "字面\\\\\\\\" },
+      { kind: "text", text: "结束" },
+    ])
+  })
 })

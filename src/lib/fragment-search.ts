@@ -1,6 +1,7 @@
 import { LOCKBOX_TAG } from "@/lib/lockbox"
 import { readFlowchartContent } from "@/lib/flowchart-content"
 import { readOutlineContent } from "@/lib/mind-map-outline"
+import { stripMarkdownHardBreaks } from "@shard/markdown/core"
 import type { Fragment } from "@/types"
 
 export type FragmentSearchScope = "all" | "active" | "archive"
@@ -80,13 +81,14 @@ export function toFragmentSearchDocument(
 }
 
 export function buildFragmentSearchIndex(
-  documents: FragmentSearchDocument[]
+  documents: FragmentSearchDocument[],
+  hardBreakParseLimit = 32_000,
 ): FragmentSearchIndexItem[] {
   return documents.map((document) => {
     const visibleTags = document.tags.filter(
       (tag) => tag !== "inbox" && tag !== LOCKBOX_TAG
     )
-    const plainContent = markdownToSearchText(document.content)
+    const plainContent = markdownToSearchText(document.content, hardBreakParseLimit)
 
     return {
       ...document,
@@ -234,7 +236,7 @@ function findHighlightRanges(
   }, [])
 }
 
-export function markdownToSearchText(markdown: string) {
+export function markdownToSearchText(markdown: string, hardBreakParseLimit = 32_000) {
   if (/(?:^|\n)```shardmap[^\S\r\n]*(?:\r?\n)/u.test(markdown)) {
     const outline = readOutlineContent(markdown)
     if (outline?.format === "json") {
@@ -261,7 +263,7 @@ export function markdownToSearchText(markdown: string) {
     }
   }
 
-  return markdown
+  return stripMarkdownHardBreaks(markdown, hardBreakParseLimit)
     .replace(/!\[([^\]]*)\]\([^)]*\)/gu, "$1")
     .replace(/\[([^\]]+)\]\([^)]*\)/gu, "$1")
     .replace(/^\s*(?:#{1,6}|>|[-+*]|\d+[.)])\s+/gmu, "")

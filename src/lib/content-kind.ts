@@ -1,3 +1,5 @@
+import { stripMarkdownHardBreaks } from "@shard/markdown/core"
+
 /**
  * type 是受保护的单值标签，缺省即碎片（产品框架 §2）。
  *
@@ -70,7 +72,7 @@ export function isStreamKind(kind: ContentKind) {
 }
 
 export function deriveNoteTitle(content: string) {
-  const lines = content.split(/\r?\n/u)
+  const lines = stripMarkdownHardBreaks(content, 32_000).split(/\r?\n/u)
   const heading = lines
     .map((line) => line.match(/^ {0,3}#\s+(.+?)\s*$/u)?.[1] ?? "")
     .find((title) => title.trim().length > 0)
@@ -98,7 +100,7 @@ export interface DocumentDigest {
  * 卡片不渲染全文，所以这里必须把 Markdown 标记去干净。
  */
 export function deriveDocumentDigest(content: string): DocumentDigest {
-  const lines = content.split(/\r?\n/u)
+  const lines = stripMarkdownHardBreaks(content, 32_000).split(/\r?\n/u)
   const headingIndex = lines.findIndex((line) => HEADING_PATTERN.test(line))
 
   if (headingIndex >= 0) {

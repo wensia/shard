@@ -111,7 +111,7 @@ interface ContentTypesMockControl {
   }
 }
 
-export async function installContentTypesMock(page: Page) {
+export async function installContentTypesMock(page: Page, options: { fragmentBody?: string } = {}) {
   await installSearchIpcMock(page)
   await page.addInitScript(
     ({ documentBody, flowchartBody, flowchartFile, fragmentBody, jsonOutlineBody, jsonOutlineFile, outlineBody }: MockBodies) => {
@@ -463,7 +463,7 @@ export async function installContentTypesMock(page: Page) {
       documentBody: CARD_DOCUMENT,
       flowchartBody: CARD_JSON_FLOWCHART,
       flowchartFile: CARD_JSON_FLOWCHART_FILE,
-      fragmentBody: CARD_FRAGMENT,
+      fragmentBody: options.fragmentBody ?? CARD_FRAGMENT,
       jsonOutlineBody: CARD_JSON_OUTLINE,
       jsonOutlineFile: CARD_JSON_OUTLINE_FILE,
       outlineBody: CARD_OUTLINE,

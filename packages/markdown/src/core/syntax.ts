@@ -84,5 +84,41 @@ export const markdownParser: MarkdownParser = commonmarkParser.configure([
   ShardHighlight,
 ])
 
+/** Only a Lezer backslash HardBreak is display syntax; literal slashes stay intact. */
+export function hardBreakMarkerOffsets(
+  content: string,
+  tree: ReturnType<typeof markdownParser.parse> = markdownParser.parse(content),
+): number[] {
+  const offsets: number[] = []
+  tree.iterate({
+    enter(node) {
+      if (node.name === "HardBreak" && content.slice(node.from, node.to) === "\\\n") {
+        offsets.push(node.from)
+      }
+    },
+  })
+  return offsets
+}
+
+/** Project Markdown into visible text without changing its stored source.
+ * A bounded caller parses only complete source lines; remaining text is unchanged.
+ */
+export function stripMarkdownHardBreaks(content: string, maxParseLength = content.length): string {
+  const end = content.length <= maxParseLength
+    ? content.length
+    : content.lastIndexOf("\n", maxParseLength - 1) + 1
+  const prefix = content.slice(0, end)
+  if (!prefix.includes("\\\n")) return content
+  const offsets = hardBreakMarkerOffsets(prefix)
+  if (offsets.length === 0) return content
+  let visible = ""
+  let from = 0
+  for (const offset of offsets) {
+    visible += content.slice(from, offset)
+    from = offset + 1
+  }
+  return visible + content.slice(from)
+}
+
 /** Compatibility name for existing Shard consumers. */
 export { markdownParser as shardMarkdownParser }

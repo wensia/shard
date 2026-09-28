@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test"
 import { installSearchIpcMock } from "./search-ipc-mock"
+import { readEditor, selectEditorText, typeEditor } from "./editor-helpers"
 
 interface LockboxCall {
   args: Record<string, unknown>
@@ -34,7 +35,7 @@ async function installLockboxSpaceMock(page: Page) {
     const lockboxFragments = [
       {
         id: "secret-fragment",
-        content: "密匣里的碎片",
+        content: "密匣里的碎片\\\n\\\n呼吸也不顺畅",
         createdAt: "2026-08-29T08:00:00.000Z",
         updatedAt: now,
         tags: ["日记"],
@@ -110,6 +111,12 @@ async function installLockboxSpaceMock(page: Page) {
         invoke: async (command: string, args: Record<string, unknown> = {}) => {
           calls.push({ command, args: clone(args) })
           if (command === "list_fragments") return state()
+          if (command === "update_fragment") {
+            const fragment = lockboxFragments.find(item => item.id === args.id)
+            if (!fragment) throw new Error("Fragment not found")
+            fragment.content = String(args.content ?? fragment.content)
+            return clone(fragment)
+          }
           if (command === "unlock_lockbox") {
             lockbox.unlocked = true
             return state()
@@ -302,6 +309,27 @@ test("传送门：从资料库挂载点解锁进入密匣一级空间", async ({
   // 点笔记进禅编辑器
   await noteButton.click()
   await expect(page.locator('[data-shard-editor="zen:secret-note"]')).toBeVisible()
+})
+
+test("密匣卡片隐藏硬换行标记，编辑保存后仍保留空行", async ({ page }) => {
+  await page.goto("/")
+  await unlockThroughPortal(page)
+  const target = page.locator('[data-shard-fragment-id="secret-fragment"]')
+  const body = target.locator(".shard-fragment-card-content")
+  await expect(body).toHaveText("密匣里的碎片\n\n呼吸也不顺畅")
+  await target.getByRole("button", { name: "片段操作" }).click()
+  await page.getByRole("menuitem", { name: "编辑", exact: true }).click()
+  const editorId = "fragment:secret-fragment"
+  const editor = page.locator(`[data-shard-editor="${editorId}"] .ProseMirror`)
+  await expect(editor).toBeVisible()
+  await expect(editor).not.toContainText("\\")
+  expect(await readEditor(page, editorId)).toBe("密匣里的碎片\\\n\\\n呼吸也不顺畅")
+  await selectEditorText(page, editorId, "顺畅", { collapse: "end" })
+  await typeEditor(page, editorId, "！")
+  await page.getByRole("heading", { name: "密匣", exact: true }).click()
+  await expect.poll(async () => (await commandCalls(page, "update_fragment")).at(-1)?.args.content)
+    .toBe("密匣里的碎片\\\n\\\n呼吸也不顺畅！")
+  await expect(body).toHaveText("密匣里的碎片\n\n呼吸也不顺畅！")
 })
 
 test("离开密匣空间立即上锁，手动上锁送回资料库", async ({ page }) => {

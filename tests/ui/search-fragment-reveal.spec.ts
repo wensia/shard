@@ -287,6 +287,23 @@ test("same_fragment_new_request_reveals_again", async ({ page }) => {
   })).toBe(0)
 })
 
+test("硬换行移除后仍按可见文本定位搜索高亮", async ({ page }) => {
+  await page.addInitScript(() => {
+    const fragments = (globalThis as typeof globalThis & {
+      __T10_REVEAL_FRAGMENTS__: Array<{ content: string; id: string }>
+    }).__T10_REVEAL_FRAGMENTS__
+    const target = fragments.find(({ id }) => id === "t10-target")
+    if (target) target.content = "T10 定位目标 firstneedle\\\n\\\nsecondneedle 结尾"
+  })
+  await page.goto("/")
+  await openSearchResult(page, "secondneedle", /T10 定位目标/)
+  const target = page.locator(`[data-shard-fragment-id="${TARGET_ID}"]`)
+  await expect(target.locator(".shard-fragment-card-content")).toHaveText(
+    "T10 定位目标 firstneedle\n\nsecondneedle 结尾"
+  )
+  expect(normalRanges(await waitForVisibleHighlight(page)).map(({ text }) => text)).toEqual(["secondneedle"])
+})
+
 test("late_markdown_render_is_awaited", async ({ page }) => {
   await delayMarkdownWorker(page)
   await page.goto("/")

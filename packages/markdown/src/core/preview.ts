@@ -1,4 +1,5 @@
 import { getTagRanges } from "./text.js"
+import { stripMarkdownHardBreaks } from "./syntax.js"
 
 /**
  * Markdown 预览的共享解析规则：把源文本读成语义块，并把行内标记剥干净。
@@ -54,7 +55,7 @@ export function parseMarkdownPreview(
   limit = 8
 ): MarkdownPreviewBlock[] {
   const lines = stripFrontmatter(
-    content.replace(/\r\n?/gu, "\n").split("\n")
+    stripMarkdownHardBreaks(content, 32_000).replace(/\r\n?/gu, "\n").split("\n")
   )
   const blocks: MarkdownPreviewBlock[] = []
   let inFence = false

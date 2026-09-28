@@ -5,6 +5,9 @@ import { createCanvasFile, createCanvasNode } from "@/features/canvas/model"
 import { parseMindMapOutline } from "./mind-map-outline"
 
 describe("graph fragment search text", () => {
+  it("plain Markdown search preview excludes hard-break markers", () => {
+    expect(markdownToSearchText("正文\\\n续行 字面\\\\\\\\")).toBe("正文 续行 字面\\\\\\\\")
+  })
   it("projects JSON outline node text and notes without internal fields", () => {
     const file = parseMindMapOutline("- 发布计划\n  - 准备素材").file!
     file.id = "secret-map-id"

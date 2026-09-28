@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react"
+import { stripMarkdownHardBreaks } from "@shard/markdown/core"
 import { ChevronLeftIcon, ChevronRightIcon } from "@/components/icons"
 import { Button } from "@/components/ui/button"
 import { addDays, formatDay, nextDayForKey, shiftMonth, todayDay, type CalendarDay } from "@/components/ui/calendar"
@@ -13,7 +14,7 @@ const weekdays = ["一", "二", "三", "四", "五", "六", "日"]
 const VISIBLE_BANNERS = 3
 
 function summary(content: string): string {
-  const line = content.split("\n").find((item) => item.trim()) ?? ""
+  const line = stripMarkdownHardBreaks(content, 32_000).split("\n").find((item) => item.trim()) ?? ""
   return line.replace(/^\s*(?:#{1,6}\s*|[-*+]\s+(?:\[[ xX]\]\s*)?)/u, "")
     .replace(/⏰ \d{4}-\d{2}-\d{2} \d{2}:\d{2}/gu, "")
     .replace(/!?\[\[([^\]]+)\]\]/gu, "$1")

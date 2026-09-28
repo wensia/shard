@@ -1,5 +1,5 @@
 import { parseMarkdownTable, parseMarkdownTableRow, type MarkdownTable } from "./core/table.js"
-import { markdownParser } from "./core/syntax.js"
+import { hardBreakMarkerOffsets, markdownParser, stripMarkdownHardBreaks } from "./core/syntax.js"
 import {
   getTagRanges,
   isMarkdownHorizontalRuleLine,
@@ -101,7 +101,7 @@ export function parseMarkdown(request: MarkdownParseRequest): ParsedMarkdown {
 }
 
 export function parseMarkdownDocument(content: string): ParsedMarkdownDocument {
-  const lines = content.replace(/\r\n?/g, "\n").split("\n")
+  const lines = stripMarkdownHardBreaks(content).replace(/\r\n?/g, "\n").split("\n")
   const blocks: MarkdownDocumentBlock[] = []
   let index = 0
 
@@ -178,7 +178,9 @@ export function parseMarkdownContent(
   options: { hideTags?: boolean; renderImages?: boolean; compactParagraphs?: boolean } = {}
 ): ParsedMarkdownContent {
   const lines = content.split("\n")
-  const paragraphSeparators = options.compactParagraphs ? findParagraphSeparators(content) : new Set<number>()
+  const tree = options.compactParagraphs || content.includes("\\\n") ? markdownParser.parse(content) : null
+  const paragraphSeparators = options.compactParagraphs && tree ? findParagraphSeparators(content, tree) : new Set<number>()
+  const hardBreakMarkers = tree ? new Set(hardBreakMarkerOffsets(content, tree)) : new Set<number>()
   const blocks: MarkdownContentBlock[] = []
   let lastVisibleIndex = -1
   let lineOffset = 0
@@ -192,7 +194,7 @@ export function parseMarkdownContent(
   }
   for (let index = 0; index < lines.length; index += 1) {
     const source = lines[index]
-    const line = parseContentLine(source, index, options)
+    const line = parseContentLine(source, index, options, hardBreakMarkers.has(lineOffset + source.length - 1))
     // Consume only the Markdown paragraph delimiter. Keep source line indexes
     // intact for task toggles, and keep any additional intentional blank lines.
     if (paragraphSeparators.has(lineOffset)) line.hidden = true
@@ -221,9 +223,8 @@ export function parseMarkdownContent(
   return { kind: "content", blocks, lastVisibleIndex }
 }
 
-function findParagraphSeparators(content: string): Set<number> {
+function findParagraphSeparators(content: string, tree: ReturnType<typeof markdownParser.parse>): Set<number> {
   const separators = new Set<number>()
-  const tree = markdownParser.parse(content)
   for (let node = tree.topNode.firstChild; node; node = node.nextSibling) {
     const previous = node.prevSibling
     if (node.name !== "Paragraph" || previous?.name !== "Paragraph") continue
@@ -252,11 +253,14 @@ function findFenceEnd(lines: string[], start: number) {
 function parseContentLine(
   source: string,
   lineIndex: number,
-  options: { hideTags?: boolean; renderImages?: boolean }
+  options: { hideTags?: boolean; renderImages?: boolean },
+  hardBreak: boolean,
 ): MarkdownContentLine {
   const image = options.renderImages ? parseMarkdownImageLine(source) : null
-  const display = options.hideTags && !image ? stripTagsFromLine(source) : source
-  const hidden = options.hideTags && !image && display.length === 0 && source.length > 0
+  const visible = hardBreak ? source.slice(0, -1) : source
+  const display = options.hideTags && !image ? stripTagsFromLine(visible) : visible
+  // Tag-only rows hide; a marker-only row keeps its blank line.
+  const hidden = options.hideTags && !image && display.length === 0 && visible.length > 0
   const taskMatch = display.match(TASK_MARKER_PATTERN)
   return {
     type: "line", source, lineIndex, display, hidden: Boolean(hidden), image,

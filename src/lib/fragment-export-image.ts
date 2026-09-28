@@ -1,5 +1,6 @@
 import { parseMarkdownImageLine } from "@/lib/editor-format"
 import { stripInlineMarkdown } from "@/lib/markdown-preview"
+import { stripMarkdownHardBreaks } from "@shard/markdown/core"
 import {
   loadFragmentImageSrc,
   toDrawableImageSource,
@@ -852,8 +853,8 @@ function drawActivityGrid(
   context.globalAlpha = 1
 }
 
-function fragmentToBlocks(fragment: Fragment): ExportBlock[] {
-  const lines = fragment.content.trimEnd().split("\n")
+export function fragmentToBlocks(fragment: Fragment): ExportBlock[] {
+  const lines = stripMarkdownHardBreaks(fragment.content, 32_000).trimEnd().split("\n")
   const blocks: ExportBlock[] = []
   let index = 0
 

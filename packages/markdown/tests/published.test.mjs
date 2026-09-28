@@ -113,6 +113,50 @@ test("paragraph compaction retains a following task's original source line index
   assert.equal(parsed.lastVisibleIndex, 5)
 })
 
+test("only Lezer backslash HardBreak markers disappear from content display", async () => {
+  const { parseMarkdownContent, parseMarkdownDocument } = await import("../dist/parser.js")
+  const slash = "\\"
+  const examples = [
+    { name: "line ending", source: `甲${slash}\n乙`, display: ["甲", "乙"] },
+    { name: "slash-only row", source: `甲${slash}\n${slash}\n乙`, display: ["甲", "", "乙"] },
+    { name: "multiple hard breaks", source: `甲${slash}\n${slash}\n${slash}\n乙`, display: ["甲", "", "", "乙"] },
+    { name: "escaped literal", source: `甲${slash}${slash}\n乙`, display: [`甲${slash}${slash}`, "乙"] },
+    { name: "final slash", source: `甲${slash}`, display: [`甲${slash}`] },
+    { name: "paragraph end", source: `甲${slash}\n\n乙`, display: [`甲${slash}`, "", "乙"] },
+    { name: "fenced code", source: `\`\`\`txt\n甲${slash}\n\`\`\``, display: ["```txt", `甲${slash}`, "```"] },
+    { name: "indented code", source: `    甲${slash}\n    乙`, display: [`    甲${slash}`, "    乙"] },
+    { name: "table", source: `| a${slash} | b |\n| --- | --- |\n| c | d |`, display: [`| a${slash} | b |`, "| --- | --- |", "| c | d |"] },
+  ]
+  for (const { name, source, display } of examples) {
+    const parsed = parseMarkdownContent(source, { hideTags: true, compactParagraphs: true })
+    const lines = parsed.blocks.map(block => block.type === "fence" ? block.line : block)
+    assert.deepEqual(lines.map(line => line.display ?? line.source), display, name)
+    assert.deepEqual(lines.map(line => line.source), source.split("\n"), `${name} source`)
+  }
+  const empty = parseMarkdownContent(`甲${slash}\n${slash}\n乙`, { hideTags: true })
+  assert.equal(empty.blocks[1].hidden, false)
+  assert.equal(empty.blocks[1].display, "")
+  const tagged = parseMarkdownContent(`#密匣${slash}\n正文`, { hideTags: true })
+  assert.equal(tagged.blocks[0].hidden, true)
+  assert.equal(tagged.blocks[1].display, "正文")
+  assert.deepEqual(parseMarkdownDocument(`甲${slash}\n乙`).blocks[0].inline.text, "甲 乙")
+})
+
+test("published preview removes hard breaks but preserves literal backslashes", () => {
+  const slash = "\\"
+  assert.deepEqual(core.parseMarkdownPreview(`甲${slash}\n${slash}\n乙${slash}${slash}\n末${slash}`), [
+    { kind: "text", text: "甲" },
+    { kind: "text", text: `乙${slash}${slash}` },
+    { kind: "text", text: `末${slash}` },
+  ])
+})
+
+test("bounded display projection leaves markers beyond its parse budget untouched", () => {
+  const source = "甲\\\n乙\n\n丙\\\n丁"
+  assert.equal(core.stripMarkdownHardBreaks(source, 5), "甲\n乙\n\n丙\\\n丁")
+  assert.equal(core.stripMarkdownHardBreaks(source), "甲\n乙\n\n丙\n丁")
+})
+
 async function filesIn(directory) {
   const entries = await readdir(directory, { withFileTypes: true })
   return (await Promise.all(entries.map(entry => {

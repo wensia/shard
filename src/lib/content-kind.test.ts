@@ -97,6 +97,13 @@ describe("deriveDocumentDigest", () => {
   it("空正文返回空标题与空摘要", () => {
     expect(deriveDocumentDigest(" \n\t")).toEqual({ summary: "", title: "" })
   })
+
+  it("摘要隐藏硬换行标记但保留字面反斜杠", () => {
+    expect(deriveDocumentDigest("# 标题\n正文\\\n下文\n字面\\\\\\\\")).toEqual({
+      title: "标题",
+      summary: "正文 下文 字面\\\\\\\\",
+    })
+  })
 })
 
 describe("deriveNoteTitle", () => {
@@ -121,6 +128,10 @@ describe("deriveNoteTitle", () => {
 
   it("空内容返回空标题", () => {
     expect(deriveNoteTitle(" \n\t")).toBe("")
+  })
+
+  it("回退标题不显示硬换行标记", () => {
+    expect(deriveNoteTitle("首行\\\n次行")).toBe("首行")
   })
 })
 

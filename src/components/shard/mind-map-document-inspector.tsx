@@ -1,4 +1,5 @@
 import { SelectControl } from "@/components/ui/select"
+import { stripMarkdownHardBreaks } from "@shard/markdown/core"
 import { TabLabel } from "@/components/ui/tabs"
 import { useEffect, useMemo, useState } from "react"
 import { Button } from "@/components/ui/button"
@@ -48,7 +49,7 @@ export function MindMapDocumentInspector({ file, selectedNodeIds, fragments, onC
       link: { targetType: document.kind === "mindmap" ? "map" : "flow", targetId: document.id } as Omit<Extract<ShardDocumentLink, { targetType: "map" | "flow" }>, "id">,
     })),
     ...fragments.filter(fragment => !fragment.lockbox && !fragment.archived).map(fragment => ({
-      key: `fragment:${fragment.id}`, title: fragment.content.replace(/^#+\s*/, "").split("\n")[0] || "未命名文档",
+      key: `fragment:${fragment.id}`, title: stripMarkdownHardBreaks(fragment.content, 512).replace(/^#+\s*/, "").split("\n")[0] || "未命名文档",
       kind: fragment.kind === "note" ? "文档" : "片段",
       link: { targetType: "fragment", targetId: fragment.id } as const,
     })),

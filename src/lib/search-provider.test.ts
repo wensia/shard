@@ -85,6 +85,20 @@ afterEach(() => {
 })
 
 describe("legacy public search outline titles", () => {
+  it("fragment result title hides hard-break marker", async () => {
+    vi.stubGlobal("Worker", FakeWorker)
+    const provider = createLegacyPublicSearchProvider([
+      fragment({ content: "首行\\\n续行", kind: "fragment", tags: [] }),
+    ])
+
+    try {
+      const response = await provider.search(request)
+      expect(response.hits[0]?.title).toBe("首行")
+    } finally {
+      provider.dispose()
+    }
+  })
+
   it("uses JSON roots while retaining invalid JSON and truncated legacy fallbacks", async () => {
     vi.stubGlobal("Worker", FakeWorker)
     const jsonFile = parseMindMapOutline("- JSON 根标题\n  - 子节点").file

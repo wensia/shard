@@ -10,6 +10,7 @@ import {
   type NodeProps, type ReactFlowInstance,
 } from "@xyflow/react"
 import "@xyflow/react/dist/style.css"
+import { stripMarkdownHardBreaks } from "@shard/markdown/core"
 import { PropertiesPanel } from "@/components/shard/properties-panel"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
@@ -114,7 +115,8 @@ function sourcePreview(link: ShardDocumentLink | undefined, fragments: Fragment[
       link?.targetType === "markdownPath" ? item.path === link.path : false
   ))
   if (!fragment) return { title: "原文不可用", excerpt: "原文已移动、删除或当前不可访问。", missing: true }
-  const lines = fragment.content.slice(0, 800).trim().split("\n")
+  const previewContent = stripMarkdownHardBreaks(fragment.content, 1_024).slice(0, 800)
+  const lines = previewContent.trim().split("\n")
   if (deriveKind(fragment.tags) === "fragment") return {
     title: lines[0]?.replace(/^#+\s*/, "").slice(0, 64) || "未命名碎片",
     excerpt: "碎片来源 · 在碎片中查看完整内容",
@@ -123,7 +125,7 @@ function sourcePreview(link: ShardDocumentLink | undefined, fragments: Fragment[
   }
   return {
     title: lines[0]?.replace(/^#+\s*/, "").slice(0, 100) || "未命名资料",
-    excerpt: lines.slice(1).join("\n").slice(0, 280) || fragment.content.slice(0, 280),
+    excerpt: lines.slice(1).join("\n").slice(0, 280) || previewContent.slice(0, 280),
     missing: false,
   }
 }
@@ -1052,7 +1054,7 @@ export const CanvasWorkspace = forwardRef<CanvasWorkspaceHandle, CanvasWorkspace
           const id = event.dataTransfer.getData(REFERENCE_DRAG_TYPE)
           const item = fragments.find((fragment) => fragment.id === id && !fragment.lockbox && !fragment.archived)
           if (!item || !flowRef.current) return
-          insertNode("reference", { text: item.content.slice(0, 100).split("\n")[0], link:
+          insertNode("reference", { text: stripMarkdownHardBreaks(item.content, 512).slice(0, 100).split("\n")[0], link:
             { id: createCanvasId(), targetType: "fragment", targetId: item.id } },
           flowRef.current.screenToFlowPosition({ x: event.clientX, y: event.clientY }))
         }}>
@@ -1138,9 +1140,9 @@ export const CanvasWorkspace = forwardRef<CanvasWorkspaceHandle, CanvasWorkspace
           <div className="shard-canvas-picker-list" aria-busy={pickerLoading}>
             {references.map((item) => <button type="button" className="shard-canvas-picker-item" key={item.id}
               draggable={!blocked} onDragStart={(event) => { event.dataTransfer.setData(REFERENCE_DRAG_TYPE, item.id); event.dataTransfer.effectAllowed = "copy" }}
-              disabled={blocked} onClick={() => insertNode("reference", { text: item.content.slice(0, 100).split("\n")[0], link:
+              disabled={blocked} onClick={() => insertNode("reference", { text: stripMarkdownHardBreaks(item.content, 512).slice(0, 100).split("\n")[0], link:
                 { id: createCanvasId(), targetType: "fragment", targetId: item.id } })}>
-              <span>{deriveKind(item.tags) === "note" ? "文档" : "碎片"}</span><strong>{item.content.slice(0, 64).split("\n")[0].replace(/^#+\s*/, "") || "未命名资料"}</strong>
+              <span>{deriveKind(item.tags) === "note" ? "文档" : "碎片"}</span><strong>{stripMarkdownHardBreaks(item.content, 512).slice(0, 64).split("\n")[0].replace(/^#+\s*/, "") || "未命名资料"}</strong>
             </button>)}
             {documents.filter(item => item.id !== draft.id && item.title.toLocaleLowerCase().includes(query.toLocaleLowerCase())).map(item =>
               <button type="button" className="shard-canvas-picker-item" key={`${item.kind}:${item.id}`} disabled={blocked}

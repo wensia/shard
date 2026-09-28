@@ -13,7 +13,7 @@ self.onmessage = (event: MessageEvent<FragmentSearchWorkerRequest>) => {
 
   if (request.type === "index") {
     indexVersion = request.version
-    index = buildFragmentSearchIndex(request.documents)
+    index = buildFragmentSearchIndex(request.documents, Number.POSITIVE_INFINITY)
     postMessage({
       type: "ready",
       version: indexVersion,

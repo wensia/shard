@@ -1,4 +1,5 @@
 import { deriveDocumentDigest, deriveKind, deriveNoteTitle } from "@/lib/content-kind"
+import { stripMarkdownHardBreaks } from "@shard/markdown/core"
 import {
   toFragmentSearchDocument,
   type FragmentSearchHighlight,
@@ -252,7 +253,7 @@ function fragmentSearchTitle(fragment: Fragment) {
     return readFlowchartContent(fragment.content)?.file.title.trim() || "未命名流程图"
   }
 
-  const firstVisibleLine = fragment.content
+  const firstVisibleLine = stripMarkdownHardBreaks(fragment.content, 32_000)
     .split(/\r?\n/u)
     .map((line) => line.trim().replace(/^#{1,6}\s+/u, ""))
     .find(Boolean)

@@ -132,6 +132,17 @@ test("fragment tasks keep original source line indexes after hiding tags and par
   await expect(consumer.locator("p > div, p table")).toHaveCount(0)
 })
 
+test("hard breaks keep visible rows and blank rows without exposing their markers", async ({ page }) => {
+  const slash = "\\"
+  await render(page, "content", `第一行${slash}\n${slash}\n第三行${slash}${slash}\n末行${slash}`, { hideTags: true })
+  const body = page.getByTestId("consumer").locator(".md-content")
+  await expect(body).toHaveText(`第一行\n\n第三行${slash}${slash}\n末行${slash}`)
+  await expect(body).toHaveCSS("white-space", "pre-wrap")
+  await render(page, "document", `第一行${slash}\n第二行`)
+  await expect(page.getByTestId("consumer").locator(".md-paragraph")).toHaveText("第一行 第二行")
+  await expect(page.getByTestId("consumer")).not.toContainText(slash)
+})
+
 test("task lines group into a card while a task with a note becomes its own memo card", async ({ page }) => {
   await render(page, "content", [
     "今天要做",
