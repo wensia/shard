@@ -12,6 +12,7 @@ name = "shard-cli"
 path = "src/main.rs"
 
 [dependencies]
+chrono = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 shard-core = { path = "../shard-core" }

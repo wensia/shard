@@ -1,6 +1,8 @@
 //! Shard 终端快捷创建。直接往资料库写一条碎片，App 不运行也能用；
 //! 提交交给 App 的检查点，切回 App 窗口时碎片流会自动刷新。
 
+mod edit;
+mod find;
 mod graph;
 mod parse;
 
@@ -26,6 +28,8 @@ shard — 在终端里记一条 Shard 碎片
 
 用法:
   shard [选项] [#标签…] [/块命令] 内容
+  shard -s [关键词…]                搜索碎片；不带关键词时列出最近修改的
+  shard -e [序号 | id | 关键词…]    用编辑器修改一条已有碎片
   shard [--vault <路径>] --append-dataset <vault 相对路径> < records.json
   shard [--vault <路径>] --graph-read <碎片id>
   shard [--vault <路径>] --graph-outline <碎片id>
@@ -39,6 +43,10 @@ shard — 在终端里记一条 Shard 碎片
   shard #备忘 /任务列表 买咖啡
   shard /待办 买咖啡            # 斜杠命令同编辑器，拼音缩写也可：/db
   pbpaste | shard #摘录         # 没有内容参数时从标准输入读取
+  shard -s 银行 房贷            # 多个关键词须同时命中
+  shard -e 2                    # 编辑上次搜索结果的第 2 条
+  shard -e 81b8ea9d             # 按 id，或 id 中的一段
+  shard -e                      # 编辑最近修改的一条
   shard --append-dataset datasets/阅读记录.csv < records.json
   shard --graph-read 20260928-graph | jq .graph
   shard --graph-outline 20260928-outline
@@ -49,6 +57,15 @@ shard — 在终端里记一条 Shard 碎片
   /有序列表 /编号         → 1. 列表项
   /引用                   → > 引用
   多行内容每个非空行各成一项；未识别的 /xxx 按正文保留。
+
+搜索与编辑:
+  -s, --search [关键词…]  匹配与排序规则同 App 搜索；结果带序号并记住，供 -e 引用
+  -n, --limit <N>         搜索最多列出 N 条（默认 20）
+      --json              搜索结果输出为 JSON
+  -e, --edit [目标]       编辑器取 $VISUAL / $EDITOR（默认 vi）；图形编辑器要带等待参数，
+                          如 EDITOR='code -w'。保存后按正文重算 #标签、刷新更新时间；
+                          编辑期间碎片被 App 或同步改动时不覆盖（退出码 2）。
+                          大纲、流程图用 --graph-* 命令；密匣碎片只能在 App 中编辑。
 
 选项:
   --vault <路径>   指定资料库（默认读 Shard 设置，或环境变量 SHARD_VAULT）
@@ -105,6 +122,7 @@ fn run() -> Result<(), CliError> {
     let mut vault_arg = None;
     let mut append_path = None;
     let mut graph_command = None;
+    let mut find_mode = None;
 
     // 选项只认内容之前的部分，正文里的 `--xxx` 原样保留。
     while let Some(arg) = args.peek() {
@@ -125,6 +143,16 @@ fn run() -> Result<(), CliError> {
                 args.next();
                 append_path = Some(args.next().ok_or("--append-dataset 需要 vault 相对路径")?);
             }
+            "-s" | "--search" | "-e" | "--edit" => {
+                let edit = matches!(arg.as_str(), "-e" | "--edit");
+                args.next();
+                find_mode = Some(if edit {
+                    FindMode::Edit
+                } else {
+                    FindMode::Search
+                });
+                break;
+            }
             command if command.starts_with("--graph-") => {
                 let command = args.next().expect("peeked argument must exist");
                 graph_command = Some(parse_graph_command(&command, args.by_ref().collect())?);
@@ -140,6 +168,13 @@ fn run() -> Result<(), CliError> {
             }
             _ => break,
         }
+    }
+
+    if let Some(mode) = find_mode {
+        if append_path.is_some() {
+            return Err("搜索与编辑不能与 --append-dataset 同时使用".into());
+        }
+        return run_find(mode, args.collect(), vault_arg);
     }
 
     let content = args.collect::<Vec<_>>().join(" ");
@@ -316,6 +351,132 @@ fn run_graph(command: graph::GraphCommand, vault_arg: Option<String>) -> Result<
         )?,
     }
     Ok(())
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum FindMode {
+    Search,
+    Edit,
+}
+
+struct FindArgs {
+    terms: Vec<String>,
+    limit: usize,
+    json: bool,
+    vault: Option<String>,
+}
+
+/// `-s` / `-e` 之后的参数：选项可以写在关键词前后，`--` 之后全部按关键词处理。
+fn parse_find_args(mode: FindMode, args: Vec<String>) -> Result<FindArgs, CliError> {
+    let mut parsed = FindArgs {
+        terms: Vec::new(),
+        limit: find::DEFAULT_LIMIT,
+        json: false,
+        vault: None,
+    };
+    let mut args = args.into_iter();
+    let search_only = |name: &str| -> Result<(), CliError> {
+        if mode == FindMode::Search {
+            Ok(())
+        } else {
+            Err(format!("{name} 只能用于搜索").into())
+        }
+    };
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--" => {
+                parsed.terms.extend(args.by_ref());
+                break;
+            }
+            "-n" | "--limit" => {
+                search_only(&arg)?;
+                let value = args.next().ok_or("--limit 需要一个数字")?;
+                parsed.limit = parse_limit(&value)?;
+            }
+            other if other.starts_with("--limit=") => {
+                search_only("--limit")?;
+                parsed.limit = parse_limit(&other["--limit=".len()..])?;
+            }
+            "--json" => {
+                search_only("--json")?;
+                parsed.json = true;
+            }
+            "--vault" => parsed.vault = Some(args.next().ok_or("--vault 需要一个路径")?),
+            other if other.starts_with("--vault=") => {
+                parsed.vault = Some(other["--vault=".len()..].to_string());
+            }
+            _ => parsed.terms.push(arg),
+        }
+    }
+    Ok(parsed)
+}
+
+fn parse_limit(value: &str) -> Result<usize, CliError> {
+    value
+        .parse::<usize>()
+        .ok()
+        .filter(|limit| *limit > 0)
+        .ok_or_else(|| "--limit 必须是正整数".into())
+}
+
+fn run_find(mode: FindMode, args: Vec<String>, vault_arg: Option<String>) -> Result<(), CliError> {
+    let args = parse_find_args(mode, args)?;
+    let vault = resolve_vault(args.vault.or(vault_arg))?;
+    let entries = find::load_fragments(&vault)?;
+
+    if mode == FindMode::Search {
+        let query = args.terms.join(" ");
+        let outcome = find::search(&entries, &query, args.limit)?;
+        if args.json {
+            println!("{}", find::hits_json(&outcome.hits, &vault));
+            return Ok(());
+        }
+        if outcome.hits.is_empty() {
+            return Err(if query.trim().is_empty() {
+                "资料库里还没有碎片".into()
+            } else {
+                format!("没有找到包含「{}」的碎片", query.trim()).into()
+            });
+        }
+        find::remember_search(&vault, &query, &outcome.hits);
+        let terminal = io::stdout().is_terminal();
+        println!(
+            "{}",
+            find::format_hits(&outcome.hits, &find::Style::for_stream(terminal))
+        );
+        if terminal {
+            let shown = outcome.hits.len();
+            let summary = if outcome.total > shown {
+                format!("共 {} 条，列出前 {shown} 条（-n 调整）", outcome.total)
+            } else {
+                format!("共 {shown} 条")
+            };
+            eprintln!("{summary} · shard -e <序号> 编辑");
+        }
+        return Ok(());
+    }
+
+    let entry = match find::select(&entries, &vault, &args.terms)? {
+        find::Selection::Found(entry) => entry,
+        find::Selection::Ambiguous(total) => {
+            return Err(format!("匹配到 {total} 条，用 shard -e <序号> 选择其中一条").into())
+        }
+    };
+    eprintln!("编辑 {}  {}", find::short_id(&entry.id), entry.title);
+    match edit::edit_fragment(&vault, entry, &lock_dir()?, lock_timeout()?) {
+        Ok(edit::EditOutcome::Saved) => {
+            println!("已保存：{}", entry.relative_path(&vault));
+            Ok(())
+        }
+        Ok(edit::EditOutcome::Unchanged) => {
+            println!("没有改动");
+            Ok(())
+        }
+        Err(failure) => Err(CliError {
+            code: failure.code,
+            message: failure.message,
+        }),
+    }
 }
 
 fn lock_dir() -> Result<PathBuf, CliError> {

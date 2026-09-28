@@ -144,6 +144,8 @@ pnpm install:cli            # 构建并安装到 ~/.local/bin/shard（PREFIX 可
 shard 今天心情很好
 shard #备忘 /任务列表 买咖啡   # 前导 #标签 与 /块命令，其余是正文
 pbpaste | shard #摘录          # 没有内容参数时读标准输入
+shard -s 银行 房贷             # 多个关键词须同时命中；不带关键词列出最近修改的碎片
+shard -e 2                   # 编辑上次搜索结果的第 2 条，也可用 id 或关键词
 shard --graph-read <碎片id>    # 读取受管图 JSON 与完整文件 fileSha
 shard --graph-outline <碎片id> # 将大纲只读导出为两空格缩进列表
 ```
@@ -151,6 +153,7 @@ shard --graph-outline <碎片id> # 将大纲只读导出为两空格缩进列表
 - 块命令与编辑器 `/` 菜单同名（含拼音缩写）：`/任务列表` `/待办` `/备忘` → `- [ ]`，`/列表` → `-`，`/编号` → `1.`，`/引用` → `>`；多行内容每行一项。
 - 资料库依次取 `--vault`、`SHARD_VAULT`、App 设置里的资料库、`~/Documents/ShardVault`。
 - 只写文件（`source: cli`），提交交给 App 的检查点；App 运行中切回窗口即可看到新碎片。
+- `-s` 的匹配与排序规则同 App 搜索，结果序号可供 `-e` 引用；`-e` 使用 `$VISUAL`、`$EDITOR`（默认 `vi`），图形编辑器须带等待参数，如 `EDITOR='code -w'`。保存后按正文重算标签；编辑期间文件被改动时不覆盖，退出码为 2。大纲与流程图请使用图命令，密匣只能在 App 中编辑；双链关系会在 App 下次保存该碎片时更新。
 - bash 等把 `#` 当注释的 shell 里给标签加引号，或用全角 `＃备忘`。`#密匣` 只能在 App 中保存。
 - 图命令直接读写公开的大纲/流程图片段：`--graph-write <碎片id> --expect <fileSha>` 从标准输入读取完整图 JSON，`--graph-set-text <碎片id> <节点id> <文字> --expect <fileSha>` 修改节点文字，`--graph-add-child <碎片id> <父节点id> <文字> --expect <fileSha>` 添加大纲子节点，`--graph-remove <碎片id> <节点id> --expect <fileSha>` 删除大纲子树。
 - 所有图写命令都必须使用最近一次 `--graph-read` 返回的 `fileSha`；文件已被其他进程修改时会拒绝写入。图写入只落盘，提交仍由 App 检查点聚合。
