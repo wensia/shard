@@ -28,6 +28,7 @@
 | **G1b** | 大纲、流程图宿主中的属性（与图编辑器基线协同）；属性键名边界修正 | G1 | 已完成，施工令见 §13 |
 | **G2** | 属性进入时间线筛选（前端计算；SQLite 属性派生表推迟，见 §14 开头） | G1 | 已完成，施工令见 §14 |
 | **G3** | 标签主题页（该标签下的碎片、大纲、流程图、文档与反链）与属性表格视图 | G2 | 已完成，施工令见 §15 |
+| **Z1** | 收尾：密匣 fileSha 单次读取；搜索面板 `#标签` 主题页候选；修复主线既有失败的 6 项 UI 用例 | G3、集成（`5351c09`） | 执行中，施工令见 §17 |
 
 ## 3. P0 施工令：frontmatter 保真读写
 
@@ -883,3 +884,50 @@ UI 改动遵守 AGENTS.md 与 `vendor/kiln`，复用现有组件与 token。
 | SQLite 属性表 | 推迟到列表增量化（S4） |
 | 登记表 | 改显示名、全库改键未做；属性候选超过 8 项时无可搜索选择 |
 | 表格视图 | 只读，无单元格编辑 |
+
+## 17. Z1 施工令：收尾修复
+
+前置：§2 全部批次已完成，`feat/frontmatter-fidelity` 已由集成会话合入 `astryx-migration`（`5351c09`，其前一提交 `1ad3e8a` 为主工作树改动快照）。本批在新 worktree `shard-wt-z1`、分支 `feat/content-model-z1`（基于 `5351c09`）上进行，只处理 §16 遗留项中无需产品决策、不涉及用户数据的三项。
+
+集成时主线引入的约束（本批必须遵守）：
+- 业务代码**不得直接 import `sonner`**（`scripts/verify-tokens.mjs` 会拦截），通知一律用 `src/lib/notify.tsx` 的 `notify.*`，失败类用 `notify.failure(标题, error)`。
+- `fragment-timeline.module.css` 的 `.root` 与「旧格式大纲升级」提示条设了 `--shard-focus-offset: -2px`，以通过 focus-ring-clipping 用例，不要回退。
+- 主线已去掉导图面板（`setIsMindMapViewActive` 等已删除）。
+
+### 17.1 密匣 `fileSha` 单次读取
+
+`src-tauri/src/lib.rs` 的 `lockbox_fragment_from_parts` 为算 `fileSha` 再次读取加密文件，与载荷解密不是同一次读取，存在毫秒级不一致窗口；`search_sources.rs` 的 `load_lockbox_markdown` 同样两次读取。改为每条路径只读一次加密文件：同一份文本既用于计算 `fileSha`，也用于解密载荷（必要时给 `read_lockbox_payload` 增加接收已读文本的变体）。对外行为、错误文案不变。补一条单测：同一次读取产生的 `fileSha` 与解密内容对应。
+
+### 17.2 搜索面板的标签主题页候选
+
+在搜索面板（`src/components/shard/search-palette.tsx` 及其控制器）中，当输入以 `#` 或 `＃` 开头时，在结果列表顶部额外显示匹配的标签候选行「标签主题页：<标签>」（候选来自当前公开碎片的标签，排除 type 标签与 `inbox`，按前缀匹配、最多 5 条）；选中后导航到 G3 的主题页路由并关闭面板。**不修改搜索契约、Rust 搜索或结果目录的数据结构**——这是面板层的附加候选行，键盘上下选择与回车行为要与现有结果一致。补 UI 用例。
+
+### 17.3 修复主线既有失败的 UI 用例
+
+集成会话在主线全量 UI（766 项）中确认的、与内容模型无关的既有失败：
+
+- `tests/ui/fragment-scroll-performance.spec.ts` 3 项：`beforeEach` 中 `page.evaluate` 超时（等待 `document.fonts.ready` 或动画）；在分支起点 `43a87f4` 也同样失败；
+- `tests/ui/library-tree.spec.ts` 3 项：导图标题改名相关 2 项、碎片转文档正文空行 1 项。
+
+逐项查明根因并在报告中写明：
+- 测试本身的问题（过时的选择器、断言与现行产品行为不一致、等待条件不可达等）→ 修测试，不降低断言的有效性；
+- 产品 bug → 最小修复，并说明影响范围；
+- 用例描述的是已被产品决策取代的旧行为 → 不要删除，报告中列出证据与建议，保持失败交由决策。
+
+`tests/ui/selection-band*.spec.ts` 的 2 项失败来自主线快照中 `fragment-content` 开启 `compactParagraphs`，**不在本批范围**，不要修改。
+
+### 17.4 验收命令
+
+使用 worktree 内未跟踪的 `playwright.worktree.config.ts`（**端口 1424**，`reuseExistingServer: false`，不提交）；必须显式 `-c playwright.worktree.config.ts`，不得用 `pnpm test:ui`；绝不能连接 1420（用户主工作区）或 1422。开工前先跑一遍下表 UI 用例记录基线。
+
+| 命令 | 要求 |
+| --- | --- |
+| `cargo test -p shard-core -p shard -p shard-cli` | 全部通过 |
+| `pnpm test:unit` | 除 golden 夹具那一项既有失败外全部通过 |
+| `pnpm build` | 通过（含 verify-tokens 的 sonner 约束） |
+| `pnpm build:markdown && pnpm exec playwright test -c playwright.worktree.config.ts tests/ui/fragment-scroll-performance.spec.ts tests/ui/library-tree.spec.ts tests/ui/search-palette.spec.ts tests/ui/tag-topic.spec.ts tests/ui/lockbox-space.spec.ts tests/ui/search-integration.spec.ts` 及本批新增用例 | 17.3 的 6 项修复后通过（或按 17.3 第三种情况如实保留并说明）；其余无新增失败 |
+| `git diff --check` | 通过 |
+
+### 17.5 交付
+
+不提交 Git；测试改写的 `tests/evidence` 图片结束前恢复。报告写 `docs/dev/content-model-tasks-log/Z1.md`：改动文件与要点、每项失败用例的根因与处理、验收结果、偏差及原因、遗留问题。
