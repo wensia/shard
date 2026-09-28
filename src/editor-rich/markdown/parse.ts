@@ -75,6 +75,14 @@ function childrenOf(node: LezerNode): LezerNode[] {
 function parseBlocks(nodes: LezerNode[], src: string): JSONContent[] {
   const blocks: JSONContent[] = []
   for (const node of nodes) {
+    const previous = node.prevSibling
+    if (node.name === "Paragraph" && previous?.name === "Paragraph") {
+      const gap = src.slice(previous.to, node.from)
+      if (/^\s+$/u.test(gap)) {
+        const extraLines = (gap.match(/\n/gu)?.length ?? 0) - 2
+        for (let index = 0; index < extraLines; index += 1) blocks.push({ type: "paragraph" })
+      }
+    }
     const block = parseBlock(node, src)
     if (Array.isArray(block)) blocks.push(...block)
     else if (block) blocks.push(block)

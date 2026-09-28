@@ -1,6 +1,5 @@
 import {
   BookOpenIcon,
-  GitBranchIcon,
   HelpCircleIcon,
   InboxIcon,
   KeyboardIcon,
@@ -37,7 +36,6 @@ import styles from "./bottom-tabs.module.css"
 interface BottomTabsProps {
   fragments: Fragment[]
   onHelp: () => void
-  onOpenMindMaps: () => void
   onOpenSearch: () => void
   onOpenSettings: () => void
   onRouteChange: (route: WorkspaceRoute) => void
@@ -78,7 +76,6 @@ const FRAGMENT_TABS: Array<{
 export function BottomTabs({
   fragments,
   onHelp,
-  onOpenMindMaps,
   onOpenSearch,
   onOpenSettings,
   onRouteChange,
@@ -239,11 +236,6 @@ export function BottomTabs({
                 icon={SearchIcon}
                 label="搜索笔记"
                 onSelect={onOpenSearch}
-              />
-              <BottomMenuItem
-                icon={GitBranchIcon}
-                label="思维导图"
-                onSelect={onOpenMindMaps}
               />
               <DropdownMenuSeparator />
               <BottomMenuItem

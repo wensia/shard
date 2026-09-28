@@ -436,7 +436,7 @@ async function beginOtherFragmentConversion(page: Page, mode: NonNullable<Wikili
 
 test("A 碎片 blur 保存已失败时禁止 B 转文档并保留 A 草稿", async ({ page }) => {
   const draft = await beginOtherFragmentConversion(page, "failure")
-  await expect(page.getByText(/自动保存失败：.*模拟碎片正文写入失败/u).first()).toBeVisible()
+  await expect(page.locator("[data-sonner-toast]").filter({ hasText: "片段自动保存失败" }).first()).toBeVisible()
   await expect(page.getByRole("dialog", { name: "转为文档", exact: true })).toHaveCount(0)
   await expect(page.locator('[data-shard-editor="fragment:fragment-source"]')).toBeVisible()
   expect(await readEditor(page, "fragment:fragment-source")).toBe(draft)
@@ -457,7 +457,7 @@ for (const mode of ["deferred-success", "deferred-failure"] as const) {
     expect(pending.calls.filter(call => call.command === "convert_fragment_to_note")).toEqual([])
     await page.evaluate(() => (globalThis as typeof globalThis & { __SHARD_COMPLETE_INLINE_SAVE__: () => void }).__SHARD_COMPLETE_INLINE_SAVE__())
     if (mode === "deferred-failure") {
-      await expect(page.getByText(/自动保存失败：.*模拟碎片正文写入失败/u).first()).toBeVisible()
+      await expect(page.locator("[data-sonner-toast]").filter({ hasText: "片段自动保存失败" }).first()).toBeVisible()
       await expect(page.getByRole("dialog", { name: "转为文档", exact: true })).toHaveCount(0)
       expect(await readEditor(page, "fragment:fragment-source")).toBe(draft)
       expect((await inlineSaveCalls(page)).events).toEqual(["saving", "failed"])

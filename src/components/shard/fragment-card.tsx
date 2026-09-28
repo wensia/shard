@@ -17,7 +17,6 @@ import {
   type ShardIcon,
 } from "@/components/icons"
 import { useMemo, useState, type ReactNode } from "react"
-import { toast } from "sonner"
 
 import { FragmentEditor } from "@/components/shard/fragment-editor"
 import { FragmentBody } from "@/components/shard/fragment-body"
@@ -33,7 +32,6 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { getApiErrorMessage } from "@/lib/api"
 import {
   CONTENT_KIND_LABELS,
   deriveDocumentDigest,
@@ -41,6 +39,7 @@ import {
   type ContentKind,
 } from "@/lib/content-kind"
 import { parseMindMapOutline } from "@/lib/mind-map-outline"
+import { notify } from "@/lib/notify"
 import type { RelatedFragment } from "@/lib/relations"
 import { cn } from "@/lib/utils"
 import type { CsvFileSummary, Fragment } from "@/types"
@@ -145,10 +144,10 @@ export function FragmentCard({
       }
 
       await clipboard.writeText(fragment.content)
-      toast("已复制片段内容")
+      notify.success("片段内容已复制")
     } catch (error) {
-      toast.error(`复制片段失败：${getApiErrorMessage(error)}`, {
-        duration: Infinity,
+      notify.failure("片段内容复制失败", error, {
+        action: { label: "重试", onClick: () => void copyFragmentContent() },
       })
     }
   }

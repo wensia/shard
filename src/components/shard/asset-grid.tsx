@@ -4,15 +4,15 @@ import {
   FolderOpenIcon,
   ImageIcon,
 } from "@/components/icons"
-import { toast } from "sonner"
 
 import { LibraryFileIcon } from "@/components/shard/library-file-icon"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
-import { getApiErrorMessage, revealFragmentImageInDir } from "@/lib/api"
+import { revealFragmentImageInDir } from "@/lib/api"
 import { formatBytes, formatModifiedAt } from "@/lib/file-metadata"
 import { libraryEntryName, libraryEntryTypeLabel } from "@/lib/library-entry"
 import { loadFragmentImageSrc } from "@/lib/fragment-images"
+import { notify } from "@/lib/notify"
 import {
   loadLibraryPreview,
   type LibraryPreview,
@@ -487,8 +487,8 @@ export function AssetViewer({ asset, onBack }: AssetViewerProps) {
     try {
       await revealFragmentImageInDir(asset.path)
     } catch (error) {
-      toast.error(`打开所在目录失败：${getApiErrorMessage(error)}`, {
-        duration: Infinity,
+      notify.failure("图片所在目录打开失败", error, {
+        action: { label: "重试", onClick: () => void revealInDir() },
       })
     }
   }

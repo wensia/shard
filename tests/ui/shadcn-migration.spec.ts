@@ -370,9 +370,15 @@ async function installTauriMock(
   }, options)
 }
 
-async function openMindMaps(page: Page) {
-  await page.locator("[data-shard-utility-menu-trigger]:visible").click()
-  await page.getByRole("menuitem", { name: "思维导图", exact: true }).click()
+/** 独立导图工作区的真实入口之一：速记里的 [[导图]] 双链芯片。 */
+async function openMindMap(page: Page, title: string) {
+  const composer = page.locator('[data-shard-editor="composer"] .ProseMirror')
+  await composer.click()
+  await page.keyboard.type(`[[${title}`)
+  const menu = page.getByRole("listbox", { name: "双链建议" })
+  await expect(menu.getByRole("option", { name: new RegExp(title) })).toHaveCount(1)
+  await page.keyboard.press("Enter")
+  await composer.locator(".shard-rich-wikilink", { hasText: title }).click()
 }
 
 test.beforeEach(async ({ page }) => {
@@ -695,7 +701,7 @@ test("capture, card menu, and share dialog remain functional", async ({
   await page.context().grantPermissions(["clipboard-read", "clipboard-write"])
   await copiedCard.getByRole("button", { name: "片段操作" }).click()
   await page.getByRole("menuitem", { name: "复制" }).click()
-  await expect(page.getByText("已复制片段内容")).toBeVisible()
+  await expect(page.locator("[data-sonner-toast]").filter({ hasText: "片段内容已复制" })).toHaveAttribute("data-type", "success")
   expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
     "迁移后的新片段 #work"
   )
@@ -1045,8 +1051,7 @@ test("search recall mode preserves context, focus, and timeline scrolling", asyn
 
 test("independent mind map search stays inside narrow and 200% effective viewports", async ({ page }) => {
   await page.setViewportSize({ width: 720, height: 640 })
-  await openMindMaps(page)
-  await page.getByLabel("打开思维导图：测试导图").click()
+  await openMindMap(page, "测试导图")
   await expect(page.getByLabel("思维导图编辑器")).toBeVisible()
 
   for (const viewport of [{ width: 720, height: 640 }, { width: 640, height: 360 }]) {
@@ -1088,8 +1093,9 @@ test("lockbox and mind map editing preserve adaptive node geometry", async ({
   ).toBeVisible()
   await expect(page.getByRole("dialog")).toHaveCount(0)
 
-  await openMindMaps(page)
-  await page.getByLabel("打开思维导图：测试导图").click()
+  // 离开密匣空间即上锁；独立导图从碎片页速记的双链进入
+  await page.getByRole("button", { name: "碎片", exact: true }).click()
+  await openMindMap(page, "测试导图")
   await expect(page.getByLabel("思维导图编辑器")).toBeVisible()
   await page.setViewportSize({ height: 720, width: 900 })
   // Workspace resize preserves the chosen zoom; explicitly zoom out to exercise scaled editing.
@@ -1210,7 +1216,7 @@ test("lockbox and mind map editing preserve adaptive node geometry", async ({
   expect(grandchildLeft - childRight).toBeGreaterThanOrEqual(96)
 
   await page.keyboard.press("Control+Enter")
-  await expect(page.getByLabel("打开思维导图：测试导图")).toBeVisible()
+  await expect(page.getByLabel("思维导图编辑器")).toHaveCount(0)
   expect(
     await page.evaluate(() =>
       (
@@ -1223,8 +1229,7 @@ test("lockbox and mind map editing preserve adaptive node geometry", async ({
 })
 
 test("mind map canvas deletes nodes from selected state", async ({ page }) => {
-  await openMindMaps(page)
-  await page.getByLabel("打开思维导图：测试导图").click()
+  await openMindMap(page, "测试导图")
   await expect(page.getByLabel("思维导图编辑器")).toBeVisible()
 
   const childNode = page.locator('[data-mind-map-node="child"]')
@@ -1249,8 +1254,7 @@ test("mind map canvas deletes nodes from selected state", async ({ page }) => {
 test("mind map canvas context menu acts on nodes and multi-selection", async ({
   page,
 }) => {
-  await openMindMaps(page)
-  await page.getByLabel("打开思维导图：测试导图").click()
+  await openMindMap(page, "测试导图")
   await expect(page.getByLabel("思维导图编辑器")).toBeVisible()
 
   const childNode = page.locator('[data-mind-map-node="child"]')
@@ -1299,8 +1303,7 @@ test("mind map canvas context menu acts on nodes and multi-selection", async ({
 test("mind map canvas marquee selects nodes and space-drag pans", async ({
   page,
 }) => {
-  await openMindMaps(page)
-  await page.getByLabel("打开思维导图：测试导图").click()
+  await openMindMap(page, "测试导图")
   const svg = page.getByLabel("思维导图编辑器")
   await expect(svg).toBeVisible()
 
@@ -1365,8 +1368,7 @@ test("mind map canvas marquee selects nodes and space-drag pans", async ({
 })
 
 test("mind map canvas collapses and expands subtrees", async ({ page }) => {
-  await openMindMaps(page)
-  await page.getByLabel("打开思维导图：测试导图").click()
+  await openMindMap(page, "测试导图")
   await expect(page.getByLabel("思维导图编辑器")).toBeVisible()
 
   const childNode = page.locator('[data-mind-map-node="child"]')
@@ -1398,8 +1400,7 @@ test("mind map canvas collapses and expands subtrees", async ({ page }) => {
 test("mind map workspace undo/redo restores deletions and merges typing", async ({
   page,
 }) => {
-  await openMindMaps(page)
-  await page.getByLabel("打开思维导图：测试导图").click()
+  await openMindMap(page, "测试导图")
   await expect(page.getByLabel("思维导图编辑器")).toBeVisible()
 
   const childNode = page.locator('[data-mind-map-node="child"]')
@@ -1452,8 +1453,7 @@ test("mind map workspace undo/redo restores deletions and merges typing", async 
 })
 
 test("mind map canvas arrow keys navigate the tree", async ({ page }) => {
-  await openMindMaps(page)
-  await page.getByLabel("打开思维导图：测试导图").click()
+  await openMindMap(page, "测试导图")
   await expect(page.getByLabel("思维导图编辑器")).toBeVisible()
 
   const rootNode = page.locator('[data-mind-map-node="root"]')
@@ -1496,8 +1496,7 @@ test("mind map canvas arrow keys navigate the tree", async ({ page }) => {
 })
 
 test("mind map canvas type-to-edit replaces node text", async ({ page }) => {
-  await openMindMaps(page)
-  await page.getByLabel("打开思维导图：测试导图").click()
+  await openMindMap(page, "测试导图")
   await expect(page.getByLabel("思维导图编辑器")).toBeVisible()
 
   const childNode = page.locator('[data-mind-map-node="child"]')
@@ -1518,11 +1517,10 @@ test("mind map canvas type-to-edit replaces node text", async ({ page }) => {
   await expect(editor).toHaveValue("abc")
 })
 
-test("mind map workspace suppresses default Tab traversal without creating topics", async ({
+test("mind map workspace keeps toolbar Tab traversal without creating topics", async ({
   page,
 }) => {
-  await openMindMaps(page)
-  await page.getByLabel("打开思维导图：测试导图").click()
+  await openMindMap(page, "测试导图")
   await expect(page.getByLabel("思维导图编辑器")).toBeVisible()
 
   const initialCount = await page.locator("[data-mind-map-node]").count()
@@ -2145,8 +2143,8 @@ test("自动同步失败通知可关闭且不堆叠", async ({ page }) => {
       .toBe(attempt)
   }
 
-  const failureToast = page.getByText(/\u81ea\u52a8\u540c\u6b65\u5931\u8d25：TLS 连接失败/)
   const errorToast = page.locator('[data-sonner-toast][data-type="error"]')
+  const failureToast = errorToast.filter({ hasText: "自动同步失败" })
   await runAutoSync(1)
   await expect(failureToast).toBeVisible()
   await expect(errorToast).toHaveCount(1)
@@ -2181,9 +2179,10 @@ test("自动同步失败通知可关闭且不堆叠", async ({ page }) => {
       toastBackgroundAlpha: colorAlpha(getComputedStyle(toast).backgroundColor),
     }
   })
+  // 关闭按钮是浮层自带控件：静止时透明（kiln Toast / Feedback），通知表面本身不透明。
   expect(toastPresentation).toEqual({
     closeButtonContained: true,
-    closeButtonBackgroundAlpha: 255,
+    closeButtonBackgroundAlpha: 0,
     toastBackgroundAlpha: 255,
   })
 

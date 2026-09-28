@@ -15,7 +15,6 @@ import {
   Loader2Icon,
   XIcon,
 } from "@/components/icons"
-import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -38,10 +37,10 @@ import {
   loadFragmentImageSrc,
 } from "@/lib/fragment-images"
 import {
-  getApiErrorMessage,
   getFragmentImageFilePath,
   revealFragmentImageInDir,
 } from "@/lib/api"
+import { notify } from "@/lib/notify"
 import { CsvInlineLink, CsvPreview } from "@/components/shard/csv-preview"
 // 副作用导入：卡片渲染同样按围栏语言查 UI 注册表，启动时先让块完成注册。
 import { getBlockUI } from "@/editor-rich/blocks/registry-ui"
@@ -93,6 +92,7 @@ export function FragmentContent({
 
   return (
     <MarkdownContent
+      compactParagraphs
       className={className}
       content={content}
       hideTags={hideTags}
@@ -262,11 +262,11 @@ export function FragmentImageAttachment({
     try {
       const saved = await downloadFragmentImageAttachment(path, alt, vaultPath)
       if (saved) {
-        toast("图片附件已下载")
+        notify.success("图片附件已下载")
       }
     } catch (error) {
-      toast.error(`图片附件下载失败：${getApiErrorMessage(error)}`, {
-        duration: Infinity,
+      notify.failure("图片附件下载失败", error, {
+        action: { label: "重试", onClick: () => void downloadImage() },
       })
     } finally {
       setIsDownloading(false)
@@ -298,10 +298,10 @@ export function FragmentImageAttachment({
       }
 
       await clipboard.writeText(filePath)
-      toast(`已复制图片文件路径：${filePath}`)
+      notify.success("图片文件路径已复制")
     } catch (error) {
-      toast.error(`图片路径复制失败：${getApiErrorMessage(error)}`, {
-        duration: Infinity,
+      notify.failure("图片文件路径复制失败", error, {
+        action: { label: "重试", onClick: () => void copyImageFilePath() },
       })
     }
   }
@@ -309,10 +309,10 @@ export function FragmentImageAttachment({
   async function revealImageInDir() {
     try {
       await revealFragmentImageInDir(path)
-      toast("已打开图片所在目录")
+      notify.success("图片所在目录已打开")
     } catch (error) {
-      toast.error(`图片所在目录打开失败：${getApiErrorMessage(error)}`, {
-        duration: Infinity,
+      notify.failure("图片所在目录打开失败", error, {
+        action: { label: "重试", onClick: () => void revealImageInDir() },
       })
     }
   }

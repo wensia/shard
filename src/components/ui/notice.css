@@ -1,0 +1,176 @@
+/* 消息通知（kiln Toast / Feedback，轻量浮卡）
+   弹层表面 + 弹层阴影；状态只由 16px 图标着色，标题用正文色保证可读；
+   失败额外加一整圈淡陶土细环（不用单边色条）。sonner 以 unstyled 渲染，
+   这里接管全部外观，不再用 !important 覆盖库样式。 */
+
+.kiln-notice {
+  display: grid;
+  grid-template-columns: var(--shard-icon-size-md) minmax(0, 1fr) var(--control-height-sm);
+  align-items: start;
+  column-gap: var(--space-3);
+  width: var(--width);
+  padding: var(--space-3) var(--space-2) var(--space-3) var(--space-4);
+  border-radius: var(--radius-card);
+  background: var(--popover);
+  color: var(--popover-foreground);
+  font-family: var(--font-sans);
+  box-shadow: var(--shadow-popover);
+}
+
+/* 折叠堆叠时，后排通知被 sonner 压成与最前一条等高；内容必须藏起来，
+   否则会从前一条底下露出（unstyled 模式不带 sonner 自己的这条规则）。 */
+.kiln-notice[data-expanded="false"][data-front="false"] {
+  overflow: hidden;
+}
+
+.kiln-notice[data-expanded="false"][data-front="false"] > * {
+  opacity: 0;
+}
+
+.kiln-notice > * {
+  transition: opacity 150ms ease;
+}
+
+.kiln-notice[data-type="error"] {
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--destructive) 34%, transparent),
+    var(--shadow-popover);
+}
+
+/* 图标列：与标题首行（行高 20px）垂直居中 */
+.kiln-notice-icon {
+  display: flex;
+  grid-column: 1;
+  grid-row: 1;
+  align-items: center;
+  height: 20px;
+  margin-top: 2px;
+}
+
+.kiln-notice-icon svg {
+  width: var(--shard-icon-size-md);
+  height: var(--shard-icon-size-md);
+}
+
+.kiln-notice[data-type="success"] .kiln-notice-icon { color: var(--success); }
+.kiln-notice[data-type="info"] .kiln-notice-icon { color: var(--info); }
+.kiln-notice[data-type="warning"] .kiln-notice-icon { color: var(--warning); }
+.kiln-notice[data-type="error"] .kiln-notice-icon { color: var(--destructive); }
+.kiln-notice[data-type="loading"] .kiln-notice-icon { color: var(--muted-foreground); }
+
+.kiln-notice-content {
+  display: flex;
+  grid-column: 2;
+  grid-row: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding-top: 2px;
+}
+
+.kiln-notice-title {
+  color: var(--popover-foreground);
+  font-size: var(--text-body);
+  font-weight: var(--weight-medium);
+  line-height: 20px;
+  overflow-wrap: anywhere;
+}
+
+.kiln-notice-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.kiln-notice-description {
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: var(--text-meta);
+  line-height: 18px;
+  overflow-wrap: anywhere;
+}
+
+.kiln-notice-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+/* 「详情」「复制详情」「不用了」：行内文字链接，静止即可见，不是幽灵按钮 */
+.kiln-notice-link {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--primary-text);
+  font: inherit;
+  font-size: var(--text-meta);
+  cursor: pointer;
+}
+
+.kiln-notice-link:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.kiln-notice-detail {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-1);
+}
+
+.kiln-notice-detail pre {
+  box-sizing: border-box;
+  width: 100%;
+  max-height: calc(18px * 6 + var(--space-2) * 2);
+  margin: 0;
+  padding: var(--space-2);
+  overflow: auto;
+  overscroll-behavior: contain;
+  border-radius: var(--radius-control);
+  background: var(--muted);
+  color: var(--muted-foreground);
+  font-family: var(--font-mono);
+  font-size: var(--text-meta);
+  line-height: 18px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+/* 关闭：浮层自带的关闭控件，静止时透明、无边框（kiln：overlay chrome 保持安静） */
+.kiln-notice-close {
+  display: inline-flex;
+  grid-column: 3;
+  grid-row: 1;
+  align-items: center;
+  justify-content: center;
+  width: var(--control-height-sm);
+  height: var(--control-height-sm);
+  margin-top: -2px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--muted-foreground);
+  cursor: pointer;
+  transition: background-color 150ms ease, color 150ms ease;
+}
+
+.kiln-notice-close:hover {
+  background: var(--muted);
+  color: var(--foreground);
+}
+
+.kiln-notice-close svg {
+  --shard-icon-stroke: var(--shard-icon-stroke-sm);
+  width: var(--shard-icon-size-sm);
+  height: var(--shard-icon-size-sm);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .kiln-notice-close {
+    transition: none;
+  }
+}

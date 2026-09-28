@@ -22,7 +22,6 @@ import {
 } from "@/components/icons"
 
 import { Button } from "@/components/ui/button"
-import { toast } from "sonner"
 
 import { MindMapCanvasEditor, type MindMapCanvasSessionState } from "@/components/shard/mind-map-canvas-editor"
 import { MindMapOutlineEditor, type MindMapOutlineSessionState } from "@/components/shard/mind-map-outline-editor"
@@ -40,6 +39,7 @@ import {
   isMindMapFileContentEqual,
   type MindMapChangeMeta,
 } from "@/lib/mind-map-tree"
+import { notify } from "@/lib/notify"
 import type { Fragment, MindMapReadResult, MindMapSummary, ShardDocumentLink, ShardMapFile } from "@/types"
 
 import styles from "./mind-map-workspace.module.css"
@@ -298,15 +298,21 @@ export const MindMapCanvas = forwardRef<
           }
           if (composingRef.current) return false
           void refreshSummaries()
-          if (mode === "manual") toast("思维导图已保存", { duration: 5000 })
+          if (mode === "manual") notify.success("思维导图已保存")
           return true
         } catch (unknownError) {
           const message = getApiErrorMessage(unknownError)
           setAutoSaveError(message)
-          if (message.includes("冲突副本") && draftFileRef.current) {
+          const isConflict = message.includes("冲突副本")
+          if (isConflict && draftFileRef.current) {
             setConflict({ draft: draftFileRef.current, message })
           }
-          if (mode === "manual") toast.error(`保存思维导图失败：${message}`, { duration: Infinity })
+          if (mode === "manual") {
+            // 冲突由冲突条处理（保留磁盘版本 / 保存我的版本），原样重试只会再次冲突。
+            notify.failure("思维导图保存失败", unknownError, isConflict ? undefined : {
+              action: { label: "重试", onClick: () => void save("manual") },
+            })
+          }
           return false
         } finally {
           setSaveMode(null)
@@ -414,7 +420,7 @@ export const MindMapCanvas = forwardRef<
 
   const keepDiskVersion = useCallback(async () => {
     await loadMap()
-    toast("已载入磁盘版本", { duration: 5000 })
+    notify.info("已载入磁盘版本")
   }, [loadMap])
 
   const keepMyVersion = useCallback(async () => {
@@ -437,11 +443,9 @@ export const MindMapCanvas = forwardRef<
       redoStackRef.current = []
       lastMergeKeyRef.current = null
       await refreshSummaries()
-      toast("已保存我的版本", { duration: 5000 })
+      notify.success("我的版本已保存")
     } catch (unknownError) {
-      toast.error(`保存我的版本失败：${getApiErrorMessage(unknownError)}`, {
-        duration: Infinity,
-      })
+      notify.failure("我的版本保存失败", unknownError)
     } finally {
       setSaveMode(null)
     }
@@ -658,7 +662,7 @@ export const MindMapCanvas = forwardRef<
           try {
             if (await save("auto")) await onOpenLink(link)
           } catch (unknownError) {
-            toast.error(`打开关联文档失败：${getApiErrorMessage(unknownError)}`)
+            notify.failure("关联文档打开失败", unknownError)
           } finally {
             interactionBlockedRef.current = false
             setInteractionBlocked(false)

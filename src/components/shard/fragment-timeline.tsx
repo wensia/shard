@@ -123,6 +123,7 @@ export function FragmentTimeline({
   const programmaticScrollRef = useRef(false)
   const programmaticScrollTimeoutRef = useRef<number | null>(null)
   const completedScrollTargetRef = useRef<string | null>(null)
+  const positionedEditorIdRef = useRef<string | null>(null)
   const viewportRef = useRef<HTMLDivElement>(null)
   const layoutScrollFrameRef = useRef<number | null>(null)
   const layoutScrollingRef = useRef(false)
@@ -301,6 +302,25 @@ export function FragmentTimeline({
         viewport.scrollTop = restorePositionRef.current
         lastScrollTopRef.current = viewport.scrollTop
         restorePositionRef.current = null
+        return true
+      }
+    }
+    const enteringEditor = editingFragmentId !== positionedEditorIdRef.current
+    positionedEditorIdRef.current = editingFragmentId
+    if (enteringEditor && editingFragmentId && !isLoading
+      && (!scrollToFragmentId || completedScrollTargetRef.current === scrollTargetIdentity)) {
+      const viewport = viewportRef.current
+      const card = findFragmentCard(viewport, editingFragmentId)
+      if (viewport && card) {
+        // 阅读态允许时间戳滚出顶部；编辑态正文取代时间戳，必须露出编辑区上缘。
+        // 仅在进入编辑这一帧修正 timeline，不能持续劫持用户后续的滚动。
+        beforeNavigate()
+        const delta = card.getBoundingClientRect().top - viewport.getBoundingClientRect().top
+        if (delta < 0) {
+          suppressLayoutScroll()
+          viewport.scrollTop += delta
+          lastScrollTopRef.current = viewport.scrollTop
+        }
         return true
       }
     }
@@ -569,7 +589,7 @@ export function FragmentTimeline({
           >
             <FragmentMasonry
               key={scopeKey}
-              layoutKey={JSON.stringify([isLoading, scrollTargetIdentity, timelineItems.map((item) => item.id)])}
+              layoutKey={JSON.stringify([isLoading, scrollTargetIdentity, editingFragmentId, timelineItems.map((item) => item.id)])}
               renderLimit={renderLimit}
               onBeforeScroll={suppressLayoutScroll}
               onLayout={handleTimelineLayout}

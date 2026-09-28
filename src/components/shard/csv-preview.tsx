@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react"
-import { toast } from "sonner"
 
 import { getApiErrorMessage, openCsvFile, readCsvFile } from "@/lib/api"
 import { isNonUtf8CsvEncoding, type CsvDocument } from "@/lib/csv"
 import { parseCsvBytesInWorker } from "@/lib/csv-worker"
+import { notify } from "@/lib/notify"
 
 import styles from "./csv-preview.module.css"
 
@@ -17,7 +17,7 @@ export function CsvInlineLink({ label, path }: { label: string; path: string }) 
     try {
       await openCsvFile(path)
     } catch (error) {
-      toast.error(`打开 CSV 失败：${getApiErrorMessage(error)}`, { duration: Infinity })
+      notify.failure("CSV 文件打开失败", error)
     }
   }
 
@@ -61,7 +61,7 @@ export function CsvPreview({ maxRows, path }: CsvPreviewProps) {
     try {
       await openCsvFile(path)
     } catch (error) {
-      toast.error(`打开 CSV 失败：${getApiErrorMessage(error)}`, { duration: Infinity })
+      notify.failure("CSV 文件打开失败", error)
     } finally {
       setIsOpening(false)
     }

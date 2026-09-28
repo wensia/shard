@@ -15,7 +15,6 @@ import {
   SendHorizontalIcon,
   XIcon,
 } from "@/components/icons"
-import { toast } from "sonner"
 
 import { EditorToolbar } from "@/components/shard/editor-toolbar"
 import { FragmentImageAttachment } from "@/components/shard/fragment-content"
@@ -35,7 +34,6 @@ import {
   parseMarkdownImageLine,
 } from "@/lib/editor-format"
 import {
-  getApiErrorMessage,
   openCsvFile,
   setWindowControlsHidden,
 } from "@/lib/api"
@@ -46,6 +44,7 @@ import {
   deriveKind,
 } from "@/lib/content-kind"
 import { hasMarkdownImage, wantsLockbox } from "@/lib/lockbox"
+import { notify } from "@/lib/notify"
 import { parseMindMapOutline } from "@/lib/mind-map-outline"
 import { useTableDocumentDrop } from "@/lib/use-table-document-drop"
 import {
@@ -208,7 +207,7 @@ export function FragmentEditor({
           : undefined
     if (csvPath) {
       void openCsvFile(csvPath).catch((error) => {
-        toast.error(`打开 CSV 失败：${getApiErrorMessage(error)}`, { duration: Infinity })
+        notify.failure("CSV 文件打开失败", error)
       })
       return
     }
@@ -218,7 +217,7 @@ export function FragmentEditor({
       return
     }
 
-    toast(`待建链接「${target}」尚不存在，可在资料库新建文档`)
+    notify.info(`「${target}」还没有文档`, { description: "可在资料库新建同名文档。" })
   }
 
   const draftContent = useMemo(
@@ -492,7 +491,7 @@ export function FragmentEditor({
     if (readOnly) return true
     if (nextContent.trim().length === 0) {
       setSaveState("error")
-      toast.error("片段内容不能为空", { duration: Infinity })
+      notify.error("片段内容不能为空")
       return false
     }
 
@@ -505,7 +504,9 @@ export function FragmentEditor({
       const tags = kind === "fragment" ? extracted : applyTypeTag(extracted, kind)
       const editsLockbox = Boolean(fragment?.lockbox)
       if ((editsLockbox || wantsLockbox(nextContent, tags)) && hasMarkdownImage(nextContent)) {
-        throw new Error("密匣暂不支持图片附件。请先移除图片，再保存到密匣。")
+        setSaveState("error")
+        notify.error("密匣暂不支持图片", { description: "请先移除图片，再保存到密匣。" })
+        return false
       }
       if (isDraft) {
         if (!onCreateRef.current) {
@@ -522,7 +523,7 @@ export function FragmentEditor({
       return true
     } catch (error) {
       setSaveState("error")
-      toast.error(`${isDraft ? "保存失败" : "自动保存失败"}：${getApiErrorMessage(error)}`, { duration: Infinity })
+      notify.failure(isDraft ? "片段保存失败" : "片段自动保存失败", error)
       return false
     }
   }

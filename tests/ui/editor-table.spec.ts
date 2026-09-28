@@ -341,7 +341,9 @@ for (const variant of ["composer", "inline", "zen"] as const) {
     await emitDrag(page, editorId, "enter", ["/tmp/测试.csv", "/tmp/测试.xlsx"])
     await expect(page.getByText("请在资料库中导入为多维表格", { exact: true })).toBeVisible()
     await emitDrag(page, editorId, "drop", ["/tmp/测试.csv", "/tmp/测试.xlsx"])
-    await expect(page.getByText("请在资料库的“多维表格”菜单中选择“从 CSV / Excel 导入…”，导入 CSV 或 XLSX 文件。", { exact: true })).toBeVisible()
+    const notice = page.locator("[data-sonner-toast]").filter({ hasText: "表格请从资料库导入" })
+    await expect(notice).toHaveAttribute("data-type", "info")
+    await expect(notice).toContainText("在「多维表格」菜单选择「从 CSV / Excel 导入…」。")
     await expect.poll(() => readEditor(page, editorId)).toBe(LEGACY_TABLE_SAVED)
     const commands = await page.evaluate(() => (window as unknown as { __SHARD_TEST_COMMANDS__: string[] }).__SHARD_TEST_COMMANDS__)
     expect(commands).not.toContain("convert_table_document_to_markdown")
@@ -353,7 +355,9 @@ for (const variant of ["composer", "inline", "zen"] as const) {
 test("旧 XLS 文件提示先另存 XLSX，不承诺支持直接导入", async ({ page }) => {
   await fillEditor(page, "composer", "尚未保存的正文")
   await emitDrag(page, "composer", "drop", ["/tmp/旧格式.xls"])
-  await expect(page.getByText("请先将旧 Excel 文件另存为 XLSX，再到资料库的“多维表格”菜单中选择“从 CSV / Excel 导入…”。", { exact: true })).toBeVisible()
+  const notice = page.locator("[data-sonner-toast]").filter({ hasText: "旧版 Excel 需先转换" })
+  await expect(notice).toHaveAttribute("data-type", "info")
+  await expect(notice).toContainText("另存为 XLSX 后，从资料库「多维表格」菜单导入。")
   await expect.poll(() => readEditor(page, "composer")).toBe("尚未保存的正文")
 })
 

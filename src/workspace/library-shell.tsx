@@ -26,7 +26,6 @@ import {
   PlusIcon,
   Trash2Icon,
 } from "@/components/icons"
-import { toast } from "sonner"
 
 import { FragmentBacklinksPanel } from "@/components/shard/fragment-related"
 import { AssetGrid, AssetViewer } from "@/components/shard/asset-grid"
@@ -88,6 +87,7 @@ import {
 import { deriveKind } from "@/lib/content-kind"
 import { extractTags, normalizeTagList } from "@/lib/editor-format"
 import { libraryEntryName, libraryNameError, type LibrarySort } from "@/lib/library-entry"
+import { notify } from "@/lib/notify"
 import { useLibraryFileSelection } from "@/lib/use-library-file-selection"
 import { useImageUpload } from "@/hooks/use-image-upload"
 import { useFragmentRelations } from "@/lib/use-fragment-relations"
@@ -237,6 +237,16 @@ function countLibraryFiles(entries: LibraryTreeEntry[]): number {
   return entries.reduce((total, entry) => total + (
     entry.kind === "directory" ? countLibraryFiles(entry.children ?? []) : 1
   ), 0)
+}
+
+/**
+ * 两份正文落盘后是否是同一份：后端写入时去掉尾部空白再补一个换行，读回时
+ * 去掉开头的空行（`write_fragment_file` / `read_fragment`）。编辑器序列化
+ * 从不带尾换行，只按全等比较，排空式保存会把同一份正文无限重存下去。
+ */
+function isSameStoredBody(left: string, right: string) {
+  const stored = (body: string) => body.replace(/^\n+/u, "").trimEnd()
+  return stored(left) === stored(right)
 }
 
 export function LibraryShell({
@@ -578,7 +588,7 @@ export function LibraryShell({
       // 草稿里是字面转义 `\#标签`。peek 只算不改，用户可以接着打字；宿主刚写入
       // 编辑器还没接到的内容（图片附件）时它原样返回草稿。
       const content = richNoteEditor.current?.peekMarkdown(draftRef.current) ?? draftRef.current
-      if (!note || content === lastSavedContentRef.current) {
+      if (!note || isSameStoredBody(content, lastSavedContentRef.current)) {
         setSaveState("saved")
         return true
       }
@@ -591,7 +601,7 @@ export function LibraryShell({
       const savePromise = (async () => {
       if (content.trim().length === 0) {
         setSaveState("error")
-        toast.error("文档内容不能为空", { duration: Infinity })
+        notify.error("文档内容不能为空")
         return false
       }
 
@@ -650,8 +660,8 @@ export function LibraryShell({
           return true
         }
         setSaveState("error")
-        toast.error(`自动保存失败：${message}`, {
-          duration: Infinity,
+        notify.failure("文档保存失败", error, {
+          action: { label: "重试", onClick: () => void saveCurrentNote() },
         })
         return false
       }
@@ -750,7 +760,7 @@ export function LibraryShell({
           : undefined
     if (csvPath) {
       void openCsvFile(csvPath).catch((error) => {
-        toast.error(`打开 CSV 失败：${getApiErrorMessage(error)}`, { duration: Infinity })
+        notify.failure("CSV 文件打开失败", error)
       })
       return
     }
@@ -765,7 +775,7 @@ export function LibraryShell({
       return
     }
 
-    toast(`待建链接「${target}」尚不存在，可在资料库新建文档`)
+    notify.info(`「${target}」还没有文档`, { description: "可在资料库新建同名文档。" })
   }
 
   useEffect(() => {
@@ -779,7 +789,7 @@ export function LibraryShell({
   async function selectMindMap(path: string) {
     const map = libraryMindMaps.find((candidate) => candidate.path === path)
     if (!map?.mindMapId) {
-      toast.error("思维导图文件无法读取", { duration: Infinity })
+      notify.error("思维导图无法读取")
       return
     }
     if (selection?.kind !== "mindmap" || selection.path !== path) {
@@ -808,14 +818,14 @@ export function LibraryShell({
       try {
         const documents = await listDiagramDocuments()
         const document = documents.find(item => item.id === link.targetId && item.kind === (link.targetType === "map" ? "mindmap" : "flowchart"))
-        if (!document) { toast.error("引用的图文档已不存在"); return }
+        if (!document) { notify.error("引用的图文档已不存在"); return }
         if (document.kind === "mindmap") await selectMindMap(document.path)
         else await selectCanvas(document.path, "flowchart")
-      } catch (error) { toast.error(`打开图文档失败：${getApiErrorMessage(error)}`) }
+      } catch (error) { notify.failure("图文档打开失败", error) }
       return
     }
     const source = relationFragments.find(fragment => link.targetType === "fragment" ? fragment.id === link.targetId : fragment.path === link.path)
-    if (!source) { toast.error("引用的资料已不存在或已移动"); return }
+    if (!source) { notify.error("引用的资料已不存在或已移动"); return }
     if (deriveKind(source.tags) === "note") await selectNote(source.id)
     else onNavigateToFragment?.(source.id)
   }
@@ -1012,13 +1022,13 @@ export function LibraryShell({
         setSelectedTreePath(result.fragment.path)
       }
       if (result.updatedLinks > 0) {
-        toast(`已更新 ${result.updatedLinks} 处双链引用`)
+        notify.success(`${result.updatedLinks} 处双链引用已更新`)
       }
       // Keep path selection and the new tree in one update, before a missing-file effect can clear the viewer.
       onSuccess?.(result)
       return result
     } catch (error) {
-      if (reportError) toast.error(`${label}失败：${getApiErrorMessage(error)}`, { duration: Infinity })
+      if (reportError) notify.failure(`${label}失败`, error)
       return null
     } finally {
       setBusyAction(null)
@@ -1108,7 +1118,7 @@ export function LibraryShell({
           }
           setBatchError(message)
           if (!hasRemainingFiles) {
-            toast.error(`批量${label}返回错误，目录已刷新，请核对文件位置。`, { duration: Infinity })
+            notify.warning("请核对文件位置", { description: `批量${label}时出现异常，目录已刷新。` })
           }
           fileSelection.finish(completed, false)
           setTreeDialog(null)
@@ -1118,7 +1128,7 @@ export function LibraryShell({
       if (latest) onLibraryMutation({ ...latest, updatedLinks })
       fileSelection.finish(completed, true)
       setTreeDialog(null)
-      toast.success(`已${label} ${completed.length} 项${updatedLinks ? `，更新 ${updatedLinks} 处双链引用` : ""}`)
+      notify.success(`${completed.length} 项已${label}`, updatedLinks ? { description: `同时更新了 ${updatedLinks} 处双链引用。` } : undefined)
     } finally {
       tableStructurePending.current = false
       batchPending.current = false
@@ -1164,20 +1174,20 @@ export function LibraryShell({
             void onRefreshLibrary?.().catch(() => undefined)
           }
           openConvertedFragment(current)
-          toast("已核对：内容已转回碎片")
+          notify.success("内容已转回碎片")
         } else if (current) {
           setInteractionBlocked(false)
-          toast.error(`转回碎片失败：${getApiErrorMessage(failure)}`, { duration: Infinity })
+          notify.failure("转回碎片失败", failure)
         } else {
           closeConvertedDocument()
           setInteractionBlocked(false)
-          toast.error("文档当前不可访问，已关闭编辑器并刷新资料库。", { duration: Infinity })
+          notify.error("文档当前无法访问", { description: "已关闭编辑器并刷新资料库。" })
           void onRefreshLibrary?.().catch(() => undefined)
         }
         void Promise.resolve(onRefreshFragments?.()).catch(() => undefined)
-      } catch {
-        toast.error("暂时无法核对转换结果，已暂停原文档编辑。", {
-          duration: Infinity,
+      } catch (verifyError) {
+        notify.failure("转换结果暂时无法核对", verifyError, {
+          description: "已暂停原文档编辑。",
           action: { label: "重新核对", onClick: () => void verifyConversion() },
         })
       }
@@ -1231,7 +1241,7 @@ export function LibraryShell({
     const extension = entry ? entry.name.slice(libraryEntryName(entry).length) : ""
     const nameError = libraryNameError(value, extension)
     if (nameError) {
-      toast.error(nameError)
+      notify.error("名称过长", { description: nameError })
       return
     }
     const oldPath = renaming.path
@@ -1274,7 +1284,7 @@ export function LibraryShell({
       setSelectedTreePath(result.path)
       setIsZen(false)
       setMobilePane("editor")
-    } catch (error) { toast.error(`新建思维导图失败：${getApiErrorMessage(error)}`, { duration: Infinity }) }
+    } catch (error) { notify.failure("思维导图创建失败", error) }
     finally { setBusyAction(null) }
   }
 
@@ -1285,8 +1295,8 @@ export function LibraryShell({
       if (!document) throw new Error("图文档已不存在")
       const label = document.title.replace(/[\[\]\\]/gu, "\\$&")
       await navigator.clipboard.writeText(`[${label}](shard://${document.kind === "mindmap" ? "map" : "flow"}/${encodeURIComponent(document.id)})`)
-      toast.success("已复制文档链接，可粘贴到文档")
-    } catch (error) { toast.error(`复制文档链接失败：${getApiErrorMessage(error)}`) }
+      notify.success("文档链接已复制", { description: "可粘贴到文档中。" })
+    } catch (error) { notify.failure("文档链接复制失败", error) }
   }
 
   async function onCanvasSplit(result: { documents: DiagramDocumentSummary[]; indexPath: string }) {
@@ -1309,7 +1319,7 @@ export function LibraryShell({
       await onRefreshLibrary?.()
       if (await selectCanvas(result.path)) pendingCanvasCreate.current = null
     } catch (error) {
-      toast.error(`新建流程图失败：${getApiErrorMessage(error)}`, { duration: Infinity })
+      notify.failure("流程图创建失败", error)
     } finally { setBusyAction(null) }
   }
 
@@ -1326,7 +1336,7 @@ export function LibraryShell({
       const result = await createTable(pendingTableCreate.current)
       await tableCreated(result)
       pendingTableCreate.current = null
-    } catch (error) { toast.error(`新建多维表格失败：${getApiErrorMessage(error)}`, { duration: Infinity }) }
+    } catch (error) { notify.failure("多维表格创建失败", error) }
     finally { setBusyAction(null) }
   }
 
@@ -1361,7 +1371,7 @@ export function LibraryShell({
     }
     const nameError = libraryNameError(value)
     if (nameError) {
-      toast.error(nameError)
+      notify.error("名称过长", { description: nameError })
       return
     }
     const result = await runMutation("新建目录", () =>
@@ -1429,9 +1439,7 @@ export function LibraryShell({
     if (entry.kind === "csv") {
       setSelectedTreePath(entry.path)
       void openCsvFile(entry.path).catch((error) =>
-        toast.error(`打开 CSV 失败：${getApiErrorMessage(error)}`, {
-          duration: Infinity,
-        })
+        notify.failure("CSV 文件打开失败", error)
       )
       return
     }
@@ -1439,7 +1447,7 @@ export function LibraryShell({
     if (note) {
       void selectNote(note.id)
     } else {
-      toast.error("文档索引尚未刷新，请稍后重试", { duration: Infinity })
+      notify.warning("文档还在准备中", { description: "请稍后再试。" })
     }
   }
 
@@ -1630,7 +1638,7 @@ export function LibraryShell({
             setSelectedTreePath(path)
             setCanvasSaveState("saved")
             try { await onRefreshLibrary?.() }
-            catch (error) { toast.error(`画布副本已保存，刷新资料库失败：${getApiErrorMessage(error)}`, { duration: Infinity }) }
+            catch (error) { notify.failure("资料库刷新失败", error, { description: "画布副本已保存。" }) }
           }} />
       </Suspense>
     }

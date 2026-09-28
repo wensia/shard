@@ -19,6 +19,7 @@ test-results/
 # workspace 化之后构建产物与锁文件都收敛到仓库根，子目录里的是历史残留。
 target/
 src-tauri/target/
+src-tauri/binaries/
 src-tauri/gen/schemas/
 crates/*/target/
 

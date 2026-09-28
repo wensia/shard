@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { toast } from "sonner"
 
 import styles from "../App.module.css"
 import { LockKeyholeIcon } from "@/components/icons"
@@ -56,6 +55,8 @@ import {
   createFragment,
   DESKTOP_RUNTIME_MESSAGE,
   getApiErrorMessage,
+  getCliInstallStatus,
+  installCli,
   linkFragments,
   listCsvFiles,
   listFragments,
@@ -68,6 +69,7 @@ import {
   pinFragment,
   resetLockboxPassword,
   setupLockbox,
+  setCliInstallDeclined,
   checkpointVault,
   syncVault,
   unlockLockbox,
@@ -77,6 +79,7 @@ import {
 } from "@/lib/api"
 import { deriveKind, isTypeTag } from "@/lib/content-kind"
 import { toggleTaskLine } from "@/lib/editor-format"
+import { notify } from "@/lib/notify"
 import {
   buildWikilinkCandidates,
   resolveWikilinkTarget,
@@ -149,6 +152,7 @@ import { useReminderBadge } from "@/workspace/use-reminder-badge"
 import { useSearchController } from "@/workspace/use-search-controller"
 
 const AUTO_SYNC_FAILURE_TOAST_ID = "auto-sync-failure"
+const CLI_INSTALL_PROMPT_TOAST_ID = "cli-install-prompt"
 const GLOBAL_CAPTURE_EVENT = "shard:capture"
 const SIDEBAR_COLLAPSED_STORAGE_KEY = "shard.sidebar-collapsed"
 /** 切回窗口时对账碎片列表的最小间隔，避免频繁切换反复全量读取 vault。 */
@@ -245,7 +249,6 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
   const [legacySearchSession, setLegacySearchSession] =
     useState<LegacyFragmentSearchSession | null>(null)
   const [searchSession, setSearchSession] = useState<SearchSession | null>(null)
-  const [isMindMapViewActive, setIsMindMapViewActive] = useState(false)
   const [activeMindMapId, setActiveMindMapId] = useState<string | null>(null)
   const [searchMindMapNavigation, setSearchMindMapNavigation] = useState<{
     requestId: string
@@ -306,6 +309,87 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
   useEffect(() => {
     void refreshFragments()
     void refreshMindMaps()
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+
+    const timerId = window.setTimeout(() => {
+      void (async () => {
+        try {
+          const current = await getCliInstallStatus()
+          if (
+            cancelled ||
+            current.declined ||
+            current.state === "installed" ||
+            current.state === "conflict" ||
+            current.state === "unavailable"
+          ) {
+            return
+          }
+
+          const repairsExistingLink = current.linkPath !== null
+          const next =
+            current.state === "notInstalled"
+              ? await installCli(false)
+              : current
+
+          if (cancelled || next.declined) return
+
+          if (next.state === "installed") {
+            if (!repairsExistingLink) {
+              notify.success("终端命令 shard 已安装", {
+                description: "示例：shard 今天心情很好",
+              })
+            }
+            return
+          }
+
+          if (next.state !== "needsShellConfig") return
+
+          notify.info("安装终端命令 shard？", {
+            id: CLI_INSTALL_PROMPT_TOAST_ID,
+            description: "装好后可在终端里直接用 shard 命令。",
+            persistent: true,
+            action: {
+              label: "安装",
+              onClick: () => {
+                void installCli(true)
+                  .then((installed) => {
+                    if (installed.state !== "installed") {
+                      throw new Error(installed.message ?? "终端命令安装未完成")
+                    }
+                    notify.success("终端命令 shard 已安装", {
+                      description: "新开终端窗口即可使用。",
+                    })
+                  })
+                  .catch((error) => {
+                    notify.failure("终端命令安装失败", error)
+                  })
+              },
+            },
+            cancel: {
+              label: "不用了",
+              onClick: () => {
+                void setCliInstallDeclined(true).catch((error) => {
+                  notify.failure("偏好保存失败", error, {
+                    description: "下次启动可能还会询问。",
+                  })
+                })
+              },
+            },
+          })
+        } catch {
+          // 启动探测不影响主界面；用户仍可稍后在设置中手动安装。
+        }
+      })()
+    }, 750)
+
+    return () => {
+      cancelled = true
+      window.clearTimeout(timerId)
+      notify.dismiss(CLI_INSTALL_PROMPT_TOAST_ID)
+    }
   }, [])
 
   useEffect(() => () => {
@@ -457,7 +541,9 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
         return
       }
 
-      toast.error(`${"读取 Shard vault 失败"}：${message}`, { duration: Infinity })
+      notify.failure("Vault 读取失败", error, {
+        action: { label: "重试", onClick: () => void refreshFragments(options) },
+      })
     } finally {
       if (!options.silent) setIsLoading(false)
     }
@@ -472,7 +558,9 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
         setMindMaps([])
         return
       }
-      toast.error(`${"读取思维导图失败"}：${message}`, { duration: Infinity })
+      notify.failure("思维导图读取失败", error, {
+        action: { label: "重试", onClick: () => void refreshMindMaps() },
+      })
     }
   }
 
@@ -486,7 +574,9 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
         setCsvFiles([])
         return
       }
-      toast.error(`读取 CSV 文件列表失败：${message}`, { duration: Infinity })
+      notify.failure("CSV 文件列表读取失败", error, {
+        action: { label: "重试", onClick: () => void refreshCsvFiles() },
+      })
     }
   }
 
@@ -499,7 +589,9 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
         setLibraryTree(null)
         return
       }
-      toast.error(`读取资料库目录失败：${message}`, { duration: Infinity })
+      notify.failure("资料库目录读取失败", error, {
+        action: { label: "重试", onClick: () => void refreshLibraryTree() },
+      })
     }
   }
 
@@ -509,15 +601,13 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
         const migration = await migrateLegacyNotes()
         migratedLibraryVaultRef.current = currentVaultPath
         if (migration.migratedCount > 0) {
-          toast(`已迁移 ${migration.migratedCount} 篇旧笔记到资料库`)
+          notify.success(`${migration.migratedCount} 篇旧笔记已迁入资料库`)
           await refreshFragments()
           await refreshCsvFiles()
         }
         await refreshMindMaps()
       } catch (error) {
-        toast.error(`迁移旧笔记失败：${getApiErrorMessage(error)}`, {
-          duration: Infinity,
-        })
+        notify.failure("旧笔记迁移失败", error)
         return
       }
     }
@@ -560,7 +650,6 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     applyVaultState(state)
     if (options.resetView) {
       closeEditor()
-      setIsMindMapViewActive(false)
       setRoute({ space: "fragments", params: {} })
     }
     setIsVaultGuideOpen(true)
@@ -569,28 +658,32 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
   /** 返回创建好的碎片：`/文档` 提交后速记框据此直接进禅模式（产品框架 §2）。 */
   async function handleCreate(content: string, tags: string[]): Promise<Fragment> {
     recordContentActivity()
-    setIsCreating(true)
     const shouldCreateInLockbox = wantsLockbox(content, tags)
+
+    // 保存前的校验只提示用户怎么做，不走「保存失败」通知
+    if (shouldCreateInLockbox && hasMarkdownImage(content)) {
+      notify.error("密匣暂不支持图片", {
+        description: "请先移除图片，再保存到密匣。",
+      })
+      throw new Error("密匣暂不支持图片附件。请先移除图片，再保存到密匣。")
+    }
+    if (shouldCreateInLockbox && !ensureLockboxConfigured()) {
+      notify.warning("请先设置密匣", { description: "设置好后再次保存即可。" })
+      throw new Error("请先设置密匣，然后再次保存。")
+    }
+
+    setIsCreating(true)
 
     if (shouldCreateInLockbox) {
       try {
-        if (hasMarkdownImage(content)) {
-          throw new Error("密匣暂不支持图片附件。请先移除图片，再保存到密匣。")
-        }
-        if (!ensureLockboxConfigured()) {
-          throw new Error("请先设置密匣，然后再次保存。")
-        }
-
         const created = await createFragment(content, tags)
         setFragments((current) => [created, ...current])
-        toast("已保存到密匣")
+        notify.success("已保存到密匣")
         void refreshFragments()
         return created
       } catch (error) {
         const message = getApiErrorMessage(error)
-        toast.error(`${"创建密匣片段失败"}：${message}`, {
-          duration: Infinity,
-        })
+        notify.failure("密匣碎片保存失败", error)
         throw new Error(message)
       } finally {
         setIsCreating(false)
@@ -634,27 +727,25 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
             }
           }
         } catch (error) {
-          toast.error(
-            `片段已保存，但双链同步失败：${getApiErrorMessage(error)}`,
-            { duration: Infinity }
-          )
+          notify.failure("双链同步失败", error, {
+            description: "碎片本身已保存。",
+          })
         }
       }
       if (created.gitStatus === "commit_failed") {
-        toast(
-          `${"片段已保存，但 Git commit 失败"}：${
-            created.error ?? "可以继续记录，之后再处理 Git 配置。"
-          }`
-        )
+        notify.warning("Git 提交失败", {
+          description: "碎片已保存，可以继续记录。",
+          detail: created.error ?? undefined,
+        })
       } else {
         if (!matchesFragmentFilters(created, fragmentFilters)) {
-          toast("已记录，当前筛选下不可见", { action: { label: "查看碎片", onClick: () => showFragmentTarget(created) } })
-        } else toast("碎片已保存")
+          notify.info("已记录，当前筛选下不可见", { action: { label: "查看碎片", onClick: () => showFragmentTarget(created) } })
+        } else notify.success("碎片已保存")
       }
       return created
     } catch (error) {
       const message = getApiErrorMessage(error)
-      toast.error(`${"创建片段失败"}：${message}`, { duration: Infinity })
+      notify.failure("碎片保存失败", error)
       throw new Error(message)
     } finally {
       setIsCreating(false)
@@ -665,7 +756,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     // 同步会先提交磁盘版本再 pull——不 flush 的话，旧磁盘内容被提交，
     // 之后迟到的自动保存还会把旧基线草稿盖回刚拉取的版本
     if (!(await saveLibraryDraftBeforeNavigation())) {
-      toast.error("草稿保存失败，已取消同步", { duration: Infinity })
+      notify.error("草稿保存失败", { description: "已取消同步。" })
       return
     }
     setIsSyncing(true)
@@ -673,9 +764,9 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
       const synced = await syncVault()
       setGit(synced)
       markSynced()
-      toast.dismiss(AUTO_SYNC_FAILURE_TOAST_ID)
+      notify.dismiss(AUTO_SYNC_FAILURE_TOAST_ID)
       autoSyncFailureNotifiedRef.current = false
-      toast("同步完成")
+      notify.success("Vault 已同步")
       void refreshFragments()
       void refreshMindMaps()
     } catch (error) {
@@ -683,12 +774,15 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
         setSettingsSection("git")
         setIsVaultGuideOpen(true)
         void refreshFragments()
-        toast(`${"需要完成 Git 配置"}：${getApiErrorMessage(error)}`)
+        notify.warning("同步前需要完成 Git 配置", {
+          description: "已打开 Git 设置。",
+          detail: getApiErrorMessage(error),
+        })
         return
       }
 
-      toast.error(`${"同步失败"}：${getApiErrorMessage(error)}`, {
-        duration: Infinity,
+      notify.failure("同步失败", error, {
+        action: { label: "重试", onClick: () => void handleSync() },
       })
     } finally {
       setIsSyncing(false)
@@ -701,7 +795,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
   async function handleCheckpoint() {
     // 同 handleSync：不 flush 会把旧磁盘内容提交进去
     if (!(await saveLibraryDraftBeforeNavigation())) {
-      toast.error("草稿保存失败，已取消提交", { duration: Infinity })
+      notify.error("草稿保存失败", { description: "已取消提交。" })
       return
     }
     try {
@@ -709,24 +803,27 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
       setGit(result.git)
       switch (result.status) {
         case "committed":
-          toast(`已提交 ${result.changes} 项变更`)
+          notify.success(`${result.changes} 项变更已提交`)
           // 逐文件 gitStatus 来自读取时的脏检测，要整体刷新才会退回 clean
           void refreshFragments()
           void refreshMindMaps()
           break
         case "no_changes":
-          toast("没有需要提交的变更")
+          notify.info("没有需要提交的变更")
           break
         case "blocked":
-          toast(`提交已跳过：${result.reason ?? "有未完成的 Git 操作"}`)
+          notify.warning("提交已跳过", {
+            description: "有未完成的 Git 操作，完成后再提交。",
+            detail: result.reason ?? undefined,
+          })
           break
         case "not_git":
-          toast("当前资料库未启用 Git")
+          notify.info("当前资料库未启用 Git")
           break
       }
     } catch (error) {
-      toast.error(`${"提交失败"}：${getApiErrorMessage(error)}`, {
-        duration: Infinity,
+      notify.failure("提交失败", error, {
+        action: { label: "重试", onClick: () => void handleCheckpoint() },
       })
     }
   }
@@ -868,7 +965,9 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
           currentFragment.id === fragment.id ? fragment : currentFragment
         )
       )
-      toast.error(`${"更新复选框失败"}：${getApiErrorMessage(error)}`, { duration: Infinity })
+      notify.failure("复选框更新失败", error, {
+        description: "勾选状态已还原。",
+      })
     }
   }
 
@@ -902,11 +1001,14 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
         closeEditor()
       }
       if (!fragment.lockbox) await refreshLibraryTree()
-      toast(archived ? "已移入回收站" : "已恢复")
+      notify.success(archived ? "已移入回收站" : "已恢复")
       return true
     } catch (error) {
-      toast.error(`${archived ? "删除失败" : "恢复失败"}：${getApiErrorMessage(error)}`, {
-        duration: Infinity,
+      notify.failure(archived ? "删除失败" : "恢复失败", error, {
+        action: {
+          label: "重试",
+          onClick: () => void archiveFragmentWithFeedback(fragment, archived),
+        },
       })
       return false
     }
@@ -936,7 +1038,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
           )
         )
       )
-      toast(nextPinned ? "已置顶" : "已取消置顶")
+      notify.success(nextPinned ? "已置顶" : "已取消置顶")
     } catch (error) {
       setFragments((current) =>
         sortFragmentsForDisplay(
@@ -945,10 +1047,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
           )
         )
       )
-      toast.error(
-        `${nextPinned ? "置顶失败" : "取消置顶失败"}：${getApiErrorMessage(error)}`,
-        { duration: Infinity }
-      )
+      notify.failure(nextPinned ? "置顶失败" : "取消置顶失败", error)
     }
   }
 
@@ -981,12 +1080,9 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
           ? await convertFragmentToNote(fragment.id)
           : await convertNoteToFragment(fragment.id)
       handleLibraryMutation(result)
-      toast(nextKind === "note" ? "已转为文档" : "已转回碎片")
+      notify.success(nextKind === "note" ? "已转为文档" : "已转回碎片")
     } catch (error) {
-      toast.error(
-        `${nextKind === "note" ? "转为文档失败" : "转回碎片失败"}：${getApiErrorMessage(error)}`,
-        { duration: Infinity }
-      )
+      notify.failure(nextKind === "note" ? "转为文档失败" : "转回碎片失败", error)
     }
   }
 
@@ -1011,7 +1107,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
       if (deriveKind(current.tags) === "note") {
         applyVaultState(state)
         openConvertedDocument(current)
-        toast("已核对：内容已转为文档")
+        notify.success("已转为文档", { description: "核对后确认转换已完成。" })
       } else {
         setConversionNeedsVerification(false)
         setConversionError(`${failureMessage} 已核对：内容仍在碎片中，可以重试。`)
@@ -1038,7 +1134,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
       handleLibraryMutation(result)
       try { localStorage.setItem(`shard.convert-directory:${vaultPath}`, conversionDraft.directory) } catch { /* unavailable storage */ }
       openConvertedDocument(result.fragment)
-      toast("已转为文档")
+      notify.success("已转为文档")
     } catch (error) {
       // A failed transport can follow a successful disk mutation; never retry until its state is known.
       setConversionNeedsVerification(true)
@@ -1074,11 +1170,9 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
           fragment.id === updated.id ? updated : fragment
         )
       )
-      toast.success("已关联")
+      notify.success("已关联")
     } catch (error) {
-      toast.error(`关联失败：${getApiErrorMessage(error)}`, {
-        duration: Infinity,
-      })
+      notify.failure("关联失败", error)
       throw error
     }
   }
@@ -1092,11 +1186,9 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
           fragment.id === updated.id ? updated : fragment
         )
       )
-      toast.success("已移除关联")
+      notify.success("已移除关联")
     } catch (error) {
-      toast.error(`移除关联失败：${getApiErrorMessage(error)}`, {
-        duration: Infinity,
-      })
+      notify.failure("移除关联失败", error)
       throw error
     }
   }
@@ -1104,7 +1196,9 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
   async function handleMoveFragmentToLockbox(fragment: Fragment) {
     if (fragment.lockbox || fragment.archived) return
     if (hasMarkdownImage(fragment.content)) {
-      toast.error(`${"密匣暂不支持图片附件"}：${"请先移除图片，再移入密匣，避免附件留在公开 assets 目录。"}`, { duration: Infinity })
+      notify.error("密匣暂不支持图片", {
+        description: "请先移除图片，再移入密匣。",
+      })
       return
     }
 
@@ -1116,7 +1210,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     if (!lockbox?.configured) {
       setPendingLockboxMoveId(fragment.id)
       openLockboxGate()
-      toast("设置密匣后会移入笔记")
+      notify.info("设置密匣后会移入笔记")
       return
     }
     await moveFragmentIntoLockbox(fragment.id)
@@ -1147,12 +1241,10 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
       applyVaultState(state)
       await refreshLibraryTree()
       closeEditor()
-      toast(successMessage)
+      notify.success(successMessage)
       return true
     } catch (error) {
-      toast.error(`${"移入密匣失败"}：${getApiErrorMessage(error)}`, {
-        duration: Infinity,
-      })
+      notify.failure("移入密匣失败", error)
       return false
     }
   }
@@ -1212,9 +1304,9 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
   }
 
   function showHelp() {
-    toast(
-      `${"帮助"}：${"先在 Inbox 写片段，用 #标签归类。需要持久化和同步时，在设置里选择或创建 vault。"}`
-    )
+    notify.info("快速上手", {
+      description: "在 Inbox 记下碎片，用 #标签归类；在设置里选择或创建 Vault。",
+    })
   }
 
   async function handleSetupLockbox(password: string) {
@@ -1235,7 +1327,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
       return
     }
 
-    toast("密匣已设置")
+    notify.success("密匣已设置")
   }
 
   async function handleUnlockLockbox(password: string) {
@@ -1278,7 +1370,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
 
     setSelectedLockboxTag(null)
     setRoute({ space: "lockbox", params: {} })
-    toast("密匣已解锁")
+    notify.success("密匣已解锁")
   }
 
   function hideLockboxLocally(returnToLibrary: boolean) {
@@ -1305,10 +1397,10 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
       if (!acceptsVaultStateResponse(request, state.vaultPath)) return
       completeVaultPrivacyChange()
       applyVaultState(state)
-      toast("密匣已上锁")
+      notify.success("密匣已上锁")
     } catch (error) {
-      toast.error(`${"密匣上锁失败"}：${getApiErrorMessage(error)}`, {
-        duration: Infinity,
+      notify.failure("密匣上锁失败", error, {
+        action: { label: "重试", onClick: () => void handleLockLockbox() },
       })
     }
   }
@@ -1330,8 +1422,8 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
       completeVaultPrivacyChange()
       applyVaultState(state)
     } catch (error) {
-      toast.error(`密匣上锁失败：${getApiErrorMessage(error)}`, {
-        duration: Infinity,
+      notify.failure("密匣上锁失败", error, {
+        action: { label: "重试", onClick: () => void autoLockLockbox(options) },
       })
     }
   }
@@ -1364,7 +1456,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     completeVaultPrivacyChange()
     applyVaultState(state)
     setLockboxDialogMode(null)
-    toast("密匣密码已修改")
+    notify.success("密匣密码已修改")
   }
 
   async function handleResetLockboxPassword(
@@ -1388,7 +1480,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
       return
     }
 
-    toast("密匣密码已重置")
+    notify.success("密匣密码已重置")
   }
 
   function closeLockboxDialog() {
@@ -1481,14 +1573,13 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     setEditingVariant("inline")
     setEditingFragmentId(null)
     setSelectedLockboxTag(null)
-    setIsMindMapViewActive(false)
 
     if (fragment.lockbox) {
       if (!lockbox?.unlocked) {
         revokeSearchSession("locked")
         // 推门进密匣空间，解锁在空间内的面板里完成
         enterLockboxSpace()
-        toast("请先解锁密匣后查看笔记")
+        notify.info("请先解锁密匣", { description: "解锁后即可查看这篇笔记。" })
         return
       }
 
@@ -1537,7 +1628,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
       (fragment) => fragment.id === fragmentId
     )
     if (!target) {
-      toast("链接目标已不存在")
+      notify.info("链接目标已不存在")
       return
     }
 
@@ -1563,7 +1654,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     )
     setNavigationOrigin({ route, filters: fragmentFilters })
     requestLibraryTarget({ kind: "note", id: created.id, edit: true })
-    toast("文档已保存，来源碎片已保留")
+    notify.success("文档已保存", { description: "来源碎片已保留。" })
     void refreshFragments()
     void refreshLibraryTree()
   }
@@ -1630,7 +1721,6 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     setIsFragmentFilterOpen(false)
     fragmentFilterReturnFocusRef.current = null
     revokeSearchSession("close")
-    setIsMindMapViewActive(false)
     setActiveMindMapId(null)
     setSearchMindMapNavigation(null)
     setNavigationOrigin(null)
@@ -1648,7 +1738,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     const fragmentId = legacySearchSession.resultIds[nextIndex]
     const fragment = fragments.find((candidate) => candidate.id === fragmentId)
     if (!fragment) {
-      toast("这条笔记已不在当前搜索范围中")
+      notify.info("这条笔记已不在搜索结果中")
       return
     }
 
@@ -1680,18 +1770,10 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     })
   }
 
-  async function openMindMap(map?: MindMapSummary) {
+  async function openMindMap(map: MindMapSummary) {
     if (!(await saveLibraryDraftBeforeNavigation())) return
 
     revokeSearchSession("spaceChanged")
-    if (!map) {
-      if (route.space !== "fragments") {
-        setRoute({ space: "fragments", params: {} })
-      }
-      setIsMindMapViewActive(true)
-      return
-    }
-
     setActiveMindMapId(map.id)
   }
 
@@ -1705,7 +1787,6 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     }
     if (!(await saveLibraryDraftBeforeNavigation())) return
 
-    setIsMindMapViewActive(false)
     setNavigationOrigin(null)
     setFragmentSelectionActive(false)
 
@@ -2212,7 +2293,6 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
       if (isModalBusy || !(await saveLibraryDraftBeforeNavigation())) return
 
       revokeSearchSession("spaceChanged")
-      setIsMindMapViewActive(false)
       setRoute({ space: "fragments", params: {} })
       focusComposer()
     }
@@ -2242,7 +2322,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
       .then((synced) => {
         setGit(synced)
         markSynced()
-        toast.dismiss(AUTO_SYNC_FAILURE_TOAST_ID)
+        notify.dismiss(AUTO_SYNC_FAILURE_TOAST_ID)
         autoSyncFailureNotifiedRef.current = false
         void refreshFragments()
         void refreshMindMaps()
@@ -2250,9 +2330,9 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
       .catch((error) => {
         if (!autoSyncFailureNotifiedRef.current) {
           autoSyncFailureNotifiedRef.current = true
-          toast.error(`${"自动同步失败"}：${getApiErrorMessage(error)}`, {
+          notify.failure("自动同步失败", error, {
             id: AUTO_SYNC_FAILURE_TOAST_ID,
-            duration: Infinity,
+            action: { label: "重试", onClick: () => void handleSync() },
           })
         }
       })
@@ -2265,7 +2345,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     enabled: appSettings.autoSyncEnabled,
     intervalMinutes: appSettings.autoSyncIntervalMinutes,
     onDisabled: () => {
-      toast.dismiss(AUTO_SYNC_FAILURE_TOAST_ID)
+      notify.dismiss(AUTO_SYNC_FAILURE_TOAST_ID)
       autoSyncFailureNotifiedRef.current = false
     },
     tickRef: autoSyncTickRef,
@@ -2332,7 +2412,9 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
           setIsClosing(true)
           const drafts = librarySaveHandlerRef.current
           drafts?.setInteractionBlocked(true)
-          toast.loading("正在保存并退出…", { id: "window-close" })
+          notify.progress("正在保存并退出", { id: "window-close" })
+          // 失败提示沿用同一 id 替换进行中提示，finally 里不能再把它关掉
+          let closeFailed = false
           try {
             const flushed =
               (await drafts?.flush()) ?? true
@@ -2351,12 +2433,16 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
             ])
             await currentWindow.destroy()
           } catch (error) {
-            toast.error(`退出未完成，当前窗口已保留：${getApiErrorMessage(error)}`)
+            closeFailed = true
+            notify.failure("退出失败", error, {
+              id: "window-close",
+              description: "当前窗口已保留。",
+            })
           } finally {
             closing = false
             drafts?.setInteractionBlocked(false)
             setIsClosing(false)
-            toast.dismiss("window-close")
+            if (!closeFailed) notify.dismiss("window-close")
           }
         })
         if (disposed) stop()
@@ -2509,7 +2595,6 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
             <SidebarNav
               fragments={publicOnlyFragments}
               isCollapsed={false}
-              mindMapViewActive={isMindMapViewActive}
               onOpenSearch={openSearch}
               onRouteChange={handleRouteChange}
               onToggleCollapsed={() => {
@@ -2560,11 +2645,6 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
               onOpenMindMap: (map) => void openMindMap(map),
               onOpenFragmentZen: openZenEditor,
               onOpenZen: openZenDraft,
-            }}
-            isMindMapViewActive={isMindMapViewActive}
-            mindMapPanel={{
-              onMapsChange: setMindMaps,
-              onOpenMap: setActiveMindMapId,
             }}
             searchContextBar={searchContextBarProps}
             filterContext={<FragmentFilterContext filters={fragmentFilters} onClear={() => void applyFragmentFilters(EMPTY_FRAGMENT_FILTERS)} />}
@@ -2666,7 +2746,6 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
           <BottomTabs
             fragments={publicOnlyFragments}
             onHelp={showHelp}
-            onOpenMindMaps={() => openMindMap()}
             onOpenSearch={openSearch}
             onOpenSettings={() => openSettings("vault")}
             onRouteChange={handleRouteChange}
@@ -2685,7 +2764,6 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
             onCheckpoint={() => void handleCheckpoint()}
             onHelp={showHelp}
             onOpenGitSettings={() => openSettings("git")}
-            onOpenMindMaps={() => openMindMap()}
             onOpenSettings={() => openSettings("vault")}
             onShortcuts={showShortcuts}
             onSync={() => void handleSync()}

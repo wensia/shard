@@ -370,9 +370,14 @@ test("palette is available in standalone mindmap workspace", async ({
 }) => {
   await installSearchPaletteFixture(page);
   await page.goto("/");
-  await page.locator("[data-shard-utility-menu-trigger]:visible").click();
-  await page.getByRole("menuitem", { name: "思维导图", exact: true }).click();
-  await page.getByLabel("打开思维导图：T07 独立导图", { exact: true }).click();
+  const composer = page.locator('[data-shard-editor="composer"] .ProseMirror');
+  await composer.click();
+  await page.keyboard.type("[[T07 独立导图");
+  await expect(
+    page.getByRole("listbox", { name: "双链建议" }).getByRole("option", { name: /T07 独立导图/ }),
+  ).toHaveCount(1);
+  await page.keyboard.press("Enter");
+  await composer.locator(".shard-rich-wikilink", { hasText: "T07 独立导图" }).click();
   await expect(
     page.getByRole("button", { name: "退出思维导图", exact: true }),
   ).toBeVisible();

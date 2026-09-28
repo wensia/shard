@@ -50,18 +50,50 @@
   max-width: 620px;
 }
 
-.panelFull {
-  max-height: min(84dvh, 640px);
-  min-height: min(84dvh, 520px);
-  max-width: 760px;
+/* 完整设置：Tolaria 式版面——顶部标题栏，下方左侧锚点导航 + 右侧单页滚动。
+   面板落在画布色上，分组卡片用白色表面托起（与 Tolaria 的 background / card 分层一致）。 */
+.panelSettings {
+  background: var(--background);
+}
+
+.settingsHeader {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  border-bottom: 1px solid var(--border);
+  padding: var(--space-3) var(--space-4) var(--space-3) var(--space-6);
+}
+
+.settingsTitle {
+  font-size: var(--text-page-title);
+  line-height: 24px;
+  font-weight: 600;
+}
+
+.settingsBody {
+  display: flex;
+  min-height: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
 }
 
 @media (min-width: 768px) {
-  .panelFull {
-    display: grid;
-    grid-template-columns: 168px minmax(0, 1fr);
-    grid-template-rows: minmax(0, 1fr);
+  .settingsBody {
+    flex-direction: row;
   }
+}
+
+.settingsScroll {
+  container: settings-content / inline-size;
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 0 var(--space-6) var(--space-6);
+  /* 键盘聚焦触发的滚动给焦点环留出余量，不让它贴着视口边被裁掉 */
+  scroll-padding-block: var(--space-4);
 }
 
 .headerBlock {
@@ -74,11 +106,6 @@
 .sectionPad {
   border-bottom: 1px solid var(--border);
   padding: var(--shard-space-5) var(--shard-space-6);
-}
-
-.sectionPadCompact {
-  border-bottom: 1px solid var(--border);
-  padding: var(--shard-space-3) var(--shard-space-6);
 }
 
 .mainScroll {
@@ -94,39 +121,23 @@
 /* ---------- Sidebar nav (settings dialog) ---------- */
 
 .navRail {
+  --shard-focus-offset: -2px;
   display: flex;
   flex-shrink: 0;
-  gap: var(--shard-space-1);
+  gap: var(--space-1);
   overflow-x: auto;
   border-bottom: 1px solid var(--border);
-  background: var(--sidebar);
-  padding: var(--shard-space-2);
+  padding: var(--space-2);
 }
 
 @media (min-width: 768px) {
   .navRail {
+    width: 208px;
     flex-direction: column;
     overflow: visible;
     border-bottom: none;
     border-right: 1px solid var(--border);
-    padding: var(--shard-space-3);
-  }
-}
-
-.navEyebrow {
-  display: none;
-  padding: var(--shard-space-1) var(--shard-space-3) var(--shard-space-2);
-  font-size: 11px;
-  line-height: 16px;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--muted-foreground);
-}
-
-@media (min-width: 768px) {
-  .navEyebrow {
-    display: block;
+    padding: var(--space-3);
   }
 }
 
@@ -135,7 +146,7 @@
   flex-shrink: 0;
   align-items: center;
   gap: var(--shard-space-2);
-  height: 36px;
+  height: var(--control-height);
   border-radius: var(--shard-radius-control);
   border: none;
   padding-inline: var(--shard-space-3);
@@ -150,6 +161,17 @@
 .navButton:hover {
   background: color-mix(in srgb, var(--sidebar-accent) 55%, transparent);
   color: var(--sidebar-foreground);
+}
+
+.navButton[aria-current="true"] {
+  background: var(--sidebar-accent);
+  color: var(--sidebar-accent-foreground);
+}
+
+.navLabel {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* ---------- Rail (folder / git / remote) status row ---------- */
@@ -219,23 +241,17 @@
 
 .themeGrid {
   display: grid;
-  gap: var(--shard-space-2);
-  margin-top: var(--shard-space-3);
-}
-
-@media (min-width: 640px) {
-  .themeGrid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
+  width: 100%;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-2);
 }
 
 .themeButton {
   display: grid;
-  grid-template-columns:
-    var(--shard-space-6) minmax(0, 1fr) var(--shard-space-4);
+  grid-template-columns: var(--space-4) minmax(0, 1fr) var(--space-4);
   align-items: center;
-  gap: var(--shard-space-3);
-  min-height: calc(var(--shard-space-8) + var(--shard-space-3));
+  gap: var(--space-2);
+  height: var(--control-height);
   border-radius: var(--shard-radius-control);
   border: 1px solid var(--border);
   background: var(--background);
@@ -259,8 +275,8 @@
 }
 
 .themeSwatch {
-  width: var(--shard-space-6);
-  height: var(--shard-space-6);
+  width: var(--space-4);
+  height: var(--space-4);
   border-radius: var(--shard-radius-control);
   border: 1px solid color-mix(in srgb, var(--foreground) 13%, transparent);
 }
@@ -274,27 +290,6 @@
 :global(.dark) .themeSwatch[data-accent="teal"] { background: var(--palette-dark-teal); }
 :global(.dark) .themeSwatch[data-accent="peacock"] { background: var(--palette-dark-peacock); }
 :global(.dark) .themeSwatch[data-accent="amber"] { background: var(--palette-dark-amber); }
-
-.modeGrid {
-  display: grid;
-  gap: var(--shard-space-2);
-  margin-top: var(--shard-space-3);
-}
-
-@media (min-width: 640px) {
-  .modeGrid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-}
-
-.modeIcon {
-  justify-self: center;
-  color: var(--muted-foreground);
-}
-
-.themeButton[aria-pressed="true"] .modeIcon {
-  color: var(--primary-text);
-}
 
 .themeLabel {
   overflow: hidden;
@@ -350,27 +345,50 @@
   opacity: var(--shard-alpha-55);
 }
 
-.intervalButton {
-  height: 32px;
-  border-radius: var(--shard-radius-control);
-  border: 1px solid var(--border);
-  padding-inline: var(--shard-space-3);
-  font-size: 12px;
+/* ---------- 设置行里的小件：状态点、行内表单、忙碌提示、快捷键 ---------- */
+
+.statusIndicator {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-body);
+  line-height: 20px;
   font-weight: 500;
+  white-space: nowrap;
+}
+
+.statusDot {
+  width: var(--space-2);
+  height: var(--space-2);
+  flex-shrink: 0;
+  border-radius: var(--radius-pill);
+}
+
+.inlineForm {
+  display: flex;
+  width: 100%;
+  gap: var(--space-2);
+}
+
+.inlineForm > :first-child {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.busyLine {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-body);
+  line-height: 20px;
   color: var(--muted-foreground);
-  background: transparent;
-  cursor: pointer;
-  transition: border-color 150ms ease-out, color 150ms ease-out;
 }
 
-.intervalButton:hover:not(:disabled) {
-  border-color: var(--ring);
-  color: var(--foreground);
-}
-
-.intervalButton:disabled {
-  pointer-events: none;
-  opacity: var(--shard-alpha-55);
+.kbdGroup {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--space-1);
 }
 
 /* ---------- Icon animations (used to be Tailwind's animate-spin/pulse) ---------- */

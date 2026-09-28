@@ -452,7 +452,7 @@ for (const mode of ["save-failure", "deferred-save-failure"] as const) {
         globalThis as typeof globalThis & { __SHARD_RESOLVE_FRAGMENT_SAVE__: () => void }
       ).__SHARD_RESOLVE_FRAGMENT_SAVE__())
     }
-    await expect(page.getByText(/自动保存失败：.*模拟碎片正文写入失败/u).first()).toBeVisible()
+    await expect(page.locator("[data-sonner-toast]").filter({ hasText: "片段自动保存失败" }).first()).toBeVisible()
     await expect(page.getByRole("toolbar", { name: "碎片批量操作" })).toBeHidden()
     await expect(page.getByRole("checkbox", { name: /选择片段：/u })).toHaveCount(0)
     await expect(page.locator('[data-shard-editor="fragment:fragment-first"]')).toBeVisible()

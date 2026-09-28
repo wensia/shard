@@ -203,6 +203,23 @@ for (const file of walk(SRC)) {
   });
 }
 
+// ── 消息通知单一入口（kiln Toast / Feedback）────────────────────
+// 业务代码只能经 src/lib/notify.tsx 发通知；直接调用 sonner 会绕过文案结构、
+// 默认时长与同标题合并，旧的「标题拼错误原文」写法就是这样回来的。硬失败，不进基线。
+const NOTIFY_INFRA = new Set([
+  "src/lib/notify.tsx",
+  "src/components/ui/notice.tsx",
+  "src/components/ui/sonner.tsx",
+]);
+for (const file of walk(SRC)) {
+  const rel = relative(REPO, file);
+  if (NOTIFY_INFRA.has(rel)) continue;
+  const source = readFileSync(file, "utf8");
+  if (/from\s+["']sonner["']/.test(source)) {
+    fail(`${rel} 直接引用了 sonner —— 通知一律走 notify（src/lib/notify.tsx）。`);
+  }
+}
+
 // CSS 侧的图标描边扫描独立于 ts/tsx 主循环 —— 不把主循环扩到 .css，
 // 是为了避免 hex 检查突然吞下整个样式层、基线爆炸。
 const walkCss = (dir) => {

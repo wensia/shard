@@ -163,6 +163,46 @@ test.describe("速记框富文本", () => {
     await expect(proseMirror(page).locator(":scope > p.is-empty:only-child")).toHaveCount(1)
   })
 
+  for (const height of [720, 480]) {
+    for (const breaks of [1, 2, 3]) {
+      test(`正文按 ${breaks} 次 Enter 后，碎片流与重开编辑保持行距（高度 ${height}）`, async ({ page }) => {
+        await page.setViewportSize({ width: 1280, height })
+        await typeEditor(page, "composer", "始于欲望")
+        for (let index = 0; index < breaks; index += 1) await page.keyboard.press("Enter")
+        await typeEditor(page, "composer", "终究要为它赎罪")
+        const editorSpacing = await proseMirror(page).evaluate((element) => {
+          const paragraphs = element.querySelectorAll("p")
+          return (paragraphs[paragraphs.length - 1].getBoundingClientRect().top - paragraphs[0].getBoundingClientRect().top)
+            / Number.parseFloat(getComputedStyle(element).lineHeight)
+        })
+        expect(editorSpacing).toBeCloseTo(breaks, 1)
+
+        await submitComposer(page)
+        const target = page.locator('[data-shard-fragment-id="rich-created-1"]')
+        const body = target.locator('.shard-fragment-content')
+        await expect(body).toContainText("终究要为它赎罪")
+        const cardSpacing = await body.evaluate((element) => {
+          const lines = Array.from(element.querySelectorAll('[data-markdown-search-block="text"]'))
+            .filter((line) => line.textContent?.includes("始于欲望") || line.textContent?.includes("终究要为它赎罪"))
+          return (lines[1].getBoundingClientRect().top - lines[0].getBoundingClientRect().top)
+            / Number.parseFloat(getComputedStyle(element).lineHeight)
+        })
+        expect(cardSpacing).toBeCloseTo(editorSpacing, 1)
+
+        await target.getByRole("button", { name: "片段操作", exact: true }).click()
+        await page.getByRole("menuitem", { name: "编辑", exact: true }).click()
+        const reopened = page.locator('[data-shard-editor="fragment:rich-created-1"] .ProseMirror')
+        await expect(reopened.locator("p")).toHaveCount(breaks + 1)
+        const reopenedSpacing = await reopened.evaluate((element) => {
+          const paragraphs = element.querySelectorAll("p")
+          return (paragraphs[paragraphs.length - 1].getBoundingClientRect().top - paragraphs[0].getBoundingClientRect().top)
+            / Number.parseFloat(getComputedStyle(element).lineHeight)
+        })
+        expect(reopenedSpacing).toBeCloseTo(editorSpacing, 1)
+      })
+    }
+  }
+
   test("输入 `- ` 前缀转成列表，提交写回 `- 项`", async ({ page }) => {
     await typeEditor(page, "composer", "- 项")
 

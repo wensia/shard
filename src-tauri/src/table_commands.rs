@@ -427,7 +427,9 @@ mod tests {
         );
         let oversized_bytes = create_request(902, &"😀".repeat(60), "notes");
         assert_eq!(
-            create_in_vault(vault, &oversized_bytes).unwrap_err().message,
+            create_in_vault(vault, &oversized_bytes)
+                .unwrap_err()
+                .message,
             "名称占用空间过长，请减少部分字符。"
         );
         let title = format!("{}abc.shardtable.json", "😀".repeat(59));

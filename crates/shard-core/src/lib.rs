@@ -26,6 +26,8 @@ pub const LIBRARY_FILENAME_MAX_BYTES: usize = 255;
 #[serde(rename_all = "camelCase")]
 pub struct AppConfig {
     pub vault_path: Option<String>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub cli_install_declined: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
@@ -401,5 +403,24 @@ mod tests {
     fn rejects_empty_fragment() {
         let vault = tempfile::tempdir().unwrap();
         assert!(create_public_fragment_in_vault(vault.path(), "  \n", vec![], "cli").is_err());
+    }
+
+    #[test]
+    fn app_config_keeps_cli_install_preference_backward_compatible() {
+        let legacy: AppConfig = serde_yaml::from_str("vaultPath: /tmp/vault\n").unwrap();
+        assert_eq!(legacy.vault_path.as_deref(), Some("/tmp/vault"));
+        assert!(!legacy.cli_install_declined);
+
+        let default_yaml = serde_yaml::to_string(&legacy).unwrap();
+        assert!(default_yaml.contains("vaultPath: /tmp/vault"));
+        assert!(!default_yaml.contains("cliInstallDeclined"));
+
+        let declined = AppConfig {
+            vault_path: Some("/tmp/vault".to_string()),
+            cli_install_declined: true,
+        };
+        let declined_yaml = serde_yaml::to_string(&declined).unwrap();
+        assert!(declined_yaml.contains("vaultPath: /tmp/vault"));
+        assert!(declined_yaml.contains("cliInstallDeclined: true"));
     }
 }

@@ -139,6 +139,21 @@ export interface GithubCliInfo {
   error: string | null
 }
 
+export type CliInstallState =
+  | "installed"
+  | "notInstalled"
+  | "needsShellConfig"
+  | "conflict"
+  | "unavailable"
+
+export interface CliInstallStatus {
+  state: CliInstallState
+  linkPath: string | null
+  shellConfigPath: string | null
+  message: string | null
+  declined: boolean
+}
+
 export interface MindMapSummary {
   id: string
   title: string

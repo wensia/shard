@@ -1652,7 +1652,7 @@ test("文件名失焦改名失败时，松开返回按钮仍保留可修正的�
   await input.fill("已有导图")
   await page.getByRole("button", { name: "返回所在目录", exact: true }).hover()
   await page.mouse.down()
-  await expect(page.getByText("重命名失败：目标名称已存在。", { exact: true })).toBeVisible()
+  await expect(page.locator('[data-sonner-toast][data-type="error"]').filter({ hasText: "重命名失败" })).toBeVisible()
   await page.mouse.up()
   await expect(input).toBeVisible()
   await expect(input).toHaveValue("已有导图")
@@ -1705,7 +1705,7 @@ test("思维导图标题改名保存失败或名称冲突时保留草稿与输�
   const input = page.getByRole("textbox", { name: "重命名名称", exact: true })
   await input.fill("已有导图")
   await input.press("Enter")
-  await expect(page.getByText(/保存思维导图失败：导图重命名测试：保存失败/u)).toBeVisible()
+  await expect(page.locator("[data-sonner-toast]").filter({ hasText: "思维导图保存失败" })).toHaveAttribute("data-type", "error")
   await expect(input).toBeEnabled()
   await expect(input).toHaveValue("已有导图")
   await expect(branch).toHaveValue("失败后仍需保留的草稿")
@@ -1714,7 +1714,7 @@ test("思维导图标题改名保存失败或名称冲突时保留草稿与输�
 
   await page.evaluate(() => { (window as MindMapRenameRuntime).__mindMapRename.failSave = false })
   await input.press("Enter")
-  await expect(page.getByText("重命名失败：目标名称已存在。", { exact: true })).toBeVisible()
+  await expect(page.locator('[data-sonner-toast][data-type="error"]').filter({ hasText: "重命名失败" })).toBeVisible()
   await expect(input).toBeEnabled()
   await expect(input).toHaveValue("已有导图")
   await expect(branch).toHaveValue("失败后仍需保留的草稿")
@@ -1769,25 +1769,12 @@ test("碎片禅编辑器仍可打开并通过 Escape 关闭", async ({ page }) =
   await expect(fragmentCard).toBeVisible()
 })
 
-test("思维导图管理从更多操作打开并保留原有全屏工作区", async ({ page }) => {
+test("更多操作菜单不再提供思维导图入口", async ({ page }) => {
   const sidebar = page.getByRole("navigation", { name: "工作台导航" })
   await expect(sidebar.getByRole("button", { name: /思维导图/ })).toHaveCount(0)
   await page.locator("[data-shard-utility-menu-trigger]:visible").click()
-  await page.getByRole("menuitem", { name: "思维导图", exact: true }).click()
-  await expect(page.getByRole("button", { name: "新建", exact: true })).toBeVisible()
-  await page.getByLabel("打开思维导图：项目导图", { exact: true }).click()
-
-  const exitButton = page.getByRole("button", {
-    name: "退出思维导图",
-    exact: true,
-  })
-  await expect(exitButton).toBeVisible()
-  await expect(page.getByLabel("思维导图编辑器", { exact: true })).toBeVisible()
-  await expect(sidebar).toHaveCount(0)
-
-  await exitButton.click()
-  await expect(exitButton).toHaveCount(0)
-  await expect(sidebar).toBeVisible()
+  await expect(page.getByRole("menuitem", { name: "设置", exact: true })).toBeVisible()
+  await expect(page.getByRole("menuitem", { name: "思维导图", exact: true })).toHaveCount(0)
 })
 
 test("资料库文档粘贴图片会调用共享上传命令", async ({ page }) => {
@@ -1890,7 +1877,7 @@ test("转回碎片已移动后响应丢失会核对当前类型，不重试转�
   await page.getByRole("button", { name: "旧笔记.md 操作", exact: true }).click()
   await page.getByRole("menuitem", { name: "转回碎片", exact: true }).click()
 
-  await expect(page.getByText("已核对：内容已转回碎片", { exact: true })).toBeVisible()
+  await expect(page.locator('[data-sonner-toast][data-type="success"]').filter({ hasText: "内容已转回碎片" })).toBeVisible()
   const fragment = page.locator('[data-shard-fragment-id="note-old"]')
   await expect(fragment).toBeVisible()
   await expect(fragment).toContainText("保留这段最新正文")
@@ -2250,7 +2237,7 @@ test("新建前保存失败会保留原笔记草稿且不创建文件", async ({
   })
   await fillEditor(page, "library:note-old", "# 保留草稿\n\n尚未保存")
   await createLibraryEntry(page, "新建文档")
-  await expect(page.getByText(/新建文档测试：保存失败/u).first()).toBeVisible()
+  await expect(page.locator('[data-sonner-toast][data-type="error"]').filter({ hasText: "文档保存失败" })).toBeVisible()
   await expect.poll(() => readEditor(page, "library:note-old")).toBe("# 保留草稿\n\n尚未保存")
   await expect(page.getByRole("button", { name: "重命名文件", exact: true })).toHaveText("旧笔记")
   expect(await commandCalls(page, "create_library_note")).toHaveLength(0)
@@ -2353,7 +2340,7 @@ test("重命名批量更新旧 wikilink 后仍可从别名链接导航", async (
   })
   await renameInput.fill("新笔记")
   await renameInput.press("Enter")
-  await expect(page.getByText("已更新 1 处双链引用", { exact: true })).toBeVisible()
+  await expect(page.locator('[data-sonner-toast][data-type="success"]').filter({ hasText: "1 处双链引用已更新" })).toBeVisible()
   expect((await commandCalls(page, "rename_library_entry"))[0].args).toEqual({
     newName: "新笔记",
     path: "notes/旧笔记.md",
@@ -2632,7 +2619,7 @@ test("重复退出请求不能越过正在执行的检查点，关闭失败后�
   await page.evaluate(() => (window as unknown as { __tableCloseTest: { close(): Promise<void> } }).__tableCloseTest.close())
   expect(await page.evaluate(() => (window as unknown as { __tableCloseTest: { destroyed: number } }).__tableCloseTest.destroyed)).toBe(0)
   await page.evaluate(() => (window as unknown as { __tableCloseTest: { release(): void } }).__tableCloseTest.release())
-  await expect(page.getByText(/退出未完成，当前窗口已保留/)).toBeVisible()
+  await expect(page.locator('[data-sonner-toast][data-type="error"]').filter({ hasText: "退出失败" }).filter({ hasText: "当前窗口已保留。" })).toBeVisible()
   await expect(page.locator("main[inert]")).toHaveCount(0)
   await page.evaluate(async () => {
     const state = (window as unknown as { __tableCloseTest: { close(): Promise<void>; failDestroy: boolean } }).__tableCloseTest
@@ -2673,12 +2660,12 @@ test("表格无效数字草稿阻止手动同步与检查点调用", async ({ pa
   const statusBar = page.getByRole("contentinfo", { name: "状态栏" })
 
   await statusBar.getByRole("button", { name: "同步", exact: true }).click()
-  await expect(page.getByText("草稿保存失败，已取消同步", { exact: true })).toBeVisible()
+  await expect(page.locator('[data-sonner-toast][data-type="error"]').filter({ hasText: "草稿保存失败" }).filter({ hasText: "已取消同步。" })).toBeVisible()
   expect(await commandCalls(page, "sync_vault")).toHaveLength(syncCallsBefore)
   await expect(editor).toHaveValue("同步前的无效数字草稿")
 
   await statusBar.getByRole("button", { name: "未提交更改", exact: true }).click()
-  await expect(page.getByText("草稿保存失败，已取消提交", { exact: true })).toBeVisible()
+  await expect(page.locator('[data-sonner-toast][data-type="error"]').filter({ hasText: "草稿保存失败" }).filter({ hasText: "已取消提交。" })).toBeVisible()
   expect(await page.evaluate(() => (window as unknown as { __tableCloseTest: { checkpoints: number } }).__tableCloseTest.checkpoints)).toBe(checkpointsBefore)
   await expect(workspace).toBeVisible()
   await expect(editor).toHaveValue("同步前的无效数字草稿")
@@ -2906,7 +2893,10 @@ test("笔记保存失败时文档链接不跳走，成功后按稳定 ID 打开�
   await page.evaluate(() => { (window as any).__diagramLinks.failNoteSave = true })
   await page.locator('[data-shard-editor="library:note-old"] a[href="shard://map/map-project"]').click()
   await expect(page.getByRole("textbox", { name: "资料库文档编辑器" })).toBeVisible()
-  await expect(page.getByText(/文档跳转测试：笔记保存失败/u).first()).toBeVisible()
+  const saveFailure = page.locator('[data-sonner-toast][data-type="error"]').filter({ hasText: "文档保存失败" })
+  await expect(saveFailure).toBeVisible()
+  await saveFailure.getByRole("button", { name: "详情", exact: true }).click()
+  await expect(saveFailure).toContainText("文档跳转测试：笔记保存失败")
   await page.evaluate(() => { (window as any).__diagramLinks.failNoteSave = false })
   await page.locator('[data-shard-editor="library:note-old"] a[href="shard://map/map-project"]').click()
   await expect(page.getByRole("textbox", { name: "资料库文档编辑器" })).toHaveCount(0)

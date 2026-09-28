@@ -328,7 +328,7 @@ test("保存失败保留可编辑草稿，碎片流没有出现过临时卡片",
   const before = await readLifecycle(page)
   await submitDraft(page)
   await resolveCreate(page, "磁盘暂时不可写")
-  await expect(page.getByText("创建片段失败：磁盘暂时不可写", { exact: true })).toBeVisible()
+  await expect(page.locator('[data-sonner-toast][data-type="error"]').filter({ hasText: "碎片保存失败" })).toBeVisible()
   await expect(page.getByRole("button", { name: "保存片段", exact: true })).toBeEnabled()
   await expect(page.locator('[data-shard-editor="composer"] .ProseMirror')).toBeFocused()
   expect(await readEditor(page, "composer")).toBe(newContent)

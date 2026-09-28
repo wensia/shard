@@ -138,9 +138,9 @@ source: desktop
 
 ## 终端快捷创建
 
-```bash
-pnpm install:cli            # 构建并安装到 ~/.local/bin/shard（PREFIX 可覆盖）
+安装 Shard.app 并首次启动后，App 会自动安装 `shard` 终端命令。仅当需要向 shell 配置加入 PATH 时，App 才会先征求确认；也可以在设置的「终端命令」中查看状态或卸载。
 
+```bash
 shard 今天心情很好
 shard #备忘 /任务列表 买咖啡   # 前导 #标签 与 /块命令，其余是正文
 pbpaste | shard #摘录          # 没有内容参数时读标准输入
@@ -150,6 +150,8 @@ pbpaste | shard #摘录          # 没有内容参数时读标准输入
 - 资料库依次取 `--vault`、`SHARD_VAULT`、App 设置里的资料库、`~/Documents/ShardVault`。
 - 只写文件（`source: cli`），提交交给 App 的检查点；App 运行中切回窗口即可看到新碎片。
 - bash 等把 `#` 当注释的 shell 里给标签加引号，或用全角 `＃备忘`。`#密匣` 只能在 App 中保存。
+
+开发者可以运行 `pnpm install:cli` 在本地构建并安装 CLI；该脚本仅用于开发，默认安装到 `~/.local/bin/shard`，也可以通过 `PREFIX` 覆盖安装目录。
 
 ## Design
 

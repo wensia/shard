@@ -1,5 +1,4 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
-import { toast } from "sonner"
 import { Trash2Icon, XIcon } from "@/components/icons"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
@@ -9,6 +8,7 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { SelectControl } from "@/components/ui/select"
 import { emptyTrash, getApiErrorMessage, purgeFromTrash, restoreFromTrash } from "@/lib/api"
 import { isTypeTag } from "@/lib/content-kind"
+import { notify } from "@/lib/notify"
 import { libraryDirectoryOptions, type FragmentFilters } from "@/lib/fragment-space"
 import type { Fragment, LibraryMutationResult, LibraryTreeEntry } from "@/types"
 
@@ -141,12 +141,16 @@ export function FragmentTrashWorkspace({ entries, fragments, loading, targetId, 
         : action === "purge" ? await purgeFromTrash(entry!.path) : await restoreFromTrash(entry!.path)
       onMutation(result)
       setPending(null)
-      toast(action === "restore" ? "碎片已恢复" : action === "empty" ? "碎片回收站已清空" : "碎片已永久删除")
+      notify.success(action === "restore" ? "碎片已恢复" : action === "empty" ? "碎片回收站已清空" : "碎片已永久删除")
       if (action === "restore") onRestored(fragments.find(fragment => fragment.path === entry?.path)?.id)
     } catch (failure) {
       const message = getApiErrorMessage(failure)
       setError(message)
-      if (action === "restore") toast.error(`恢复失败：${message}`)
+      if (action === "restore") {
+        notify.failure("碎片恢复失败", failure, {
+          action: { label: "重试", onClick: () => void mutate("restore", entry) },
+        })
+      }
     } finally { setBusy(false) }
   }
   return <section aria-label="碎片回收站" className="flex h-full min-h-0 flex-col overflow-hidden bg-background" aria-busy={busy || loading}>

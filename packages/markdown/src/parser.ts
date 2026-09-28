@@ -1,4 +1,5 @@
 import { parseMarkdownTable, parseMarkdownTableRow, type MarkdownTable } from "./core/table.js"
+import { markdownParser } from "./core/syntax.js"
 import {
   getTagRanges,
   isMarkdownHorizontalRuleLine,
@@ -91,7 +92,7 @@ export interface ParsedMarkdownDocument {
 export type ParsedMarkdown = ParsedMarkdownContent | ParsedMarkdownDocument
 export type MarkdownParseRequest =
   | { kind: "document"; content: string }
-  | { kind: "content"; content: string; hideTags?: boolean; renderImages?: boolean }
+  | { kind: "content"; content: string; hideTags?: boolean; renderImages?: boolean; compactParagraphs?: boolean }
 
 export function parseMarkdown(request: MarkdownParseRequest): ParsedMarkdown {
   return request.kind === "document"
@@ -174,11 +175,13 @@ export function parseMarkdownDocument(content: string): ParsedMarkdownDocument {
 
 export function parseMarkdownContent(
   content: string,
-  options: { hideTags?: boolean; renderImages?: boolean } = {}
+  options: { hideTags?: boolean; renderImages?: boolean; compactParagraphs?: boolean } = {}
 ): ParsedMarkdownContent {
   const lines = content.split("\n")
+  const paragraphSeparators = options.compactParagraphs ? findParagraphSeparators(content) : new Set<number>()
   const blocks: MarkdownContentBlock[] = []
   let lastVisibleIndex = -1
+  let lineOffset = 0
   // Lex each row once. Every table candidate references this shared array instead
   // of reparsing/copying its entire suffix (delimiter-only tables may overlap).
   const rows = lines.map(parseMarkdownTableRow)
@@ -190,6 +193,10 @@ export function parseMarkdownContent(
   for (let index = 0; index < lines.length; index += 1) {
     const source = lines[index]
     const line = parseContentLine(source, index, options)
+    // Consume only the Markdown paragraph delimiter. Keep source line indexes
+    // intact for task toggles, and keep any additional intentional blank lines.
+    if (paragraphSeparators.has(lineOffset)) line.hidden = true
+    lineOffset += source.length + 1
     if (!line.hidden) lastVisibleIndex = index
     const fence = source.match(FENCE_PATTERN)
     const fenceEnd = fence ? findFenceEnd(lines, index) : -1
@@ -212,6 +219,26 @@ export function parseMarkdownContent(
     }
   }
   return { kind: "content", blocks, lastVisibleIndex }
+}
+
+function findParagraphSeparators(content: string): Set<number> {
+  const separators = new Set<number>()
+  const tree = markdownParser.parse(content)
+  for (let node = tree.topNode.firstChild; node; node = node.nextSibling) {
+    const previous = node.prevSibling
+    if (node.name !== "Paragraph" || previous?.name !== "Paragraph") continue
+    // Standalone images and embeds use their own block geometry.
+    const isMedia = (from: number, to: number) => {
+      const source = content.slice(from, to).trim()
+      return Boolean(parseMarkdownImageLine(source)) || /^!\[\[[^\n]+\]\]$/u.test(source)
+    }
+    if (isMedia(previous.from, previous.to) || isMedia(node.from, node.to)) continue
+    const gap = content.slice(previous.to, node.from)
+    if (/^[\t \r]*\n[\t \r]*\n/u.test(gap)) {
+      separators.add(content.indexOf("\n", previous.to) + 1)
+    }
+  }
+  return separators
 }
 
 /** Scanning stops at the next fence line, so the total work stays linear in the document. */

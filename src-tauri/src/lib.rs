@@ -34,6 +34,7 @@ use std::{
 };
 use tauri::Manager;
 
+mod cli_install;
 mod table;
 mod canvas_commands;
 mod table_commands;
@@ -508,6 +509,68 @@ where
     tauri::async_runtime::spawn_blocking(operation)
         .await
         .map_err(|error| format!("后台任务失败：{error}"))?
+}
+
+#[tauri::command]
+async fn cli_install_status(
+    app: tauri::AppHandle,
+) -> Result<cli_install::CliInstallStatus, String> {
+    run_blocking(move || {
+        let config = read_app_config(&app)?;
+        let environment = cli_install::system_environment()?;
+        Ok(cli_install::install_status(
+            &environment,
+            config.cli_install_declined,
+        ))
+    })
+    .await
+}
+
+#[tauri::command]
+async fn install_cli(
+    app: tauri::AppHandle,
+    allow_shell_config: bool,
+) -> Result<cli_install::CliInstallStatus, String> {
+    run_blocking(move || {
+        let mut config = read_app_config(&app)?;
+        let environment = cli_install::system_environment()?;
+        let mut status = cli_install::install(
+            &environment,
+            allow_shell_config,
+            config.cli_install_declined,
+        )?;
+        if status.state == cli_install::CliInstallState::Installed {
+            config.cli_install_declined = false;
+            write_app_config(&app, &config)?;
+            status.declined = false;
+        }
+        Ok(status)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn uninstall_cli(app: tauri::AppHandle) -> Result<cli_install::CliInstallStatus, String> {
+    run_blocking(move || {
+        let mut config = read_app_config(&app)?;
+        let environment = cli_install::system_environment()?;
+        let mut status = cli_install::uninstall(&environment, true)?;
+        config.cli_install_declined = true;
+        write_app_config(&app, &config)?;
+        status.declined = true;
+        Ok(status)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn set_cli_install_declined(app: tauri::AppHandle, declined: bool) -> Result<(), String> {
+    run_blocking(move || {
+        let mut config = read_app_config(&app)?;
+        config.cli_install_declined = declined;
+        write_app_config(&app, &config)
+    })
+    .await
 }
 
 /// 门内不可重入：持门代码不得再调用本函数（会自死锁）。
@@ -6516,6 +6579,10 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             search_commands::search_vault,
             search_commands::read_search_target,
+            cli_install_status,
+            install_cli,
+            uninstall_cli,
+            set_cli_install_declined,
             table_commands::create_table,
             canvas_commands::create_canvas,
             canvas_commands::read_canvas,

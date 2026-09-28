@@ -8,7 +8,6 @@ import {
   XIcon,
 } from "@/components/icons"
 import { useEffect, useMemo, useState } from "react"
-import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -30,9 +29,9 @@ import {
 } from "@/lib/fragment-export-image"
 import {
   copyExportedImage,
-  getApiErrorMessage,
   saveExportedImage,
 } from "@/lib/api"
+import { notify } from "@/lib/notify"
 import { cn } from "@/lib/utils"
 import type { Fragment } from "@/types"
 import styles from "@/components/shard/fragment-image-exporter.module.css"
@@ -92,9 +91,7 @@ export function FragmentImageExporter({
       })
       .catch((error) => {
         if (cancelled) return
-        toast.error(`预览生成失败：${getApiErrorMessage(error)}`, {
-          duration: Infinity,
-        })
+        notify.failure("分享图片预览生成失败", error)
       })
       .finally(() => {
         if (!cancelled) setIsPreviewing(false)
@@ -155,10 +152,10 @@ export function FragmentImageExporter({
         await copyBlobImage(blob)
       }
 
-      toast("分享图片已复制")
+      notify.success("分享图片已复制")
     } catch (error) {
-      toast.error(`复制分享图片失败：${getApiErrorMessage(error)}`, {
-        duration: Infinity,
+      notify.failure("分享图片复制失败", error, {
+        action: { label: "重试", onClick: () => void handleCopy() },
       })
     } finally {
       setIsCopying(false)
@@ -185,17 +182,17 @@ export function FragmentImageExporter({
 
         const bytes = await blobToBytes(blob)
         await saveExportedImage(path, bytes)
-        toast("分享图片已保存")
+        notify.success("分享图片已保存")
         onClose()
         return
       }
 
       downloadBlob(blob, fileName)
-      toast("分享图片已下载")
+      notify.success("分享图片已下载")
       onClose()
     } catch (error) {
-      toast.error(`保存分享图片失败：${getApiErrorMessage(error)}`, {
-        duration: Infinity,
+      notify.failure("分享图片保存失败", error, {
+        action: { label: "重试", onClick: () => void handleExport() },
       })
     } finally {
       setIsExporting(false)

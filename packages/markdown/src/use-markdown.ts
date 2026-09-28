@@ -7,10 +7,10 @@ interface ParseState {
   error?: Error
 }
 
-export function useMarkdown(kind: "content" | "document", content: string, hideTags = false, renderImages = false) {
+export function useMarkdown(kind: "content" | "document", content: string, hideTags = false, renderImages = false, compactParagraphs = false) {
   const request = useMemo<MarkdownParseRequest>(() => kind === "document"
     ? { kind, content }
-    : { kind, content, hideTags, renderImages }, [kind, content, hideTags, renderImages])
+    : { kind, content, hideTags, renderImages, compactParagraphs }, [kind, content, hideTags, renderImages, compactParagraphs])
   const asynchronous = content.length > ASYNC_MARKDOWN_THRESHOLD
   const synchronousResult = useMemo(() => asynchronous ? null : parseMarkdown(request), [asynchronous, request])
   const [state, setState] = useState<ParseState | null>(null)

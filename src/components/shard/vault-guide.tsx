@@ -10,11 +10,11 @@ import {
   MoonIcon,
   PaletteIcon,
   RefreshCwIcon,
+  SquareTerminalIcon,
   SunIcon,
   XIcon,
 } from "@/components/icons"
 import { useEffect, useRef, useState, type CSSProperties } from "react"
-import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -24,6 +24,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
+import { SelectControl } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
 import {
   AUTO_SYNC_INTERVAL_OPTIONS,
@@ -41,14 +42,31 @@ import {
 } from "@/lib/theme"
 import {
   createGithubVaultRepo,
+  getCliInstallStatus,
   getGithubCliStatus,
   getApiErrorMessage,
   initializeVaultGit,
+  installCli,
   setVaultPath,
   setVaultRemote,
+  uninstallCli,
 } from "@/lib/api"
-import type { GithubCliInfo, GitInfo, VaultState } from "@/types"
+import { notify } from "@/lib/notify"
+import type {
+  CliInstallStatus,
+  GithubCliInfo,
+  GitInfo,
+  VaultState,
+} from "@/types"
 
+import {
+  SettingsBlock,
+  SettingsGroup,
+  SettingsGroupItem,
+  SettingsMono,
+  SettingsRow,
+  SettingsSegmented,
+} from "./settings-controls"
 import styles from "./vault-guide.module.css"
 
 /*
@@ -89,7 +107,10 @@ const monoPathStyle: CSSProperties = {
   userSelect: "all",
 }
 
-export type SettingsSection = "appearance" | "git" | "shortcuts" | "vault"
+export type SettingsSection = "appearance" | "cli" | "git" | "shortcuts" | "vault"
+
+/** 设置单页里的分区顺序，也是左侧锚点导航的顺序。 */
+const SETTINGS_SECTIONS: SettingsSection[] = ["vault", "git", "appearance", "cli", "shortcuts"]
 
 interface VaultGuideProps {
   autoSyncEnabled: boolean
@@ -110,19 +131,42 @@ interface VaultGuideProps {
 }
 
 type VaultAction = "create" | "github" | "git" | "open" | "remote" | null
+type CliAction = "install" | "uninstall" | null
 type SettingsLocale = "en" | "zh"
 
 interface SettingsCopy {
   autoSyncDescription: string
   autoSyncEnableLabel: string
+  autoSyncIntervalDescription: string
   autoSyncIntervalLabel: string
   autoSyncNeedsRemote: string
   autoSyncTitle: string
   close: string
+  cliActionFailed: string
+  cliCommandLabel: string
+  cliStatusRowLabel: string
+  cliConflict: string
+  cliConflictShort: string
+  cliDescription: string
+  cliInstall: string
+  cliInstallBusy: string
+  cliInstalled: string
+  cliInstalledToast: string
+  cliNeedsShellConfig: string
+  cliNotInstalled: string
+  cliStatusChecking: string
+  cliStatusFailed: string
+  cliTitle: string
+  cliUnavailable: string
+  cliUninstall: string
+  cliUninstallBusy: string
+  cliUninstalledToast: string
+  cliUsage: string
   connectRemote: string
   connectRemoteBusy: string
   createRepo: string
   createRepoBusy: string
+  createVaultAction: string
   createVaultDescription: string
   createVaultLabel: string
   dialogTitleCreate: string
@@ -140,11 +184,15 @@ interface SettingsCopy {
   gitStatus: Record<"dirty" | "error" | "local" | "none" | "ready" | "syncing", string>
   headlineDefault: string
   headlineNeedsRemote: string
+  currentVaultLabel: string
+  initGitAction: string
   initGitDescription: string
   initGitLabel: string
   manualDividerLabel: string
+  manualRemoteLabel: string
   manualRemoteHint: string
   navAppearance: string
+  navLabel: string
   navGit: string
   navShortcuts: string
   noVault: string
@@ -161,6 +209,7 @@ interface SettingsCopy {
   sideRemote: string
   syncNow: string
   syncNowBusy: string
+  syncNowDescription: string
   syncSetupTitle: string
   colorModeDescription: string
   colorModeTitle: string
@@ -178,10 +227,13 @@ interface SettingsCopy {
   toastVaultCreated: string
   toastVaultFailed: string
   toastVaultSwitched: string
+  vaultMoveHint: string
   vaultTitle: string
   autoSyncMinutes(minutes: number): string
   githubAuthenticated(account: string, protocol: string): string
   githubProtocol(protocol: string): string
+  cliLinkPath(path: string): string
+  cliShellConfigPath(path: string): string
 }
 
 const COLOR_MODE_ICONS: Record<ColorMode, typeof SunIcon> = {
@@ -195,14 +247,38 @@ const settingsCopy: Record<SettingsLocale, SettingsCopy> = {
     autoSyncDescription:
       "Sync to the remote on a fixed interval. Skipped while you are editing or a dialog is open.",
     autoSyncEnableLabel: "Enable auto sync",
+    autoSyncIntervalDescription: "How often Shard syncs in the background.",
     autoSyncIntervalLabel: "Sync interval",
     autoSyncNeedsRemote: "Connect a Git remote to enable auto sync.",
     autoSyncTitle: "Auto sync",
     close: "Close",
+    cliActionFailed: "Terminal command update failed",
+    cliCommandLabel: "shard command",
+    cliStatusRowLabel: "Status",
+    cliConflict:
+      "A non-Shard command named shard already exists. Shard will not overwrite it.",
+    cliConflictShort: "Conflict",
+    cliDescription:
+      "Create a fragment directly from any terminal without opening the app.",
+    cliInstall: "Install",
+    cliInstallBusy: "Installing",
+    cliInstalled: "Installed",
+    cliInstalledToast: "The shard terminal command is installed",
+    cliNeedsShellConfig: "Not installed",
+    cliNotInstalled: "Not installed",
+    cliStatusChecking: "Checking installation status...",
+    cliStatusFailed: "Could not read the installation status",
+    cliTitle: "Terminal command",
+    cliUnavailable: "Unavailable in development builds",
+    cliUninstall: "Uninstall",
+    cliUninstallBusy: "Uninstalling",
+    cliUninstalledToast: "The shard terminal command is uninstalled",
+    cliUsage: "Example: shard #备忘 /任务列表 买咖啡",
     connectRemote: "Connect remote",
     connectRemoteBusy: "Connecting",
     createRepo: "Auto configure sync",
     createRepoBusy: "Configuring",
+    createVaultAction: "Create",
     createVaultDescription: "Choose an empty folder and initialize Git.",
     createVaultLabel: "Create folder",
     dialogTitleCreate: "Choose or create a Shard vault folder",
@@ -234,12 +310,16 @@ const settingsCopy: Record<SettingsLocale, SettingsCopy> = {
       "Choose an existing Shard folder, or create a new one as the local root for Markdown and Git.",
     headlineNeedsRemote:
       "The current folder is usable, but sync is not configured yet. Auto configure GitHub sync, or enter any Git remote URL manually.",
+    currentVaultLabel: "Current folder",
+    initGitAction: "Initialize",
     initGitDescription: "Enable local commit history for the current folder.",
     initGitLabel: "Initialize Git",
     manualDividerLabel: "Or connect a remote manually",
+    manualRemoteLabel: "Manual remote",
     manualRemoteHint:
       "The manual URL is saved as origin. You can also run git remote add origin <url> in the current folder.",
     navAppearance: "Appearance",
+    navLabel: "Settings sections",
     navGit: "Git sync",
     navShortcuts: "Shortcuts",
     noVault: "No folder selected",
@@ -263,6 +343,7 @@ const settingsCopy: Record<SettingsLocale, SettingsCopy> = {
     sideRemote: "Remote",
     syncNow: "Sync now",
     syncNowBusy: "Syncing",
+    syncNowDescription: "Pull from the remote and push local commits now.",
     syncSetupTitle: "Set up sync",
     colorModeDescription:
       "Follow the system appearance, or keep Shard light or dark.",
@@ -272,8 +353,8 @@ const settingsCopy: Record<SettingsLocale, SettingsCopy> = {
     themeTitle: "Accent color",
     toastGithubCreated: "Git sync configured",
     toastGithubCreatedDescription:
-      "A private GitHub repository is connected as origin. Use the sidebar sync action for future updates.",
-    toastGithubFailed: "GitHub setup failed",
+      "Connected to a private GitHub repository. Sync from the sidebar.",
+    toastGithubFailed: "GitHub sync setup failed",
     toastGitInitialized: "Git initialized",
     toastGitInitializeFailed: "Git initialization failed",
     toastRepoRequired: "GitHub repository name is required",
@@ -283,24 +364,49 @@ const settingsCopy: Record<SettingsLocale, SettingsCopy> = {
     toastVaultCreated: "Vault created",
     toastVaultFailed: "Vault setup failed",
     toastVaultSwitched: "Vault switched",
+    vaultMoveHint: "Switching folders never moves your files.",
     vaultTitle: "Vault",
     autoSyncMinutes: (minutes) => `${minutes} min`,
     githubAuthenticated: (account, protocol) =>
       `Signed in as ${account}${protocol}. Shard can configure GitHub sync automatically.`,
     githubProtocol: (protocol) => `, Git protocol ${protocol}`,
+    cliLinkPath: (path) => `Link: ${path}`,
+    cliShellConfigPath: (path) => `Installation will update: ${path}`,
   },
   zh: {
     autoSyncDescription:
       "按固定间隔在后台同步到远端；正在编辑或有弹窗时会自动跳过。",
     autoSyncEnableLabel: "启用自动同步",
+    autoSyncIntervalDescription: "后台自动同步的频率。",
     autoSyncIntervalLabel: "同步间隔",
     autoSyncNeedsRemote: "连接 Git 远端后即可启用自动同步。",
     autoSyncTitle: "自动同步",
     close: "关闭",
+    cliActionFailed: "终端命令操作失败",
+    cliCommandLabel: "shard 命令",
+    cliStatusRowLabel: "安装状态",
+    cliConflict: "已存在非 Shard 的 shard 命令，Shard 不会覆盖它。",
+    cliConflictShort: "有冲突",
+    cliDescription: "无需打开 App，直接从任意终端创建碎片。",
+    cliInstall: "安装",
+    cliInstallBusy: "安装中",
+    cliInstalled: "已安装",
+    cliInstalledToast: "终端命令 shard 已安装",
+    cliNeedsShellConfig: "未安装",
+    cliNotInstalled: "未安装",
+    cliStatusChecking: "正在检查安装状态…",
+    cliStatusFailed: "无法读取安装状态",
+    cliTitle: "终端命令",
+    cliUnavailable: "开发版不可用",
+    cliUninstall: "卸载",
+    cliUninstallBusy: "卸载中",
+    cliUninstalledToast: "终端命令 shard 已卸载",
+    cliUsage: "示例：shard #备忘 /任务列表 买咖啡",
     connectRemote: "连接远端",
     connectRemoteBusy: "连接中",
     createRepo: "自动配置同步",
     createRepoBusy: "配置中",
+    createVaultAction: "新建",
     createVaultDescription: "选择一个空目录，并为它初始化 Git。",
     createVaultLabel: "创建新目录",
     dialogTitleCreate: "选择或新建 Shard vault 目录",
@@ -327,12 +433,16 @@ const settingsCopy: Record<SettingsLocale, SettingsCopy> = {
       "选择已有 Shard 目录，或创建一个新目录作为 Markdown 与 Git 的本地根目录。",
     headlineNeedsRemote:
       "当前目录已经可用，但还没有完成同步配置。可以自动配置 GitHub 同步，也可以手动填写任意 Git 远端。",
+    currentVaultLabel: "当前目录",
+    initGitAction: "初始化",
     initGitDescription: "为当前目录开启本地提交历史。",
     initGitLabel: "初始化 Git",
     manualDividerLabel: "或手动连接远端",
+    manualRemoteLabel: "手动连接远端",
     manualRemoteHint:
       "手动 URL 会保存为 origin。也可以在当前目录运行 git remote add origin <url>。",
     navAppearance: "外观",
+    navLabel: "设置分区",
     navGit: "Git 同步",
     navShortcuts: "快捷键",
     noVault: "未选择目录",
@@ -355,29 +465,32 @@ const settingsCopy: Record<SettingsLocale, SettingsCopy> = {
     sideRemote: "远端",
     syncNow: "立即同步",
     syncNowBusy: "同步中",
+    syncNowDescription: "马上拉取远端并推送本地提交。",
     syncSetupTitle: "配置同步",
     colorModeDescription: "跟随系统外观，或固定使用浅色、深色。",
     colorModeTitle: "明暗",
     themeDescription: "选择用于焦点、选中、链接和主要操作的克制强调色。",
     themeTitle: "主题色",
     toastGithubCreated: "Git 同步已配置",
-    toastGithubCreatedDescription:
-      "私有 GitHub 仓库已连接为 origin，后续可直接从侧栏同步。",
-    toastGithubFailed: "自动配置 GitHub 失败",
+    toastGithubCreatedDescription: "已连接私有 GitHub 仓库，之后可从侧栏同步。",
+    toastGithubFailed: "GitHub 同步配置失败",
     toastGitInitialized: "Git 已初始化",
     toastGitInitializeFailed: "Git 初始化失败",
     toastRepoRequired: "GitHub 仓库名不能为空",
     toastRemoteConfigured: "Git 远端已配置",
     toastRemoteFailed: "Git 远端配置失败",
-    toastRemoteRequired: "Git 远端 URL 不能为空",
+    toastRemoteRequired: "Git 远端地址不能为空",
     toastVaultCreated: "Vault 已创建",
     toastVaultFailed: "Vault 设置失败",
     toastVaultSwitched: "Vault 已切换",
+    vaultMoveHint: "更换目录不会移动现有文件。",
     vaultTitle: "Vault",
     autoSyncMinutes: (minutes) => `${minutes} 分钟`,
     githubAuthenticated: (account, protocol) =>
       `已登录 ${account}${protocol}。Shard 可以自动配置 GitHub 同步。`,
     githubProtocol: (protocol) => `，Git 协议 ${protocol}`,
+    cliLinkPath: (path) => `链接位置：${path}`,
+    cliShellConfigPath: (path) => `安装时将修改：${path}`,
   },
 }
 
@@ -431,15 +544,22 @@ export function VaultGuide({
   vaultPath,
 }: VaultGuideProps) {
   const [activeAction, setActiveAction] = useState<VaultAction>(null)
+  const [cliAction, setCliAction] = useState<CliAction>(null)
+  const [cliError, setCliError] = useState<string | null>(null)
+  const [cliStatus, setCliStatus] = useState<CliInstallStatus | null>(null)
   const [githubStatus, setGithubStatus] = useState<GithubCliInfo | null>(null)
   const [isCheckingGithub, setIsCheckingGithub] = useState(false)
   const [remoteUrl, setRemoteUrl] = useState("")
   const [repoName, setRepoName] = useState(defaultRepoName(vaultPath))
-  const [section, setSection] = useState<SettingsSection>(initialSection)
+  const [activeSection, setActiveSection] =
+    useState<SettingsSection>(initialSection)
   const [accentTheme, setAccentTheme] =
     useState<AccentTheme>(getStoredAccentTheme)
   const [colorMode, setColorMode] = useState<ColorMode>(getStoredColorMode)
   const dialogRef = useRef<HTMLDivElement>(null)
+  const scrollRef = useRef<HTMLElement>(null)
+  const spyFrameRef = useRef<number | null>(null)
+  const spyTargetRef = useRef<{ top: number; until: number } | null>(null)
   const locale = getPreferredSettingsLocale()
   const copy = settingsCopy[locale]
 
@@ -481,11 +601,101 @@ export function VaultGuide({
     setRepoName(defaultRepoName(vaultPath))
   }, [vaultPath])
 
-  useEffect(() => {
-    if (isOpen) {
-      setSection(initialSection)
+  const showsFullSettings = !required && Boolean(vaultPath)
+
+  /** 只滚设置内容区自身：WKWebView 里 scrollIntoView 会连带滚动外层容器。 */
+  function scrollToSection(id: SettingsSection, behavior: ScrollBehavior) {
+    setActiveSection(id)
+    const root = scrollRef.current
+    const target = root?.querySelector<HTMLElement>(
+      `[data-settings-section="${id}"]`
+    )
+    if (!root || !target) return
+    const top = Math.max(
+      0,
+      target.getBoundingClientRect().top -
+        root.getBoundingClientRect().top +
+        root.scrollTop
+    )
+    // 平滑滚动途经的分区不抢高亮；滚到位（或滚到底）后再交还给滚动监听。
+    spyTargetRef.current = { top, until: performance.now() + 1200 }
+    root.scrollTo({ top, behavior })
+  }
+
+  function syncActiveSection() {
+    spyFrameRef.current = null
+    const root = scrollRef.current
+    if (!root) return
+    const pending = spyTargetRef.current
+    if (pending) {
+      const reachable = Math.min(pending.top, root.scrollHeight - root.clientHeight)
+      if (
+        Math.abs(root.scrollTop - reachable) < 2 ||
+        performance.now() > pending.until
+      ) {
+        spyTargetRef.current = null
+      }
+      return
     }
-  }, [initialSection, isOpen])
+    const sections = Array.from(
+      root.querySelectorAll<HTMLElement>("[data-settings-section]")
+    )
+    if (sections.length === 0) return
+    const rootTop = root.getBoundingClientRect().top
+    // 滚到底时最后一个分区可能永远顶不到上沿，直接算它。
+    let current = sections[sections.length - 1]
+    if (root.scrollTop + root.clientHeight < root.scrollHeight - 2) {
+      current = sections[0]
+      for (const section of sections) {
+        if (section.getBoundingClientRect().top - rootTop <= 24) current = section
+      }
+    }
+    const id = current.dataset.settingsSection as SettingsSection | undefined
+    if (id) setActiveSection(id)
+  }
+
+  function handleSettingsScroll() {
+    if (spyFrameRef.current !== null) return
+    spyFrameRef.current = requestAnimationFrame(syncActiveSection)
+  }
+
+  useEffect(() => {
+    if (!isOpen || !showsFullSettings) return
+    // 打开即落在目标分区（如状态栏的 Git 入口），不做平滑滚动。
+    const frame = requestAnimationFrame(() =>
+      scrollToSection(initialSection, "auto")
+    )
+    return () => cancelAnimationFrame(frame)
+    // scrollToSection 只读 ref，不进依赖表。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialSection, isOpen, showsFullSettings])
+
+  useEffect(
+    () => () => {
+      if (spyFrameRef.current !== null) cancelAnimationFrame(spyFrameRef.current)
+    },
+    []
+  )
+
+  useEffect(() => {
+    if (!isOpen || !showsFullSettings) return
+
+    let cancelled = false
+    setCliError(null)
+    setCliStatus(null)
+
+    void getCliInstallStatus()
+      .then((status) => {
+        if (!cancelled) setCliStatus(status)
+      })
+      .catch((error) => {
+        if (!cancelled) setCliError(getApiErrorMessage(error))
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [isOpen, showsFullSettings])
 
   useEffect(() => {
     if (!isOpen || !needsRemote) {
@@ -565,11 +775,9 @@ export function VaultGuide({
 
       const state = await setVaultPath(path, initializeGit)
       onVaultState(state, { resetView: true })
-      toast(initializeGit ? copy.toastVaultCreated : copy.toastVaultSwitched)
+      notify.success(initializeGit ? copy.toastVaultCreated : copy.toastVaultSwitched)
     } catch (error) {
-      toast.error(`${copy.toastVaultFailed}: ${getApiErrorMessage(error)}`, {
-        duration: Infinity,
-      })
+      notify.failure(copy.toastVaultFailed, error)
     } finally {
       setActiveAction(null)
     }
@@ -581,14 +789,9 @@ export function VaultGuide({
     try {
       const state = await initializeVaultGit()
       onVaultState(state)
-      toast(copy.toastGitInitialized)
+      notify.success(copy.toastGitInitialized)
     } catch (error) {
-      toast.error(
-        `${copy.toastGitInitializeFailed}: ${getApiErrorMessage(error)}`,
-        {
-          duration: Infinity,
-        }
-      )
+      notify.failure(copy.toastGitInitializeFailed, error)
     } finally {
       setActiveAction(null)
     }
@@ -597,7 +800,7 @@ export function VaultGuide({
   async function configureRemote() {
     const nextRemoteUrl = remoteUrl.trim()
     if (!nextRemoteUrl) {
-      toast.error(copy.toastRemoteRequired, { duration: Infinity })
+      notify.error(copy.toastRemoteRequired)
       return
     }
 
@@ -607,11 +810,9 @@ export function VaultGuide({
       const state = await setVaultRemote(nextRemoteUrl)
       onVaultState(state)
       setRemoteUrl("")
-      toast(copy.toastRemoteConfigured)
+      notify.success(copy.toastRemoteConfigured)
     } catch (error) {
-      toast.error(`${copy.toastRemoteFailed}: ${getApiErrorMessage(error)}`, {
-        duration: Infinity,
-      })
+      notify.failure(copy.toastRemoteFailed, error)
     } finally {
       setActiveAction(null)
     }
@@ -620,7 +821,7 @@ export function VaultGuide({
   async function createGithubRepo() {
     const nextRepoName = repoName.trim()
     if (!nextRepoName) {
-      toast.error(copy.toastRepoRequired, { duration: Infinity })
+      notify.error(copy.toastRepoRequired)
       return
     }
 
@@ -629,13 +830,43 @@ export function VaultGuide({
     try {
       const state = await createGithubVaultRepo(nextRepoName)
       onVaultState(state)
-      toast(`${copy.toastGithubCreated}: ${copy.toastGithubCreatedDescription}`)
-    } catch (error) {
-      toast.error(`${copy.toastGithubFailed}: ${getApiErrorMessage(error)}`, {
-        duration: Infinity,
+      notify.success(copy.toastGithubCreated, {
+        description: copy.toastGithubCreatedDescription,
       })
+    } catch (error) {
+      notify.failure(copy.toastGithubFailed, error)
     } finally {
       setActiveAction(null)
+    }
+  }
+
+  async function updateCliInstallation(action: Exclude<CliAction, null>) {
+    setCliAction(action)
+    setCliError(null)
+
+    try {
+      const status =
+        action === "install" ? await installCli(true) : await uninstallCli()
+      setCliStatus(status)
+
+      if (action === "install" && status.state !== "installed") {
+        throw new Error(status.message ?? copy.cliActionFailed)
+      }
+      if (action === "uninstall" && status.state === "installed") {
+        throw new Error(status.message ?? copy.cliActionFailed)
+      }
+
+      notify.success(
+        action === "install"
+          ? copy.cliInstalledToast
+          : copy.cliUninstalledToast
+      )
+    } catch (error) {
+      const message = getApiErrorMessage(error)
+      setCliError(message)
+      notify.failure(copy.cliActionFailed, error)
+    } finally {
+      setCliAction(null)
     }
   }
 
@@ -821,83 +1052,6 @@ export function VaultGuide({
     </>
   )
 
-  const appearanceSection = (
-    <>
-      <section className={styles.sectionPad}>
-        <h3 style={sectionTitleStyle}>{copy.colorModeTitle}</h3>
-        <p style={sectionDescriptionStyle}>{copy.colorModeDescription}</p>
-        <div className={styles.modeGrid}>
-          {COLOR_MODES.map((mode) => {
-            const isActive = colorMode === mode.id
-            const label = locale === "zh" ? mode.labelZh : mode.labelEn
-            const ModeIcon = COLOR_MODE_ICONS[mode.id]
-
-            return (
-              <button
-                aria-pressed={isActive}
-                className={styles.themeButton}
-                key={mode.id}
-                onClick={() => {
-                  applyColorMode(mode.id)
-                  setColorMode(mode.id)
-                }}
-                type="button"
-              >
-                <ModeIcon
-                  aria-hidden="true"
-                  className={`${styles.modeIcon} size-(--shard-icon-size-md)`}
-                />
-                <span className={styles.themeLabel}>{label}</span>
-                {isActive ? (
-                  <CheckIcon
-                    aria-hidden="true"
-                    className={`${styles.themeCheck} size-(--shard-icon-size-md)`}
-                  />
-                ) : null}
-              </button>
-            )
-          })}
-        </div>
-      </section>
-      <section className={styles.sectionPad}>
-        <h3 style={sectionTitleStyle}>{copy.themeTitle}</h3>
-        <p style={sectionDescriptionStyle}>{copy.themeDescription}</p>
-        <div className={styles.themeGrid}>
-          {ACCENT_THEMES.map((theme) => {
-            const isActive = accentTheme === theme.id
-            const label = locale === "zh" ? theme.labelZh : theme.labelEn
-
-            return (
-              <button
-                aria-pressed={isActive}
-                className={styles.themeButton}
-                key={theme.id}
-                onClick={() => {
-                  applyAccentTheme(theme.id)
-                  setAccentTheme(theme.id)
-                }}
-                type="button"
-              >
-                <span
-                  aria-hidden="true"
-                  className={styles.themeSwatch}
-                  data-accent={theme.id}
-                />
-                <span className={styles.themeLabel}>{label}</span>
-                {isActive ? (
-                  <CheckIcon
-                    aria-hidden="true"
-                    className={`${styles.themeCheck} size-(--shard-icon-size-md)`}
-                  />
-                ) : null}
-              </button>
-            )
-          })}
-        </div>
-      </section>
-    </>
-  )
-
   const directorySection = (
     <section className={styles.sectionPad}>
       <h3 style={sectionTitleStyle}>{copy.directoryTitle}</h3>
@@ -926,6 +1080,42 @@ export function VaultGuide({
     </section>
   )
 
+  const cliStatusLabel = cliError
+    ? copy.cliStatusFailed
+    : !cliStatus
+      ? copy.cliStatusChecking
+      : cliStatus.state === "installed"
+        ? copy.cliInstalled
+        : cliStatus.state === "conflict"
+          ? copy.cliConflictShort
+          : cliStatus.state === "unavailable"
+            ? copy.cliUnavailable
+            : cliStatus.state === "needsShellConfig"
+              ? copy.cliNeedsShellConfig
+              : copy.cliNotInstalled
+  const cliDetail = cliError
+    ? cliError
+    : cliStatus?.state === "needsShellConfig" && cliStatus.shellConfigPath
+      ? copy.cliShellConfigPath(cliStatus.shellConfigPath)
+      : cliStatus?.linkPath
+        ? cliStatus.state === "installed"
+          ? copy.cliLinkPath(cliStatus.linkPath)
+          : cliStatus.linkPath
+        : cliStatus?.state === "unavailable"
+          ? null
+          : cliStatus?.message ?? null
+  const cliCanInstall =
+    cliStatus?.state === "notInstalled" ||
+    cliStatus?.state === "needsShellConfig"
+  const cliTone: StationTone = cliError || cliStatus?.state === "conflict"
+    ? "ruby"
+    : !cliStatus
+      ? "info"
+      : cliStatus.state === "installed"
+        ? "emerald"
+        : cliStatus.state === "unavailable"
+          ? "empty"
+          : "amber"
   if (required || !vaultPath) {
     return (
       <Dialog
@@ -1004,268 +1194,475 @@ export function VaultGuide({
     )
   }
 
-  const navItems: { icon: typeof FolderOpenIcon; id: SettingsSection; label: string }[] = [
-    { icon: FolderOpenIcon, id: "vault", label: copy.vaultTitle },
-    { icon: PaletteIcon, id: "appearance", label: copy.navAppearance },
-    { icon: GitBranchIcon, id: "git", label: copy.navGit },
-    { icon: KeyboardIcon, id: "shortcuts", label: copy.navShortcuts },
-  ]
-  const sectionTitle =
-    section === "appearance"
-      ? copy.navAppearance
-      : section === "git"
-        ? copy.navGit
-        : section === "shortcuts"
-          ? copy.navShortcuts
-          : copy.vaultTitle
+  const navMeta: Record<SettingsSection, { icon: typeof FolderOpenIcon; label: string }> = {
+    appearance: { icon: PaletteIcon, label: copy.navAppearance },
+    cli: { icon: SquareTerminalIcon, label: copy.cliTitle },
+    git: { icon: GitBranchIcon, label: copy.navGit },
+    shortcuts: { icon: KeyboardIcon, label: copy.navShortcuts },
+    vault: { icon: FolderOpenIcon, label: copy.vaultTitle },
+  }
+  const spinner = <Loader2Icon aria-hidden="true" className={styles.spin} />
+  const cliStatusDescription = cliError ? (
+    cliError
+  ) : cliStatus?.state === "conflict" ? (
+    <>
+      {copy.cliConflict}
+      {cliStatus.linkPath ? (
+        <>
+          <br />
+          <SettingsMono>{cliStatus.linkPath}</SettingsMono>
+        </>
+      ) : null}
+    </>
+  ) : cliDetail ? (
+    <SettingsMono>{cliDetail}</SettingsMono>
+  ) : undefined
 
   return (
     <Dialog open={isOpen} onOpenChange={(nextOpen) => !nextOpen && onClose()}>
       <DialogContent
-        className={`${styles.panelBase} ${styles.panelFull} gap-0 p-0 ring-0`}
+        className={`${styles.panelBase} ${styles.panelSettings} gap-0 p-0 ring-0`}
         finalFocus={getUtilityMenuTrigger}
         ref={dialogRef}
         showCloseButton={false}
         style={{
-          maxWidth: 760,
-          maxHeight: "min(84dvh, 640px)",
-          minHeight: "min(84dvh, 520px)",
+          maxWidth: "min(960px, calc(100vw - 48px))",
+          height: "min(86dvh, 720px)",
         }}
       >
         <DialogDescription className="sr-only">
-          配置 Shard 的目录、外观、Git 同步与快捷键。
+          配置 Shard 的目录、Git 同步、外观、终端命令与快捷键。
         </DialogDescription>
-        <nav className={styles.navRail}>
-          <div className={styles.navEyebrow}>{copy.settingsTitle}</div>
-          {navItems.map(({ icon: Icon, id, label }) => {
-            const isActive = section === id
-            return (
-              <button
-                className={styles.navButton}
-                key={id}
-                onClick={() => setSection(id)}
-                style={
-                  isActive
-                    ? {
-                        background: "var(--sidebar-accent)",
-                        color: "var(--sidebar-accent-foreground)",
-                      }
-                    : undefined
-                }
-                type="button"
-              >
-                <Icon className="size-(--shard-icon-size-md)" style={{ flexShrink: 0 }} />
-                <span
-                  style={{
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  {label}
-                </span>
-              </button>
-            )
-          })}
-        </nav>
-
-        <div
-          style={{
-            display: "flex",
-            flexDirection: "column",
-            minHeight: 0,
-            minWidth: 0,
-            flexGrow: 1,
-            flexShrink: 1,
-            flexBasis: 0,
-          }}
-        >
-          <header
-            className="flex items-center justify-between gap-3"
-            style={{
-              borderBottom: "1px solid var(--border)",
-              flexShrink: 0,
-              paddingBlock: "var(--shard-space-3)",
-              paddingInline: "var(--shard-space-6)",
-            }}
+        <header className={styles.settingsHeader}>
+          <DialogTitle className={styles.settingsTitle}>
+            {copy.settingsTitle}
+          </DialogTitle>
+          <Button
+            aria-label={copy.close}
+            onClick={onClose}
+            size="icon-sm"
+            type="button"
+            variant="ghost"
           >
-            <DialogTitle
-              style={{ fontSize: 16, lineHeight: "24px", fontWeight: 600 }}
-            >
-              {sectionTitle}
-            </DialogTitle>
-            <Button
-              aria-label={copy.close}
-              onClick={onClose}
-              size="icon-sm"
-              style={{ marginRight: -8 }}
-              type="button"
-              variant="ghost"
-            >
-              <XIcon aria-hidden="true" />
-              <span className="sr-only">{copy.close}</span>
-            </Button>
-          </header>
+            <XIcon aria-hidden="true" />
+            <span className="sr-only">{copy.close}</span>
+          </Button>
+        </header>
 
-          <main className={styles.mainScroll}>
-            {section === "appearance" ? appearanceSection : null}
+        <div className={styles.settingsBody}>
+          <nav
+            aria-label={copy.navLabel}
+            className={styles.navRail}
+            data-focus-region="settings-nav"
+          >
+            {SETTINGS_SECTIONS.map((id) => {
+              const { icon: Icon, label } = navMeta[id]
+              return (
+                <button
+                  aria-current={activeSection === id ? "true" : undefined}
+                  className={styles.navButton}
+                  key={id}
+                  onClick={() =>
+                    scrollToSection(id, prefersReducedMotion() ? "auto" : "smooth")
+                  }
+                  type="button"
+                >
+                  <Icon className="size-(--shard-icon-size-md)" style={{ flexShrink: 0 }} />
+                  <span className={styles.navLabel}>{label}</span>
+                </button>
+              )
+            })}
+          </nav>
 
-            {section === "vault" ? (
-              <>
-                <section className={styles.sectionPad}>
-                  <div style={eyebrowStyle}>{copy.sideCurrent}</div>
-                  <div
-                    style={{
-                      marginTop: "var(--shard-space-1)",
-                      fontSize: 16,
-                      lineHeight: "24px",
-                      fontWeight: 600,
-                      textWrap: "balance",
-                    }}
+          <main
+            className={styles.settingsScroll}
+            data-focus-region="settings-content"
+            onScroll={handleSettingsScroll}
+            ref={scrollRef}
+          >
+            <SettingsBlock id="vault" title={copy.vaultTitle}>
+              <SettingsGroup busy={activeAction === "open" || activeAction === "create"}>
+                <SettingsRow
+                  controlWidth="auto"
+                  description={
+                    <>
+                      <SettingsMono>{vaultPath}</SettingsMono>
+                      <br />
+                      {copy.vaultMoveHint}
+                    </>
+                  }
+                  label={copy.currentVaultLabel}
+                >
+                  <Button
+                    disabled={isVaultActionBusy}
+                    onClick={() => void chooseVault(false)}
+                    size="md"
+                    type="button"
+                    variant="outline"
                   >
-                    {folderName}
-                  </div>
-                  <p style={monoPathStyle}>{vaultPath}</p>
-                </section>
-                {directorySection}
-              </>
-            ) : null}
+                    {activeAction === "open" ? spinner : <FolderOpenIcon aria-hidden="true" />}
+                    {copy.openVaultLabel}
+                  </Button>
+                </SettingsRow>
+                <SettingsRow
+                  controlWidth="auto"
+                  description={copy.createVaultDescription}
+                  label={copy.createVaultLabel}
+                >
+                  <Button
+                    disabled={isVaultActionBusy}
+                    onClick={() => void chooseVault(true)}
+                    size="md"
+                    type="button"
+                    variant="outline"
+                  >
+                    {activeAction === "create" ? spinner : <FolderPlusIcon aria-hidden="true" />}
+                    {copy.createVaultAction}
+                  </Button>
+                </SettingsRow>
+              </SettingsGroup>
+            </SettingsBlock>
 
-            {section === "git" ? (
-              <>
-                {railSection}
-                {gitSetupSections}
-                <section className={styles.sectionPad}>
-                  <div className="flex items-start justify-between gap-4">
-                    <div style={{ minWidth: 0 }}>
-                      <h3 style={sectionTitleStyle}>{copy.autoSyncTitle}</h3>
-                      <p style={sectionDescriptionStyle}>
-                        {copy.autoSyncDescription}
-                      </p>
-                    </div>
-                    <Switch
-                      aria-label={copy.autoSyncEnableLabel}
-                      checked={autoSyncEnabled}
-                      disabled={!git?.hasRemote}
-                      onCheckedChange={(next) =>
-                        onAutoSyncChange({ autoSyncEnabled: next })
-                      }
-                    />
-                  </div>
-                  {git?.hasRemote ? (
-                    <div
-                      className="flex flex-wrap items-center gap-3"
-                      style={{ marginTop: "var(--shard-space-4)" }}
+            <SettingsBlock id="git" title={copy.navGit}>
+              <SettingsGroup busy={isRemoteBusy || activeAction === "git"}>
+                <SettingsRow
+                  controlWidth="auto"
+                  description={
+                    git?.shortCommit ? (
+                      <SettingsMono>{`${git.branch} · ${git.shortCommit}`}</SettingsMono>
+                    ) : (
+                      git?.error || copy.gitDescription
+                    )
+                  }
+                  label={copy.sideGit}
+                >
+                  <StatusIndicator label={gitLabel} tone={gitTone} />
+                </SettingsRow>
+                {git?.status === "no_git" ? (
+                  <SettingsRow
+                    controlWidth="auto"
+                    description={copy.initGitDescription}
+                    label={copy.initGitLabel}
+                  >
+                    <Button
+                      disabled={isVaultActionBusy}
+                      onClick={() => void initializeGit()}
+                      size="md"
+                      type="button"
+                      variant="outline"
                     >
-                      <span
-                        style={{
-                          fontSize: 12,
-                          lineHeight: "20px",
-                          fontWeight: 500,
-                          color: "var(--muted-foreground)",
+                      {activeAction === "git" ? spinner : <GitBranchIcon aria-hidden="true" />}
+                      {copy.initGitAction}
+                    </Button>
+                  </SettingsRow>
+                ) : null}
+                <SettingsRow
+                  controlWidth="auto"
+                  description={
+                    git?.hasRemote
+                      ? copy.remoteAlreadyConnected
+                      : needsRemote
+                        ? copy.headlineNeedsRemote
+                        : copy.gitDescription
+                  }
+                  label={copy.sideRemote}
+                >
+                  <StatusIndicator label={remoteLabel} tone={remoteTone} />
+                </SettingsRow>
+                {needsRemote ? (
+                  <>
+                    {isRemoteBusy ? (
+                      <SettingsGroupItem>
+                        <div aria-live="polite" className={styles.busyLine}>
+                          <Loader2Icon
+                            aria-hidden="true"
+                            className={`${styles.spin} size-(--shard-icon-size-md)`}
+                            style={{ flexShrink: 0 }}
+                          />
+                          <span>
+                            {isCreatingGithubRepo ? copy.githubBusy : copy.remoteBusy}
+                          </span>
+                        </div>
+                      </SettingsGroupItem>
+                    ) : null}
+                    <SettingsRow
+                      controlWidth="wide"
+                      description={getGithubStatusText(githubStatus, isCheckingGithub, copy)}
+                      label="GitHub"
+                    >
+                      <form
+                        className={styles.inlineForm}
+                        onSubmit={(event) => {
+                          event.preventDefault()
+                          void createGithubRepo()
                         }}
                       >
-                        {copy.autoSyncIntervalLabel}
-                      </span>
-                      <div className="flex gap-1">
-                        {AUTO_SYNC_INTERVAL_OPTIONS.map((minutes) => {
-                          const isSelected =
-                            minutes === autoSyncIntervalMinutes
-                          return (
-                            <button
-                              className={styles.intervalButton}
-                              disabled={!autoSyncEnabled}
-                              key={minutes}
-                              onClick={() =>
-                                onAutoSyncChange({
-                                  autoSyncIntervalMinutes: minutes,
-                                })
-                              }
-                              style={
-                                isSelected
-                                  ? {
-                                      borderColor: "var(--shard-sapphire)",
-                                      background: "var(--shard-sapphire-soft)",
-                                      color: "var(--shard-sapphire-text)",
-                                    }
-                                  : undefined
-                              }
-                              type="button"
-                            >
-                              {copy.autoSyncMinutes(minutes)}
-                            </button>
-                          )
-                        })}
-                      </div>
-                    </div>
-                  ) : (
-                    <p
-                      style={{
-                        ...sectionDescriptionStyle,
-                        marginTop: "var(--shard-space-3)",
-                      }}
-                    >
-                      {copy.autoSyncNeedsRemote}
-                    </p>
-                  )}
-                  <div style={{ marginTop: "var(--shard-space-4)" }}>
-                    <Button
-                      disabled={isSyncing || !git?.hasRemote}
-                      onClick={onSync}
-                      size="sm"
-                      type="button"
-                      variant="secondary"
-                    >
-                      {isSyncing ? (
-                        <Loader2Icon
-                          aria-hidden="true"
-                          className={styles.spin}
+                        <Input
+                          aria-label={copy.repoNameLabel}
+                          disabled={
+                            isRemoteBusy ||
+                            isCheckingGithub ||
+                            !githubStatus?.authenticated
+                          }
+                          id="vault-github-repository"
+                          onChange={(event) => setRepoName(event.target.value)}
+                          value={repoName}
                         />
-                      ) : (
-                        <RefreshCwIcon aria-hidden="true" />
-                      )}
-                      {isSyncing ? copy.syncNowBusy : copy.syncNow}
-                    </Button>
-                  </div>
-                </section>
-              </>
-            ) : null}
-
-            {section === "shortcuts" ? (
-              <section className={styles.sectionPadCompact}>
-                <div>
-                  {shortcutRows[locale].map((row, index) => (
-                    <div
-                      className="flex items-center justify-between gap-4"
-                      key={row.label}
-                      style={{
-                        borderTop:
-                          index === 0 ? "none" : "1px solid var(--border)",
-                        paddingBlock: "var(--shard-space-3)",
-                      }}
+                        <Button
+                          disabled={
+                            isRemoteBusy ||
+                            isCheckingGithub ||
+                            !githubStatus?.authenticated
+                          }
+                          size="md"
+                          type="submit"
+                          variant="default"
+                        >
+                          {isCreatingGithubRepo ? copy.createRepoBusy : copy.createRepo}
+                        </Button>
+                      </form>
+                    </SettingsRow>
+                    <SettingsRow
+                      controlWidth="wide"
+                      description={copy.manualRemoteHint}
+                      label={copy.manualRemoteLabel}
                     >
-                      <span style={{ fontSize: 14, lineHeight: "20px" }}>
-                        {row.label}
-                      </span>
-                      <div
-                        className="flex items-center gap-1"
-                        style={{ flexShrink: 0 }}
+                      <form
+                        className={styles.inlineForm}
+                        onSubmit={(event) => {
+                          event.preventDefault()
+                          void configureRemote()
+                        }}
                       >
-                        {row.keys.map((key) => (
-                          <kbd className={styles.kbdKey} key={key}>
-                            {key}
-                          </kbd>
-                        ))}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </section>
-            ) : null}
+                        <Input
+                          aria-label={copy.remoteUrlLabel}
+                          disabled={isRemoteBusy}
+                          id="vault-remote-url"
+                          onChange={(event) => setRemoteUrl(event.target.value)}
+                          placeholder="git@github.com:you/shard-vault.git"
+                          value={remoteUrl}
+                        />
+                        <Button
+                          disabled={isRemoteBusy}
+                          size="md"
+                          type="submit"
+                          variant="outline"
+                        >
+                          {isConfiguringRemote ? copy.connectRemoteBusy : copy.connectRemote}
+                        </Button>
+                      </form>
+                    </SettingsRow>
+                  </>
+                ) : null}
+              </SettingsGroup>
+
+              <SettingsGroup>
+                <SettingsRow
+                  controlWidth="auto"
+                  description={
+                    git?.hasRemote ? copy.autoSyncDescription : copy.autoSyncNeedsRemote
+                  }
+                  label={copy.autoSyncTitle}
+                >
+                  <Switch
+                    aria-label={copy.autoSyncEnableLabel}
+                    checked={autoSyncEnabled}
+                    disabled={!git?.hasRemote}
+                    onCheckedChange={(next) => onAutoSyncChange({ autoSyncEnabled: next })}
+                  />
+                </SettingsRow>
+                <SettingsRow
+                  controlWidth="compact"
+                  description={copy.autoSyncIntervalDescription}
+                  label={copy.autoSyncIntervalLabel}
+                >
+                  <SelectControl
+                    aria-label={copy.autoSyncIntervalLabel}
+                    className="w-full"
+                    disabled={!git?.hasRemote || !autoSyncEnabled}
+                    onValueChange={(value) =>
+                      onAutoSyncChange({ autoSyncIntervalMinutes: Number(value) })
+                    }
+                    options={AUTO_SYNC_INTERVAL_OPTIONS.map((minutes) => ({
+                      label: copy.autoSyncMinutes(minutes),
+                      value: String(minutes),
+                    }))}
+                    value={String(autoSyncIntervalMinutes)}
+                  />
+                </SettingsRow>
+                <SettingsRow
+                  controlWidth="auto"
+                  description={copy.syncNowDescription}
+                  label={copy.syncNow}
+                >
+                  <Button
+                    disabled={isSyncing || !git?.hasRemote}
+                    onClick={onSync}
+                    size="md"
+                    type="button"
+                    variant="outline"
+                  >
+                    {isSyncing ? spinner : <RefreshCwIcon aria-hidden="true" />}
+                    {isSyncing ? copy.syncNowBusy : copy.syncNow}
+                  </Button>
+                </SettingsRow>
+              </SettingsGroup>
+            </SettingsBlock>
+
+            <SettingsBlock id="appearance" title={copy.navAppearance}>
+              <SettingsGroup>
+                <SettingsRow
+                  description={copy.colorModeDescription}
+                  label={copy.colorModeTitle}
+                >
+                  <SettingsSegmented
+                    ariaLabel={copy.colorModeTitle}
+                    onChange={(mode) => {
+                      applyColorMode(mode)
+                      setColorMode(mode)
+                    }}
+                    options={COLOR_MODES.map((mode) => {
+                      const ModeIcon = COLOR_MODE_ICONS[mode.id]
+                      return {
+                        icon: <ModeIcon aria-hidden="true" />,
+                        label: locale === "zh" ? mode.labelZh : mode.labelEn,
+                        value: mode.id,
+                      }
+                    })}
+                    value={colorMode}
+                  />
+                </SettingsRow>
+                <SettingsRow
+                  controlWidth="wide"
+                  description={copy.themeDescription}
+                  label={copy.themeTitle}
+                >
+                  <div aria-label={copy.themeTitle} className={styles.themeGrid} role="group">
+                    {ACCENT_THEMES.map((theme) => {
+                      const isActive = accentTheme === theme.id
+                      return (
+                        <button
+                          aria-pressed={isActive}
+                          className={styles.themeButton}
+                          key={theme.id}
+                          onClick={() => {
+                            applyAccentTheme(theme.id)
+                            setAccentTheme(theme.id)
+                          }}
+                          type="button"
+                        >
+                          <span
+                            aria-hidden="true"
+                            className={styles.themeSwatch}
+                            data-accent={theme.id}
+                          />
+                          <span className={styles.themeLabel}>
+                            {locale === "zh" ? theme.labelZh : theme.labelEn}
+                          </span>
+                          {isActive ? (
+                            <CheckIcon
+                              aria-hidden="true"
+                              className={`${styles.themeCheck} size-(--shard-icon-size-md)`}
+                            />
+                          ) : null}
+                        </button>
+                      )
+                    })}
+                  </div>
+                </SettingsRow>
+              </SettingsGroup>
+            </SettingsBlock>
+
+            <SettingsBlock id="cli" title={copy.cliTitle}>
+              <SettingsGroup busy={cliAction !== null}>
+                <SettingsRow
+                  controlWidth="auto"
+                  description={
+                    <>
+                      {copy.cliDescription}
+                      <br />
+                      <SettingsMono>{copy.cliUsage}</SettingsMono>
+                    </>
+                  }
+                  label={copy.cliCommandLabel}
+                >
+                  {cliStatus?.state === "installed" ? (
+                    <Button
+                      disabled={cliAction !== null}
+                      onClick={() => void updateCliInstallation("uninstall")}
+                      size="md"
+                      type="button"
+                      variant="outline"
+                    >
+                      {cliAction === "uninstall" ? spinner : null}
+                      {cliAction === "uninstall" ? copy.cliUninstallBusy : copy.cliUninstall}
+                    </Button>
+                  ) : cliCanInstall ? (
+                    <Button
+                      disabled={cliAction !== null}
+                      onClick={() => void updateCliInstallation("install")}
+                      size="md"
+                      type="button"
+                      variant="default"
+                    >
+                      {cliAction === "install" ? spinner : null}
+                      {cliAction === "install" ? copy.cliInstallBusy : copy.cliInstall}
+                    </Button>
+                  ) : null}
+                </SettingsRow>
+                <SettingsRow
+                  controlWidth="auto"
+                  description={cliStatusDescription}
+                  label={copy.cliStatusRowLabel}
+                >
+                  <span aria-live="polite">
+                    <StatusIndicator label={cliStatusLabel} tone={cliTone} />
+                  </span>
+                </SettingsRow>
+              </SettingsGroup>
+            </SettingsBlock>
+
+            <SettingsBlock id="shortcuts" title={copy.navShortcuts}>
+              <SettingsGroup>
+                {shortcutRows[locale].map((row) => (
+                  <SettingsRow controlWidth="auto" key={row.label} label={row.label}>
+                    <span className={styles.kbdGroup}>
+                      {row.keys.map((key) => (
+                        <kbd className={styles.kbdKey} key={key}>
+                          {key}
+                        </kbd>
+                      ))}
+                    </span>
+                  </SettingsRow>
+                ))}
+              </SettingsGroup>
+            </SettingsBlock>
           </main>
         </div>
       </DialogContent>
     </Dialog>
+  )
+}
+
+function prefersReducedMotion() {
+  return (
+    typeof window !== "undefined" &&
+    window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true
+  )
+}
+
+function StatusIndicator({ label, tone }: { label: string; tone: StationTone }) {
+  return (
+    <span className={styles.statusIndicator}>
+      <span
+        aria-hidden="true"
+        className={
+          tone === "info" ? `${styles.statusDot} ${styles.pulseDot}` : styles.statusDot
+        }
+        style={stationToneStyle[tone]}
+      />
+      <span>{label}</span>
+    </span>
   )
 }
 

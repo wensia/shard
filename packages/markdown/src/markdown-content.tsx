@@ -28,6 +28,8 @@ export interface MarkdownContentProps {
   content: string
   className?: string
   hideTags?: boolean
+  /** Match a rich editor's adjacent paragraphs without displaying the source delimiter as a blank row. */
+  compactParagraphs?: boolean
   onTaskToggle?: (lineIndex: number) => void
   /** Omitting this adapter preserves image Markdown as source text. */
   renderImage?: (image: MarkdownImageRenderProps) => ReactNode
@@ -61,10 +63,10 @@ interface RenderedContentBlock {
 }
 
 export function MarkdownContent({
-  content, className, hideTags = false, onTaskToggle, renderImage, renderInline,
+  content, className, hideTags = false, compactParagraphs = false, onTaskToggle, renderImage, renderInline,
   renderEmbed, renderFence, renderTaskReminder, loadingFallback = "加载中…", errorFallback,
 }: MarkdownContentProps) {
-  const parsed = useMarkdown("content", content, hideTags, Boolean(renderImage))
+  const parsed = useMarkdown("content", content, hideTags, Boolean(renderImage), compactParagraphs)
   const result = parsed.result?.kind === "content" ? parsed.result : undefined
   const blocks = result?.blocks
   const lastVisibleIndex = result?.lastVisibleIndex ?? -1

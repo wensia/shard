@@ -16,6 +16,7 @@
     "test:ui": "pnpm build:markdown && playwright test",
     "preview": "vite preview",
     "install:cli": "bash scripts/install-cli.sh",
+    "build:cli-sidecar": "node scripts/build-cli-sidecar.mjs",
     "build:mac:apple-silicon": "tauri build --target aarch64-apple-darwin --bundles dmg",
     "tauri": "tauri"
   },

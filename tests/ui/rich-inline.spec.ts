@@ -219,7 +219,7 @@ test.describe("富文本行内与附件组件", () => {
     expect(decoration).toEqual({ line: "underline", style: "dotted" })
 
     await chip.click()
-    await expect(page.getByText(/待建链接「尚未创建」尚不存在/u)).toBeVisible()
+    await expect(page.locator('[data-sonner-toast][data-type="info"]').filter({ hasText: "「尚未创建」还没有文档" })).toBeVisible()
     await expect.poll(() => readEditor(page, "composer")).toBe("[[尚未创建]]")
   })
 

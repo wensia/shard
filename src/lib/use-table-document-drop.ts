@@ -1,7 +1,8 @@
 import { useEffect, useState, type RefObject } from "react"
 import { isTauri } from "@tauri-apps/api/core"
 import { getCurrentWebview } from "@tauri-apps/api/webview"
-import { toast } from "sonner"
+
+import { notify } from "@/lib/notify"
 
 /** 旧 Excel 格式也拦截并提示另存，不再转换为正文表格。 */
 const TABLE_DOCUMENT_EXTENSIONS = ["csv", "xls", "xlsb", "xlsm", "xlsx"]
@@ -73,9 +74,15 @@ export function useTableDocumentDrop({
       if (paths.length === 0) return
 
       const hasLegacyFormat = paths.some(path => !/\.(?:csv|xlsx)$/iu.test(path))
-      toast.info(hasLegacyFormat
-        ? "请先将旧 Excel 文件另存为 XLSX，再到资料库的“多维表格”菜单中选择“从 CSV / Excel 导入…”。"
-        : "请在资料库的“多维表格”菜单中选择“从 CSV / Excel 导入…”，导入 CSV 或 XLSX 文件。")
+      if (hasLegacyFormat) {
+        notify.info("旧版 Excel 需先转换", {
+          description: "另存为 XLSX 后，从资料库「多维表格」菜单导入。",
+        })
+      } else {
+        notify.info("表格请从资料库导入", {
+          description: "在「多维表格」菜单选择「从 CSV / Excel 导入…」。",
+        })
+      }
     }
 
     // 订阅失败不能拖垮编辑器：webview API 在非桌面宿主（浏览器预览、

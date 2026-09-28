@@ -1,13 +1,13 @@
 import { useCallback, useRef } from "react"
-import { toast } from "sonner"
 
 import {
   extractTags,
   getMarkdownImageAlt,
   normalizeTagList,
 } from "@/lib/editor-format"
-import { getApiErrorMessage, saveFragmentImage } from "@/lib/api"
+import { saveFragmentImage } from "@/lib/api"
 import { wantsLockbox } from "@/lib/lockbox"
+import { notify } from "@/lib/notify"
 
 export interface UploadedImage {
   alt: string
@@ -45,10 +45,9 @@ export function useImageUpload({
     const content = getContentRef.current()
     const tags = normalizeTagList(["inbox", ...extractTags(content)])
     if (isLockboxRef.current || wantsLockbox(content, tags)) {
-      toast.error(
-        "密匣暂不支持图片附件：请先移除 #密匣，或在公开笔记中上传图片。",
-        { duration: Infinity }
-      )
+      notify.error("密匣暂不支持图片", {
+        description: "请先移除 #密匣，或在公开笔记中上传图片。",
+      })
       return
     }
 
@@ -64,9 +63,7 @@ export function useImageUpload({
       })
     } catch (error) {
       URL.revokeObjectURL(previewUrl)
-      toast.error(`图片上传失败：${getApiErrorMessage(error)}`, {
-        duration: Infinity,
-      })
+      notify.failure("图片上传失败", error)
     }
   }, [])
 

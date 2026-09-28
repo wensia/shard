@@ -204,7 +204,7 @@ test("未提交更改点击触发检查点提交", async ({ page }) => {
   await expect
     .poll(async () => await calledCommands(page))
     .toContain("checkpoint_vault")
-  await expect(page.getByText("已提交 3 项变更")).toBeVisible()
+  await expect(page.getByText("3 项变更已提交")).toBeVisible()
 })
 
 test("落后/领先提交数以等宽数字呈现", async ({ page }) => {

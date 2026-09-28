@@ -49,14 +49,16 @@ function serializeBlocks(nodes: JSONContent[], tightLists: boolean): string {
   nodes.forEach((node, index) => {
     const text = serializeBlock(node)
     const previous = nodes[index - 1]
-    const glue = previous && tightLists && LIST_TYPES.has(node.type ?? "") ? "\n" : "\n\n"
+    // An empty paragraph is one visible blank row, in addition to the normal
+    // Markdown paragraph delimiter. Do not collapse it during serialization.
+    const emptyParagraph = node.type === "paragraph" && text === ""
+    const glue = emptyParagraph || (previous && tightLists && LIST_TYPES.has(node.type ?? "")) ? "\n" : "\n\n"
     if (parts.length === 0) parts.push(text)
     else parts.push(glue, text)
   })
 
   const joined = parts.join("")
-  // 中间的空段落只是解析兜底，不该写回文件。
-  return joined.replace(/\n{3,}/gu, "\n\n").replace(/^\s+|\s+$/gu, "")
+  return joined.replace(/^\s+|\s+$/gu, "")
 }
 
 function serializeBlock(node: JSONContent): string {

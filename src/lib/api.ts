@@ -3,6 +3,7 @@ import { invoke, isTauri } from "@tauri-apps/api/core"
 import { deriveKind } from "@/lib/content-kind"
 import type {
   CheckpointResult,
+  CliInstallStatus,
   CsvFileSummary,
   DiagramDocumentSummary,
   Fragment,
@@ -56,6 +57,16 @@ function desktopInvoke<T>(command: string, args?: Record<string, unknown>) {
   return invoke<T>(command, args).catch((error) =>
     Promise.reject(getApiErrorMessage(error))
   )
+}
+
+function unavailableCliInstallStatus(): CliInstallStatus {
+  return {
+    state: "unavailable",
+    linkPath: null,
+    shellConfigPath: null,
+    message: null,
+    declined: false,
+  }
 }
 
 /** 搜索命令使用的原始调用路径；调用方负责把未知错误归一化为自己的类型。 */
@@ -389,6 +400,26 @@ export function setVaultRemote(remoteUrl: string) {
 
 export function getGithubCliStatus() {
   return desktopInvoke<GithubCliInfo>("github_cli_status")
+}
+
+export function getCliInstallStatus() {
+  if (!isTauri()) return Promise.resolve(unavailableCliInstallStatus())
+  return desktopInvoke<CliInstallStatus>("cli_install_status")
+}
+
+export function installCli(allowShellConfig: boolean) {
+  if (!isTauri()) return Promise.resolve(unavailableCliInstallStatus())
+  return desktopInvoke<CliInstallStatus>("install_cli", { allowShellConfig })
+}
+
+export function uninstallCli() {
+  if (!isTauri()) return Promise.resolve(unavailableCliInstallStatus())
+  return desktopInvoke<CliInstallStatus>("uninstall_cli")
+}
+
+export function setCliInstallDeclined(declined: boolean) {
+  if (!isTauri()) return Promise.resolve()
+  return desktopInvoke<void>("set_cli_install_declined", { declined })
 }
 
 export function createGithubVaultRepo(repoName: string) {

@@ -301,6 +301,13 @@ export const ShardRichEditor = forwardRef<ShardRichEditorHandle, ShardRichEditor
       const { doc, frontmatter } = parseShardMarkdown(next)
       frontmatterRef.current = frontmatter
       lastMarkdownRef.current = next
+      // 不支持 overflow-anchor 的 WebKit（Tauri 的 WKWebView）里，ProseMirror 换文档后
+      // 按参照元素的位移改写编辑器所有祖先的 scrollTop，连碎片流和 overflow:hidden
+      // 外壳一起滚走。宿主载入不是用户滚动，换完还原各层原位。
+      const scrollStack: { element: Element; top: number }[] = []
+      for (let element = instance.view.dom.parentElement; element; element = element.parentElement) {
+        scrollStack.push({ element, top: element.scrollTop })
+      }
       // 载入的正文已经由转换层解析过，剩下的字面 `#词` 是源文件里的 `\#`：
       // 打上跳过标记，收敛不碰它，打开一篇文档不会悄悄改写用户的转义。
       instance
@@ -311,6 +318,9 @@ export const ShardRichEditor = forwardRef<ShardRichEditorHandle, ShardRichEditor
         // （与旧编辑器外部写入 `addToHistory.of(false)` 一致）。
         .setMeta("addToHistory", false)
         .run()
+      for (const { element, top } of scrollStack) {
+        if (element.scrollTop !== top) element.scrollTop = top
+      }
       loadedRef.current = { doc: instance.state.doc, markdown: next }
       // 载入不报值：正文若不是规范形态（多余空格、`*` 列表），归一只发生在
       // 文档模型里，宿主的 content 仍是磁盘原文——打开文档既不标脏也不触发
@@ -398,6 +408,11 @@ export const ShardRichEditor = forwardRef<ShardRichEditorHandle, ShardRichEditor
         tier === "document" ? DOCUMENT_TIER_INPUT_RULES : FRAGMENT_TIER_INPUT_RULES,
       extensions,
       onCreate: ({ editor: instance }) => {
+        // 只认 useEditor 交回来的活实例：StrictMode 下 useState 初始化会多建一个
+        // 随即销毁的实例，它的 create 同样走到这里。让它写入 loadedRef，活实例
+        // 就永远被当成「已编辑」，peekMarkdown 交出规范化正文，资料库的排空式
+        // 保存与后端归一化后的原文永远对不上，陷入无限保存。
+        if (instance !== editorRef.current) return
         loadedRef.current = { doc: instance.state.doc, markdown: loadedRef.current.markdown }
       },
       onFocus: () => callbacks.current.onFocus?.(),
@@ -498,8 +513,16 @@ export const ShardRichEditor = forwardRef<ShardRichEditorHandle, ShardRichEditor
 
     useEffect(() => {
       if (!editor || !autoFocus) return
-      editor.commands.focus("end")
-    }, [autoFocus, editor])
+      editor.commands.focus("end", { scrollIntoView: variant !== "inline" })
+      if (variant !== "inline") return
+      // 行内编辑只在正文容器内显示末尾光标；默认选区定位会连带滚动碎片流
+      // 和 overflow:hidden 的外壳，导致点击编辑时整块内容突然上移。
+      const frame = requestAnimationFrame(() => {
+        const viewport = editorElementRef.current?.parentElement
+        if (viewport) viewport.scrollTop = viewport.scrollHeight
+      })
+      return () => cancelAnimationFrame(frame)
+    }, [autoFocus, editor, variant])
 
     useEffect(() => {
       if (!editor) return

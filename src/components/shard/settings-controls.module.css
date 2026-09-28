@@ -1,0 +1,191 @@
+/*
+ * settings-controls.module.css
+ *
+ * 设置面板的分区 / 分组卡片 / 设置行 / 分段轨道。数值全部取 kiln token；
+ * 行在内容区够宽时横排（名称说明在左、控件在右），窄时上下堆叠——
+ * 用容器查询而不是视口断点，因为对话框宽度与视口宽度不成比例。
+ */
+
+.block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding-block: var(--space-4);
+}
+
+.blockTitle {
+  margin: 0;
+  font-size: var(--text-section-title);
+  line-height: 20px;
+  font-weight: 600;
+  color: var(--foreground);
+}
+
+.group {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--card);
+}
+
+.item {
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border);
+}
+
+.item:last-child {
+  border-bottom: none;
+}
+
+.row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.rowText {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: var(--space-0\.5);
+}
+
+.rowLabel {
+  font-size: var(--text-body);
+  line-height: 20px;
+  font-weight: 500;
+  color: var(--foreground);
+}
+
+.rowDescription {
+  font-size: var(--text-meta);
+  line-height: 18px;
+  color: var(--muted-foreground);
+  text-wrap: pretty;
+}
+
+.control {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+@container settings-content (min-width: 520px) {
+  .row:not([data-control-width="wide"]) {
+    flex-direction: row;
+    align-items: center;
+  }
+
+  .row:not([data-control-width="wide"]) .control {
+    flex: 0 0 auto;
+    justify-content: flex-end;
+  }
+
+  .control[data-width="compact"] {
+    width: 224px;
+  }
+
+  .control[data-width="default"] {
+    width: 280px;
+  }
+
+  .control[data-width="auto"] {
+    width: auto;
+  }
+}
+
+/* 宽控件（行内表单、色板）晚一档横排，免得左侧说明被挤成窄条 */
+@container settings-content (min-width: 680px) {
+  .row[data-control-width="wide"] {
+    flex-direction: row;
+    align-items: center;
+  }
+
+  .control[data-width="wide"] {
+    width: 400px;
+    flex: 0 0 auto;
+    justify-content: flex-end;
+  }
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-size: var(--text-meta);
+  line-height: 18px;
+  word-break: break-all;
+  user-select: all;
+}
+
+/* ---------- 分段轨道（kiln SegmentedControl：外框 = --control-height） ---------- */
+
+.segmentTrack {
+  display: flex;
+  width: 100%;
+  height: var(--control-height);
+  gap: var(--space-1);
+  padding: 1px;
+  border: 1px solid color-mix(in srgb, var(--border-visible) 50%, transparent);
+  border-radius: var(--radius-control);
+  background: var(--segment-track-bg);
+}
+
+.segment {
+  position: relative;
+  display: inline-flex;
+  min-width: 0;
+  flex: 1 1 0;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  height: var(--control-height-sm);
+  padding-inline: var(--space-2);
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--muted-foreground);
+  font-size: var(--text-body);
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    background-color 150ms ease,
+    color 150ms ease,
+    box-shadow 150ms ease;
+}
+
+.segment svg {
+  flex-shrink: 0;
+  width: var(--shard-icon-size-sm);
+  height: var(--shard-icon-size-sm);
+}
+
+.segment:hover {
+  background: var(--segment-hover-bg);
+  color: var(--foreground);
+}
+
+.segment[aria-pressed="true"] {
+  background: var(--segment-active-bg);
+  color: var(--segment-active-fg);
+  box-shadow: var(--segment-active-shadow);
+}
+
+/* 选中标记：暗色里激活片与 hover 只差一点亮度，选中身份靠这道短横；亮色 token 为透明 */
+.segment[aria-pressed="true"]::after {
+  position: absolute;
+  bottom: 2px;
+  left: 50%;
+  width: var(--space-3);
+  height: 2px;
+  border-radius: 1px;
+  background: var(--segment-active-mark);
+  content: "";
+  translate: -50% 0;
+}
+
+.segmentLabel {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

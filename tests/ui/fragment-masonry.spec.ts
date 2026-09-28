@@ -9,9 +9,9 @@ import { installSearchIpcMock } from "./search-ipc-mock"
 
 const fragmentIds = Array.from({ length: 18 }, (_, index) => `masonry-${index}`)
 
-async function installMasonryMock(page: Page, count = 18) {
+async function installMasonryMock(page: Page, count = 18, pinFirst = true) {
   await installSearchIpcMock(page)
-  await page.addInitScript((count: number) => {
+  await page.addInitScript(({ count, pinFirst }: { count: number; pinFirst: boolean }) => {
     const longLengths = new Map([[0, 42], [2, 64], [4, 38]])
     const fragments = Array.from({ length: count }, (_, index) => {
       const createdAt = index === 0
@@ -21,7 +21,7 @@ async function installMasonryMock(page: Page, count = 18) {
       return {
         id: `masonry-${index}`,
         kind: "fragment",
-        content: paragraphs
+        content: index === 1 ? "- [ ] 去银行办理房贷最低还款 ⏰ 2026-09-28 10:30" : paragraphs
           ? Array.from({ length: paragraphs }, (_, line) =>
             `长文 ${index} 第 ${line + 1} 段：记录观察和后续行动，保持完整正文。`
           ).join("\n\n")
@@ -35,7 +35,7 @@ async function installMasonryMock(page: Page, count = 18) {
         error: null,
         archived: false,
         lockbox: false,
-        pinned: index === 0,
+        pinned: pinFirst && index === 0,
         related: [],
       }
     }).reverse()
@@ -73,7 +73,7 @@ async function installMasonryMock(page: Page, count = 18) {
         },
       },
     })
-  }, count)
+  }, { count, pinFirst })
 }
 
 async function openFragmentStream(page: Page) {
@@ -366,6 +366,119 @@ test("列数跟随碎片可用容器宽度，侧栏折叠无需触发窗口 resi
   await expect(layout).toHaveAttribute("data-columns", "1")
   await expectPackedLayout(page)
 })
+
+const editPositionCases = [
+  { width: 1800, height: 900 },
+  { width: 1280, height: 520 },
+  { width: 640, height: 520 },
+].flatMap(viewport => ["masonry-1", "masonry-2"].map(fragmentId => ({ viewport, fragmentId })))
+
+for (const { viewport, fragmentId } of editPositionCases) {
+  test(`点击编辑保持碎片流和外层容器位置 ${fragmentId} ${viewport.width}x${viewport.height}`, async ({ page }) => {
+    await page.setViewportSize(viewport)
+    await openFragmentStream(page)
+    await expectPackedLayout(page)
+    const card = page.locator(`[data-shard-fragment-id="${fragmentId}"]`)
+    if (fragmentId === "masonry-1") await expect(card).toContainText("去银行办理房贷最低还款")
+    await card.getByRole("button", { name: "片段操作", exact: true }).click()
+    // 单列里按钮可能需先滚动到可见处；等待这次滚动引起的 composer 折叠结束。
+    await page.waitForTimeout(350)
+    const readPosition = () => card.evaluate((element) => {
+      const ancestors: { className: string; top: number; left: number }[] = []
+      for (let parent = element.parentElement; parent; parent = parent.parentElement) {
+        ancestors.push({ className: parent.className, top: parent.scrollTop, left: parent.scrollLeft })
+      }
+      const composer = document.querySelector('[data-shard-editor="composer"]')!.getBoundingClientRect()
+      return { ancestors, cardTop: element.getBoundingClientRect().top, composerTop: composer.top, windowY: window.scrollY }
+    })
+    const before = await readPosition()
+    await page.getByRole("menuitem", { name: "编辑", exact: true }).click()
+    const editor = card.locator(".ProseMirror")
+    await expect(editor).toBeFocused()
+    // 聚焦、菜单关闭及 ResizeObserver 均异步发生，覆盖随后的布局帧。
+    await page.waitForTimeout(350)
+    expect(await readPosition()).toEqual(before)
+    if (fragmentId === "masonry-2") {
+      // 长文仍显示末尾光标，只允许编辑器自己的正文视口滚到末尾。
+      const innerScroll = await card.locator("[data-shard-editor]").evaluate(element => {
+        const viewport = element.parentElement!
+        return { top: viewport.scrollTop, max: viewport.scrollHeight - viewport.clientHeight }
+      })
+      expect(innerScroll.top).toBeGreaterThan(0)
+      expect(innerScroll.top).toBeCloseTo(innerScroll.max, 0)
+    }
+    await page.keyboard.type(" edited")
+    await expect(editor).toContainText("edited")
+  })
+}
+
+test("无 overflow-anchor 的 WebKit 里点击编辑不改写外层滚动", async ({ page }) => {
+  // Tauri 的 WKWebView 不支持 overflow-anchor，ProseMirror 换文档时改走
+  // storeScrollPos/resetScrollPos，会把位移写进编辑器所有祖先的 scrollTop。
+  await page.addInitScript(() => {
+    Object.defineProperty(CSSStyleDeclaration.prototype, "overflowAnchor", {
+      configurable: true, get: () => undefined, set: () => {},
+    })
+  })
+  // 不置顶时最新的任务卡排在左列第一张，与真实复现现场一致。
+  await installMasonryMock(page, 18, false)
+  await page.reload()
+  await openFragmentStream(page)
+  await page.waitForTimeout(350)
+  const card = page.locator('[data-shard-fragment-id="masonry-1"]')
+  const readPosition = () => card.evaluate((element) => {
+    const ancestors: number[] = []
+    for (let parent = element.parentElement; parent; parent = parent.parentElement) {
+      ancestors.push(parent.scrollTop)
+    }
+    return { ancestors, cardTop: element.getBoundingClientRect().top }
+  })
+  const before = await readPosition()
+  await card.getByRole("button", { name: "片段操作", exact: true }).click()
+  await page.getByRole("menuitem", { name: "编辑", exact: true }).click()
+  await expect(card.locator(".ProseMirror")).toBeFocused()
+  await page.waitForTimeout(350)
+  expect(await readPosition()).toEqual(before)
+})
+
+for (const width of [1280, 640]) {
+  test(`部分滚出顶部的卡片进入编辑后正文完整可见 ${width}`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 720 })
+    await openFragmentStream(page)
+    await expectPackedLayout(page)
+    const card = page.locator('[data-shard-fragment-id="masonry-1"]')
+    await card.evaluate(element => {
+      const viewport = element.closest<HTMLElement>('[data-slot="scroll-area-viewport"]')!
+      viewport.scrollTop += element.getBoundingClientRect().top - viewport.getBoundingClientRect().top + 18
+    })
+    await page.waitForTimeout(350)
+    const geometry = () => card.evaluate(element => {
+      const viewport = element.closest<HTMLElement>('[data-slot="scroll-area-viewport"]')!
+      const composer = document.querySelector('[data-shard-editor="composer"]')!.getBoundingClientRect()
+      return { top: element.getBoundingClientRect().top, viewportTop: viewport.getBoundingClientRect().top,
+        scroll: viewport.scrollTop, composerTop: composer.top, composerBottom: composer.bottom, windowY: window.scrollY }
+    })
+    const before = await geometry()
+    expect(before.top).toBeLessThan(before.viewportTop)
+    // locator.click 会替用户滚回卡片顶部，掩盖真实鼠标点击时的裁切。
+    const menu = (await card.getByRole("button", { name: "片段操作", exact: true }).boundingBox())!
+    await page.mouse.click(menu.x + menu.width / 2, menu.y + menu.height / 2)
+    await page.getByRole("menuitem", { name: "编辑", exact: true }).click()
+    await expect(card.locator(".ProseMirror")).toBeFocused()
+    await page.waitForTimeout(350)
+    const after = await geometry()
+    expect(Math.abs(after.top - after.viewportTop)).toBeLessThanOrEqual(1)
+    expect(Math.abs(after.scroll - (before.scroll + before.top - before.viewportTop))).toBeLessThanOrEqual(1)
+    expect(after.composerTop).toBe(before.composerTop)
+    expect(after.composerBottom).toBe(before.composerBottom)
+    expect(after.windowY).toBe(before.windowY)
+    const task = (await card.locator('[data-type="taskItem"]').boundingBox())!
+    expect(task.y).toBeGreaterThanOrEqual(after.viewportTop)
+    await card.getByRole("button", { name: "取消", exact: true }).click()
+    await page.waitForTimeout(350)
+    expect(await geometry()).toEqual(after)
+  })
+}
 
 test("编辑中的卡片跨单双列切换保留同一编辑器、草稿和选区", async ({ page }) => {
   await openFragmentStream(page)

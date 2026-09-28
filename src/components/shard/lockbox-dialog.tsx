@@ -8,7 +8,6 @@ import {
 } from "react"
 import { save } from "@tauri-apps/plugin-dialog"
 import { ArrowBigUpIcon, XIcon } from "@/components/icons"
-import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -20,6 +19,7 @@ import {
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { getApiErrorMessage, saveRecoveryKey } from "@/lib/api"
+import { notify } from "@/lib/notify"
 
 export type LockboxDialogMode = "change" | "reset" | "setup" | "unlock"
 
@@ -488,10 +488,10 @@ function RecoveryKeyStep({
       if (!path) return
 
       await saveRecoveryKey(path, recoveryKey)
-      toast("恢复密钥已下载")
+      notify.success("恢复密钥已下载")
     } catch (error) {
-      toast.error(`下载恢复密钥失败：${getApiErrorMessage(error)}`, {
-        duration: Infinity,
+      notify.failure("恢复密钥下载失败", error, {
+        action: { label: "重试", onClick: () => void downloadRecoveryKey() },
       })
     } finally {
       setIsDownloading(false)

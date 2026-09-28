@@ -294,7 +294,7 @@ test.describe("资料库编辑器", () => {
     await fillEditor(page, `library:${NOTE_ID}`, "[[尚未创建]]")
     await expect(chips(page)).toHaveClass(/shard-rich-wikilink--missing/u)
     await chips(page).click()
-    await expect(page.getByText(/待建链接「尚未创建」尚不存在/u)).toBeVisible()
+    await expect(page.locator('[data-sonner-toast][data-type="info"]').filter({ hasText: "「尚未创建」还没有文档" })).toBeVisible()
     await expect.poll(() => readEditor(page, `library:${NOTE_ID}`)).toBe("[[尚未创建]]")
   })
 
@@ -430,5 +430,36 @@ test.describe("资料库编辑器里的大纲块", () => {
     )
     await expect(widget).toHaveAttribute("data-mind-map-fence-widget", "editor")
     await expect.poll(() => readEditor(page, `library:${NOTE_ID}`)).toBe(OUTLINE_BODY)
+  })
+})
+
+test.describe("资料库保存与后端归一化", () => {
+  test("只有标题的文档打开后显式保存不写盘，更不会反复重存", async ({ page }) => {
+    // 真实后端写入时去掉尾部空白再补一个换行，读回的正文总带尾换行；
+    // 编辑器序列化不带尾换行。两边口径不一时，排空式保存曾把同一份正文无限重存。
+    await installRichLibraryMock(page, "# 未命名\n")
+    await page.addInitScript(() => {
+      const internals = (globalThis as typeof globalThis & {
+        __TAURI_INTERNALS__: { invoke: (command: string, args?: Record<string, unknown>) => Promise<unknown> }
+      }).__TAURI_INTERNALS__
+      const invoke = internals.invoke
+      internals.invoke = async (command, args = {}) => {
+        const result = await invoke(command, args)
+        if (command !== "update_fragment") return result
+        const fragment = result as { content: string }
+        return { ...fragment, content: `${fragment.content.trimEnd()}\n` }
+      }
+    })
+    await page.goto("/")
+    await openSampleNote(page)
+    await expect(proseMirror(page).locator("h1")).toHaveText("未命名")
+
+    await page.keyboard.press("ControlOrMeta+s")
+    await expect(
+      page.getByRole("contentinfo", { name: "状态栏" }).getByText("已保存")
+    ).toBeVisible()
+    // 失控时两秒内会有上百次调用；留出足够的时间窗再断言一次都没有。
+    await page.waitForTimeout(1_000)
+    expect(await commandCalls(page, "update_fragment")).toHaveLength(0)
   })
 })

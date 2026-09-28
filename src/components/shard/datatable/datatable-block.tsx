@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
-import { toast } from "sonner"
 
 import {
   ChevronRightIcon,
@@ -28,6 +27,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { getApiErrorMessage, readCsvFile } from "@/lib/api"
 import { parseCsvBytesInWorker } from "@/lib/csv-worker"
+import { notify } from "@/lib/notify"
 import {
   addDatatableColumn,
   addDatatableRow,
@@ -250,9 +250,11 @@ function DatatableSurface({ spec, readOnly, onChange }: DatatableSurfaceProps) {
       if (!chosen) return
       const text = datatableToCsv(columns, groups ? groups.flatMap((item) => item.entries) : entries)
       await writeTableExchangeFile(chosen, new TextEncoder().encode(text))
-      toast("数据表已导出为 CSV")
+      notify.success("数据表已导出为 CSV")
     } catch (error) {
-      toast.error(`数据表导出失败：${getApiErrorMessage(error)}`, { duration: Infinity })
+      notify.failure("数据表导出失败", error, {
+        action: { label: "重试", onClick: () => void exportCsv() },
+      })
     } finally {
       setIsExporting(false)
     }

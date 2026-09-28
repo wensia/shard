@@ -934,7 +934,10 @@ mod tests {
         ] {
             let mut file = fixture();
             file.title = title.clone();
-            assert_eq!(create_in_vault(vault, "notes", &title, file).unwrap_err(), expected);
+            assert_eq!(
+                create_in_vault(vault, "notes", &title, file).unwrap_err(),
+                expected
+            );
         }
         let title = "😀".repeat(60);
         let mut file = fixture();
@@ -948,8 +951,13 @@ mod tests {
         file.title = "长标题".repeat(30);
         file.nodes[0].text = "已修改".into();
         let saved = write_in_vault(
-            vault, &legacy_path, file.clone(), file.revision, &legacy.last_saved_hash,
-        ).unwrap();
+            vault,
+            &legacy_path,
+            file.clone(),
+            file.revision,
+            &legacy.last_saved_hash,
+        )
+        .unwrap();
         assert_eq!(saved.file.title, file.title);
         let reread = read_in_vault(vault, &legacy_path).unwrap();
         assert_eq!(reread.path, legacy_path);

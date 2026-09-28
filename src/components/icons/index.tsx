@@ -82,6 +82,7 @@ import {
   SeparatorHorizontalIcon as LSeparatorHorizontal,
   SettingsIcon as LSettings,
   Share2Icon as LShare2,
+  SquareTerminalIcon as LSquareTerminal,
   TableIcon as LTable,
   TagIcon as LTag,
   TextCursorInputIcon as LTextCursorInput,
@@ -177,6 +178,7 @@ export const SendHorizontalIcon = /*#__PURE__*/ withIconDefaults(LSendHorizontal
 export const SeparatorHorizontalIcon = /*#__PURE__*/ withIconDefaults(LSeparatorHorizontal)
 export const SettingsIcon = /*#__PURE__*/ withIconDefaults(LSettings)
 export const Share2Icon = /*#__PURE__*/ withIconDefaults(LShare2)
+export const SquareTerminalIcon = /*#__PURE__*/ withIconDefaults(LSquareTerminal)
 export const TableIcon = /*#__PURE__*/ withIconDefaults(LTable)
 export const TagIcon = /*#__PURE__*/ withIconDefaults(LTag)
 export const TextCursorInputIcon = /*#__PURE__*/ withIconDefaults(LTextCursorInput)

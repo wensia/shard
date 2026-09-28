@@ -15,7 +15,6 @@ import {
   LockKeyholeIcon,
   SendHorizontalIcon,
 } from "@/components/icons"
-import { toast } from "sonner"
 
 import { EditorToolbar } from "@/components/shard/editor-toolbar"
 import { FragmentImageAttachment } from "@/components/shard/fragment-content"
@@ -32,7 +31,6 @@ import {
   normalizeTagList,
 } from "@/lib/editor-format"
 import {
-  getApiErrorMessage,
   openCsvFile,
   saveFragmentImage,
 } from "@/lib/api"
@@ -43,6 +41,7 @@ import {
   OUTLINE_TYPE_TAG,
 } from "@/lib/content-kind"
 import { wantsLockbox } from "@/lib/lockbox"
+import { notify } from "@/lib/notify"
 import {
   EMPTY_MIND_MAP_OUTLINE_SOURCE,
   parseMindMapOutline,
@@ -163,7 +162,7 @@ export const CaptureBox = forwardRef<CaptureBoxHandle, CaptureBoxProps>(function
           : undefined
     if (csvPath) {
       void openCsvFile(csvPath).catch((error) => {
-        toast.error(`打开 CSV 失败：${getApiErrorMessage(error)}`, { duration: Infinity })
+        notify.failure("CSV 文件打开失败", error)
       })
       return
     }
@@ -173,7 +172,7 @@ export const CaptureBox = forwardRef<CaptureBoxHandle, CaptureBoxProps>(function
       return
     }
 
-    toast(`待建链接「${target}」尚不存在，可在资料库新建笔记`)
+    notify.info(`「${target}」还没有文档`, { description: "可在资料库新建同名文档。" })
   }, [])
   const isOutlineMode = outlineCode !== null
   const outlineFile = useMemo(
@@ -302,7 +301,7 @@ export const CaptureBox = forwardRef<CaptureBoxHandle, CaptureBoxProps>(function
   async function submitOutline() {
     if (isCreating) return
     if (!outlineFile || !hasOutlineRoot) {
-      toast("大纲还没有中心主题：先写下根节点，再保存。")
+      notify.warning("大纲还没有中心主题", { description: "先写下根节点，再保存。" })
       return
     }
 
@@ -336,7 +335,7 @@ export const CaptureBox = forwardRef<CaptureBoxHandle, CaptureBoxProps>(function
     const draft = getCurrentEditorValue()
     const draftTags = normalizeTagList(["inbox", ...extractTags(draft)])
     if (wantsLockbox(draft, draftTags) && pendingImages.length > 0) {
-      toast.error("密匣暂不支持图片附件：请先移除图片，再保存到密匣，避免附件写入公开 assets 目录。", { duration: Infinity })
+      notify.error("密匣暂不支持图片", { description: "请先移除图片，再保存到密匣。" })
       setIsEditorExpanded(true)
       return
     }
@@ -346,7 +345,7 @@ export const CaptureBox = forwardRef<CaptureBoxHandle, CaptureBoxProps>(function
       for (const image of pendingImages) {
         const path = await saveFragmentImage(image.fileName, image.bytes).catch(
           (error) => {
-            toast.error(`图片保存失败：${getApiErrorMessage(error)}`, { duration: Infinity })
+            notify.failure("图片保存失败", error)
             throw error
           }
         )
@@ -389,7 +388,7 @@ export const CaptureBox = forwardRef<CaptureBoxHandle, CaptureBoxProps>(function
     if (!onOpenZen) return
 
     if (pendingImages.length > 0) {
-      toast.error("带图片的草稿暂不能切换到禅模式：请先保存当前片段，或移除图片后再进入禅模式。", { duration: Infinity })
+      notify.error("带图片的草稿不能进禅模式", { description: "请先保存片段，或移除图片。" })
       return
     }
 
@@ -422,7 +421,7 @@ export const CaptureBox = forwardRef<CaptureBoxHandle, CaptureBoxProps>(function
         focusActiveEditor()
       })
     } catch (error) {
-      toast.error(`图片上传失败：${getApiErrorMessage(error)}`, { duration: Infinity })
+      notify.failure("图片上传失败", error)
       URL.revokeObjectURL(previewUrl)
     }
   }

@@ -30,7 +30,6 @@ import styles from "./sidebar-nav.module.css"
 interface SidebarNavProps {
   fragments: Fragment[]
   isCollapsed: boolean
-  mindMapViewActive: boolean
   onOpenSearch: () => void
   onRouteChange: (route: WorkspaceRoute) => void
   onToggleCollapsed: () => void
@@ -196,7 +195,6 @@ const NAV_LABEL_STYLE: CSSProperties = {
 export function SidebarNav({
   fragments,
   isCollapsed,
-  mindMapViewActive,
   onOpenSearch,
   onRouteChange,
   onToggleCollapsed,
@@ -362,7 +360,7 @@ export function SidebarNav({
         ) : null}
         {SPACE_ITEMS.map((item) => {
           const Icon = item.icon
-          const isActive = item.id === route.space && !mindMapViewActive
+          const isActive = item.id === route.space
 
           return (
             <div className={styles.navGroup} key={item.id}>
@@ -378,7 +376,7 @@ export function SidebarNav({
                 onClick={() => onRouteChange(item.route)}
               />
 
-              {item.id === "fragments" && route.space === "fragments" && !mindMapViewActive ? (
+              {item.id === "fragments" && route.space === "fragments" ? (
                 <>
                   {isCollapsed ? (
                     <CollapsedGroupMarker label={copy.groups.fragments} />
