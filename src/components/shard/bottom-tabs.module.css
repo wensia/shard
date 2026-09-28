@@ -1,42 +1,5 @@
-/* Mobile workspace navigation. Kiln semantic tokens own its hierarchy and
-   interaction states; Shard-specific shell geometry remains outside it. */
-
-.tab {
-  position: relative;
-  display: flex;
-  height: calc(var(--control-height) + var(--space-3));
-  min-width: 0;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-0\.5);
-  border-radius: var(--radius-control);
-  padding-inline: var(--space-1);
-  font-size: var(--text-tiny);
-  line-height: var(--leading-tight);
-  font-weight: 400;
-  color: var(--muted-foreground);
-  transition:
-    background-color 0.15s ease,
-    color 0.15s ease;
-}
-
-.tabActive {
-  background: var(--sidebar-primary);
-  color: var(--sidebar-primary-foreground);
-  font-weight: 600;
-}
-
-.tabInactive:hover {
-  background: var(--sidebar-accent);
-  color: var(--sidebar-accent-foreground);
-}
-
-.tab:focus-visible,
-.secondaryTab:focus-visible {
-  outline: none;
-  box-shadow: var(--ring-focus);
-}
+/* Mobile workspace navigation. 页签外观统一由 components/ui/tabs.css 负责；
+   这里只保留小窗外壳自身的几何。 */
 
 .navigationStack {
   display: flex;
@@ -46,59 +9,12 @@
   gap: var(--space-1);
 }
 
-.primaryTabs {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--space-1);
-  border-radius: var(--radius-panel);
-  background: var(--muted);
-  padding: var(--space-1);
-}
-
+/* 一级、二级导航的外观见 components/ui/tabs.css（墨迹，nav / sub 档）；这里只管二级的横向滚动 */
 .secondaryTabs {
-  display: flex;
   min-width: 0;
-  gap: var(--space-1);
   overflow-x: auto;
-  padding-block: var(--space-0\.5);
-}
-
-.secondaryTab {
-  display: flex;
-  height: var(--control-height-sm);
-  min-width: max-content;
-  align-items: center;
-  gap: var(--space-1);
-  border-radius: var(--radius-control);
-  padding-inline: var(--space-2);
-  font-size: var(--text-meta);
-  font-weight: 400;
-  color: var(--muted-foreground);
-  transition:
-    background-color 0.15s ease,
-    color 0.15s ease;
-}
-
-.secondaryTabActive {
-  background: var(--primary-subtle);
-  color: var(--primary-text);
-  font-weight: 500;
-}
-
-.secondaryTabInactive:hover {
-  background: var(--sidebar-accent);
-  color: var(--sidebar-accent-foreground);
-}
-
-.count {
-  min-width: var(--space-4);
-  border-radius: var(--radius-control);
-  background: var(--background);
-  padding-inline: var(--space-1);
-  color: var(--muted-foreground);
-  font-size: var(--text-tiny);
-  font-variant-numeric: tabular-nums;
-  text-align: center;
+  overscroll-behavior-x: none;
+  scrollbar-width: none;
 }
 
 .truncate {

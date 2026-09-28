@@ -14,20 +14,23 @@
 .table-workspace-toolbar .table-add-record { color: var(--primary-text); }
 .table-workspace-toolbar svg, .table-view-bar svg { width: var(--space-4); height: var(--space-4); }
 .table-workspace-toolbar [data-slot="button"]:focus-visible, .table-view-bar [data-slot="button"]:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
-.table-view-bar { display: flex; flex-shrink: 0; align-items: center; gap: 0; min-width: 0; padding-inline: var(--space-3); background: var(--table-header); border-bottom: 1px solid var(--border); }
-.table-view-tabs { display: flex; align-items: center; gap: 0; flex: 0 1 auto; min-width: 0; overflow-x: auto; overscroll-behavior: contain; scrollbar-width: thin; }
-.table-view-tab-group { display: flex; align-items: center; flex-shrink: 0; min-width: 0; border-right: 1px solid var(--border); color: var(--muted-foreground); }
-/* The name and More action share one tab surface; children never paint over it. */
-.table-view-tab-group[data-active="false"]:is(:hover, :focus-within):not(:has(.table-view-tab:disabled)) { background: var(--table-row-hover); color: var(--foreground); }
-.table-view-tab-group[data-active="true"], .table-view-tab-group:has(.table-view-menu[aria-expanded="true"]) { background: var(--card); color: var(--foreground); }
-.table-view-tab { display: flex; align-items: center; gap: var(--space-2); position: relative; flex-shrink: 0; max-width: calc(var(--space-12) * 5); height: var(--table-pagination-height); padding-inline: var(--space-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 0; border-radius: 0; background: transparent; color: inherit; font: inherit; font-weight: var(--weight-medium); cursor: pointer; }
+/* 视图栏：墨迹页签（与 components/ui/tabs.css 同一语言）——没有色带、分隔竖线和选中底板，
+   选中视图 = 正文色 + 覆盖名称与「…」的 2px 品牌色下划线。视图名全部用 500 字重，切换不跳宽。 */
+.table-view-bar { --shard-focus-offset: -2px; display: flex; flex-shrink: 0; align-items: center; gap: var(--space-4); min-width: 0; padding-inline: var(--space-4); border-bottom: 1px solid var(--border); }
+.table-view-tabs { display: flex; align-items: stretch; gap: var(--shard-space-5); flex: 0 1 auto; min-width: 0; overflow-x: auto; overscroll-behavior: contain; scrollbar-width: thin; }
+.table-view-tab-group { position: relative; display: flex; align-items: center; flex-shrink: 0; min-width: 0; color: var(--muted-foreground); transition: color 150ms ease; }
+/* 名称与「…」共用一个页签：下划线画在分组上，覆盖两者。 */
+.table-view-tab-group[data-active="false"]:is(:hover, :focus-within):not(:has(.table-view-tab:disabled)) { color: var(--foreground); }
+.table-view-tab-group[data-active="true"], .table-view-tab-group:has(.table-view-menu[aria-expanded="true"]) { color: var(--foreground); }
+.table-view-tab-group[data-active="true"]::after { position: absolute; right: 0; bottom: 0; left: 0; height: 2px; border-radius: 1px; background: var(--primary-text); content: ""; }
+.table-view-tab { display: flex; align-items: center; gap: var(--space-2); position: relative; flex-shrink: 0; max-width: calc(var(--space-12) * 5); height: var(--table-pagination-height); padding-inline: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 0; border-radius: 0; background: transparent; color: inherit; font: inherit; font-weight: var(--weight-medium); cursor: pointer; }
 .table-view-tab[aria-selected="true"] > svg { color: var(--primary-text); }
 .table-view-tab > span { overflow: hidden; text-overflow: ellipsis; }
 .table-view-bar .table-view-menu, .table-view-bar .table-view-menu:hover, .table-view-bar .table-view-menu[aria-expanded="true"] { flex-shrink: 0; height: var(--table-pagination-height); border-radius: 0; background: transparent; color: inherit; cursor: pointer; }
 .table-view-tab:focus-visible, .table-view-bar .table-view-menu:focus-visible { outline: calc(var(--space-1) / 2) solid var(--ring); outline-offset: calc(var(--space-1) / -2); box-shadow: none; }
 .table-view-tab:disabled { cursor: default; opacity: var(--shard-alpha-55); }
 .table-view-bar > button { height: var(--table-pagination-height); }
-.table-new-view { margin-inline-start: var(--space-2); }
+.table-new-view { margin-inline-start: 0; color: var(--muted-foreground); }
 .table-inline-actions { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); }
 .table-workspace-body { display: flex; flex: 1; position: relative; min-width: 0; min-height: 0; overflow: hidden; }
 .table-workspace-grid { flex: 1; position: relative; min-width: 0; min-height: 0; overflow: hidden; background: var(--background); }

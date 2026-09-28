@@ -1,0 +1,152 @@
+/* Shard 标签（墨迹）：纯文字页签，没有轨道、底板和外框。
+   未选中 = 次要文字色；选中 = 正文色 + 500 字重 + 标签宽度的 2px 品牌色下划线，图标同为品牌色。
+   对应 kiln 的 line tabs；Shard 所有标签（视图切换、检查器、表格视图、小窗导航）统一用这一种。
+
+   用法：tablist 挂 .shard-tabs（可选 data-size），每个 tab 挂 .shard-tab，文字包进 TabLabel。
+   选中态认 aria-selected（页签）或 aria-current="page"（导航）。
+   尺寸档：
+   - 默认：面板内（检查器），高 --control-height-lg，底部一条通栏分隔由宿主画
+   - bar：嵌在标题栏 / 工具栏里，页签撑满栏高，下划线落在栏的底边
+   - nav：小窗一级导航，图标在上、文字在下，指示线在顶部
+   - sub：二级小号页签，可带计数 */
+
+.shard-tabs {
+  /* 页签贴着栏边，键盘焦点环内收，避免被裁 */
+  --shard-focus-offset: -2px;
+  display: flex;
+  min-width: 0;
+  align-items: stretch;
+  gap: var(--shard-space-5);
+}
+
+.shard-tab {
+  position: relative;
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--shard-space-micro);
+  height: var(--control-height-lg);
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--muted-foreground);
+  font: inherit;
+  font-size: var(--text-body);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color 150ms ease;
+}
+
+.shard-tab:hover:not(:disabled) {
+  color: var(--foreground);
+}
+
+.shard-tab:is([aria-selected="true"], [aria-current="page"]) {
+  color: var(--foreground);
+  font-weight: var(--weight-medium);
+}
+
+.shard-tab:is([aria-selected="true"], [aria-current="page"])::after {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--primary-text);
+  content: "";
+}
+
+.shard-tab > svg {
+  width: var(--shard-icon-size-sm);
+  height: var(--shard-icon-size-sm);
+  --shard-icon-stroke: var(--shard-icon-stroke-sm);
+}
+
+.shard-tab:is([aria-selected="true"], [aria-current="page"]) > svg {
+  color: var(--primary-text);
+}
+
+.shard-tab:disabled {
+  cursor: default;
+  opacity: var(--shard-alpha-55);
+}
+
+/* 选中加粗不改变宽度：隐藏的 500 字重副本先占住宽度（kiln：状态变化不得改变控件尺寸） */
+.shard-tab-label {
+  display: inline-grid;
+}
+
+.shard-tab-label::after {
+  height: 0;
+  overflow: hidden;
+  font-weight: var(--weight-medium);
+  visibility: hidden;
+  /* 替代文本为空：占位副本不进无障碍树，页签的可访问名称只有一份文字 */
+  content: attr(data-label) / "";
+  user-select: none;
+}
+
+/* bar：撑满所在栏的高度，下划线与栏底边重合 */
+.shard-tabs[data-size="bar"] {
+  align-self: stretch;
+}
+
+.shard-tabs[data-size="bar"] > .shard-tab {
+  height: auto;
+}
+
+/* nav：小窗一级导航 */
+.shard-tabs[data-size="nav"] {
+  display: grid;
+  grid-auto-columns: minmax(0, 1fr);
+  grid-auto-flow: column;
+  gap: 0;
+}
+
+.shard-tabs[data-size="nav"] > .shard-tab {
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--space-0\.5);
+  height: calc(var(--control-height) + var(--space-3));
+  font-size: var(--text-meta);
+}
+
+.shard-tabs[data-size="nav"] > .shard-tab > svg {
+  width: var(--shard-icon-size-nav);
+  height: var(--shard-icon-size-nav);
+  /* 18px 导航图标回到基准描边（上面给小图标设的是加粗档） */
+  --shard-icon-stroke: inherit;
+}
+
+.shard-tabs[data-size="nav"] > .shard-tab:is([aria-selected="true"], [aria-current="page"])::after {
+  top: 0;
+  bottom: auto;
+  left: 50%;
+  width: var(--space-8);
+  translate: -50% 0;
+}
+
+/* sub：二级小号页签 */
+.shard-tabs[data-size="sub"] {
+  gap: var(--space-4);
+}
+
+.shard-tabs[data-size="sub"] > .shard-tab {
+  height: var(--control-height-sm);
+  font-size: var(--text-meta);
+}
+
+.shard-tab-count {
+  color: var(--muted-foreground);
+  font-size: var(--text-tiny);
+  font-weight: var(--weight-regular);
+  font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .shard-tab {
+    transition: none;
+  }
+}

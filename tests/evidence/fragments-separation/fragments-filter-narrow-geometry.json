@@ -22,9 +22,9 @@
     "bounds": {
       "left": 64,
       "right": 576,
-      "top": 73.15625,
-      "bottom": 446.84375,
-      "height": 373.6875
+      "top": 16,
+      "bottom": 504,
+      "height": 488
     },
     "viewport": {
       "width": 640,
@@ -36,12 +36,24 @@
     "notoLoaded": true,
     "controls": [
       {
+        "label": "类型",
+        "kind": "select",
+        "left": 89,
+        "right": 551,
+        "top": 143.5625,
+        "bottom": 171.5625,
+        "height": 28,
+        "width": 462,
+        "radius": "4px",
+        "font": "-apple-system, \"Helvetica Neue\", Arial, \"Noto Sans SC\", \"Hiragino Sans GB\", STHeiti, \"Microsoft YaHei\", \"Microsoft JhengHei\", \"Source Han Sans SC\", \"Noto Sans CJK SC\", \"Source Han Sans CN\", \"Source Han Sans TC\", \"Noto Sans CJK TC\", SimSun, sans-serif"
+      },
+      {
         "label": "标签",
         "kind": "select",
         "left": 89,
         "right": 551,
-        "top": 200.71875,
-        "bottom": 228.71875,
+        "top": 210.125,
+        "bottom": 238.125,
         "height": 28,
         "width": 462,
         "radius": "4px",
@@ -52,8 +64,20 @@
         "kind": "select",
         "left": 89,
         "right": 551,
-        "top": 267.28125,
-        "bottom": 295.28125,
+        "top": 276.6875,
+        "bottom": 304.6875,
+        "height": 28,
+        "width": 462,
+        "radius": "4px",
+        "font": "-apple-system, \"Helvetica Neue\", Arial, \"Noto Sans SC\", \"Hiragino Sans GB\", STHeiti, \"Microsoft YaHei\", \"Microsoft JhengHei\", \"Source Han Sans SC\", \"Noto Sans CJK SC\", \"Source Han Sans CN\", \"Source Han Sans TC\", \"Noto Sans CJK TC\", SimSun, sans-serif"
+      },
+      {
+        "label": "属性名",
+        "kind": "select",
+        "left": 89,
+        "right": 551,
+        "top": 373.8125,
+        "bottom": 401.8125,
         "height": 28,
         "width": 462,
         "radius": "4px",
@@ -64,8 +88,8 @@
         "kind": "button",
         "left": 89,
         "right": 551,
-        "top": 349.84375,
-        "bottom": 381.84375,
+        "top": 407,
+        "bottom": 439,
         "height": 32,
         "width": 462,
         "radius": "4px",
@@ -76,8 +100,8 @@
         "kind": "button",
         "left": 89,
         "right": 551,
-        "top": 389.84375,
-        "bottom": 421.84375,
+        "top": 447,
+        "bottom": 479,
         "height": 32,
         "width": 462,
         "radius": "4px",
@@ -87,7 +111,7 @@
   },
   "popup": {
     "x": 89,
-    "y": 233,
+    "y": 242,
     "width": 462,
     "height": 92
   }

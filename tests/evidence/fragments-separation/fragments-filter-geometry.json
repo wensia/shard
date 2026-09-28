@@ -3,9 +3,9 @@
     "bounds": {
       "left": 644,
       "right": 1156,
-      "top": 263.15625,
-      "bottom": 636.84375,
-      "height": 373.6875
+      "top": 196.59375,
+      "bottom": 703.40625,
+      "height": 506.8125
     },
     "viewport": {
       "width": 1800,
@@ -16,6 +16,18 @@
     "fontToken": "-apple-system, \"Helvetica Neue\", Arial, \"Noto Sans SC\", \"Hiragino Sans GB\", STHeiti, \"Microsoft YaHei\", \"Microsoft JhengHei\", \"Source Han Sans SC\", \"Noto Sans CJK SC\", \"Source Han Sans CN\", \"Source Han Sans TC\", \"Noto Sans CJK TC\", SimSun, sans-serif",
     "notoLoaded": true,
     "controls": [
+      {
+        "label": "类型",
+        "kind": "select",
+        "left": 669,
+        "right": 1131,
+        "top": 324.15625,
+        "bottom": 352.15625,
+        "height": 28,
+        "width": 462,
+        "radius": "4px",
+        "font": "-apple-system, \"Helvetica Neue\", Arial, \"Noto Sans SC\", \"Hiragino Sans GB\", STHeiti, \"Microsoft YaHei\", \"Microsoft JhengHei\", \"Source Han Sans SC\", \"Noto Sans CJK SC\", \"Source Han Sans CN\", \"Source Han Sans TC\", \"Noto Sans CJK TC\", SimSun, sans-serif"
+      },
       {
         "label": "标签",
         "kind": "select",
@@ -41,12 +53,24 @@
         "font": "-apple-system, \"Helvetica Neue\", Arial, \"Noto Sans SC\", \"Hiragino Sans GB\", STHeiti, \"Microsoft YaHei\", \"Microsoft JhengHei\", \"Source Han Sans SC\", \"Noto Sans CJK SC\", \"Source Han Sans CN\", \"Source Han Sans TC\", \"Noto Sans CJK TC\", SimSun, sans-serif"
       },
       {
+        "label": "属性名",
+        "kind": "select",
+        "left": 669,
+        "right": 1131,
+        "top": 554.40625,
+        "bottom": 582.40625,
+        "height": 28,
+        "width": 462,
+        "radius": "4px",
+        "font": "-apple-system, \"Helvetica Neue\", Arial, \"Noto Sans SC\", \"Hiragino Sans GB\", STHeiti, \"Microsoft YaHei\", \"Microsoft JhengHei\", \"Source Han Sans SC\", \"Noto Sans CJK SC\", \"Source Han Sans CN\", \"Source Han Sans TC\", \"Noto Sans CJK TC\", SimSun, sans-serif"
+      },
+      {
         "label": "取消",
         "kind": "button",
         "left": 669,
         "right": 1131,
-        "top": 539.84375,
-        "bottom": 571.84375,
+        "top": 606.40625,
+        "bottom": 638.40625,
         "height": 32,
         "width": 462,
         "radius": "4px",
@@ -57,8 +81,8 @@
         "kind": "button",
         "left": 669,
         "right": 1131,
-        "top": 579.84375,
-        "bottom": 611.84375,
+        "top": 646.40625,
+        "bottom": 678.40625,
         "height": 32,
         "width": 462,
         "radius": "4px",

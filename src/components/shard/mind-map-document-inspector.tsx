@@ -1,4 +1,5 @@
 import { SelectControl } from "@/components/ui/select"
+import { TabLabel } from "@/components/ui/tabs"
 import { useEffect, useMemo, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -74,14 +75,14 @@ export function MindMapDocumentInspector({ file, selectedNodeIds, fragments, onC
 
   return <aside aria-label="思维导图检查器" className={styles.inspector} data-focus-region="mind-map-panel" data-mind-map-inspector data-mind-map-side-panel data-density="compact">
     <header className={styles.inspectorHeader} data-mind-map-panel-header><strong>主题属性</strong><Button variant="ghost" size="icon-sm" aria-label="关闭检查器" onClick={onClose}><XIcon /></Button></header>
-    <div className={styles.inspectorTabs} role="tablist" aria-label="导图检查器视图">
-      {(["properties", "outline"] as const).map((value, index) => <button className={styles.inspectorTab} key={value} type="button" role="tab" id={`map-${value}-tab`} aria-controls={`map-${value}-panel`}
+    <div className={`shard-tabs ${styles.inspectorTabs}`} role="tablist" aria-label="导图检查器视图">
+      {(["properties", "outline"] as const).map((value, index) => <button className="shard-tab" key={value} type="button" role="tab" id={`map-${value}-tab`} aria-controls={`map-${value}-panel`}
         aria-selected={tab === value} tabIndex={tab === value ? 0 : -1} onClick={() => setTab(value)} onKeyDown={event => {
           if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return
           event.preventDefault(); setTab(index === 0 ? "outline" : "properties")
           const parent = event.currentTarget.parentElement
           ;(parent?.children[index === 0 ? 1 : 0] as HTMLElement | undefined)?.focus()
-        }}>{value === "properties" ? "属性" : "主题导航"}</button>)}
+        }}><TabLabel>{value === "properties" ? "属性" : "主题导航"}</TabLabel></button>)}
     </div>
     <div className={styles.inspectorBody} role="tabpanel" id={`map-${tab}-panel`} aria-labelledby={`map-${tab}-tab`}>
       {tab === "outline" ? <div className={styles.outline} aria-label="导图主题导航">{rows.map(({ node, depth }) => <div key={node.id} className={styles.outlineRow} style={{ paddingInlineStart: `calc(${Math.min(depth, 8)} * var(--space-3))` }}>

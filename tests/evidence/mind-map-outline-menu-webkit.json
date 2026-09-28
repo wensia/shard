@@ -3,8 +3,8 @@
     "viewportWidth": 1280,
     "left": 10,
     "right": 199.125,
-    "top": 237,
-    "bottom": 635.15625,
+    "top": 227,
+    "bottom": 625.15625,
     "width": 189.125,
     "viewportHeight": 760,
     "radius": 6,
@@ -22,15 +22,15 @@
       {
         "left": 10,
         "right": 199.125,
-        "top": 237,
-        "bottom": 635.15625,
+        "top": 227,
+        "bottom": 625.15625,
         "size": 14
       },
       {
         "left": 200,
         "right": 364.875,
-        "top": 494,
-        "bottom": 641,
+        "top": 484,
+        "bottom": 631,
         "size": 14
       }
     ],
@@ -40,8 +40,8 @@
     "viewportWidth": 640,
     "left": 45,
     "right": 234.125,
-    "top": 237,
-    "bottom": 635.15625,
+    "top": 227,
+    "bottom": 625.15625,
     "width": 189.125,
     "viewportHeight": 760,
     "radius": 6,
@@ -59,15 +59,15 @@
       {
         "left": 45,
         "right": 234.125,
-        "top": 237,
-        "bottom": 635.15625,
+        "top": 227,
+        "bottom": 625.15625,
         "size": 14
       },
       {
         "left": 235,
         "right": 399.875,
-        "top": 494,
-        "bottom": 641,
+        "top": 484,
+        "bottom": 631,
         "size": 14
       }
     ],
