@@ -191,6 +191,34 @@ test("属性筛选校验非法数字、过滤时间线并可单独清除", async
   await expect(context.getByRole("button", { name: "清除属性筛选", exact: true })).toHaveCount(0)
 })
 
+test("筛选连续使用下拉后关闭对话框不残留弹层", async ({ page }) => {
+  const closeAndCheck = async (close: (dialog: ReturnType<typeof page.getByRole>) => Promise<void>) => {
+    const dialog = await openFragmentFilters(page)
+    await selectOption(dialog.getByRole("combobox", { name: "类型", exact: true }), "outline")
+    await selectOption(dialog.getByRole("combobox", { name: "属性名", exact: true }), "金额")
+    await selectOption(dialog.getByRole("combobox", { name: "属性运算", exact: true }), "between")
+    await close(dialog)
+    await expect(dialog).toHaveCount(0)
+    await expect(page.locator('[data-slot="select-positioner"], [data-slot="select-content"]')).toHaveCount(0)
+  }
+
+  await closeAndCheck(async dialog => { await dialog.getByRole("button", { name: "取消" }).click() })
+  await closeAndCheck(async dialog => {
+    await dialog.getByRole("combobox", { name: "属性运算", exact: true }).click()
+    await expect(page.getByRole("listbox")).toBeVisible()
+    await page.keyboard.press("Escape")
+    await expect(page.getByRole("listbox")).toHaveCount(0)
+    await expect(dialog).toBeVisible()
+    await page.keyboard.press("Escape")
+  })
+  await closeAndCheck(async () => { await page.locator('[data-slot="dialog-overlay"]').click({ position: { x: 5, y: 5 } }) })
+  await closeAndCheck(async dialog => {
+    await dialog.getByRole("textbox", { name: "属性下限" }).fill("1")
+    await dialog.getByRole("textbox", { name: "属性上限" }).fill("2")
+    await dialog.getByRole("button", { name: "查看碎片" }).click()
+  })
+})
+
 test("禅模式显示各类型属性，并可添加、编辑、删除与提示类型不符", async ({ page }) => {
   await openFragmentZen(page)
   const panel = page.getByRole("region", { name: "属性" })

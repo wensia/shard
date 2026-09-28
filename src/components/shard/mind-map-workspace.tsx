@@ -609,7 +609,7 @@ export const MindMapCanvas = forwardRef<
     if (!draftFile) return
     if (isMindMapWorkspaceTarget(rootRef.current, document.activeElement)) return
     rootRef.current?.focus({ preventScroll: true })
-  }, [draftFile, surface])
+  }, [draftFile?.id, surface])
 
   useEffect(() => {
     if (isLoading || error || !draftFile || view !== "outline") return
