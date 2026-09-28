@@ -1787,6 +1787,27 @@ test("思维导图标题改名前等待草稿落盘，改名后继续编辑并�
   expect((await commandCalls(page, "write_mind_map")).every(call => call.args.id === "map-project")).toBe(true)
 })
 
+test("导图自动保存完成后改名输入仍可编辑并确认", async ({ page }) => {
+  await installMindMapRenameMock(page)
+  const branch = page.getByRole("textbox", { name: "导图节点", exact: true })
+  const title = page.getByRole("button", { name: "重命名文件", exact: true })
+  await page.evaluate(() => { (window as MindMapRenameRuntime).__mindMapRename.holdSave = true })
+  await branch.fill("自动保存中的修改")
+  await title.click()
+  const input = page.getByRole("textbox", { name: "重命名名称", exact: true })
+  await expect(input).toBeFocused()
+  await expect.poll(() => commandCalls(page, "write_mind_map")).toHaveLength(1)
+  await page.evaluate(() => (window as MindMapRenameRuntime).__mindMapRename.release())
+  await expect.poll(() => page.evaluate(() => (window as MindMapRenameRuntime).__mindMapRename.events)).toContain("write:done")
+  await expect(input).toBeVisible()
+  await expect(input).toBeFocused()
+  expect(await commandCalls(page, "rename_library_entry")).toHaveLength(0)
+  await input.fill("自动保存后改名")
+  await input.press("Enter")
+  await expect(title).toHaveText("自动保存后改名")
+  await expect(branch).toHaveValue("自动保存中的修改")
+})
+
 test("思维导图标题改名保存失败或名称冲突时保留草稿与输入，可修正后重试", async ({ page }) => {
   await installMindMapRenameMock(page)
   const branch = page.getByRole("textbox", { name: "导图节点", exact: true })
