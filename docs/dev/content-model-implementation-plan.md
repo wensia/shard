@@ -29,7 +29,8 @@
 | **G2** | 属性进入时间线筛选（前端计算；SQLite 属性派生表推迟，见 §14 开头） | G1 | 已完成，施工令见 §14 |
 | **G3** | 标签主题页（该标签下的碎片、大纲、流程图、文档与反链）与属性表格视图 | G2 | 已完成，施工令见 §15 |
 | **Z1** | 收尾：密匣 fileSha 单次读取；搜索面板 `#标签` 主题页候选；修复主线既有失败的 6 项 UI 用例 | G3、集成（`5351c09`） | 已完成，施工令见 §17 |
-| **Z2** | 真实应用冒烟发现的两个缺陷：筛选下拉列表关闭对话框后残留；资料库导图有未保存修改时改名框被自动保存冲掉 | Z1、真实应用冒烟 | 已完成（待真实应用复测），施工令见 §18 |
+| **Z2** | 真实应用冒烟发现的两个缺陷：筛选下拉列表关闭对话框后残留；资料库导图有未保存修改时改名框被自动保存冲掉 | Z1、真实应用冒烟 | 已完成（真实应用复测 8/8 通过），施工令见 §18 |
+| **Z3** | 卡片等只读渲染把 Markdown 硬换行标记 `\` 原样显示（用户在密匣内容中发现） | Z2 | 执行中，施工令见 §19 |
 
 ## 3. P0 施工令：frontmatter 保真读写
 
@@ -970,3 +971,46 @@ UI 改动遵守 AGENTS.md 与 `vendor/kiln`，复用现有组件与 token。
 ### 18.4 交付
 
 不提交 Git；测试改写的 `tests/evidence` 图片结束前恢复。报告写 `docs/dev/content-model-tasks-log/Z2.md`：两个缺陷各自的根因与调用链、修复要点、改动文件、验收结果（含测试数）、偏差及原因、遗留问题。
+
+## 19. Z3 施工令：只读渲染中的硬换行标记
+
+前置：主线 `astryx-migration` 为 `142b1ca`；本批在 worktree `shard-wt-z3`、分支 `fix/hardbreak-display` 进行。遵守主线约束：通知用 `notify.*`，不直接 import `sonner`。
+
+### 19.1 现象与根因
+
+用户在密匣时间线看到几篇内容的卡片上出现多余的 `\`：有的单独占一行，有的挂在行尾（例如「呼吸也不顺畅\」）；点「编辑」进入编辑器后这些 `\` 不见了。
+
+已核实的根因：
+- 富文本编辑器把段内换行（hardBreak，Shift+Enter）序列化为「`\` + 换行」（`src/editor-rich/markdown/serialize.ts` 约 317 行 `writer.raw("\\\n")`）。连续两次段内换行时会出现只有一个 `\` 的行。编辑器解析侧（Lezer）把它识别为 `HardBreak` 节点，所以编辑态显示为换行、看不到 `\`。
+- 卡片用的是 `packages/markdown/src/parser.ts` 的逐行只读渲染：`parseContentLine` 的 `display` 基本就是源码行（只去掉标签），对行尾硬换行标记不做任何处理，于是 `\` 被当作普通字符显示。
+- 用户真实库的公开碎片中目前没有这种标记，受影响的是密匣内容（加密，未读取）；但这是渲染层的通用问题，任何位置出现都会显示 `\`。
+- 用户输入的字面反斜杠由序列化器转义为 `\\`，不是硬换行，不能被隐藏。
+
+### 19.2 要求
+
+1. **判定与编辑器一致**：`packages/markdown/src/parser.ts` 已调用 `markdownParser.parse(content)`（与编辑器同一个 Lezer 配置）。用这次解析得到的 `HardBreak` 节点位置判断哪些 `\` 是硬换行标记，不要自己写一套「行尾奇数个反斜杠」的规则（段落最后一行末尾的 `\`、转义的 `\\`、代码块与围栏内、表格行内的 `\` 都不是硬换行，要保持原样）。
+2. **显示**：硬换行标记在 `display` 中去掉，`source` 保持原样；去掉后为空的行显示为一个空行（与编辑器中看到的空行一致）。行尾去字符不能影响搜索高亮等依赖 `display`/`source` 偏移的功能，改完要核对 `src/lib/search-dom-highlight.ts` 等使用方。
+3. **其它只读出口一起检查**：凡是把 Markdown 正文变成可见文本的地方——卡片（公开与密匣共用）、分享图导出、资料库缩略图/预览、搜索结果摘要与标题、快速打开标题、文档卡片的标题与摘要（`deriveDocumentDigest`、`deriveNoteTitle`）——逐一确认是否会露出 `\`，会露出的统一复用 `packages/markdown` 中的同一个处理函数，不要各处重复实现。报告中列出检查过的出口与结论。
+4. 不改编辑器的序列化格式与已有文件内容（不做数据迁移）。
+
+### 19.3 测试
+
+- `packages/markdown`：单元测试覆盖行尾硬换行、仅含 `\` 的行、连续多个硬换行、转义 `\\`、段落末行的 `\`、代码块与围栏内的 `\`、表格中的 `\`。
+- TS 单元：19.2 第 3 条中改到的出口各一条。
+- UI：一张含硬换行标记的碎片卡片（公开时间线与密匣时间线各一，如密匣 mock 可用）不显示 `\`，行与空行布局正确；进入编辑后内容一致，保存后再看卡片仍不显示 `\`。
+
+### 19.4 验收命令
+
+使用 worktree 内未跟踪的 `playwright.worktree.config.ts`（**端口 1424**，`reuseExistingServer: false`，不提交）；必须显式 `-c playwright.worktree.config.ts`，不得用 `pnpm test:ui`；绝不能连接 1420。开工前先跑一遍下表 UI 用例记录基线。
+
+| 命令 | 要求 |
+| --- | --- |
+| `pnpm test:markdown` | 通过 |
+| `pnpm test:unit` | 全部通过（quick-open 性能若在全套中波动须单独复跑） |
+| `pnpm build` | 通过 |
+| `pnpm build:markdown && pnpm exec playwright test -c playwright.worktree.config.ts tests/ui/markdown-package.spec.ts tests/ui/lockbox-space.spec.ts tests/ui/fragment-masonry.spec.ts tests/ui/search-fragment-reveal.spec.ts tests/ui/rich-surfaces.spec.ts tests/ui/content-types.spec.ts` 及本批新增用例 | 相对基线没有新增失败；新增用例全部通过 |
+| `git diff --check` | 通过 |
+
+### 19.5 交付
+
+不提交 Git；测试改写的 `tests/evidence` 图片结束前恢复。报告写 `docs/dev/content-model-tasks-log/Z3.md`：根因、判定方式、检查过的只读出口与结论、改动文件、验收结果（含测试数）、偏差及原因、遗留问题。
