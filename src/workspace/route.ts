@@ -4,7 +4,9 @@ export type FragmentsView = "all" | "trash"
 
 export type FragmentsRoute = {
   space: "fragments"
-  params: { view?: FragmentsView }
+  params:
+    | { view?: FragmentsView }
+    | { tag: string; view: "tag" }
 }
 
 export type LibraryRoute = {
@@ -50,7 +52,11 @@ export function isWorkspaceRoute(value: unknown): value is WorkspaceRoute {
       hasOnlyKeys(value.params, []) ||
       (hasOnlyKeys(value.params, ["view"]) &&
         typeof value.params.view === "string" &&
-        FRAGMENT_VIEWS.includes(value.params.view as FragmentsView))
+        FRAGMENT_VIEWS.includes(value.params.view as FragmentsView)) ||
+      (hasOnlyKeys(value.params, ["view", "tag"]) &&
+        value.params.view === "tag" &&
+        typeof value.params.tag === "string" &&
+        value.params.tag.length > 0)
     )
   }
 

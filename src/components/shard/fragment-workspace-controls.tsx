@@ -241,16 +241,18 @@ function propertyFilterLabel(filter: PropertyFilter) {
   return `属性：${filter.key} ${operator}`
 }
 
-export function FragmentFilterContext({ filters, onClear, onClearProperty }: {
+export function FragmentFilterContext({ filters, onClear, onClearProperty, onOpenTagTopic }: {
   filters: FragmentFilters
   onClear: () => void
   onClearProperty: () => void
+  onOpenTagTopic?: (tag: string) => void
 }) {
   const labels = [filters.kind ? CONTENT_KIND_LABELS[filters.kind] : null, filters.tag ? `#${filters.tag}` : null, filters.month, filters.pinned ? "只看置顶" : null, filters.property ? propertyFilterLabel(filters.property) : null].filter(Boolean)
   if (!labels.length) return null
   return <div className="shard-content-inset shrink-0 pb-2" role="region" aria-label="当前碎片筛选">
     <div className="shard-content-measure flex items-center gap-2 text-[length:var(--text-meta)] text-muted-foreground">
       <span className="min-w-0 truncate" title={labels.join(" · ")}>{labels.join(" · ")}</span>
+      {filters.tag && onOpenTagTopic ? <Button size="sm" variant="outline" onClick={() => onOpenTagTopic(filters.tag!)}>打开主题页</Button> : null}
       {filters.property ? <Button size="icon-sm" variant="ghost" aria-label="清除属性筛选" onClick={onClearProperty}><XIcon aria-hidden="true" /></Button> : null}
       <Button size="icon-sm" variant="ghost" aria-label="清除筛选" onClick={onClear}><XIcon aria-hidden="true" /></Button>
     </div>

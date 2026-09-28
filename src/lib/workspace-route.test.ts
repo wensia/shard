@@ -16,6 +16,7 @@ describe("WorkspaceRoute", () => {
     { space: "lockbox", params: {} },
     { space: "fragments", params: { view: "all" } },
     { space: "fragments", params: { view: "trash" } },
+    { space: "fragments", params: { view: "tag", tag: "项目" } },
   ])("remains pure data after JSON round-trip", (route) => {
     const restored: unknown = JSON.parse(JSON.stringify(route))
 
@@ -31,6 +32,9 @@ describe("WorkspaceRoute", () => {
     { space: "fragments", params: { month: "2026-08" } },
     { space: "fragments", params: { filter: "insight" } },
     { space: "fragments", params: { view: "unknown" } },
+    { space: "fragments", params: { view: "tag" } },
+    { space: "fragments", params: { view: "tag", tag: "" } },
+    { space: "fragments", params: { view: "tag", tag: "项目", extra: true } },
     { space: "fragments", params: { view: "all", noteId: "1" } },
     // 密匣已从碎片 filter 提为一级空间，旧 localStorage 值必须回退默认路由
     { space: "fragments", params: { filter: "lockbox" } },

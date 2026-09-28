@@ -97,6 +97,7 @@ import {
   type OrganizeTemplate,
 } from "@/lib/api"
 import { deriveKind, isTypeTag } from "@/lib/content-kind"
+import { collectTagTopicFragments } from "@/lib/tag-topic"
 import { readOutlineContent } from "@/lib/mind-map-outline"
 import { readFlowchartContent } from "@/lib/flowchart-content"
 import { toggleTaskLine } from "@/lib/editor-format"
@@ -149,6 +150,7 @@ import type {
   VaultState,
 } from "@/types"
 import { FragmentsWorkspace } from "@/workspace/fragments-workspace"
+import { TagTopicWorkspace } from "@/components/shard/tag-topic-workspace"
 import { LockboxShell } from "@/workspace/lockbox-shell"
 import {
   LibraryShell,
@@ -333,6 +335,9 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
   const [dismissedOutlineUpgradeCount, setDismissedOutlineUpgradeCount] = useState(0)
   const [fragmentSelectionActive, setFragmentSelectionActive] = useState(false)
   const fragmentsView = route.space === "fragments" ? route.params.view ?? "all" : "all"
+  const tagTopicTag = route.space === "fragments" && route.params.view === "tag"
+    ? route.params.tag
+    : null
   const searchReturnFocusRef = useRef<HTMLElement | null>(null)
   const fragmentFilterReturnFocusRef = useRef<HTMLElement | null>(null)
   const librarySaveHandlerRef = useRef<LibraryDraftHandle | null>(null)
@@ -342,7 +347,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
   const fragmentFlushRef = useRef<(() => Promise<boolean>) | null>(null)
   const registerFragmentFlush = useCallback((flush: (() => Promise<boolean>) | null) => { fragmentFlushRef.current = flush }, [])
   useEffect(() => {
-    if (!isFragmentFilterOpen) return
+    if (!isFragmentFilterOpen && !tagTopicTag) return
     let cancelled = false
     setFragmentFilterRegistryLoading(true)
     setFragmentFilterRegistryError(null)
@@ -357,7 +362,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
         if (!cancelled) setFragmentFilterRegistryLoading(false)
       })
     return () => { cancelled = true }
-  }, [isFragmentFilterOpen, vaultPath])
+  }, [isFragmentFilterOpen, tagTopicTag, vaultPath])
   useEffect(() => {
     const onOpen = (event: Event) => {
       const path = (event as CustomEvent<{ path: string }>).detail?.path
@@ -2027,9 +2032,14 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
 
   async function applyFragmentFilters(filters: FragmentFilters) {
     if (!(await saveLibraryDraftBeforeNavigation())) return
+    const currentRoute = routeRef.current
     setActiveOutlineEditor(null)
     setActiveFlowchartEditor(null)
-    setFragmentFilters(filters)
+    setFragmentFilters(
+      currentRoute.space === "fragments" && currentRoute.params.view === "tag"
+        ? { ...filters, tag: null }
+        : filters
+    )
     setIsFragmentFilterOpen(false)
     fragmentFilterReturnFocusRef.current = null
     revokeSearchSession("close")
@@ -2037,6 +2047,28 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     setActiveMindMapId(null)
     setSearchMindMapNavigation(null)
     setNavigationOrigin(null)
+    setRoute(
+      currentRoute.space === "fragments" && currentRoute.params.view === "tag"
+        ? currentRoute
+        : { space: "fragments", params: {} }
+    )
+  }
+
+  async function openTagTopic(tag: string) {
+    if (!(await saveLibraryDraftBeforeNavigation())) return
+    setFragmentFilters((current) => ({ ...current, tag: null }))
+    setIsMindMapViewActive(false)
+    setActiveMindMapId(null)
+    setPendingScrollFragmentId(null)
+    setNavigationOrigin(null)
+    setFragmentSelectionActive(false)
+    setRoute({ space: "fragments", params: { view: "tag", tag } })
+  }
+
+  async function returnFromTagTopic() {
+    if (!(await saveLibraryDraftBeforeNavigation())) return
+    setFragmentFilters(EMPTY_FRAGMENT_FILTERS)
+    setFragmentSelectionActive(false)
     setRoute({ space: "fragments", params: {} })
   }
 
@@ -2166,6 +2198,18 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
   const visibleStreamFragments = useMemo(
     () => inboxFragments.filter(fragment => matchesFragmentFilters(fragment, fragmentFilters, fragmentFilterRegistry?.properties)),
     [inboxFragments, fragmentFilterRegistry, fragmentFilters]
+  )
+  const tagTopicFragments = useMemo(
+    () => tagTopicTag ? collectTagTopicFragments(inboxFragments, tagTopicTag) : [],
+    [inboxFragments, tagTopicTag]
+  )
+  const visibleTagTopicFragments = useMemo(
+    () => tagTopicFragments.filter(fragment => matchesFragmentFilters(
+      fragment,
+      { ...fragmentFilters, tag: null },
+      fragmentFilterRegistry?.properties
+    )),
+    [fragmentFilterRegistry, fragmentFilters, tagTopicFragments]
   )
   const searchScope = scopeForSpace(route.space)
   const publicSearchProvider = useMemo(
@@ -2860,6 +2904,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     onExportImage: setExportingFragment,
     onLinkFragment: handleLinkFragment,
     onMoveToLockbox: handleMoveFragmentToLockbox,
+    onOpenTag: openTagTopic,
     onOpenZen: openZenEditor,
     onPin: handlePinFragment,
     onRefreshFragments: refreshFragments,
@@ -3106,7 +3151,37 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
                 </Button>
               </div>
             ) : null}
-            {route.space === "fragments" && fragmentsView !== "trash" ? (
+            {route.space === "fragments" && tagTopicTag ? (
+              <TagTopicWorkspace
+                key={`${vaultPath}:${tagTopicTag}`}
+                allFragments={publicOnlyFragments}
+                filterContext={
+                  <FragmentFilterContext
+                    filters={fragmentFilters}
+                    onClear={() => void applyFragmentFilters(EMPTY_FRAGMENT_FILTERS)}
+                    onClearProperty={() => void applyFragmentFilters({ ...fragmentFilters, property: null })}
+                  />
+                }
+                fragments={visibleTagTopicFragments}
+                isLoading={isLoading}
+                onBack={() => void returnFromTagTopic()}
+                onNavigateToFragment={(fragmentId) => {
+                  void handleNavigateToFragment(fragmentId)
+                }}
+                onOpenFragment={openZenEditor}
+                propertyRegistry={fragmentFilterRegistry}
+                propertyRegistryLoading={fragmentFilterRegistryLoading}
+                tag={tagTopicTag}
+                timeline={{
+                  ...timelineHandlers,
+                  scopeKey: `${vaultPath}:tag:${tagTopicTag}:${JSON.stringify(fragmentFilters)}`,
+                  scrollToFragmentId: null,
+                  onOrganize: handleOrganizeFragments,
+                  onSelectionModeChange: setFragmentSelectionActive,
+                }}
+                topicFragments={tagTopicFragments}
+              />
+            ) : route.space === "fragments" && fragmentsView === "all" ? (
               <FragmentsWorkspace
             capture={{
               initialContent: composerDraftRef.current,
@@ -3156,6 +3231,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
                 filters={fragmentFilters}
                 onClear={() => void applyFragmentFilters(EMPTY_FRAGMENT_FILTERS)}
                 onClearProperty={() => void applyFragmentFilters({ ...fragmentFilters, property: null })}
+                onOpenTagTopic={openTagTopic}
               />
             </>}
             timeline={{
@@ -3206,6 +3282,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
               emptyIcon: LockKeyholeIcon,
               emptyMessage: lockboxEmptyMessage,
               fragments: lockboxTimelineFragments,
+              onOpenTag: undefined,
               // 密匣内的关联候选保持密匣隔离，不混入公开内容
               relationFragments: lockboxTimelineFragments,
               scrollToFragmentId: lockboxScrollTargetId,

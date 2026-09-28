@@ -108,7 +108,7 @@ function validDateTimeOperand(value: string) {
   return validatePropertyDateTime(value) === null
 }
 
-function comparableDateTime(value: string): string | null {
+export function comparablePropertyDateTime(value: string): string | null {
   const prefix = value.slice(0, 16)
   if (validatePropertyDateTime(prefix)) return null
   const suffix = value.slice(16)
@@ -120,8 +120,8 @@ function comparableDateTime(value: string): string | null {
 
 function compareByType(left: string, right: string, type: "number" | "date" | "datetime") {
   if (type === "number") return compareDecimalText(left, right)
-  const normalizedLeft = type === "datetime" ? comparableDateTime(left) : validatePropertyDate(left) ? null : left
-  const normalizedRight = type === "datetime" ? comparableDateTime(right) : validatePropertyDate(right) ? null : right
+  const normalizedLeft = type === "datetime" ? comparablePropertyDateTime(left) : validatePropertyDate(left) ? null : left
+  const normalizedRight = type === "datetime" ? comparablePropertyDateTime(right) : validatePropertyDate(right) ? null : right
   if (!normalizedLeft || !normalizedRight) return null
   return normalizedLeft === normalizedRight ? 0 : normalizedLeft < normalizedRight ? -1 : 1
 }
@@ -211,7 +211,7 @@ export function matchesPropertyFilter(
     }
   }
   if (type === "datetime" && property.value.kind === "text") {
-    const comparable = comparableDateTime(property.value.text)
+    const comparable = comparablePropertyDateTime(property.value.text)
     if (!comparable) return false
     if (filter.op === "between") {
       const values = pair(filter.value)!

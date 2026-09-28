@@ -64,6 +64,7 @@ interface FragmentCardProps {
   onEdit?: (fragment: Fragment) => void
   onExportImage?: (fragment: Fragment) => void
   onMoveToLockbox?: (fragment: Fragment) => void
+  onOpenTag?: (tag: string) => void
   onLinkFragment?: (
     sourceId: string,
     targetId: string
@@ -118,6 +119,7 @@ export function FragmentCard({
   onExportImage,
   onLinkFragment,
   onMoveToLockbox,
+  onOpenTag,
   onOpenZen,
   onPin,
   onRefreshFragments,
@@ -296,7 +298,7 @@ export function FragmentCard({
                 </span>
               ) : null}
               {displayTags.map((tag) => (
-                <TagBadge key={tag} tag={tag} />
+                <TagBadge key={tag} onOpen={onOpenTag} tag={tag} />
               ))}
             </div>
           ) : null}

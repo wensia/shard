@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type UIEvent } from "react"
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type UIEvent } from "react"
 import { InboxIcon, XIcon, type ShardIcon } from "@/components/icons"
 
 import { FragmentCard } from "@/components/shard/fragment-card"
@@ -21,6 +21,7 @@ interface FragmentTimelineProps {
   editingFragmentId?: string | null
   emptyIcon?: ShardIcon
   emptyMessage?: string
+  footer?: ReactNode
   fragments: Fragment[]
   isLoading: boolean
   knownTags?: string[]
@@ -35,6 +36,7 @@ interface FragmentTimelineProps {
     targetId: string
   ) => Promise<void> | void
   onMoveToLockbox?: (fragment: Fragment) => void
+  onOpenTag?: (tag: string) => void
   onOpenZen?: (fragment: Fragment) => void
   onOrganize?: (
     fragments: Fragment[],
@@ -86,6 +88,7 @@ export function FragmentTimeline({
   editingFragmentId = null,
   emptyIcon: EmptyIcon = InboxIcon,
   emptyMessage = "还没有片段。写下第一条，按 Cmd/Ctrl+Enter 保存。",
+  footer,
   fragments,
   isLoading,
   knownTags = [],
@@ -97,6 +100,7 @@ export function FragmentTimeline({
   onExportImage,
   onLinkFragment,
   onMoveToLockbox,
+  onOpenTag,
   onNavigateToFragment,
   onOpenZen,
   onOrganize,
@@ -611,6 +615,7 @@ export function FragmentTimeline({
                     onExportImage={onExportImage}
                     onLinkFragment={onLinkFragment}
                     onMoveToLockbox={onMoveToLockbox}
+                    onOpenTag={onOpenTag}
                     onNavigateToFragment={onNavigateToFragment}
                     onOpenZen={onOpenZen}
                     onPin={onPin}
@@ -636,6 +641,7 @@ export function FragmentTimeline({
                 }}>显示更多碎片</Button>
               </div>
             ) : null}
+            {footer}
           </div>
           </>
         )}
