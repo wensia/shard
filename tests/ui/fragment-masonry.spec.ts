@@ -64,6 +64,9 @@ async function installMasonryMock(page: Page, count = 18) {
             },
           })
           if (command === "list_library_tree") return structuredClone(tree)
+          if (command === "read_property_registry") {
+            return { registry: { version: 1, properties: {} }, sha: "property-registry-empty" }
+          }
           if (command === "migrate_legacy_notes") {
             return { tree: structuredClone(tree), migratedCount: 0 }
           }
@@ -217,7 +220,7 @@ function expectFilterDialogGeometry(geometry: Awaited<ReturnType<typeof readFilt
   expect(geometry.font).toBe(geometry.fontToken)
   expect(geometry.font).toContain('"Noto Sans SC"')
   expect(geometry.notoLoaded).toBe(true)
-  expect(geometry.controls).toHaveLength(5)
+  expect(geometry.controls).toHaveLength(6)
   for (const control of geometry.controls) {
     expect(control.radius).toBe("4px")
     expect(control.height).toBeCloseTo(control.kind === "select" ? 28 : 32, 1)

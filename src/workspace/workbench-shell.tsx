@@ -84,6 +84,7 @@ import {
   migrateLegacyNotes,
   organizeFragments,
   pinFragment,
+  readPropertyRegistry,
   resetLockboxPassword,
   readGraphFragment,
   setupLockbox,
@@ -140,6 +141,7 @@ import type {
   CsvFileSummary,
   MindMapSummary,
   OutlineUpgradeRunResult,
+  PropertyRegistry,
   LibraryMutationResult,
   LibraryTreeSnapshot,
   ShardMapFile,
@@ -315,6 +317,9 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
   const [libraryTree, setLibraryTree] = useState<LibraryTreeSnapshot | null>(null)
   const [fragmentFilters, setFragmentFilters] = useState<FragmentFilters>(EMPTY_FRAGMENT_FILTERS)
   const [isFragmentFilterOpen, setIsFragmentFilterOpen] = useState(false)
+  const [fragmentFilterRegistry, setFragmentFilterRegistry] = useState<PropertyRegistry | null>(null)
+  const [fragmentFilterRegistryLoading, setFragmentFilterRegistryLoading] = useState(false)
+  const [fragmentFilterRegistryError, setFragmentFilterRegistryError] = useState<string | null>(null)
   const [navigationOrigin, setNavigationOrigin] = useState<{ route: WorkspaceRoute; filters: FragmentFilters } | null>(null)
   const [convertingFragment, setConvertingFragment] = useState<Fragment | null>(null)
   const [conversionDraft, setConversionDraft] = useState({ title: "", directory: "notes" })
@@ -336,6 +341,23 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
   const composerDraftRef = useRef("")
   const fragmentFlushRef = useRef<(() => Promise<boolean>) | null>(null)
   const registerFragmentFlush = useCallback((flush: (() => Promise<boolean>) | null) => { fragmentFlushRef.current = flush }, [])
+  useEffect(() => {
+    if (!isFragmentFilterOpen) return
+    let cancelled = false
+    setFragmentFilterRegistryLoading(true)
+    setFragmentFilterRegistryError(null)
+    void readPropertyRegistry()
+      .then(result => {
+        if (!cancelled) setFragmentFilterRegistry(result.registry)
+      })
+      .catch(error => {
+        if (!cancelled) setFragmentFilterRegistryError(getApiErrorMessage(error))
+      })
+      .finally(() => {
+        if (!cancelled) setFragmentFilterRegistryLoading(false)
+      })
+    return () => { cancelled = true }
+  }, [isFragmentFilterOpen, vaultPath])
   useEffect(() => {
     const onOpen = (event: Event) => {
       const path = (event as CustomEvent<{ path: string }>).detail?.path
@@ -814,7 +836,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
           }`
         )
       } else {
-        if (!matchesFragmentFilters(created, fragmentFilters)) {
+        if (!matchesFragmentFilters(created, fragmentFilters, fragmentFilterRegistry?.properties)) {
           toast("已记录，当前筛选下不可见", { action: { label: "查看碎片", onClick: () => showFragmentTarget(created) } })
         } else toast("碎片已保存")
       }
@@ -848,7 +870,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
       setGit((current) => current?.status === "ready"
         ? { ...current, status: "dirty" }
         : current)
-      if (!matchesFragmentFilters(fragment, fragmentFilters)) {
+      if (!matchesFragmentFilters(fragment, fragmentFilters, fragmentFilterRegistry?.properties)) {
         toast("已记录，当前筛选下不可见", {
           action: { label: "查看碎片", onClick: () => showFragmentTarget(fragment) },
         })
@@ -884,7 +906,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
       setGit((current) => current?.status === "ready"
         ? { ...current, status: "dirty" }
         : current)
-      if (!matchesFragmentFilters(fragment, fragmentFilters)) {
+      if (!matchesFragmentFilters(fragment, fragmentFilters, fragmentFilterRegistry?.properties)) {
         toast("已记录，当前筛选下不可见", {
           action: { label: "查看碎片", onClick: () => showFragmentTarget(fragment) },
         })
@@ -1761,7 +1783,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
 
   function showFragmentTarget(fragment: Fragment) {
     setPendingLibraryTarget(null)
-    if (route.space !== "fragments" || fragmentsView !== "all" || !matchesFragmentFilters(fragment, fragmentFilters)) {
+    if (route.space !== "fragments" || fragmentsView !== "all" || !matchesFragmentFilters(fragment, fragmentFilters, fragmentFilterRegistry?.properties)) {
       setNavigationOrigin(current => current ?? { route, filters: fragmentFilters })
       setFragmentFilters(EMPTY_FRAGMENT_FILTERS)
     }
@@ -2141,7 +2163,10 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
       : lockboxStream
   }, [lockbox?.unlocked, lockboxFragments, selectedLockboxTag])
 
-  const visibleStreamFragments = useMemo(() => inboxFragments.filter(fragment => matchesFragmentFilters(fragment, fragmentFilters)), [inboxFragments, fragmentFilters])
+  const visibleStreamFragments = useMemo(
+    () => inboxFragments.filter(fragment => matchesFragmentFilters(fragment, fragmentFilters, fragmentFilterRegistry?.properties)),
+    [inboxFragments, fragmentFilterRegistry, fragmentFilters]
+  )
   const searchScope = scopeForSpace(route.space)
   const publicSearchProvider = useMemo(
     () => createPublicSearchProvider(publicOnlyFragments),
@@ -2906,6 +2931,9 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     <FragmentFilterDialog
       filters={fragmentFilters}
       fragments={inboxFragments}
+      propertyRegistry={fragmentFilterRegistry}
+      propertyRegistryError={fragmentFilterRegistryError}
+      propertyRegistryLoading={fragmentFilterRegistryLoading}
       onApply={filters => void applyFragmentFilters(filters)}
       onClose={closeFragmentFilters}
       open={isFragmentFilterOpen}
@@ -3124,7 +3152,11 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
                 }}
                 onOpen={() => void openOutlineUpgrade()}
               /> : null}
-              <FragmentFilterContext filters={fragmentFilters} onClear={() => void applyFragmentFilters(EMPTY_FRAGMENT_FILTERS)} />
+              <FragmentFilterContext
+                filters={fragmentFilters}
+                onClear={() => void applyFragmentFilters(EMPTY_FRAGMENT_FILTERS)}
+                onClearProperty={() => void applyFragmentFilters({ ...fragmentFilters, property: null })}
+              />
             </>}
             timeline={{
               ...timelineHandlers,
@@ -3133,7 +3165,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
               scrollToFragmentId: pendingScrollFragmentId,
               onOrganize: handleOrganizeFragments,
               onSelectionModeChange: setFragmentSelectionActive,
-              emptyMessage: fragmentFilters.tag || fragmentFilters.month || fragmentFilters.pinned ? "没有符合条件的碎片，可清除筛选后查看。" : "还没有碎片，记下一点什么吧。",
+              emptyMessage: fragmentFilters.tag || fragmentFilters.month || fragmentFilters.pinned || fragmentFilters.property ? "没有符合条件的碎片，可清除筛选后查看。" : "还没有碎片，记下一点什么吧。",
             }}
               />
             ) : route.space === "fragments" && fragmentsView === "trash" ? (

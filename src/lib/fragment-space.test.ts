@@ -28,6 +28,24 @@ describe("fragment space ownership", () => {
     expect(matchesFragmentFilters(sample(), filters)).toBe(false)
     expect(matchesFragmentFilters(sample({ tags: ["别的标签"], pinned: true }), filters)).toBe(false)
   })
+  it("combines property filters with kind, tag, month, and pinned", () => {
+    const candidate = sample({
+      pinned: true,
+      properties: [{ key: "评分", value: { kind: "number", text: "4.5" }, editable: true }],
+    })
+    const filters = {
+      ...EMPTY_FRAGMENT_FILTERS,
+      kind: "fragment" as const,
+      tag: "想法",
+      month: "2024-03",
+      pinned: true,
+      property: { key: "评分", op: "gte" as const, value: "4.5" },
+    }
+    const registry = { 评分: { type: "number" as const } }
+    expect(matchesFragmentFilters(candidate, filters, registry)).toBe(true)
+    expect(matchesFragmentFilters(candidate, { ...filters, tag: "别的标签" }, registry)).toBe(false)
+    expect(matchesFragmentFilters(candidate, { ...filters, property: { key: "评分", op: "gt", value: "4.5" } }, registry)).toBe(false)
+  })
   it("filters every stream content kind from type tags and keeps all as the default", () => {
     const fixtures = [
       sample(),

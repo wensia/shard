@@ -1,6 +1,7 @@
 import { expect, test, type Page } from "@playwright/test"
 
 import { fillEditor } from "./editor-helpers"
+import { openFragmentFilters } from "./fragment-filter-helpers"
 import {
   CARD_FRAGMENT,
   card,
@@ -162,6 +163,32 @@ async function calls(page: Page, command: string) {
 test.beforeEach(async ({ page }) => {
   await installPropertiesMock(page)
   await page.goto("/")
+})
+
+test("属性筛选校验非法数字、过滤时间线并可单独清除", async ({ page }) => {
+  const dialog = await openFragmentFilters(page)
+  await selectOption(dialog.getByRole("combobox", { name: "类型", exact: true }), "fragment")
+  await selectOption(dialog.getByRole("combobox", { name: "属性名", exact: true }), "金额")
+  await selectOption(dialog.getByRole("combobox", { name: "属性运算", exact: true }), "gt")
+  const value = dialog.getByRole("textbox", { name: "属性值", exact: true })
+  await value.fill("1e3")
+  await dialog.getByRole("button", { name: "查看碎片", exact: true }).click()
+  await expect(dialog).toBeVisible()
+  await expect(value).toHaveAttribute("aria-invalid", "true")
+  await expect(dialog.getByRole("alert")).toHaveText("数字格式无效。")
+
+  await value.fill("1")
+  await dialog.getByRole("button", { name: "查看碎片", exact: true }).click()
+  await expect(dialog).toHaveCount(0)
+  await expect(page.locator(".shard-timeline-item")).toHaveCount(1)
+  await expect(card(page, "card-fragment")).toBeVisible()
+  const context = page.getByRole("region", { name: "当前碎片筛选", exact: true })
+  await expect(context).toContainText("碎片 · 属性：金额 大于 1")
+
+  await context.getByRole("button", { name: "清除属性筛选", exact: true }).click()
+  await expect(context).toContainText("碎片")
+  await expect(context).not.toContainText("属性：")
+  await expect(context.getByRole("button", { name: "清除属性筛选", exact: true })).toHaveCount(0)
 })
 
 test("禅模式显示各类型属性，并可添加、编辑、删除与提示类型不符", async ({ page }) => {

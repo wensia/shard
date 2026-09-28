@@ -163,6 +163,8 @@ async function installSearchPaletteFixture(
               return "0.1.3-test";
             case "list_fragments":
               return state();
+            case "read_property_registry":
+              return { registry: { version: 1, properties: {} }, sha: "property-registry-empty" };
             case "list_library_tree":
               return clone(tree);
             case "migrate_legacy_notes":
