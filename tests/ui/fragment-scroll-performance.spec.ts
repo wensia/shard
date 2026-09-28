@@ -129,7 +129,10 @@ async function settleGeometry(page: Page) {
   await page.evaluate(async () => {
     await document.fonts.ready
     const composer = document.querySelector('[data-shard-editor="composer"]')!.closest(".shard-content-measure")!
-    await Promise.all(composer.getAnimations({ subtree: true }).map(animation => animation.finished.catch(() => undefined)))
+    const finiteAnimations = composer.getAnimations({ subtree: true }).filter(animation =>
+      Number.isFinite(Number(animation.effect?.getComputedTiming().endTime))
+    )
+    await Promise.all(finiteAnimations.map(animation => animation.finished.catch(() => undefined)))
     // ResizeObserver callbacks and their scheduled measurement get separate frames.
     for (let frame = 0; frame < 4; frame++) await new Promise(requestAnimationFrame)
   })

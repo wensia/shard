@@ -28,7 +28,10 @@ async function installSearchPaletteFixture(
         content: `# 共同词公开笔记 ${index + 1}\n\n公开正文 ${index + 1}`,
         createdAt: now,
         updatedAt: now,
-        tags: index === 0 ? ["inbox", "公开"] : ["inbox", "note", "公开"],
+        tags:
+          index === 0
+            ? ["inbox", "公开", "公共", "公告", "公文", "公益", "公园"]
+            : ["inbox", "note", "公开"],
         category: null,
         path: `notes/public-${index + 1}.md`,
         gitStatus: "committed",
@@ -348,6 +351,41 @@ test("composition does not query or open a result", async ({ page }) => {
   expect(
     (await searchCalls(page)).filter(({ command }) => command === "search_vault"),
   ).toHaveLength(1);
+});
+
+test("hash query opens a matching public tag topic with keyboard navigation", async ({
+  page,
+}) => {
+  await installSearchPaletteFixture(page);
+  await page.goto("/");
+  await page.keyboard.press("Control+k");
+
+  const dialog = page.getByRole("dialog", { name: "搜索" });
+  const input = page.getByRole("combobox", { name: "搜索内容" });
+  await input.fill("#公");
+  const candidates = dialog.locator("[data-search-tag-topic]");
+  await expect(candidates).toHaveCount(5);
+  await expect(candidates.first()).toHaveAttribute("aria-selected", "true");
+  await expect(dialog.getByRole("option", { name: /标签主题页：inbox/u })).toHaveCount(0);
+
+  await input.press("ArrowDown");
+  await expect(candidates.nth(1)).toHaveAttribute("aria-selected", "true");
+  await input.press("ArrowUp");
+  await expect(candidates.first()).toHaveAttribute("aria-selected", "true");
+
+  await input.fill("＃公开");
+  const publicTopic = dialog.getByRole("option", {
+    name: "标签主题页：公开",
+    exact: true,
+  });
+  await expect(publicTopic).toHaveCount(1);
+  await expect(publicTopic).toHaveAttribute("aria-selected", "true");
+  await input.press("Enter");
+
+  await expect(dialog).toHaveCount(0);
+  await expect(
+    page.getByRole("region", { name: "标签主题页：公开", exact: true }),
+  ).toBeVisible();
 });
 
 test("tab never switches search mode", async ({ page }) => {

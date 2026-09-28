@@ -2145,13 +2145,19 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
   }
 
   async function openTagTopic(tag: string) {
-    if (!(await saveLibraryDraftBeforeNavigation())) return
+    if (!(await saveLibraryDraftBeforeNavigation())) return false
     setFragmentFilters((current) => ({ ...current, tag: null }))
     setActiveMindMapId(null)
     setPendingScrollFragmentId(null)
     setNavigationOrigin(null)
     setFragmentSelectionActive(false)
     setRoute({ space: "fragments", params: { view: "tag", tag } })
+    return true
+  }
+
+  async function openTagTopicFromSearch(tag: string) {
+    if (!(await openTagTopic(tag))) return
+    revokeSearchSession("close")
   }
 
   async function returnFromTagTopic() {
@@ -2620,6 +2626,13 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
       ).sort((a, b) => a.localeCompare(b)),
     [appSettings.customTags, publicActiveFragments]
   )
+  const tagTopicTags = useMemo(
+    () =>
+      Array.from(new Set(inboxFragments.flatMap((fragment) => fragment.tags)))
+        .filter((tag) => tag !== "inbox" && !isTypeTag(tag))
+        .sort((left, right) => left.localeCompare(right, "zh-CN")),
+    [inboxFragments]
+  )
 
   const editingFragment = useMemo(
     () =>
@@ -3050,10 +3063,12 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
         onFilterFragments={openFragmentFiltersFromSearch}
         onIncludeTrashChange={searchController.onIncludeTrashChange}
         onModeChange={searchController.onModeChange}
+        onOpenTagTopic={(tag) => void openTagTopicFromSearch(tag)}
         onQueryChange={searchController.onQueryChange}
         onSelect={searchController.onSelect}
         onSelectedKeyChange={searchController.onSelectedKeyChange}
         session={searchSession}
+        tagTopicTags={tagTopicTags}
       />
     ) : null
 

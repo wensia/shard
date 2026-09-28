@@ -6120,10 +6120,12 @@ fn create_lockbox_fragment_in_vault(
     if let Some(read_keys) = unlocked_lockbox_read_keys(vault, lockbox_runtime) {
         read_lockbox_fragment(&path, vault, &dirty, &read_keys, override_status)
     } else {
+        let encrypted_text = fs::read_to_string(&path).map_err(|error| error.to_string())?;
         lockbox_fragment_from_parts(
             &path,
             vault,
             &dirty,
+            &encrypted_text,
             frontmatter,
             None,
             String::new(),
@@ -6339,10 +6341,12 @@ fn move_public_fragment_payload_to_lockbox_in_vault(
     if let Some(read_keys) = unlocked_lockbox_read_keys(vault, lockbox_runtime) {
         read_lockbox_fragment(&lockbox_path, vault, &dirty, &read_keys, override_status)
     } else {
+        let encrypted_text = fs::read_to_string(&lockbox_path).map_err(|error| error.to_string())?;
         lockbox_fragment_from_parts(
             &lockbox_path,
             vault,
             &dirty,
+            &encrypted_text,
             frontmatter,
             None,
             String::new(),
@@ -6405,11 +6409,13 @@ fn read_lockbox_fragment(
     read_keys: &LockboxReadKeys,
     override_status: Option<(String, Option<String>)>,
 ) -> Result<Fragment, String> {
-    let payload = read_lockbox_payload(path, read_keys)?;
+    let encrypted_text = fs::read_to_string(path).map_err(|error| error.to_string())?;
+    let payload = read_lockbox_payload_from_text(&encrypted_text, read_keys)?;
     lockbox_fragment_from_parts(
         path,
         vault,
         dirty_paths,
+        &encrypted_text,
         payload.frontmatter,
         payload.frontmatter_raw,
         payload.body,
@@ -6421,12 +6427,12 @@ fn lockbox_fragment_from_parts(
     path: &Path,
     vault: &Path,
     dirty_paths: &HashSet<String>,
+    encrypted_text: &str,
     frontmatter: FragmentFrontmatter,
     frontmatter_raw: Option<String>,
     body: String,
     override_status: Option<(String, Option<String>)>,
 ) -> Result<Fragment, String> {
-    let encrypted_text = fs::read_to_string(path).map_err(|error| error.to_string())?;
     let rel_path = relative_path(vault, path)?;
     let (git_status, error) = override_status.unwrap_or_else(|| {
         if !vault.join(".git").exists() {
@@ -6446,7 +6452,7 @@ fn lockbox_fragment_from_parts(
     Ok(Fragment {
         id: frontmatter.id,
         content: body.trim_start_matches('\n').to_string(),
-        file_sha: content_sha256_hex(&encrypted_text),
+        file_sha: content_sha256_hex(encrypted_text),
         created_at: frontmatter.created_at,
         updated_at: frontmatter.updated_at,
         tags: frontmatter.tags,
@@ -6527,7 +6533,14 @@ fn read_lockbox_payload(
     read_keys: &LockboxReadKeys,
 ) -> Result<LockboxFragmentPayload, String> {
     let text = fs::read_to_string(path).map_err(|error| error.to_string())?;
-    let encrypted = serde_json::from_str::<LockboxEncryptedFragment>(&text)
+    read_lockbox_payload_from_text(&text, read_keys)
+}
+
+fn read_lockbox_payload_from_text(
+    text: &str,
+    read_keys: &LockboxReadKeys,
+) -> Result<LockboxFragmentPayload, String> {
+    let encrypted = serde_json::from_str::<LockboxEncryptedFragment>(text)
         .map_err(|error| error.to_string())?;
     if encrypted.version != LOCKBOX_VERSION {
         return Err("不支持的密匣片段版本。".to_string());
@@ -8588,6 +8601,51 @@ mod tests {
         )
         .unwrap();
         assert_eq!(updated.content, "无基线保存");
+    }
+
+    #[test]
+    fn lockbox_fragment_file_sha_and_content_share_one_encrypted_snapshot() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let vault = tempdir.path();
+        let runtime = LockboxRuntime::default();
+        ensure_vault_layout(vault).unwrap();
+        setup_lockbox_in_vault(vault, &runtime, "correct horse").unwrap();
+        let fragment = create_lockbox_fragment_in_vault(
+            vault,
+            &runtime,
+            "同一快照正文",
+            vec![LOCKBOX_TAG.into()],
+        )
+        .unwrap();
+        let path = find_lockbox_fragment_path(vault, &fragment.id)
+            .unwrap()
+            .unwrap();
+        let read_keys = require_unlocked_lockbox_read_keys(vault, &runtime).unwrap();
+        let encrypted_snapshot = fs::read_to_string(&path).unwrap();
+        let payload = read_lockbox_payload_from_text(&encrypted_snapshot, &read_keys).unwrap();
+
+        let mut replacement =
+            read_lockbox_payload_from_text(&encrypted_snapshot, &read_keys).unwrap();
+        replacement.body = "后来写入的正文".to_string();
+        let write_key = LockboxWriteKey::Master(read_keys.master_key.clone());
+        write_lockbox_payload(&path, &write_key, &replacement).unwrap();
+        let replacement_text = fs::read_to_string(&path).unwrap();
+
+        let projected = lockbox_fragment_from_parts(
+            &path,
+            vault,
+            &HashSet::new(),
+            &encrypted_snapshot,
+            payload.frontmatter,
+            payload.frontmatter_raw,
+            payload.body,
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(projected.content, "同一快照正文");
+        assert_eq!(projected.file_sha, content_sha256_hex(&encrypted_snapshot));
+        assert_ne!(projected.file_sha, content_sha256_hex(&replacement_text));
     }
 
     #[test]

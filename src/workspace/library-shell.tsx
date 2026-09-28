@@ -1758,6 +1758,7 @@ export function LibraryShell({
       ? activeSearchNavigation
       : null
     if (selectedMindMap || searchMindMap) {
+      const mindMapId = searchMindMap?.result.file.id ?? selectedMindMap!.mindMapId!
       return (
         <div
           className={
@@ -1766,9 +1767,9 @@ export function LibraryShell({
         >
           <MindMapCanvas
             initialRead={searchMindMap?.result ?? null}
-            key={`${selection?.kind === "mindmap" ? selection.path : "map"}:${searchMindMap?.requestId ?? "browse"}`}
+            key={`${mindMapId}:${searchMindMap?.requestId ?? "browse"}`}
             ref={mindMapHandle}
-            mapId={searchMindMap?.result.file.id ?? selectedMindMap!.mindMapId!}
+            mapId={mindMapId}
             fragments={relationFragments}
             onOpenLink={openCanvasLink}
             onSaveStateChange={setMindMapSaveState}

@@ -7,6 +7,7 @@ import {
   Grid2X2Icon,
   LockKeyholeIcon,
   SearchIcon,
+  TagIcon,
   TableIcon,
   WorkflowIcon,
   XIcon,
@@ -43,8 +44,14 @@ export interface SearchPaletteProps {
   onClose(): void;
   onFilterFragments?(): void;
   onIncludeTrashChange?(includeTrash: boolean): void;
+  onOpenTagTopic?(tag: string): void;
   onSelectedKeyChange?(key: string | null): void;
+  tagTopicTags?: readonly string[];
 }
+
+type SearchPaletteOption =
+  | { key: string; kind: "hit"; hit: SearchHit }
+  | { key: string; kind: "tag"; tag: string };
 
 const KIND_ICON: Record<SearchKind, LucideIcon> = {
   canvas: Grid2X2Icon,
@@ -76,9 +83,11 @@ export function SearchPalette({
   onFilterFragments,
   onIncludeTrashChange,
   onModeChange,
+  onOpenTagTopic,
   onQueryChange,
   onSelect,
   onSelectedKeyChange,
+  tagTopicTags = [],
 }: SearchPaletteProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const isComposingRef = useRef(false);
@@ -86,12 +95,40 @@ export function SearchPalette({
   const optionRefs = useRef(new Map<string, HTMLButtonElement>());
   const viewportRef = useRef<HTMLDivElement>(null);
   const [inputValue, setInputValue] = useState(session.drafts[session.mode]);
-  const [selectedIndex, setSelectedIndex] = useState(() =>
-    Math.max(
-      0,
-      session.hits.findIndex((hit) => hit.target.key === session.selectedKey),
-    ),
+  const [selectedOptionKey, setSelectedOptionKey] = useState<string | null>(
+    null,
   );
+  const tagOptions = useMemo<SearchPaletteOption[]>(() => {
+    if (
+      !onOpenTagTopic ||
+      (inputValue[0] !== "#" && inputValue[0] !== "＃")
+    ) {
+      return [];
+    }
+    const prefix = inputValue.slice(1).trim().toLocaleLowerCase("zh-CN");
+    return tagTopicTags
+      .filter((tag) =>
+        tag.toLocaleLowerCase("zh-CN").startsWith(prefix),
+      )
+      .slice(0, 5)
+      .map((tag) => ({ key: `tag-topic:${tag}`, kind: "tag", tag }));
+  }, [inputValue, onOpenTagTopic, tagTopicTags]);
+  const options = useMemo<SearchPaletteOption[]>(
+    () => [
+      ...tagOptions,
+      ...session.hits.map((hit) => ({
+        hit,
+        key: `search-hit:${hit.target.key}`,
+        kind: "hit" as const,
+      })),
+    ],
+    [session.hits, tagOptions],
+  );
+  const selectedIndex = Math.max(
+    0,
+    options.findIndex((option) => option.key === selectedOptionKey),
+  );
+  const selectedOption = options[selectedIndex] ?? null;
 
   useEffect(() => {
     inputRef.current?.focus();
@@ -106,17 +143,32 @@ export function SearchPalette({
   }, [session.drafts, session.mode]);
 
   useEffect(() => {
-    const nextIndex = session.hits.findIndex(
-      (hit) => hit.target.key === session.selectedKey,
-    );
-    setSelectedIndex(nextIndex >= 0 ? nextIndex : 0);
-  }, [session.hits, session.selectedKey]);
+    setSelectedOptionKey((current) => {
+      if (
+        current?.startsWith("tag-topic:") &&
+        options.some((option) => option.key === current)
+      ) {
+        return current;
+      }
+      const selectedHit = session.selectedKey
+        ? options.find(
+            (option) =>
+              option.kind === "hit" &&
+              option.hit.target.key === session.selectedKey,
+          )
+        : null;
+      if (selectedHit) return selectedHit.key;
+      if (current && options.some((option) => option.key === current)) {
+        return current;
+      }
+      return options[0]?.key ?? null;
+    });
+  }, [options, session.selectedKey]);
 
   useEffect(() => {
-    const selected = session.hits[selectedIndex];
     const viewport = viewportRef.current;
-    const option = selected
-      ? optionRefs.current.get(selected.target.key)
+    const option = selectedOption
+      ? optionRefs.current.get(selectedOption.key)
       : null;
     if (!viewport || !option) return;
 
@@ -127,10 +179,9 @@ export function SearchPalette({
     } else if (optionRect.bottom > viewportRect.bottom) {
       viewport.scrollTop += optionRect.bottom - viewportRect.bottom;
     }
-  }, [selectedIndex, session.hits]);
+  }, [selectedOption]);
 
-  const selectedHit = session.hits[selectedIndex] ?? null;
-  const activeOptionId = selectedHit
+  const activeOptionId = selectedOption
     ? `search-palette-option-${selectedIndex}`
     : undefined;
   const openSectionTitle = useMemo(() => {
@@ -158,10 +209,12 @@ export function SearchPalette({
   ]);
 
   function selectIndex(index: number) {
-    const hit = session.hits[index];
-    if (!hit) return;
-    setSelectedIndex(index);
-    onSelectedKeyChange?.(hit.target.key);
+    const option = options[index];
+    if (!option) return;
+    setSelectedOptionKey(option.key);
+    if (option.kind === "hit") {
+      onSelectedKeyChange?.(option.hit.target.key);
+    }
   }
 
   function submitQuery(value: string) {
@@ -191,7 +244,7 @@ export function SearchPalette({
     }
     if (event.key === "ArrowDown") {
       event.preventDefault();
-      selectIndex(Math.min(selectedIndex + 1, session.hits.length - 1));
+      selectIndex(Math.min(selectedIndex + 1, options.length - 1));
       return;
     }
     if (event.key === "ArrowUp") {
@@ -201,7 +254,10 @@ export function SearchPalette({
     }
     if (event.key === "Enter") {
       event.preventDefault();
-      if (selectedHit) onSelect(selectedHit);
+      if (selectedOption?.kind === "hit") onSelect(selectedOption.hit);
+      else if (selectedOption?.kind === "tag") {
+        onOpenTagTopic?.(selectedOption.tag);
+      }
     }
   }
 
@@ -228,7 +284,7 @@ export function SearchPalette({
             aria-activedescendant={activeOptionId}
             aria-autocomplete="list"
             aria-controls="search-palette-results"
-            aria-expanded={session.hits.length > 0}
+            aria-expanded={options.length > 0}
             aria-label="搜索内容"
             autoComplete="off"
             className={styles.input}
@@ -298,7 +354,7 @@ export function SearchPalette({
             id="search-palette-results"
             role="listbox"
           >
-            {session.hits.length > 0 ? (
+            {options.length > 0 ? (
               <>
                 {openSectionTitle ? (
                   <div
@@ -310,22 +366,37 @@ export function SearchPalette({
                     {openSectionTitle}
                   </div>
                 ) : null}
-                {session.hits.map((hit, index) => (
-                  <SearchPaletteRow
-                    hit={hit}
-                    id={`search-palette-option-${index}`}
-                    isSelected={index === selectedIndex}
-                    key={hit.target.key}
-                    mode={session.mode}
-                    onOpen={() => onSelect(hit)}
-                    onSelect={() => selectIndex(index)}
-                    optionRef={(element) => {
-                      if (element)
-                        optionRefs.current.set(hit.target.key, element);
-                      else optionRefs.current.delete(hit.target.key);
-                    }}
-                  />
-                ))}
+                {options.map((option, index) =>
+                  option.kind === "tag" ? (
+                    <SearchPaletteTagRow
+                      id={`search-palette-option-${index}`}
+                      isSelected={index === selectedIndex}
+                      key={option.key}
+                      mode={session.mode}
+                      onOpen={() => onOpenTagTopic?.(option.tag)}
+                      onSelect={() => selectIndex(index)}
+                      optionRef={(element) => {
+                        if (element) optionRefs.current.set(option.key, element);
+                        else optionRefs.current.delete(option.key);
+                      }}
+                      tag={option.tag}
+                    />
+                  ) : (
+                    <SearchPaletteRow
+                      hit={option.hit}
+                      id={`search-palette-option-${index}`}
+                      isSelected={index === selectedIndex}
+                      key={option.key}
+                      mode={session.mode}
+                      onOpen={() => onSelect(option.hit)}
+                      onSelect={() => selectIndex(index)}
+                      optionRef={(element) => {
+                        if (element) optionRefs.current.set(option.key, element);
+                        else optionRefs.current.delete(option.key);
+                      }}
+                    />
+                  ),
+                )}
               </>
             ) : (
               <SearchPaletteState session={session} />
@@ -452,6 +523,49 @@ function SearchPaletteRow({
           ? parentPath(hit.target.path)
           : formatUpdatedAt(hit.updatedAt)}
       </span>
+    </button>
+  );
+}
+
+function SearchPaletteTagRow({
+  id,
+  isSelected,
+  mode,
+  onOpen,
+  onSelect,
+  optionRef,
+  tag,
+}: {
+  id: string;
+  isSelected: boolean;
+  mode: SearchMode;
+  onOpen: () => void;
+  onSelect: () => void;
+  optionRef: (element: HTMLButtonElement | null) => void;
+  tag: string;
+}) {
+  return (
+    <button
+      aria-selected={isSelected}
+      className={
+        mode === "fullText" ? styles.resultRowFullText : styles.resultRowOpen
+      }
+      data-search-tag-topic={tag}
+      data-selected={isSelected ? "true" : undefined}
+      id={id}
+      onClick={onOpen}
+      onMouseEnter={onSelect}
+      ref={optionRef}
+      role="option"
+      type="button"
+    >
+      <span className={styles.kindIcon} title="标签主题页">
+        <TagIcon aria-hidden="true" />
+      </span>
+      <span className={styles.resultText}>
+        <span className={styles.resultTitle}>标签主题页：{tag}</span>
+      </span>
+      <span aria-hidden="true" className={styles.resultMeta} />
     </button>
   );
 }

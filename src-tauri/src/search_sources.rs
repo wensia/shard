@@ -878,8 +878,9 @@ fn load_lockbox_markdown(
     note_source_read();
     let encrypted_text = fs::read_to_string(&safe_path).map_err(fs_error)?;
     let file_sha = crate::content_sha256_hex(&encrypted_text);
-    let payload = crate::read_lockbox_payload(&safe_path, lease.read_keys())
-        .map_err(|_| SearchError::Io { retryable: false })?;
+    let payload =
+        crate::read_lockbox_payload_from_text(&encrypted_text, lease.read_keys())
+            .map_err(|_| SearchError::Io { retryable: false })?;
     let revision = serde_json::to_vec(&payload)
         .map(|bytes| crate::hash_bytes(&bytes))
         .map_err(|_| SearchError::Internal { retryable: false })?;

@@ -1925,7 +1925,7 @@ test("碎片确认标题目录后转为文档并聚焦正文，转回时保留�
   })
   const editor = page.getByRole("textbox", { name: "资料库文档编辑器", exact: true })
   await expect(editor).toBeFocused()
-  await expect.poll(() => readEditor(page, "library:fragment-august")).toBe("# 八月灵感\n碎片正文")
+  await expect.poll(() => readEditor(page, "library:fragment-august")).toBe("# 八月灵感\n\n碎片正文")
   await expect(page.locator('[data-shard-fragment-id]')).toHaveCount(0)
   await page.keyboard.press("ControlOrMeta+End")
   await page.keyboard.press("Enter")
@@ -3048,9 +3048,11 @@ test("加入时间线失败保留资料库图文件且普通文件没有菜单�
 
   for (const name of ["旧笔记.md", "清单.csv", "旧画布.shardcanvas.json"]) {
     await page.getByRole("button", { name: `${name} 操作`, exact: true }).click()
-    await expect(page.getByRole("menuitem", { name: "加入时间线", exact: true })).toHaveCount(0)
+    const menu = page.getByRole("menu", { name: "文件操作", exact: true })
+    await expect(menu).toBeVisible()
+    await expect(menu.getByRole("menuitem", { name: "加入时间线", exact: true })).toHaveCount(0)
     await page.keyboard.press("Escape")
-    await expect(page.getByRole("menu")).toHaveCount(0)
+    await expect(menu).toHaveCount(0)
   }
   await page.getByRole("button", { name: "审批流程.shardflow.json 操作", exact: true }).click()
   await expect(page.getByRole("menuitem", { name: "加入时间线", exact: true })).toBeVisible()
@@ -3061,8 +3063,11 @@ test("加入时间线失败保留资料库图文件且普通文件没有菜单�
   await page.getByRole("checkbox", { name: "选择 项目导图.shardmap.json", exact: true }).click()
   await page.getByRole("checkbox", { name: "选择 审批流程.shardflow.json", exact: true }).click()
   await page.getByRole("button", { name: "项目导图.shardmap.json 操作", exact: true }).click()
-  await expect(page.getByRole("menuitem", { name: "加入时间线", exact: true })).toHaveCount(0)
+  const batchMenu = page.getByRole("menu", { name: "文件操作", exact: true })
+  await expect(batchMenu).toBeVisible()
+  await expect(batchMenu.getByRole("menuitem", { name: "加入时间线", exact: true })).toHaveCount(0)
   await page.keyboard.press("Escape")
+  await expect(batchMenu).toHaveCount(0)
   await page.getByRole("toolbar", { name: "文件批量操作", exact: true })
     .getByRole("button", { name: "完成", exact: true }).click()
 
