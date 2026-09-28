@@ -28,6 +28,9 @@ pub enum SaveError {
 }
 
 pub trait Store {
+    fn open(&mut self, entry: &FragmentEntry) -> Result<String, String> {
+        Ok(entry.body.clone())
+    }
     fn save(&mut self, id: &str, body: &str) -> Result<SaveReport, SaveError>;
     fn reload(&mut self) -> Result<Vec<FragmentEntry>, String>;
 }
@@ -288,11 +291,28 @@ impl App {
             .height as usize
     }
 
+    pub fn open_id(&mut self, id: &str) {
+        if let Some(index) = self.entries.iter().position(|entry| entry.id == id) {
+            self.open_index(index);
+        }
+    }
+
     fn open_selected(&mut self) {
         let Some(&index) = self.hits.get(self.selected) else {
             return;
         };
-        self.editor = Some(Editor::new(&self.entries[index].body));
+        self.open_index(index);
+    }
+
+    fn open_index(&mut self, index: usize) {
+        let body = match self.store.open(&self.entries[index]) {
+            Ok(body) => body,
+            Err(error) => {
+                self.search_error = Some(error);
+                return;
+            }
+        };
+        self.editor = Some(Editor::new(&body));
         self.editing = Some(index);
         self.editor_scroll = 0;
         self.saved_at = None;
@@ -489,6 +509,7 @@ impl App {
                 if self.save() {
                     self.finish_exit(pending)
                 } else {
+                    self.pending = None;
                     Action::None
                 }
             }
@@ -743,6 +764,36 @@ mod tests {
         ctrl_key(&mut app, 's');
         assert!(screen(&app, 80, 20).join("\n").contains("资料库已锁定"));
         assert!(app.editor.as_ref().unwrap().is_dirty());
+    }
+
+    #[test]
+    fn failed_confirmation_save_closes_dialog_and_shows_error() {
+        for failure in [
+            SaveError::Conflict {
+                draft_path: std::env::temp_dir().join("draft.md"),
+            },
+            SaveError::Locked,
+            SaveError::Invalid("内容为空，未保存".into()),
+        ] {
+            let (mut app, state) = app(vec![entry("one", "原文")]);
+            press(&mut app, KeyCode::Enter);
+            press(&mut app, KeyCode::Char('新'));
+            let draft = app.editor.as_ref().unwrap().text();
+            state.borrow_mut().result = Some(failure.clone());
+            press(&mut app, KeyCode::Esc);
+            press(&mut app, KeyCode::Enter);
+            assert_eq!(app.pending, None);
+            assert_eq!(app.page, Page::Edit);
+            assert_eq!(app.editor.as_ref().unwrap().text(), draft);
+            assert!(app.editor.as_ref().unwrap().is_dirty());
+            let display = screen(&app, 80, 20).join("\n");
+            assert!(!display.contains("保存修改？"));
+            assert!(display.contains(match failure {
+                SaveError::Conflict { .. } => "这条碎片已被其他地方修改",
+                SaveError::Locked => "资料库已锁定",
+                SaveError::Invalid(_) => "内容为空，未保存",
+            }));
+        }
     }
 
     #[test]

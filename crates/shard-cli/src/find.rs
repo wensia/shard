@@ -456,7 +456,7 @@ fn recall_search(vault: &Path) -> Option<Vec<String>> {
 
 pub enum Selection<'a> {
     Found(&'a FragmentEntry),
-    /// 多条命中：已列出并记为「上次搜索」，调用方提示用序号再选。
+    /// 多条命中；是否列出并询问序号由调用方选择。
     Ambiguous(usize),
 }
 
@@ -464,11 +464,12 @@ pub enum Selection<'a> {
 /// - 无参数：最近修改的一条
 /// - 纯数字且上次搜索有这个序号：上次搜索的第 N 条
 /// - 与 id 相同，或是 id 的一段（至少 4 个字符）且只命中一条：这条碎片
-/// - 其余按关键词搜索：唯一命中直接编辑；多条时在终端里让用户选序号
+/// - 其余按关键词搜索：唯一命中直接编辑；多条时按 `prompt_on_ambiguous` 决定是否询问序号
 pub fn select<'a>(
     entries: &'a [FragmentEntry],
     vault: &Path,
     args: &[String],
+    prompt_on_ambiguous: bool,
 ) -> Result<Selection<'a>, String> {
     if entries.is_empty() {
         return Err("资料库里还没有可编辑的碎片".to_string());
@@ -515,6 +516,9 @@ pub fn select<'a>(
         [] => Err(format!("没有找到包含「{query}」的碎片")),
         [hit] => Ok(Selection::Found(hit.entry)),
         hits => {
+            if !prompt_on_ambiguous {
+                return Ok(Selection::Ambiguous(outcome.total));
+            }
             remember_search(vault, &query, hits);
             let style = Style::for_stream(io::stderr().is_terminal());
             eprintln!("{}", format_hits(hits, &style));

@@ -30,7 +30,9 @@ shard — 在终端里记一条 Shard 碎片
 用法:
   shard [选项] [#标签…] [/块命令] 内容
   shard -s [关键词…]                搜索碎片；不带关键词时列出最近修改的
-  shard -e [序号 | id | 关键词…]    用编辑器修改一条已有碎片
+  shard -i [关键词…]                打开交互搜索与编辑界面
+  shard -e [序号 | id | 关键词…]    在终端内编辑一条已有碎片
+  shard -e --external [目标]        改用外部编辑器
   shard [--vault <路径>] --append-dataset <vault 相对路径> < records.json
   shard [--vault <路径>] --graph-read <碎片id>
   shard [--vault <路径>] --graph-outline <碎片id>
@@ -45,6 +47,7 @@ shard — 在终端里记一条 Shard 碎片
   shard /待办 买咖啡            # 斜杠命令同编辑器，拼音缩写也可：/db
   pbpaste | shard #摘录         # 没有内容参数时从标准输入读取
   shard -s 银行 房贷            # 多个关键词须同时命中
+  shard -i 银行 房贷            # 在交互界面搜索并编辑
   shard -e 2                    # 编辑上次搜索结果的第 2 条
   shard -e 81b8ea9d             # 按 id，或 id 中的一段
   shard -e                      # 编辑最近修改的一条
@@ -61,12 +64,16 @@ shard — 在终端里记一条 Shard 碎片
 
 搜索与编辑:
   -s, --search [关键词…]  匹配与排序规则同 App 搜索；结果带序号并记住，供 -e 引用
+  -i, --interactive [关键词…]  打开交互搜索与内置编辑器（须在终端中运行）
   -n, --limit <N>         搜索最多列出 N 条（默认 20）
       --json              搜索结果输出为 JSON
-  -e, --edit [目标]       编辑器取 $VISUAL / $EDITOR（默认 vi）；图形编辑器要带等待参数，
-                          如 EDITOR='code -w'。保存后按正文重算 #标签、刷新更新时间；
+  -e, --edit [目标]       stdin 与 stdout 均为终端时使用内置编辑器；否则使用外部编辑器。
+      --external          对 -e 强制使用 $VISUAL / $EDITOR（默认 vi）；图形编辑器
+                          要带等待参数，如 EDITOR='code -w'。保存后按正文重算 #标签、刷新更新时间；
                           编辑期间碎片被 App 或同步改动时不覆盖（退出码 2）。
                           大纲、流程图用 --graph-* 命令；密匣碎片只能在 App 中编辑。
+  内置编辑器：Ctrl+S 保存，Esc 返回，Ctrl+Z 撤销，Ctrl+Y 重做，Ctrl+Q 退出。
+  鼠标捕获期间，用 Option（iTerm2）或 Fn（Terminal）拖动可原生选择复制。
 
 选项:
   --vault <路径>   指定资料库（默认读 Shard 设置，或环境变量 SHARD_VAULT）
@@ -124,6 +131,7 @@ fn run() -> Result<(), CliError> {
     let mut append_path = None;
     let mut graph_command = None;
     let mut find_mode = None;
+    let mut external = false;
 
     // 选项只认内容之前的部分，正文里的 `--xxx` 原样保留。
     while let Some(arg) = args.peek() {
@@ -144,10 +152,17 @@ fn run() -> Result<(), CliError> {
                 args.next();
                 append_path = Some(args.next().ok_or("--append-dataset 需要 vault 相对路径")?);
             }
-            "-s" | "--search" | "-e" | "--edit" => {
-                let edit = matches!(arg.as_str(), "-e" | "--edit");
+            "--external" => {
+                external = true;
                 args.next();
-                find_mode = Some(if edit {
+            }
+            "-s" | "--search" | "-e" | "--edit" | "-i" | "--interactive" => {
+                let edit = matches!(arg.as_str(), "-e" | "--edit");
+                let interactive = matches!(arg.as_str(), "-i" | "--interactive");
+                args.next();
+                find_mode = Some(if interactive {
+                    FindMode::Interactive
+                } else if edit {
                     FindMode::Edit
                 } else {
                     FindMode::Search
@@ -175,7 +190,10 @@ fn run() -> Result<(), CliError> {
         if append_path.is_some() {
             return Err("搜索与编辑不能与 --append-dataset 同时使用".into());
         }
-        return run_find(mode, args.collect(), vault_arg);
+        return run_find(mode, args.collect(), vault_arg, external);
+    }
+    if external {
+        return Err("--external 只能与 -e 一起使用".into());
     }
 
     let content = args.collect::<Vec<_>>().join(" ");
@@ -358,6 +376,7 @@ fn run_graph(command: graph::GraphCommand, vault_arg: Option<String>) -> Result<
 enum FindMode {
     Search,
     Edit,
+    Interactive,
 }
 
 struct FindArgs {
@@ -365,6 +384,7 @@ struct FindArgs {
     limit: usize,
     json: bool,
     vault: Option<String>,
+    external: bool,
 }
 
 /// `-s` / `-e` 之后的参数：选项可以写在关键词前后，`--` 之后全部按关键词处理。
@@ -374,6 +394,7 @@ fn parse_find_args(mode: FindMode, args: Vec<String>) -> Result<FindArgs, CliErr
         limit: find::DEFAULT_LIMIT,
         json: false,
         vault: None,
+        external: false,
     };
     let mut args = args.into_iter();
     let search_only = |name: &str| -> Result<(), CliError> {
@@ -402,6 +423,8 @@ fn parse_find_args(mode: FindMode, args: Vec<String>) -> Result<FindArgs, CliErr
                 search_only("--json")?;
                 parsed.json = true;
             }
+            "--external" if mode == FindMode::Edit => parsed.external = true,
+            "--external" => return Err("--external 只能与 -e 一起使用".into()),
             "--vault" => parsed.vault = Some(args.next().ok_or("--vault 需要一个路径")?),
             other if other.starts_with("--vault=") => {
                 parsed.vault = Some(other["--vault=".len()..].to_string());
@@ -420,13 +443,28 @@ fn parse_limit(value: &str) -> Result<usize, CliError> {
         .ok_or_else(|| "--limit 必须是正整数".into())
 }
 
-fn run_find(mode: FindMode, args: Vec<String>, vault_arg: Option<String>) -> Result<(), CliError> {
+fn run_find(
+    mode: FindMode,
+    args: Vec<String>,
+    vault_arg: Option<String>,
+    external: bool,
+) -> Result<(), CliError> {
     let args = parse_find_args(mode, args)?;
+    if external && mode != FindMode::Edit {
+        return Err("--external 只能与 -e 一起使用".into());
+    }
+    if mode == FindMode::Interactive && !(io::stdin().is_terminal() && io::stdout().is_terminal()) {
+        return Err("交互界面需要在终端中运行".into());
+    }
     let vault = resolve_vault(args.vault.or(vault_arg))?;
+    let query = args.terms.join(" ");
+    if mode == FindMode::Interactive {
+        return tui::run(&vault, Some(&query), None, &lock_dir()?, lock_timeout()?)
+            .map_err(Into::into);
+    }
     let entries = find::load_fragments(&vault)?;
 
     if mode == FindMode::Search {
-        let query = args.terms.join(" ");
         let outcome = find::search(&entries, &query, args.limit)?;
         if args.json {
             println!("{}", find::hits_json(&outcome.hits, &vault));
@@ -457,7 +495,19 @@ fn run_find(mode: FindMode, args: Vec<String>, vault_arg: Option<String>) -> Res
         return Ok(());
     }
 
-    let entry = match find::select(&entries, &vault, &args.terms)? {
+    if !external && !args.external && io::stdin().is_terminal() && io::stdout().is_terminal() {
+        let entry = match find::select(&entries, &vault, &args.terms, false)? {
+            find::Selection::Found(entry) => entry,
+            find::Selection::Ambiguous(_) => {
+                return tui::run(&vault, Some(&query), None, &lock_dir()?, lock_timeout()?)
+                    .map_err(Into::into);
+            }
+        };
+        return tui::run(&vault, None, Some(&entry.id), &lock_dir()?, lock_timeout()?)
+            .map_err(Into::into);
+    }
+
+    let entry = match find::select(&entries, &vault, &args.terms, true)? {
         find::Selection::Found(entry) => entry,
         find::Selection::Ambiguous(total) => {
             return Err(format!("匹配到 {total} 条，用 shard -e <序号> 选择其中一条").into())
@@ -646,5 +696,21 @@ fn expand_home(path: &str) -> PathBuf {
     match (path.strip_prefix("~/"), home_dir()) {
         (Some(rest), Some(home)) => home.join(rest),
         _ => Path::new(path).to_path_buf(),
+    }
+}
+
+#[cfg(test)]
+mod tui_entry_tests {
+    use super::*;
+
+    #[test]
+    fn external_flag_is_only_for_edit() {
+        let edit = parse_find_args(FindMode::Edit, vec!["--external".into(), "目标".into()])
+            .ok()
+            .unwrap();
+        assert!(edit.external);
+        assert_eq!(edit.terms, vec!["目标"]);
+        assert!(parse_find_args(FindMode::Search, vec!["--external".into()]).is_err());
+        assert!(parse_find_args(FindMode::Interactive, vec!["--external".into()]).is_err());
     }
 }
