@@ -171,6 +171,7 @@ impl Editor {
         }
     }
 
+    #[cfg(test)]
     pub fn cursor(&self) -> Cursor {
         self.cursor
     }

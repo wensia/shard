@@ -67,6 +67,7 @@ pub struct App {
     pub editing: Option<usize>,
     pub editor_scroll: usize,
     pub error: Option<String>,
+    pub draft_paths: Vec<PathBuf>,
     pub saved_at: Option<Instant>,
     pub pending: Option<Pending>,
     pub size: (u16, u16),
@@ -89,6 +90,7 @@ impl App {
             editing: None,
             editor_scroll: 0,
             error: None,
+            draft_paths: Vec::new(),
             saved_at: None,
             pending: None,
             size: (80, 24),
@@ -456,9 +458,10 @@ impl App {
             }
             Err(SaveError::Conflict { draft_path }) => {
                 self.error = Some(format!(
-                    "这条碎片已被其他地方修改，没有覆盖；你的内容已另存到 {}",
+                    "这条碎片已被其他地方修改，没有覆盖；你的内容已另存到\n{}",
                     draft_path.display()
                 ));
+                self.draft_paths.push(draft_path);
                 false
             }
             Err(SaveError::Locked) => {
@@ -555,7 +558,7 @@ impl App {
                     }
                 }
                 Page::Edit => {
-                    let body = editor_view::layout(area).body;
+                    let body = editor_view::layout(area, self.error.as_deref()).body;
                     if contains(body, mouse.column, mouse.row) {
                         if let Some(editor) = &mut self.editor {
                             let row = self.editor_scroll + (mouse.row - body.y) as usize;
@@ -575,16 +578,22 @@ impl App {
     }
 
     fn editor_width(&self) -> usize {
-        editor_view::layout(Rect::new(0, 0, self.size.0, self.size.1))
-            .body
-            .width
-            .max(1) as usize
+        editor_view::layout(
+            Rect::new(0, 0, self.size.0, self.size.1),
+            self.error.as_deref(),
+        )
+        .body
+        .width
+        .max(1) as usize
     }
     fn editor_height(&self) -> usize {
-        editor_view::layout(Rect::new(0, 0, self.size.0, self.size.1))
-            .body
-            .height
-            .max(1) as usize
+        editor_view::layout(
+            Rect::new(0, 0, self.size.0, self.size.1),
+            self.error.as_deref(),
+        )
+        .body
+        .height
+        .max(1) as usize
     }
 
     fn ensure_editor_visible(&mut self) {
@@ -727,6 +736,16 @@ mod tests {
     }
 
     #[test]
+    fn search_preview_wraps_chinese_after_tag_on_first_row() {
+        let body = format!("#生活 今天去咖啡店{}", "喝咖啡聊天".repeat(8));
+        let (app, _) = app(vec![entry("one", &body)]);
+        let rows = screen(&app, 40, 12);
+        let preview_y = search_view::layout(Rect::new(0, 0, 40, 12)).preview.y as usize;
+        assert!(rows[preview_y].starts_with("#生活 今天"));
+        assert_eq!(rows[preview_y].trim_end().width(), 40);
+    }
+
+    #[test]
     fn save_marks_editor_clean_and_discard_returns_without_save() {
         let (mut app, state) = app(vec![entry("one", "原文")]);
         press(&mut app, KeyCode::Enter);
@@ -764,6 +783,29 @@ mod tests {
         ctrl_key(&mut app, 's');
         assert!(screen(&app, 80, 20).join("\n").contains("资料库已锁定"));
         assert!(app.editor.as_ref().unwrap().is_dirty());
+    }
+
+    #[test]
+    fn conflict_path_is_visible_in_narrow_window_and_returned_on_quit() {
+        let (mut app, state) = app(vec![entry("one", "原文")]);
+        let path = std::env::temp_dir()
+            .join("var/folders/long-session-path/T/shard-conflict-draft-1234567890.md");
+        press(&mut app, KeyCode::Enter);
+        press(&mut app, KeyCode::Char('新'));
+        state.borrow_mut().result = Some(SaveError::Conflict {
+            draft_path: path.clone(),
+        });
+        ctrl_key(&mut app, 's');
+        let rows = screen(&app, 60, 16);
+        let error_area = editor_view::layout(Rect::new(0, 0, 60, 16), app.error.as_deref()).error;
+        let visible_path = rows[error_area.y as usize..error_area.bottom() as usize]
+            .iter()
+            .map(|row| row.trim_end())
+            .collect::<String>();
+        assert!(visible_path.contains(path.to_str().unwrap()));
+        assert_eq!(ctrl_key(&mut app, 'q'), Action::None);
+        assert_eq!(press(&mut app, KeyCode::Char('d')), Action::Quit);
+        assert_eq!(app.draft_paths, vec![path]);
     }
 
     #[test]

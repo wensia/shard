@@ -32,7 +32,7 @@ pub fn run(
         .size()
         .map_err(|error| error.to_string())?;
     app.handle(Event::Resize(size.width, size.height));
-    loop {
+    let result = (|| loop {
         terminal
             .terminal_mut()
             .draw(|frame| app.render(frame))
@@ -41,7 +41,12 @@ pub fn run(
             .next_event()
             .map_err(|error| format!("读取终端输入失败：{error}"))?;
         if app.handle(event) == Action::Quit {
-            return Ok(());
+            break Ok(());
         }
+    })();
+    drop(terminal);
+    for path in &app.draft_paths {
+        eprintln!("未保存的草稿：{}", path.display());
     }
+    result
 }

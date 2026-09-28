@@ -5,14 +5,17 @@ use ratatui::{
     layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Paragraph, Wrap},
+    widgets::Paragraph,
     Frame,
 };
 use shard_core::search::SearchTextPart;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use crate::{find, tui::app::App};
+use crate::{
+    find,
+    tui::{app::App, editor_view},
+};
 
 #[derive(Debug, Clone, Copy)]
 pub struct SearchLayout {
@@ -81,10 +84,9 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         .get(app.selected)
         .and_then(|index| app.entries.get(*index))
     {
+        let lines = editor_view::visual_lines(&entry.body, regions.preview.width as usize);
         frame.render_widget(
-            Paragraph::new(entry.body.as_str())
-                .style(Style::default().fg(Color::Gray))
-                .wrap(Wrap { trim: false }),
+            Paragraph::new(lines.join("\n")).style(Style::default().fg(Color::Gray)),
             regions.preview,
         );
     }

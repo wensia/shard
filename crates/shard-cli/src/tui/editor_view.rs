@@ -11,6 +11,7 @@ use ratatui::{
 use unicode_segmentation::UnicodeSegmentation;
 
 use super::app::App;
+use super::editor::Editor;
 use crate::find;
 
 #[derive(Clone, Copy, Debug)]
@@ -21,18 +22,41 @@ pub struct EditorLayout {
     pub footer: Rect,
 }
 
-pub fn layout(area: Rect) -> EditorLayout {
+pub fn layout(area: Rect, error: Option<&str>) -> EditorLayout {
+    let error_height = error
+        .map(|text| visual_lines(text, area.width as usize).len().min(4) as u16)
+        .unwrap_or(0)
+        .min(area.height.saturating_sub(2));
     EditorLayout {
         header: Rect::new(area.x, area.y, area.width, 1),
         body: Rect::new(
             area.x,
             area.y.saturating_add(1),
             area.width,
-            area.height.saturating_sub(3),
+            area.height.saturating_sub(2 + error_height),
         ),
-        error: Rect::new(area.x, area.bottom().saturating_sub(2), area.width, 1),
+        error: Rect::new(
+            area.x,
+            area.bottom().saturating_sub(1 + error_height),
+            area.width,
+            error_height,
+        ),
         footer: Rect::new(area.x, area.bottom().saturating_sub(1), area.width, 1),
     }
+}
+
+pub fn visual_lines(text: &str, width: usize) -> Vec<String> {
+    let editor = Editor::new(text);
+    editor
+        .layout(width)
+        .iter()
+        .map(|row| {
+            editor.lines()[row.line][row.start..row.end]
+                .graphemes(true)
+                .map(|part| if part == "\t" { "    " } else { part })
+                .collect()
+        })
+        .collect()
 }
 
 pub fn render(frame: &mut Frame, app: &App, area: Rect) {
@@ -42,7 +66,7 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
     let Some(entry) = app.entries.get(index) else {
         return;
     };
-    let regions = layout(area);
+    let regions = layout(area, app.error.as_deref());
     let status = if editor.is_dirty() {
         "● 未保存"
     } else if app
@@ -121,8 +145,10 @@ pub fn render(frame: &mut Frame, app: &App, area: Rect) {
         }
     }
     if let Some(error) = &app.error {
+        let lines = visual_lines(error, regions.error.width as usize);
         frame.render_widget(
-            Paragraph::new(error.as_str()).style(Style::default().fg(Color::Red)),
+            Paragraph::new(lines.into_iter().take(4).collect::<Vec<_>>().join("\n"))
+                .style(Style::default().fg(Color::Red)),
             regions.error,
         );
     }
