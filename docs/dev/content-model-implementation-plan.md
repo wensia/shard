@@ -24,7 +24,10 @@
 | **H4a** | 旧格式 md 大纲批量升级：正式导入器（Rust）、预检报告、必须成功的检查点或独立备份、逐篇原子升级；加固偏重 UI 用例 | H3 | 已完成，施工令见 §9 |
 | **H4b** | 资料库独立 `.shardmap.json`/`.shardflow.json` 显式加入时间线（沿用旧图 id 作为碎片 id，原文件移入回收站）；`shard://map|flow/<id>` 与节点引用找不到独立文件时回退到同 id 碎片 | H4a | 已完成，施工令见 §10 |
 | **H4c** | CLI 原生 JSON 读写、缩进列表只读导出、按节点 id 修改（需把图模型与校验移入 shard-core） | H4b、main 的跨进程写锁 | 已完成，施工令见 §11 |
-| G1–G3 | 属性面板与 `.shard/properties.json`；SQLite 属性表与筛选；标签主题页表格视图 | P1 | 待细化 |
+| **G1** | 自定义属性后端（保真设置/删除自定义键、DTO 携带属性、类型登记表）与碎片/文档禅模式、资料库文档的属性面板 | H4c | 执行中，施工令见 §12 |
+| G1b | 大纲、流程图宿主中的属性（与图编辑器基线协同） | G1 | 待细化 |
+| G2 | 属性进入时间线筛选；SQLite 属性派生表 | G1 | 待细化 |
+| G3 | 标签主题页（该标签下的碎片、大纲、流程图、文档与反链）与属性表格视图 | G2 | 待细化 |
 
 ## 3. P0 施工令：frontmatter 保真读写
 
@@ -623,3 +626,94 @@ UI 改动遵守 AGENTS.md 与 `vendor/kiln`，复用现有组件与 token。
 ### 11.5 交付
 
 不提交 Git；测试改写的 `tests/evidence` 图片结束前恢复。报告写 `docs/dev/content-model-tasks-log/H4c.md`：改动文件与要点、开工前 UI 基线、验收结果（含测试数）、偏差及原因、遗留问题。
+
+## 12. G1 施工令：自定义属性（后端与禅模式/资料库面板）
+
+前置：P0–H4c 已在本分支（含 main 的数据集与跨进程写锁）。依据产品框架 §2.2。本批不做：大纲与流程图宿主的属性（G1b）、属性筛选与 SQLite（G2）、标签主题页与表格视图（G3）、登记表的改显示名与全库改键。
+
+现状要点（调研结论）：
+- `crates/shard-core/src/frontmatter.rs` 的 `apply_frontmatter` 只遍历系统键；`validate_updated_mapping` 要求非系统键前后完全相等；`insertion_index` 对非系统键会 panic；`recognized_key` 只认 `^[A-Za-z_][A-Za-z0-9_]*`，中文键、带连字符的键都是不透明条目。`serialize_entry`、`parse_mapping`、`split_raw_items` 可复用。
+- serde_yaml 0.9：`'00123'`、无引号前导零、`yes/no/on/off`、日期、日期时间都解析为字符串；`1.50` 解析为浮点（写回成 `1.5`）；超出 u64 的整数让 `Value` 解析失败；`x`、`[x]` 可区分；嵌套映射为 `Mapping`；`!tag` 为 `Tagged`。
+- `Fragment` DTO（Rust 与 TS）不含任何自定义属性；三处构造：`read_fragment`、`lockbox_fragment_from_parts`、`search_sources.rs` 的 `markdown_document`。密匣载荷以 `frontmatter_raw` 为准。
+- 只改 frontmatter 的命令（置顶、关联）经 `write_fragment_update`，其 `render_fragment` 会规整正文首尾空白；图写入与类型转换用 `format!("---\n{raw}\n---{body}")` 原样保留正文。
+- 编辑器基线规则：`FragmentEditor` 与 `library-shell.tsx` 在编辑器干净时随刷新更新 `fileSha` 基线，有未保存草稿时保留旧基线。
+- `.shard` 在受管根内，检查点会提交它；没有通用的 `.shard` JSON 读写函数；`.shard/lockbox.json` 用 `serde_json` + `write_text_atomically`。
+- 前端没有 YAML 库。Kiln 有 Compact Detail Field Group（28–32px 键值条）；Shard 已有 `DatePicker`（`YYYY-MM-DD`）、`TimePicker`（`HH:mm`）、`Checkbox`、`Switch`、`SelectControl`、`Input`、`Badge`、`DropdownMenu`；多维表格有按类型分派的 `TableValueInput`（`src/features/tables/table-value-editor.tsx`）可参考。
+
+### 12.1 shard-core：自定义键的保真设置与删除
+
+在 `frontmatter.rs` 增加：
+- `set_custom_property(raw, key, value: &serde_yaml::Value) -> Result<String, String>` 与 `remove_custom_property(raw, key) -> Result<String, String>`。
+- 键名规则（新增函数 `validate_property_key`）：非空、不超过 64 个字符；只含 Unicode 字母、数字、`_`、`-`；不以 `-` 开头；不是系统保留名。`recognized_key` 相应放宽为能识别这类键（系统键识别不变）。
+- 已有该键且能识别为唯一条目时替换该条目的全部行；没有时追加到 raw 末尾；删除时移除该条目的全部行。键以引号、流式等无法安全定位的写法存在，或同名重复时返回错误，不产生部分结果。
+- **写后校验**：其它所有键（含系统键）的值前后相等，目标键等于期望值或已不存在；失败返回错误。复用现有别名/锚点检查思路：目标条目的锚点被别处引用时拒绝。
+- 现有 `apply_frontmatter` 的行为与测试不变。
+
+### 12.2 属性的值表示（后端 → 前端）
+
+- `Fragment` DTO 增加 `properties: Vec<FragmentProperty>`（前端字段名 `properties`，可选以兼容旧 mock），按 frontmatter 中出现的顺序列出所有**非系统键**。`FragmentProperty = { key, value: PropertyValue, editable: bool }`。
+- `PropertyValue` 按解析结果分类（JSON 安全，不经 JS number）：
+  - `{ kind: "text", text }`（字符串）
+  - `{ kind: "number", text }`（数字，以文本给出）
+  - `{ kind: "bool", value }`
+  - `{ kind: "null" }`
+  - `{ kind: "list", items: string[] }`（仅当所有元素都是字符串、数字或布尔时，元素转为文本；否则归入 other）
+  - `{ kind: "other", raw }`（嵌套映射、带标签值、其它无法安全编辑的值，`raw` 为该条目原文，`editable: false`）
+  - 键无法解析为 `Value`（例如超出 u64 的整数）时整篇仍能读取，该键按 `other` 返回原文。
+- 三处 DTO 构造都填 `properties`；密匣条目从 `frontmatter_raw` 取。
+
+### 12.3 类型登记表 `.shard/properties.json`
+
+- 格式：`{ "version": 1, "properties": { "<键>": { "type": "text" | "number" | "date" | "datetime" | "checkbox" | "list" | "link" } } }`。文件缺失视为空表；版本不支持或 JSON 损坏时返回错误，**不影响碎片读取与属性值**（前端按「未登记」处理并提示登记表异常）。
+- 命令：`read_property_registry()` 返回 `{ registry, sha }`；`register_property_type(key, type, expected_sha)`：拿写门，比对 sha，写入或更新该键的类型，原子写；内容写入只落盘不提交（由检查点聚合）。
+- 登记表只是解释规则：任何登记操作都不改动碎片文件里的值。
+
+### 12.4 属性写命令
+
+- `set_fragment_property(id, key, value)` 与 `remove_fragment_property(id, key)`：拿写门，读当前文件，公开碎片用 12.1 的函数改 raw、`updated_at` 经 `apply_frontmatter` 更新，**正文原样保留**（`format!("---\n{raw}\n---{body}")`，不用会规整正文的 `render_fragment`），原子写；密匣碎片在已解锁时改载荷的 `frontmatter_raw` 与投影，未解锁时报错。返回新的 `Fragment`（带新 `fileSha` 与 `properties`）。
+- `value` 由前端按登记类型构造、后端校验后转为 YAML 值：
+  - text → 字符串；
+  - number → 前端传十进制文本，后端要求是 i64 范围内整数或有限小数，否则报「数字格式无效，可改用文本类型」；
+  - date → `YYYY-MM-DD` 字符串；datetime → `YYYY-MM-DDTHH:mm` 字符串（本地时间，不加时区）；
+  - checkbox → 布尔；list → 字符串数组；link → 字符串 `[[目标]]`（写出时必须是加引号的字符串，不能变成流式序列）；
+  - 空值 → null。
+- 这些命令不接收 `expected_file_sha`（字段级补丁，读最新磁盘）。回收站中的碎片拒绝修改。
+
+### 12.5 编辑器基线协同（必须做）
+
+属性写入会改变 `fileSha`。`FragmentEditor` 与 `library-shell.tsx` 收到属性命令返回的 fragment 时：若其 `content` 等于编辑器上次保存的正文（属性写入不改正文），**即使存在未保存草稿，也采用新的 `fileSha` 作为基线**；否则沿用现有规则。补一条 UI 用例：禅模式有未保存草稿时改一个属性，随后正文自动保存成功，不出现冲突提示。
+
+### 12.6 属性面板（前端）
+
+- 新组件 `PropertiesPanel`，放在：`FragmentEditor` 禅模式正文上方（碎片与文档；大纲与流程图不在本批）、资料库文档编辑器正文上方（`library-shell.tsx` 编辑区顶部，资料库禅模式同样显示）。行内编辑不显示。
+- 外观：Kiln Compact Detail Field Group（每行：属性名、值控件、行菜单），无属性时只显示一个低调的「添加属性」入口；复用现有控件与 token，不新增视觉样式。
+- 值控件按「登记类型，否则按值的 kind」分派：文本/链接 `Input`（失焦或回车提交）；数字 `Input`（`inputMode="decimal"`，失焦校验）；日期 `DatePicker`；日期时间 `DatePicker` + `TimePicker`；勾选 `Checkbox`（立即提交）；列表 `Input`，以中英文逗号分隔，未编辑时显示为 `Badge`；`other` 只读显示原文并提示「此值只能在文本编辑器中修改」。
+- 值与登记类型不符时（例如登记为数字但值是「abc」）显示提示，不自动改写。
+- 「添加属性」：输入键名（按 12.1 规则即时校验：不能与已有键重复、不能是保留名）与类型（`SelectControl`，已登记的键默认取登记类型，否则默认文本）→ 未登记时先 `register_property_type`（**密匣碎片不登记**，界面注明「私密内容的新属性不会写入公开类型表」）→ `set_fragment_property` 写入 null 值，并聚焦值控件。
+- 行菜单：「删除属性」只删除当前文件中的这个键，不改登记表。
+- 属性命令失败时 toast 显示后端错误，面板回到磁盘上的值。
+- 属性写入成功后按现有方式更新时间线与资料库中的该 fragment。
+
+### 12.7 测试
+
+- Rust（shard-core）：中文键、带连字符键的新增/替换/删除；其它键（含注释、块标量、系统键）逐字节保留；保留名、非法键名、引号键、重复键、锚点被引用时拒绝；每种 12.4 的值类型写出后再解析得到期望值（`'00123'` 保持字符串、`[[目标]]` 保持字符串）。
+- Rust（src-tauri）：DTO `properties` 的各 kind 分类（含超出 u64 的整数按 other 返回且整篇可读）；属性命令写后正文字节不变、`updated_at` 更新、返回新 `fileSha`；密匣已解锁与未解锁两种情况；回收站拒绝；登记表读写、sha 不一致拒绝、损坏文件报错但碎片读取不受影响。
+- TS 单元：值控件的构造与校验（数字、日期、日期时间、列表拆分）。
+- UI（mock 补新命令，fragment 样本带 `properties`）：禅模式与资料库面板显示各类型属性；添加、编辑、删除；登记类型不符提示；密匣碎片添加属性不调用登记命令；12.5 的基线协同用例。
+
+### 12.8 验收命令
+
+沿用 `playwright.worktree.config.ts`（1422，不提交），开工前先跑一遍下表 UI 用例记录基线；偶发失败用 `--workers=1 --retries=0` 单独复跑并注明。
+
+| 命令 | 要求 |
+| --- | --- |
+| `cargo test -p shard-core -p shard -p shard-cli` | 全部通过 |
+| `pnpm test:unit` | 除 golden 夹具那一项既有失败外全部通过（quick-open 性能若波动须单独复跑） |
+| `pnpm build` | 通过 |
+| `pnpm build:markdown && pnpm exec playwright test -c playwright.worktree.config.ts tests/ui/rich-surfaces.spec.ts tests/ui/library-workspace.spec.ts tests/ui/content-types.spec.ts tests/ui/lockbox-space.spec.ts tests/ui/search-integration.spec.ts` 及本批新增的属性 spec | 相对基线没有新增失败；新增用例全部通过 |
+| `rustfmt --edition 2021 --check` 本批新建或修改的 shard-core 文件 | 通过 |
+| `git diff --check` | 通过 |
+
+### 12.9 交付
+
+不提交 Git；测试改写的 `tests/evidence` 图片结束前恢复。报告写 `docs/dev/content-model-tasks-log/G1.md`：改动文件与要点、开工前 UI 基线、验收结果（含测试数）、偏差及原因、遗留问题。
