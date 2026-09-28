@@ -50,28 +50,68 @@ async function commandCount(page: Page, command: string) {
   return (await readTypeCalls(page)).filter((call) => call.command === command).length
 }
 
-async function addEmptyOutlineNodes(page: Page, count: number) {
-  await page.evaluate(async (nodeCount) => {
-    for (let index = 0; index < nodeCount; index += 1) {
-      const inputs = document.querySelectorAll<HTMLTextAreaElement>(
-        '[data-capture-outline="editor"] [data-outline-node] textarea[data-outline-field="text"]'
-      )
-      const target = document.activeElement instanceof HTMLTextAreaElement
-        ? document.activeElement
-        : inputs.item(inputs.length - 1)
-      if (!(target instanceof HTMLTextAreaElement)) {
-        throw new Error(`第 ${index + 1} 个节点前没有活动的大纲输入框`)
-      }
-      target.focus()
-      target.dispatchEvent(new KeyboardEvent("keydown", {
-        bubbles: true,
-        cancelable: true,
-        code: "Enter",
-        key: "Enter",
-      }))
-      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+async function setOutlineNodeCount(page: Page, nodeCount: number) {
+  await page.evaluate((total) => {
+    interface OutlineNode {
+      id: string
+      parentId: string | null
+      sortKey: string
+      text: string
+      createdAt: string
+      updatedAt: string
     }
-  }, count)
+    interface OutlineFile {
+      rootId: string
+      nodes: Record<string, OutlineNode>
+      updatedAt: string
+      revision: number
+      [key: string]: unknown
+    }
+    interface OutlineFiber {
+      memoizedProps?: {
+        file?: OutlineFile
+        onChange?: (file: OutlineFile) => void
+      }
+      return: OutlineFiber | null
+    }
+
+    const root = document.querySelector<HTMLTextAreaElement>(
+      '[data-capture-outline="editor"] [data-outline-node][data-root="true"] textarea[data-outline-field="text"]'
+    )
+    if (!root) throw new Error("大纲根节点未挂载")
+
+    const fiberKey = Object.keys(root).find((key) => key.startsWith("__reactFiber$"))
+    if (!fiberKey) throw new Error("大纲编辑器的 React Fiber 未挂载")
+
+    let fiber = (root as unknown as Record<string, OutlineFiber>)[fiberKey]
+    while (fiber) {
+      const file = fiber.memoizedProps?.file
+      const onChange = fiber.memoizedProps?.onChange
+      if (file?.nodes?.[file.rootId] && onChange) {
+        const next = structuredClone(file)
+        const now = new Date().toISOString()
+        next.nodes = { [next.rootId]: next.nodes[next.rootId] }
+        for (let index = 1; index < total; index += 1) {
+          const id = `test-outline-${index}`
+          next.nodes[id] = {
+            id,
+            parentId: next.rootId,
+            sortKey: String(index).padStart(4, "0"),
+            text: "",
+            createdAt: now,
+            updatedAt: now,
+          }
+        }
+        next.updatedAt = now
+        next.revision += 1
+        onChange(next)
+        return
+      }
+      fiber = fiber.return
+    }
+
+    throw new Error("未找到大纲编辑器会话")
+  }, nodeCount)
 }
 
 /**
@@ -173,10 +213,9 @@ test.describe("速记框内容类型", () => {
   })
 
   test("201 节点大纲完整提交，不沿用旧的 200 节点截断", async ({ page }) => {
-    test.setTimeout(60_000)
     await runOutlineCommand(page, "composer")
     await page.keyboard.type("二百零一节点")
-    await addEmptyOutlineNodes(page, 200)
+    await setOutlineNodeCount(page, 201)
     await expect(outlineComposer(page).locator("[data-outline-node]")).toHaveCount(201)
 
     await page.keyboard.press("ControlOrMeta+Enter")
@@ -187,10 +226,9 @@ test.describe("速记框内容类型", () => {
   })
 
   test("超过 400 节点时拦截提交、提示并保留完整草稿", async ({ page }) => {
-    test.slow()
     await runOutlineCommand(page, "composer")
     await page.keyboard.type("超限大纲")
-    await addEmptyOutlineNodes(page, 400)
+    await setOutlineNodeCount(page, 401)
     await expect(outlineComposer(page).locator("[data-outline-node]")).toHaveCount(401)
 
     await page.keyboard.press("ControlOrMeta+Enter")

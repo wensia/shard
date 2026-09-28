@@ -144,12 +144,16 @@ pnpm install:cli            # 构建并安装到 ~/.local/bin/shard（PREFIX 可
 shard 今天心情很好
 shard #备忘 /任务列表 买咖啡   # 前导 #标签 与 /块命令，其余是正文
 pbpaste | shard #摘录          # 没有内容参数时读标准输入
+shard --graph-read <碎片id>    # 读取受管图 JSON 与完整文件 fileSha
+shard --graph-outline <碎片id> # 将大纲只读导出为两空格缩进列表
 ```
 
 - 块命令与编辑器 `/` 菜单同名（含拼音缩写）：`/任务列表` `/待办` `/备忘` → `- [ ]`，`/列表` → `-`，`/编号` → `1.`，`/引用` → `>`；多行内容每行一项。
 - 资料库依次取 `--vault`、`SHARD_VAULT`、App 设置里的资料库、`~/Documents/ShardVault`。
 - 只写文件（`source: cli`），提交交给 App 的检查点；App 运行中切回窗口即可看到新碎片。
 - bash 等把 `#` 当注释的 shell 里给标签加引号，或用全角 `＃备忘`。`#密匣` 只能在 App 中保存。
+- 图命令直接读写公开的大纲/流程图片段：`--graph-write <碎片id> --expect <fileSha>` 从标准输入读取完整图 JSON，`--graph-set-text <碎片id> <节点id> <文字> --expect <fileSha>` 修改节点文字，`--graph-add-child <碎片id> <父节点id> <文字> --expect <fileSha>` 添加大纲子节点，`--graph-remove <碎片id> <节点id> --expect <fileSha>` 删除大纲子树。
+- 所有图写命令都必须使用最近一次 `--graph-read` 返回的 `fileSha`；文件已被其他进程修改时会拒绝写入。图写入只落盘，提交仍由 App 检查点聚合。
 
 ## Design
 

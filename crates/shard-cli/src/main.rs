@@ -1,6 +1,7 @@
 //! Shard 终端快捷创建。直接往资料库写一条碎片，App 不运行也能用；
 //! 提交交给 App 的检查点，切回 App 窗口时碎片流会自动刷新。
 
+mod graph;
 mod parse;
 
 use serde::Deserialize;
@@ -26,6 +27,12 @@ shard — 在终端里记一条 Shard 碎片
 用法:
   shard [选项] [#标签…] [/块命令] 内容
   shard [--vault <路径>] --append-dataset <vault 相对路径> < records.json
+  shard [--vault <路径>] --graph-read <碎片id>
+  shard [--vault <路径>] --graph-outline <碎片id>
+  shard [--vault <路径>] --graph-write <碎片id> --expect <fileSha> < graph.json
+  shard [--vault <路径>] --graph-set-text <碎片id> <节点id> <文字> --expect <fileSha>
+  shard [--vault <路径>] --graph-add-child <碎片id> <父节点id> <文字> --expect <fileSha>
+  shard [--vault <路径>] --graph-remove <碎片id> <节点id> --expect <fileSha>
 
 示例:
   shard 今天心情很好
@@ -33,6 +40,8 @@ shard — 在终端里记一条 Shard 碎片
   shard /待办 买咖啡            # 斜杠命令同编辑器，拼音缩写也可：/db
   pbpaste | shard #摘录         # 没有内容参数时从标准输入读取
   shard --append-dataset datasets/阅读记录.csv < records.json
+  shard --graph-read 20260928-graph | jq .graph
+  shard --graph-outline 20260928-outline
 
 块命令:
   /任务列表 /待办 /备忘   → - [ ] 任务项
@@ -44,6 +53,12 @@ shard — 在终端里记一条 Shard 碎片
 选项:
   --vault <路径>   指定资料库（默认读 Shard 设置，或环境变量 SHARD_VAULT）
   --append-dataset <路径>  从标准输入读取 JSON，按主键幂等追加记录
+  --graph-read <id>        读取大纲或流程图 JSON
+  --graph-outline <id>     把大纲导出为两空格缩进列表
+  --graph-write <id>       从标准输入更新完整图 JSON（必须带 --expect）
+  --graph-set-text …       按节点 id 修改大纲或流程图文字（必须带 --expect）
+  --graph-add-child …      在大纲父节点末尾新增子节点（必须带 --expect）
+  --graph-remove …         删除大纲节点及其子树（必须带 --expect）
   -h, --help       显示帮助
   -V, --version    显示版本
 
@@ -89,6 +104,7 @@ fn run() -> Result<(), CliError> {
     let mut args = env::args().skip(1).peekable();
     let mut vault_arg = None;
     let mut append_path = None;
+    let mut graph_command = None;
 
     // 选项只认内容之前的部分，正文里的 `--xxx` 原样保留。
     while let Some(arg) = args.peek() {
@@ -109,6 +125,11 @@ fn run() -> Result<(), CliError> {
                 args.next();
                 append_path = Some(args.next().ok_or("--append-dataset 需要 vault 相对路径")?);
             }
+            command if command.starts_with("--graph-") => {
+                let command = args.next().expect("peeked argument must exist");
+                graph_command = Some(parse_graph_command(&command, args.by_ref().collect())?);
+                break;
+            }
             "--" => {
                 args.next();
                 break;
@@ -122,6 +143,12 @@ fn run() -> Result<(), CliError> {
     }
 
     let content = args.collect::<Vec<_>>().join(" ");
+    if let Some(command) = graph_command {
+        if append_path.is_some() || !content.is_empty() {
+            return Err("图命令不能与碎片内容或 --append-dataset 同时使用".into());
+        }
+        return run_graph(command, vault_arg);
+    }
     if let Some(path) = append_path {
         if !content.is_empty() {
             return Err("--append-dataset 不能与碎片内容同时使用".into());
@@ -147,6 +174,147 @@ fn run() -> Result<(), CliError> {
 
     let shown = path.strip_prefix(&vault).unwrap_or(&path);
     println!("{}", shown.display());
+    Ok(())
+}
+
+fn parse_graph_command(command: &str, args: Vec<String>) -> Result<graph::GraphCommand, CliError> {
+    use graph::GraphCommand;
+    let positional = |index: usize, name: &str| {
+        args.get(index)
+            .cloned()
+            .ok_or_else(|| CliError::from(format!("{command} 缺少{name}")))
+    };
+    let expect = |index: usize| -> Result<String, CliError> {
+        if args.get(index).map(String::as_str) != Some("--expect") {
+            return Err(format!("{command} 必须带 --expect <fileSha>").into());
+        }
+        args.get(index + 1)
+            .cloned()
+            .ok_or_else(|| CliError::from("--expect 需要 fileSha"))
+    };
+    let ensure_len = |length: usize| {
+        if args.len() == length {
+            Ok(())
+        } else {
+            Err(CliError::from(format!("{command} 参数数量不正确")))
+        }
+    };
+
+    match command {
+        "--graph-read" => {
+            ensure_len(1)?;
+            Ok(GraphCommand::Read {
+                fragment_id: positional(0, "碎片 id")?,
+            })
+        }
+        "--graph-outline" => {
+            ensure_len(1)?;
+            Ok(GraphCommand::Outline {
+                fragment_id: positional(0, "碎片 id")?,
+            })
+        }
+        "--graph-write" => {
+            let expect = expect(1)?;
+            ensure_len(3)?;
+            Ok(GraphCommand::Write {
+                fragment_id: positional(0, "碎片 id")?,
+                expect,
+            })
+        }
+        "--graph-set-text" => {
+            let expect = expect(3)?;
+            ensure_len(5)?;
+            Ok(GraphCommand::SetText {
+                fragment_id: positional(0, "碎片 id")?,
+                node_id: positional(1, "节点 id")?,
+                text: positional(2, "文字")?,
+                expect,
+            })
+        }
+        "--graph-add-child" => {
+            let expect = expect(3)?;
+            ensure_len(5)?;
+            Ok(GraphCommand::AddChild {
+                fragment_id: positional(0, "碎片 id")?,
+                parent_id: positional(1, "父节点 id")?,
+                text: positional(2, "文字")?,
+                expect,
+            })
+        }
+        "--graph-remove" => {
+            let expect = expect(2)?;
+            ensure_len(4)?;
+            Ok(GraphCommand::Remove {
+                fragment_id: positional(0, "碎片 id")?,
+                node_id: positional(1, "节点 id")?,
+                expect,
+            })
+        }
+        _ => Err(format!("未知图命令：{command}").into()),
+    }
+}
+
+fn run_graph(command: graph::GraphCommand, vault_arg: Option<String>) -> Result<(), CliError> {
+    use graph::GraphCommand;
+    let vault = resolve_vault(vault_arg)?;
+    match command {
+        GraphCommand::Read { fragment_id } => graph::run_read(&vault, &fragment_id)?,
+        GraphCommand::Outline { fragment_id } => graph::run_outline(&vault, &fragment_id)?,
+        GraphCommand::Write {
+            fragment_id,
+            expect,
+        } => {
+            let value = graph::read_stdin_json()?;
+            graph::run_write(
+                &vault,
+                &fragment_id,
+                &expect,
+                value,
+                &lock_dir()?,
+                lock_timeout()?,
+            )?;
+        }
+        GraphCommand::SetText {
+            fragment_id,
+            node_id,
+            text,
+            expect,
+        } => graph::run_set_text(
+            &vault,
+            &fragment_id,
+            &node_id,
+            text,
+            &expect,
+            &lock_dir()?,
+            lock_timeout()?,
+        )?,
+        GraphCommand::AddChild {
+            fragment_id,
+            parent_id,
+            text,
+            expect,
+        } => graph::run_add_child(
+            &vault,
+            &fragment_id,
+            &parent_id,
+            text,
+            &expect,
+            &lock_dir()?,
+            lock_timeout()?,
+        )?,
+        GraphCommand::Remove {
+            fragment_id,
+            node_id,
+            expect,
+        } => graph::run_remove(
+            &vault,
+            &fragment_id,
+            &node_id,
+            &expect,
+            &lock_dir()?,
+            lock_timeout()?,
+        )?,
+    }
     Ok(())
 }
 

@@ -981,7 +981,7 @@ fn load_mind_map(vault: &Path, path: &Path) -> Result<LoadedSearchDocument, Sear
     let relative = crate::relative_path(vault, path).map_err(io_error)?;
     let (file, text) = crate::read_mind_map_file(path).map_err(io_error)?;
     crate::validate_mind_map_file(vault, &file).map_err(io_error)?;
-    let body = mind_map_search_text(&file);
+    let body = shard_core::graph_model::mind_map_search_text(&file);
     Ok(structured_document(
         vault,
         relative,
@@ -993,15 +993,6 @@ fn load_mind_map(vault: &Path, path: &Path) -> Result<LoadedSearchDocument, Sear
         body,
         SearchRevealHint::DocumentOnly,
     ))
-}
-
-fn mind_map_search_text(file: &ShardMapFile) -> String {
-    file.nodes
-        .values()
-        .map(|node| node.text.trim())
-        .filter(|text| !text.is_empty())
-        .collect::<Vec<_>>()
-        .join("\n")
 }
 
 fn load_canvas(vault: &Path, relative: &str) -> Result<LoadedSearchDocument, SearchError> {
@@ -2323,7 +2314,7 @@ mod tests {
             }
         }))
         .unwrap();
-        let map_text = mind_map_search_text(&mind_map);
+        let map_text = shard_core::graph_model::mind_map_search_text(&mind_map);
         assert!(map_text.contains("用户节点文本"));
         assert!(!map_text.contains("secret-root-id"));
         assert!(!map_text.contains("secret-sort-key"));

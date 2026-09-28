@@ -15,7 +15,7 @@ use shard_core::dataset::{self, DatasetLimits, DatasetOp, DatasetSnapshot};
 use shard_core::{
     contains_lockbox_tag, create_public_fragment_in_vault,
     create_public_fragment_with_id_in_vault, default_vault_path, derive_type,
-    ensure_public_csv_path, ensure_vault_layout, is_false, new_fragment_id, normalize_tag,
+    ensure_public_csv_path, ensure_vault_layout, new_fragment_id, normalize_tag,
     normalize_tags, normalize_type_tags,
     frontmatter::{
         apply_frontmatter, parse_fragment, raw_from_frontmatter, write_fragment_update,
@@ -30,6 +30,12 @@ use shard_core::{
     write_text_atomically, AppConfig, FragmentFrontmatter, FragmentRelation, LOCKBOX_TAG,
     LIBRARY_FILENAME_MAX_BYTES, PROTECTED_TYPE_TAGS, TYPE_TAGS,
 };
+pub(crate) use shard_core::graph_model::{
+    CanvasFile, CanvasNode, ShardDocumentLink, ShardMapFile, ShardMapNode, SHARD_MAP_KIND,
+    SHARD_MAP_SCHEMA_VERSION,
+};
+#[cfg(test)]
+pub(crate) use shard_core::graph_model::{CanvasEdge, ShardMapNodeStyle};
 use shard_core::vault_lock::{VaultProcessLock, LOCKS_DIR_NAME};
 use sha2::{Digest, Sha256};
 use std::{
@@ -73,10 +79,6 @@ const LOCKBOX_WRITE_KEY_BITS: usize = 2048;
 const LOCKBOX_SALT_BYTES: usize = 16;
 const LOCKBOX_NONCE_BYTES: usize = 12;
 const LOCKBOX_FRAGMENT_KEY_ALGORITHM: &str = "rsa-oaep-sha256-aes-256-gcm";
-const SHARD_MAP_KIND: &str = "shard.map";
-const SHARD_MAP_SCHEMA_VERSION: u32 = 1;
-const SHARD_MAP_MAX_NODES: usize = 400;
-const SHARD_MAP_MAX_NODE_TEXT_CHARS: usize = 2_000;
 const CSV_GIT_PATHSPEC: &str = ":(glob,icase)**/*.csv";
 
 /// Vault selection changes the persisted path and the active search context as one unit.
@@ -475,68 +477,6 @@ struct MindMapReadResult {
     file: ShardMapFile,
     path: String,
     last_saved_hash: String,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct ShardMapFile {
-    kind: String,
-    schema_version: u32,
-    id: String,
-    title: String,
-    created_at: String,
-    updated_at: String,
-    saved_with_app_version: String,
-    revision: u64,
-    root_id: String,
-    has_protected_links: bool,
-    nodes: BTreeMap<String, ShardMapNode>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    viewport: Option<ShardMapViewport>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct ShardMapViewport {
-    x: f64,
-    y: f64,
-    zoom: f64,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct ShardMapNode {
-    id: String,
-    parent_id: Option<String>,
-    sort_key: String,
-    text: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    note: Option<String>,
-    #[serde(default, skip_serializing_if = "is_false")]
-    collapsed: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    width: Option<f64>,
-    created_at: String,
-    updated_at: String,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    links: Vec<ShardDocumentLink>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    style: Option<ShardMapNodeStyle>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct ShardMapNodeStyle {
-    tone: Option<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-#[serde(tag = "targetType", rename_all = "camelCase", rename_all_fields = "camelCase", deny_unknown_fields)]
-enum ShardDocumentLink {
-    Fragment { id: String, #[serde(alias = "target_id")] target_id: String },
-    MarkdownPath { id: String, path: String },
-    Map { id: String, #[serde(alias = "target_id")] target_id: String },
-    Flow { id: String, #[serde(alias = "target_id")] target_id: String },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -4899,139 +4839,7 @@ fn mind_map_read_result(
 }
 
 fn validate_mind_map_file(vault: &Path, file: &ShardMapFile) -> Result<(), String> {
-    if file.kind != SHARD_MAP_KIND {
-        return Err("不支持的导图文件类型。".to_string());
-    }
-    if file.schema_version != SHARD_MAP_SCHEMA_VERSION {
-        return Err("不支持的导图 schema 版本。".to_string());
-    }
-    if file.id.trim().is_empty() {
-        return Err("导图 id 不能为空。".to_string());
-    }
-    if file.title.trim().is_empty() {
-        return Err("导图标题不能为空。".to_string());
-    }
-    if file.has_protected_links {
-        return Err("当前版本不支持带密匣链接的明文导图。".to_string());
-    }
-    if !file.nodes.contains_key(&file.root_id) {
-        return Err("导图缺少 root 节点。".to_string());
-    }
-    if file.nodes.len() > SHARD_MAP_MAX_NODES {
-        return Err(format!("导图节点数量不能超过 {}。", SHARD_MAP_MAX_NODES));
-    }
-    if file
-        .nodes
-        .get(&file.root_id)
-        .and_then(|node| node.parent_id.as_ref())
-        .is_some()
-    {
-        return Err("root 节点的 parentId 必须为空。".to_string());
-    }
-
-    for (node_id, node) in &file.nodes {
-        if node.width.is_some_and(|width| !width.is_finite() || width <= 0.0 || width > 10_000.0) {
-            return Err("导图节点宽度无效。".to_string());
-        }
-        validate_mind_map_node(vault, file, node_id, node)?;
-    }
-
-    validate_mind_map_tree_shape(file)?;
-
-    Ok(())
-}
-
-fn validate_mind_map_tree_shape(file: &ShardMapFile) -> Result<(), String> {
-    let mut sibling_sort_keys = HashSet::new();
-
-    for node in file.nodes.values() {
-        let parent_key = node.parent_id.as_deref().unwrap_or("__root__");
-        let sibling_key = format!("{}\u{0}{}", parent_key, node.sort_key);
-        if !sibling_sort_keys.insert(sibling_key) {
-            return Err(format!("同级节点存在重复 sortKey：{}。", node.sort_key));
-        }
-    }
-
-    let mut visited = HashSet::new();
-    let mut visiting = HashSet::new();
-    visit_mind_map_node(file, &file.root_id, &mut visiting, &mut visited)?;
-
-    if visited.len() != file.nodes.len() {
-        return Err("导图包含无法从 root 到达的节点。".to_string());
-    }
-
-    Ok(())
-}
-
-fn visit_mind_map_node(
-    file: &ShardMapFile,
-    node_id: &str,
-    visiting: &mut HashSet<String>,
-    visited: &mut HashSet<String>,
-) -> Result<(), String> {
-    if visited.contains(node_id) {
-        return Ok(());
-    }
-    if !visiting.insert(node_id.to_string()) {
-        return Err("导图包含循环父子关系。".to_string());
-    }
-
-    for child in file
-        .nodes
-        .values()
-        .filter(|node| node.parent_id.as_deref() == Some(node_id))
-    {
-        visit_mind_map_node(file, &child.id, visiting, visited)?;
-    }
-
-    visiting.remove(node_id);
-    visited.insert(node_id.to_string());
-    Ok(())
-}
-
-fn validate_mind_map_node(
-    vault: &Path,
-    file: &ShardMapFile,
-    node_id: &str,
-    node: &ShardMapNode,
-) -> Result<(), String> {
-    if node.id != node_id {
-        return Err(format!("节点 {} 的 id 与索引不一致。", node_id));
-    }
-    if node.id.trim().is_empty() {
-        return Err("节点 id 不能为空。".to_string());
-    }
-    if node.sort_key.trim().is_empty() {
-        return Err(format!("节点 {} 缺少 sortKey。", node.id));
-    }
-    if node.text.chars().count() > SHARD_MAP_MAX_NODE_TEXT_CHARS {
-        return Err(format!("节点 {} 文本过长。", node.id));
-    }
-    if node.parent_id.is_none() && node.id != file.root_id {
-        return Err(format!("非 root 节点 {} 缺少 parentId。", node.id));
-    }
-    if let Some(parent_id) = node.parent_id.as_deref() {
-        if parent_id == node.id {
-            return Err(format!("节点 {} 不能把自己作为父节点。", node.id));
-        }
-        if !file.nodes.contains_key(parent_id) {
-            return Err(format!("节点 {} 指向不存在的父节点。", node.id));
-        }
-    }
-
-    for link in &node.links {
-        validate_document_link(vault, file, link)?;
-    }
-
-    Ok(())
-}
-
-fn validate_document_link(
-    vault: &Path,
-    _file: &ShardMapFile,
-    link: &ShardDocumentLink,
-) -> Result<(), String> {
-    canvas_commands::validate_public_link(vault, link)
+    shard_core::graph_model::validate_mind_map_file(vault, file)
 }
 
 
@@ -5152,8 +4960,7 @@ fn find_mind_map_path(vault: &Path, id: &str) -> Result<Option<PathBuf>, String>
 }
 
 fn canonical_mind_map_text(file: &ShardMapFile) -> Result<String, String> {
-    let text = serde_json::to_string_pretty(file).map_err(|error| error.to_string())?;
-    Ok(format!("{}\n", text))
+    shard_core::graph_model::canonical_mind_map_text(file)
 }
 
 fn hash_text(text: &str) -> String {
@@ -6338,19 +6145,7 @@ fn find_lockbox_fragment_path(vault: &Path, id: &str) -> Result<Option<PathBuf>,
 }
 
 fn find_fragment_path(vault: &Path, id: &str) -> Result<Option<PathBuf>, String> {
-    let mut files = Vec::new();
-    collect_markdown_files(&vault.join("fragments"), &mut files)?;
-    collect_markdown_files(&vault.join(".trash").join("fragments"), &mut files)?;
-    collect_markdown_files(&vault.join("notes"), &mut files)?;
-    for path in files {
-        let text = fs::read_to_string(&path).map_err(|error| error.to_string())?;
-        if let Ok((frontmatter, _)) = parse_fragment_text(&text) {
-            if frontmatter.id == id {
-                return Ok(Some(path));
-            }
-        }
-    }
-    Ok(None)
+    shard_core::graph_model::find_fragment_path(vault, id)
 }
 
 fn setup_lockbox_in_vault(
@@ -9635,6 +9430,31 @@ mod tests {
         let read = read_graph_fragment_in_vault(vault, &created.fragment.id).unwrap();
         assert_eq!(read.fragment.id, created.fragment.id);
         assert_eq!(read.graph, created.graph);
+    }
+
+    #[test]
+    fn reads_core_canonical_outline_written_by_external_graph_writer() {
+        let directory = tempfile::tempdir().unwrap();
+        let vault = directory.path();
+        ensure_vault_layout(vault).unwrap();
+        let id = "cli-compatible-outline";
+        let mut graph = outline_graph_fixture(2);
+        graph["id"] = serde_json::json!(id);
+        let file = serde_json::from_value::<ShardMapFile>(graph.clone()).unwrap();
+        let json_text = shard_core::graph_model::canonical_mind_map_text(&file).unwrap();
+        let path = vault.join("fragments/tests/cli-compatible-outline.md");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        write_t6_fragment(
+            &path,
+            id,
+            vec!["inbox", "outline"],
+            &render_region(GraphRegionKind::Outline, &json_text),
+        );
+
+        let read = read_graph_fragment_in_vault(vault, id).unwrap();
+
+        assert_eq!(read.fragment.id, id);
+        assert_eq!(read.graph, graph);
     }
 
     #[test]
