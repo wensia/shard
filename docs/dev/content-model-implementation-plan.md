@@ -26,7 +26,7 @@
 | **H4c** | CLI 原生 JSON 读写、缩进列表只读导出、按节点 id 修改（需把图模型与校验移入 shard-core） | H4b、main 的跨进程写锁 | 已完成，施工令见 §11 |
 | **G1** | 自定义属性后端（保真设置/删除自定义键、DTO 携带属性、类型登记表）与碎片/文档禅模式、资料库文档的属性面板 | H4c | 已完成，施工令见 §12 |
 | **G1b** | 大纲、流程图宿主中的属性（与图编辑器基线协同）；属性键名边界修正 | G1 | 已完成，施工令见 §13 |
-| G2 | 属性进入时间线筛选；SQLite 属性派生表 | G1 | 待细化 |
+| **G2** | 属性进入时间线筛选（前端计算；SQLite 属性派生表推迟，见 §14 开头） | G1 | 执行中，施工令见 §14 |
 | G3 | 标签主题页（该标签下的碎片、大纲、流程图、文档与反链）与属性表格视图 | G2 | 待细化 |
 
 ## 3. P0 施工令：frontmatter 保真读写
@@ -762,3 +762,49 @@ UI 改动遵守 AGENTS.md 与 `vendor/kiln`，复用现有组件与 token。
 ### 13.5 交付
 
 不提交 Git；测试改写的 `tests/evidence` 图片结束前恢复。报告写 `docs/dev/content-model-tasks-log/G1b.md`：改动文件与要点、开工前 UI 基线、验收结果（含测试数）、偏差及原因、遗留问题。
+
+## 14. G2 施工令：时间线按属性筛选
+
+**范围决定（2026-09-28）**：属性筛选在前端计算，**本批不建 SQLite 属性派生表**。理由：时间线现有的类型、标签、月份筛选都是前端对全量 `fragments` 过滤（`src/lib/fragment-space.ts` 的 `matchesFragmentFilters`）；`list_fragments` 每次读全部文件、不走 SQLite；G1 起每条 fragment 已携带 `properties`。在列表改为增量读取（`docs/design/sqlite-index-plan.md` 的 S4）之前，单独建属性表只会多一份需同步的缓存而没有新能力。属性表随 S4 一起做。
+
+前置：G1、G1b 已在本分支（`2552429`）。现状：`FragmentFilters { kind, tag, month, pinned }`；筛选对话框 `FragmentFilterDialog` 与状态条 `FragmentFilterContext` 在 `src/components/shard/fragment-workspace-controls.tsx`；属性工具在 `src/lib/properties.ts`（类型列表、键名与值校验）；类型登记表经 `read_property_registry` 读取；`Fragment.properties` 为 `{ key, value: PropertyValue, editable }[]`，`PropertyValue` 的 kind 为 text / number / bool / null / list / other，数字以文本给出。
+
+### 14.1 筛选模型（`src/lib/fragment-space.ts` 或新文件 `src/lib/property-filter.ts`）
+
+- `FragmentFilters` 增加 `property: PropertyFilter | null`（本批只支持一个属性条件，与其它条件为「且」）。
+- `PropertyFilter = { key, op, value? }`，按属性的**登记类型**决定可用运算（未登记按文本）：
+  - 通用：`exists`（存在该键）、`missing`（不存在该键）、`empty`（值为 null、空字符串或空列表）、`notEmpty`；
+  - 文本、链接：`equals`、`contains`（不区分大小写）；
+  - 数字：`eq`、`gt`、`gte`、`lt`、`lte`、`between`（含两端）——**用精确的十进制比较**（字符串解析为符号、整数部分、小数部分逐位比较），不经 JS number，避免精度误差；
+  - 日期：`on`、`before`、`after`、`between`（按 `YYYY-MM-DD` 比较）；日期时间：`before`、`after`、`between`（按 `YYYY-MM-DDTHH:mm` 比较，只取到分钟；带时区偏移的原始值按字面前 16 位比较并视为不可比较时排除）；
+  - 勾选：`isTrue`、`isFalse`；
+  - 列表：`includes`（某一项完全相等）。
+- **类型不符的值不参与比较**：例如登记为数字但值是「abc」，在数字比较运算下视为不匹配（`exists`、`missing`、`empty` 等通用运算照常）。`other` 类值只参与通用运算。
+- `matchesFragmentFilters` 纳入属性条件；纯函数，便于单测。
+
+### 14.2 界面
+
+- 筛选对话框增加「属性」一组：属性名选择（候选为当前可见范围内所有碎片出现过的键与登记表中的键，去重排序）→ 运算选择（随类型变化）→ 值控件（沿用 G1 的控件：文本 `Input`、数字 `Input`、日期 `DatePicker`、日期时间 `DatePicker` + `TimePicker`、列表项 `Input`；`between` 显示两个值控件；通用运算不显示值控件）。复用对话框现有控件与布局，不新增视觉样式。候选超过 8 项时按 Kiln 要求使用可搜索的选择方式（若无现成 Combobox，就用现有 `SelectControl` 并在报告中说明）。
+- 状态条 `FragmentFilterContext` 显示属性条件（例如「属性：作者 包含 张三」「属性：评分 介于 3 与 5」），可单独清除，也随「清除全部」清除。
+- 值输入不合法（数字、日期格式错误）时不应用该条件，并在控件旁提示。
+
+### 14.3 测试
+
+- TS 单元：每种运算的匹配与不匹配；十进制比较的边界（`0.1` 与 `0.10`、负数、大整数 `12345678901234567890`、`1e3` 视为非法数字文本不参与比较）；类型不符排除；`other` 只参与通用运算；与标签、类型、月份条件的组合。
+- UI（mock 样本带多种属性）：在对话框中选择属性与运算后时间线只剩匹配卡片；状态条显示并可清除；非法值不应用。
+
+### 14.4 验收命令
+
+沿用 `playwright.worktree.config.ts`（1422，不提交；必须显式 `-c playwright.worktree.config.ts`，不得用 `pnpm test:ui`），开工前先跑一遍下表 UI 用例记录基线。
+
+| 命令 | 要求 |
+| --- | --- |
+| `cargo test -p shard-core -p shard -p shard-cli` | 全部通过（本批预计不改 Rust） |
+| `pnpm test:unit` | 除 golden 夹具那一项既有失败外全部通过 |
+| `pnpm build` | 通过 |
+| `pnpm build:markdown && pnpm exec playwright test -c playwright.worktree.config.ts tests/ui/fragment-masonry.spec.ts tests/ui/properties.spec.ts tests/ui/content-types.spec.ts tests/ui/search-palette.spec.ts` 及本批新增用例 | 相对基线没有新增失败；新增用例全部通过 |
+| `git diff --check` | 通过 |
+
+### 14.5 交付
+
+不提交 Git；测试改写的 `tests/evidence` 图片结束前恢复。报告写 `docs/dev/content-model-tasks-log/G2.md`：改动文件与要点、开工前 UI 基线、验收结果（含测试数）、偏差及原因、遗留问题。
