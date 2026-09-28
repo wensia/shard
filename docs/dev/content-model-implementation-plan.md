@@ -864,3 +864,22 @@ UI 改动遵守 AGENTS.md 与 `vendor/kiln`，复用现有组件与 token。
 ### 15.5 交付
 
 不提交 Git；测试改写的 `tests/evidence` 图片结束前恢复。报告写 `docs/dev/content-model-tasks-log/G3.md`：改动文件与要点、开工前 UI 基线、验收结果（含测试数）、偏差及原因、遗留问题。
+
+## 16. 收尾状态（2026-09-28）
+
+§2 批次表中全部 13 批（P0、P1、H1、H2、H2b、H3、H4a、H4b、H4c、G1、G1b、G2、G3）已完成并提交在 `feat/frontmatter-fidelity`，每批都经 Claude 审 diff 与独立复跑验收；任务日志见 `docs/dev/content-model-tasks-log/`。分支已并入 `main`（`a636ef5`），相对 `main` 新增 31 个提交，可快进合入。
+
+**验证边界**：所有验证来自 Rust 单元/集成测试（临时 vault、真实文件系统与 Git）、TS 单元测试与 Playwright（浏览器 + IPC mock，1422 端口）。**尚未在真实 Tauri 应用与真实 vault 中做端到端冒烟**。
+
+**遗留项**（均未在本计划内处理）：
+
+| 项目 | 说明 |
+| --- | --- |
+| golden 夹具未入库 | `.gitignore` 全局 `*.md` 使 `src/editor-rich/markdown/golden/` 只跟踪 1 组，`roundtrip.test.ts` 在干净检出中稳定失败；同一规则也让 `docs/dev/*` 新文件需 `git add -f` |
+| 既有 UI 失败 | `library-tree.spec.ts` 4 项、`fragment-scroll-performance.spec.ts` 3 项在分支起点 `43a87f4` 即失败 |
+| 负载敏感用例 | 部分冲突/禅模式用例在本机高负载并行时偶发失败、串行通过；401 节点用例依赖 React Fiber 内部结构注入草稿 |
+| 密匣 `fileSha` | `lockbox_fragment_from_parts` 读载荷与算哈希是两次读取，存在毫秒级不一致窗口 |
+| 搜索 `#标签` 入口 | G3 未做标签主题页的搜索候选 |
+| SQLite 属性表 | 推迟到列表增量化（S4） |
+| 登记表 | 改显示名、全库改键未做；属性候选超过 8 项时无可搜索选择 |
+| 表格视图 | 只读，无单元格编辑 |
