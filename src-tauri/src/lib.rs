@@ -4,7 +4,7 @@ use aes_gcm::{
 };
 use argon2::{Algorithm, Argon2, Params, Version};
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
-use chrono::{DateTime, Local};
+use chrono::{DateTime, Local, NaiveDate, NaiveDateTime};
 use rand::{rngs::OsRng, RngCore};
 use rsa::{
     pkcs8::{DecodePrivateKey, DecodePublicKey, EncodePrivateKey, EncodePublicKey},
@@ -18,7 +18,9 @@ use shard_core::{
     ensure_public_csv_path, ensure_vault_layout, new_fragment_id, normalize_tag,
     normalize_tags, normalize_type_tags,
     frontmatter::{
-        apply_frontmatter, parse_fragment, raw_from_frontmatter, write_fragment_update,
+        apply_frontmatter, custom_property_entries, parse_fragment, raw_from_frontmatter,
+        remove_custom_property, set_custom_property, validate_property_key,
+        write_fragment_update,
     },
     graph_region::{
         find_region, render_region, replace_region, GraphRegionKind, MISSING_REGION_ERROR,
@@ -195,8 +197,80 @@ struct Fragment {
     lockbox: bool,
     pinned: bool,
     related: Vec<FragmentRelation>,
+    properties: Vec<FragmentProperty>,
     #[serde(skip_serializing_if = "Option::is_none")]
     conflict_of: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+struct FragmentProperty {
+    key: String,
+    value: PropertyValue,
+    editable: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+enum PropertyValue {
+    Text { text: String },
+    Number { text: String },
+    Bool { value: bool },
+    Null,
+    List { items: Vec<String> },
+    Other { raw: String },
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[serde(tag = "type", content = "value", rename_all = "lowercase")]
+enum PropertyInputValue {
+    Text(Option<String>),
+    Number(Option<String>),
+    Date(Option<String>),
+    Datetime(Option<String>),
+    Checkbox(Option<bool>),
+    List(Option<Vec<String>>),
+    Link(Option<String>),
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+enum PropertyType {
+    Text,
+    Number,
+    Date,
+    Datetime,
+    Checkbox,
+    List,
+    Link,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+struct PropertyRegistry {
+    version: u32,
+    properties: BTreeMap<String, PropertyRegistryEntry>,
+}
+
+impl Default for PropertyRegistry {
+    fn default() -> Self {
+        Self {
+            version: 1,
+            properties: BTreeMap::new(),
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+struct PropertyRegistryEntry {
+    #[serde(rename = "type")]
+    property_type: PropertyType,
+}
+
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct PropertyRegistryReadResult {
+    registry: PropertyRegistry,
+    sha: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -613,6 +687,163 @@ fn lock_vault_gate(vault: &Path) -> VaultGate {
     VaultGate { process, inner }
 }
 
+fn fragment_properties(raw: &str) -> Vec<FragmentProperty> {
+    custom_property_entries(raw)
+        .into_iter()
+        .map(|entry| {
+            let (value, value_editable) = match entry.value {
+                Some(serde_yaml::Value::String(text)) => (PropertyValue::Text { text }, true),
+                Some(serde_yaml::Value::Number(number)) => (
+                    PropertyValue::Number {
+                        text: number.to_string(),
+                    },
+                    true,
+                ),
+                Some(serde_yaml::Value::Bool(value)) => (PropertyValue::Bool { value }, true),
+                Some(serde_yaml::Value::Null) => (PropertyValue::Null, true),
+                Some(serde_yaml::Value::Sequence(values)) => {
+                    let items = values
+                        .iter()
+                        .map(|value| match value {
+                            serde_yaml::Value::String(value) => Some(value.clone()),
+                            serde_yaml::Value::Number(value) => Some(value.to_string()),
+                            serde_yaml::Value::Bool(value) => Some(value.to_string()),
+                            _ => None,
+                        })
+                        .collect::<Option<Vec<_>>>();
+                    match items {
+                        Some(items) => (PropertyValue::List { items }, true),
+                        None => (PropertyValue::Other { raw: entry.raw.clone() }, false),
+                    }
+                }
+                _ => (PropertyValue::Other { raw: entry.raw.clone() }, false),
+            };
+            FragmentProperty {
+                key: entry.key,
+                value,
+                editable: entry.editable && value_editable,
+            }
+        })
+        .collect()
+}
+
+fn property_input_to_yaml(value: PropertyInputValue) -> Result<serde_yaml::Value, String> {
+    use serde_yaml::Value;
+    match value {
+        PropertyInputValue::Text(None)
+        | PropertyInputValue::Number(None)
+        | PropertyInputValue::Date(None)
+        | PropertyInputValue::Datetime(None)
+        | PropertyInputValue::Checkbox(None)
+        | PropertyInputValue::List(None)
+        | PropertyInputValue::Link(None) => Ok(Value::Null),
+        PropertyInputValue::Text(Some(value)) if value.is_empty() => Ok(Value::Null),
+        PropertyInputValue::Text(Some(value)) => Ok(Value::String(value)),
+        PropertyInputValue::Number(Some(value)) => parse_property_number(&value),
+        PropertyInputValue::Date(Some(value)) => {
+            if value.is_empty() {
+                return Ok(Value::Null);
+            }
+            NaiveDate::parse_from_str(&value, "%Y-%m-%d")
+                .map_err(|_| "日期格式无效，应为 YYYY-MM-DD。".to_string())?;
+            Ok(Value::String(value))
+        }
+        PropertyInputValue::Datetime(Some(value)) => {
+            if value.is_empty() {
+                return Ok(Value::Null);
+            }
+            NaiveDateTime::parse_from_str(&value, "%Y-%m-%dT%H:%M")
+                .map_err(|_| "日期时间格式无效，应为 YYYY-MM-DDTHH:mm。".to_string())?;
+            Ok(Value::String(value))
+        }
+        PropertyInputValue::Checkbox(Some(value)) => Ok(Value::Bool(value)),
+        PropertyInputValue::List(Some(items)) if items.is_empty() => Ok(Value::Null),
+        PropertyInputValue::List(Some(items)) => {
+            Ok(Value::Sequence(items.into_iter().map(Value::String).collect()))
+        }
+        PropertyInputValue::Link(Some(value)) => {
+            let value = value.trim();
+            if value.is_empty() {
+                return Ok(Value::Null);
+            }
+            Ok(Value::String(if value.starts_with("[[") && value.ends_with("]]") {
+                value.to_string()
+            } else {
+                format!("[[{value}]]")
+            }))
+        }
+    }
+}
+
+fn parse_property_number(raw: &str) -> Result<serde_yaml::Value, String> {
+    let value = raw.trim();
+    if value.is_empty() {
+        return Ok(serde_yaml::Value::Null);
+    }
+    if let Ok(integer) = value.parse::<i64>() {
+        return Ok(serde_yaml::Value::Number(integer.into()));
+    }
+    let unsigned = value.strip_prefix(['-', '+']).unwrap_or(value);
+    let Some((integer, fraction)) = unsigned.split_once('.') else {
+        return Err("数字格式无效，可改用文本类型。".to_string());
+    };
+    if fraction.is_empty()
+        || !integer.chars().all(|character| character.is_ascii_digit())
+        || !fraction.chars().all(|character| character.is_ascii_digit())
+    {
+        return Err("数字格式无效，可改用文本类型。".to_string());
+    }
+    let number = value.parse::<f64>()
+        .map_err(|_| "数字格式无效，可改用文本类型。".to_string())?;
+    if !number.is_finite() {
+        return Err("数字格式无效，可改用文本类型。".to_string());
+    }
+    serde_yaml::to_value(number).map_err(|_| "数字格式无效，可改用文本类型。".to_string())
+}
+
+fn property_registry_path(vault: &Path) -> PathBuf {
+    vault.join(".shard").join("properties.json")
+}
+
+fn read_property_registry_in_vault(vault: &Path) -> Result<PropertyRegistryReadResult, String> {
+    let path = property_registry_path(vault);
+    let text = match fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(PropertyRegistryReadResult {
+                registry: PropertyRegistry::default(),
+                sha: content_sha256_hex(""),
+            });
+        }
+        Err(error) => return Err(error.to_string()),
+    };
+    let registry = serde_json::from_str::<PropertyRegistry>(&text)
+        .map_err(|error| format!("属性类型登记表损坏：{error}"))?;
+    if registry.version != 1 {
+        return Err(format!("不支持的属性类型登记表版本：{}", registry.version));
+    }
+    Ok(PropertyRegistryReadResult { registry, sha: content_sha256_hex(&text) })
+}
+
+fn register_property_type_in_vault(
+    vault: &Path,
+    key: &str,
+    property_type: PropertyType,
+    expected_sha: &str,
+) -> Result<PropertyRegistryReadResult, String> {
+    validate_property_key(key)?;
+    let current = read_property_registry_in_vault(vault)?;
+    if current.sha != expected_sha {
+        return Err("属性类型登记表已被外部修改，请刷新后重试。".to_string());
+    }
+    let mut registry = current.registry;
+    registry.properties.insert(key.to_string(), PropertyRegistryEntry { property_type });
+    let mut text = serde_json::to_string_pretty(&registry).map_err(|error| error.to_string())?;
+    text.push('\n');
+    write_text_atomically(&property_registry_path(vault), &text)?;
+    Ok(PropertyRegistryReadResult { registry, sha: content_sha256_hex(&text) })
+}
+
 #[tauri::command]
 async fn list_fragments(
     app: tauri::AppHandle,
@@ -624,6 +855,58 @@ async fn list_fragments(
         list_fragments_in_vault(&vault, &lockbox_runtime)
     })
     .await
+}
+
+#[tauri::command]
+async fn read_property_registry(app: tauri::AppHandle) -> Result<PropertyRegistryReadResult, String> {
+    run_blocking(move || read_property_registry_in_vault(&configured_vault_path(&app)?)).await
+}
+
+#[tauri::command]
+async fn register_property_type(
+    app: tauri::AppHandle,
+    key: String,
+    property_type: PropertyType,
+    expected_sha: String,
+) -> Result<PropertyRegistryReadResult, String> {
+    run_blocking(move || {
+        let vault = ensure_vault_dirs(&app)?;
+        let _gate = lock_vault_gate(&vault);
+        register_property_type_in_vault(&vault, &key, property_type, &expected_sha)
+    }).await
+}
+
+#[tauri::command]
+async fn set_fragment_property(
+    app: tauri::AppHandle,
+    lockbox_runtime: tauri::State<'_, LockboxRuntime>,
+    id: String,
+    key: String,
+    value: PropertyInputValue,
+) -> Result<Fragment, String> {
+    let lockbox_runtime = lockbox_runtime.inner().clone();
+    run_blocking(move || {
+        let vault = ensure_vault_dirs(&app)?;
+        let _gate = lock_vault_gate(&vault);
+        set_fragment_property_in_vault(
+            &vault, &lockbox_runtime, &id, &key, &property_input_to_yaml(value)?,
+        )
+    }).await
+}
+
+#[tauri::command]
+async fn remove_fragment_property(
+    app: tauri::AppHandle,
+    lockbox_runtime: tauri::State<'_, LockboxRuntime>,
+    id: String,
+    key: String,
+) -> Result<Fragment, String> {
+    let lockbox_runtime = lockbox_runtime.inner().clone();
+    run_blocking(move || {
+        let vault = ensure_vault_dirs(&app)?;
+        let _gate = lock_vault_gate(&vault);
+        remove_fragment_property_in_vault(&vault, &lockbox_runtime, &id, &key)
+    }).await
 }
 
 #[tauri::command]
@@ -5414,7 +5697,10 @@ fn read_fragment(
 ) -> Result<Fragment, String> {
     let text = fs::read_to_string(path).map_err(|error| error.to_string())?;
     let file_sha = content_sha256_hex(&text);
-    let (frontmatter, body) = parse_fragment_text(&text)?;
+    let parsed = parse_fragment(&text)?;
+    let properties = fragment_properties(&parsed.raw);
+    let frontmatter = parsed.frontmatter;
+    let body = parsed.body;
     let rel_path = relative_path(vault, path)?;
     let (git_status, error) = override_status.unwrap_or_else(|| {
         if !vault.join(".git").exists() {
@@ -5447,6 +5733,7 @@ fn read_fragment(
         lockbox: false,
         pinned: frontmatter.pinned,
         related: frontmatter.related,
+        properties,
         conflict_of: frontmatter.conflict_of,
     })
 }
@@ -5463,6 +5750,88 @@ fn parse_fragment_text(text: &str) -> Result<(FragmentFrontmatter, &str), String
     let frontmatter =
         serde_yaml::from_str::<FragmentFrontmatter>(yaml).map_err(|error| error.to_string())?;
     Ok((frontmatter, body))
+}
+
+fn set_fragment_property_in_vault(
+    vault: &Path,
+    lockbox_runtime: &LockboxRuntime,
+    id: &str,
+    key: &str,
+    value: &serde_yaml::Value,
+) -> Result<Fragment, String> {
+    validate_property_key(key)?;
+    if let Some(path) = find_lockbox_fragment_path(vault, id)? {
+        let read_keys = require_unlocked_lockbox_read_keys(vault, lockbox_runtime)?;
+        return mutate_lockbox_fragment_property_in_vault(
+            vault, &path, &read_keys, key, Some(value),
+        );
+    }
+    let path = find_fragment_path(vault, id)?.ok_or_else(|| format!("找不到片段 {id}"))?;
+    mutate_public_fragment_property_in_vault(vault, &path, key, Some(value))
+}
+
+fn remove_fragment_property_in_vault(
+    vault: &Path,
+    lockbox_runtime: &LockboxRuntime,
+    id: &str,
+    key: &str,
+) -> Result<Fragment, String> {
+    validate_property_key(key)?;
+    if let Some(path) = find_lockbox_fragment_path(vault, id)? {
+        let read_keys = require_unlocked_lockbox_read_keys(vault, lockbox_runtime)?;
+        return mutate_lockbox_fragment_property_in_vault(vault, &path, &read_keys, key, None);
+    }
+    let path = find_fragment_path(vault, id)?.ok_or_else(|| format!("找不到片段 {id}"))?;
+    mutate_public_fragment_property_in_vault(vault, &path, key, None)
+}
+
+fn mutate_public_fragment_property_in_vault(
+    vault: &Path,
+    path: &Path,
+    key: &str,
+    value: Option<&serde_yaml::Value>,
+) -> Result<Fragment, String> {
+    if relative_path(vault, path)?.starts_with(".trash/") {
+        return Err("回收站中的片段不能修改属性。".to_string());
+    }
+    let text = fs::read_to_string(path).map_err(|error| error.to_string())?;
+    let parsed = parse_fragment(&text)?;
+    let raw = match value {
+        Some(value) => set_custom_property(&parsed.raw, key, value)?,
+        None => remove_custom_property(&parsed.raw, key)?,
+    };
+    let mut frontmatter = parsed.frontmatter;
+    frontmatter.updated_at = Local::now().to_rfc3339();
+    let raw = apply_frontmatter(&raw, &frontmatter)?;
+    write_text_atomically(path, &format!("---\n{raw}\n---{}", parsed.body))?;
+    read_fragment(path, vault, &dirty_paths(vault), None)
+}
+
+fn mutate_lockbox_fragment_property_in_vault(
+    vault: &Path,
+    path: &Path,
+    read_keys: &LockboxReadKeys,
+    key: &str,
+    value: Option<&serde_yaml::Value>,
+) -> Result<Fragment, String> {
+    if relative_path(vault, path)?.starts_with("lockbox/archive/") {
+        return Err("密匣中已删除的片段不能修改属性。".to_string());
+    }
+    let mut payload = read_lockbox_payload(path, read_keys)?;
+    let raw = payload.frontmatter_raw.as_deref().map(str::to_string).map(Ok)
+        .unwrap_or_else(|| raw_from_frontmatter(&payload.frontmatter))?;
+    let raw = match value {
+        Some(value) => set_custom_property(&raw, key, value)?,
+        None => remove_custom_property(&raw, key)?,
+    };
+    payload.frontmatter.updated_at = Local::now().to_rfc3339();
+    payload.frontmatter_raw = Some(apply_frontmatter(&raw, &payload.frontmatter)?);
+    write_lockbox_payload(
+        path,
+        &LockboxWriteKey::Master(read_keys.master_key.clone()),
+        &payload,
+    )?;
+    read_lockbox_fragment(path, vault, &dirty_paths(vault), read_keys, None)
 }
 
 fn update_public_fragment_tags_in_vault(
@@ -5693,6 +6062,7 @@ fn create_lockbox_fragment_in_vault(
             vault,
             &dirty,
             frontmatter,
+            None,
             String::new(),
             override_status,
         )
@@ -5911,6 +6281,7 @@ fn move_public_fragment_payload_to_lockbox_in_vault(
             vault,
             &dirty,
             frontmatter,
+            None,
             String::new(),
             override_status,
         )
@@ -5977,6 +6348,7 @@ fn read_lockbox_fragment(
         vault,
         dirty_paths,
         payload.frontmatter,
+        payload.frontmatter_raw,
         payload.body,
         override_status,
     )
@@ -5987,6 +6359,7 @@ fn lockbox_fragment_from_parts(
     vault: &Path,
     dirty_paths: &HashSet<String>,
     frontmatter: FragmentFrontmatter,
+    frontmatter_raw: Option<String>,
     body: String,
     override_status: Option<(String, Option<String>)>,
 ) -> Result<Fragment, String> {
@@ -6002,6 +6375,10 @@ fn lockbox_fragment_from_parts(
         }
     });
     let archived = rel_path.starts_with("lockbox/archive/");
+    let properties = frontmatter_raw
+        .as_deref()
+        .map(fragment_properties)
+        .unwrap_or_default();
 
     Ok(Fragment {
         id: frontmatter.id,
@@ -6019,6 +6396,7 @@ fn lockbox_fragment_from_parts(
         lockbox: true,
         pinned: frontmatter.pinned,
         related: frontmatter.related,
+        properties,
         conflict_of: frontmatter.conflict_of,
     })
 }
@@ -7505,6 +7883,10 @@ pub fn run() {
             table_exchange_commands::read_table_exchange_file,
             table_exchange_commands::write_table_exchange_file,
             list_fragments,
+            read_property_registry,
+            register_property_type,
+            set_fragment_property,
+            remove_fragment_property,
             preflight_outline_upgrade,
             run_outline_upgrade,
             checkpoint_vault,
@@ -7906,6 +8288,128 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.starts_with("STALE_BASE:"), "实际：{error}");
+    }
+
+    #[test]
+    fn custom_property_dto_is_ordered_json_safe_and_tolerates_large_integer() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let vault = tempdir.path();
+        ensure_vault_layout(vault).unwrap();
+        let id = write_public_test_fragment(vault, "属性正文");
+        let path = find_fragment_path(vault, &id).unwrap().unwrap();
+        let parsed = parse_fragment(&fs::read_to_string(&path).unwrap()).unwrap();
+        let raw = format!(
+            "{}\n文本: '00123'\n数字: 1.50\n勾选: true\n空值: null\n列表: [甲, 2, false]\n嵌套:\n  child: value\n标签值: !custom value\n超大整数: 184467440737095516160",
+            parsed.raw
+        );
+        fs::write(&path, format!("---\n{raw}\n---{}", parsed.body)).unwrap();
+
+        let fragment = read_fragment(&path, vault, &dirty_paths(vault), None).unwrap();
+        assert_eq!(fragment.properties.iter().map(|item| item.key.as_str()).collect::<Vec<_>>(),
+            vec!["文本", "数字", "勾选", "空值", "列表", "嵌套", "标签值", "超大整数"]);
+        assert_eq!(fragment.properties[0].value, PropertyValue::Text { text: "00123".into() });
+        assert_eq!(fragment.properties[1].value, PropertyValue::Number { text: "1.5".into() });
+        assert_eq!(fragment.properties[2].value, PropertyValue::Bool { value: true });
+        assert_eq!(fragment.properties[3].value, PropertyValue::Null);
+        assert_eq!(fragment.properties[4].value, PropertyValue::List {
+            items: vec!["甲".into(), "2".into(), "false".into()],
+        });
+        assert!(fragment.properties[5..].iter().all(|item|
+            matches!(item.value, PropertyValue::Other { .. }) && !item.editable));
+    }
+
+    #[test]
+    fn property_input_and_registry_contracts_are_validated() {
+        assert!(matches!(
+            property_input_to_yaml(PropertyInputValue::Number(Some("1.50".into()))).unwrap(),
+            serde_yaml::Value::Number(_)
+        ));
+        assert!(matches!(
+            property_input_to_yaml(PropertyInputValue::Number(Some(".5".into()))).unwrap(),
+            serde_yaml::Value::Number(_)
+        ));
+        assert!(property_input_to_yaml(PropertyInputValue::Number(Some("1e3".into()))).is_err());
+        assert!(property_input_to_yaml(PropertyInputValue::Number(Some("9223372036854775808".into()))).is_err());
+        assert!(property_input_to_yaml(PropertyInputValue::Date(Some("2026-02-29".into()))).is_err());
+        assert!(property_input_to_yaml(PropertyInputValue::Datetime(Some("2026-09-28T25:00".into()))).is_err());
+        for input in ["目标", "[[目标]]"] {
+            assert_eq!(
+                property_input_to_yaml(PropertyInputValue::Link(Some(input.into()))).unwrap(),
+                serde_yaml::Value::String("[[目标]]".into())
+            );
+        }
+        assert_eq!(property_input_to_yaml(PropertyInputValue::Text(None)).unwrap(), serde_yaml::Value::Null);
+
+        let tempdir = tempfile::tempdir().unwrap();
+        let vault = tempdir.path();
+        ensure_vault_layout(vault).unwrap();
+        let empty = read_property_registry_in_vault(vault).unwrap();
+        assert_eq!(empty.sha, content_sha256_hex(""));
+        let written = register_property_type_in_vault(vault, "截止日期", PropertyType::Date, &empty.sha).unwrap();
+        assert_eq!(written.registry.properties["截止日期"].property_type, PropertyType::Date);
+        assert_eq!(read_property_registry_in_vault(vault).unwrap(), written);
+        assert!(register_property_type_in_vault(vault, "截止日期", PropertyType::Datetime, &empty.sha).is_err());
+        let id = write_public_test_fragment(vault, "登记表损坏不影响读取");
+        fs::write(property_registry_path(vault), "{bad json").unwrap();
+        assert!(read_property_registry_in_vault(vault).is_err());
+        let path = find_fragment_path(vault, &id).unwrap().unwrap();
+        assert!(read_fragment(&path, vault, &dirty_paths(vault), None).is_ok());
+    }
+
+    #[test]
+    fn public_property_mutation_preserves_body_and_rejects_trash() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let vault = tempdir.path();
+        ensure_vault_layout(vault).unwrap();
+        let id = write_public_test_fragment(vault, "临时正文");
+        let path = find_fragment_path(vault, &id).unwrap().unwrap();
+        let parsed = parse_fragment(&fs::read_to_string(&path).unwrap()).unwrap();
+        let body = "\n\n正文尾部保留  \n\n";
+        fs::write(&path, format!("---\n{}\n---{body}", parsed.raw)).unwrap();
+        let before_sha = content_sha256_hex(&fs::read_to_string(&path).unwrap());
+        let updated = mutate_public_fragment_property_in_vault(
+            vault, &path, "链接", Some(&serde_yaml::Value::String("[[目标]]".into())),
+        ).unwrap();
+        assert_ne!(updated.file_sha, before_sha);
+        assert_eq!(parse_fragment(&fs::read_to_string(&path).unwrap()).unwrap().body, body);
+        let removed = mutate_public_fragment_property_in_vault(vault, &path, "链接", None).unwrap();
+        assert!(removed.properties.is_empty());
+
+        let trash = vault.join(".trash/fragments/tests/property.md");
+        fs::create_dir_all(trash.parent().unwrap()).unwrap();
+        fs::rename(&path, &trash).unwrap();
+        let before = fs::read(&trash).unwrap();
+        assert!(set_fragment_property_in_vault(
+            vault, &LockboxRuntime::default(), &id, "状态", &serde_yaml::Value::String("拒绝".into()),
+        ).unwrap_err().contains("回收站"));
+        assert_eq!(fs::read(trash).unwrap(), before);
+    }
+
+    #[test]
+    fn lockbox_property_mutation_requires_unlock_and_rejects_archive() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let vault = tempdir.path();
+        let runtime = LockboxRuntime::default();
+        ensure_vault_layout(vault).unwrap();
+        setup_lockbox_in_vault(vault, &runtime, "correct horse").unwrap();
+        let fragment = create_lockbox_fragment_in_vault(vault, &runtime, "私密正文", vec![LOCKBOX_TAG.into()]).unwrap();
+        let path = find_lockbox_fragment_path(vault, &fragment.id).unwrap().unwrap();
+        let updated = set_fragment_property_in_vault(
+            vault, &runtime, &fragment.id, "私密属性", &serde_yaml::Value::String("保真".into()),
+        ).unwrap();
+        assert_eq!(updated.properties.len(), 1);
+
+        lock_lockbox_runtime(&runtime);
+        let before = fs::read(&path).unwrap();
+        assert_eq!(remove_fragment_property_in_vault(vault, &runtime, &fragment.id, "私密属性").unwrap_err(), "lockbox_locked");
+        assert_eq!(fs::read(&path).unwrap(), before);
+
+        unlock_lockbox_in_vault(vault, &runtime, "correct horse").unwrap();
+        let read_keys = require_unlocked_lockbox_read_keys(vault, &runtime).unwrap();
+        assert!(set_lockbox_fragment_archived_in_vault(vault, &path, &read_keys, true).unwrap().archived);
+        assert!(set_fragment_property_in_vault(
+            vault, &runtime, &fragment.id, "私密属性", &serde_yaml::Value::String("拒绝".into()),
+        ).unwrap_err().contains("已删除"));
     }
 
     #[test]

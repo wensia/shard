@@ -1,6 +1,7 @@
 import { invoke, isTauri } from "@tauri-apps/api/core"
 
 import { deriveKind } from "@/lib/content-kind"
+import type { PropertyRequestValue, PropertyType } from "@/lib/properties"
 import type { CanvasFile } from "@/features/canvas/model"
 import type {
   CheckpointResult,
@@ -19,6 +20,7 @@ import type {
   OutlineUpgradePreflightItem,
   OutlineUpgradeRunResult,
   OutlineUpgradeSelection,
+  PropertyRegistryRead,
   ShardMapFile,
   VaultState,
 } from "@/types"
@@ -314,6 +316,34 @@ export function updateFragment(
   expectedFileSha?: string
 ) {
   return invokeFragment("update_fragment", { id, content, tags, expectedFileSha })
+}
+
+export function readPropertyRegistry() {
+  return desktopInvoke<PropertyRegistryRead>("read_property_registry")
+}
+
+export function registerPropertyType(
+  key: string,
+  type: PropertyType,
+  expectedSha: string
+) {
+  return desktopInvoke<PropertyRegistryRead>("register_property_type", {
+    key,
+    propertyType: type,
+    expectedSha,
+  })
+}
+
+export function setFragmentProperty(
+  id: string,
+  key: string,
+  value: PropertyRequestValue
+) {
+  return invokeFragment("set_fragment_property", { id, key, value })
+}
+
+export function removeFragmentProperty(id: string, key: string) {
+  return invokeFragment("remove_fragment_property", { id, key })
 }
 
 export function updateFragmentTags(id: string, tags: string[]) {

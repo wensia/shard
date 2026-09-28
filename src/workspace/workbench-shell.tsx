@@ -1055,6 +1055,13 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     return updated
   }
 
+  function handleFragmentPropertyUpdated(updated: Fragment) {
+    recordContentActivity()
+    setFragments((current) =>
+      current.map((fragment) => (fragment.id === updated.id ? updated : fragment))
+    )
+  }
+
   function openInlineEditor(fragment: Fragment) {
     if (isJsonOutlineFragment(fragment)) {
       openOutlineEditor(fragment)
@@ -3199,6 +3206,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
             onRefreshLibrary={refreshLibraryTree}
             onTableSaved={recordContentActivity}
             onMoveToLockbox={handleMoveFragmentToLockbox}
+            onFragmentUpdated={handleFragmentPropertyUpdated}
             onOpenGraphFragment={(fragment) => {
               setFragments(current => sortFragmentsForDisplay([fragment, ...current.filter(item => item.id !== fragment.id)]))
               if (isJsonOutlineFragment(fragment)) openOutlineEditor(fragment)
@@ -3260,6 +3268,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
         onNavigateToFragment={(fragmentId) => {
           void handleNavigateToFragment(fragmentId)
         }}
+        onFragmentUpdated={handleFragmentPropertyUpdated}
         onReady={() => {
           if (searchEditorNavigation) {
             settleSearchHost(searchEditorNavigation.requestId)

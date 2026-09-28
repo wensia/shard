@@ -851,8 +851,7 @@ fn load_public_markdown_text(
     revision: String,
 ) -> Result<LoadedSearchDocument, SearchError> {
     let relative = crate::relative_path(vault, path).map_err(io_error)?;
-    let (frontmatter, body) =
-        crate::parse_fragment_text(text).map_err(|_| SearchError::UnsupportedTarget)?;
+    let parsed = crate::parse_fragment(text).map_err(|_| SearchError::UnsupportedTarget)?;
     let archived =
         relative.starts_with(".trash/fragments/") || relative.starts_with(".trash/notes/");
     Ok(markdown_document(
@@ -860,8 +859,9 @@ fn load_public_markdown_text(
         SearchScope::Public,
         relative,
         archived,
-        frontmatter,
-        body,
+        parsed.frontmatter,
+        Some(&parsed.raw),
+        &parsed.body,
         revision.clone(),
         revision,
     ))
@@ -884,13 +884,19 @@ fn load_lockbox_markdown(
         .map(|bytes| crate::hash_bytes(&bytes))
         .map_err(|_| SearchError::Internal { retryable: false })?;
     lease.validate_session()?;
+    let crate::LockboxFragmentPayload {
+        frontmatter,
+        frontmatter_raw,
+        body,
+    } = payload;
     Ok(markdown_document(
         vault,
         SearchScope::Lockbox,
         relative.clone(),
         relative.starts_with("lockbox/archive/"),
-        payload.frontmatter,
-        &payload.body,
+        frontmatter,
+        frontmatter_raw.as_deref(),
+        &body,
         revision,
         file_sha,
     ))
@@ -903,6 +909,7 @@ fn markdown_document(
     relative: String,
     archived: bool,
     frontmatter: FragmentFrontmatter,
+    frontmatter_raw: Option<&str>,
     body: &str,
     revision: String,
     file_sha: String,
@@ -968,6 +975,9 @@ fn markdown_document(
         lockbox: matches!(scope, SearchScope::Lockbox),
         pinned: frontmatter.pinned,
         related: frontmatter.related,
+        properties: frontmatter_raw
+            .map(crate::fragment_properties)
+            .unwrap_or_default(),
         conflict_of: frontmatter.conflict_of,
     };
     LoadedSearchDocument {
@@ -2233,6 +2243,27 @@ mod tests {
         let fragment = loaded.fragment.unwrap();
         assert!(fragment.archived);
         assert_eq!(fragment.path, ".trash/notes/旧笔记.md");
+    }
+
+    #[test]
+    fn search_markdown_fragment_carries_custom_properties() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("notes/属性文档.md");
+        write_markdown(&path, "property-note", &["note"], "# 属性文档");
+        let text = fs::read_to_string(&path).unwrap();
+        let text = text.replacen("source: test", "source: test\n负责人: 张三", 1);
+        fs::write(&path, text).unwrap();
+
+        let loaded = load_public_markdown(directory.path(), &path).unwrap();
+        let fragment = loaded.fragment.unwrap();
+        assert_eq!(fragment.properties.len(), 1);
+        assert_eq!(fragment.properties[0].key, "负责人");
+        assert_eq!(
+            fragment.properties[0].value,
+            crate::PropertyValue::Text {
+                text: "张三".into()
+            }
+        );
     }
 
     #[cfg(unix)]

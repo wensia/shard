@@ -29,6 +29,7 @@ import {
 import { toast } from "sonner"
 
 import { FragmentBacklinksPanel } from "@/components/shard/fragment-related"
+import { PropertiesPanel } from "@/components/shard/properties-panel"
 import { AssetGrid, AssetViewer } from "@/components/shard/asset-grid"
 import { DirectorySelectionToolbar } from "@/components/shard/directory-selection-toolbar"
 import { TrashEntryContextMenu } from "@/components/shard/library-entry-menu"
@@ -178,6 +179,7 @@ interface LibraryShellProps {
   onConvertedToFragment?: (fragment: Fragment) => void
   onLibraryMutation: (result: LibraryMutationResult) => void
   onMoveToLockbox: (fragment: Fragment) => Promise<void>
+  onFragmentUpdated?: (fragment: Fragment) => void
   onOpenGraphFragment?: (fragment: Fragment) => void
   /** 点击树上的密匣挂载点：解锁并进入密匣一级空间（传送门）。 */
   onOpenLockbox: () => void
@@ -260,6 +262,7 @@ export function LibraryShell({
   onConvertedToFragment,
   onLibraryMutation,
   onMoveToLockbox,
+  onFragmentUpdated,
   onOpenGraphFragment,
   onOpenLockbox,
   onRegisterSaveHandler,
@@ -657,6 +660,15 @@ export function LibraryShell({
       }
     }
   }, [onSave, selectedNoteReadOnly])
+
+  function handlePropertyUpdated(updated: Fragment) {
+    if (updated.content === lastSavedContentRef.current) {
+      baseFileShaRef.current = updated.fileSha ?? null
+    }
+    selectedNoteRef.current = updated
+    if (searchNote?.id === updated.id) setSearchNote(updated)
+    onFragmentUpdated?.(updated)
+  }
 
   const saveStateRef = useRef<SaveState>("saved")
   saveStateRef.current = saveState
@@ -1683,39 +1695,49 @@ export function LibraryShell({
 
     if (selectedNote) {
       return (
-        <div className={zen ? styles.zenNoteViewport : styles.editorViewport}>
-          <ShardRichEditor
-            ref={richNoteEditor}
-            ariaLabel="资料库文档编辑器"
-            autoFocus={zen || mobilePane === "editor"}
-            editorId={`library:${selectedNote.id}`}
-            getKnownTags={() => knownTagsRef.current}
-            getWikilinkCandidates={() => wikilinkCandidatesRef.current}
-            // 换一篇文档就换一个编辑器实例：正文与撤销历史一起重置。
-            key={`${selectedNote.id}:${activeSearchNavigation?.kind === "note" ? activeSearchNavigation.requestId : "browse"}`}
-            onChange={selectedNoteReadOnly ? () => undefined : (content) => {
-              setDraft(content)
-              draftRef.current = content
-              setSaveState(
-                content === lastSavedContentRef.current ? "saved" : "dirty"
-              )
-            }}
-            onDropFiles={selectedNoteReadOnly ? undefined : (files) => void uploadPastedImages(files)}
-            // ProseMirror 对 Esc 一律 preventDefault，ZenSurface 挂在 window 上的
-            // 监听因此等不到这个键；由编辑器转交回宿主（见 shard-host.ts）。
-            onEscape={zen ? () => setIsZen(false) : undefined}
-            onImageFiles={selectedNoteReadOnly ? undefined : (files) => void uploadPastedImages(files)}
-            onNavigateWikilink={navigateWikilink}
-            onOpenDocumentLink={(link) => void openCanvasLink(link)}
-            onPasteFiles={selectedNoteReadOnly ? undefined : (files) => void uploadPastedImages(files)}
-            onSubmit={selectedNoteReadOnly ? undefined : () => void saveCurrentNote()}
-            placeholder="开始写文档…"
+        <div
+          className={`${zen ? styles.zenNoteViewport : styles.editorViewport} flex flex-col`}
+        >
+          <PropertiesPanel
+            fragment={selectedNote}
+            inset={false}
+            onFragmentUpdated={handlePropertyUpdated}
             readOnly={selectedNoteReadOnly || interactionBlocked || tableStructureBusy || busyAction !== null}
-            // 资料库里全是文档：工具集合按文档档开放（产品框架 §2）。
-            tier="document"
-            value={draft}
-            variant="library"
           />
+          <div className="min-h-0 flex-1">
+            <ShardRichEditor
+              ref={richNoteEditor}
+              ariaLabel="资料库文档编辑器"
+              autoFocus={zen || mobilePane === "editor"}
+              editorId={`library:${selectedNote.id}`}
+              getKnownTags={() => knownTagsRef.current}
+              getWikilinkCandidates={() => wikilinkCandidatesRef.current}
+              // 换一篇文档就换一个编辑器实例：正文与撤销历史一起重置。
+              key={`${selectedNote.id}:${activeSearchNavigation?.kind === "note" ? activeSearchNavigation.requestId : "browse"}`}
+              onChange={selectedNoteReadOnly ? () => undefined : (content) => {
+                setDraft(content)
+                draftRef.current = content
+                setSaveState(
+                  content === lastSavedContentRef.current ? "saved" : "dirty"
+                )
+              }}
+              onDropFiles={selectedNoteReadOnly ? undefined : (files) => void uploadPastedImages(files)}
+              // ProseMirror 对 Esc 一律 preventDefault，ZenSurface 挂在 window 上的
+              // 监听因此等不到这个键；由编辑器转交回宿主（见 shard-host.ts）。
+              onEscape={zen ? () => setIsZen(false) : undefined}
+              onImageFiles={selectedNoteReadOnly ? undefined : (files) => void uploadPastedImages(files)}
+              onNavigateWikilink={navigateWikilink}
+              onOpenDocumentLink={(link) => void openCanvasLink(link)}
+              onPasteFiles={selectedNoteReadOnly ? undefined : (files) => void uploadPastedImages(files)}
+              onSubmit={selectedNoteReadOnly ? undefined : () => void saveCurrentNote()}
+              placeholder="开始写文档…"
+              readOnly={selectedNoteReadOnly || interactionBlocked || tableStructureBusy || busyAction !== null}
+              // 资料库里全是文档：工具集合按文档档开放（产品框架 §2）。
+              tier="document"
+              value={draft}
+              variant="library"
+            />
+          </div>
         </div>
       )
     }

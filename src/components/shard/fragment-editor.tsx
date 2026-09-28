@@ -22,6 +22,7 @@ import { EditorToolbar } from "@/components/shard/editor-toolbar"
 import { FragmentImageAttachment } from "@/components/shard/fragment-content"
 import { MindMapPreview } from "@/components/shard/mind-map-preview"
 import { OutlineComposer } from "@/components/shard/outline-composer"
+import { PropertiesPanel } from "@/components/shard/properties-panel"
 import { ZenSurface } from "@/components/shard/zen-surface"
 import { Button } from "@/components/ui/button"
 import { ToolbarIconButton } from "@/components/ui/toolbar-icon-button"
@@ -76,6 +77,7 @@ interface FragmentEditorProps {
   onRegisterFlush?: (flush: (() => Promise<boolean>) | null) => void
   onCreate?: (content: string, tags: string[]) => Promise<Fragment | void>
   onNavigateToFragment?: (fragmentId: string) => void
+  onFragmentUpdated?: (fragment: Fragment) => void
   onReady?: (fragmentId: string) => void
   onRefreshFragments?: () => Promise<void> | void
   onRequestOutlineUpgrade?: (fragmentId: string) => Promise<void> | void
@@ -138,6 +140,7 @@ export function FragmentEditor({
   onRegisterFlush,
   onCreate,
   onNavigateToFragment,
+  onFragmentUpdated,
   onReady,
   onRefreshFragments,
   onRequestOutlineUpgrade,
@@ -730,6 +733,15 @@ export function FragmentEditor({
   const isLegacyOutline = outlineContent?.format === "legacy"
   const isMindMapView = isOutlineSurface && isZen && outlineView === "mindmap"
   const documentCharacterCount = countPlainTextCharacters(content)
+  const showProperties =
+    fragment !== null && (kind === "fragment" || kind === "document")
+
+  function handlePropertyUpdated(updated: Fragment) {
+    if (updated.content === lastSavedContentRef.current) {
+      baseFileShaRef.current = updated.fileSha ?? null
+    }
+    onFragmentUpdated?.(updated)
+  }
 
   const editorFrame = (
     <div
@@ -1091,6 +1103,13 @@ export function FragmentEditor({
           flexDirection: "column",
         }}
       >
+        {showProperties ? (
+          <PropertiesPanel
+            fragment={fragment}
+            onFragmentUpdated={handlePropertyUpdated}
+            readOnly={readOnly}
+          />
+        ) : null}
         {editorFrame}
         {imageAttachmentRow}
       </div>

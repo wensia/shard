@@ -28,6 +28,14 @@ struct RawItem {
     text: String,
 }
 
+#[derive(Debug, Clone)]
+pub struct CustomPropertyEntry {
+    pub key: String,
+    pub value: Option<Value>,
+    pub raw: String,
+    pub editable: bool,
+}
+
 pub fn parse_fragment(text: &str) -> Result<ParsedFragment, String> {
     let rest = text
         .strip_prefix("---\n")
@@ -93,6 +101,118 @@ pub fn apply_frontmatter(raw: &str, next: &FragmentFrontmatter) -> Result<String
         .join("\n");
     validate_updated_mapping(&old, &want, &updated, next)?;
     Ok(updated)
+}
+
+pub fn validate_property_key(key: &str) -> Result<(), String> {
+    let length = key.chars().count();
+    if length == 0 {
+        return Err("属性名不能为空。".to_string());
+    }
+    if length > 64 {
+        return Err("属性名不能超过 64 个字符。".to_string());
+    }
+    if key.starts_with('-')
+        || !key
+            .chars()
+            .all(|character| character.is_alphanumeric() || matches!(character, '_' | '-'))
+    {
+        return Err("属性名只能包含字母、数字、下划线和连字符，且不能以连字符开头。".to_string());
+    }
+    if SYSTEM_KEYS.contains(&key) {
+        return Err(format!("{key} 是系统保留属性名。"));
+    }
+    Ok(())
+}
+
+pub fn set_custom_property(raw: &str, key: &str, value: &Value) -> Result<String, String> {
+    validate_property_key(key)?;
+    let mut items = split_raw_items(raw);
+    let matching = matching_property_items(&items, key);
+    if matching.len() > 1 {
+        return Err(format!("属性 {key} 重复，无法安全修改。"));
+    }
+
+    let replacement = RawItem {
+        key: Some(key.to_string()),
+        text: serialize_property_entry(key, value)?,
+    };
+    let updated = if let Some(index) = matching.first().copied() {
+        if items[index].key.as_deref() != Some(key) {
+            return Err(format!("属性 {key} 的写法无法安全定位。"));
+        }
+        reject_referenced_item_anchors(&items, index, key)?;
+        items[index] = replacement;
+        items
+            .iter()
+            .map(|item| item.text.as_str())
+            .collect::<Vec<_>>()
+            .join("\n")
+    } else {
+        let index = items
+            .iter()
+            .rposition(|item| !item.text.is_empty())
+            .map(|index| index + 1)
+            .unwrap_or(0);
+        items.insert(index, replacement);
+        items
+            .iter()
+            .map(|item| item.text.as_str())
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+
+    validate_custom_property_update(raw, &updated, key, Some(value))?;
+    Ok(updated)
+}
+
+pub fn remove_custom_property(raw: &str, key: &str) -> Result<String, String> {
+    validate_property_key(key)?;
+    let mut items = split_raw_items(raw);
+    let matching = matching_property_items(&items, key);
+    if matching.len() > 1 {
+        return Err(format!("属性 {key} 重复，无法安全删除。"));
+    }
+    let Some(index) = matching.first().copied() else {
+        return Ok(raw.to_string());
+    };
+    if items[index].key.as_deref() != Some(key) {
+        return Err(format!("属性 {key} 的写法无法安全定位。"));
+    }
+    reject_referenced_item_anchors(&items, index, key)?;
+    items.remove(index);
+    let updated = items
+        .iter()
+        .map(|item| item.text.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    validate_custom_property_update(raw, &updated, key, None)?;
+    Ok(updated)
+}
+
+pub fn custom_property_entries(raw: &str) -> Vec<CustomPropertyEntry> {
+    let items = split_raw_items(raw);
+    let keys = items.iter().map(item_property_keys).collect::<Vec<_>>();
+    let mut entries = Vec::new();
+    for (index, item) in items.iter().enumerate() {
+        for key in &keys[index] {
+            if SYSTEM_KEYS.contains(&key.as_str()) {
+                continue;
+            }
+            let occurrences = keys
+                .iter()
+                .flatten()
+                .filter(|candidate| *candidate == key)
+                .count();
+            let value = item_property_value(item, key);
+            entries.push(CustomPropertyEntry {
+                key: key.clone(),
+                value,
+                raw: item.text.clone(),
+                editable: occurrences == 1 && item.key.as_deref() == Some(key.as_str()),
+            });
+        }
+    }
+    entries
 }
 
 pub fn render_fragment(raw: &str, body: &str) -> String {
@@ -168,14 +288,122 @@ fn recognized_key(line: &str) -> Option<String> {
     {
         return None;
     }
-    let mut chars = candidate.chars();
-    let first = chars.next()?;
-    if !(first.is_ascii_alphabetic() || first == '_')
-        || !chars.all(|character| character.is_ascii_alphanumeric() || character == '_')
+    if candidate.starts_with('-')
+        || !candidate
+            .chars()
+            .all(|character| character.is_alphanumeric() || matches!(character, '_' | '-'))
     {
         return None;
     }
     Some(candidate.to_string())
+}
+
+fn item_property_keys(item: &RawItem) -> Vec<String> {
+    if let Some(key) = &item.key {
+        return vec![key.clone()];
+    }
+    let Ok(Value::Mapping(mapping)) = serde_yaml::from_str::<Value>(&item.text) else {
+        return Vec::new();
+    };
+    mapping
+        .keys()
+        .filter_map(|key| match key {
+            Value::String(key) => Some(key.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+fn item_property_value(item: &RawItem, key: &str) -> Option<Value> {
+    let Value::Mapping(mapping) = serde_yaml::from_str::<Value>(&item.text).ok()? else {
+        return None;
+    };
+    if item.key.as_deref() == Some(key) && mapping.len() == 1 {
+        return mapping.values().next().cloned();
+    }
+    mapping.get(Value::String(key.to_string())).cloned()
+}
+
+fn matching_property_items(items: &[RawItem], key: &str) -> Vec<usize> {
+    items
+        .iter()
+        .enumerate()
+        .filter_map(|(index, item)| {
+            item_property_keys(item)
+                .iter()
+                .any(|item_key| item_key == key)
+                .then_some(index)
+        })
+        .collect()
+}
+
+fn reject_referenced_item_anchors(
+    items: &[RawItem],
+    target_index: usize,
+    key: &str,
+) -> Result<(), String> {
+    for anchor in yaml_tokens(&items[target_index].text, '&') {
+        if items.iter().enumerate().any(|(index, item)| {
+            index != target_index && contains_yaml_token(&item.text, '*', &anchor)
+        }) {
+            return Err(format!("属性 {key} 被 YAML 别名引用，无法安全修改。"));
+        }
+    }
+    Ok(())
+}
+
+fn serialize_property_entry(key: &str, value: &Value) -> Result<String, String> {
+    const PLACEHOLDER: &str = "shard_property_placeholder";
+    let serialized = serialize_entry(PLACEHOLDER, value)?;
+    let prefix = format!("{PLACEHOLDER}:");
+    let rest = serialized
+        .strip_prefix(&prefix)
+        .ok_or_else(|| "属性序列化失败。".to_string())?;
+    Ok(format!("{key}:{rest}"))
+}
+
+fn validate_custom_property_update(
+    old: &str,
+    updated: &str,
+    key: &str,
+    expected: Option<&Value>,
+) -> Result<(), String> {
+    let old_items = split_raw_items(old);
+    let new_items = split_raw_items(updated);
+    let old_other = old_items
+        .iter()
+        .filter(|item| {
+            !item_property_keys(item)
+                .iter()
+                .any(|candidate| candidate == key)
+        })
+        .map(|item| item.text.as_str())
+        .collect::<Vec<_>>();
+    let new_other = new_items
+        .iter()
+        .filter(|item| {
+            !item_property_keys(item)
+                .iter()
+                .any(|candidate| candidate == key)
+        })
+        .map(|item| item.text.as_str())
+        .collect::<Vec<_>>();
+    if old_other != new_other {
+        return Err("其它 frontmatter 条目在属性改写后发生变化。".to_string());
+    }
+
+    let matching = matching_property_items(&new_items, key);
+    match expected {
+        Some(expected) if matching.len() == 1 => {
+            if item_property_value(&new_items[matching[0]], key).as_ref() != Some(expected) {
+                return Err(format!("属性 {key} 写后校验失败。"));
+            }
+        }
+        Some(_) => return Err(format!("属性 {key} 写后校验失败。")),
+        None if !matching.is_empty() => return Err(format!("属性 {key} 删除校验失败。")),
+        None => {}
+    }
+    Ok(())
 }
 
 fn validate_system_entries(old: &Mapping, items: &[RawItem]) -> Result<(), String> {
@@ -491,6 +719,85 @@ source: test"#;
             1,
         );
         assert!(apply_frontmatter(&anchored, &sample_frontmatter()).is_err());
+    }
+
+    #[test]
+    fn custom_properties_set_replace_remove_and_preserve_other_bytes() {
+        let raw = format!(
+            "{}\n# 自定义注释\n作者: 张三\n评分: 5 # 保留行尾\n说明: |\n  第一行\n  第二行\n",
+            raw_from_frontmatter(&sample_frontmatter()).unwrap()
+        );
+        let before_system = raw_from_frontmatter(&sample_frontmatter()).unwrap();
+
+        let added = set_custom_property(&raw, "项目-阶段", &Value::String("验证".into())).unwrap();
+        assert!(added.contains("项目-阶段: 验证"));
+        assert!(added.contains("评分: 5 # 保留行尾"));
+        assert!(added.contains("说明: |\n  第一行\n  第二行"));
+        assert!(added.contains(&before_system));
+
+        let replaced = set_custom_property(&added, "作者", &Value::String("李四".into())).unwrap();
+        assert!(replaced.contains("作者: 李四"));
+        assert!(!replaced.contains("作者: 张三"));
+        assert!(replaced.contains("评分: 5 # 保留行尾"));
+
+        let removed = remove_custom_property(&replaced, "项目-阶段").unwrap();
+        assert!(!removed.contains("项目-阶段:"));
+        assert_eq!(remove_custom_property(&removed, "不存在").unwrap(), removed);
+
+        let numeric =
+            set_custom_property(&removed, "123", &Value::String("数字键".into())).unwrap();
+        let document = format!("---\n{numeric}\n---\n正文");
+        assert!(parse_fragment(&document).is_ok());
+    }
+
+    #[test]
+    fn custom_properties_reject_unsafe_keys_layouts_and_referenced_anchors() {
+        for key in ["", "-bad", "bad key", "bad.dot", "id"] {
+            assert!(
+                validate_property_key(key).is_err(),
+                "key should fail: {key}"
+            );
+        }
+        assert!(validate_property_key(&"字".repeat(65)).is_err());
+        for key in ["作者", "项目-阶段", "123", "_内部"] {
+            assert!(validate_property_key(key).is_ok(), "key should pass: {key}");
+        }
+
+        let quoted = "\"作者\": 张三";
+        assert!(set_custom_property(quoted, "作者", &Value::String("李四".into())).is_err());
+        let flow = "{作者: 张三, 评分: 5}";
+        assert!(remove_custom_property(flow, "作者").is_err());
+        let duplicate = "作者: 张三\n作者: 李四";
+        assert!(set_custom_property(duplicate, "作者", &Value::String("王五".into())).is_err());
+        let anchored = "作者: &shared 张三\n镜像: *shared";
+        assert!(remove_custom_property(anchored, "作者").is_err());
+    }
+
+    #[test]
+    fn custom_property_values_roundtrip_without_scalar_type_drift() {
+        let cases = vec![
+            ("文本", Value::String("00123".into())),
+            ("链接", Value::String("[[目标]]".into())),
+            ("数字", serde_yaml::from_str::<Value>("1.50").unwrap()),
+            ("勾选", Value::Bool(true)),
+            ("空值", Value::Null),
+            (
+                "列表",
+                Value::Sequence(vec![Value::String("甲".into()), Value::String("2".into())]),
+            ),
+        ];
+        let mut raw = raw_from_frontmatter(&sample_frontmatter()).unwrap();
+        for (key, value) in &cases {
+            raw = set_custom_property(&raw, key, value).unwrap();
+        }
+        let entries = custom_property_entries(&raw);
+        for (key, value) in cases {
+            let entry = entries.iter().find(|entry| entry.key == key).unwrap();
+            assert_eq!(entry.value.as_ref(), Some(&value));
+            assert!(entry.editable);
+        }
+        assert!(raw.contains("文本: '00123'"));
+        assert!(raw.contains("链接: '[[目标]]'"));
     }
 
     #[test]
