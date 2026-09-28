@@ -5,6 +5,7 @@ mod edit;
 mod find;
 mod graph;
 mod parse;
+mod tui;
 
 use serde::Deserialize;
 use shard_core::{
