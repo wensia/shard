@@ -151,7 +151,7 @@ export function OrganizeFragmentsDialog({
           ) : null}
         </div>
 
-        <DialogFooter className="sm:flex-row sm:justify-end">
+        <DialogFooter>
           <Button
             disabled={isRunning}
             onClick={() => onOpenChange(false)}

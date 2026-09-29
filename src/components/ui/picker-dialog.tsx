@@ -72,6 +72,6 @@ export function PickerDialogContent({ title, summaryLabel, summary, placeholder,
       <span className="kiln-picker-summary-value" data-placeholder={empty || undefined}>{empty ? placeholder : summary}</span>
     </div>
     {children}
-    <DialogFooter className="kiln-picker-footer">{footer}</DialogFooter>
+    <DialogFooter>{footer}</DialogFooter>
   </DialogContent>
 }

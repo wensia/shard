@@ -46,7 +46,6 @@
 /* 14px / 500：kiln 摘要值字号，与 --text-section-title 同档。 */
 .kiln-picker-summary-value { font-size: var(--text-section-title); font-weight: var(--weight-medium); line-height: var(--leading-normal); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .kiln-picker-summary-value[data-placeholder] { color: var(--muted-foreground); font-weight: var(--weight-regular); }
-.kiln-picker-footer { flex-direction: row; flex-wrap: wrap; justify-content: flex-end; }
 /* 内联月历：月份导航一行 + 7 列星期 + 6 周日期，列间距 4px。 */
 .kiln-calendar { display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; }
 .kiln-calendar-nav { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }

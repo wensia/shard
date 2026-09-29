@@ -40,4 +40,3 @@
 .table-exchange-source-issues p, .table-exchange-error p { margin: 0; }
 .table-exchange-error { color: var(--destructive); font-size: var(--text-body); overflow-wrap: anywhere; }
 .table-exchange-success { color: var(--success); font-size: var(--text-body); }
-.table-exchange-footer { flex-direction: row; justify-content: flex-end; flex-wrap: wrap; }

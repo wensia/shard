@@ -183,7 +183,7 @@ export function TableImportDialog({ parentPath, initialPath, onCreated, onClose 
         {error && <p role="alert" className="table-exchange-error">{error}</p>}
         {frozen && error && <p className="table-exchange-help">重试会核对同一次导入，避免重复创建。若关闭此窗口，已成功创建的文件会保留在资料库。</p>}
       </div>
-      <DialogFooter className="table-exchange-footer"><Button variant="outline" onClick={onClose} disabled={busy === "create"}>取消</Button>
+      <DialogFooter><Button variant="outline" onClick={onClose} disabled={busy === "create"}>取消</Button>
         {!frozen && <Button variant="outline" onClick={() => void validate()} disabled={busy !== null || !preview}>{busy === "validate" ? "正在校验…" : "校验全部记录"}</Button>}
         <Button onClick={() => void create()} disabled={busy !== null || !name.trim() || (!frozen && !validation?.valid)}>{busy === "create" ? "正在创建…" : created.current ? "打开已创建的多维表格" : frozen ? "核对并重试" : "创建多维表格"}</Button>
       </DialogFooter>
@@ -235,7 +235,7 @@ export function TableExportDialog({ getFile, currentViewId, suggestedName, onClo
         {error && <p role="alert" className="table-exchange-error">{error}</p>}
         {result && <p role="status" className="table-exchange-success">{result}</p>}
       </div>
-      <DialogFooter className="table-exchange-footer"><Button variant="outline" disabled={writing} onClick={onClose}>关闭</Button><Button onClick={() => void exportFile()} disabled={busy}>{busy ? "正在导出…" : "选择保存位置"}</Button></DialogFooter>
+      <DialogFooter><Button variant="outline" disabled={writing} onClick={onClose}>关闭</Button><Button onClick={() => void exportFile()} disabled={busy}>{busy ? "正在导出…" : "选择保存位置"}</Button></DialogFooter>
     </DialogContent>
   </Dialog>
 }
