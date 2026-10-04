@@ -17,7 +17,6 @@ pub enum SearchKind {
     Mindmap,
     Flowchart,
     Canvas,
-    Table,
     Csv,
 }
 

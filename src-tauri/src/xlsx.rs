@@ -1,21 +1,52 @@
-//! Bounded XLSX exchange. Call from a blocking worker; no vault access or writes.
-//! Preview values include source issues; callers must resolve errors before creating a table.
-use super::model::{CellValue, FieldType, TableError, TableLimits, TableResult};
+//! Bounded XLSX import for datasets. Call from a blocking worker; no vault access or writes.
+//! Only the first worksheet becomes a string matrix; source issues become import warnings.
 use calamine::{DataRef, Reader, Xlsx, XlsxFormulaMetadata};
 use chrono::{Datelike, NaiveDate};
 use quick_xml::{events::Event, Reader as XmlReader};
-use rust_xlsxwriter::{ExcelDateTime, Format, Workbook};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::{
     collections::{BTreeMap, BTreeSet},
+    fmt,
     fs::File,
-    io::{Cursor, Read, Write},
+    io::{Cursor, Read},
     path::Path,
 };
 
+pub type XlsxResult<T> = Result<T, XlsxError>;
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct XlsxError {
+    pub code: String,
+    pub message: String,
+}
+impl XlsxError {
+    fn new(code: &str, message: impl Into<String>) -> Self {
+        Self {
+            code: code.into(),
+            message: message.into(),
+        }
+    }
+}
+impl fmt::Display for XlsxError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum CellValue {
+    Null,
+    Checkbox(bool),
+    Number(f64),
+    Text(String),
+}
+
 #[derive(Debug, Clone)]
 pub struct XlsxLimits {
-    pub table: TableLimits,
+    pub max_rows: usize,
+    pub max_columns: usize,
+    pub max_cells: usize,
+    pub max_text_chars: usize,
     pub max_import_bytes: usize,
     pub max_uncompressed_bytes: usize,
     pub max_zip_entries: usize,
@@ -26,36 +57,34 @@ pub struct XlsxLimits {
 }
 impl Default for XlsxLimits {
     fn default() -> Self {
-        let table = TableLimits::default();
+        let max_cells = 300_000;
         Self {
-            max_import_bytes: table.max_file_bytes,
-            max_uncompressed_bytes: table.max_file_bytes,
+            max_rows: 10_000,
+            max_columns: 128,
+            max_cells,
+            max_text_chars: 16_384,
+            max_import_bytes: 64 * 1024 * 1024,
+            max_uncompressed_bytes: 64 * 1024 * 1024,
             max_zip_entries: 1024,
             max_sheets: 32,
             max_styles: 4096,
             max_xml_depth: 64,
-            max_xml_events: table.max_cells * 16,
-            table,
+            max_xml_events: max_cells * 16,
         }
     }
 }
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct XlsxIssue {
-    pub code: String,
-    pub message: String,
-    pub severity: String,
-    pub row: Option<u32>,
-    pub column: Option<u32>,
+#[derive(Debug, Clone, PartialEq)]
+struct XlsxIssue {
+    code: String,
+    row: Option<u32>,
+    column: Option<u32>,
 }
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct XlsxCell {
-    pub value: CellValue,
-    pub kind: String,
-    pub raw_text: Option<String>,
-    pub formula: Option<String>,
-    pub issues: Vec<XlsxIssue>,
+#[derive(Debug, Clone, PartialEq)]
+struct XlsxCell {
+    value: CellValue,
+    kind: String,
+    raw_text: Option<String>,
+    issues: Vec<XlsxIssue>,
 }
 impl Default for XlsxCell {
     fn default() -> Self {
@@ -63,57 +92,53 @@ impl Default for XlsxCell {
             value: CellValue::Null,
             kind: "empty".into(),
             raw_text: None,
-            formula: None,
             issues: vec![],
         }
     }
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct XlsxWorkbookInfo {
-    pub sheet_names: Vec<String>,
-    pub issues: Vec<XlsxIssue>,
+#[cfg(test)]
+#[derive(Debug, Clone)]
+struct XlsxWorkbookInfo {
+    sheet_names: Vec<String>,
+    issues: Vec<XlsxIssue>,
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct XlsxPreview {
-    pub sheet_names: Vec<String>,
-    pub sheet_index: usize,
-    pub rows: Vec<Vec<XlsxCell>>,
-    pub total_rows: usize,
-    pub total_columns: usize,
-    pub truncated: bool,
-    pub issues: Vec<XlsxIssue>,
+#[derive(Debug, Clone)]
+struct XlsxPreview {
+    sheet_names: Vec<String>,
+    rows: Vec<Vec<XlsxCell>>,
+    truncated: bool,
+    issues: Vec<XlsxIssue>,
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct XlsxExportColumn {
-    pub name: String,
-    pub kind: FieldType,
+/// First worksheet as a string matrix (first record is the header row).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct XlsxRecords {
+    pub sheet_name: String,
+    pub sheet_count: usize,
+    pub records: Vec<Vec<String>>,
+    pub warnings: Vec<String>,
 }
 
-fn invalid(message: impl Into<String>) -> TableError {
-    TableError::new("INVALID_VALUE", message, "")
+fn invalid(message: impl Into<String>) -> XlsxError {
+    XlsxError::new("INVALID_VALUE", message)
 }
-fn limit(message: impl Into<String>) -> TableError {
-    TableError::new("LIMIT_EXCEEDED", message, "")
+fn limit(message: impl Into<String>) -> XlsxError {
+    XlsxError::new("LIMIT_EXCEEDED", message)
 }
-fn issue(code: &str, message: &str, severity: &str, pos: Option<(u32, u32)>) -> XlsxIssue {
+fn issue(code: &str, pos: Option<(u32, u32)>) -> XlsxIssue {
     XlsxIssue {
         code: code.into(),
-        message: message.into(),
-        severity: severity.into(),
         row: pos.map(|p| p.0),
         column: pos.map(|p| p.1),
     }
 }
 
-pub fn read_xlsx_file(path: &Path, limits: &XlsxLimits) -> TableResult<Vec<u8>> {
-    let file = File::open(path).map_err(|e| TableError::new("IO_ERROR", e.to_string(), ""))?;
+pub fn read_xlsx_file(path: &Path, limits: &XlsxLimits) -> XlsxResult<Vec<u8>> {
+    let file = File::open(path).map_err(|e| XlsxError::new("IO_ERROR", e.to_string()))?;
     let mut bytes = Vec::new();
     file.take(limits.max_import_bytes as u64 + 1)
         .read_to_end(&mut bytes)
-        .map_err(|e| TableError::new("IO_ERROR", e.to_string(), ""))?;
+        .map_err(|e| XlsxError::new("IO_ERROR", e.to_string()))?;
     if bytes.len() > limits.max_import_bytes {
         return Err(limit("XLSX 文件超过导入字节上限"));
     }
@@ -147,13 +172,13 @@ struct Preflight {
     issues: Vec<XlsxIssue>,
     strings: usize,
 }
-fn attr(attrs: &BTreeMap<String, String>, key: &str) -> TableResult<usize> {
+fn attr(attrs: &BTreeMap<String, String>, key: &str) -> XlsxResult<usize> {
     attrs.get(key).map_or(Ok(0), |v| {
         v.parse()
             .map_err(|_| invalid(format!("无效 XLSX 整数属性 {key}")))
     })
 }
-fn position(address: &str, limits: &XlsxLimits) -> TableResult<(u32, u32)> {
+fn position(address: &str, limits: &XlsxLimits) -> XlsxResult<(u32, u32)> {
     let mut col = 0usize;
     let mut split = 0;
     for b in address.bytes() {
@@ -172,12 +197,12 @@ fn position(address: &str, limits: &XlsxLimits) -> TableResult<(u32, u32)> {
     if col == 0 || row == 0 {
         return Err(invalid("XLSX 单元格坐标无效"));
     }
-    if row > limits.table.max_rows + 1 || col > limits.table.max_fields {
+    if row > limits.max_rows + 1 || col > limits.max_columns {
         return Err(limit("XLSX 单元格坐标超出表格行列上限"));
     }
     Ok(((row - 1) as u32, (col - 1) as u32))
 }
-fn dimension(range: &str, limits: &XlsxLimits) -> TableResult<()> {
+fn dimension(range: &str, limits: &XlsxLimits) -> XlsxResult<()> {
     for part in range.split(':') {
         position(part, limits)?;
     }
@@ -193,7 +218,7 @@ fn safe_member(name: &str) -> bool {
             .split('/')
             .all(|p| !p.is_empty() && p != "." && p != "..")
 }
-fn worksheet_path(target: &str) -> TableResult<String> {
+fn worksheet_path(target: &str) -> XlsxResult<String> {
     let path = if target.starts_with('/') {
         target.trim_start_matches('/').to_string()
     } else {
@@ -207,7 +232,7 @@ fn worksheet_path(target: &str) -> TableResult<String> {
 
 // Bound central-directory allocation before ZipArchive reads it. ZIP64 is unnecessary
 // for this module's file budget and is explicitly unsupported rather than guessed.
-fn precheck_directory(bytes: &[u8], limits: &XlsxLimits) -> TableResult<()> {
+fn precheck_directory(bytes: &[u8], limits: &XlsxLimits) -> XlsxResult<()> {
     if bytes.len() > limits.max_import_bytes {
         return Err(limit("XLSX 文件超过导入字节上限"));
     }
@@ -281,7 +306,7 @@ fn precheck_directory(bytes: &[u8], limits: &XlsxLimits) -> TableResult<()> {
     }
     Ok(())
 }
-fn preflight(bytes: &[u8], limits: &XlsxLimits) -> TableResult<Preflight> {
+fn preflight(bytes: &[u8], limits: &XlsxLimits) -> XlsxResult<Preflight> {
     precheck_directory(bytes, limits)?;
     let mut zip = zip::ZipArchive::new(Cursor::new(bytes))
         .map_err(|e| invalid(format!("XLSX ZIP 无法读取：{e}")))?;
@@ -325,12 +350,7 @@ fn preflight(bytes: &[u8], limits: &XlsxLimits) -> TableResult<Preflight> {
         if name.ends_with(".xml") || name.ends_with(".rels") {
             scan_xml(&name, &data, &mut result, limits, &mut xml_events)?;
         } else if name.ends_with("vbaProject.bin") {
-            result.issues.push(issue(
-                "MACROS_IGNORED",
-                "工作簿含宏；不会执行或导入宏",
-                "warning",
-                None,
-            ));
+            result.issues.push(issue("MACROS_IGNORED", None));
         }
     }
     if !names.contains("[Content_Types].xml") || !names.contains("xl/workbook.xml") {
@@ -351,7 +371,7 @@ fn preflight(bytes: &[u8], limits: &XlsxLimits) -> TableResult<Preflight> {
         }
     }
     let total_cells: usize = result.worksheets.values().map(|s| s.cells.len()).sum();
-    if total_cells > limits.table.max_cells + limits.table.max_fields {
+    if total_cells > limits.max_cells + limits.max_columns {
         return Err(limit("XLSX 工作簿实际单元格总数超过上限"));
     }
     for sheet in result.worksheets.values() {
@@ -378,7 +398,7 @@ fn scan_xml(
     result: &mut Preflight,
     limits: &XlsxLimits,
     events: &mut usize,
-) -> TableResult<()> {
+) -> XlsxResult<()> {
     let text = std::str::from_utf8(bytes).map_err(|_| invalid("XLSX XML 必须为 UTF-8"))?;
     let mut reader = XmlReader::from_str(text);
     reader.config_mut().expand_empty_elements = true;
@@ -422,23 +442,23 @@ fn scan_xml(
                         )
                         .map_err(|_| invalid("XLSX XML 属性编码无效"))?
                         .into_owned();
-                    if value.chars().count() > limits.table.max_text_chars {
+                    if value.chars().count() > limits.max_text_chars {
                         return Err(limit("XLSX XML 属性过长"));
                     }
                     attrs.insert(key, value);
                 }
                 if tag == "sst" {
-                    if attr(&attrs, "uniqueCount")? > limits.table.max_cells {
+                    if attr(&attrs, "uniqueCount")? > limits.max_cells {
                         return Err(limit("XLSX sharedStrings uniqueCount 超过上限"));
                     }
-                    if attr(&attrs, "count")? > limits.table.max_cells * limits.max_sheets {
+                    if attr(&attrs, "count")? > limits.max_cells * limits.max_sheets {
                         return Err(limit("XLSX sharedStrings count 超过上限"));
                     }
                 }
                 if root == "sst" && tag == "si" {
                     result.strings += 1;
                     shared_chars = 0;
-                    if result.strings > limits.table.max_cells {
+                    if result.strings > limits.max_cells {
                         return Err(limit("XLSX 共享字符串过多"));
                     }
                 }
@@ -458,23 +478,13 @@ fn scan_xml(
                         return Err(invalid("工作表名称或关系重复"));
                     }
                     if attrs.get("state").is_some_and(|v| v != "visible") {
-                        result.issues.push(issue(
-                            "HIDDEN_SHEET",
-                            "工作簿包含隐藏工作表；请选择需要导入的工作表",
-                            "warning",
-                            None,
-                        ));
+                        result.issues.push(issue("HIDDEN_SHEET", None));
                     }
                     result.sheets.push((title, id));
                 }
                 if tag == "Relationship" {
                     if attrs.get("TargetMode").is_some_and(|v| v == "External") {
-                        result.issues.push(issue(
-                            "EXTERNAL_LINK_IGNORED",
-                            "工作簿含外部关系；不会访问网络或更新外链",
-                            "warning",
-                            None,
-                        ));
+                        result.issues.push(issue("EXTERNAL_LINK_IGNORED", None));
                     }
                     if name == "xl/_rels/workbook.xml.rels"
                         && attrs.get("Type").is_some_and(|v| v.ends_with("/worksheet"))
@@ -525,7 +535,7 @@ fn scan_xml(
                             position(&format!("A{r}"), limits)?;
                         }
                     }
-                    if tag == "col" && attr(&attrs, "max")? > limits.table.max_fields {
+                    if tag == "col" && attr(&attrs, "max")? > limits.max_columns {
                         return Err(limit("XLSX 列格式超出列数上限"));
                     }
                     if (tag == "row" || tag == "col")
@@ -535,12 +545,7 @@ fn scan_xml(
                             .iter()
                             .any(|i| i.code == "HIDDEN_ROWS_OR_COLUMNS")
                     {
-                        sheet.issues.push(issue(
-                            "HIDDEN_ROWS_OR_COLUMNS",
-                            "隐藏行列仍在预览中保留",
-                            "warning",
-                            None,
-                        ));
+                        sheet.issues.push(issue("HIDDEN_ROWS_OR_COLUMNS", None));
                     }
                     if tag == "dimension" {
                         if let Some(r) = attrs.get("ref") {
@@ -550,15 +555,10 @@ fn scan_xml(
                     if tag == "mergeCell" {
                         let r = attrs.get("ref").ok_or_else(|| invalid("合并范围缺失"))?;
                         dimension(r, limits)?;
-                        if sheet.issues.len() > limits.table.max_cells {
+                        if sheet.issues.len() > limits.max_cells {
                             return Err(limit("合并范围过多"));
                         }
-                        sheet.issues.push(issue(
-                            "MERGED_CELLS",
-                            &format!("合并区域 {r}：仅保留实际单元格值，不填充其他格"),
-                            "warning",
-                            None,
-                        ));
+                        sheet.issues.push(issue("MERGED_CELLS", None));
                     }
                     if tag == "c" {
                         if cell.is_some() {
@@ -592,7 +592,7 @@ fn scan_xml(
                             c.formula = true;
                             if attrs.contains_key("si") {
                                 let si = attr(&attrs, "si")?;
-                                if si >= limits.table.max_cells {
+                                if si >= limits.max_cells {
                                     return Err(limit("共享公式索引超过上限"));
                                 }
                                 c.shared = Some(si);
@@ -614,8 +614,7 @@ fn scan_xml(
                         .ok_or_else(|| invalid("XLSX 单元格结束位置无效"))?;
                     sheet.rows = sheet.rows.max(c.pos.0 as usize + 1);
                     sheet.columns = sheet.columns.max(c.pos.1 as usize + 1);
-                    if sheet.rows.saturating_sub(1).max(1) * sheet.columns > limits.table.max_cells
-                    {
+                    if sheet.rows.saturating_sub(1).max(1) * sheet.columns > limits.max_cells {
                         return Err(limit("XLSX 矩形单元格数量超过上限"));
                     }
                     if sheet.cells.insert(c.pos, c).is_some() {
@@ -685,16 +684,16 @@ fn count_xml_text(
     cell_chars: &mut usize,
     shared_chars: &mut usize,
     limits: &XlsxLimits,
-) -> TableResult<()> {
+) -> XlsxResult<()> {
     if root == "sst" && stack.iter().any(|t| t == "si") {
         *shared_chars += text.chars().count();
-        if *shared_chars > limits.table.max_text_chars {
+        if *shared_chars > limits.max_text_chars {
             return Err(limit("XLSX 共享字符串过长"));
         }
     }
     if let Some(c) = cell {
         *cell_chars += text.chars().count();
-        if *cell_chars > limits.table.max_text_chars {
+        if *cell_chars > limits.max_text_chars {
             return Err(limit("XLSX 单元格文本或公式过长"));
         }
         if stack.last().is_some_and(|t| t == "v") {
@@ -704,7 +703,8 @@ fn count_xml_text(
     Ok(())
 }
 
-pub fn inspect_xlsx(bytes: &[u8], limits: &XlsxLimits) -> TableResult<XlsxWorkbookInfo> {
+#[cfg(test)]
+fn inspect_xlsx(bytes: &[u8], limits: &XlsxLimits) -> XlsxResult<XlsxWorkbookInfo> {
     let checked = preflight(bytes, limits)?;
     // Construction happens only after all XML has passed allocation/coordinate checks.
     let workbook =
@@ -715,12 +715,12 @@ pub fn inspect_xlsx(bytes: &[u8], limits: &XlsxLimits) -> TableResult<XlsxWorkbo
     })
 }
 
-pub fn preview_xlsx(
+fn preview_xlsx(
     bytes: &[u8],
     sheet_index: usize,
     max_preview_rows: usize,
     limits: &XlsxLimits,
-) -> TableResult<XlsxPreview> {
+) -> XlsxResult<XlsxPreview> {
     let checked = preflight(bytes, limits)?;
     let mut workbook =
         Xlsx::new(Cursor::new(bytes)).map_err(|e| invalid(format!("解析 XLSX 失败：{e}")))?;
@@ -752,35 +752,20 @@ pub fn preview_xlsx(
             .ok_or_else(|| invalid("单元格未通过预检"))?;
         let mut cell = convert_cell(record.value, source, &checked, limits)?;
         if let Some(formula) = record.formula {
-            cell.formula = match formula {
-                XlsxFormulaMetadata::Normal { formula }
-                | XlsxFormulaMetadata::Shared { formula, .. } => Some(formula),
-                XlsxFormulaMetadata::SharedDerived { .. } => {
-                    cell.issues.push(issue(
-                        "SHARED_FORMULA_TEXT_UNAVAILABLE",
-                        "共享公式使用缓存预览，首版不展开派生公式文本",
-                        "warning",
-                        Some(pos),
-                    ));
-                    None
-                }
-                _ => return Err(invalid("不支持的 XLSX 公式类型")),
-            };
-            cell.issues.push(issue(
-                "FORMULA_CACHED_VALUE",
-                "该值来自公式缓存；未重算且无法验证缓存是否最新",
-                "warning",
-                Some(pos),
-            ));
+            // Only the cached value is imported; formula text is dropped.
+            if !matches!(
+                formula,
+                XlsxFormulaMetadata::Normal { .. }
+                    | XlsxFormulaMetadata::Shared { .. }
+                    | XlsxFormulaMetadata::SharedDerived { .. }
+            ) {
+                return Err(invalid("不支持的 XLSX 公式类型"));
+            }
+            cell.issues.push(issue("FORMULA_CACHED_VALUE", Some(pos)));
             if !source.has_value || (source.raw.is_empty() && source.cell_type != "str") {
                 cell.value = CellValue::Null;
                 cell.kind = "error".into();
-                cell.issues.push(issue(
-                    "FORMULA_CACHE_MISSING",
-                    "公式没有缓存值，不能当作空单元格导入",
-                    "error",
-                    Some(pos),
-                ));
+                cell.issues.push(issue("FORMULA_CACHE_MISSING", Some(pos)));
             }
         }
         issues.extend(cell.issues.clone());
@@ -790,10 +775,7 @@ pub fn preview_xlsx(
     }
     Ok(XlsxPreview {
         sheet_names: names,
-        sheet_index,
         rows,
-        total_rows: raw.rows,
-        total_columns: raw.columns,
         truncated: raw.rows > max_preview_rows,
         issues,
     })
@@ -803,7 +785,7 @@ fn convert_cell(
     source: &RawCell,
     checked: &Preflight,
     limits: &XlsxLimits,
-) -> TableResult<XlsxCell> {
+) -> XlsxResult<XlsxCell> {
     let mut cell = XlsxCell {
         raw_text: source.has_value.then(|| source.raw.clone()),
         ..Default::default()
@@ -828,12 +810,7 @@ fn convert_cell(
         DataRef::DateTime(v) => {
             if !v.as_f64().is_finite() || v.as_f64() < 0.0 || v.as_f64() > 2_958_465.0 {
                 cell.kind = "error".into();
-                cell.issues.push(issue(
-                    "INVALID_EXCEL_DATE",
-                    "Excel 日期序列超出可用范围",
-                    "error",
-                    pos,
-                ));
+                cell.issues.push(issue("INVALID_EXCEL_DATE", pos));
                 return Ok(cell);
             }
             let (year, month, day, hour, minute, second, milli) = v.to_ymd_hms_milli();
@@ -845,12 +822,16 @@ fn convert_cell(
                 || milli != 0
             {
                 cell.kind = "error".into();
-                cell.issues.push(issue(
-                    "DATE_TIME_OR_DURATION",
-                    "日期时间、时间或时长不能静默截成日期；请显式选择文本",
-                    "error",
-                    pos,
-                ));
+                if !v.is_duration() {
+                    // Strings carry the wall-clock value; a date field would silently drop it.
+                    let mut text =
+                        format!("{year:04}-{month:02}-{day:02} {hour:02}:{minute:02}:{second:02}");
+                    if milli != 0 {
+                        text.push_str(&format!(".{milli:03}"));
+                    }
+                    cell.raw_text = Some(text);
+                }
+                cell.issues.push(issue("DATE_TIME_OR_DURATION", pos));
             } else if let Some(date) =
                 NaiveDate::from_ymd_opt(year as i32, month as u32, day as u32)
                     .filter(|d| d.year() >= 1 && d.year() <= 9999)
@@ -859,12 +840,7 @@ fn convert_cell(
                 cell.value = CellValue::Text(date.format("%Y-%m-%d").to_string());
             } else {
                 cell.kind = "error".into();
-                cell.issues.push(issue(
-                    "INVALID_EXCEL_DATE",
-                    "无效 Excel 日期（含虚构的 1900-02-29），不能静默修正",
-                    "error",
-                    pos,
-                ));
+                cell.issues.push(issue("INVALID_EXCEL_DATE", pos));
             }
         }
         DataRef::DateTimeIso(v) => {
@@ -874,37 +850,22 @@ fn convert_cell(
             } else {
                 cell.kind = "error".into();
                 cell.raw_text = Some(v);
-                cell.issues.push(issue(
-                    "INVALID_DATE_ONLY",
-                    "ISO 日期时间不是合法 YYYY-MM-DD 日期",
-                    "error",
-                    pos,
-                ));
+                cell.issues.push(issue("INVALID_DATE_ONLY", pos));
             }
         }
         DataRef::DurationIso(v) => {
             cell.kind = "error".into();
             cell.raw_text = Some(v);
-            cell.issues.push(issue(
-                "DURATION_UNSUPPORTED",
-                "时长不能静默转换为日期",
-                "error",
-                pos,
-            ));
+            cell.issues.push(issue("DURATION_UNSUPPORTED", pos));
         }
         DataRef::Error(v) => {
             cell.kind = "error".into();
             cell.raw_text = Some(v.to_string());
-            cell.issues.push(issue(
-                "CELL_ERROR",
-                "源单元格为 Excel 错误值，不能当空值导入",
-                "error",
-                pos,
-            ));
+            cell.issues.push(issue("CELL_ERROR", pos));
         }
     }
     if let CellValue::Text(text) = &cell.value {
-        if text.chars().count() > limits.table.max_text_chars {
+        if text.chars().count() > limits.max_text_chars {
             return Err(limit("XLSX 单元格文字超过上限"));
         }
     }
@@ -912,12 +873,7 @@ fn convert_cell(
         if let CellValue::Text(v) = &cell.value {
             cell.raw_text = Some(v.clone());
             if v.len() > 1 && v.starts_with('0') && v.bytes().all(|b| b.is_ascii_digit()) {
-                cell.issues.push(issue(
-                    "LEADING_ZERO_TEXT",
-                    "含前导零的源文本已原样保留；字段映射时应保留文本类型",
-                    "warning",
-                    pos,
-                ));
+                cell.issues.push(issue("LEADING_ZERO_TEXT", pos));
             }
         }
     }
@@ -942,12 +898,8 @@ fn set_number(value: f64, source: &RawCell, checked: &Preflight, cell: &mut Xlsx
         || numeric_leading_zero
     {
         cell.kind = "error".into();
-        cell.issues.push(issue(
-            "NUMBER_PRECISION_OR_LEADING_ZERO",
-            "数字可能超出精度或含前导零；保留原始词法，请显式按文本导入",
-            "error",
-            Some(source.pos),
-        ));
+        cell.issues
+            .push(issue("NUMBER_PRECISION_OR_LEADING_ZERO", Some(source.pos)));
         return;
     }
     cell.kind = "number".into();
@@ -959,22 +911,13 @@ fn set_number(value: f64, source: &RawCell, checked: &Preflight, cell: &mut Xlsx
                 .get(format)
                 .cloned()
                 .unwrap_or_else(|| format!("内置格式 {format}"));
-            let message = format!("数字显示格式 {code} 不会保留；预览为原始数值");
-            cell.issues.push(issue(
-                "NUMBER_FORMAT_NOT_PRESERVED",
-                &message,
-                "warning",
-                Some(source.pos),
-            ));
+            cell.issues
+                .push(issue("NUMBER_FORMAT_NOT_PRESERVED", Some(source.pos)));
             if code.contains("00") && !code.contains('.') {
                 cell.kind = "error".into();
                 cell.value = CellValue::Null;
-                cell.issues.push(issue(
-                    "FORMATTED_LEADING_ZERO",
-                    "数字格式可能显示前导零，需显式处理后导入",
-                    "error",
-                    Some(source.pos),
-                ));
+                cell.issues
+                    .push(issue("FORMATTED_LEADING_ZERO", Some(source.pos)));
             }
         }
     }
@@ -988,210 +931,119 @@ fn valid_date(value: &str) -> Option<NaiveDate> {
         .then_some(date)
 }
 
-/// Exports scalar values only. Resolve select/multiSelect option labels explicitly
-/// before this call and pass those exchange columns as Text; never export raw IDs.
-pub fn export_xlsx(
-    columns: &[XlsxExportColumn],
-    rows: &[Vec<CellValue>],
-    limits: &XlsxLimits,
-) -> TableResult<Vec<u8>> {
-    if columns.is_empty()
-        || columns.len() > limits.table.max_fields
-        || rows.len() > limits.table.max_rows
-        || rows.len().max(1) * columns.len() > limits.table.max_cells
+/// Reads the first worksheet as strings. Never truncates: oversized sheets are rejected.
+pub fn read_xlsx_records(bytes: &[u8], limits: &XlsxLimits) -> XlsxResult<XlsxRecords> {
+    let preview = preview_xlsx(bytes, 0, limits.max_rows + 1, limits)?;
+    if preview.truncated {
+        return Err(limit("XLSX 行数超过数据集上限"));
+    }
+    let mut records: Vec<Vec<String>> = preview
+        .rows
+        .iter()
+        .map(|row| row.iter().map(cell_text).collect())
+        .collect();
+    while records
+        .last()
+        .is_some_and(|row| row.iter().all(String::is_empty))
     {
-        return Err(limit("XLSX 导出超过表格行列/单元格上限"));
+        records.pop();
     }
-    let mut workbook = Workbook::new();
-    let sheet = workbook.add_worksheet();
-    let date_format = Format::new().set_num_format("yyyy-mm-dd");
-    let blank_format = Format::new().set_num_format("@");
-    let mut text_bytes = 0usize;
-    let mut empty_strings = BTreeSet::new();
-    for (col, column) in columns.iter().enumerate() {
-        if column.name.trim().is_empty() || column.name.chars().count() > 128 {
-            return Err(invalid("XLSX 列名为空或过长"));
-        }
-        if matches!(column.kind, FieldType::Select | FieldType::MultiSelect) {
-            return Err(invalid("选项字段导出前必须显式映射为标签文本"));
-        }
-        sheet
-            .write_string(0, col as u16, &column.name)
-            .map_err(|e| invalid(e.to_string()))?;
+    let width = records
+        .iter()
+        .filter_map(|row| row.iter().rposition(|value| !value.is_empty()))
+        .max()
+        .map_or(0, |last| last + 1);
+    for row in &mut records {
+        row.truncate(width);
     }
-    for (row, values) in rows.iter().enumerate() {
-        if values.len() != columns.len() {
-            return Err(invalid("XLSX 导出行的列数不匹配"));
-        }
-        for (col, (column, value)) in columns.iter().zip(values).enumerate() {
-            let r = (row + 1) as u32;
-            let c = col as u16;
-            match (&column.kind, value) {
-                (_, CellValue::Null) => {
-                    sheet
-                        .write_blank(r, c, &blank_format)
-                        .map_err(|e| invalid(e.to_string()))?;
-                }
-                (FieldType::Text, CellValue::Text(text)) => {
-                    text_bytes = text_bytes
-                        .checked_add(text.len())
-                        .ok_or_else(|| limit("导出文本大小溢出"))?;
-                    if text.chars().count() > limits.table.max_text_chars
-                        || text.encode_utf16().count() > 32767
-                        || text_bytes > limits.table.max_file_bytes
-                    {
-                        return Err(limit("XLSX 导出文本超过上限"));
-                    }
-                    if text.is_empty() {
-                        empty_strings.insert(cell_address(r, c));
-                        sheet
-                            .write_blank(r, c, &blank_format)
-                            .map_err(|e| invalid(e.to_string()))?;
-                    } else {
-                        sheet
-                            .write_string(r, c, text)
-                            .map_err(|e| invalid(e.to_string()))?;
-                    }
-                }
-                (FieldType::Number, CellValue::Number(v))
-                    if v.is_finite() && v.abs() <= 9_007_199_254_740_991.0 =>
-                {
-                    let spelling = v.to_string();
-                    let digits = spelling
-                        .split(['e', 'E'])
-                        .next()
-                        .unwrap_or(&spelling)
-                        .chars()
-                        .filter(|c| c.is_ascii_digit())
-                        .collect::<String>();
-                    if digits.trim_start_matches('0').len() > 15 {
-                        return Err(invalid(
-                            "数字超过 Excel 15 位有效数字范围，请显式作为文本导出",
-                        ));
-                    }
-                    sheet
-                        .write_number(r, c, *v)
-                        .map_err(|e| invalid(e.to_string()))?;
-                }
-                (FieldType::Checkbox, CellValue::Checkbox(v)) => {
-                    sheet
-                        .write_boolean(r, c, *v)
-                        .map_err(|e| invalid(e.to_string()))?;
-                }
-                (FieldType::Date, CellValue::Text(value)) => {
-                    let date = valid_date(value).ok_or_else(|| invalid("XLSX 导出日期无效"))?;
-                    let date = ExcelDateTime::from_ymd(
-                        date.year() as u16,
-                        date.month() as u8,
-                        date.day() as u8,
-                    )
-                    .map_err(|e| invalid(format!("日期无法使用 Excel 1900 日期系统导出：{e}")))?;
-                    sheet
-                        .write_datetime_with_format(r, c, &date, &date_format)
-                        .map_err(|e| invalid(e.to_string()))?;
-                }
-                _ => {
-                    return Err(invalid(format!(
-                        "第 {} 行第 {} 列类型不匹配",
-                        row + 1,
-                        col + 1
-                    )))
-                }
-            }
-        }
-    }
-    let bytes = workbook
-        .save_to_buffer()
-        .map_err(|e| invalid(format!("XLSX 导出失败：{e}")))?;
-    let bytes = if empty_strings.is_empty() {
-        bytes
-    } else {
-        preserve_empty_strings(bytes, &empty_strings)?
-    };
-    if bytes.len() > limits.max_import_bytes {
-        return Err(limit("XLSX 导出文件超过字节上限"));
-    }
-    Ok(bytes)
+    Ok(XlsxRecords {
+        sheet_name: preview.sheet_names[0].clone(),
+        sheet_count: preview.sheet_names.len(),
+        records,
+        warnings: import_warnings(&preview.issues),
+    })
 }
 
-fn cell_address(row: u32, col: u16) -> String {
-    let mut n = col as usize + 1;
-    let mut letters = Vec::new();
-    while n > 0 {
-        letters.push((b'A' + ((n - 1) % 26) as u8) as char);
-        n = (n - 1) / 26;
-    }
-    format!(
-        "{}{}",
-        letters.into_iter().rev().collect::<String>(),
-        row + 1
-    )
-}
-// Writer deliberately omits empty strings. Replace only our known blank placeholders
-// with explicit inline strings in the generated package; never introduce a formula.
-fn preserve_empty_strings(bytes: Vec<u8>, empty: &BTreeSet<String>) -> TableResult<Vec<u8>> {
-    let mut archive =
-        zip::ZipArchive::new(Cursor::new(bytes)).map_err(|e| invalid(e.to_string()))?;
-    let mut output = zip::ZipWriter::new(Cursor::new(Vec::new()));
-    let mut replaced = 0;
-    for i in 0..archive.len() {
-        let mut file = archive.by_index(i).map_err(|e| invalid(e.to_string()))?;
-        if file.name() != "xl/worksheets/sheet1.xml" {
-            output
-                .raw_copy_file(file)
-                .map_err(|e| invalid(e.to_string()))?;
-            continue;
-        }
-        let mut xml = String::new();
-        file.read_to_string(&mut xml)
-            .map_err(|e| invalid(e.to_string()))?;
-        let mut reader = XmlReader::from_str(&xml);
-        let mut writer = quick_xml::Writer::new(Vec::new());
-        loop {
-            let event = reader.read_event().map_err(|e| invalid(e.to_string()))?;
-            if let Event::Empty(ref e) = event {
-                if e.local_name().as_ref() == b"c" {
-                    let address = e
-                        .attributes()
-                        .filter_map(Result::ok)
-                        .find(|a| a.key.as_ref() == b"r")
-                        .map(|a| String::from_utf8_lossy(a.value.as_ref()).to_string());
-                    if let Some(address) = address.filter(|a| empty.contains(a)) {
-                        write!(
-                            writer.get_mut(),
-                            "<c r=\"{address}\" t=\"inlineStr\"><is><t></t></is></c>"
-                        )
-                        .map_err(|e| invalid(e.to_string()))?;
-                        replaced += 1;
-                        continue;
-                    }
+fn cell_text(cell: &XlsxCell) -> String {
+    match (&cell.value, cell.kind.as_str()) {
+        (CellValue::Text(text), "text" | "date") => text.clone(),
+        (CellValue::Number(value), "number") => number_text(*value),
+        (CellValue::Checkbox(value), "checkbox") => if *value { "TRUE" } else { "FALSE" }.into(),
+        // Binary noise in a stored float (Excel writes 0.1+0.2 as 0.30000000000000004) is
+        // shown as Excel shows it. Integer spellings (long IDs, leading zeros) stay verbatim.
+        (_, "error")
+            if cell
+                .issues
+                .iter()
+                .any(|issue| issue.code == "NUMBER_PRECISION_OR_LEADING_ZERO") =>
+        {
+            let raw = cell.raw_text.as_deref().unwrap_or_default().trim();
+            match raw.parse::<f64>() {
+                Ok(value) if value.is_finite() && raw.contains(['.', 'e', 'E']) => {
+                    number_text(value)
                 }
+                _ => raw.to_string(),
             }
-            if matches!(event, Event::Eof) {
-                break;
-            }
-            writer
-                .write_event(event)
-                .map_err(|e| invalid(e.to_string()))?;
         }
-        output
-            .start_file(
-                "xl/worksheets/sheet1.xml",
-                zip::write::SimpleFileOptions::default()
-                    .compression_method(zip::CompressionMethod::Deflated),
-            )
-            .map_err(|e| invalid(e.to_string()))?;
-        output
-            .write_all(&writer.into_inner())
-            .map_err(|e| invalid(e.to_string()))?;
+        // Excel errors, timestamps and formatted numbers keep their source spelling.
+        (_, "error") => cell.raw_text.clone().unwrap_or_default(),
+        _ => String::new(),
     }
-    if replaced != empty.len() {
-        return Err(invalid("XLSX 空文本占位未完整写出，已中止导出"));
+}
+
+/// Excel keeps 15 significant digits; drop binary noise such as 0.30000000000000004.
+fn number_text(value: f64) -> String {
+    if value == 0.0 {
+        return "0".into();
     }
-    Ok(output
-        .finish()
-        .map_err(|e| invalid(e.to_string()))?
-        .into_inner())
+    let rounded = format!("{value:.14e}").parse::<f64>().unwrap_or(value);
+    format!("{rounded}")
+}
+
+fn import_warnings(issues: &[XlsxIssue]) -> Vec<String> {
+    let positions = |codes: &[&str]| {
+        issues
+            .iter()
+            .filter(|issue| codes.contains(&issue.code.as_str()))
+            .map(|issue| (issue.row, issue.column))
+            .collect::<BTreeSet<_>>()
+    };
+    let cells = |codes: &[&str]| positions(codes).len();
+    let mut warnings = Vec::new();
+    let mut counted = |count: usize, text: &str| {
+        if count > 0 {
+            warnings.push(format!("{count} 个{text}"));
+        }
+    };
+    let missing = positions(&["FORMULA_CACHE_MISSING"]);
+    counted(
+        positions(&["FORMULA_CACHED_VALUE"])
+            .difference(&missing)
+            .count(),
+        "公式单元格只导入计算结果",
+    );
+    counted(missing.len(), "公式单元格没有缓存结果，已导入为空");
+    counted(
+        cells(&["NUMBER_FORMAT_NOT_PRESERVED", "FORMATTED_LEADING_ZERO"]),
+        "数字单元格按原始数值导入，不保留显示格式",
+    );
+    counted(cells(&["CELL_ERROR"]), "错误值单元格按原文导入");
+    counted(
+        cells(&[
+            "DATE_TIME_OR_DURATION",
+            "INVALID_EXCEL_DATE",
+            "INVALID_DATE_ONLY",
+            "DURATION_UNSUPPORTED",
+        ]),
+        "日期时间单元格按文本导入",
+    );
+    if cells(&["MERGED_CELLS"]) > 0 {
+        warnings.push("合并单元格只保留左上角的值".into());
+    }
+    if cells(&["MACROS_IGNORED"]) > 0 {
+        warnings.push("工作簿中的宏不会导入".into());
+    }
+    warnings
 }
 
 #[cfg(test)]
@@ -1336,8 +1188,10 @@ mod tests {
                 bytes[offset + 24..offset + 28].copy_from_slice(&1u32.to_le_bytes());
             }
         }
-        let mut l = XlsxLimits::default();
-        l.max_uncompressed_bytes = 5000;
+        let l = XlsxLimits {
+            max_uncompressed_bytes: 5000,
+            ..XlsxLimits::default()
+        };
         assert!(inspect_xlsx(&bytes, &l).is_err());
     }
     #[test]
@@ -1423,7 +1277,7 @@ mod tests {
                 "LIMIT_EXCEEDED"
             );
         }
-        let text = "a".repeat(l.table.max_text_chars + 1);
+        let text = "a".repeat(l.max_text_chars + 1);
         let cell=format!("<sheetData><row r=\"1\"><c r=\"A1\" t=\"inlineStr\"><is><t>{text}</t></is></c></row></sheetData>");
         assert_eq!(
             inspect_xlsx(&fixture(&cell, false, &[]), &l)
@@ -1440,8 +1294,10 @@ mod tests {
         )
         .is_err());
         let bytes = fixture("<sheetData/>", false, &[]);
-        let mut l = XlsxLimits::default();
-        l.max_import_bytes = 16;
+        let mut l = XlsxLimits {
+            max_import_bytes: 16,
+            ..XlsxLimits::default()
+        };
         assert_eq!(inspect_xlsx(&bytes, &l).unwrap_err().code, "LIMIT_EXCEEDED");
         l.max_import_bytes = 64 * 1024 * 1024;
         l.max_uncompressed_bytes = 100;
@@ -1452,55 +1308,6 @@ mod tests {
         assert!(inspect_xlsx(b"not a zip", &l).is_err());
     }
     #[test]
-    fn export_roundtrip_never_interprets_user_text_as_formula() {
-        let columns = vec![
-            XlsxExportColumn {
-                name: "文本".into(),
-                kind: FieldType::Text,
-            },
-            XlsxExportColumn {
-                name: "数字".into(),
-                kind: FieldType::Number,
-            },
-            XlsxExportColumn {
-                name: "日期".into(),
-                kind: FieldType::Date,
-            },
-            XlsxExportColumn {
-                name: "勾选".into(),
-                kind: FieldType::Checkbox,
-            },
-        ];
-        let rows = ["=SUM(A1:A2)", "+1+1", "-1+1", "@SUM(A1:A2)", "", "00123"]
-            .iter()
-            .map(|text| {
-                vec![
-                    CellValue::Text((*text).into()),
-                    CellValue::Number(0.0),
-                    CellValue::Text("2024-02-29".into()),
-                    CellValue::Checkbox(false),
-                ]
-            })
-            .collect::<Vec<_>>();
-        let bytes = export_xlsx(&columns, &rows, &XlsxLimits::default()).unwrap();
-        let p = preview_xlsx(&bytes, 0, 100, &XlsxLimits::default()).unwrap();
-        assert_eq!(p.total_rows, rows.len() + 1);
-        for (i, row) in rows.iter().enumerate() {
-            for (j, value) in row.iter().enumerate() {
-                assert_eq!(&p.rows[i + 1][j].value, value, "at {i},{j}");
-            }
-        }
-        assert!(!p.issues.iter().any(|i| i.code == "FORMULA_CACHED_VALUE"));
-        let mut archive = zip::ZipArchive::new(Cursor::new(&bytes)).unwrap();
-        let mut xml = String::new();
-        archive
-            .by_name("xl/worksheets/sheet1.xml")
-            .unwrap()
-            .read_to_string(&mut xml)
-            .unwrap();
-        assert!(!xml.contains("<f>"));
-    }
-    #[test]
     fn preview_is_bounded_and_checks_all_cells_not_only_visible_rows() {
         let bytes = fixture(
             r#"<sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>标题</t></is></c></row><row r="3"><c r="B3" t="e"><v>#N/A</v></c></row></sheetData>"#,
@@ -1509,12 +1316,99 @@ mod tests {
         );
         let p = preview_xlsx(&bytes, 0, 1, &XlsxLimits::default()).unwrap();
         assert_eq!(p.rows.len(), 1);
-        assert_eq!(p.total_rows, 3);
         assert!(p.truncated);
         assert!(p
             .issues
             .iter()
             .any(|i| i.code == "CELL_ERROR" && i.row == Some(2)));
         assert!(preview_xlsx(&bytes, 1, 1, &XlsxLimits::default()).is_err());
+    }
+    #[test]
+    fn records_keep_source_spelling_as_strings() {
+        let bytes = fixture(
+            r#"<sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>编号</t></is></c><c r="B1" t="inlineStr"><is><t>数值</t></is></c><c r="C1" t="inlineStr"><is><t>勾选</t></is></c><c r="D1" t="inlineStr"><is><t>日期</t></is></c><c r="E1" t="inlineStr"><is><t>时间</t></is></c><c r="F1" t="inlineStr"><is><t>错误</t></is></c><c r="G1" t="inlineStr"><is><t>大数</t></is></c></row><row r="2"><c r="A2" t="inlineStr"><is><t>00123</t></is></c><c r="B2"><v>0.30000000000000004</v></c><c r="C2" t="b"><v>1</v></c><c r="D2" s="1"><v>45292</v></c><c r="E2" s="1"><v>45292.5</v></c><c r="F2" t="e"><v>#N/A</v></c><c r="G2"><v>9007199254740993</v></c></row><row r="3"><c r="B3"><v>1.2E-3</v></c><c r="C3" t="b"><v>0</v></c><c r="E3"><v>0</v></c></row></sheetData>"#,
+            false,
+            &[],
+        );
+        let records = read_xlsx_records(&bytes, &XlsxLimits::default()).unwrap();
+        assert_eq!(records.sheet_name, "数据");
+        assert_eq!(records.sheet_count, 1);
+        assert_eq!(
+            records.records,
+            vec![
+                vec!["编号", "数值", "勾选", "日期", "时间", "错误", "大数"],
+                vec![
+                    "00123",
+                    "0.3",
+                    "TRUE",
+                    "2024-01-01",
+                    "2024-01-01 12:00:00",
+                    "#N/A",
+                    "9007199254740993",
+                ],
+                vec!["", "0.0012", "FALSE", "", "0", "", ""],
+            ]
+        );
+        assert_eq!(
+            records.warnings,
+            vec!["1 个错误值单元格按原文导入", "1 个日期时间单元格按文本导入"]
+        );
+    }
+    #[test]
+    fn records_trim_trailing_blank_rows_and_columns_only() {
+        let bytes = fixture(
+            r#"<sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>名称</t></is></c><c r="B1" t="inlineStr"><is><t>备注</t></is></c><c r="D1" t="inlineStr"><is><t></t></is></c></row><row r="3"><c r="A3" t="inlineStr"><is><t>第三行</t></is></c></row><row r="5"><c r="C5" t="inlineStr"><is><t></t></is></c></row></sheetData>"#,
+            false,
+            &[],
+        );
+        let records = read_xlsx_records(&bytes, &XlsxLimits::default()).unwrap();
+        assert_eq!(
+            records.records,
+            vec![vec!["名称", "备注"], vec!["", ""], vec!["第三行", ""]]
+        );
+        assert!(records.warnings.is_empty());
+        let empty = read_xlsx_records(&fixture("<sheetData/>", false, &[]), &XlsxLimits::default())
+            .unwrap();
+        assert!(empty.records.is_empty());
+    }
+    #[test]
+    fn records_report_lossy_formulas_formats_and_merges() {
+        let bytes = fixture(
+            r#"<sheetData><row r="1"><c r="A1"><f>1+1</f><v>2</v></c><c r="B1"><f>1+2</f></c><c r="C1" s="2"><v>123</v></c></row></sheetData><mergeCells count="1"><mergeCell ref="A2:B2"/></mergeCells>"#,
+            false,
+            &[],
+        );
+        let records = read_xlsx_records(&bytes, &XlsxLimits::default()).unwrap();
+        assert_eq!(records.records, vec![vec!["2", "", "123"]]);
+        assert_eq!(
+            records.warnings,
+            vec![
+                "1 个公式单元格只导入计算结果",
+                "1 个公式单元格没有缓存结果，已导入为空",
+                "1 个数字单元格按原始数值导入，不保留显示格式",
+                "合并单元格只保留左上角的值",
+            ]
+        );
+    }
+    #[test]
+    fn records_reject_sheets_over_the_row_limit_instead_of_truncating() {
+        let bytes = fixture(
+            r#"<sheetData><row r="1"><c r="A1"><v>1</v></c></row><row r="2"><c r="A2"><v>2</v></c></row><row r="3"><c r="A3"><v>3</v></c></row></sheetData>"#,
+            false,
+            &[],
+        );
+        let limits = XlsxLimits {
+            max_rows: 1,
+            ..XlsxLimits::default()
+        };
+        let error = read_xlsx_records(&bytes, &limits).unwrap_err();
+        assert_eq!(error.code, "LIMIT_EXCEEDED");
+        assert_eq!(
+            read_xlsx_records(&bytes, &XlsxLimits::default())
+                .unwrap()
+                .records
+                .len(),
+            3
+        );
     }
 }

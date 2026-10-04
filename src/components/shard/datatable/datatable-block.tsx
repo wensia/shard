@@ -256,7 +256,7 @@ function DatatableSurface({ spec, readOnly, onChange, allowDatasetActions }: Dat
     setIsExporting(true)
     try {
       const { save } = await import("@tauri-apps/plugin-dialog")
-      const { writeTableExchangeFile } = await import("@/features/tables/xlsx-api")
+      const { writeExportFile } = await import("@/lib/export-file")
       const name = (spec.title || DEFAULT_TITLE).replace(/[\\/:*?"<>|]/gu, "_")
       const chosen = await save({
         defaultPath: `${name}.csv`,
@@ -265,7 +265,7 @@ function DatatableSurface({ spec, readOnly, onChange, allowDatasetActions }: Dat
       })
       if (!chosen) return
       const text = datatableToCsv(columns, groups ? groups.flatMap((item) => item.entries) : entries)
-      await writeTableExchangeFile(chosen, new TextEncoder().encode(text))
+      await writeExportFile(chosen, new TextEncoder().encode(text))
       notify.success("数据表已导出为 CSV")
     } catch (error) {
       notify.failure("数据表导出失败", error, {

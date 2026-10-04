@@ -1,0 +1,2 @@
+/* Glide 文字单元格的原生 textarea 编辑器：输入法组字期间按键不交给网格导航。 */
+.dataset-cell-editor { display: block; width: 100%; min-width: 0; resize: none; border: 0; outline: none; background: var(--card); color: var(--foreground); font: inherit; line-height: var(--leading-normal); }

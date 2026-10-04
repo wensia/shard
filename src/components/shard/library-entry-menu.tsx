@@ -37,7 +37,7 @@ export interface LibraryEntryMenuProps extends MenuControl {
   onConvertToFragment: (entry: LibraryTreeEntry) => void
   onCopyDocumentLink?: (entry: LibraryTreeEntry) => void
   onDelete: (entry: LibraryTreeEntry) => void
-  onImportTable?: (entry: LibraryTreeEntry) => void
+  onImportDataset?: (entry: LibraryTreeEntry) => void
   onImportGraphToTimeline?: (entry: LibraryTreeEntry) => void
   onMove: (entry: LibraryTreeEntry, destinationDirectory: string) => void
   onMoveToLockbox: (entry: LibraryTreeEntry) => void
@@ -70,8 +70,8 @@ function LibraryEntryMenuItems({ entry, destinations, batch, run, ...actions }: 
       {actions.onOpenEntry ? <DropdownMenuItem onClick={() => run(() => actions.onOpenEntry?.(entry))}>
         {entry.kind === "directory" ? <FolderIcon /> : <FileTextIcon />}打开
       </DropdownMenuItem> : null}
-      {actions.onImportTable && /\.(?:csv|xlsx)$/iu.test(entry.name) ? (
-        <DropdownMenuItem onClick={() => run(() => actions.onImportTable?.(entry))}>导入为多维表格</DropdownMenuItem>
+      {actions.onImportDataset && /\.(?:csv|xlsx)$/iu.test(entry.name) ? (
+        <DropdownMenuItem onClick={() => run(() => actions.onImportDataset?.(entry))}>导入为数据集</DropdownMenuItem>
       ) : null}
       {actions.onCopyDocumentLink && (entry.kind === "mindmap" || entry.kind === "flowchart") ? (
         <DropdownMenuItem onClick={() => actions.onCopyDocumentLink?.(entry)}>复制文档链接</DropdownMenuItem>

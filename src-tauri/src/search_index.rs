@@ -21,7 +21,7 @@ use sha2::{Digest, Sha256};
 use shard_core::search::SearchProjectionBlock;
 
 const SCHEMA_VERSION: i64 = 2;
-const INDEX_FORMAT: &str = "search-projection-assets-v3";
+const INDEX_FORMAT: &str = "search-projection-assets-v4";
 const BATCH_SIZE: usize = 1_000;
 
 #[derive(Default)]
@@ -504,7 +504,7 @@ fn safe_public_path<'a>(path: &'a str, kind: &str) -> Option<&'a Path> {
                 || matches!(names.as_slice(), [trash, root, ..] if trash == ".trash" && (root == "fragments" || root == "notes"))
         }
         "mindMap" => matches!(names.as_slice(), [root, ..] if root == "notes" || root == "maps"),
-        "canvas" | "table" => matches!(names.as_slice(), [root, ..] if root == "notes"),
+        "canvas" => matches!(names.as_slice(), [root, ..] if root == "notes"),
         "csv" => !names.is_empty(),
         _ => false,
     };
@@ -521,7 +521,6 @@ fn safe_public_path<'a>(path: &'a str, kind: &str) -> Option<&'a Path> {
         "markdown" => lower.ends_with(".md"),
         "mindMap" => lower.ends_with(".shardmap.json"),
         "canvas" => lower.ends_with(".shardcanvas.json") || lower.ends_with(".shardflow.json"),
-        "table" => lower.ends_with(".shardtable.json"),
         "csv" => lower.ends_with(".csv"),
         _ => false,
     };

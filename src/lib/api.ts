@@ -3,6 +3,7 @@ import { invoke, isTauri } from "@tauri-apps/api/core"
 import { deriveKind } from "@/lib/content-kind"
 import type { PropertyRequestValue, PropertyType } from "@/lib/properties"
 import type { CanvasFile } from "@/features/canvas/model"
+import type { DatasetSnapshot } from "@/features/datasets/types"
 import type {
   CheckpointResult,
   CliInstallStatus,
@@ -180,6 +181,23 @@ function invokeLibraryMutation(command: string, args?: Record<string, unknown>) 
 
 export function createLibraryNote(parentPath: string, title: string) {
   return invokeLibraryMutation("create_library_note", { parentPath, title })
+}
+
+/** 在 datasets/ 建 CSV，并在资料库目录里建一篇引用它的说明文档（同一把写锁内完成）。 */
+export function createLibraryDataset(
+  parentPath: string,
+  title: string,
+  header: string[],
+  rows: string[][],
+  primaryKey?: string
+): Promise<{ dataset: DatasetSnapshot; library: LibraryMutationResult }> {
+  return desktopInvoke<{ dataset: DatasetSnapshot; library: StoredLibraryMutationResult }>(
+    "create_library_dataset",
+    { parentPath, title, header, rows, primaryKey: primaryKey ?? null }
+  ).then(({ dataset, library }) => ({
+    dataset,
+    library: { ...library, fragment: library.fragment ? hydrateFragment(library.fragment) : undefined },
+  }))
 }
 
 export function createLibraryDirectory(parentPath: string, name: string) {

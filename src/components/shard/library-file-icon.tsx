@@ -6,7 +6,6 @@ import {
   GitBranchIcon,
   ImageIcon,
   PanelsTopLeftIcon,
-  TableIcon,
   WorkflowIcon,
   type ShardIcon,
 } from "@/components/icons"
@@ -20,7 +19,6 @@ const FILE_ICONS = {
   mindmap: GitBranchIcon,
   flowchart: WorkflowIcon,
   canvas: PanelsTopLeftIcon,
-  table: TableIcon,
   image: ImageIcon,
   file: FileIcon,
 } satisfies Record<LibraryTreeEntryKind, ShardIcon>

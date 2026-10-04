@@ -30,7 +30,6 @@ const typeLabels: Record<LibraryTreeEntryKind, string> = {
   mindmap: "思维导图",
   flowchart: "流程图",
   canvas: "旧混合画布",
-  table: "多维表格",
   image: "图片",
   file: "文件",
 }
@@ -41,7 +40,6 @@ const suffixes: Partial<Record<LibraryTreeEntryKind, RegExp>> = {
   mindmap: /\.shardmap\.json$/i,
   flowchart: /\.shardflow\.json$/i,
   canvas: /\.shardcanvas\.json$/i,
-  table: /\.shardtable\.json$/i,
   image: /\.(gif|jpe?g|png|svg|webp)$/i,
   file: /\.[^.]+$/,
 }

@@ -32,7 +32,7 @@ interface AssetGridProps {
 
 export interface LibraryGridItem {
   content?: string
-  kind: "csv" | "directory" | "file" | "image" | "markdown" | "mindmap" | "table" | "canvas" | "flowchart"
+  kind: "csv" | "directory" | "file" | "image" | "markdown" | "mindmap" | "canvas" | "flowchart"
   mindMapId?: string
   modifiedAt: string
   name: string

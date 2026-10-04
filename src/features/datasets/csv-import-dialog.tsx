@@ -5,57 +5,81 @@ import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { parseCsvBytesInWorker } from "@/lib/csv-worker"
-import type { CsvDocument } from "@/lib/csv"
+import { inspectCsvImport, type CsvImportInspection } from "@/lib/csv"
 import { getApiErrorMessage } from "@/lib/api"
-import { createDataset } from "./api"
+import { createDataset, type XlsxRecords } from "./api"
 import { newRowId } from "./ops"
 
-type ImportFile = { name: string; bytes: Uint8Array }
+/** CSV 交原始字节（编码在 worker 里识别）；Excel 由 Rust 读成字符串矩阵后传入。 */
+export type DatasetImportFile =
+  | { name: string; bytes: Uint8Array }
+  | { name: string; workbook: XlsxRecords }
 
-export function CsvImportDialog({ file, allowed, onClose, onImported }: {
-  file: ImportFile | null
+/** 自定义落盘方式（如资料库同时生成说明文档）；返回数据集路径。 */
+export type DatasetImportCreate = (title: string, header: string[], rows: string[][], primaryKey?: string) => Promise<string>
+
+type ParsedImport = { records: string[][]; inspection: CsvImportInspection; source: string; warnings: string[] }
+
+export function CsvImportDialog({ file, allowed, onClose, onImported, onCreate }: {
+  file: DatasetImportFile | null
   allowed: boolean
   onClose: () => void
   onImported: (path: string) => void
+  onCreate?: DatasetImportCreate
 }) {
-  const [document, setDocument] = useState<CsvDocument | null>(null)
+  const [parsed, setParsed] = useState<ParsedImport | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [addId, setAddId] = useState(true)
   const [creating, setCreating] = useState(false)
+  const excel = file !== null && "workbook" in file
 
   useEffect(() => {
     if (!file) return
     let active = true
-    setDocument(null)
+    setParsed(null)
     setError(null)
     setAddId(true)
+    if ("workbook" in file) {
+      const { records, sheetName, sheetCount, warnings } = file.workbook
+      setParsed({
+        records,
+        inspection: inspectCsvImport(records),
+        source: sheetCount > 1 ? `工作表：${sheetName}（共 ${sheetCount} 个，只导入第一个）` : `工作表：${sheetName}`,
+        warnings,
+      })
+      return
+    }
     if (file.bytes.length > 128 * 1024 * 1024) {
       setError("LIMIT_EXCEEDED:CSV 文件超过导入上限")
       return
     }
-    void parseCsvBytesInWorker(file.bytes, true).then((parsed) => {
-      if (active) setDocument(parsed)
+    void parseCsvBytesInWorker(file.bytes, true).then((document) => {
+      if (active) setParsed({ records: document.records, inspection: document.importInspection!, source: `编码：${document.encoding.toUpperCase()}`, warnings: [] })
     }).catch((cause) => { if (active) setError(getApiErrorMessage(cause)) })
     return () => { active = false }
   }, [file])
 
-  const header = document?.records[0] ?? []
-  const rows = document?.records.slice(1) ?? []
+  const header = parsed?.records[0] ?? []
+  const rows = parsed?.records.slice(1) ?? []
   const hasId = header.includes("id")
-  const inspection = document?.importInspection
+  const inspection = parsed?.inspection
   const validId = inspection?.idValid ?? true
-  const reason = !allowed ? "私密碎片不支持数据集" : error ?? (inspection ? inspection.headerInvalid ? "表头名称不能为空且不能重复" : inspection.ragged ? "CSV 每行列数必须与表头一致" : addId && !hasId ? inspection.withIdLimit : inspection.baseLimit : null)
+  const kindLabel = excel ? "Excel" : "CSV"
+  const reason = !allowed ? "私密碎片不支持数据集" : error ?? (inspection ? inspection.headerInvalid ? "表头名称不能为空且不能重复" : inspection.ragged ? `${kindLabel} 每行列数必须与表头一致` : addId && !hasId ? inspection.withIdLimit : inspection.baseLimit : null)
   const selectedKey = addId && (!hasId || validId)
 
   async function submit() {
-    if (!file || !document || reason || creating) return
+    if (!file || !parsed || reason || creating) return
     setCreating(true)
     try {
-      const title = file.name.replace(/\.csv$/iu, "") || "数据集"
+      const title = file.name.replace(/\.(?:csv|xlsx)$/iu, "") || "数据集"
       const outputHeader = selectedKey && !hasId ? ["id", ...header] : header
       const outputRows = selectedKey && !hasId ? rows.map((row) => [newRowId(), ...row]) : rows
-      const snapshot = await createDataset(title, outputHeader, outputRows, selectedKey ? "id" : undefined)
-      onImported(snapshot.path)
+      const primaryKey = selectedKey ? "id" : undefined
+      const path = onCreate
+        ? await onCreate(title, outputHeader, outputRows, primaryKey)
+        : (await createDataset(title, outputHeader, outputRows, primaryKey)).path
+      onImported(path)
       onClose()
     } catch (cause) {
       notify.failure("导入失败", cause)
@@ -65,18 +89,21 @@ export function CsvImportDialog({ file, allowed, onClose, onImported }: {
   }
 
   return <Dialog open={file !== null} onOpenChange={(open) => { if (!open && !creating) onClose() }}>
-    <DialogContent className="sm:max-w-2xl" aria-busy={creating || Boolean(file && !document && !error)}>
-      <DialogHeader><DialogTitle>导入 CSV 为数据集</DialogTitle></DialogHeader>
+    <DialogContent className="sm:max-w-2xl" aria-busy={creating || Boolean(file && !parsed && !error)}>
+      <DialogHeader><DialogTitle>导入 {kindLabel} 为数据集</DialogTitle></DialogHeader>
       <div className="min-h-0 space-y-3 overflow-y-auto pr-2 text-[length:var(--text-body)]">
-        <p className="text-muted-foreground">{file?.name} · 编码：{document?.encoding.toUpperCase() ?? "识别中…"} · {document ? `${rows.length} 行 · ${header.length} 列` : ""}</p>
+        <p className="text-muted-foreground">{file?.name} · {parsed?.source ?? "识别中…"} · {parsed ? `${rows.length} 行 · ${header.length} 列` : ""}</p>
         {reason ? <p role="alert" className="text-destructive">{reason}</p> : null}
-        {document ? <div className="max-h-72 overflow-auto rounded-[var(--shard-surface-radius)] border border-border">
+        {parsed?.warnings.length ? <ul className="list-disc space-y-1 pl-5 text-muted-foreground">
+          {parsed.warnings.map((warning) => <li key={warning}>{warning}</li>)}
+        </ul> : null}
+        {parsed ? <div className="max-h-72 overflow-auto rounded-[var(--shard-surface-radius)] border border-border">
           <table className="w-full border-collapse text-left">
             <thead><tr>{header.map((name, index) => <th className="sticky top-0 bg-muted px-2 py-1 text-[length:var(--text-meta)]" key={index}>{name}</th>)}</tr></thead>
             <tbody>{rows.slice(0, 20).map((row, index) => <tr key={index}>{row.map((value, column) => <td className="border-t border-border px-2 py-1" key={column}>{value}</td>)}</tr>)}</tbody>
           </table>
         </div> : null}
-        {document ? <label className="flex items-center gap-2">
+        {parsed ? <label className="flex items-center gap-2">
           <Checkbox checked={selectedKey} disabled={creating || (hasId && !validId)} onCheckedChange={(checked) => setAddId(checked === true)} />
           {hasId ? "用 id 列作为主键" : "添加稳定 ID 列（推荐）"}
         </label> : null}
@@ -84,7 +111,7 @@ export function CsvImportDialog({ file, allowed, onClose, onImported }: {
       </div>
       <DialogFooter>
         <Button variant="outline" disabled={creating} onClick={onClose}>取消</Button>
-        <Button disabled={!document || Boolean(reason) || creating} onClick={() => void submit()}>{creating ? "导入中…" : "导入"}</Button>
+        <Button disabled={!parsed || Boolean(reason) || creating} onClick={() => void submit()}>{creating ? "导入中…" : "导入"}</Button>
       </DialogFooter>
     </DialogContent>
   </Dialog>

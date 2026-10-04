@@ -1,7 +1,5 @@
 import { readCanvas } from "@/features/canvas/api"
 import type { CanvasReadResult } from "@/features/canvas/model"
-import { readTable } from "@/features/tables/api"
-import type { TableReadResult } from "@/features/tables/model"
 import { readGraphFragment, readMindMap, type GraphFragmentResult } from "@/lib/api"
 import { openDatasetEditor } from "@/features/datasets/open-dataset"
 import { readSearchTarget } from "@/lib/search-api"
@@ -43,12 +41,6 @@ export interface SearchTargetRouterAdapters {
   openGraphFragment(
     target: SearchTarget,
     result: GraphFragmentResult,
-    requestId: string,
-    signal: AbortSignal
-  ): Promise<{ reveal: SearchRevealHandle | null }>
-  openTable(
-    target: SearchTarget,
-    result: TableReadResult,
     requestId: string,
     signal: AbortSignal
   ): Promise<{ reveal: SearchRevealHandle | null }>
@@ -131,21 +123,6 @@ export function createSearchTargetRouter({
           signal
         )
         return ready(String(result.file.revision), opened.reveal)
-      }
-
-      if (target.kind === "table") {
-        const result = await readTable({
-          path: target.path,
-          ...(target.objectId ? { expectedTableId: target.objectId } : {}),
-        })
-        throwIfAborted(signal)
-        const opened = await adapters.openTable(
-          target,
-          result,
-          requestId,
-          signal
-        )
-        return ready(String(result.revision), opened.reveal)
       }
 
       if (target.kind === "csv") {

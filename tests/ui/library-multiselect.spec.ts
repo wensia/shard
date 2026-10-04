@@ -19,7 +19,7 @@ type MockWindow = Window & { __librarySelection: SelectionMock }
 const FILES = [
   "A 笔记.md",
   "B 清单.csv",
-  "C 表格.shardtable.json",
+  "C 流程.shardflow.json",
   "D 画布.shardcanvas.json",
   "E 导图.shardmap.json",
   "F 这是一份用于核对宫格文件卡片单行省略和完整名称提示的超长附件名称.pdf",
@@ -43,7 +43,7 @@ async function installSelectionMock(page: Page, extraFileCount = 0) {
       ] },
       entry("A 笔记.md", "markdown"),
       entry("B 清单.csv", "csv"),
-      entry("C 表格.shardtable.json", "table"),
+      entry("C 流程.shardflow.json", "flowchart"),
       entry("D 画布.shardcanvas.json", "canvas"),
       entry("E 导图.shardmap.json", "mindmap"),
       entry(longName, "file"),
@@ -831,13 +831,13 @@ for (const mode of ["列表", "宫格"] as const) {
     await expect(context).toHaveCount(0)
     const rename = page.getByRole("textbox", { name: "重命名名称", exact: true })
     await expect(rename).toBeFocused()
-    await expect(rename).toHaveValue("C 表格")
-    await rename.fill("右键改名表格")
+    await expect(rename).toHaveValue("C 流程")
+    await rename.fill("右键改名流程")
     await rename.press("Enter")
     await expect(rename).toHaveCount(0)
-    await expect(entryButton(page, "右键改名表格.shardtable.json")).toBeVisible()
+    await expect(entryButton(page, "右键改名流程.shardflow.json")).toBeVisible()
     expect(await commandCalls(page, "rename_library_entry")).toEqual([{
-      command: "rename_library_entry", args: { path: `notes/${FILES[2]}`, newName: "右键改名表格" },
+      command: "rename_library_entry", args: { path: `notes/${FILES[2]}`, newName: "右键改名流程" },
     }])
     await entryButton(page, FILES[0]).click({ button: "right" })
     await context.getByRole("menuitem", { name: "打开", exact: true }).click()
@@ -921,12 +921,12 @@ for (const mode of ["列表", "宫格"] as const) {
 
     // 64 Unicode code points but 65 UTF-16 code units: no maxlength truncation.
     const validBase = "名".repeat(63) + "😀"
-    const validInput = validBase + (mode === "宫格" ? ".shardtable.json" : "")
+    const validInput = validBase + (mode === "宫格" ? ".shardflow.json" : "")
     await input.fill(validInput)
     await expect(input).toHaveValue(validInput)
     await input.press("Enter")
     await expect(input).toHaveCount(0)
-    await expect(entryButton(page, `${validBase}.shardtable.json`)).toBeVisible()
+    await expect(entryButton(page, `${validBase}.shardflow.json`)).toBeVisible()
     expect(await commandCalls(page, "rename_library_entry")).toEqual([{
       command: "rename_library_entry", args: { path: `notes/${FILES[2]}`, newName: validInput },
     }])

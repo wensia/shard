@@ -33,3 +33,19 @@ export function createDataset(
 export function isStaleBaseError(error: unknown): boolean {
   return getApiErrorMessage(error).startsWith("STALE_BASE:")
 }
+
+/** Excel 第一个工作表读成的字符串矩阵（第一行是表头）；只用于导入为数据集。 */
+export type XlsxRecords = {
+  sheetName: string
+  sheetCount: number
+  records: string[][]
+  warnings: string[]
+}
+
+export function readImportXlsxFile(path: string): Promise<XlsxRecords> {
+  return desktopInvoke("read_import_xlsx_file", { path })
+}
+
+export async function readImportCsvFile(path: string): Promise<Uint8Array> {
+  return new Uint8Array(await desktopInvoke<number[]>("read_import_csv_file", { path }))
+}

@@ -6,8 +6,8 @@ import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
-import { readKilnGridTheme } from "@/features/tables/kiln-grid-theme"
-import { provideTableTextEditor } from "@/features/tables/text-cell-editor"
+import { readKilnGridTheme } from "./kiln-grid-theme"
+import { provideTextCellEditor } from "./text-cell-editor"
 import { getApiErrorMessage } from "@/lib/api"
 import { notify } from "@/lib/notify"
 import { applyDatasetOps as saveDatasetOps, isStaleBaseError, readDataset } from "./api"
@@ -289,7 +289,7 @@ export const DatasetEditor = forwardRef<DatasetEditorHandle, DatasetEditorProps>
       {loading && !table ? <div className="p-[var(--space-4)]" role="status">正在读取数据集…</div> : !table ? <div className="p-[var(--space-4)]">无法打开数据集</div> : metrics && <DataEditor ref={grid} width="100%" height="100%" columns={columns} rows={table.rows.length} getCellContent={getCellContent} getCellsForSelection={true}
         theme={metrics.theme} rowHeight={metrics.rowHeight} headerHeight={metrics.headerHeight} headerIcons={{ lock: ({ bgColor }) => `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="${bgColor}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>` }}
         rowMarkers={{ kind: "both", width: metrics.headerHeight }} rowSelect="multi" rowSelectionMode="multi" columnSelect="none" rangeSelect="rect" cellActivationBehavior="double-click"
-        gridSelection={selection} onGridSelectionChange={setSelection} provideEditor={provideTableTextEditor}
+        gridSelection={selection} onGridSelectionChange={setSelection} provideEditor={provideTextCellEditor}
         trailingRowOptions={blocked ? undefined : { hint: "新增行", sticky: false }} onRowAppended={async () => { if (!blocked) appendRow(); return undefined }}
         onCellsEdited={edits => { if (blocked) return true; const cells = edits.flatMap(({ location: [column, row], value }) => value.kind === GridCellKind.Text && column !== keyColumn && tableRef.current?.rows[row]?.[column] !== value.data ? [{ row, column, value: value.data }] : []); if (cells.length) commit([{ op: "setCells", cells }]); return true }}
         onPaste={paste} onDelete={clear} onHeaderMenuClick={(column, bounds: Rectangle) => { if (!blocked) setMenu({ column, anchor: { getBoundingClientRect: () => DOMRect.fromRect(bounds) } }) }}

@@ -60,15 +60,16 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSepara
 import type { CanvasWorkspaceHandle } from "@/features/canvas/canvas-workspace"
 import { createCanvas } from "@/features/canvas/api"
 import { createCanvasFile, type CanvasFile, type CanvasReadResult } from "@/features/canvas/model"
-import { TableWorkspace, type TableWorkspaceHandle } from "@/features/tables/table-workspace"
-import { TableImportDialog } from "@/features/tables/exchange-dialog"
-import { createTable, type CreateTableRequest } from "@/features/tables/api"
-import { createTableId, type TableContent, type TableReadResult } from "@/features/tables/model"
+import { open as openFileDialog } from "@tauri-apps/plugin-dialog"
+import { CsvImportDialog, type DatasetImportFile } from "@/features/datasets/csv-import-dialog"
+import { readImportCsvFile, readImportXlsxFile } from "@/features/datasets/api"
+import type { DatasetSnapshot } from "@/features/datasets/types"
 import {
   ShardRichEditor,
   type ShardRichEditorHandle,
 } from "@/editor-rich/ShardRichEditor"
 import {
+  createLibraryDataset,
   createLibraryDirectory,
   createLibraryNote,
   createMindMap,
@@ -150,12 +151,6 @@ export type LibrarySearchNavigationTarget =
       result: CanvasReadResult
     }
   | {
-      kind: "table"
-      requestId: string
-      target: SearchTarget
-      result: TableReadResult
-    }
-  | {
       kind: "mindmap"
       requestId: string
       target: SearchTarget
@@ -185,7 +180,7 @@ interface LibraryShellProps {
   onOpenLockbox: () => void
   onRegisterSaveHandler: (handle: LibraryDraftHandle | null) => void
   onRefreshLibrary?: () => Promise<void>
-  onTableSaved?: () => void
+  onContentSaved?: () => void
   onSave: (
     id: string,
     content: string,
@@ -209,7 +204,6 @@ type TreeDialogState =
 type LibrarySelection =
   | { kind: "note"; id: string }
   | { kind: "mindmap"; path: string }
-  | { kind: "table"; path: string }
   | { kind: "canvas" | "flowchart"; path: string }
   | { kind: "trash" }
   | { kind: "assets"; path?: string }
@@ -220,7 +214,7 @@ function readLibrarySelection(vaultPath: string): LibrarySelection {
   try {
     const value = JSON.parse(sessionStorage.getItem(`shard.library-selection:${vaultPath}`) ?? "null")
     if (value?.kind === "note" && typeof value.id === "string") return { kind: "note", id: value.id }
-    if (["directory", "mindmap", "table", "canvas", "flowchart"].includes(value?.kind) &&
+    if (["directory", "mindmap", "canvas", "flowchart"].includes(value?.kind) &&
       typeof value.path === "string" && (value.path === "notes" || value.path.startsWith("notes/"))) {
       return { kind: value.kind, path: value.path }
     }
@@ -277,7 +271,7 @@ export function LibraryShell({
   onOpenLockbox,
   onRegisterSaveHandler,
   onRefreshLibrary,
-  onTableSaved,
+  onContentSaved,
   onSaveStateChange,
   onRefreshFragments,
   onSave,
@@ -297,20 +291,16 @@ export function LibraryShell({
     useState<LibrarySearchNavigationTarget | null>(null)
   const [pendingIndexPath, setPendingIndexPath] = useState<string | null>(null)
   const richNoteEditor = useRef<ShardRichEditorHandle>(null)
-  const tableHandle = useRef<TableWorkspaceHandle>(null)
   const canvasHandle = useRef<CanvasWorkspaceHandle>(null)
   const mindMapHandle = useRef<MindMapCanvasHandle>(null)
   const selectedCanvasPath = selection?.kind === "canvas" || selection?.kind === "flowchart" ? selection.path : null
   const [canvasSaveState, setCanvasSaveState] = useState<SaveState>("saved")
   const [mindMapSaveState, setMindMapSaveState] = useState<SaveState>("saved")
   const pendingCanvasCreate = useRef<{ parent: string; file: CanvasFile } | null>(null)
-  const [importTableParent, setImportTableParent] = useState<string | null>(null)
-  const [importTableSource, setImportTableSource] = useState<string | undefined>()
-  const pendingTableCreate = useRef<CreateTableRequest | null>(null)
-  const selectedTablePath = selection?.kind === "table" ? selection.path : null
-  const [tableSaveState, setTableSaveState] = useState<SaveState>("saved")
-  const tableStructurePending = useRef(false)
-  const [tableStructureBusy, setTableStructureBusy] = useState(false)
+  const [datasetDraft, setDatasetDraft] = useState<{ parent: string; value: string } | null>(null)
+  const [datasetImport, setDatasetImport] = useState<{ parent: string; file: DatasetImportFile } | null>(null)
+  const structurePending = useRef(false)
+  const [structureBusy, setStructureBusy] = useState(false)
   const [interactionBlocked, setInteractionBlocked] = useState(false)
   const [directoryViewMode, setDirectoryViewMode] =
     useState<DirectoryViewMode>(readDirectoryViewPreference)
@@ -503,7 +493,7 @@ export function LibraryShell({
     const missingNote = selection?.kind === "note" &&
       !notes.some((note) => note.id === selection.id) &&
       searchNote?.id !== selection.id
-    const missingFile = selection && ["directory", "mindmap", "table", "canvas", "flowchart"].includes(selection.kind) &&
+    const missingFile = selection && ["directory", "mindmap", "canvas", "flowchart"].includes(selection.kind) &&
       "path" in selection && selection.path !== "notes" && !findTreeEntry(libraryTree.entries, selection.path!)
     if (!selection || missingNote || missingFile) {
       setSelection({ kind: "directory", path: "notes" })
@@ -568,10 +558,9 @@ export function LibraryShell({
   }, [selectedNote?.path])
 
   const saveCurrentNote = useCallback<LibrarySaveHandler>(async () => {
-    if (tableStructurePending.current) return false
+    if (structurePending.current) return false
     if (canvasHandle.current && !(await canvasHandle.current.flush())) return false
     if (mindMapHandle.current && !(await mindMapHandle.current.save())) return false
-    if (tableHandle.current && !(await tableHandle.current.flush())) return false
     if (selectedNoteReadOnly) return true
     // 排空式保存：在飞的保存只覆盖它启动瞬间的快照。等它结束后必须回头重查
     // 草稿是否又变了，直到「无在飞 && 草稿==已落盘」才算 flush 完成，
@@ -685,22 +674,21 @@ export function LibraryShell({
 
   // 状态栏要的是能触发重渲染的值，saveHandlerRef 那条通道是 ref，拿不到
   useEffect(() => {
-    onSaveStateChange(selectedCanvasPath ? canvasSaveState : selectedTablePath ? tableSaveState : selectedMindMap ? mindMapSaveState : selectedNote ? saveState : null)
+    onSaveStateChange(selectedCanvasPath ? canvasSaveState : selectedMindMap ? mindMapSaveState : selectedNote ? saveState : null)
     return () => onSaveStateChange(null)
-  }, [onSaveStateChange, saveState, selectedNote, selectedTablePath, tableSaveState, selectedCanvasPath, canvasSaveState, selectedMindMap, mindMapSaveState])
+  }, [onSaveStateChange, saveState, selectedNote, selectedCanvasPath, canvasSaveState, selectedMindMap, mindMapSaveState])
 
   useEffect(() => {
     onRegisterSaveHandler({
       flush: saveCurrentNote,
       setInteractionBlocked: blocked => {
         setInteractionBlocked(blocked)
-        tableHandle.current?.setInteractionBlocked(blocked)
         canvasHandle.current?.setInteractionBlocked(blocked)
         mindMapHandle.current?.setInteractionBlocked(blocked)
       },
       // error 也算 dirty：内容仍未落盘，检查点与同步都必须等它解决
       isDirty: () =>
-        tableStructurePending.current || Boolean(canvasHandle.current?.isDirty()) || Boolean(mindMapHandle.current?.isDirty()) || Boolean(tableHandle.current?.isDirty()) || saveStateRef.current !== "saved" || savePromiseRef.current !== null,
+        structurePending.current || Boolean(canvasHandle.current?.isDirty()) || Boolean(mindMapHandle.current?.isDirty()) || saveStateRef.current !== "saved" || savePromiseRef.current !== null,
     })
     return () => onRegisterSaveHandler(null)
   }, [onRegisterSaveHandler, saveCurrentNote])
@@ -723,7 +711,7 @@ export function LibraryShell({
       if (event.shiftKey || event.altKey) return
       if (event.key.toLowerCase() !== "s") return
       event.preventDefault()
-      if (selectedNoteRef.current || tableHandle.current || canvasHandle.current || mindMapHandle.current) void saveCurrentNote()
+      if (selectedNoteRef.current || canvasHandle.current || mindMapHandle.current) void saveCurrentNote()
     }
     window.addEventListener("keydown", onKeyDown)
     return () => window.removeEventListener("keydown", onKeyDown)
@@ -843,17 +831,6 @@ export function LibraryShell({
     else onNavigateToFragment?.(source.id)
   }
 
-  async function selectTable(path: string) {
-    if (selectedTablePath !== path) {
-      if (!(await saveCurrentNote())) return false
-      setSelection({ kind: "table", path })
-      setSelectedTreePath(path)
-    }
-    setIsZen(false)
-    setMobilePane("editor")
-    return true
-  }
-
   async function selectAssetsView(path?: string) {
     if (!(await saveCurrentNote())) return
     setSelection(path ? { kind: "assets", path } : { kind: "assets" })
@@ -933,8 +910,6 @@ export function LibraryShell({
     }
     if (searchNavigateTo.kind === "mindmap") {
       setSelection({ kind: "mindmap", path: searchNavigateTo.target.path })
-    } else if (searchNavigateTo.kind === "table") {
-      setSelection({ kind: "table", path: searchNavigateTo.target.path })
     } else {
       setSelection({ kind: searchNavigateTo.kind, path: searchNavigateTo.target.path })
     }
@@ -968,7 +943,7 @@ export function LibraryShell({
   // 树只剩目录后，第三栏打开文件就没有回到列表的路了——给出所在目录的返回口，
   // 与图片单张视图的「返回图片列表」同一个模式。
   const selectedFilePath = selectedNote?.path ?? selectedMindMap?.path ??
-    activeSearchNavigation?.target.path ?? selectedTablePath ?? selectedCanvasPath
+    activeSearchNavigation?.target.path ?? selectedCanvasPath
   const canEnterZen = selection?.kind === "note" || selection?.kind === "mindmap" ||
     (selection?.kind === "assets" && Boolean(selection.path))
   const openedFileParentPath = (() => {
@@ -989,8 +964,6 @@ export function LibraryShell({
           : selection.path.split("/").pop() || "资料库"
       : selectedCanvasPath
         ? selectedCanvasPath.split("/").pop()?.replace(/\.shard(?:canvas|flow)\.json$/iu, "") || "未命名流程图"
-      : selectedTablePath
-        ? selectedTablePath.split("/").pop()?.replace(/\.shardtable\.json$/iu, "") || "未命名多维表格"
       : selectedNote
         ? selectedNote.path.split("/").pop()?.replace(/\.md$/iu, "") || "无标题文档"
       : selectedMindMap
@@ -1061,21 +1034,21 @@ export function LibraryShell({
     mutation: () => Promise<LibraryMutationResult>,
     options?: { revealNote?: boolean; reportError?: boolean; onSuccess?(result: LibraryMutationResult): void }
   ) {
-    if (busyAction || tableStructurePending.current) return null
-    const table = tableHandle.current ?? canvasHandle.current ?? mindMapHandle.current
-    table?.setInteractionBlocked(true)
-    setTableStructureBusy(true)
-    // Begin the existing flush before closing navigation's gate. The table's
+    if (busyAction || structurePending.current) return null
+    const workspace = canvasHandle.current ?? mindMapHandle.current
+    workspace?.setInteractionBlocked(true)
+    setStructureBusy(true)
+    // Begin the existing flush before closing navigation's gate. The workspace's
     // synchronous input gate spans that flush, the filesystem work and remap.
     const saving = saveCurrentNote()
-    tableStructurePending.current = true
+    structurePending.current = true
     try {
       if (!(await saving)) return null
       return await runMutation(label, mutation, options)
     } finally {
-      tableStructurePending.current = false
-      table?.setInteractionBlocked(false)
-      setTableStructureBusy(false)
+      structurePending.current = false
+      workspace?.setInteractionBlocked(false)
+      setStructureBusy(false)
     }
   }
 
@@ -1087,9 +1060,9 @@ export function LibraryShell({
     setTreeDialog({ kind: "purge", entry })
   }
 
-  function remapSelectedTable(oldPath: string, newPath: string) {
+  function remapSelectedPath(oldPath: string, newPath: string) {
     setSelection(current => {
-      if ((current?.kind !== "table" && current?.kind !== "canvas" && current?.kind !== "flowchart" && current?.kind !== "mindmap") || !(current.path === oldPath || current.path.startsWith(`${oldPath}/`))) return current
+      if ((current?.kind !== "canvas" && current?.kind !== "flowchart" && current?.kind !== "mindmap") || !(current.path === oldPath || current.path.startsWith(`${oldPath}/`))) return current
       const path = newPath + current.path.slice(oldPath.length)
       setSelectedTreePath(path)
       return { kind: current.kind, path }
@@ -1099,12 +1072,12 @@ export function LibraryShell({
   function moveEntry(entry: LibraryTreeEntry, destinationDirectory: string) {
     void runSavedMutation("移动", () =>
       moveLibraryEntry(entry.path, destinationDirectory),
-      { onSuccess: () => remapSelectedTable(entry.path, `${destinationDirectory}/${entry.name}`) }
+      { onSuccess: () => remapSelectedPath(entry.path, `${destinationDirectory}/${entry.name}`) }
     )
   }
 
   async function runBatchMutation(entries: LibraryTreeEntry[], destination?: string) {
-    if (batchPending.current || busyAction || tableStructurePending.current || entries.length === 0) return
+    if (batchPending.current || busyAction || structurePending.current || entries.length === 0) return
     batchPending.current = true
     const label = destination ? "移动" : "删除"
     const completed: string[] = []
@@ -1113,7 +1086,7 @@ export function LibraryShell({
     setBatchError(null)
     setBusyAction(`${label}中（0/${entries.length}）`)
     const saving = saveCurrentNote()
-    tableStructurePending.current = true
+    structurePending.current = true
     try {
       if (!(await saving)) return
       for (const entry of entries) {
@@ -1151,7 +1124,7 @@ export function LibraryShell({
       setTreeDialog(null)
       notify.success(`${completed.length} 项已${label}`, updatedLinks ? { description: `同时更新了 ${updatedLinks} 处双链引用。` } : undefined)
     } finally {
-      tableStructurePending.current = false
+      structurePending.current = false
       batchPending.current = false
       setBusyAction(null)
     }
@@ -1242,7 +1215,7 @@ export function LibraryShell({
     setRenaming({
       path,
       source,
-      value: fileName.replace(/\.(?:shardflow\.json|shardcanvas\.json|shardtable\.json|shardmap\.json|md|csv)$/iu, ""),
+      value: fileName.replace(/\.(?:shardflow\.json|shardcanvas\.json|shardmap\.json|md|csv)$/iu, ""),
     })
   }
 
@@ -1251,7 +1224,7 @@ export function LibraryShell({
     if (!renaming || busyAction) return
     const value = renaming.value.trim()
     const currentName = (renaming.path.split("/").pop() ?? "").replace(
-      /\.(?:shardflow\.json|shardcanvas\.json|shardtable\.json|shardmap\.json|md|csv)$/iu,
+      /\.(?:shardflow\.json|shardcanvas\.json|shardmap\.json|md|csv)$/iu,
       ""
     )
     if (!value || value === currentName) {
@@ -1268,9 +1241,9 @@ export function LibraryShell({
     const oldPath = renaming.path
     const promise = runSavedMutation("重命名", () => renameLibraryEntry(oldPath, value), {
       onSuccess: () => {
-        const extension = oldPath.endsWith(".shardflow.json") ? ".shardflow.json" : oldPath.endsWith(".shardmap.json") ? ".shardmap.json" : oldPath.endsWith(".shardcanvas.json") ? ".shardcanvas.json" : oldPath.endsWith(".shardtable.json") ? ".shardtable.json" : ""
+        const extension = oldPath.endsWith(".shardflow.json") ? ".shardflow.json" : oldPath.endsWith(".shardmap.json") ? ".shardmap.json" : oldPath.endsWith(".shardcanvas.json") ? ".shardcanvas.json" : ""
         const name = extension && !value.endsWith(extension) ? `${value}${extension}` : value
-        remapSelectedTable(oldPath, `${oldPath.slice(0, oldPath.lastIndexOf("/"))}/${name}`)
+        remapSelectedPath(oldPath, `${oldPath.slice(0, oldPath.lastIndexOf("/"))}/${name}`)
         setRenaming(null)
       },
     })
@@ -1282,16 +1255,67 @@ export function LibraryShell({
     }
   }
 
-  async function tableCreated(result: TableReadResult) {
-    onTableSaved?.()
-    await onRefreshLibrary?.()
-    if (!(await selectTable(result.path))) throw new Error("多维表格已创建；当前内容尚未保存，暂未打开")
+  /** 数据集文件在 datasets/；资料库里落一篇引用它的说明文档，并选中它。 */
+  async function createDatasetInLibrary(label: string, parent: string, title: string, header: string[], rows: string[][], primaryKey?: string): Promise<DatasetSnapshot> {
+    setBusyAction(label)
+    try {
+      const { dataset, library } = await createLibraryDataset(parent, title, header, rows, primaryKey)
+      onLibraryMutation(library)
+      if (library.fragment) {
+        setSelection({ kind: "note", id: library.fragment.id })
+        setSelectedTreePath(library.fragment.path)
+        setMobilePane("editor")
+      }
+      if (parent !== "notes") setExpandedPaths((current) => new Set(current).add(parent))
+      setIsZen(false)
+      onContentSaved?.()
+      return dataset
+    } finally {
+      setBusyAction(null)
+    }
   }
 
-  async function importLibraryTable(entry: LibraryTreeEntry) {
+  async function startCreateDataset() {
     if (busyAction || !(await saveCurrentNote())) return
-    setImportTableSource(`${vaultPath.replace(/\/$/u, "")}/${entry.path}`)
-    setImportTableParent(entry.path.slice(0, entry.path.lastIndexOf("/")))
+    setDatasetDraft({ parent: selectedDirectory, value: "未命名数据集" })
+  }
+
+  async function submitCreateDataset() {
+    if (!datasetDraft || busyAction) return
+    const title = datasetDraft.value.trim()
+    if (!title) return
+    const nameError = libraryNameError(title, ".md")
+    if (nameError) {
+      notify.error("名称过长", { description: nameError })
+      return
+    }
+    try {
+      const dataset = await createDatasetInLibrary("新建数据集", datasetDraft.parent, title, ["id", "名称"], [], "id")
+      setDatasetDraft(null)
+      openDatasetEditor(dataset.path)
+    } catch (error) { notify.failure("数据集创建失败", error) }
+  }
+
+  /** `source` 为空时弹系统文件选择框；资料库里的 CSV 条目直接传入绝对路径。 */
+  async function startDatasetImport(parent: string, source?: string) {
+    if (busyAction || !(await saveCurrentNote())) return
+    let path = source
+    if (!path) {
+      const chosen = await openFileDialog({ title: "导入为数据集", multiple: false, directory: false, filters: [{ name: "CSV / Excel", extensions: ["csv", "xlsx"] }] })
+      if (typeof chosen !== "string") return
+      path = chosen
+    }
+    const name = path.split(/[\\/]/u).pop() ?? "数据集"
+    try {
+      const file: DatasetImportFile = /\.xlsx$/iu.test(path)
+        ? { name, workbook: await readImportXlsxFile(path) }
+        : { name, bytes: await readImportCsvFile(path) }
+      setDatasetImport({ parent, file })
+    } catch (error) { notify.failure("读取导入文件失败", error) }
+  }
+
+  function importDatasetEntry(entry: LibraryTreeEntry) {
+    void startDatasetImport(entry.path.slice(0, entry.path.lastIndexOf("/")), `${vaultPath.replace(/\/$/u, "")}/${entry.path}`)
   }
 
   async function createNativeMindMap() {
@@ -1299,7 +1323,7 @@ export function LibraryShell({
     setBusyAction("新建思维导图")
     try {
       const result = await createMindMap("未命名思维导图", undefined, selectedDirectory)
-      onTableSaved?.()
+      onContentSaved?.()
       await onRefreshLibrary?.()
       setSelection({ kind: "mindmap", path: result.path })
       setSelectedTreePath(result.path)
@@ -1321,7 +1345,7 @@ export function LibraryShell({
   }
 
   async function onCanvasSplit(result: { documents: DiagramDocumentSummary[]; indexPath: string }) {
-    onTableSaved?.()
+    onContentSaved?.()
     await onRefreshLibrary?.()
     await onRefreshFragments?.()
     setSelection({ kind: "directory", path: result.indexPath.slice(0, result.indexPath.lastIndexOf("/")) })
@@ -1336,29 +1360,12 @@ export function LibraryShell({
       pendingCanvasCreate.current ??= { parent: selectedDirectory, file: createCanvasFile("未命名流程图") }
       const request = pendingCanvasCreate.current
       const result = await createCanvas(request.parent, request.file.title, request.file)
-      onTableSaved?.()
+      onContentSaved?.()
       await onRefreshLibrary?.()
       if (await selectCanvas(result.path)) pendingCanvasCreate.current = null
     } catch (error) {
       notify.failure("流程图创建失败", error)
     } finally { setBusyAction(null) }
-  }
-
-  async function createNativeTable() {
-    if (busyAction || !(await saveCurrentNote())) return
-    setBusyAction("新建多维表格")
-    try {
-      if (!pendingTableCreate.current) {
-        const primary = createTableId("fld"); const viewId = createTableId("view")
-        const content: TableContent = { primaryFieldId: primary, fields: { [primary]: { id: primary, name: "名称", type: "text" } }, fieldOrder: [primary], records: {}, recordOrder: [],
-          views: { [viewId]: { id: viewId, name: "全部记录", type: "table", filters: { operator: "and", conditions: [] }, sorts: [], groupBy: null, fieldOrder: [primary], hiddenFieldIds: [], columnWidths: {} } }, viewOrder: [viewId] }
-        pendingTableCreate.current = { requestId: createTableId("req"), tableId: createTableId("tbl"), parentPath: selectedDirectory, suggestedName: "未命名", content }
-      }
-      const result = await createTable(pendingTableCreate.current)
-      await tableCreated(result)
-      pendingTableCreate.current = null
-    } catch (error) { notify.failure("多维表格创建失败", error) }
-    finally { setBusyAction(null) }
   }
 
   async function createNoteAndEdit() {
@@ -1477,10 +1484,6 @@ export function LibraryShell({
       void selectCanvas(entry.path)
       return
     }
-    if (entry.kind === "table") {
-      void selectTable(entry.path)
-      return
-    }
     if (entry.kind === "mindmap") {
       void selectMindMap(entry.path)
       return
@@ -1572,7 +1575,7 @@ export function LibraryShell({
             onBatchMove={(entries, destination) => void runBatchMutation(entries, destination)}
             onCopyDocumentLink={copyDiagramLink}
             onDelete={requestDelete}
-            onImportTable={(entry) => void importLibraryTable(entry)}
+            onImportDataset={importDatasetEntry}
             onImportGraphToTimeline={(entry) => setTreeDialog({ kind: "importGraph", entry })}
             onMove={moveEntry}
             onMoveToLockbox={moveEntryToLockbox}
@@ -1678,7 +1681,7 @@ export function LibraryShell({
         <CanvasWorkspace key={`${selectedCanvasPath}:${searchCanvas?.requestId ?? "browse"}`} ref={canvasHandle} path={selectedCanvasPath}
           initialRead={searchCanvas?.result ?? null} fragments={relationFragments}
           readOnly={Boolean(searchCanvas?.target.archived)}
-          onOpenLink={openCanvasLink} onSplit={onCanvasSplit} onSaved={onTableSaved} onSaveStateChange={setCanvasSaveState}
+          onOpenLink={openCanvasLink} onSplit={onCanvasSplit} onSaved={onContentSaved} onSaveStateChange={setCanvasSaveState}
           onReady={(revision) => searchCanvas && settleSearchNavigation(searchCanvas.requestId, { status: "ready", revision })}
           onLoadError={(error) => searchCanvas && settleSearchNavigation(searchCanvas.requestId, { status: "error", error })}
           onRecovered={async (path) => {
@@ -1691,18 +1694,6 @@ export function LibraryShell({
       </Suspense>
     }
 
-    if (selectedTablePath) {
-      const searchTable = activeSearchNavigation?.kind === "table" &&
-        activeSearchNavigation.target.path === selectedTablePath
-        ? activeSearchNavigation
-        : null
-      return <TableWorkspace key={`${selectedTablePath}:${searchTable?.requestId ?? "browse"}`} ref={tableHandle} embedded disabled={Boolean(searchTable?.target.archived) || tableStructureBusy || !!busyAction}
-        initialRead={searchTable?.result ?? null} path={selectedTablePath} title={selectedTitle} refreshToken={libraryTree}
-        onReady={(revision) => searchTable && settleSearchNavigation(searchTable.requestId, { status: "ready", revision })}
-        onLoadError={(error) => searchTable && settleSearchNavigation(searchTable.requestId, { status: "error", error })}
-        onSaveStateChange={setTableSaveState} onSaved={onTableSaved} onClose={() => void selectDirectoryView(openedFileParentPath ?? "notes")} />
-    }
-
     if (selectedNote) {
       return (
         <div
@@ -1712,7 +1703,7 @@ export function LibraryShell({
             fragment={selectedNote}
             inset={false}
             onFragmentUpdated={handlePropertyUpdated}
-            readOnly={selectedNoteReadOnly || interactionBlocked || tableStructureBusy || busyAction !== null}
+            readOnly={selectedNoteReadOnly || interactionBlocked || structureBusy || busyAction !== null}
           />
           <div className="min-h-0 flex-1">
             <ShardRichEditor
@@ -1741,7 +1732,7 @@ export function LibraryShell({
               onPasteFiles={selectedNoteReadOnly ? undefined : (files) => void uploadPastedImages(files)}
               onSubmit={selectedNoteReadOnly ? undefined : () => void saveCurrentNote()}
               placeholder="开始写文档…"
-              readOnly={selectedNoteReadOnly || interactionBlocked || tableStructureBusy || busyAction !== null}
+              readOnly={selectedNoteReadOnly || interactionBlocked || structureBusy || busyAction !== null}
               // 资料库里全是文档：工具集合按文档档开放（产品框架 §2）。
               tier="document"
               value={draft}
@@ -1773,7 +1764,7 @@ export function LibraryShell({
             fragments={relationFragments}
             onOpenLink={openCanvasLink}
             onSaveStateChange={setMindMapSaveState}
-            onMapsChange={() => onTableSaved?.()}
+            onMapsChange={() => onContentSaved?.()}
             onReady={(revision) => searchMindMap && settleSearchNavigation(searchMindMap.requestId, { status: "ready", revision })}
             onLoadError={(error) => searchMindMap && settleSearchNavigation(searchMindMap.requestId, { status: "error", error })}
             readOnly={Boolean(searchMindMap?.target.archived)}
@@ -1785,7 +1776,7 @@ export function LibraryShell({
       )
     }
 
-    return <LibraryEmptyState message="从资料库选择文档、图片、目录、多维表格、思维导图或流程图" />
+    return <LibraryEmptyState message="从资料库选择文档、图片、目录、思维导图或流程图" />
   }
 
   const dialogTitle =
@@ -1821,7 +1812,7 @@ export function LibraryShell({
 
   return (
     <section aria-label="资料库" className={styles.shell}>
-      <div className={styles.workspace} data-table-open={selectedTablePath || selectedCanvasPath || selectedMindMap ? "true" : undefined}>
+      <div className={styles.workspace} data-table-open={selectedCanvasPath || selectedMindMap ? "true" : undefined}>
         <aside
           aria-busy={busyAction !== null || isLoading ? true : undefined}
           aria-label="资料库目录"
@@ -1851,8 +1842,8 @@ export function LibraryShell({
                   <DropdownMenuItem onClick={() => queueCreateAction(() => void createNoteAndEdit())}>
                     <FilePlus2Icon aria-hidden="true" />新建文档
                   </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => queueCreateAction(() => void createNativeTable())}>
-                    <FileSpreadsheetIcon aria-hidden="true" />新建多维表格
+                  <DropdownMenuItem onClick={() => queueCreateAction(() => void startCreateDataset())}>
+                    <FileSpreadsheetIcon aria-hidden="true" />新建数据集
                   </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => queueCreateAction(() => void createNativeMindMap())}>
                     <GitBranchIcon aria-hidden="true" />新建思维导图
@@ -1865,9 +1856,7 @@ export function LibraryShell({
                     <FolderPlusIcon aria-hidden="true" />新建目录
                   </DropdownMenuItem>
                   <DropdownMenuSeparator />
-                  <DropdownMenuItem onClick={() => queueCreateAction(() => void (async () => {
-                    if (await saveCurrentNote()) { setImportTableSource(undefined); setImportTableParent(selectedDirectory) }
-                  })())}>从 CSV / Excel 导入…</DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => queueCreateAction(() => void startDatasetImport(selectedDirectory))}>从 CSV / Excel 导入…</DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
             </div>
@@ -2075,12 +2064,12 @@ export function LibraryShell({
                 ) : null}
                 <div className={styles.editorHeading} data-tauri-drag-region>
                   {selectedFilePath && renaming?.source === "editor" && renaming.path === selectedFilePath ? (
-                    <div className={styles.renameWrap} aria-busy={busyAction !== null || tableStructureBusy}>
+                    <div className={styles.renameWrap} aria-busy={busyAction !== null || structureBusy}>
                       <Input
                         aria-label="重命名名称"
                         autoFocus
                         ref={titleRenameInput}
-                        disabled={busyAction !== null || tableStructureBusy}
+                        disabled={busyAction !== null || structureBusy}
                         onBlur={() => void submitRename()}
                         onChange={(event) =>
                           setRenaming((current) =>
@@ -2107,7 +2096,7 @@ export function LibraryShell({
                         <button
                           aria-label="重命名文件"
                           className={styles.editorTitleButton}
-                          disabled={selectedTargetReadOnly || busyAction !== null || tableStructureBusy}
+                          disabled={selectedTargetReadOnly || busyAction !== null || structureBusy}
                           onClick={() => startRename(selectedFilePath, "editor")}
                           title="重命名文件"
                           type="button"
@@ -2194,7 +2183,46 @@ export function LibraryShell({
         </ZenSurface>
       ) : null}
 
-      {importTableParent !== null ? <TableImportDialog parentPath={importTableParent} initialPath={importTableSource} onCreated={tableCreated} onClose={() => { setImportTableParent(null); setImportTableSource(undefined) }} /> : null}
+      <CsvImportDialog
+        file={datasetImport?.file ?? null}
+        allowed
+        onClose={() => setDatasetImport(null)}
+        onCreate={async (title, header, rows, primaryKey) => (await createDatasetInLibrary("导入数据集", datasetImport?.parent ?? selectedDirectory, title, header, rows, primaryKey)).path}
+        onImported={() => undefined}
+      />
+
+      <Dialog
+        open={datasetDraft !== null}
+        onOpenChange={(open) => {
+          if (!open && !busyAction) setDatasetDraft(null)
+        }}
+      >
+        <DialogContent aria-busy={busyAction !== null ? true : undefined} showCloseButton={busyAction === null}>
+          <DialogHeader>
+            <DialogTitle>新建数据集</DialogTitle>
+            <DialogDescription>数据存为 datasets/ 下的 CSV，并在当前目录生成一篇引用它的说明文档。</DialogDescription>
+          </DialogHeader>
+          <Input
+            aria-label="数据集名称"
+            autoFocus
+            disabled={busyAction !== null}
+            value={datasetDraft?.value ?? ""}
+            onChange={(event) => setDatasetDraft(current => current && { ...current, value: event.target.value })}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && !event.nativeEvent.isComposing) {
+                event.preventDefault()
+                void submitCreateDataset()
+              }
+            }}
+          />
+          <DialogFooter className={styles.dialogFooter}>
+            <Button disabled={busyAction !== null} onClick={() => setDatasetDraft(null)} type="button" variant="outline">取消</Button>
+            <Button disabled={busyAction !== null || !datasetDraft?.value.trim()} onClick={() => void submitCreateDataset()} type="button">
+              {busyAction === "新建数据集" ? "正在创建…" : "创建"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog
         open={treeDialog !== null}

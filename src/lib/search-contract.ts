@@ -11,7 +11,6 @@ export type SearchKind =
   | "mindmap"
   | "flowchart"
   | "canvas"
-  | "table"
   | "csv"
 
 export type SearchField = "title" | "tags" | "body" | "path"

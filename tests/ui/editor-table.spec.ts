@@ -355,8 +355,7 @@ for (const variant of ["composer", "inline", "zen"] as const) {
     expect(commands.filter(command => command === "read_import_csv_file")).toHaveLength(1)
     expect(commands).not.toContain("create_dataset")
     expect(commands).not.toContain("convert_table_document_to_markdown")
-    expect(commands).not.toContain("read_table_exchange_file")
-    expect(commands).not.toContain("create_table")
+    expect(commands).not.toContain("read_import_xlsx_file")
   })
 }
 
@@ -367,7 +366,7 @@ test("旧 XLS 文件提示先另存 CSV，不承诺支持直接导入", async ({
   await expect.poll(() => readEditor(page, "composer")).toBe("尚未保存的正文")
 })
 
-test("普通文档拖放不会出现多维表格提示或触发表格转换", async ({ page }) => {
+test("普通文档拖放不会出现表格导入提示或触发表格转换", async ({ page }) => {
   await fillEditor(page, "composer", "普通正文")
   await emitDrag(page, "composer", "enter", ["/tmp/普通.md", "/tmp/图片.png"])
   await emitDrag(page, "composer", "over", [])

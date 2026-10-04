@@ -11,7 +11,7 @@ describe("new library filename limits", () => {
   it("counts Unicode characters without counting a supplied format suffix", () => {
     const name = "字".repeat(63) + "😀"
     expect(libraryNameError(name)).toBeNull()
-    expect(libraryNameError(`${name}.shardtable.json`, ".shardtable.json")).toBeNull()
+    expect(libraryNameError(`${name}.shardflow.json`, ".shardflow.json")).toBeNull()
     expect(libraryNameError(`${name}字`, ".md")).toBe("名称最多 64 个字符（不含扩展名）。")
   })
 
@@ -33,7 +33,6 @@ describe("library entry display names", () => {
     ["计划.shardmap.json", "mindmap", "计划"],
     ["计划.shardflow.json", "flowchart", "计划"],
     ["计划.shardcanvas.json", "canvas", "计划"],
-    ["计划.shardtable.json", "table", "计划"],
     ["照片.JPEG", "image", "照片"],
     ["年度.报告.pdf", "file", "年度.报告"],
     ["资料.v2", "directory", "资料.v2"],
@@ -58,7 +57,7 @@ describe("library entry display names", () => {
 describe("library entry sorting", () => {
   it("sorts display names naturally without mutating the input or copying entries", () => {
     const ten = entry("项目10.md")
-    const two = entry("项目2.shardtable.json", { kind: "table" })
+    const two = entry("项目2.shardflow.json", { kind: "flowchart" })
     const one = entry("项目1.shardmap.json", { kind: "mindmap" })
     const entries = [ten, two, one]
 
@@ -80,11 +79,11 @@ describe("library entry sorting", () => {
     const csv = entry("资料.csv", { kind: "csv" })
     const markdownTen = entry("项目10.md")
     const markdownTwo = entry("项目2.md")
-    const table = entry("资料.shardtable.json", { kind: "table" })
-    const entries = [markdownTen, table, csv, markdownTwo]
+    const flowchart = entry("资料.shardflow.json", { kind: "flowchart" })
+    const entries = [markdownTen, flowchart, csv, markdownTwo]
 
-    expect(sortLibraryEntries(entries, { key: "kind", direction: "asc" })).toEqual([table, csv, markdownTwo, markdownTen])
-    expect(sortLibraryEntries(entries, { key: "kind", direction: "desc" })).toEqual([markdownTwo, markdownTen, csv, table])
+    expect(sortLibraryEntries(entries, { key: "kind", direction: "asc" })).toEqual([flowchart, csv, markdownTwo, markdownTen])
+    expect(sortLibraryEntries(entries, { key: "kind", direction: "desc" })).toEqual([markdownTwo, markdownTen, csv, flowchart])
   })
 
   it("sorts byte sizes numerically and keeps invalid sizes last in either direction", () => {

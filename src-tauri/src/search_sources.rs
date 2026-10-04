@@ -30,7 +30,7 @@ use crate::{
     search_index::{CachedDoc, CachedFile, IndexEntry, IndexRegistry, IndexStore},
     search_lockbox::{peek_lockbox_read_lease, LockboxReadLease},
     search_runtime::{SearchBuildRequest, SearchRuntime, SearchSnapshotDraft},
-    table_commands, Fragment, LockboxRuntime, ShardMapFile,
+    Fragment, LockboxRuntime, ShardMapFile,
 };
 
 const CSV_HEADER_MAX_BYTES: u64 = 1024 * 1024;
@@ -42,7 +42,6 @@ enum PublicSourceKind {
     Markdown,
     MindMap,
     Canvas,
-    Table,
     Csv,
 }
 
@@ -417,7 +416,6 @@ fn source_kind_name(kind: PublicSourceKind) -> &'static str {
         PublicSourceKind::Markdown => "markdown",
         PublicSourceKind::MindMap => "mindMap",
         PublicSourceKind::Canvas => "canvas",
-        PublicSourceKind::Table => "table",
         PublicSourceKind::Csv => "csv",
     }
 }
@@ -427,7 +425,6 @@ fn cached_source_record(file: &CachedFile) -> Option<SourceRecord> {
         "markdown" => PublicSourceKind::Markdown,
         "mindMap" => PublicSourceKind::MindMap,
         "canvas" => PublicSourceKind::Canvas,
-        "table" => PublicSourceKind::Table,
         "csv" => PublicSourceKind::Csv,
         _ => return None,
     };
@@ -584,10 +581,6 @@ fn load_public_source(
             note_source_read();
             load_canvas(vault, &source.relative)
         }
-        PublicSourceKind::Table => {
-            note_source_read();
-            load_table(vault, &source.relative)
-        }
         PublicSourceKind::Csv => {
             note_source_read();
             load_csv(vault, &source.path)
@@ -673,21 +666,6 @@ fn enumerate_public_sources(vault: &Path) -> Result<(Vec<PublicSource>, u32), Se
                 &mut skipped,
             )?;
         }
-    }
-
-    let mut tables = Vec::new();
-    if let Some(notes_root) = &notes_root {
-        canvas_commands::scan_files(notes_root, ".shardtable.json", &mut tables, &mut visited)
-            .map_err(io_error)?;
-    }
-    for path in tables {
-        push_public_source(
-            vault,
-            path,
-            PublicSourceKind::Table,
-            &mut sources,
-            &mut skipped,
-        )?;
     }
 
     let mut csv_files = Vec::new();
@@ -1017,22 +995,6 @@ fn load_canvas(vault: &Path, relative: &str) -> Result<LoadedSearchDocument, Sea
         vault,
         relative.to_string(),
         kind,
-        Some(document.id),
-        document.title,
-        document.updated_at,
-        document.revision,
-        document.body,
-        SearchRevealHint::DocumentOnly,
-    ))
-}
-
-fn load_table(vault: &Path, relative: &str) -> Result<LoadedSearchDocument, SearchError> {
-    let document = table_commands::read_search_document(vault, relative)
-        .map_err(|_| SearchError::Io { retryable: false })?;
-    Ok(structured_document(
-        vault,
-        relative.to_string(),
-        SearchKind::Table,
         Some(document.id),
         document.title,
         document.updated_at,
@@ -1534,7 +1496,6 @@ fn count_structured_files(root: &Path, visited: &mut usize) -> Result<u32, Searc
                 ".shardmap.json",
                 ".shardcanvas.json",
                 ".shardflow.json",
-                ".shardtable.json",
                 ".csv",
             ]
             .iter()
@@ -2034,11 +1995,8 @@ mod tests {
             .to_string(),
         )
         .unwrap();
-        fs::write(
-            vault.join("notes/table.shardtable.json"),
-            include_str!("../../tests/fixtures/tables/valid/empty.json"),
-        )
-        .unwrap();
+        // Retired multidimensional tables stay on disk but are no longer indexed.
+        fs::write(vault.join("notes/table.shardtable.json"), "{}").unwrap();
         #[cfg(unix)]
         std::os::unix::fs::symlink(vault.join("notes"), vault.join("maps")).unwrap();
         let first = public_draft(vault, None, true);
@@ -2054,7 +2012,7 @@ mod tests {
         let incremental = public_draft(vault, Some(previous(first, true)), false);
         let full = public_draft(vault, None, true);
         assert_same_draft(&incremental, &full);
-        assert!(full.skipped_files >= 2);
+        assert!(full.skipped_files >= 1);
         assert!(full
             .documents
             .iter()
@@ -2063,7 +2021,7 @@ mod tests {
             .documents
             .iter()
             .any(|doc| doc.stable_key.contains("canvas.shardcanvas.json")));
-        assert!(full
+        assert!(!full
             .documents
             .iter()
             .any(|doc| doc.stable_key.contains("table.shardtable.json")));
@@ -2379,47 +2337,6 @@ mod tests {
         assert!(canvas_text.contains("用户边标签"));
         assert!(!canvas_text.contains("secret-node-id"));
         assert!(!canvas_text.contains("987654"));
-
-        let table: crate::table::TableFile = serde_json::from_value(json!({
-            "kind": "shard.table",
-            "schemaVersion": 1,
-            "id": "secret-table-id",
-            "revision": 1,
-            "creation": {"requestId": "secret-request", "payloadHash": "secret-hash"},
-            "lastMutationId": null,
-            "lastMutationHash": null,
-            "createdAt": "2026-09-25T00:00:00Z",
-            "updatedAt": "2026-09-25T00:00:00Z",
-            "primaryFieldId": "secret-title-field",
-            "fields": {
-                "secret-title-field": {"id": "secret-title-field", "name": "任务", "type": "text"},
-                "secret-status-field": {
-                    "id": "secret-status-field",
-                    "name": "状态",
-                    "type": "select",
-                    "options": [{"id": "secret-option-id", "label": "进行中", "color": "blue"}]
-                }
-            },
-            "fieldOrder": ["secret-title-field", "secret-status-field"],
-            "records": {
-                "secret-record-id": {
-                    "id": "secret-record-id",
-                    "createdAt": "2026-09-25T00:00:00Z",
-                    "updatedAt": "2026-09-25T00:00:00Z",
-                    "values": {"secret-title-field": "用户表格文本", "secret-status-field": "secret-option-id"}
-                }
-            },
-            "recordOrder": ["secret-record-id"],
-            "views": {},
-            "viewOrder": []
-        }))
-        .unwrap();
-        let table_text = table.search_text();
-        assert!(table_text.contains("用户表格文本"));
-        assert!(table_text.contains("进行中"));
-        assert!(!table_text.contains("secret-option-id"));
-        assert!(!table_text.contains("secret-record-id"));
-        assert!(!table_text.contains("secret-request"));
     }
 
     #[test]

@@ -10,7 +10,7 @@ export type LibraryPreview =
   | { kind: "canvas"; nodes: { id: string; x: number; y: number; width: number; height: number }[]; edges: { source: string; target: string }[] }
 
 export interface LibraryPreviewEntry {
-  kind: "csv" | "directory" | "file" | "image" | "markdown" | "mindmap" | "table" | "canvas" | "flowchart"
+  kind: "csv" | "directory" | "file" | "image" | "markdown" | "mindmap" | "canvas" | "flowchart"
   mindMapId?: string
   modifiedAt: string
   path: string

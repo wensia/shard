@@ -145,7 +145,6 @@ export type LibraryTreeEntryKind =
   | "mindmap"
   | "flowchart"
   | "canvas"
-  | "table"
   | "image"
   | "file"
 

@@ -1,4 +1,5 @@
 import { useLayoutEffect, useRef } from "react";
+import "./text-cell-editor.css";
 import { GridCellKind, type GridCell, type ProvideEditorCallback, type ProvideEditorComponent, type TextCell } from "@glideapps/glide-data-grid";
 
 /** Native textarea: composition keys must not reach Glide's grid navigation. */
@@ -18,7 +19,7 @@ const TextCellEditor: ProvideEditorComponent<TextCell> = ({ value, onChange, onF
     });
     return () => cancelAnimationFrame(frame);
   }, [isHighlighted]);
-  return <textarea ref={input} className="gdg-input table-native-cell-editor" aria-label="编辑单元格" data-focus-editor value={value.data} readOnly={value.readonly} rows={Math.min(8, value.data.split("\n").length)}
+  return <textarea ref={input} className="gdg-input dataset-cell-editor" aria-label="编辑单元格" data-focus-editor value={value.data} readOnly={value.readonly} rows={Math.min(8, value.data.split("\n").length)}
     onCompositionStart={() => { composing.current = true; }}
     onCompositionEnd={() => { composing.current = false; }}
     onChange={(event) => { const next = { ...value, data: event.target.value, displayData: event.target.value }; latest.current = next; onChange(next); }}
@@ -30,5 +31,5 @@ const TextCellEditor: ProvideEditorComponent<TextCell> = ({ value, onChange, onF
       }
     }} />;
 };
-const TableCellEditor: ProvideEditorComponent<GridCell> = (props) => props.value.kind === GridCellKind.Text ? <TextCellEditor {...props} value={props.value} /> : null;
-export const provideTableTextEditor: ProvideEditorCallback<GridCell> = (cell) => cell.kind === GridCellKind.Text ? TableCellEditor : undefined;
+const GridTextCellEditor: ProvideEditorComponent<GridCell> = (props) => props.value.kind === GridCellKind.Text ? <TextCellEditor {...props} value={props.value} /> : null;
+export const provideTextCellEditor: ProvideEditorCallback<GridCell> = (cell) => cell.kind === GridCellKind.Text ? GridTextCellEditor : undefined;

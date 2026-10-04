@@ -4,11 +4,11 @@ import { applyFragmentTag } from "./fragment-filter-helpers"
 
 import { fillEditor, readEditor, readEditorSnapshot } from "./editor-helpers"
 import { selectOption } from "./select-helpers"
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { mkdirSync, writeFileSync } from "node:fs"
 import type { MindMapReadResult, ShardMapFile } from "../../src/types"
 import { installSearchIpcMock } from "./search-ipc-mock"
 
-async function createLibraryEntry(page: Page, name: "新建文档" | "新建目录") {
+async function createLibraryEntry(page: Page, name: "新建文档" | "新建目录" | "新建数据集") {
   const directory = page.getByRole("complementary", { name: "资料库目录" })
   if (!(await directory.isVisible())) await page.getByRole("button", { name: "返回资料库目录", exact: true }).click()
   await directory.getByRole("button", { name: "新建", exact: true }).click()
@@ -774,7 +774,7 @@ async function installLibrarySortMock(page: Page) {
       { name: "10 项目.md", kind: "markdown", size: 100, createdAt: "2026-08-04T00:00:00Z", modifiedAt: "2026-08-02T00:00:00Z" },
       { name: "2 数据.csv", kind: "csv", size: 400, createdAt: "2026-08-02T00:00:00Z", modifiedAt: "2026-08-01T00:00:00Z" },
       { name: "30 导图.shardmap.json", kind: "mindmap", size: 200, createdAt: "2026-08-01T00:00:00Z", modifiedAt: "2026-08-04T00:00:00Z" },
-      { name: "4 表格.shardtable.json", kind: "table", size: 300, createdAt: "2026-08-03T00:00:00Z", modifiedAt: "2026-08-03T00:00:00Z" },
+      { name: "4 流程.shardflow.json", kind: "flowchart", size: 300, createdAt: "2026-08-03T00:00:00Z", modifiedAt: "2026-08-03T00:00:00Z" },
       { name: "1 历史.md", kind: "markdown", size: 50, modifiedAt: "2026-08-05T00:00:00Z" },
       { name: "Z 目录", kind: "directory", size: 0, modifiedAt: "2026-08-06T00:00:00Z", children: [] },
     ].map(entry => ({ ...entry, path: `notes/${entry.name}` }))
@@ -807,7 +807,7 @@ async function installLibrarySidebarMock(page: Page, directoryCount = 0) {
       child.children!.push(directory("孙目录", child.path))
       project.children!.push(child)
       tree.entries.push(
-        { name: "任务.shardtable.json", path: "notes/任务.shardtable.json", kind: "table" },
+        { name: "任务.csv", path: "notes/任务.csv", kind: "csv" },
         { name: "流程.shardflow.json", path: "notes/流程.shardflow.json", kind: "flowchart" },
         ...Array.from({ length: directoryCount }, (_, index) => directory(`目录 ${String(index + 1).padStart(2, "0")}`)),
       )
@@ -843,7 +843,7 @@ test("文件入口递归统计所有文件格式且排除文件夹，新建菜�
     .getByRole("button", { name: "文件", exact: true })).toBeVisible()
   await expect(sidebar.getByRole("tree", { name: "文件夹", exact: true })).toBeVisible()
   await sidebar.getByRole("button", { name: "新建", exact: true }).click()
-  for (const name of ["新建文档", "新建思维导图", "新建流程图", "新建多维表格", "新建目录", "从 CSV / Excel 导入…"]) {
+  for (const name of ["新建文档", "新建数据集", "新建思维导图", "新建流程图", "新建目录", "从 CSV / Excel 导入…"]) {
     await expect(page.getByRole("menuitem", { name, exact: true })).toBeVisible()
   }
   await page.keyboard.press("Escape")
@@ -1008,14 +1008,14 @@ test("目录五个表头可切换排序方向，创建时间缺失显示未知�
   await expect(unknown.getByRole("cell").nth(4)).toHaveText("未知")
   await expect(list.locator('tr[data-path="notes/10 项目.md"]').getByRole("cell").nth(4)).toContainText("2026/08/04")
   await expect(list.locator('th[aria-sort="ascending"]')).toHaveCount(1)
-  await expectOrder(["1 历史.md", "2 数据.csv", "4 表格.shardtable.json", "10 项目.md", "30 导图.shardmap.json"])
+  await expectOrder(["1 历史.md", "2 数据.csv", "4 流程.shardflow.json", "10 项目.md", "30 导图.shardmap.json"])
 
   const cases = [
-    { label: "名称", first: "descending", order: ["30 导图.shardmap.json", "10 项目.md", "4 表格.shardtable.json", "2 数据.csv", "1 历史.md"], reverse: ["1 历史.md", "2 数据.csv", "4 表格.shardtable.json", "10 项目.md", "30 导图.shardmap.json"] },
-    { label: "类型", first: "ascending", order: ["4 表格.shardtable.json", "30 导图.shardmap.json", "2 数据.csv", "1 历史.md", "10 项目.md"], reverse: ["1 历史.md", "10 项目.md", "2 数据.csv", "30 导图.shardmap.json", "4 表格.shardtable.json"] },
-    { label: "大小", first: "descending", order: ["2 数据.csv", "4 表格.shardtable.json", "30 导图.shardmap.json", "10 项目.md", "1 历史.md"], reverse: ["1 历史.md", "10 项目.md", "30 导图.shardmap.json", "4 表格.shardtable.json", "2 数据.csv"] },
-    { label: "创建时间", first: "descending", order: ["10 项目.md", "4 表格.shardtable.json", "2 数据.csv", "30 导图.shardmap.json", "1 历史.md"], reverse: ["30 导图.shardmap.json", "2 数据.csv", "4 表格.shardtable.json", "10 项目.md", "1 历史.md"] },
-    { label: "修改时间", first: "descending", order: ["1 历史.md", "30 导图.shardmap.json", "4 表格.shardtable.json", "10 项目.md", "2 数据.csv"], reverse: ["2 数据.csv", "10 项目.md", "4 表格.shardtable.json", "30 导图.shardmap.json", "1 历史.md"] },
+    { label: "名称", first: "descending", order: ["30 导图.shardmap.json", "10 项目.md", "4 流程.shardflow.json", "2 数据.csv", "1 历史.md"], reverse: ["1 历史.md", "2 数据.csv", "4 流程.shardflow.json", "10 项目.md", "30 导图.shardmap.json"] },
+    { label: "类型", first: "ascending", order: ["4 流程.shardflow.json", "30 导图.shardmap.json", "2 数据.csv", "1 历史.md", "10 项目.md"], reverse: ["1 历史.md", "10 项目.md", "2 数据.csv", "30 导图.shardmap.json", "4 流程.shardflow.json"] },
+    { label: "大小", first: "descending", order: ["2 数据.csv", "4 流程.shardflow.json", "30 导图.shardmap.json", "10 项目.md", "1 历史.md"], reverse: ["1 历史.md", "10 项目.md", "30 导图.shardmap.json", "4 流程.shardflow.json", "2 数据.csv"] },
+    { label: "创建时间", first: "descending", order: ["10 项目.md", "4 流程.shardflow.json", "2 数据.csv", "30 导图.shardmap.json", "1 历史.md"], reverse: ["30 导图.shardmap.json", "2 数据.csv", "4 流程.shardflow.json", "10 项目.md", "1 历史.md"] },
+    { label: "修改时间", first: "descending", order: ["1 历史.md", "30 导图.shardmap.json", "4 流程.shardflow.json", "10 项目.md", "2 数据.csv"], reverse: ["2 数据.csv", "10 项目.md", "4 流程.shardflow.json", "30 导图.shardmap.json", "1 历史.md"] },
   ]
   for (const { label, first, order, reverse } of cases) {
     const button = list.getByRole("button", { name: `按${label}排序`, exact: true })
@@ -1050,7 +1050,7 @@ test("排序菜单与列表宫格共享顺序，字段方向和视图在刷新�
   await page.getByRole("menuitemradio", { name: "升序", exact: true }).click()
   await expect(page.getByRole("menuitemradio", { name: "升序", exact: true })).toHaveAttribute("aria-checked", "true")
   await page.keyboard.press("Escape")
-  const ascending = ["Z 目录", "1 历史.md", "10 项目.md", "30 导图.shardmap.json", "4 表格.shardtable.json", "2 数据.csv"]
+  const ascending = ["Z 目录", "1 历史.md", "10 项目.md", "30 导图.shardmap.json", "4 流程.shardflow.json", "2 数据.csv"]
   await expect.poll(gridOrder).toEqual(ascending)
   expect(await page.evaluate(() => JSON.parse(localStorage.getItem("shard.library-directory-sort") ?? "null"))).toEqual({ key: "size", direction: "asc" })
 
@@ -2566,78 +2566,19 @@ test("没有图片时保留稳定入口并显示图片空态", async ({ page }) 
   ).toHaveCount(0)
 })
 
-test("多维表格重命名期间冻结编辑与导航，完成后按新路径恢复工作区", async ({ page }) => {
-  await page.addInitScript((file) => {
-    const runtime = window as unknown as {
-      __TAURI_INTERNALS__: { invoke(command: string, args?: unknown): Promise<unknown> };
-      __tableRenameTest: { started: boolean; writes: number; reads: string[]; release(): void };
-    }
-    const original = runtime.__TAURI_INTERNALS__.invoke
-    let path = "notes/冻结验收.shardtable.json"
-    let release = () => {}
-    const held = new Promise<void>(resolve => { release = resolve })
-    runtime.__tableRenameTest = { started: false, writes: 0, reads: [], release }
-    const tree = async () => {
-      const base = await original("list_library_tree") as { entries: unknown[] }
-      return { ...base, entries: [...base.entries, { name: path.split("/").pop(), path, kind: "table", size: 100, modifiedAt: file.updatedAt }] }
-    }
-    runtime.__TAURI_INTERNALS__.invoke = async (command, raw) => {
-      if (command === "list_library_tree") return tree()
-      if (command === "migrate_legacy_notes") return { tree: await tree(), migratedCount: 0 }
-      if (command === "read_table") {
-        const request = JSON.parse(new TextDecoder().decode(raw as Uint8Array))
-        runtime.__tableRenameTest.reads.push(request.path)
-        if (request.path !== path) throw { code: "NOT_FOUND", message: "旧路径已移动" }
-        return new TextEncoder().encode(JSON.stringify({ file, path, title: path.split("/").pop()?.replace(/\.shardtable\.json$/, ""), revision: file.revision, contentHash: "a".repeat(64) })).buffer
-      }
-      if (command === "apply_table_mutations") {
-        runtime.__tableRenameTest.writes++
-        throw { code: "GIT_BUSY", message: "本测试不应产生表格写入" }
-      }
-      if (command === "rename_library_entry" && (raw as { path: string }).path === path) {
-        runtime.__tableRenameTest.started = true
-        await held
-        path = `notes/${(raw as { newName: string }).newName}.shardtable.json`
-        return { tree: await tree(), updatedLinks: 0 }
-      }
-      return original(command, raw)
-    }
-  }, JSON.parse(readFileSync(new URL("../fixtures/tables/valid/six-types.json", import.meta.url), "utf8")))
-  await page.reload()
-  await page.getByRole("button", { name: "资料库", exact: true }).click()
-  await page.getByRole("button", { name: /^文件（/u, exact: true }).click()
-  await page.getByRole("button", { name: "打开文件 冻结验收.shardtable.json", exact: true }).click()
-  await expect(page.getByRole("region", { name: "多维表格：冻结验收", exact: true })).toBeVisible()
-  await page.getByRole("button", { name: "重命名文件", exact: true }).click()
-  const input = page.getByRole("textbox", { name: "重命名名称", exact: true })
-  await input.fill("已改名验收")
-  await input.press("Enter")
-  await expect.poll(() => page.evaluate(() => (window as unknown as { __tableRenameTest: { started: boolean } }).__tableRenameTest.started)).toBe(true)
-  const workspace = page.getByRole("region", { name: "多维表格：冻结验收", exact: true })
-  await expect(workspace).toHaveAttribute("aria-busy", "true")
-  await expect(workspace.getByRole("button", { name: "新增记录", exact: true })).toBeDisabled()
-  const canvas = workspace.locator("canvas").first()
-  await canvas.dblclick({ position: { x: 80, y: 65 }, force: true })
-  await page.keyboard.type("late-input")
-  await expect(workspace.getByRole("textbox", { name: "编辑单元格", exact: true })).toHaveCount(0)
-  await expect(page.getByRole("button", { name: /^文件（/u })).toBeDisabled()
-  await expect(workspace).toBeVisible()
-  await page.evaluate(() => (window as unknown as { __tableRenameTest: { release(): void } }).__tableRenameTest.release())
-  const renamed = page.getByRole("region", { name: "多维表格：已改名验收", exact: true })
-  await expect(renamed).toBeVisible()
-  await expect(page.getByRole("button", { name: /^文件（/u })).toBeEnabled()
-  await expect(renamed.getByRole("button", { name: "新增记录", exact: true })).toBeEnabled()
-  await expect(renamed.getByText("4 / 4 条记录 · 6 列")).toBeVisible()
-  const evidence = await page.evaluate(() => (window as unknown as { __tableRenameTest: { writes: number; reads: string[] } }).__tableRenameTest)
-  expect(evidence.writes).toBe(0)
-  expect(evidence.reads).toContain("notes/已改名验收.shardtable.json")
+type CloseGuardState = { close(): Promise<void>; listeners: number; destroyed: number; checkpoints: number; holdCheckpoint: boolean; failDestroy: boolean; failSave: boolean; release(): void }
+const closeGuard = (page: Page) => page.evaluate(() => {
+  const { destroyed, checkpoints } = (window as unknown as { __closeGuardTest: CloseGuardState }).__closeGuardTest
+  return { destroyed, checkpoints }
 })
+const requestClose = (page: Page) => page.evaluate(() => (window as unknown as { __closeGuardTest: CloseGuardState }).__closeGuardTest.close())
 
-async function installTableCloseMock(page: Page, withSyncActions = false) {
-  await page.addInitScript(({ file, withSyncActions }) => {
+/** 窗口关闭、检查点与同步守卫：以资料库文档的保存失败作为「草稿未落盘」来源。 */
+async function installCloseGuardMock(page: Page, withSyncActions = false) {
+  await page.addInitScript(({ withSyncActions }) => {
     const runtime = window as unknown as {
       __TAURI_INTERNALS__: { invoke(command: string, args?: unknown): Promise<unknown>; metadata: unknown; transformCallback(callback: (event: unknown) => unknown): number };
-      __tableCloseTest: { close(): Promise<void>; listeners: number; destroyed: number; checkpoints: number; holdCheckpoint: boolean; failDestroy: boolean; release(): void };
+      __closeGuardTest: CloseGuardState;
     }
     const original = runtime.__TAURI_INTERNALS__.invoke
     const callbacks = new Map<number, (event: unknown) => unknown>()
@@ -2645,14 +2586,9 @@ async function installTableCloseMock(page: Page, withSyncActions = false) {
     let next = 0
     let release = () => {}
     const held = new Promise<void>(resolve => { release = resolve })
-    const state = runtime.__tableCloseTest = {
+    const state = runtime.__closeGuardTest = {
       async close() { for (const [id, entry] of [...listeners]) if (entry.event === "tauri://close-requested") await callbacks.get(entry.handler)?.({ event: entry.event, id, payload: null }) },
-      listeners: 0, destroyed: 0, checkpoints: 0, holdCheckpoint: false, failDestroy: false, release,
-    }
-    const path = "notes/退出验收.shardtable.json"
-    const tree = async () => {
-      const base = await original("list_library_tree") as { entries: unknown[] }
-      return { ...base, entries: [...base.entries, { name: "退出验收.shardtable.json", path, kind: "table", size: 100, modifiedAt: file.updatedAt }] }
+      listeners: 0, destroyed: 0, checkpoints: 0, holdCheckpoint: false, failDestroy: false, failSave: false, release,
     }
     runtime.__TAURI_INTERNALS__.metadata = { currentWindow: { label: "main" }, currentWebview: { label: "main" } }
     runtime.__TAURI_INTERNALS__.transformCallback = callback => { callbacks.set(++next, callback); return next }
@@ -2679,109 +2615,100 @@ async function installTableCloseMock(page: Page, withSyncActions = false) {
         if (state.holdCheckpoint) await held
         throw new Error("测试检查点失败不应阻止已落盘内容退出")
       }
+      if (command === "update_fragment" && state.failSave) throw new Error("测试：文档保存失败")
       if (command === "list_fragments" && withSyncActions) {
         const result = await original(command, raw) as { git: Record<string, unknown> }
         return { ...result, git: { ...result.git, status: "dirty", hasRemote: true } }
       }
-      if (command === "list_library_tree") return tree()
-      if (command === "migrate_legacy_notes") return { tree: await tree(), migratedCount: 0 }
-      if (command === "read_table") return new TextEncoder().encode(JSON.stringify({ file, path, title: "退出验收", revision: file.revision, contentHash: "a".repeat(64) })).buffer
       return original(command, raw)
     }
-  }, { file: JSON.parse(readFileSync(new URL("../fixtures/tables/valid/six-types.json", import.meta.url), "utf8")), withSyncActions })
+  }, { withSyncActions })
   await page.reload()
-  await expect.poll(() => page.evaluate(() => (window as unknown as { __tableCloseTest: { listeners: number } }).__tableCloseTest.listeners)).toBe(1)
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __closeGuardTest: CloseGuardState }).__closeGuardTest.listeners)).toBe(1)
   await page.getByRole("button", { name: "资料库", exact: true }).click()
   await page.getByRole("button", { name: /^文件（/u, exact: true }).click()
-  await page.getByRole("button", { name: "打开文件 退出验收.shardtable.json", exact: true }).click()
-  await expect(page.getByText("4 / 4 条记录 · 6 列")).toBeVisible()
+  await page.getByRole("button", { name: "打开文件 旧笔记.md", exact: true }).click()
+  await expect(page.getByRole("button", { name: "重命名文件", exact: true })).toHaveText("旧笔记")
 }
 
-test("保存失败取消退出保留表格草稿，明确放弃后才关闭", async ({ page }) => {
-  await installTableCloseMock(page)
-  const workspace = page.getByRole("region", { name: "多维表格：退出验收", exact: true })
-  await workspace.locator("canvas").first().dblclick({ position: { x: 260, y: 65 }, force: true })
-  const editor = page.getByRole("textbox", { name: "编辑单元格", exact: true })
-  await editor.fill("无效数字草稿")
+async function failingDraft(page: Page, content: string) {
+  await page.evaluate(() => { (window as unknown as { __closeGuardTest: CloseGuardState }).__closeGuardTest.failSave = true })
+  await fillEditor(page, "library:note-old", content)
+}
+
+test("保存失败取消退出保留文档草稿，明确放弃后才关闭", async ({ page }) => {
+  await installCloseGuardMock(page)
+  await failingDraft(page, "# 旧笔记\n\n退出前没能保存的草稿")
   page.once("dialog", dialog => dialog.dismiss())
-  await page.evaluate(() => (window as unknown as { __tableCloseTest: { close(): Promise<void> } }).__tableCloseTest.close())
-  await expect(workspace).toBeVisible()
-  await expect(editor).toHaveValue("无效数字草稿")
-  expect(await page.evaluate(() => { const state = (window as unknown as { __tableCloseTest: { destroyed: number; checkpoints: number } }).__tableCloseTest; return [state.destroyed, state.checkpoints] })).toEqual([0, 0])
+  await requestClose(page)
+  await expect.poll(() => readEditor(page, "library:note-old")).toBe("# 旧笔记\n\n退出前没能保存的草稿")
+  expect(await closeGuard(page)).toEqual({ destroyed: 0, checkpoints: 0 })
   page.once("dialog", dialog => dialog.accept())
-  await page.evaluate(() => (window as unknown as { __tableCloseTest: { close(): Promise<void> } }).__tableCloseTest.close())
-  expect(await page.evaluate(() => (window as unknown as { __tableCloseTest: { destroyed: number } }).__tableCloseTest.destroyed)).toBe(1)
+  await requestClose(page)
+  expect((await closeGuard(page)).destroyed).toBe(1)
 })
 
 test("重复退出请求不能越过正在执行的检查点，关闭失败后可以重试", async ({ page }) => {
-  await installTableCloseMock(page)
+  await installCloseGuardMock(page)
+  const before = await readEditor(page, "library:note-old")
   await page.evaluate(() => {
-    const state = (window as unknown as { __tableCloseTest: { close(): Promise<void>; holdCheckpoint: boolean; failDestroy: boolean } }).__tableCloseTest
+    const state = (window as unknown as { __closeGuardTest: CloseGuardState }).__closeGuardTest
     state.holdCheckpoint = true
     state.failDestroy = true
     void state.close()
   })
-  await expect.poll(() => page.evaluate(() => (window as unknown as { __tableCloseTest: { checkpoints: number } }).__tableCloseTest.checkpoints)).toBe(1)
+  await expect.poll(async () => (await closeGuard(page)).checkpoints).toBe(1)
   await expect(page.locator("main[inert]")).toHaveAttribute("aria-busy", "true")
-  await page.locator("[data-table-workspace] canvas").first().dblclick({ position: { x: 80, y: 65 }, force: true })
+  // 不能对 inert 元素强点：Playwright 会等到检查点的 5 秒兜底超时之后才返回。
+  await expect(page.locator('[data-shard-editor="library:note-old"] .ProseMirror')).toHaveAttribute("contenteditable", "false")
   await page.keyboard.type("late-input")
-  await expect(page.locator('[aria-label="编辑单元格"]')).toHaveCount(0)
+  expect(await readEditor(page, "library:note-old")).toBe(before)
   await page.locator('[aria-label="Shard 侧边栏"]').getByRole("button", { name: "碎片", exact: true, includeHidden: true }).click({ force: true })
-  await expect(page.locator('[aria-label="多维表格：退出验收"]')).toBeVisible()
-  await page.evaluate(() => (window as unknown as { __tableCloseTest: { close(): Promise<void> } }).__tableCloseTest.close())
-  expect(await page.evaluate(() => (window as unknown as { __tableCloseTest: { destroyed: number } }).__tableCloseTest.destroyed)).toBe(0)
-  await page.evaluate(() => (window as unknown as { __tableCloseTest: { release(): void } }).__tableCloseTest.release())
+  // inert 子树不在无障碍树里，用 DOM 定位确认仍停在这篇文档。
+  await expect(page.locator('[data-shard-editor="library:note-old"]')).toBeVisible()
+  await requestClose(page)
+  expect((await closeGuard(page)).destroyed).toBe(0)
+  await page.evaluate(() => (window as unknown as { __closeGuardTest: CloseGuardState }).__closeGuardTest.release())
   await expect(page.locator('[data-sonner-toast][data-type="error"]').filter({ hasText: "退出失败" }).filter({ hasText: "当前窗口已保留。" })).toBeVisible()
   await expect(page.locator("main[inert]")).toHaveCount(0)
   await page.evaluate(async () => {
-    const state = (window as unknown as { __tableCloseTest: { close(): Promise<void>; failDestroy: boolean } }).__tableCloseTest
+    const state = (window as unknown as { __closeGuardTest: CloseGuardState }).__closeGuardTest
     state.failDestroy = false
     await state.close()
   })
-  expect(await page.evaluate(() => (window as unknown as { __tableCloseTest: { destroyed: number } }).__tableCloseTest.destroyed)).toBe(1)
+  expect((await closeGuard(page)).destroyed).toBe(1)
 })
 
-test("表格无效数字草稿阻止切目录与切碎片空间", async ({ page }) => {
-  await installTableCloseMock(page)
-  const workspace = page.getByRole("region", { name: "多维表格：退出验收", exact: true })
-  await workspace.locator("canvas").first().dblclick({ position: { x: 260, y: 65 }, force: true })
-  const editor = page.getByRole("textbox", { name: "编辑单元格", exact: true })
-  await editor.fill("导航前的无效数字草稿")
+test("文档保存失败时阻止切目录与切碎片空间", async ({ page }) => {
+  await installCloseGuardMock(page)
+  await failingDraft(page, "# 旧笔记\n\n导航前没能保存的草稿")
 
   await page.getByRole("complementary", { name: "资料库目录" }).getByRole("button", { name: /^文件（/u, exact: true }).click()
-  await expect(workspace.getByRole("alert")).toBeVisible()
-  await expect(workspace).toBeVisible()
-  await expect(editor).toHaveValue("导航前的无效数字草稿")
+  await expect(page.locator('[data-sonner-toast][data-type="error"]').filter({ hasText: "文档保存失败" }).first()).toBeVisible()
   await expect(page.getByRole("region", { name: "notes 目录列表", exact: true })).toHaveCount(0)
+  await expect.poll(() => readEditor(page, "library:note-old")).toBe("# 旧笔记\n\n导航前没能保存的草稿")
 
   await page.getByRole("button", { name: "碎片", exact: true }).click()
-  await expect(workspace).toBeVisible()
-  await expect(editor).toHaveValue("导航前的无效数字草稿")
+  await expect(page.getByRole("button", { name: "重命名文件", exact: true })).toHaveText("旧笔记")
+  await expect.poll(() => readEditor(page, "library:note-old")).toBe("# 旧笔记\n\n导航前没能保存的草稿")
   await expect.poll(() => page.evaluate(() => localStorage.getItem("shard.workspace-route"))).toBe(JSON.stringify({ space: "library", params: {} }))
-  expect(await commandCalls(page, "apply_table_mutations")).toHaveLength(0)
 })
 
-test("表格无效数字草稿阻止手动同步与检查点调用", async ({ page }) => {
-  await installTableCloseMock(page, true)
-  const workspace = page.getByRole("region", { name: "多维表格：退出验收", exact: true })
-  await workspace.locator("canvas").first().dblclick({ position: { x: 260, y: 65 }, force: true })
-  const editor = page.getByRole("textbox", { name: "编辑单元格", exact: true })
-  await editor.fill("同步前的无效数字草稿")
+test("文档保存失败时阻止手动同步与检查点调用", async ({ page }) => {
+  await installCloseGuardMock(page, true)
+  await failingDraft(page, "# 旧笔记\n\n同步前没能保存的草稿")
   const syncCallsBefore = (await commandCalls(page, "sync_vault")).length
-  const checkpointsBefore = await page.evaluate(() => (window as unknown as { __tableCloseTest: { checkpoints: number } }).__tableCloseTest.checkpoints)
+  const checkpointsBefore = (await closeGuard(page)).checkpoints
   const statusBar = page.getByRole("contentinfo", { name: "状态栏" })
 
   await statusBar.getByRole("button", { name: "同步", exact: true }).click()
   await expect(page.locator('[data-sonner-toast][data-type="error"]').filter({ hasText: "草稿保存失败" }).filter({ hasText: "已取消同步。" })).toBeVisible()
   expect(await commandCalls(page, "sync_vault")).toHaveLength(syncCallsBefore)
-  await expect(editor).toHaveValue("同步前的无效数字草稿")
 
   await statusBar.getByRole("button", { name: "未提交更改", exact: true }).click()
   await expect(page.locator('[data-sonner-toast][data-type="error"]').filter({ hasText: "草稿保存失败" }).filter({ hasText: "已取消提交。" })).toBeVisible()
-  expect(await page.evaluate(() => (window as unknown as { __tableCloseTest: { checkpoints: number } }).__tableCloseTest.checkpoints)).toBe(checkpointsBefore)
-  await expect(workspace).toBeVisible()
-  await expect(editor).toHaveValue("同步前的无效数字草稿")
-  expect(await commandCalls(page, "apply_table_mutations")).toHaveLength(0)
+  expect((await closeGuard(page)).checkpoints).toBe(checkpointsBefore)
+  await expect.poll(() => readEditor(page, "library:note-old")).toBe("# 旧笔记\n\n同步前没能保存的草稿")
 })
 
 async function installCanvasLibraryMock(page: Page) {
@@ -2854,45 +2781,103 @@ test("流程图从资料库创建并保存，失败时阻止返回目录", async
 })
 
 
-test("CSV 源文件直接进入多维表格导入预览，取消不创建新表", async ({ page }) => {
+type LibraryDatasetCall = { command: string; args?: Record<string, unknown> }
+const libraryDatasetCalls = (page: Page, command: string) => page.evaluate(name => (window as unknown as {
+  __libraryDatasetCalls: LibraryDatasetCall[]
+}).__libraryDatasetCalls.filter(call => call.command === name), command)
+
+/** 资料库建数据集：CSV 落 datasets/，说明文档复用基础 mock 的新建文档。 */
+async function installLibraryDatasetMock(page: Page) {
   await page.addInitScript(() => {
     const runtime = window as unknown as {
       __TAURI_INTERNALS__: { invoke(command: string, args?: unknown): Promise<unknown> }
-      __tableSourceImportCalls: { command: string; args?: unknown }[]
+      __libraryDatasetCalls: LibraryDatasetCall[]
     }
     const original = runtime.__TAURI_INTERNALS__.invoke
-    runtime.__tableSourceImportCalls = []
-    runtime.__TAURI_INTERNALS__.invoke = async (command, args) => {
-      runtime.__tableSourceImportCalls.push({ command, args })
-      if (command === "read_table_exchange_file") {
-        return new TextEncoder().encode("名称,状态\n保留原始CSV,待办\n").buffer
+    runtime.__libraryDatasetCalls = []
+    let dataset = { path: "", table: { header: [] as string[], rows: [] as string[][] } }
+    const snapshot = () => ({
+      ...dataset, sha: "sha-0", schemaSha: "schema-sha", editable: true, readOnlyReason: null,
+      schema: { schemaVersion: 1, datasetId: "ds_0123456789abcdef0123456789abcdef", title: "", primaryKey: "id" },
+    })
+    runtime.__TAURI_INTERNALS__.invoke = async (command, raw) => {
+      const args = (raw ?? {}) as Record<string, unknown>
+      runtime.__libraryDatasetCalls.push({ command, args: JSON.parse(JSON.stringify(args)) })
+      if (command === "plugin:dialog|open") return "/tmp/导入/库存.xlsx"
+      if (command === "read_import_csv_file") return Array.from(new TextEncoder().encode("名称,状态\n保留原始CSV,待办\n"))
+      if (command === "read_import_xlsx_file") {
+        return { sheetName: "库存表", sheetCount: 2, records: [["名称", "数量"], ["苹果", "3"], ["梨", "0012"]], warnings: ["1 个公式单元格只导入计算结果"] }
       }
-      return original(command, args)
+      if (command === "create_library_dataset") {
+        dataset = { path: `datasets/${String(args.title)}.csv`, table: { header: args.header as string[], rows: args.rows as string[][] } }
+        const library = await original("create_library_note", { parentPath: args.parentPath, title: args.title })
+        return { dataset: snapshot(), library }
+      }
+      if (command === "read_dataset") return snapshot()
+      return original(command, raw)
     }
   })
   await page.reload()
+}
+
+test("CSV 源文件进入数据集导入预览，取消不创建数据集", async ({ page }) => {
+  await installLibraryDatasetMock(page)
   await page.getByRole("button", { name: "资料库", exact: true }).click()
   await page.getByRole("button", { name: /^文件（/u, exact: true }).click()
   await page.getByRole("button", { name: "清单.csv 操作", exact: true }).click()
-  await page.getByRole("menuitem", { name: "导入为多维表格", exact: true }).click()
-  const dialog = page.getByRole("dialog", { name: "导入多维表格", exact: true })
+  await page.getByRole("menuitem", { name: "导入为数据集", exact: true }).click()
+  const dialog = page.getByRole("dialog", { name: "导入 CSV 为数据集", exact: true })
   await expect(dialog).toBeVisible()
-  await expect(dialog.getByText("清单.csv", { exact: true })).toBeVisible()
+  await expect(dialog).toContainText("清单.csv · 编码：UTF-8 · 1 行 · 2 列")
   await expect(dialog.getByRole("cell", { name: "保留原始CSV", exact: true })).toBeVisible()
-  const calls = await page.evaluate(() => (window as unknown as {
-    __tableSourceImportCalls: { command: string; args?: unknown }[]
-  }).__tableSourceImportCalls)
-  const reads = calls.filter(call => call.command === "read_table_exchange_file")
-  expect(reads).toEqual([
-    { command: "read_table_exchange_file", args: { request: { path: "/tmp/shard-library-tree-test/notes/清单.csv" } } },
+  expect(await libraryDatasetCalls(page, "read_import_csv_file")).toEqual([
+    { command: "read_import_csv_file", args: { path: "/tmp/shard-library-tree-test/notes/清单.csv" } },
   ])
-  expect(calls.filter(call => ["plugin:dialog|open", "create_table"].includes(call.command))).toHaveLength(0)
+  expect(await libraryDatasetCalls(page, "plugin:dialog|open")).toHaveLength(0)
   await dialog.getByRole("button", { name: "取消", exact: true }).click()
   await expect(dialog).toHaveCount(0)
+  expect(await libraryDatasetCalls(page, "create_library_dataset")).toHaveLength(0)
   await expect(page.getByRole("button", { name: "清单.csv 操作", exact: true })).toBeVisible()
   await page.getByRole("button", { name: "新建", exact: true }).click()
-  await expect(page.getByRole("menuitem", { name: "新建多维表格", exact: true })).toBeVisible()
+  await expect(page.getByRole("menuitem", { name: "新建数据集", exact: true })).toBeVisible()
+  await expect(page.getByRole("menuitem", { name: "新建多维表格", exact: true })).toHaveCount(0)
   await expect(page.getByRole("menuitem", { name: "从 CSV / Excel 导入…", exact: true })).toBeVisible()
+})
+
+test("新建数据集先起名，再建 CSV 与说明文档并直接打开编辑", async ({ page }) => {
+  await installLibraryDatasetMock(page)
+  await page.getByRole("button", { name: "资料库", exact: true }).click()
+  await createLibraryEntry(page, "新建数据集")
+  const dialog = page.getByRole("dialog", { name: "新建数据集", exact: true })
+  const input = dialog.getByRole("textbox", { name: "数据集名称", exact: true })
+  await expect(input).toHaveValue("未命名数据集")
+  await input.fill("书单")
+  await input.press("Enter")
+  await expect(dialog).toHaveCount(0)
+  await expect(page.getByRole("region", { name: "数据集禅模式" })).toBeVisible()
+  expect((await libraryDatasetCalls(page, "create_library_dataset")).map(call => call.args)).toEqual([
+    { parentPath: "notes", title: "书单", header: ["id", "名称"], rows: [], primaryKey: "id" },
+  ])
+  expect(await commandCalls(page, "create_library_note")).toHaveLength(1)
+})
+
+test("从 Excel 导入只取第一个工作表并提示转换说明，导入后生成说明文档", async ({ page }) => {
+  await installLibraryDatasetMock(page)
+  await page.getByRole("button", { name: "资料库", exact: true }).click()
+  await page.getByRole("complementary", { name: "资料库目录" }).getByRole("button", { name: "新建", exact: true }).click()
+  await page.getByRole("menuitem", { name: "从 CSV / Excel 导入…", exact: true }).click()
+  const dialog = page.getByRole("dialog", { name: "导入 Excel 为数据集", exact: true })
+  await expect(dialog).toContainText("库存.xlsx · 工作表：库存表（共 2 个，只导入第一个） · 2 行 · 2 列")
+  await expect(dialog.getByText("1 个公式单元格只导入计算结果", { exact: true })).toBeVisible()
+  await expect(dialog.getByRole("cell", { name: "0012", exact: true })).toBeVisible()
+  expect((await libraryDatasetCalls(page, "read_import_xlsx_file")).map(call => call.args)).toEqual([{ path: "/tmp/导入/库存.xlsx" }])
+  await dialog.getByRole("button", { name: "导入", exact: true }).click()
+  await expect(dialog).toHaveCount(0)
+  const [created] = await libraryDatasetCalls(page, "create_library_dataset")
+  expect(created.args).toMatchObject({ parentPath: "notes", title: "库存", header: ["id", "名称", "数量"], primaryKey: "id" })
+  expect((created.args!.rows as string[][]).map(row => row.slice(1))).toEqual([["苹果", "3"], ["梨", "0012"]])
+  expect((created.args!.rows as string[][]).every(row => /^r_[0-9a-f]{12}$/u.test(row[0]))).toBe(true)
+  await expect(page.getByRole("button", { name: "重命名文件", exact: true })).toHaveText("库存")
 })
 
 async function installDiagramDocumentsMock(page: Page) {

@@ -8,7 +8,6 @@ import {
   LockKeyholeIcon,
   SearchIcon,
   TagIcon,
-  TableIcon,
   WorkflowIcon,
   XIcon,
   type LucideIcon,
@@ -62,7 +61,6 @@ const KIND_ICON: Record<SearchKind, LucideIcon> = {
   mindmap: GitBranchIcon,
   note: FileTextIcon,
   outline: GitBranchIcon,
-  table: TableIcon,
 };
 
 const KIND_LABEL: Record<SearchKind, string> = {
@@ -74,7 +72,6 @@ const KIND_LABEL: Record<SearchKind, string> = {
   mindmap: "思维导图",
   note: "笔记",
   outline: "大纲",
-  table: "表格",
 };
 
 export function SearchPalette({

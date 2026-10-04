@@ -400,7 +400,7 @@ test("网格主题颜色全部转为 Glide 可解析的 rgb/rgba（color-mix tok
   await clickCell(page, 0, 2)
   await expect.poll(() => cellValue(page, 0, 2)).toMatch(/^r_[0-9a-f]{12}$/)
   const colors = await editor(page).evaluate(async element => {
-    const { readKilnGridTheme } = await import(/* @vite-ignore */ "/src/features/tables/kiln-grid-theme.ts") as typeof import("../../src/features/tables/kiln-grid-theme")
+    const { readKilnGridTheme } = await import(/* @vite-ignore */ "/src/features/datasets/kiln-grid-theme.ts") as typeof import("../../src/features/datasets/kiln-grid-theme")
     const { theme } = readKilnGridTheme(element as HTMLElement)
     return Object.entries(theme).filter(([key, value]) => typeof value === "string" && /(color|^text|^bg|^fg|^accent|border)/iu.test(key)).map(([key, value]) => [key, value as string])
   })

@@ -80,7 +80,7 @@ test("项目扫描包含业务、共享控件与 dev，不服从 tsconfig 的目
   const root = mkdtempSync(join(tmpdir(), "shard-ui-control-fixture-"));
   try {
     writeFileSync(join(root, "tsconfig.json"), JSON.stringify({ compilerOptions: { jsx: "react-jsx", strict: true }, exclude: ["src/dev", "src/components/ui"] }));
-    for (const folder of ["features/tables", "components/ui", "dev"]) {
+    for (const folder of ["features/datasets", "components/ui", "dev"]) {
       const directory = join(root, "src", folder);
       mkdirSync(directory, { recursive: true });
       writeFileSync(join(directory, "fixture.tsx"), "const Demo = () => <select />;");

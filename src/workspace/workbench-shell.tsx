@@ -2407,21 +2407,6 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
           await waitForSearchHost(requestId, signal)
           return { reveal: null }
         },
-        openTable: async (target, result, requestId, signal) => {
-          setActiveOutlineEditor(null)
-          setActiveFlowchartEditor(null)
-          setActiveMindMapId(null)
-          setSearchEditorNavigation(null)
-          setPendingLibrarySearchTarget({
-            kind: "table",
-            requestId,
-            result,
-            target,
-          })
-          setRoute({ space: "library", params: {} })
-          await waitForSearchHost(requestId, signal)
-          return { reveal: null }
-        },
       },
     })
 
@@ -3410,7 +3395,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
               showFragmentTarget(fragment)
             }}
             onRefreshLibrary={refreshLibraryTree}
-            onTableSaved={recordContentActivity}
+            onContentSaved={recordContentActivity}
             onMoveToLockbox={handleMoveFragmentToLockbox}
             onFragmentUpdated={handleFragmentPropertyUpdated}
             onOpenGraphFragment={(fragment) => {

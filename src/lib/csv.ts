@@ -102,8 +102,7 @@ export function parseCsv(source: string): string[][] {
 
 /**
  * CSV 序列化：`parseCsv` 的逆运算。字段含引号、逗号或换行时加引号并把引号翻倍，
- * 记录之间用 CRLF（RFC 4180）——与 `exportTableCsv` 的写法一致，
- * 但这里只处理纯字符串矩阵，不掺多维表格的字段类型与公式防护。
+ * 记录之间用 CRLF（RFC 4180）；只处理纯字符串矩阵，不做字段类型与公式防护。
  */
 export function serializeCsv(records: readonly (readonly string[])[]): string {
   return records.map((record) => record.map(serializeCsvField).join(",")).join("\r\n")

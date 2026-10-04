@@ -210,8 +210,7 @@ function treeSearchKind(
     entry.kind === "csv" ||
     entry.kind === "mindmap" ||
     entry.kind === "flowchart" ||
-    entry.kind === "canvas" ||
-    entry.kind === "table"
+    entry.kind === "canvas"
   ) {
     return entry.kind
   }

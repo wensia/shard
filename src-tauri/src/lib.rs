@@ -57,10 +57,8 @@ use std::{
 use tauri::Manager;
 
 mod cli_install;
-mod table;
 mod canvas_commands;
-mod table_commands;
-mod table_exchange_commands;
+mod export_commands;
 mod window_frame;
 mod reminder_badge;
 mod search_commands;
@@ -72,6 +70,7 @@ mod search_reconcile;
 mod search_runtime;
 mod search_lockbox;
 mod search_sources;
+mod xlsx;
 
 const DEFAULT_WINDOW_TITLE: &str = "Shard";
 const LOCKBOX_TTL: Duration = Duration::from_secs(15 * 60);
@@ -143,8 +142,8 @@ fn managed_pathspecs() -> Vec<String> {
         .collect();
     specs.push(CSV_GIT_PATHSPEC.to_string());
     specs.push(":(exclude,glob)datasets/**/.?*.tmp-[0-9a-f][0-9a-f][0-9a-f][0-9a-f]".to_string());
-    // Only native-table atomic-write leftovers: a nonempty name and exactly
-    // 32 lowercase hex characters. Do not ignore arbitrary hidden/temporary files.
+    // Legacy multidimensional-table (旧多维表格，已退役) atomic-write leftovers: a nonempty
+    // name and exactly 32 lowercase hex characters. Do not ignore arbitrary hidden/temporary files.
     specs.push(format!(
         ":(exclude,glob)**/.?*.shardtable.json.table-tmp-{}",
         "[0-9a-f]".repeat(32)
@@ -1060,6 +1059,43 @@ async fn create_library_note(
     .await
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LibraryDatasetResult {
+    dataset: DatasetSnapshot,
+    library: LibraryMutationResult,
+}
+
+#[tauri::command]
+async fn create_library_dataset(
+    app: tauri::AppHandle,
+    title: String,
+    header: Vec<String>,
+    rows: Vec<Vec<String>>,
+    primary_key: Option<String>,
+    parent_path: Option<String>,
+) -> Result<LibraryDatasetResult, String> {
+    run_blocking(move || {
+        let vault = ensure_vault_dirs(&app)?;
+        let (dataset, fragment) = {
+            let _gate = lock_vault_gate(&vault);
+            create_library_dataset_in_vault(
+                &vault,
+                &title,
+                header,
+                rows,
+                primary_key,
+                parent_path.as_deref(),
+            )?
+        };
+        Ok(LibraryDatasetResult {
+            dataset,
+            library: library_mutation_result(&vault, Some(fragment), 0)?,
+        })
+    })
+    .await
+}
+
 #[tauri::command]
 async fn create_library_directory(
     app: tauri::AppHandle,
@@ -1251,6 +1287,23 @@ async fn read_import_csv_file(path: String) -> Result<Vec<u8>, String> {
             return Err("LIMIT_EXCEEDED:CSV 文件超过导入上限".to_string());
         }
         Ok(bytes)
+    }).await
+}
+
+#[tauri::command]
+async fn read_import_xlsx_file(path: String) -> Result<xlsx::XlsxRecords, String> {
+    run_blocking(move || {
+        let source = Path::new(&path);
+        if !source.is_absolute() || !source.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("xlsx")) {
+            return Err("只能导入 XLSX 文件".to_string());
+        }
+        let resolved = source.canonicalize().map_err(|error| error.to_string())?;
+        if resolved.components().any(|component| matches!(component, Component::Normal(name) if name.to_string_lossy().eq_ignore_ascii_case("lockbox"))) {
+            return Err("私密碎片不支持数据集".to_string());
+        }
+        let limits = xlsx::XlsxLimits::default();
+        let bytes = xlsx::read_xlsx_file(&resolved, &limits).map_err(|error| error.to_string())?;
+        xlsx::read_xlsx_records(&bytes, &limits).map_err(|error| error.to_string())
     }).await
 }
 
@@ -3507,8 +3560,7 @@ fn is_library_reference_source(path: &Path) -> bool {
     has_child && (matches!(path.extension().and_then(|extension| extension.to_str()), Some("md" | "csv"))
         || is_mind_map_file(path)
         || canvas_commands::is_canvas(path)
-        || canvas_commands::is_flow(path)
-        || table_commands::is_table(path))
+        || canvas_commands::is_flow(path))
 }
 
 fn extract_asset_references(text: &str) -> Vec<String> {
@@ -3738,7 +3790,7 @@ fn valid_library_creation_time(value: String) -> Option<String> {
 
 fn library_document_created_at(path: &Path, kind: &str) -> Option<String> {
     // Native documents store creation metadata before their body. Keep library scans
-    // bounded even for large tables; externally reordered headers can use FS birthtime.
+    // bounded even for large documents; externally reordered headers can use FS birthtime.
     const HEADER_BYTES: u64 = 64 * 1024;
     let file = File::open(path).ok()?;
     let reader = BufReader::new(file.take(HEADER_BYTES));
@@ -3843,8 +3895,6 @@ where
                 "flowchart"
             } else if canvas_commands::is_canvas(&path) {
                 "canvas"
-            } else if table_commands::is_table(&path) {
-                "table"
             } else if is_mind_map {
                 "mindmap"
             } else {
@@ -3874,7 +3924,7 @@ where
                 mind_map
                     .as_ref()
                     .and_then(|summary| valid_library_creation_time(summary.created_at.clone()))
-            } else if matches!(kind, "markdown" | "table" | "flowchart" | "canvas") {
+            } else if matches!(kind, "markdown" | "flowchart" | "canvas") {
                 library_document_created_at(&path, kind)
             } else {
                 None
@@ -4180,6 +4230,15 @@ fn create_library_note_in_vault(
     title: &str,
     directory: Option<&str>,
 ) -> Result<Fragment, String> {
+    create_library_note_with_body(vault, title, directory, &format!("# {}", title.trim()))
+}
+
+fn create_library_note_with_body(
+    vault: &Path,
+    title: &str,
+    directory: Option<&str>,
+    body: &str,
+) -> Result<Fragment, String> {
     let title = title.trim();
     if title.is_empty() {
         return Err("笔记标题不能为空。".to_string());
@@ -4201,13 +4260,65 @@ fn create_library_note_in_vault(
         conflict_of: None,
         related: Vec::new(),
     };
-    write_fragment_file(&path, &frontmatter, &format!("# {title}"))?;
+    write_fragment_file(&path, &frontmatter, body)?;
     read_fragment(
         &path,
         vault,
         &dirty_paths(vault),
         None,
     )
+}
+
+/// Creates `datasets/<title>.csv` plus a note in the library that embeds it. Caller holds the
+/// vault gate. A failed note removes the new CSV and schema so no orphan dataset remains.
+fn create_library_dataset_in_vault(
+    vault: &Path,
+    title: &str,
+    header: Vec<String>,
+    rows: Vec<Vec<String>>,
+    primary_key: Option<String>,
+    directory: Option<&str>,
+) -> Result<(DatasetSnapshot, Fragment), String> {
+    #[derive(Serialize)]
+    struct DatatableSource<'a> {
+        title: &'a str,
+        src: &'a str,
+    }
+    let title = title.trim();
+    if title.is_empty() {
+        return Err("数据集名称不能为空。".to_string());
+    }
+    validate_library_name_length(title, ".md")?;
+    existing_library_directory(vault, directory)?;
+    let dataset = dataset::create_dataset(
+        vault,
+        title,
+        header,
+        rows,
+        primary_key,
+        &DatasetLimits::default(),
+    )
+    .map_err(|error| error.to_string())?;
+    let created = (|| {
+        let block = serde_json::to_string_pretty(&DatatableSource {
+            title,
+            src: &dataset.path,
+        })
+        .map_err(|error| error.to_string())?;
+        let body = format!("# {title}\n\n```datatable\n{block}\n```\n");
+        create_library_note_with_body(vault, title, directory, &body)
+    })();
+    match created {
+        Ok(fragment) => Ok((dataset, fragment)),
+        Err(error) => {
+            let csv = vault.join(&dataset.path);
+            if let Some(name) = csv.file_name().and_then(|name| name.to_str()) {
+                let _ = fs::remove_file(csv.with_file_name(format!("{name}.schema.json")));
+            }
+            let _ = fs::remove_file(&csv);
+            Err(error)
+        }
+    }
 }
 
 fn create_library_directory_in_vault(
@@ -4247,14 +4358,6 @@ fn rename_library_entry_in_vault(
             } else {
                 format!("{new_name}{suffix}")
             }
-        } else if table_commands::is_table(&source) {
-            if new_name.ends_with(".shardtable.json") {
-                new_name.to_string()
-            } else if Path::new(new_name).extension().is_some() {
-                return Err("重命名不能改变文件类型。".to_string());
-            } else {
-                format!("{new_name}.shardtable.json")
-            }
         } else if is_mind_map_file(&source) {
             if new_name.ends_with(".shardmap.json") {
                 new_name.to_string()
@@ -4292,8 +4395,6 @@ fn rename_library_entry_in_vault(
             ".shardcanvas.json"
         }
         .to_string()
-    } else if table_commands::is_table(&source) {
-        ".shardtable.json".to_string()
     } else if is_mind_map_file(&source) {
         ".shardmap.json".to_string()
     } else {
@@ -4433,6 +4534,8 @@ fn timestamped_collision_path(path: &Path) -> Result<PathBuf, String> {
         .file_name()
         .and_then(|name| name.to_str())
         .ok_or_else(|| "条目名称无效。".to_string())?;
+    // `.shardtable.json` is a retired multidimensional-table (旧多维表格) suffix; keep it so
+    // restoring a legacy file from trash still preserves its double extension.
     let (stem, extension) = [
         ".shardflow.json", ".shardcanvas.json", ".shardtable.json", ".shardmap.json",
     ]
@@ -7948,20 +8051,12 @@ pub fn run() {
             install_cli,
             uninstall_cli,
             set_cli_install_declined,
-            table_commands::create_table,
             canvas_commands::create_canvas,
             canvas_commands::read_canvas,
             canvas_commands::write_canvas,
             canvas_commands::split::list_diagram_documents,
             canvas_commands::split::split_canvas,
-            table_commands::read_table,
-            table_commands::apply_table_mutations,
-            table_commands::save_table_copy,
-            table_exchange_commands::inspect_table_xlsx,
-            table_exchange_commands::preview_table_xlsx,
-            table_exchange_commands::prepare_table_xlsx_export,
-            table_exchange_commands::read_table_exchange_file,
-            table_exchange_commands::write_table_exchange_file,
+            export_commands::write_export_file,
             list_fragments,
             read_property_registry,
             register_property_type,
@@ -7975,6 +8070,7 @@ pub fn run() {
             list_library_tree,
             migrate_legacy_notes,
             create_library_note,
+            create_library_dataset,
             create_library_directory,
             rename_library_entry,
             move_library_entry,
@@ -7986,6 +8082,7 @@ pub fn run() {
             convert_note_to_fragment,
             read_csv_file,
             read_import_csv_file,
+            read_import_xlsx_file,
             read_dataset,
             apply_dataset_ops,
             create_dataset,
@@ -8295,7 +8392,7 @@ mod tests {
     }
 
     #[test]
-    fn native_table_crash_leftovers_stay_out_of_checkpoint_sync_and_structural_commits() {
+    fn legacy_table_crash_leftovers_stay_out_of_checkpoint_sync_and_structural_commits() {
         let tempdir = tempfile::tempdir().unwrap();
         let vault = tempdir.path();
         ensure_vault_layout(vault).unwrap();
@@ -8304,9 +8401,8 @@ mod tests {
         let _gate = lock_vault_gate(vault);
         fs::create_dir(vault.join("notes/source")).unwrap();
         let table = "notes/source/normal.shardtable.json";
-        let source = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../tests/fixtures/tables/valid/empty.json");
-        let mut table_bytes = fs::read(source).unwrap();
+        // Retired multidimensional tables are plain managed files now.
+        let mut table_bytes = br#"{"kind":"shard.table","schemaVersion":1}"#.to_vec();
         fs::write(vault.join(table), &table_bytes).unwrap();
         let leftover_name = format!(".normal.shardtable.json.table-tmp-{}", "a".repeat(32));
         let leftover = format!("notes/source/{leftover_name}");
@@ -10846,13 +10942,122 @@ mod tests {
     }
 
     #[test]
+    fn library_tree_hides_retired_tables_but_keeps_them_restorable_from_trash() {
+        fn flatten(entries: &[LibraryTreeEntry]) -> Vec<(String, String)> {
+            entries
+                .iter()
+                .flat_map(|entry| {
+                    let mut items = vec![(entry.path.clone(), entry.kind.clone())];
+                    items.extend(flatten(entry.children.as_deref().unwrap_or_default()));
+                    items
+                })
+                .collect()
+        }
+        let tempdir = tempfile::tempdir().unwrap();
+        let vault = tempdir.path();
+        ensure_vault_layout(vault).unwrap();
+        fs::write(vault.join("notes/旧表.shardtable.json"), "{}").unwrap();
+        fs::write(vault.join("notes/说明.md"), "# 说明").unwrap();
+        fs::create_dir_all(vault.join(".trash/notes")).unwrap();
+        fs::write(vault.join(".trash/notes/已删表.shardtable.json"), "{}").unwrap();
+
+        let tree = build_library_tree(vault).unwrap();
+        let entries = flatten(&tree.entries);
+        assert_eq!(entries, vec![("notes/说明.md".to_string(), "markdown".to_string())]);
+        let trash = flatten(&tree.trash_entries);
+        assert!(trash.contains(&(
+            ".trash/notes/已删表.shardtable.json".to_string(),
+            "file".to_string()
+        )));
+        assert!(!trash.iter().any(|(_, kind)| kind == "table"));
+    }
+
+    #[test]
+    fn library_dataset_creates_csv_schema_and_embedding_note() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let vault = tempdir.path();
+        ensure_vault_layout(vault).unwrap();
+        fs::create_dir(vault.join("notes/项目")).unwrap();
+        let (dataset, note) = create_library_dataset_in_vault(
+            vault,
+            " 读书清单 ",
+            vec!["id".into(), "名称".into()],
+            vec![vec!["r1".into(), "第一本".into()]],
+            Some("id".into()),
+            Some("notes/项目"),
+        )
+        .unwrap();
+        assert_eq!(dataset.path, "datasets/读书清单.csv");
+        assert!(vault.join("datasets/读书清单.csv").is_file());
+        assert!(vault.join("datasets/读书清单.csv.schema.json").is_file());
+        assert_eq!(note.path, "notes/项目/读书清单.md");
+        assert!(note.tags.iter().any(|tag| tag == "note"));
+        assert_eq!(
+            note.content.trim(),
+            "# 读书清单\n\n```datatable\n{\n  \"title\": \"读书清单\",\n  \"src\": \"datasets/读书清单.csv\"\n}\n```"
+        );
+    }
+
+    #[test]
+    fn library_dataset_leaves_no_csv_when_the_note_cannot_be_created() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let vault = tempdir.path();
+        ensure_vault_layout(vault).unwrap();
+        for directory in [Some("notes/不存在"), Some("../outside")] {
+            assert!(create_library_dataset_in_vault(
+                vault,
+                "孤儿",
+                vec!["名称".into()],
+                Vec::new(),
+                None,
+                directory,
+            )
+            .is_err());
+        }
+        assert!(create_library_dataset_in_vault(vault, "  ", vec!["名称".into()], Vec::new(), None, None)
+            .is_err());
+        let leftovers = fs::read_dir(vault.join("datasets"))
+            .map(|entries| {
+                entries
+                    .filter(|entry| {
+                        entry.as_ref().is_ok_and(|entry| {
+                            entry.file_name().to_string_lossy().contains(".csv")
+                        })
+                    })
+                    .count()
+            })
+            .unwrap_or(0);
+        assert_eq!(leftovers, 0);
+
+        // A note write failure after the CSV exists rolls the dataset back.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let notes = vault.join("notes");
+            fs::set_permissions(&notes, fs::Permissions::from_mode(0o555)).unwrap();
+            let result = create_library_dataset_in_vault(
+                vault,
+                "只读目录",
+                vec!["名称".into()],
+                Vec::new(),
+                None,
+                None,
+            );
+            fs::set_permissions(&notes, fs::Permissions::from_mode(0o755)).unwrap();
+            assert!(result.is_err());
+            assert!(!vault.join("datasets/只读目录.csv").exists());
+            assert!(!vault.join("datasets/只读目录.csv.schema.json").exists());
+        }
+    }
+
+    #[test]
     fn library_tree_preserves_document_creation_time_across_atomic_rewrites() {
         let tempdir = tempfile::tempdir().unwrap();
         let vault = tempdir.path();
         ensure_vault_layout(vault).unwrap();
         let created_at = "2025-03-04T05:06:07+08:00";
         let note_path = vault.join("notes/说明.md");
-        let table_path = vault.join("notes/数据.shardtable.json");
+        let flow_path = vault.join("notes/数据.shardflow.json");
 
         for body in ["first version", "second version"] {
             write_text_atomically(
@@ -10861,7 +11066,7 @@ mod tests {
             )
             .unwrap();
             write_text_atomically(
-                &table_path,
+                &flow_path,
                 &format!(r#"{{"createdAt":"{created_at}","body":"{body}"}}"#),
             )
             .unwrap();
@@ -11091,6 +11296,7 @@ mod tests {
             r#"{"image":"assets/canvas.png"}"#,
         )
         .unwrap();
+        // Retired multidimensional tables are no longer reference sources.
         fs::write(
             vault.join("notes/table.shardtable.json"),
             r#"{"cell":"assets/table.png"}"#,
@@ -11119,11 +11325,10 @@ mod tests {
                 "assets/document.png".into(),
                 "assets/shared.png".into(),
                 "assets/canvas.png".into(),
-                "assets/table.png".into(),
                 format!("assets/aa/{hash}.png"),
             ])
         );
-        for name in ["fragment", "unknown", "private", "deleted"] {
+        for name in ["fragment", "table", "unknown", "private", "deleted"] {
             assert!(vault.join(format!("assets/{name}.png")).is_file());
         }
     }
@@ -11244,10 +11449,7 @@ mod tests {
         let tempdir = tempfile::tempdir().unwrap();
         let vault = tempdir.path();
         ensure_vault_layout(vault).unwrap();
-        for extension in [
-            ".md", ".CSV", ".shardmap.json", ".shardtable.json",
-            ".shardflow.json", ".shardcanvas.json",
-        ] {
+        for extension in [".md", ".CSV", ".shardmap.json", ".shardflow.json", ".shardcanvas.json"] {
             let source = format!("notes/source{extension}");
             fs::write(vault.join(&source), "fixture").unwrap();
             assert_eq!(
@@ -11268,7 +11470,7 @@ mod tests {
     fn library_filename_generated_collision_suffixes_fit_characters_and_bytes() {
         let tempdir = tempfile::tempdir().unwrap();
         for title in ["字".repeat(80), "😀".repeat(80)] {
-            for extension in [".md", ".shardmap.json", ".shardtable.json", ".shardflow.json"] {
+            for extension in [".md", ".shardmap.json", ".shardflow.json"] {
                 for index in 1..=11 {
                     let path = unique_titled_path(tempdir.path(), &title, extension);
                     let name = path.file_name().unwrap().to_str().unwrap();
