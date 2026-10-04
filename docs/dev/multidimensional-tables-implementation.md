@@ -1,5 +1,7 @@
 # Shard 多维表格实现与验收记录
 
+> **已退役（2026-10-04）**：多维表格产品已删除，结构化数据改由 CSV 数据集承载，见 [CSV 数据存储层方案](csv-data-storage-plan.md) 第 7 节。本文仅作历史记录。
+
 日期：2026-09-07。状态：MT1–MT4 代码已接入，MT5 集成验收进行中，**M1 尚未完成全部验收**。代码与下述自动化、桌面交换验证已完成；剩余原生门禁明确列在文末。
 
 范围与完成门以 [执行计划](multidimensional-tables-plan.md) 为准；逐项测试层次与缺口见 [验收覆盖矩阵](multidimensional-tables-acceptance-matrix.md)；格式、校验和保存协议见 [数据契约](multidimensional-tables-contract.md)。M2 的 Markdown 正文、笔记引用、跨表关联、汇总、看板、日历与搜索扩展，以及 M3 公式均未实施。未启动索引或分片容量分支。

@@ -1,5 +1,7 @@
 # 多维表格：飞书桌面现场参考与 Shard 适配
 
+> **已退役（2026-10-04）**：多维表格产品已删除，结构化数据改由 CSV 数据集承载，见 [CSV 数据存储层方案](csv-data-storage-plan.md) 第 7 节。本文仅作历史记录。
+
 日期：2026-09-08。用户已在本机飞书打开多维表格，要求直接仿照其设计。此文记录该界面的现场观察与 Shard 的适配约束，补充 [产品与操作规范](multidimensional-tables-product-spec.md) 和 [执行计划](multidimensional-tables-plan.md)。实现、测试和原生验收状态以 [验收记录](multidimensional-tables-implementation.md) 为准；参考观察本身不代表 Shard 已完成实现。
 
 ## 观察范围

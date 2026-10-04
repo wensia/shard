@@ -1,5 +1,7 @@
 # Shard 多维表格执行计划
 
+> **已退役（2026-10-04）**：多维表格产品已删除，结构化数据改由 CSV 数据集承载，见 [CSV 数据存储层方案](csv-data-storage-plan.md) 第 7 节。本文仅作历史记录。
+
 日期：2026-09-07。状态：MT1–MT4 代码已接入，MT5 集成验收进行中；M1 尚未完成交付。M2 / M3 未实施。
 
 目标：Shard 只支持多维表格这一种表格产品，在资料库管理具有字段类型、稳定记录 ID 和独立视图的原生文件。CSV / XLSX 是数据交换格式。操作借鉴 Notion、飞书、Teable 和思源，具体取舍与入口约束见 [产品与操作规范](multidimensional-tables-product-spec.md)。旧 Markdown 表格保留源码与阅读兼容，退出独立单元格编辑和 Excel 转 Markdown 入口。

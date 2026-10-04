@@ -1,5 +1,7 @@
 # Shard 多维表格验收覆盖矩阵
 
+> **已退役（2026-10-04）**：多维表格产品已删除，结构化数据改由 CSV 数据集承载，见 [CSV 数据存储层方案](csv-data-storage-plan.md) 第 7 节。本文仅作历史记录。
+
 日期：2026-09-07。对照 [执行计划](multidimensional-tables-plan.md) MT1 / MT3 / MT5 及第 8 节核对。**M1 尚未全部验收**；测试套件通过只证明下表列明的层次和场景。本次未重复全量测试，新增 2 个真实 Git 用例和 2 个整页表格失败门禁用例，并定向验证相关测试。
 
 状态含义：**已通过 R** = Rust 真实文件系统/临时 Git；**已通过 T** = TypeScript 逻辑与模拟传输；**已通过 U/W** = Chromium / Playwright WebKit，Tauri IPC 为 mock；**已通过 N** = 独立标识的真实 Tauri/WKWebView + 临时 vault。**静态接线**表示已读代码但未找到专属行为证据，**未验证**表示完成门仍缺结果。不同层次不能互相替代。

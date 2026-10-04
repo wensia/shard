@@ -1,5 +1,7 @@
 # Shard 多维表格数据契约（MT0）
 
+> **已退役（2026-10-04）**：多维表格产品已删除，结构化数据改由 CSV 数据集承载，见 [CSV 数据存储层方案](csv-data-storage-plan.md) 第 7 节。本文仅作历史记录。
+
 日期：2026-09-07。状态：可用于 MT0 原型与共同 fixtures；容量为待实测候选，正式持久化命令尚未实施。
 
 本契约细化[执行计划](./multidimensional-tables-plan.md)，定义首版公开资料库数据表的磁盘格式、DTO、操作、查询与失败语义。文件是唯一真相源；不增加数据库依赖、事件日志或新托管根目录。共同样例位于 [tests/fixtures/tables](../../tests/fixtures/tables/README.md)。
