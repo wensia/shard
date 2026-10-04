@@ -1,0 +1,3 @@
+/* Glide 单元格编辑浮层的挂载点：按视口定位，坐标直接取单元格的屏幕位置；只有浮层本身接收指针。 */
+.dataset-grid-portal { position: fixed; inset: 0; z-index: 1; pointer-events: none; }
+.dataset-grid-portal > * { pointer-events: auto; }

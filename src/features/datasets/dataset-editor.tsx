@@ -1,13 +1,14 @@
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react"
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type RefObject } from "react"
 import DataEditor, { GridCellKind, emptyGridSelection, type DataEditorRef, type GridCell, type GridSelection, type Item, type Rectangle } from "@glideapps/glide-data-grid"
 import "@glideapps/glide-data-grid/dist/index.css"
-import { Redo2Icon, Undo2Icon } from "@/components/icons"
+import "./dataset-editor.css"
+import { PlusIcon, Redo2Icon, Undo2Icon } from "@/components/icons"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
 import { readKilnGridTheme } from "./kiln-grid-theme"
-import { provideTextCellEditor } from "./text-cell-editor"
+import { createTextCellEditorProvider } from "./text-cell-editor"
 import { getApiErrorMessage } from "@/lib/api"
 import { notify } from "@/lib/notify"
 import { applyDatasetOps as saveDatasetOps, isStaleBaseError, readDataset } from "./api"
@@ -28,6 +29,20 @@ function explicitCells(ops: DatasetOp[]): number {
 export const DatasetEditor = forwardRef<DatasetEditorHandle, DatasetEditorProps>(function DatasetEditor({ path, onSnapshot }, ref) {
   const host = useRef<HTMLDivElement>(null)
   const grid = useRef<DataEditorRef>(null)
+  // Glide 的单元格编辑浮层必须渲染进 portal；页面没有 #portal，缺了它双击/打字都打不开编辑框。
+  const portal = useRef<HTMLDivElement>(null)
+  const [widths, setWidths] = useState<Record<string, number>>({})
+  // 打字进入编辑：首键交给 Glide 打开编辑框（首次还要懒加载浮层代码），从 Glide 确认激活到编辑框挂上之间
+  // 的按键暂存在这里，否则每个键都会重新激活编辑、互相顶替。null = 没有等待挂载的编辑。
+  const typed = useRef<string | null>(null)
+  const typedTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const settleTyped = useCallback(() => {
+    const value = typed.current ?? ""
+    typed.current = null
+    if (typedTimer.current) clearTimeout(typedTimer.current)
+    return value
+  }, [])
+  const provideEditor = useMemo(() => createTextCellEditorProvider(settleTyped), [settleTyped])
   const [metrics, setMetrics] = useState<ReturnType<typeof readKilnGridTheme>>()
   const [snapshot, setSnapshot] = useState<DatasetSnapshot | null>(null)
   const snapshotRef = useRef<DatasetSnapshot | null>(null)
@@ -192,7 +207,9 @@ export const DatasetEditor = forwardRef<DatasetEditorHandle, DatasetEditorProps>
 
   const keyColumn = snapshot?.schema?.primaryKey ? table?.header.indexOf(snapshot.schema.primaryKey) ?? -1 : -1
   const blocked = !snapshot?.editable || paused.current
-  const columns = useMemo(() => table?.header.map((title, index) => ({ id: `${index}:${title}`, title, width: metrics?.columnWidth ?? 180, hasMenu: !blocked, icon: index === keyColumn ? "lock" : undefined })) ?? [], [table?.header, metrics?.columnWidth, blocked, keyColumn])
+  const columns = useMemo(() => table?.header.map((title, index) => ({ id: `${index}:${title}`, title, width: widths[title] ?? metrics?.columnWidth ?? 180, hasMenu: !blocked, icon: index === keyColumn ? "lock" : undefined })) ?? [], [table?.header, metrics?.columnWidth, blocked, keyColumn, widths])
+  // 新增行后落到第一个可编辑列，而不是只读的主键列。
+  const firstEditableColumn = table?.header.findIndex((_, index) => index !== keyColumn) ?? -1
   const getCellContent = useCallback(([column, row]: Item): GridCell => {
     const text = table?.rows[row]?.[column] ?? ""
     return { kind: GridCellKind.Text, data: text, displayData: text, allowOverlay: !blocked && column !== keyColumn, readonly: blocked || column === keyColumn }
@@ -271,12 +288,21 @@ export const DatasetEditor = forwardRef<DatasetEditorHandle, DatasetEditorProps>
 
   return <section ref={host} className="flex h-full min-h-0 min-w-0 flex-col gap-[var(--space-2)] bg-background text-foreground" data-density="compact" aria-label="数据集编辑器"
     onCompositionStartCapture={() => { composing.current = true }} onCompositionEndCapture={() => { composing.current = false }}
+    onKeyDownCapture={event => {
+      if (!(event.target instanceof HTMLCanvasElement) || event.metaKey || event.ctrlKey || event.altKey || event.key.length !== 1 || composing.current || event.nativeEvent.isComposing) return
+      const cell = selection.current?.cell
+      if (typed.current === null || blocked || !cell || cell[0] === keyColumn) return
+      typed.current += event.key
+      event.preventDefault()
+      event.stopPropagation()
+    }}
     onKeyDown={event => {
       if (composing.current || event.nativeEvent.isComposing || event.keyCode === 229) return
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") { event.preventDefault(); void flush() }
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "z" && !blocked && !(event.target instanceof HTMLElement && event.target.closest("textarea, input, [contenteditable='true']"))) { event.preventDefault(); if (event.shiftKey) doRedo(); else undo() }
     }}>
     <div className="flex shrink-0 flex-wrap items-center gap-[var(--space-2)] px-[var(--space-3)] py-[var(--space-2)]">
+      <Button size="sm" variant="outline" disabled={blocked || !table} onClick={() => openName("insert", tableRef.current?.header.length ?? 0)}><PlusIcon />新增列</Button>
       <Button size="sm" variant="outline" disabled={blocked || !selectedRows.length} onClick={() => { commit([{ op: "deleteRows", rows: selectedRows }]); setSelection(emptyGridSelection) }}>删除行</Button>
       <Button size="icon-sm" variant="outline" aria-label="撤销" title="撤销" disabled={blocked || !history.current.length} onClick={undo}><Undo2Icon /></Button>
       <Button size="icon-sm" variant="outline" aria-label="重做" title="重做" disabled={blocked || !redo.current.length} onClick={doRedo}><Redo2Icon /></Button>
@@ -289,12 +315,21 @@ export const DatasetEditor = forwardRef<DatasetEditorHandle, DatasetEditorProps>
       {loading && !table ? <div className="p-[var(--space-4)]" role="status">正在读取数据集…</div> : !table ? <div className="p-[var(--space-4)]">无法打开数据集</div> : metrics && <DataEditor ref={grid} width="100%" height="100%" columns={columns} rows={table.rows.length} getCellContent={getCellContent} getCellsForSelection={true}
         theme={metrics.theme} rowHeight={metrics.rowHeight} headerHeight={metrics.headerHeight} headerIcons={{ lock: ({ bgColor }) => `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="${bgColor}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>` }}
         rowMarkers={{ kind: "both", width: metrics.headerHeight }} rowSelect="multi" rowSelectionMode="multi" columnSelect="none" rangeSelect="rect" cellActivationBehavior="double-click"
-        gridSelection={selection} onGridSelectionChange={setSelection} provideEditor={provideTextCellEditor}
-        trailingRowOptions={blocked ? undefined : { hint: "新增行", sticky: false }} onRowAppended={async () => { if (!blocked) appendRow(); return undefined }}
+        onCellActivated={() => {
+          // Glide 已决定打开编辑框（它在打开前回调）；只作最后保险的超时，正常由挂载或结束编辑清空。
+          typed.current = ""
+          if (typedTimer.current) clearTimeout(typedTimer.current)
+          typedTimer.current = setTimeout(() => { typed.current = null }, 5000)
+        }}
+        onFinishedEditing={() => { settleTyped() }}
+        gridSelection={selection} onGridSelectionChange={setSelection} provideEditor={provideEditor} portalElementRef={portal as RefObject<HTMLElement>}
+        onColumnResize={(column, size) => setWidths(current => ({ ...current, [column.title]: size }))}
+        trailingRowOptions={blocked ? undefined : { hint: "新增行", sticky: false, ...(firstEditableColumn >= 0 ? { targetColumn: firstEditableColumn } : {}) }} onRowAppended={async () => { if (!blocked) appendRow(); return undefined }}
         onCellsEdited={edits => { if (blocked) return true; const cells = edits.flatMap(({ location: [column, row], value }) => value.kind === GridCellKind.Text && column !== keyColumn && tableRef.current?.rows[row]?.[column] !== value.data ? [{ row, column, value: value.data }] : []); if (cells.length) commit([{ op: "setCells", cells }]); return true }}
         onPaste={paste} onDelete={clear} onHeaderMenuClick={(column, bounds: Rectangle) => { if (!blocked) setMenu({ column, anchor: { getBoundingClientRect: () => DOMRect.fromRect(bounds) } }) }}
         smoothScrollX smoothScrollY />}
     </div>
+    <div ref={portal} className="dataset-grid-portal" />
     <DropdownMenu open={!!menu} onOpenChange={open => { if (!open) setMenu(null) }}>
       <DropdownMenuTrigger className="sr-only" aria-label="列操作" />
       {menu && <DropdownMenuContent anchor={menu.anchor}>
