@@ -339,39 +339,9 @@
   display: block;
 }
 
-/* 普通任务收在卡片里，外框规格同备忘卡片与卡片渲染的 `.shard-task-group`。
- * 备忘卡片（带备注的任务项）是另一种东西，自己就是一张卡：同一个列表里，
- * 连续的普通任务合成一张卡，遇到备忘项就断开，两种卡片并列、不嵌套。
- * 框画在顶层列表的 li 上：每段的首项补上边与上圆角，末项补下边与下圆角。
- * 嵌套的子任务跟着父项走，不另画框。 */
-.shard-rich-editor .ProseMirror ul[data-type="taskList"]:not(li *) > li:not(:has(> .shard-rich-memo)) {
-  box-sizing: border-box;
-  border-inline: 1px solid var(--border);
-  background: var(--card);
-  padding-inline: var(--shard-space-3);
-}
-
-.shard-rich-editor
-  .ProseMirror
-  ul[data-type="taskList"]:not(li *)
-  > li:not(:has(> .shard-rich-memo)):is(:first-child, li:has(> .shard-rich-memo) + li) {
-  border-top: 1px solid var(--border);
-  border-start-start-radius: var(--radius-card);
-  border-start-end-radius: var(--radius-card);
-  padding-top: var(--shard-space-2);
-}
-
-.shard-rich-editor
-  .ProseMirror
-  ul[data-type="taskList"]:not(li *)
-  > li:not(:has(> .shard-rich-memo)):is(:last-child, :has(+ li > .shard-rich-memo)) {
-  border-bottom: 1px solid var(--border);
-  border-end-start-radius: var(--radius-card);
-  border-end-end-radius: var(--radius-card);
-  padding-bottom: var(--shard-space-2);
-}
-
-/* 卡片与卡片之间留一档间距。 */
+/* 普通任务就是 Markdown 复选框：一行一项，不加外框，与碎片卡片渲染一致（frontend-rules.css
+ * 里 `.shard-task-group` 同样去掉了外框）。备忘卡片（带备注的任务项）是另一种东西，自己是一张卡；
+ * 复选框行与备忘卡片之间留一档间距。 */
 .shard-rich-editor .ProseMirror ul[data-type="taskList"]:not(li *) > li + li:has(> .shard-rich-memo),
 .shard-rich-editor .ProseMirror ul[data-type="taskList"]:not(li *) > li:has(> .shard-rich-memo) + li {
   margin-top: var(--shard-space-2);

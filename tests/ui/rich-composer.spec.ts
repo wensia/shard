@@ -462,6 +462,17 @@ test.describe("速记框富文本", () => {
     await expect.poll(() => readEditor(page, "composer")).toBe("#骑行采购 \\\n盒马\n\n- [ ] 买链条油")
   })
 
+  test("复选框是不带外框的 Markdown 复选框，备忘卡片才有卡片外框", async ({ page }) => {
+    await fillEditor(page, "composer", "- [ ] 买链条油\n- [ ] 买内胎\n- [ ] 骑行采购\n  盒马")
+    const frame = (selector: string) => proseMirror(page).locator(selector).first().evaluate((element) => {
+      const style = getComputedStyle(element)
+      return { border: style.borderTopWidth, background: style.backgroundColor }
+    })
+    await expect(proseMirror(page).getByRole("checkbox")).toHaveCount(3)
+    expect(await frame('ul[data-type="taskList"] > li:not(:has(> .shard-rich-memo))')).toEqual({ border: "0px", background: "rgba(0, 0, 0, 0)" })
+    expect((await frame(".shard-rich-memo")).border).not.toBe("0px")
+  })
+
   test("多行段落中间一行用复选框，前后行各自保留为段落", async ({ page }) => {
     await fillEditor(page, "composer", "")
     await focusEditor(page, "composer")

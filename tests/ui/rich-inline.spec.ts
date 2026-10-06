@@ -338,7 +338,7 @@ test.describe("富文本行内与附件组件", () => {
     await expect.poll(() => readEditor(page, "composer")).toBe("- [ ] 买菜\n  番茄、鸡蛋、葱")
   })
 
-  test("子任务不算备忘卡片；连续普通任务合成一张卡，备忘卡片单独成卡", async ({ page }) => {
+  test("子任务不算备忘卡片；普通任务是不带外框的复选框，备忘卡片单独成卡", async ({ page }) => {
     await fillEditor(page, "composer", "- [ ] 买菜\n  - [ ] 番茄\n- [ ] 周会准备\n\n  带上数据表\n- [ ] 整理需求")
     await expect(memoCard(page)).toHaveCount(1)
     await expect(memoCard(page)).toContainText("周会准备")
@@ -353,12 +353,13 @@ test.describe("富文本行内与附件组件", () => {
             return { top: style.borderTopWidth, bottom: style.borderBottomWidth, left: style.borderLeftWidth }
           })
       )
-    // 买菜：一张任务卡（上下左边都有）；周会准备：备忘卡片自己带框，li 不画；整理需求：又一张任务卡。
+    // 普通任务就是 Markdown 复选框，li 一律不画框；周会准备是备忘卡片，框画在卡片自身上。
     expect(frames).toEqual([
-      { top: "1px", bottom: "1px", left: "1px" },
       { top: "0px", bottom: "0px", left: "0px" },
-      { top: "1px", bottom: "1px", left: "1px" },
+      { top: "0px", bottom: "0px", left: "0px" },
+      { top: "0px", bottom: "0px", left: "0px" },
     ])
+    expect(await memoCard(page).evaluate((card) => getComputedStyle(card).borderTopWidth)).not.toBe("0px")
   })
 
   test("备忘卡片的备注栏删不掉：退格、Delete、选区删除都保留备注栏", async ({ page }) => {
