@@ -1,6 +1,6 @@
 import type { Editor } from "@tiptap/core"
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model"
-import type { EditorState, Transaction } from "@tiptap/pm/state"
+import { TextSelection, type EditorState, type Transaction } from "@tiptap/pm/state"
 
 import { getTagMarker } from "@/lib/editor-format"
 import type { SlashCommandId } from "@/lib/slash-commands"
@@ -70,7 +70,49 @@ export function applyRichInlineFormat(editor: Editor, format: ShardRichInlineFor
   chain.run()
 }
 
+const LIST_ITEM_TYPES = new Set(["listItem", "taskItem"])
+
+/**
+ * 行格式只作用于光标（或选区）所在的那几行。Shift+Enter 的段内换行在编辑器里
+ * 仍是同一个段落，直接套列表会把整段变成一个列表项；任务项标题里带着换行就成了
+ * 备忘卡片。所以先把涉及的行按段内换行切成独立段落：选区之前最近的一个换行、
+ * 选区里的每个换行、选区之后最近的一个换行，各自换成段落边界。已在列表项里的
+ * 段落不切（那是在切换或改列表类型，切开反而会造出细节段）。
+ */
+function splitSelectedLines(editor: Editor) {
+  const { state } = editor
+  const { $from, $to } = state.selection
+  if ($from.parent !== $to.parent || $from.parent.type.name !== "paragraph") return
+  if ($from.depth > 0 && LIST_ITEM_TYPES.has($from.node(-1).type.name)) return
+
+  const breaks: number[] = []
+  let before = -1
+  let after = -1
+  $from.parent.forEach((child, offset) => {
+    if (child.type.name !== "hardBreak") return
+    if (offset < $from.parentOffset) before = offset
+    else if (offset < $to.parentOffset) breaks.push(offset)
+    else if (after < 0) after = offset
+  })
+  const cuts = [before, ...breaks, after].filter((offset) => offset >= 0)
+  if (!cuts.length) return
+
+  const start = $from.start()
+  const tr = state.tr
+  // 从后往前切，前面的位置不受影响。
+  for (const offset of [...cuts].sort((a, b) => b - a)) {
+    const pos = start + offset
+    tr.delete(pos, pos + 1).split(pos)
+  }
+  // 每切一刀，换行（1 格）变成段落边界（2 格），其后的位置后移 1。光标正好在
+  // 某个换行之前时必须留在这一行，自动映射会把它推进下一段，所以自己算。
+  const shifted = (offset: number) => start + offset + cuts.filter((cut) => cut < offset).length
+  tr.setSelection(TextSelection.create(tr.doc, shifted($from.parentOffset), shifted($to.parentOffset)))
+  editor.view.dispatch(tr)
+}
+
 export function applyRichLineFormat(editor: Editor, format: ShardRichLineFormat) {
+  splitSelectedLines(editor)
   const chain = editor.chain().focus()
   if (format === "unordered") chain.toggleBulletList()
   else if (format === "ordered") chain.toggleOrderedList()

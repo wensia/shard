@@ -5,6 +5,7 @@ import {
   focusEditor,
   readEditor,
   readEditorSnapshot,
+  selectDocRange,
   selectionToolbar,
   typeEditor,
 } from "./editor-helpers"
@@ -441,6 +442,43 @@ test.describe("速记框富文本", () => {
     await expect(proseMirror(page).getByRole("checkbox")).toHaveCount(1)
     await expect.poll(() => readEditor(page, "composer")).toBe("- [ ]")
   })
+
+  // 复选框只作用于输入 / 的那一行：Shift+Enter 连着的前几行不能被卷进同一个任务项
+  // （标题带换行就成了备忘卡片）。复选框与备忘卡片是两种东西。
+  test("Shift+Enter 换出的新行上用复选框，只把这一行变成复选框，不成备忘卡片", async ({ page }) => {
+    await fillEditor(page, "composer", "")
+    await focusEditor(page, "composer")
+    await typeEditor(page, "composer", "#骑行采购 ")
+    await page.keyboard.press("Shift+Enter")
+    await typeEditor(page, "composer", "盒马")
+    await page.keyboard.press("Shift+Enter")
+    await typeEditor(page, "composer", "/复选框")
+    await expect(commandMenu(page).getByRole("option")).toHaveCount(1)
+    await page.keyboard.press("Enter")
+
+    await expect(proseMirror(page).getByRole("checkbox")).toHaveCount(1)
+    await expect(proseMirror(page).locator('[data-shard-memo-card="true"]')).toHaveCount(0)
+    await typeEditor(page, "composer", "买链条油")
+    await expect.poll(() => readEditor(page, "composer")).toBe("#骑行采购 \\\n盒马\n\n- [ ] 买链条油")
+  })
+
+  test("多行段落中间一行用复选框，前后行各自保留为段落", async ({ page }) => {
+    await fillEditor(page, "composer", "")
+    await focusEditor(page, "composer")
+    await typeEditor(page, "composer", "甲")
+    await page.keyboard.press("Shift+Enter")
+    await page.keyboard.press("Shift+Enter")
+    await typeEditor(page, "composer", "丙")
+    // 文档坐标：甲=1、换行=2、换行=3、丙=4。3 就是两个段内换行之间的空行。
+    await selectDocRange(page, "composer", 3, 3)
+    await typeEditor(page, "composer", "/复选框")
+    await page.keyboard.press("Enter")
+    await typeEditor(page, "composer", "乙")
+    await expect(proseMirror(page).getByRole("checkbox")).toHaveCount(1)
+    await expect(proseMirror(page).locator('[data-shard-memo-card="true"]')).toHaveCount(0)
+    await expect.poll(() => readEditor(page, "composer")).toBe("甲\n\n- [ ] 乙\n\n丙")
+  })
+
 
   test("标签命令写下井号并立刻交给标签建议", async ({ page }) => {
     await fillEditor(page, "composer", "")
