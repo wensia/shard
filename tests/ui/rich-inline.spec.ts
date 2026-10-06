@@ -493,6 +493,14 @@ test.describe("富文本行内与附件组件", () => {
 
   // 手打语法自动收敛：用户从不需要输入语法，但 `#词` 与 `[[x]]` 是既有输入习惯，
   // 打出来就必须成节点，否则序列化会按字面转义成 `\#词` / `\[\[x]]`。
+  test("Shift+Enter 换行后行首手打的标签也收敛成节点", async ({ page }) => {
+    await resetComposer(page)
+    await typeEditor(page, "composer", "盒马")
+    await page.keyboard.press("Shift+Enter")
+    await typeEditor(page, "composer", "#骑行采购 ")
+    await expect(tags(page)).toHaveText("#骑行采购")
+  })
+
   test("整句手打的标签与双链都收敛成节点，提交与旧编辑器一致", async ({ page }) => {
     await resetComposer(page)
     await typeEditor(page, "composer", "记一笔 #手打标签 然后 [[手打双链]] 结束")

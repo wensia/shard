@@ -6,7 +6,7 @@ import { getTagRanges, normalizeTag } from "@shard/markdown/core"
 
 import { parseWikilinks } from "@/lib/wikilink"
 
-import { INLINE_LEAF_PLACEHOLDER } from "../suggestion/inline-match"
+import { inlineLeafText } from "../suggestion/inline-match"
 import { SLASH_SUGGESTION_KEY } from "./slash-suggestion"
 import { TAG_SUGGESTION_KEY } from "./tag-suggestion"
 import { WIKILINK_SUGGESTION_KEY } from "./wikilink-suggestion"
@@ -179,7 +179,7 @@ function blockReplacements(
     0,
     block.content.size,
     undefined,
-    INLINE_LEAF_PLACEHOLDER
+    inlineLeafText
   )
   if (!text.includes("#") && !text.includes("[[")) return []
 

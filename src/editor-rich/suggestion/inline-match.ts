@@ -1,4 +1,4 @@
-import type { ResolvedPos } from "@tiptap/pm/model"
+import type { Node as ProseMirrorNode, ResolvedPos } from "@tiptap/pm/model"
 import type { SuggestionMatch } from "@tiptap/suggestion"
 
 import { getActiveTag } from "@/lib/editor-format"
@@ -10,6 +10,15 @@ import { getActiveSlashCommand } from "@/lib/slash-commands"
  * 「块内文本下标」与「块内偏移」严格一一对应，可以直接换算回文档位置。
  */
 export const INLINE_LEAF_PLACEHOLDER = "￼"
+
+/**
+ * `textBetween` 的叶子文本：段内换行（Shift+Enter 的 hardBreak）记作 `\n`，它对
+ * `/`、`#` 的触发边界来说就是换行；其余行内原子仍是占位字符。两者都是 1 个字符，
+ * 下标与块内偏移的一一对应不变。
+ */
+export function inlineLeafText(node: ProseMirrorNode): string {
+  return node.type.name === "hardBreak" ? "\n" : INLINE_LEAF_PLACEHOLDER
+}
 
 interface BlockTextBeforeCursor {
   /** 文本块正文起点的文档位置。 */
@@ -28,7 +37,7 @@ function blockTextBeforeCursor($position: ResolvedPos): BlockTextBeforeCursor | 
       0,
       $position.parentOffset,
       undefined,
-      INLINE_LEAF_PLACEHOLDER
+      inlineLeafText
     ),
   }
 }
@@ -114,7 +123,7 @@ export function characterAfter($position: ResolvedPos) {
     $position.parentOffset,
     Math.min($position.parentOffset + 1, parent.content.size),
     undefined,
-    INLINE_LEAF_PLACEHOLDER
+    inlineLeafText
   )
 }
 
@@ -127,6 +136,6 @@ export function characterBefore($position: ResolvedPos) {
     $position.parentOffset - 1,
     $position.parentOffset,
     undefined,
-    INLINE_LEAF_PLACEHOLDER
+    inlineLeafText
   )
 }

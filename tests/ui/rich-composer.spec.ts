@@ -408,6 +408,26 @@ test.describe("速记框富文本", () => {
     await expect(menu).toHaveCount(0)
   })
 
+  // Shift+Enter 的段内换行在编辑器里是 hardBreak 节点：它之后就是新的一行，
+  // `/` 与 `#` 在行首必须照常触发（曾被当成普通字符，菜单不弹）。
+  test("Shift+Enter 换行后行首的斜杠与井号照常弹出菜单", async ({ page }) => {
+    await fillEditor(page, "composer", "")
+    await focusEditor(page, "composer")
+    await typeEditor(page, "composer", "盒马")
+    await page.keyboard.press("Shift+Enter")
+    await expect(proseMirror(page).locator("br:not(.ProseMirror-trailingBreak)")).toHaveCount(1)
+    await expect(proseMirror(page).locator("p")).toHaveCount(1)
+
+    await typeEditor(page, "composer", "/")
+    await expect(commandMenu(page)).toBeVisible()
+    await page.keyboard.press("Escape")
+    await expect(commandMenu(page)).toHaveCount(0)
+    await page.keyboard.press("Backspace")
+
+    await typeEditor(page, "composer", "#")
+    await expect(tagMenu(page)).toBeVisible()
+  })
+
   test("标签命令写下井号并立刻交给标签建议", async ({ page }) => {
     await fillEditor(page, "composer", "")
     await focusEditor(page, "composer")
