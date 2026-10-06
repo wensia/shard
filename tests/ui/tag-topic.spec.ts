@@ -7,6 +7,7 @@ import {
   revealCard,
 } from "./content-types-mock"
 import { selectOption } from "./select-helpers"
+import { fillEditor } from "./editor-helpers"
 
 const TOPIC_TAG = "项目"
 
@@ -117,6 +118,22 @@ async function openTopicFromCard(page: Page) {
 test.beforeEach(async ({ page }) => {
   await installTagTopicMock(page)
   await page.goto("/")
+})
+
+test("卡片上的标签与编辑区同一外观：只着色不画芯片，颜色一致", async ({ page }) => {
+  await fillEditor(page, "composer", `#${TOPIC_TAG} `)
+  const editorTag = page.locator('[data-shard-editor="composer"] .shard-rich-tag').first()
+  await expect(editorTag).toHaveText(`#${TOPIC_TAG}`)
+  const target = card(page, "card-fragment")
+  await revealCard(target)
+  const cardTag = target.getByRole("button", { name: `打开标签主题页：${TOPIC_TAG}`, exact: true })
+  const look = (element: Element) => {
+    const style = getComputedStyle(element)
+    return { color: style.color, background: style.backgroundColor, ring: style.boxShadow, padding: style.paddingLeft }
+  }
+  const editorLook = await editorTag.evaluate(look)
+  const cardLook = await cardTag.evaluate(look)
+  expect(cardLook).toEqual({ color: editorLook.color, background: "rgba(0, 0, 0, 0)", ring: "none", padding: "0px" })
 })
 
 test("卡片标签进入主题页，显示四类计数、主题卡片、反链并可返回", async ({ page }) => {

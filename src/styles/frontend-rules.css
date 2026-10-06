@@ -399,6 +399,29 @@
     opacity: var(--shard-alpha-55);
   }
 
+  /* 碎片卡片里的 #标签与编辑区同一外观（flomo 策略）：只着色、不画芯片，色值就是编辑区的
+   * `--shard-editor-tag-fg`，一个标签只有一种样子。可点时进标签主题页，悬停加下划线提示可点。
+   * 筛选栏里可点选的标签仍是 `.shard-tag` 芯片。 */
+  .shard-tag-inline {
+    min-width: 0;
+    border: 0;
+    padding: 0;
+    background: transparent;
+    color: var(--shard-editor-tag-fg);
+    font: inherit;
+    overflow-wrap: anywhere;
+  }
+
+  .shard-tag-inline:is(button) {
+    cursor: pointer;
+  }
+
+  .shard-tag-inline:is(button):hover {
+    color: var(--shard-tag-fg-strong);
+    text-decoration-line: underline;
+    text-underline-offset: 0.2em;
+  }
+
   .shard-card-tags {
     --shard-tag-height: 1.5rem;
     --shard-tag-padding-x: 10px;

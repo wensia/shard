@@ -4,6 +4,8 @@ import { Button } from "@/components/ui/button"
 import { isTypeTag } from "@/lib/content-kind"
 
 interface TagBadgeProps {
+  /** 与编辑区同一外观：只着色、不画芯片（碎片卡片用）。筛选栏等可点选场景仍用芯片。 */
+  inline?: boolean
   removable?: boolean
   tag: string
   onOpen?: (tag: string) => void
@@ -18,8 +20,23 @@ interface TagBadgeProps {
  * 18px 圆形小按钮属于"自定义精确尺寸"场景，用内联 style 而不是发明新的
  * frontend-rules.css 规则。
  */
-export function TagBadge({ removable = false, tag, onOpen, onRemove }: TagBadgeProps) {
+export function TagBadge({ inline = false, removable = false, tag, onOpen, onRemove }: TagBadgeProps) {
   if (isTypeTag(tag)) return null
+
+  if (inline) {
+    return onOpen ? (
+      <button
+        aria-label={`打开标签主题页：${tag}`}
+        className="shard-tag-inline"
+        onClick={() => onOpen(tag)}
+        type="button"
+      >
+        #{tag}
+      </button>
+    ) : (
+      <span className="shard-tag-inline">#{tag}</span>
+    )
+  }
 
   const toneClass = tag === "inbox" ? "shard-tag-muted" : ""
 

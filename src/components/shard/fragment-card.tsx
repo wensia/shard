@@ -297,7 +297,7 @@ export function FragmentCard({
                 </span>
               ) : null}
               {displayTags.map((tag) => (
-                <TagBadge key={tag} onOpen={onOpenTag} tag={tag} />
+                <TagBadge inline key={tag} onOpen={onOpenTag} tag={tag} />
               ))}
             </div>
           ) : null}
