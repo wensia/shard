@@ -53,8 +53,9 @@ export const SLASH_COMMANDS: readonly SlashCommand[] = [
   {
     hint: "todo",
     id: "task",
-    keywords: ["任务列表", "任务", "待办", "rwlb", "rw", "db", "task", "todo", "checkbox"],
-    label: "任务列表",
+    // 旧工具栏按钮就叫「复选框」：用户按这个名字找，「任务列表」「待办」等旧叫法保留在关键词里。
+    keywords: ["复选框", "fxk", "任务列表", "任务", "待办", "rwlb", "rw", "db", "task", "todo", "checkbox"],
+    label: "复选框",
   },
   {
     hint: "list",

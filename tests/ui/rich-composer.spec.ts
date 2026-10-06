@@ -307,7 +307,7 @@ test.describe("速记框富文本", () => {
 
     await typeEditor(page, "composer", "rw")
     await expect(menu.getByRole("option")).toHaveCount(1)
-    await expect(menu.getByRole("option")).toContainText("任务列表")
+    await expect(menu.getByRole("option")).toContainText("复选框")
 
     await page.keyboard.press("Escape")
     await expect(menu).toHaveCount(0)
@@ -372,7 +372,7 @@ test.describe("速记框富文本", () => {
       await session.send("Input.insertText", { text: "rw" })
       await expect.poll(() => readEditor(page, "composer")).toBe("/rw")
       await expect(commandMenu(page).getByRole("option")).toHaveCount(1)
-      await expect(commandMenu(page).getByRole("option")).toContainText("任务列表")
+      await expect(commandMenu(page).getByRole("option")).toContainText("复选框")
     } finally {
       await session.detach()
     }
@@ -397,7 +397,7 @@ test.describe("速记框富文本", () => {
     await expect(menu).toBeVisible()
     await expect(menu.getByRole("option").first()).toContainText("导图块")
 
-    // 导图块 → 数据表 → 数据集 → 任务列表 → 无序列表
+    // 导图块 → 数据表 → 数据集 → 复选框 → 无序列表
     await page.keyboard.press("ArrowDown")
     await page.keyboard.press("ArrowDown")
     await page.keyboard.press("ArrowDown")
@@ -426,6 +426,20 @@ test.describe("速记框富文本", () => {
 
     await typeEditor(page, "composer", "#")
     await expect(tagMenu(page)).toBeVisible()
+  })
+
+  test("按「复选框」或旧叫法都能找到复选框命令，回车插入复选框", async ({ page }) => {
+    for (const query of ["/复选框", "/fxk", "/任务列表", "/待办"]) {
+      await fillEditor(page, "composer", "")
+      await focusEditor(page, "composer")
+      await typeEditor(page, "composer", query)
+      await expect(commandMenu(page).getByRole("option")).toHaveCount(1)
+      await expect(commandMenu(page).getByRole("option")).toContainText("复选框")
+    }
+    await page.keyboard.press("Enter")
+    await expect(commandMenu(page)).toHaveCount(0)
+    await expect(proseMirror(page).getByRole("checkbox")).toHaveCount(1)
+    await expect.poll(() => readEditor(page, "composer")).toBe("- [ ]")
   })
 
   test("标签命令写下井号并立刻交给标签建议", async ({ page }) => {

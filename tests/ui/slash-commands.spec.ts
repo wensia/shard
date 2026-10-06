@@ -135,7 +135,7 @@ for (const surface of ["inline", "zen", "library"] as const) {
     await expect(menu).not.toContainText("流程图")
     await expect(menu.getByRole("option").filter({ hasText: /^大纲/u })).toHaveCount(0)
 
-    // 导图块 → 数据表 → 数据集 → 任务列表
+    // 导图块 → 数据表 → 数据集 → 复选框
     await page.keyboard.press("ArrowDown")
     await page.keyboard.press("ArrowDown")
     await page.keyboard.press("ArrowDown")

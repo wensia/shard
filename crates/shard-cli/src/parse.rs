@@ -2,7 +2,7 @@
 //!
 //! ```text
 //! shard 今天心情很好
-//! shard #备忘 /任务列表 买咖啡
+//! shard #备忘 /复选框 买咖啡
 //! ```
 
 use shard_core::{
@@ -25,7 +25,7 @@ const SLASH_KEYWORDS: &[(LineFormat, &[&str])] = &[
     (
         LineFormat::Task,
         &[
-            "任务列表", "任务", "待办", "rwlb", "rw", "db", "task", "todo", "checkbox",
+            "复选框", "fxk", "任务列表", "任务", "待办", "rwlb", "rw", "db", "task", "todo", "checkbox",
             "备忘卡片", "备忘", "bwkp", "bw", "memo", "card",
         ],
     ),
@@ -100,7 +100,7 @@ fn slash_format(name: &str) -> Option<LineFormat> {
 /// - 有格式：标签独占首段，空行后接列表，正文每个非空行各成一项
 pub fn compose(capture: &Capture) -> Result<(String, Vec<String>), String> {
     if capture.text.trim().is_empty() {
-        return Err("缺少内容。用法：shard [#标签] [/任务列表] 内容".to_string());
+        return Err("缺少内容。用法：shard [#标签] [/复选框] 内容".to_string());
     }
 
     let tag_line = capture
@@ -171,6 +171,12 @@ mod tests {
         let (body, tags) = run("#备忘 /任务列表 买咖啡").unwrap();
         assert_eq!(body, "#备忘\n\n- [ ] 买咖啡");
         assert_eq!(tags, vec!["备忘"]);
+    }
+
+    #[test]
+    fn checkbox_name_and_initials() {
+        assert_eq!(run("/复选框 买咖啡").unwrap().0, "- [ ] 买咖啡");
+        assert_eq!(run("/fxk 买咖啡").unwrap().0, "- [ ] 买咖啡");
     }
 
     #[test]
