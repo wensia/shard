@@ -215,7 +215,10 @@ export const ShardRichEditor = forwardRef<ShardRichEditorHandle, ShardRichEditor
     const [datasetCreating, setDatasetCreating] = useState(false)
     const allowDatasetActionsRef = useRef(allowDatasetActions)
     allowDatasetActionsRef.current = allowDatasetActions
-    const menu = useMemo(() => new SuggestionMenuHost(setMenuState), [])
+    // 用 useState 持有而不是 useMemo：开发热更新会无视依赖重算 useMemo，造出新宿主，
+    // 可已建好的编辑器插件仍握着旧宿主——浮层显示旧宿主的状态，点击却打到新宿主上
+    // （没有挂选择回调），表现为鼠标点候选没反应、键盘回车照常。
+    const [menu] = useState(() => new SuggestionMenuHost(setMenuState))
 
     // 回调走 ref：Tiptap 扩展在创建时固化闭包，扩展数组一变就重建整个
     // EditorView，草稿、撤销历史与输入法状态全部丢失。

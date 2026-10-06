@@ -491,6 +491,18 @@ test.describe("速记框富文本", () => {
   })
 
 
+  test("标签候选可以用鼠标点选", async ({ page }) => {
+    await fillEditor(page, "composer", "")
+    await proseMirror(page).click()
+    await page.keyboard.type("#")
+    const option = tagMenu(page).getByRole("option").filter({ hasText: "日程" })
+    await option.hover()
+    await expect(option).toHaveAttribute("aria-selected", "true")
+    await option.click()
+    await expect(tagMenu(page)).toHaveCount(0)
+    await expect(proseMirror(page).locator(".shard-rich-tag")).toHaveText("#日程")
+  })
+
   test("标签命令写下井号并立刻交给标签建议", async ({ page }) => {
     await fillEditor(page, "composer", "")
     await focusEditor(page, "composer")
