@@ -21,6 +21,64 @@
   flex: none;
 }
 
+/* 文字类禅模式的操作条：占标题栏带整高，红绿灯由宿主隐藏，退出按钮坐在它的位置。 */
+.bar {
+  display: grid;
+  height: var(--shard-titlebar-height);
+  flex: none;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-2);
+  padding-inline: var(--space-3) var(--space-4);
+  transition: opacity 200ms ease;
+}
+
+/* 写字时退场；键盘焦点进来（Tab 到按钮）必须看得见。 */
+.bar[data-hidden="true"]:not(:focus-within) {
+  opacity: 0;
+}
+
+.exit {
+  color: var(--muted-foreground);
+}
+
+.heading {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.title {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--foreground);
+  font-size: var(--text-body);
+  font-weight: var(--font-weight-medium);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.status,
+.meta {
+  flex: none;
+  color: var(--muted-foreground);
+  font-size: var(--text-meta);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.status[data-state="error"] {
+  color: var(--destructive);
+}
+
+.trailing {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-3);
+}
+
 .content {
   min-width: 0;
   min-height: 0;
@@ -28,6 +86,8 @@
   overflow: hidden;
 }
 
-.footer {
-  flex: none;
+@media (prefers-reduced-motion: reduce) {
+  .bar {
+    transition: none;
+  }
 }

@@ -1,6 +1,6 @@
-import { deriveKind, deriveNoteTitle, isStreamKind, type ContentKind } from "@/lib/content-kind"
+import { deriveKind, isStreamKind, type ContentKind } from "@/lib/content-kind"
 import { matchesPropertyFilter, type PropertyFilter, type PropertyTypeEntries } from "@/lib/property-filter"
-import type { Fragment, LibraryTreeEntry } from "@/types"
+import type { Fragment } from "@/types"
 
 export type FragmentFilterKind = Exclude<ContentKind, "note"> | null
 
@@ -26,22 +26,4 @@ export function matchesFragmentFilters(fragment: Fragment, filters: FragmentFilt
     && (!filters.month || fragment.createdAt.slice(0, 7) === filters.month)
     && (!filters.pinned || fragment.pinned)
     && (!filters.property || matchesPropertyFilter(fragment, filters.property, propertyTypes))
-}
-
-export function conversionTitle(fragment: Fragment) {
-  const text = fragment.content.replace(/!\[[^\]]*\]\([^)]*\)/gu, "").trim()
-  return deriveNoteTitle(text) || "未命名文档"
-}
-
-export function libraryDirectoryOptions(entries: LibraryTreeEntry[]) {
-  const options = [{ value: "notes", label: "资料库根目录" }]
-  const visit = (items: LibraryTreeEntry[]) => {
-    for (const entry of items) {
-      if (entry.kind !== "directory") continue
-      options.push({ value: entry.path, label: entry.path.replace(/^notes\//u, "") })
-      visit(entry.children ?? [])
-    }
-  }
-  visit(entries)
-  return options
 }

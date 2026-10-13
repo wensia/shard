@@ -249,6 +249,10 @@ async function installLibraryTreeMock(
     }
     const snapshot = () => ({
       entries: clone(entries),
+      fragmentEntries: fragments.filter(item => !item.archived && !item.lockbox && item.path.startsWith("fragments/")).map(item => ({
+        name: item.path.split("/").pop(), path: item.path, kind: "markdown", size: new TextEncoder().encode(item.content).length,
+        createdAt: item.createdAt, modifiedAt: item.updatedAt,
+      })),
       assets: includeAssets
         ? [{
             path: "assets/a3/a3f5e8c9d2aa0000000000000000000000000000000000000000000000000000.png",
@@ -437,7 +441,10 @@ async function installLibraryTreeMock(
           if (command === "rename_library_entry") {
             const oldPath = String(args.path)
             const newName = String(args.newName)
-            const entry = findEntry(oldPath)
+            const sourceFragment = fragments.find(item => item.path === oldPath && !item.archived && !item.lockbox)
+            const entry = findEntry(oldPath) ?? (sourceFragment && oldPath.startsWith("fragments/") ? {
+              name: oldPath.split("/").pop(), path: oldPath, kind: "markdown",
+            } : null)
             if (!entry) throw new Error("Entry not found")
             const extension = String(entry.kind) === "markdown"
               ? ".md"
@@ -476,11 +483,14 @@ async function installLibraryTreeMock(
           }
           if (command === "delete_library_entry") {
             const oldPath = String(args.path)
-            const entry = removeEntry(oldPath)
+            const sourceFragment = fragments.find(item => item.path === oldPath && !item.archived && !item.lockbox)
+            const entry = removeEntry(oldPath) ?? (sourceFragment && oldPath.startsWith("fragments/") ? {
+              name: oldPath.split("/").pop(), path: oldPath, kind: "markdown", size: 128, modifiedAt: now,
+            } : null)
             if (!entry) throw new Error("Entry not found")
             rebaseEntryPaths(entry, oldPath, `.trash/${oldPath}`)
             const parentPath = oldPath.slice(0, oldPath.lastIndexOf("/"))
-            trashDirectoryChildren(parentPath).push(entry)
+            if (!oldPath.startsWith("fragments/")) trashDirectoryChildren(parentPath).push(entry)
             const fragment = fragments.find((item) => item.path === oldPath)
             if (fragment) {
               fragment.path = `.trash/${oldPath}`
@@ -520,7 +530,7 @@ async function installLibraryTreeMock(
             const fragmentScope = args.scope === "fragments"
             if (!fragmentScope) trashEntries.splice(0)
             for (let index = fragments.length - 1; index >= 0; index -= 1) {
-              if (fragments[index].archived && (fragments[index].tags.includes("note") !== fragmentScope)) fragments.splice(index, 1)
+              if (fragments[index].archived && (args.scope === "all" || fragments[index].tags.includes("note") !== fragmentScope)) fragments.splice(index, 1)
             }
             return result()
           }
@@ -659,6 +669,11 @@ async function installGraphImportMock(
           next.entries.push({ name: "旧画布.shardcanvas.json", path: "notes/旧画布.shardcanvas.json", kind: "canvas", size: 512, modifiedAt: now })
         }
         next.entries = filterEntries(next.entries)
+        for (const [included, kind] of [[state.importedMap, "outline"], [state.importedFlow, "flowchart"]] as const) {
+          if (!included) continue
+          const item = fragment(kind)
+          next.fragmentEntries.push({ name: `${item.id}.md`, path: item.path, kind: "markdown", size: 512, modifiedAt: now, createdAt: now })
+        }
         const trashNotes = next.trashEntries.find((entry: any) => entry.path === ".trash/notes")
         if (trashNotes) {
           if (state.importedMap && !trashNotes.children.some((entry: any) => entry.path === ".trash/notes/项目导图.shardmap.json")) {
@@ -951,7 +966,7 @@ test("高矮窗口都让目录树占满剩余高度，长目录独立滚动并�
     await expect(sidebar.getByRole("button", { name: "目录 60", exact: true })).toBeInViewport()
     await expect(root).toBeInViewport()
     await expect(images).toBeInViewport()
-    await expect(sidebar.getByRole("button", { name: "回收站（2）", exact: true })).toBeInViewport()
+    await expect(sidebar.getByRole("button", { name: "回收站（3）", exact: true })).toBeInViewport()
     await expect(sidebar.getByRole("button", { name: "密匣（上锁空间）", exact: true })).toBeInViewport()
     expect((await root.boundingBox())!.y).toBeCloseTo(rootBox!.y, 0)
     expect((await images.boundingBox())!.y).toBeCloseTo(imagesBox!.y, 0)
@@ -1326,7 +1341,7 @@ test("资料库默认显示文件，目录树与查看器均不再暴露碎片�
   await expect(treePane.getByRole("button", { name: /^2026（/ })).toHaveCount(0)
 
   await expect(
-    treePane.getByRole("button", { name: "回收站（2）", exact: true })
+    treePane.getByRole("button", { name: "回收站（3）", exact: true })
   ).toBeVisible()
   await expect(treePane.getByRole("button", { name: /^归档（/ })).toHaveCount(0)
 
@@ -1356,13 +1371,14 @@ test("碎片筛选只在碎片空间工作，资料库回收站仍支持列表�
   const treePane = page.getByRole("complementary", { name: "资料库目录" })
   const viewer = page.getByRole("article", { name: "资料库查看器" })
   await expect(viewer.locator('[data-shard-fragment-id]')).toHaveCount(0)
-  await treePane.getByRole("button", { name: "回收站（2）", exact: true }).click()
+  await treePane.getByRole("button", { name: "回收站（3）", exact: true }).click()
   const trashList = viewer.getByRole("region", {
     name: ".trash 目录列表",
     exact: true,
   })
   await expect(trashList).toBeVisible()
   await expect(trashList.getByText("fragments", { exact: true })).toHaveCount(0)
+  await expect(trashList.locator('tr[data-path=".trash/fragments/2026/06/20260612-080000.md"]')).toContainText("20260612-080000")
   await trashList.getByRole("button", { name: "notes 操作", exact: true }).click()
   await expect(page.getByRole("menuitem", { name: "恢复", exact: true })).toBeVisible()
   await expect(page.getByRole("menuitem", { name: "彻底删除", exact: true })).toBeVisible()
@@ -1372,7 +1388,9 @@ test("碎片筛选只在碎片空间工作，资料库回收站仍支持列表�
   await page.keyboard.press("Escape")
 
   await viewer.getByRole("button", { name: "宫格视图", exact: true }).click()
-  await expect(viewer.getByRole("list", { name: ".trash 目录宫格", exact: true })).toBeVisible()
+  const trashGrid = viewer.getByRole("list", { name: ".trash 目录宫格", exact: true })
+  await expect(trashGrid).toBeVisible()
+  await expect(trashGrid.getByText("回收站碎片正文", { exact: true })).toBeVisible()
   await viewer.getByRole("button", { name: "列表视图", exact: true }).click()
   await expect(trashList).toBeVisible()
   await expect(viewer.getByRole("button", { name: "进入禅模式", exact: true })).toHaveCount(0)
@@ -1394,7 +1412,7 @@ test("删除笔记移入回收站并可从原位置恢复", async ({ page }) => 
   await deleteDialog.getByRole("button", { name: "删除", exact: true }).click()
   await expect(rootList.getByRole("button", { name: "打开文件 旧笔记.md", exact: true })).toHaveCount(0)
 
-  await treePane.getByRole("button", { name: "回收站（3）", exact: true }).click()
+  await treePane.getByRole("button", { name: "回收站（4）", exact: true }).click()
   await viewer.getByRole("button", { name: "打开目录 notes", exact: true }).click()
   const trashNotes = viewer.getByRole("region", {
     name: ".trash/notes 目录列表",
@@ -1415,54 +1433,89 @@ test("删除笔记移入回收站并可从原位置恢复", async ({ page }) => 
   ).toBeVisible()
 })
 
-test("清空回收站必须二次确认且确认后才调用命令", async ({ page }) => {
+test("资料库统一回收站二次确认后清空全部已删除内容", async ({ page }) => {
   await page.getByRole("button", { name: "资料库", exact: true }).click()
   const treePane = page.getByRole("complementary", { name: "资料库目录" })
-  await treePane.getByRole("button", { name: "回收站（2）", exact: true }).click()
+  await treePane.getByRole("button", { name: "回收站（3）", exact: true }).click()
+  const trashList = page.getByRole("region", { name: ".trash 目录列表", exact: true })
+  await expect(trashList.getByText("20260612-080000", { exact: true })).toBeVisible()
+  await expect(trashList.getByText("notes", { exact: true })).toBeVisible()
   await page.getByRole("button", { name: "清空回收站", exact: true }).click()
 
-  const dialog = page.getByRole("dialog", { name: "确认清空资料库回收站", exact: true })
+  const dialog = page.getByRole("dialog", { name: "确认清空回收站", exact: true })
+  await expect(dialog).toContainText("碎片、文档和文件")
   await expect(dialog).toContainText("永久删除，此操作不可恢复")
   await expect.poll(() => commandCalls(page, "empty_trash")).toHaveLength(0)
   await dialog.getByRole("button", { name: "清空回收站", exact: true }).click()
   await expect.poll(() => commandCalls(page, "empty_trash")).toHaveLength(1)
-  expect((await commandCalls(page, "empty_trash"))[0].args).toEqual({ scope: "library" })
+  expect((await commandCalls(page, "empty_trash"))[0].args).toEqual({ scope: "all" })
   await expect(treePane.getByRole("button", { name: "回收站（0）", exact: true })).toBeVisible()
   await expect(page.getByText("回收站是空的", { exact: true })).toBeVisible()
+  await expect(page.getByText("回收站碎片正文", { exact: true })).toHaveCount(0)
   await page.getByRole("button", { name: "碎片", exact: true }).click()
-  await page.getByRole("navigation", { name: "工作台导航" }).getByRole("button", { name: /^回收站/ }).click()
-  await expect(page.getByRole("region", { name: "碎片回收站" }).getByText("回收站碎片正文", { exact: true })).toBeVisible()
+  await expect(page.locator('[data-shard-fragment-id="fragment-august"]')).toBeVisible()
+  await expect(page.locator('[data-shard-fragment-id="fragment-archived"]')).toHaveCount(0)
 })
 
-test("清空碎片回收站只删除碎片，资料库回收站仍保留文档", async ({ page }) => {
-  await page.getByRole("navigation", { name: "工作台导航" }).getByRole("button", { name: /^回收站(?: |$)/ }).click()
-  const trash = page.getByRole("region", { name: "碎片回收站", exact: true })
-  await expect(trash.getByText("回收站碎片正文", { exact: true })).toBeVisible()
-  await trash.getByRole("button", { name: "清空碎片回收站", exact: true }).click()
-  const confirmation = page.getByRole("alertdialog", { name: "清空碎片回收站", exact: true })
-  await expect(confirmation).toContainText("资料库回收站不受影响")
-  expect(await commandCalls(page, "empty_trash")).toHaveLength(0)
-  await confirmation.getByRole("button", { name: "永久删除", exact: true }).click()
-  await expect.poll(() => commandCalls(page, "empty_trash")).toHaveLength(1)
-  expect((await commandCalls(page, "empty_trash"))[0].args).toEqual({ scope: "fragments" })
-  await expect(trash.getByText("没有已删除的碎片。", { exact: true })).toBeVisible()
-
+test("取消清空统一回收站保留碎片与文档且不调用命令", async ({ page }) => {
   await page.getByRole("button", { name: "资料库", exact: true }).click()
-  await page.getByRole("complementary", { name: "资料库目录" }).getByRole("button", { name: "回收站（2）", exact: true }).click()
+  const treePane = page.getByRole("complementary", { name: "资料库目录" })
+  await treePane.getByRole("button", { name: "回收站（3）", exact: true }).click()
+  await page.getByRole("button", { name: "清空回收站", exact: true }).click()
+  const dialog = page.getByRole("dialog", { name: "确认清空回收站", exact: true })
+  await dialog.getByRole("button", { name: "取消", exact: true }).click()
+  await expect(dialog).toBeHidden()
+  expect(await commandCalls(page, "empty_trash")).toHaveLength(0)
+  await expect(treePane.getByRole("button", { name: "回收站（3）", exact: true })).toBeVisible()
+  await expect(page.getByRole("region", { name: ".trash 目录列表", exact: true }).getByText("20260612-080000", { exact: true })).toBeVisible()
   await page.getByRole("button", { name: "打开目录 notes", exact: true }).click()
   await expect(page.getByRole("region", { name: ".trash/notes 目录列表", exact: true }).getByText("已删除文档", { exact: true })).toBeVisible()
 })
 
-test("恢复碎片后返回碎片完整流，资料库仍不显示该内容", async ({ page }) => {
-  await page.getByRole("navigation", { name: "工作台导航" }).getByRole("button", { name: /^回收站(?: |$)/ }).click()
-  const trash = page.getByRole("region", { name: "碎片回收站", exact: true })
-  await trash.getByRole("button", { name: "恢复", exact: true }).click()
+test("统一回收站恢复碎片后保留当前目录，手动进入碎片查看恢复内容", async ({ page }) => {
+  await page.getByRole("button", { name: "资料库", exact: true }).click()
+  const treePane = page.getByRole("complementary", { name: "资料库目录" })
+  await treePane.getByRole("button", { name: "回收站（3）", exact: true }).click()
+  const trash = page.getByRole("region", { name: ".trash 目录列表", exact: true })
+  await trash.getByRole("button", { name: "20260612-080000.md 操作", exact: true }).click()
+  await page.getByRole("menuitem", { name: "恢复", exact: true }).click()
   await expect.poll(() => commandCalls(page, "restore_from_trash")).toHaveLength(1)
   expect((await commandCalls(page, "restore_from_trash"))[0].args).toEqual({ path: ".trash/fragments/2026/06/20260612-080000.md" })
+  await expect(trash).toBeVisible()
+  await expect(treePane.getByRole("button", { name: "回收站（2）", exact: true })).toHaveAttribute("aria-current", "page")
+  await expect(trash.getByText("20260612-080000", { exact: true })).toHaveCount(0)
+  await page.getByRole("button", { name: "碎片", exact: true }).click()
   await expect(page.locator('[data-shard-fragment-id="fragment-archived"]')).toBeVisible()
   await page.getByRole("button", { name: "资料库", exact: true }).click()
   await expect(page.locator('[data-shard-fragment-id]')).toHaveCount(0)
   await expect(page.getByText("回收站碎片正文", { exact: true })).toHaveCount(0)
+})
+
+test("统一回收站彻底删除碎片需确认并使用碎片原路径", async ({ page }) => {
+  await page.getByRole("button", { name: "资料库", exact: true }).click()
+  const treePane = page.getByRole("complementary", { name: "资料库目录" })
+  await treePane.getByRole("button", { name: "回收站（3）", exact: true }).click()
+  const trash = page.getByRole("region", { name: ".trash 目录列表", exact: true })
+  const menu = trash.getByRole("button", { name: "20260612-080000.md 操作", exact: true })
+  await menu.click()
+  await page.getByRole("menuitem", { name: "彻底删除", exact: true }).click()
+  const dialog = page.getByRole("dialog", { name: "确认彻底删除", exact: true })
+  await expect(dialog).toContainText("永久删除，此操作不可恢复")
+  expect(await commandCalls(page, "purge_from_trash")).toHaveLength(0)
+  await dialog.getByRole("button", { name: "取消", exact: true }).click()
+  await expect(dialog).toBeHidden()
+  expect(await commandCalls(page, "purge_from_trash")).toHaveLength(0)
+  await expect(trash.getByText("20260612-080000", { exact: true })).toBeVisible()
+  await menu.click()
+  await page.getByRole("menuitem", { name: "彻底删除", exact: true }).click()
+  await dialog.getByRole("button", { name: "彻底删除", exact: true }).click()
+  await expect.poll(() => commandCalls(page, "purge_from_trash")).toHaveLength(1)
+  expect((await commandCalls(page, "purge_from_trash"))[0].args).toEqual({ path: ".trash/fragments/2026/06/20260612-080000.md" })
+  await expect(treePane.getByRole("button", { name: "回收站（2）", exact: true })).toBeVisible()
+  await expect(trash.getByText("20260612-080000", { exact: true })).toHaveCount(0)
+  await expect(trash.getByText("notes", { exact: true })).toBeVisible()
+  await page.getByRole("button", { name: "碎片", exact: true }).click()
+  await expect(page.locator('[data-shard-fragment-id="fragment-archived"]')).toHaveCount(0)
 })
 
 test("跨空间恢复资料库子目录，失效目录会回退文件根目录", async ({ page }) => {
@@ -1508,7 +1561,11 @@ test("资料库普通导图条目在第三栏打开并保留侧栏与目录树",
   const treePane = page.getByRole("complementary", { name: "资料库目录" })
   const sidebar = page.getByRole("navigation", { name: "工作台导航" })
 
-  await expect(sidebar.getByRole("button")).toHaveText(["碎片", "日历", "资料库"])
+  for (const name of ["碎片", "日历", "资料库"]) {
+    await expect(sidebar.getByRole("button", { name, exact: true })).toBeVisible()
+  }
+  await expect(sidebar.getByRole("button", { name: /^全部碎片 \d+$/u })).toBeVisible()
+  await expect(sidebar.getByRole("button", { name: /^回收站 \d+$/u })).toHaveCount(0)
   await expect(
     treePane.getByRole("button", { name: /^思维导图（/ })
   ).toHaveCount(0)
@@ -1563,6 +1620,11 @@ test("资料库文档禅模式进出后保留同一份草稿", async ({ page }) 
   const zenSurface = page.getByLabel("资料库文档禅模式", { exact: true })
   await expect(zenSurface).toBeVisible()
   await expect.poll(() => readEditor(page, editorId)).toBe(zenDraft)
+  // 资料库文档的禅模式同样有操作条：文件名作标题，字数只数正文纯文本。
+  const bar = zenSurface.locator("[data-zen-bar]")
+  await expect(bar.locator("[data-zen-title]")).toHaveText("项目计划")
+  await expect(bar.locator("[data-zen-word-count]")).toHaveText("11 字")
+  await expect(bar.getByRole("button", { name: "退出禅模式", exact: true })).toBeVisible()
 
   const editedInZen = `${zenDraft}\n\n退出后仍然存在`
   await fillEditor(page, editorId, editedInZen)
@@ -1919,64 +1981,6 @@ test("资料库文档粘贴图片会调用共享上传命令", async ({ page }) 
     bytes: [137, 80, 78, 71],
     fileName: "library-paste.png",
   })
-})
-
-test("碎片确认标题目录后转为文档并聚焦正文，转回时保留最新正文与唯一归属", async ({ page }) => {
-  const fragmentCard = page.locator('[data-shard-fragment-id="fragment-august"]')
-  await fragmentCard.getByRole("button", { name: "片段操作", exact: true }).click()
-  await page.getByRole("menuitem", { name: "转为文档…", exact: true }).click()
-  const conversion = page.getByRole("dialog", { name: "转为文档", exact: true })
-  await expect(conversion).toContainText("转换后移入资料库，不再显示在碎片流中")
-  await expect(conversion.getByRole("textbox", { name: "文档标题", exact: true })).toHaveValue("八月灵感")
-  expect(await commandCalls(page, "convert_fragment_to_note")).toHaveLength(0)
-  const titleControl = await expectKilnControl(conversion.getByRole("textbox", { name: "文档标题", exact: true }), 32)
-  const submitControl = await expectKilnControl(conversion.getByRole("button", { name: "转为文档", exact: true }), 32)
-  const directoryControl = await expectKilnControl(conversion.getByRole("combobox", { name: "保存位置", exact: true }), 28)
-  mkdirSync("tests/evidence/fragments-separation", { recursive: true })
-  writeFileSync("tests/evidence/fragments-separation/conversion-computed-styles.json", JSON.stringify({ titleControl, submitControl, directoryControl }, null, 2))
-  await page.screenshot({ path: "tests/evidence/fragments-separation/convert-fragment-dialog.png", animations: "disabled" })
-  await conversion.getByRole("textbox", { name: "文档标题", exact: true }).fill("整理后的八月灵感")
-  await selectOption(conversion.getByRole("combobox", { name: "保存位置", exact: true }), "notes/项目")
-  await conversion.getByRole("button", { name: "转为文档", exact: true }).click()
-  await expect.poll(() => commandCalls(page, "convert_fragment_to_note")).toHaveLength(1)
-  expect((await commandCalls(page, "convert_fragment_to_note"))[0].args).toEqual({
-    destinationDirectory: "notes/项目",
-    id: "fragment-august",
-    title: "整理后的八月灵感",
-  })
-  const editor = page.getByRole("textbox", { name: "资料库文档编辑器", exact: true })
-  await expect(editor).toBeFocused()
-  await expect.poll(() => readEditor(page, "library:fragment-august")).toBe("# 八月灵感\n\n碎片正文")
-  await expect(page.locator('[data-shard-fragment-id]')).toHaveCount(0)
-  await page.keyboard.press("ControlOrMeta+End")
-  await page.keyboard.press("Enter")
-  await page.keyboard.insertText("文档中新增内容")
-  await page.getByRole("button", { name: "返回碎片", exact: true }).click()
-  await expect(fragmentCard).toHaveCount(0)
-  await expect(page.locator('[data-shard-fragment-id="fragment-july"]')).toBeVisible()
-  await expect(page.locator('[data-shard-fragment-id]')).toHaveCount(1)
-  await page.getByRole("button", { name: "资料库", exact: true }).click()
-  await expect(editor).toBeVisible()
-  await page.getByRole("button", { name: "返回所在目录", exact: true }).click()
-  const directory = page.getByRole("region", { name: "notes/项目 目录列表", exact: true })
-  await expect(directory.getByRole("button", { name: "打开文件 整理后的八月灵感.md", exact: true })).toBeVisible()
-  await page.getByRole("button", { name: "碎片", exact: true }).click()
-  await page.getByRole("button", { name: "资料库", exact: true }).click()
-  await expect(directory).toBeVisible()
-  await directory.getByRole("button", { name: "整理后的八月灵感.md 操作", exact: true }).click()
-  await page.getByRole("menuitem", { name: "转回碎片", exact: true }).click()
-
-  await expect.poll(() => commandCalls(page, "convert_note_to_fragment")).toHaveLength(1)
-  expect((await commandCalls(page, "convert_note_to_fragment"))[0].args).toEqual({
-    id: "fragment-august",
-  })
-  await expect(fragmentCard).toBeVisible()
-  await expect(fragmentCard).toContainText("文档中新增内容")
-  await expect(page.locator('[data-shard-fragment-id]')).toHaveCount(2)
-  await page.getByRole("button", { name: "资料库", exact: true }).click()
-  await expect(directory).toBeVisible()
-  await expect(directory.getByRole("button", { name: "打开文件 整理后的八月灵感.md", exact: true })).toHaveCount(0)
-  await expect(page.locator('[data-shard-fragment-id]')).toHaveCount(0)
 })
 
 test("转回碎片已移动后响应丢失会核对当前类型，不重试转换或留下旧文档编辑器", async ({ page }) => {
@@ -3109,4 +3113,182 @@ test("独立图缺失时链接回退到同 ID 的时间线图，全部缺失仍�
 
   await page.locator('[data-shard-editor="library:note-old"] a[href="shard://map/missing-map"]').click()
   await expect(page.getByText("引用的图文档已不存在", { exact: true })).toBeVisible({ timeout: 15_000 })
+})
+
+
+test("碎片文件分类：文件视图与时间线共享正文和身份，返回分类并恢复会话", async ({ page }) => {
+  await page.getByRole("button", { name: "资料库", exact: true }).click()
+  const pane = page.getByRole("complementary", { name: "资料库目录" })
+  const category = pane.getByRole("button", { name: "碎片（2）", exact: true })
+  await category.click()
+  await expect(category).toHaveAttribute("aria-current", "page")
+  await expect(pane.getByRole("button", { name: /^文件（/ })).not.toHaveAttribute("aria-current", "page")
+  const list = page.getByRole("region", { name: "fragments 目录列表", exact: true })
+  await expect(list.getByRole("button", { name: "打开文件 20260830-080102.md", exact: true })).toBeVisible()
+  await expect(list.getByRole("button", { name: "打开文件 20260712-080000.md", exact: true })).toBeVisible()
+  await expect(list.getByText("项目计划", { exact: true })).toHaveCount(0)
+  await expect(list.getByText("20260612-080000", { exact: true })).toHaveCount(0)
+  await list.getByRole("button", { name: "打开文件 20260830-080102.md", exact: true }).click()
+  await expect(page.getByRole("textbox", { name: "资料库碎片编辑器", exact: true })).toBeVisible()
+  await fillEditor(page, "library:fragment-august", "# 八月灵感\n\n在文件视图中更新")
+  await page.getByRole("button", { name: "返回所在目录", exact: true }).click()
+  await expect(list).toBeVisible()
+  const updates = await commandCalls(page, "update_fragment")
+  expect(updates.at(-1)?.args).toMatchObject({ id: "fragment-august", tags: ["inbox", "灵感"] })
+  expect(updates.at(-1)?.args.tags).not.toContain("note")
+  await page.getByRole("button", { name: /^全部碎片 / }).click()
+  await expect(page.locator('[data-shard-fragment-id="fragment-august"]')).toContainText("在文件视图中更新")
+  await page.getByRole("button", { name: "资料库", exact: true }).click()
+  await expect(list).toBeVisible()
+  await page.reload()
+  // Cold start still opens the capture space; library restores its own selection.
+  await page.getByRole("button", { name: "资料库", exact: true }).click()
+  await expect(list).toBeVisible()
+  await expect(page.getByRole("button", { name: "碎片（2）", exact: true })).toHaveAttribute("aria-current", "page")
+})
+
+test("碎片文件分类：宫格、排序和多选沿用文件操作，切换分类清空选择", async ({ page }) => {
+  await page.getByRole("button", { name: "资料库", exact: true }).click()
+  const pane = page.getByRole("complementary", { name: "资料库目录" })
+  await pane.getByRole("button", { name: "碎片（2）", exact: true }).click()
+  await page.getByRole("button", { name: "宫格视图", exact: true }).click()
+  const grid = page.getByRole("list", { name: "fragments 目录宫格", exact: true })
+  await expect(grid.locator(':scope > li')).toHaveCount(2)
+  await expect(grid.getByText("八月灵感", { exact: true })).toBeVisible()
+  await grid.getByRole("button", { name: "20260830-080102.md 操作", exact: true }).click()
+  await expect(page.getByRole("menuitem", { name: "转回碎片", exact: true })).toHaveCount(0)
+  await expect(page.getByRole("menuitem", { name: "移动到…", exact: true })).toHaveCount(0)
+  await expect(page.getByRole("menuitem", { name: "移入密匣", exact: true })).toBeVisible()
+  await page.keyboard.press("Escape")
+  await page.getByRole("button", { name: "多选文件", exact: true }).click()
+  await grid.getByRole("checkbox", { name: "选择 20260830-080102.md", exact: true }).click()
+  const dock = page.getByRole("toolbar", { name: "文件批量操作", exact: true })
+  await expect(dock).toBeVisible()
+  await expect(dock.getByRole("button", { name: "移动到…", exact: true })).toHaveCount(0)
+  await expect(dock.getByText("已选 1 项", { exact: true })).toBeVisible()
+  await pane.getByRole("button", { name: /^文件（/ }).click()
+  await expect(dock).toBeHidden()
+  await pane.getByRole("button", { name: "碎片（2）", exact: true }).click()
+  await expect(page.getByRole("button", { name: "多选文件", exact: true })).toHaveAttribute("aria-pressed", "false")
+})
+
+test("碎片文件分类：重命名保留 ID 与碎片类型，删除进入统一回收站", async ({ page }) => {
+  await page.getByRole("button", { name: "资料库", exact: true }).click()
+  const pane = page.getByRole("complementary", { name: "资料库目录" })
+  await pane.getByRole("button", { name: "碎片（2）", exact: true }).click()
+  const list = page.getByRole("region", { name: "fragments 目录列表", exact: true })
+  await list.getByRole("button", { name: "20260830-080102.md 操作", exact: true }).click()
+  await page.getByRole("menuitem", { name: "重命名", exact: true }).click()
+  await page.getByRole("textbox", { name: "重命名名称", exact: true }).fill("八月灵感文件")
+  await page.getByRole("textbox", { name: "重命名名称", exact: true }).press("Enter")
+  // Existing rename behavior opens the updated file while keeping the stable ID.
+  await expect(page.getByRole("button", { name: "重命名文件", exact: true })).toHaveText("八月灵感文件")
+  await expect.poll(() => readEditor(page, "library:fragment-august")).toContain("八月灵感")
+  await page.getByRole("button", { name: "返回所在目录", exact: true }).click()
+  await expect(list.getByRole("button", { name: "打开文件 八月灵感文件.md", exact: true })).toBeVisible()
+  await list.getByRole("button", { name: "八月灵感文件.md 操作", exact: true }).click()
+  await page.getByRole("menuitem", { name: "删除", exact: true }).click()
+  await page.getByRole("dialog").getByRole("button", { name: "删除", exact: true }).click()
+  await expect(pane.getByRole("button", { name: "碎片（1）", exact: true })).toHaveAttribute("aria-current", "page")
+  await expect(list.getByRole("button", { name: "打开文件 八月灵感文件.md", exact: true })).toHaveCount(0)
+  await pane.getByRole("button", { name: "回收站（4）", exact: true }).click()
+  const trash = page.getByRole("region", { name: ".trash 目录列表", exact: true })
+  await expect(trash.locator('tr[data-path=".trash/fragments/2026/08/八月灵感文件.md"]')).toContainText("八月灵感")
+  await expect(trash.getByRole("button", { name: "八月灵感文件.md 操作", exact: true })).toBeVisible()
+})
+
+test("碎片文件分类：批量删除与空态保持分类", async ({ page }) => {
+  await page.getByRole("button", { name: "资料库", exact: true }).click()
+  const pane = page.getByRole("complementary", { name: "资料库目录" })
+  await pane.getByRole("button", { name: "碎片（2）", exact: true }).click()
+  await page.getByRole("checkbox", { name: "全选当前目录", exact: true }).click()
+  await page.getByRole("button", { name: "批量删除", exact: true }).click()
+  await page.getByRole("dialog").getByRole("button", { name: "删除 2 项", exact: true }).click()
+  await expect(pane.getByRole("button", { name: "碎片（0）", exact: true })).toHaveAttribute("aria-current", "page")
+  await expect(page.getByText("暂无碎片", { exact: true })).toBeVisible()
+  await expect(page.getByRole("button", { name: "多选文件", exact: true })).toBeDisabled()
+  await expect(page.getByRole("toolbar", { name: "文件批量操作", exact: true })).toBeHidden()
+})
+
+
+test("碎片文件分类：默认、悬停和键盘焦点遵守 Kiln，普通及短窗口布局稳定", async ({ page }) => {
+  await page.getByRole("button", { name: "资料库", exact: true }).click()
+  const pane = page.getByRole("complementary", { name: "资料库目录" })
+  const category = pane.getByRole("button", { name: "碎片（2）", exact: true })
+  await category.click()
+  const list = page.getByRole("region", { name: "fragments 目录列表", exact: true })
+  const before = await category.boundingBox()
+  const defaultStyle = await category.evaluate(element => {
+    const style = getComputedStyle(element)
+    return { radius: style.borderRadius, font: style.fontFamily, color: style.color, background: style.backgroundColor, outline: style.outlineStyle }
+  })
+  expect(defaultStyle.radius).toBe("4px")
+  expect(defaultStyle.font).toContain("Noto Sans SC")
+  expect(defaultStyle.outline).toBe("none")
+  await category.hover()
+  expect(await category.boundingBox()).toEqual(before)
+  expect(await category.evaluate(element => getComputedStyle(element).backgroundColor)).toBe(defaultStyle.background)
+  await page.keyboard.press("F6")
+  await expect(page.locator("html")).toHaveAttribute("data-focus-mode", "keyboard")
+  await category.focus()
+  expect(await category.evaluate(element => getComputedStyle(element).outlineStyle)).toBe("solid")
+  expect(await category.boundingBox()).toEqual(before)
+  await expectKilnControl(page.getByRole("button", { name: "多选文件", exact: true }), 28)
+  await page.getByRole("button", { name: "按创建时间排序", exact: true }).click()
+  await expect(list.locator('th[aria-sort="descending"]')).toHaveText(/创建时间/)
+  await expect(list.locator('tbody tr').first()).toHaveAttribute("data-path", "fragments/2026/08/20260830-080102.md")
+  await page.getByRole("button", { name: "宫格视图", exact: true }).click()
+  const grid = page.getByRole("list", { name: "fragments 目录宫格", exact: true })
+  await expect(grid).toBeVisible()
+  mkdirSync("tests/evidence/fragment-files", { recursive: true })
+  for (const viewport of [{ width: 1280, height: 720 }, { width: 1100, height: 480 }]) {
+    await page.setViewportSize(viewport)
+    const metrics = await page.evaluate(() => ({ width: document.documentElement.clientWidth, scrollWidth: document.documentElement.scrollWidth }))
+    expect(metrics.scrollWidth).toBeLessThanOrEqual(metrics.width)
+    await expect(category).toBeVisible()
+    await expect(grid).toBeVisible()
+    await page.screenshot({ path: `tests/evidence/fragment-files/grid-${viewport.width}x${viewport.height}.png` })
+  }
+})
+
+
+for (const kind of ["document", "outline"] as const) {
+  test(`碎片文件分类：编辑 ${kind} 保留类型与标签`, async ({ page }) => {
+    await page.addInitScript(({ kind }) => {
+      const runtime = window as unknown as { __TAURI_INTERNALS__: { invoke(command: string, args?: unknown): Promise<any> } }
+      const original = runtime.__TAURI_INTERNALS__.invoke
+      runtime.__TAURI_INTERNALS__.invoke = async (command, args) => {
+        const result = await original(command, args)
+        if (command === "list_fragments") {
+          const item = result.fragments.find((fragment: any) => fragment.id === "fragment-august")
+          item.tags = ["inbox", kind, "灵感"]
+          if (kind === "outline") item.content = "- 根节点\n  - 子节点"
+        }
+        return result
+      }
+    }, { kind })
+    await page.reload()
+    await page.getByRole("button", { name: "资料库", exact: true }).click()
+    await page.getByRole("button", { name: "碎片（2）", exact: true }).click()
+    await page.getByRole("button", { name: "打开文件 20260830-080102.md", exact: true }).click()
+    await fillEditor(page, "library:fragment-august", kind === "outline" ? "- 根节点\n  - 更新子节点" : "# 更新文档\n\n正文")
+    await page.getByRole("button", { name: "返回所在目录", exact: true }).click()
+    await expect(page.getByRole("region", { name: "fragments 目录列表", exact: true })).toBeVisible()
+    expect((await commandCalls(page, "update_fragment")).at(-1)?.args).toMatchObject({ id: "fragment-august", tags: ["inbox", kind, "灵感"] })
+  })
+}
+
+test("碎片文件分类：受管大纲与流程图打开原图编辑器，关闭返回文件列表", async ({ page }) => {
+  await installGraphImportMock(page, { map: true, flow: true })
+  await page.getByRole("button", { name: "资料库", exact: true }).click()
+  await page.getByRole("button", { name: "碎片（4）", exact: true }).click()
+  await page.getByRole("button", { name: "打开文件 map-project.md", exact: true }).click()
+  await expect(page.getByRole("region", { name: "思维导图工作区", exact: true })).toBeVisible()
+  await page.getByRole("button", { name: "退出思维导图", exact: true }).click()
+  await expect(page.getByRole("region", { name: "fragments 目录列表", exact: true })).toBeVisible()
+  await page.getByRole("button", { name: "打开文件 flow-project.md", exact: true }).click()
+  await expect(page.locator(".shard-canvas-workspace")).toBeVisible()
+  await page.getByRole("button", { name: "退出流程图", exact: true }).click()
+  await expect(page.getByRole("region", { name: "fragments 目录列表", exact: true })).toBeVisible()
+  expect(await commandCalls(page, "update_fragment")).toHaveLength(0)
 })

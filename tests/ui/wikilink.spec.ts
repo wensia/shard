@@ -110,6 +110,9 @@ async function installWikilinkMock(page: Page, options: WikilinkMockOptions = {}
       entries: fragments.filter(item => item.tags.includes("note")).map(item => ({
         name: item.path.split("/").at(-1), path: item.path, kind: "markdown", size: 0, modifiedAt: "",
       })),
+      fragmentEntries: fragments.filter(item => !item.archived && !item.lockbox && item.path.startsWith("fragments/")).map(item => ({
+        name: item.path.split("/").at(-1), path: item.path, kind: "markdown", size: 0, modifiedAt: item.updatedAt,
+      })),
       assets: [], trashEntries: [],
       fragmentTrashEntries: fragments.filter(item => item.archived).map(item => ({
         name: item.path.split("/").at(-1), path: item.path, kind: "markdown", size: 0, modifiedAt: item.createdAt,
@@ -130,7 +133,11 @@ async function installWikilinkMock(page: Page, options: WikilinkMockOptions = {}
         invoke: async (command: string, args: Record<string, unknown> = {}) => {
           calls.push({ command, args: clone(args) })
           if (command === "list_fragments") {
-            if (holdRestoreRefresh) await new Promise<void>(resolve => restoreRefreshResolvers.push(resolve))
+            if (holdRestoreRefresh) {
+              saveEvents.push("restore-refreshing")
+              await new Promise<void>(resolve => restoreRefreshResolvers.push(resolve))
+              saveEvents.push("restore-refreshed")
+            }
             return clone({
               vaultPath: "/tmp/shard-wikilink-test",
               fragments,
@@ -320,7 +327,7 @@ test("链接点击复用资料库与时间线导航且不滚动 document", async
   await fillEditor(page, "composer", "[[fragment-target]]")
   const documentScrollBefore = await page.evaluate(() => window.scrollY)
   await page.locator('[data-shard-editor="composer"] .shard-rich-wikilink').click()
-  await expect(page.getByRole("button", { name: "碎片", exact: true })).toHaveAttribute("aria-current", "page")
+  await expect(page.getByRole("navigation", { name: "工作台导航" }).getByRole("button", { name: /^全部碎片 \d+$/u })).toHaveAttribute("aria-current", "page")
   await expect(page.getByRole("complementary", { name: "资料库目录" })).toHaveCount(0)
   await expect(page.locator('[data-shard-fragment-id="fragment-target"]')).toHaveClass(/shard-fragment-card-highlight/u)
   expect(await page.evaluate(() => window.scrollY)).toBe(documentScrollBefore)
@@ -385,7 +392,7 @@ test("文档里的碎片引用保存草稿后进入碎片，返回时保留文�
   const content = "# 目标笔记\n\n最新正文 [[fragment-target]]"
   await fillEditor(page, "library:note-target", content)
   await page.locator('[data-shard-editor="library:note-target"] .shard-rich-wikilink').click()
-  await expect(page.getByRole("button", { name: "碎片", exact: true })).toHaveAttribute("aria-current", "page")
+  await expect(page.getByRole("navigation", { name: "工作台导航" }).getByRole("button", { name: /^全部碎片 \d+$/u })).toHaveAttribute("aria-current", "page")
   await expect(page.locator('[data-shard-fragment-id="fragment-target"]')).toHaveClass(/shard-fragment-card-highlight/u)
   await expect(page.getByRole("complementary", { name: "资料库目录" })).toHaveCount(0)
   await page.getByRole("button", { name: "返回资料库", exact: true }).click()
@@ -419,65 +426,7 @@ async function inlineSaveCalls(page: Page) {
   })
 }
 
-async function beginOtherFragmentConversion(page: Page, mode: NonNullable<WikilinkMockOptions["inlineSave"]>) {
-  await installWikilinkMock(page, { linkedFragments: true, inlineSave: mode })
-  await page.reload()
-  const source = page.locator('[data-shard-fragment-id="fragment-source"]')
-  await source.getByRole("button", { name: "片段操作", exact: true }).click()
-  await page.getByRole("menuitem", { name: "编辑", exact: true }).click()
-  const draft = "#shared A 的未落盘修改，必须保留。"
-  await fillEditor(page, "fragment:fragment-source", draft)
-  await page.locator('[data-shard-fragment-id="fragment-target"]')
-    .getByRole("button", { name: "片段操作", exact: true }).click()
-  await expect.poll(async () => (await inlineSaveCalls(page)).calls.filter(call => call.command === "update_fragment").length).toBe(1)
-  await page.getByRole("menuitem", { name: "转为文档…", exact: true }).click()
-  return draft
-}
-
-test("A 碎片 blur 保存已失败时禁止 B 转文档并保留 A 草稿", async ({ page }) => {
-  const draft = await beginOtherFragmentConversion(page, "failure")
-  await expect(page.locator("[data-sonner-toast]").filter({ hasText: "片段自动保存失败" }).first()).toBeVisible()
-  await expect(page.getByRole("dialog", { name: "转为文档", exact: true })).toHaveCount(0)
-  await expect(page.locator('[data-shard-editor="fragment:fragment-source"]')).toBeVisible()
-  expect(await readEditor(page, "fragment:fragment-source")).toBe(draft)
-  expect((await inlineSaveCalls(page)).calls.filter(call => call.command === "convert_fragment_to_note")).toEqual([])
-  await expect(page.getByRole("button", { name: "碎片", exact: true })).toHaveAttribute("aria-current", "page")
-})
-
-for (const mode of ["deferred-success", "deferred-failure"] as const) {
-  test(`A 碎片保存 ${mode} 时 B 转文档串行等待同一保存结果`, async ({ page }) => {
-    const draft = await beginOtherFragmentConversion(page, mode)
-    // Drain the click turn while the mock write remains explicitly unresolved.
-    await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
-    await expect(page.getByRole("dialog", { name: "转为文档", exact: true })).toHaveCount(0)
-    expect(await readEditor(page, "fragment:fragment-source")).toBe(draft)
-    const pending = await inlineSaveCalls(page)
-    expect(pending.events).toEqual(["saving"])
-    expect(pending.calls.filter(call => call.command === "update_fragment")).toHaveLength(1)
-    expect(pending.calls.filter(call => call.command === "convert_fragment_to_note")).toEqual([])
-    await page.evaluate(() => (globalThis as typeof globalThis & { __SHARD_COMPLETE_INLINE_SAVE__: () => void }).__SHARD_COMPLETE_INLINE_SAVE__())
-    if (mode === "deferred-failure") {
-      await expect(page.locator("[data-sonner-toast]").filter({ hasText: "片段自动保存失败" }).first()).toBeVisible()
-      await expect(page.getByRole("dialog", { name: "转为文档", exact: true })).toHaveCount(0)
-      expect(await readEditor(page, "fragment:fragment-source")).toBe(draft)
-      expect((await inlineSaveCalls(page)).events).toEqual(["saving", "failed"])
-      expect((await inlineSaveCalls(page)).calls.filter(call => call.command === "convert_fragment_to_note")).toEqual([])
-    } else {
-      const dialog = page.getByRole("dialog", { name: "转为文档", exact: true })
-      await expect(dialog).toBeVisible()
-      await expect(page.locator('[data-shard-editor="fragment:fragment-source"]')).toHaveCount(0)
-      await dialog.getByRole("button", { name: "转为文档", exact: true }).click()
-      await expect.poll(async () => (await inlineSaveCalls(page)).events).toEqual(["saving", "saved", "convert"])
-      const finished = await inlineSaveCalls(page)
-      const saves = finished.calls.filter(call => call.command === "update_fragment")
-      expect(saves).toHaveLength(1)
-      expect(saves[0].args).toMatchObject({ id: "fragment-source", content: draft })
-      expect(finished.calls.find(call => call.command === "convert_fragment_to_note")?.args.id).toBe("fragment-target")
-    }
-  })
-}
-
-test("搜索已删除碎片只读打开，退出后恢复并等待刷新定位", async ({ page }) => {
+test("搜索已删除碎片在资料库只读打开，恢复后等待刷新再从碎片定位", async ({ page }) => {
   await installWikilinkMock(page, { trashTarget: true })
   await page.reload()
   await expect(page.locator(".shard-timeline-item")).toHaveCount(40)
@@ -492,41 +441,64 @@ test("搜索已删除碎片只读打开，退出后恢复并等待刷新定位",
   await search.press("Enter")
 
   await expect(palette).toHaveCount(0)
-  const archivedEditor = page.locator('[data-shard-editor="zen:deleted-24"]')
+  const archivedEditor = page.locator('[data-shard-editor="library:deleted-24"]')
   await expect(archivedEditor).toBeVisible()
   await expect(archivedEditor.locator(".ProseMirror")).toHaveAttribute(
     "contenteditable",
     "false"
   )
   await expect(archivedEditor).toContainText("待恢复定位目标：保留原记录日期。")
+  await expect(page.getByRole("button", { name: "重命名文件", exact: true })).toBeDisabled()
   expect(await page.evaluate(() => document.scrollingElement?.scrollTop)).toBe(documentScroll)
-  await page.getByRole("button", { name: "退出编辑", exact: true }).click()
+  await page.getByRole("button", { name: "返回所在目录", exact: true }).click()
 
-  const trash = page.getByRole("region", { name: "碎片回收站", exact: true })
-  const target = trash.locator('[data-trash-path=".trash/fragments/deleted-24.md"]')
+  const tree = page.getByRole("complementary", { name: "资料库目录" })
+  const trash = page.getByRole("region", { name: ".trash 目录列表", exact: true })
+  const target = trash.locator('[data-path=".trash/fragments/deleted-24.md"]')
+  const restoreMenu = target.getByRole("button", { name: "deleted-24.md 操作", exact: true })
   await expect(trash).toBeVisible()
-  await target.evaluate((element) => {
-    const viewport = element.closest<HTMLElement>('[data-slot="scroll-area-viewport"]')!
-    viewport.scrollTop += element.getBoundingClientRect().top - viewport.getBoundingClientRect().top
+  await restoreMenu.evaluate((element) => {
+    const row = element.closest<HTMLElement>('[data-path]')!
+    const viewport = row.closest<HTMLElement>('[role="region"]')!
+    viewport.scrollTop += row.getBoundingClientRect().top - viewport.getBoundingClientRect().top
     element.focus({ preventScroll: true })
   })
-  await expect(target).toBeFocused()
+  await expect(restoreMenu).toBeFocused()
   await expect(target).toBeInViewport()
-  await expect.poll(() => target.evaluate(element => element.closest<HTMLElement>('[data-slot="scroll-area-viewport"]')!.scrollTop)).toBeGreaterThan(0)
-  await expect(page.getByRole("button", { name: "碎片", exact: true })).toHaveAttribute("aria-current", "page")
-  await expect(page.getByRole("complementary", { name: "资料库目录" })).toHaveCount(0)
+  await expect.poll(() => trash.evaluate(element => element.scrollTop)).toBeGreaterThan(0)
+  await expect(tree.getByRole("button", { name: "回收站（25）", exact: true })).toHaveAttribute("aria-current", "page")
+  await expect(page.getByRole("navigation", { name: "工作台导航" }).getByRole("button", { name: "资料库", exact: true })).toHaveAttribute("aria-current", "page")
   expect(await page.evaluate(() => document.scrollingElement?.scrollTop)).toBe(documentScroll)
 
-  await target.getByRole("button", { name: "恢复", exact: true }).click()
-  await expect(trash).toHaveCount(0)
-  await expect(page.getByText("碎片已恢复", { exact: true })).toBeVisible()
+  await restoreMenu.click()
+  await page.getByRole("menuitem", { name: "恢复", exact: true }).click()
+  await expect(target).toHaveCount(0)
+  await expect(trash).toBeVisible()
+  await expect(tree.getByRole("button", { name: "回收站（24）", exact: true })).toHaveAttribute("aria-current", "page")
   const restored = page.locator('[data-shard-fragment-id="deleted-24"]')
   await expect(restored).toHaveCount(0)
+  await expect.poll(async () => (await inlineSaveCalls(page)).events).toContain("restore-refreshing")
   await page.evaluate(() => (globalThis as typeof globalThis & { __SHARD_RELEASE_RESTORE_REFRESH__: () => void }).__SHARD_RELEASE_RESTORE_REFRESH__())
+  await expect.poll(async () => (await inlineSaveCalls(page)).events).toContain("restore-refreshed")
+
+  // 同一资料库实例重新打开恢复后的文件，不能继续使用搜索快照里的归档路径与只读状态。
+  await tree.getByRole("button", { name: "碎片（47）", exact: true }).click()
+  await page.getByRole("region", { name: "fragments 目录列表", exact: true })
+    .getByRole("button", { name: "打开文件 deleted-24.md", exact: true }).click()
+  await expect(archivedEditor).toBeVisible()
+  await expect(archivedEditor.locator(".ProseMirror")).toHaveAttribute("contenteditable", "true")
+  await expect(archivedEditor).toContainText("待恢复定位目标：保留原记录日期。")
+  await expect(page.getByRole("button", { name: "重命名文件", exact: true })).toBeEnabled()
+
+  await page.getByRole("button", { name: "碎片", exact: true }).click()
+  await expect(page.locator('[data-shard-editor="composer"] .ProseMirror')).toBeVisible()
+  await fillEditor(page, "composer", "[[deleted-24]]")
+  await page.locator('[data-shard-editor="composer"] .shard-rich-wikilink').click()
   await expect(restored).toHaveClass(/shard-fragment-card-highlight/u)
   await expect(restored).toBeInViewport()
   await expect(restored.locator("time")).toContainText("2026/07/01")
   await expect(page.locator(".shard-timeline-item")).toHaveCount(47)
+  expect(await page.evaluate(() => document.scrollingElement?.scrollTop)).toBe(documentScroll)
 
   // Once positioning completed, a later masonry resize must not steal user scroll.
   await expect(restored).not.toHaveClass(/shard-fragment-card-highlight/u)
@@ -543,4 +515,5 @@ test("搜索已删除碎片只读打开，退出后恢复并等待刷新定位",
   await expect(restored).not.toBeInViewport()
   const calls = (await inlineSaveCalls(page)).calls.filter(call => call.command === "restore_from_trash")
   expect(calls).toEqual([{ command: "restore_from_trash", args: { path: ".trash/fragments/deleted-24.md" } }])
+  expect((await inlineSaveCalls(page)).calls.filter(call => call.command === "update_fragment")).toEqual([])
 })

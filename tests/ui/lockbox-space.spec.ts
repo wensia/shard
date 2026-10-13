@@ -356,3 +356,108 @@ test("离开密匣空间立即上锁，手动上锁送回资料库", async ({ pa
     page.locator('[data-shard-fragment-id="secret-fragment"]')
   ).toHaveCount(0)
 })
+
+test("上锁门：卡片居中，密码框与解锁按钮同高，可切换明文，显示真实上锁时长，输错时错误替换说明行", async ({ page }) => {
+  await page.goto("/")
+  // 包一层 invoke：只有正确密码能解锁，其余抛出后端风格的错误
+  await page.evaluate(() => {
+    const internals = (globalThis as unknown as {
+      __TAURI_INTERNALS__: { invoke: (command: string, args?: Record<string, unknown>) => Promise<unknown> }
+    }).__TAURI_INTERNALS__
+    const original = internals.invoke
+    internals.invoke = async (command, args = {}) => {
+      if (command === "unlock_lockbox" && args.password !== "correct-password") throw new Error("密码不正确")
+      return original(command, args)
+    }
+  })
+  await page.getByRole("button", { name: "资料库", exact: true }).click()
+  await page
+    .getByRole("complementary", { name: "资料库目录" })
+    .getByRole("button", { name: "密匣（上锁空间）", exact: true })
+    .click()
+
+  const gate = page.getByRole("form", { name: "解锁密匣" })
+  const input = gate.getByPlaceholder("密匣密码")
+  const submit = gate.getByRole("button", { name: "解锁", exact: true })
+  await expect(input).toBeFocused()
+
+  // 匣面卡片在工作区内上下左右居中
+  const gaps = await page.locator("section[aria-labelledby=lockbox-gate-title]").evaluate((el) => {
+    const card = el.getBoundingClientRect()
+    const area = el.parentElement!.getBoundingClientRect()
+    return { vertical: Math.abs((card.top - area.top) - (area.bottom - card.bottom)), horizontal: Math.abs((card.left - area.left) - (area.right - card.right)) }
+  })
+  expect(gaps.vertical).toBeLessThanOrEqual(1)
+  expect(gaps.horizontal).toBeLessThanOrEqual(1)
+
+  // 同排控件同高（都走 --control-height）
+  const [inputHeight, buttonHeight] = await Promise.all(
+    [input, submit].map((el) => el.evaluate((node) => node.getBoundingClientRect().height))
+  )
+  expect(inputHeight).toBe(buttonHeight)
+
+  // 自动上锁时长用真实值（模拟环境 ttlSeconds = 180）
+  await expect(gate).toContainText("闲置 3 分钟后自动上锁")
+
+  // 显示/隐藏：遮蔽属性随开关移除与恢复，焦点留在输入框
+  await input.fill("wrong-pass")
+  await expect(input).toHaveAttribute("data-shard-password", "true")
+  await gate.getByRole("button", { name: "显示密码" }).click()
+  await expect(input).not.toHaveAttribute("data-shard-password", /.*/)
+  await expect(gate.getByRole("button", { name: "隐藏密码" })).toHaveAttribute("aria-pressed", "true")
+  await gate.getByRole("button", { name: "隐藏密码" }).click()
+  await expect(input).toHaveAttribute("data-shard-password", "true")
+
+  // 输错：错误替换说明行，输入框标记无效且内容被选中，直接重打即可
+  await submit.click()
+  await expect(gate.getByRole("alert")).toHaveText("密码不正确")
+  await expect(gate).not.toContainText("闲置 3 分钟后自动上锁")
+  await expect(input).toHaveAttribute("aria-invalid", "true")
+  await expect.poll(() => input.evaluate((el: HTMLInputElement) => [el.selectionStart, el.selectionEnd]))
+    .toEqual([0, "wrong-pass".length])
+
+  // 重新输入即清掉错误，说明行复原
+  await input.fill("correct-password")
+  await expect(gate.getByRole("alert")).toHaveCount(0)
+  await expect(gate).toContainText("闲置 3 分钟后自动上锁")
+  await submit.click()
+  await expect(gate).toHaveCount(0)
+})
+
+test("密码框不接受输入法：组合被立即结束、拼音不留在框里，切回英文后提示消失", async ({ page }) => {
+  await page.goto("/")
+  await page.getByRole("button", { name: "资料库", exact: true }).click()
+  await page
+    .getByRole("complementary", { name: "资料库目录" })
+    .getByRole("button", { name: "密匣（上锁空间）", exact: true })
+    .click()
+  const gate = page.getByRole("form", { name: "解锁密匣" })
+  const input = gate.getByPlaceholder("密匣密码")
+  await expect(input).toBeFocused()
+  await page.keyboard.type("abc")
+
+  // 真实的输入法组合（Chromium CDP）：开始打拼音 ni——组合应被立即结束，拼音不留在框里
+  const cdp = await page.context().newCDPSession(page)
+  await cdp.send("Input.imeSetComposition", { text: "ni", selectionStart: 2, selectionEnd: 2 })
+
+  await expect(gate.getByRole("status")).toHaveText("请切换到英文输入法")
+  await expect(input).toHaveValue("abc")
+  await expect(input).toBeFocused()
+  await expect.poll(() => input.evaluate((el: HTMLInputElement) => [el.selectionStart, el.selectionEnd])).toEqual([3, 3])
+  // 提示占用字段下方那一行，自动上锁时长暂时让位
+  await expect(gate).not.toContainText("闲置 3 分钟后自动上锁")
+
+  await page.keyboard.type("d")
+  await expect(input).toHaveValue("abcd")
+  await expect(gate.getByRole("status")).toHaveCount(0)
+  await expect(gate).toContainText("闲置 3 分钟后自动上锁")
+  // 没有宿主接管时（重置表单的新密码框），提示由密码框自己显示在下方
+  await gate.getByRole("button", { name: "忘记密码" }).click()
+  const reset = page.getByRole("form", { name: "重置密匣密码" })
+  const newPassword = reset.getByLabel("新密码", { exact: true })
+  await newPassword.click()
+  await cdp.send("Input.imeSetComposition", { text: "mi", selectionStart: 2, selectionEnd: 2 })
+  await expect(reset.getByRole("status")).toHaveText("请切换到英文输入法")
+  await expect(newPassword).toHaveValue("")
+  await expect(newPassword).toBeFocused()
+})

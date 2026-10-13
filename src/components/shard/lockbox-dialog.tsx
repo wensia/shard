@@ -1,13 +1,15 @@
 import {
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ComponentProps,
+  type CompositionEvent as ReactCompositionEvent,
   type FormEvent,
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react"
 import { save } from "@tauri-apps/plugin-dialog"
-import { ArrowBigUpIcon, XIcon } from "@/components/icons"
+import { ArrowBigUpIcon, EyeIcon, EyeOffIcon, XIcon } from "@/components/icons"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -34,9 +36,10 @@ interface LockboxDialogProps {
   onUnlock: (password: string) => Promise<void>
 }
 
+// 高度绑控件 token：与同排的按钮同高，并随密度档变化（原来写死 32px，和 sm 按钮差一档）。
 const PASSWORD_INPUT_STYLE = {
-  height: "var(--shard-space-8)",
-  minHeight: "var(--shard-space-8)",
+  height: "var(--control-height)",
+  minHeight: "var(--control-height)",
   borderRadius: "var(--shard-radius-control)",
 } as const
 
@@ -48,47 +51,162 @@ const PASSWORD_INPUT_STYLE = {
  * 遮蔽与复制保护，所以自动填充、拼写检查、复制剪切都在这里显式关掉。
  * 密匣空间的内联解锁面板复用同一个输入框。
  */
-export function LockboxPasswordInput(props: ComponentProps<typeof Input>) {
+/** 输入法组合期间被丢弃时给用户的提示，宿主可接管显示位置（见 onImeBlockedChange）。 */
+export const PASSWORD_IME_HINT = "请切换到英文输入法"
+
+type LockboxPasswordInputProps = ComponentProps<typeof Input> & {
+  /**
+   * 密码框拦下输入法组合时通知宿主，由宿主把提示放进字段下方唯一的那一行
+   * （kiln：一行说明，出错时替换）。不传时组件在自身下方显示提示。
+   */
+  onImeBlockedChange?: (blocked: boolean) => void
+}
+
+export function LockboxPasswordInput({
+  onImeBlockedChange,
+  ref,
+  ...props
+}: LockboxPasswordInputProps) {
   const [capsLockOn, setCapsLockOn] = useState(false)
+  const [revealed, setRevealed] = useState(false)
+  const [imeBlocked, setImeBlocked] = useState(false)
+  const inputRef = useRef<HTMLInputElement | null>(null)
+  // 组合开始前的值与选区：组合产生的字符一律丢弃，恢复到这里
+  const beforeCompositionRef = useRef<{ value: string; start: number; end: number } | null>(null)
   const syncCapsLock = (event: ReactKeyboardEvent<HTMLInputElement>) =>
     setCapsLockOn(event.getModifierState("CapsLock"))
+  const disabled = Boolean(props.disabled)
+
+  function setBlocked(next: boolean) {
+    setImeBlocked(next)
+    onImeBlockedChange?.(next)
+  }
+
+  function assignRef(node: HTMLInputElement | null) {
+    inputRef.current = node
+    if (typeof ref === "function") ref(node)
+    else if (ref) (ref as { current: HTMLInputElement | null }).current = node
+  }
+
+  /**
+   * 把值恢复到组合开始前。经原生 setter + input 事件回写，受控组件的 onChange 能收到。
+   * compositionend 与下一帧各恢复一次；快照要留到下一帧才清——有的输入法在失焦后
+   * 才把组合文字提交进来，只在 compositionend 恢复会漏掉它。
+   */
+  function restoreBeforeComposition(input: HTMLInputElement, final = false) {
+    const snapshot = beforeCompositionRef.current
+    if (final) beforeCompositionRef.current = null
+    if (!snapshot) return
+    if (input.value !== snapshot.value) {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(input, snapshot.value)
+      input.dispatchEvent(new Event("input", { bubbles: true }))
+    }
+    input.setSelectionRange(snapshot.start, snapshot.end)
+  }
+
+  /**
+   * 密码框不接受输入法（kiln Password Input）。这里是 type="text"（见上），浏览器不会
+   * 像 type="password" 那样自动切到英文键盘，所以在组合一开始就：记下原值 → 失焦让
+   * 输入法提交或取消组合、收起候选窗 → 下一帧重新聚焦并恢复原值。拼音不会在候选窗里
+   * 累积，也不会进入输入法的词库；组合产出的字符永远不进密码。
+   */
+  function blockComposition(event: ReactCompositionEvent<HTMLInputElement>) {
+    const input = event.currentTarget
+    beforeCompositionRef.current ??= {
+      value: input.value,
+      start: input.selectionStart ?? input.value.length,
+      end: input.selectionEnd ?? input.value.length,
+    }
+    setBlocked(true)
+    input.blur()
+    requestAnimationFrame(() => {
+      input.focus({ preventScroll: true })
+      restoreBeforeComposition(input, true)
+    })
+  }
+
   return (
-    <div style={{ position: "relative" }}>
-      <Input
-        autoCapitalize="off"
-        autoComplete="off"
-        autoCorrect="off"
-        data-shard-password="true"
-        spellCheck={false}
-        type="text"
-        onBlur={() => setCapsLockOn(false)}
-        onCopy={(event) => event.preventDefault()}
-        onCut={(event) => event.preventDefault()}
-        onKeyDown={syncCapsLock}
-        onKeyUp={syncCapsLock}
-        style={{
-          ...PASSWORD_INPUT_STYLE,
-          ...(capsLockOn ? { paddingRight: "var(--shard-space-8)" } : null),
-        }}
-        {...props}
-      />
-      {capsLockOn ? (
+    <div>
+      <div style={{ position: "relative" }}>
+        <Input
+          autoCapitalize="off"
+          autoComplete="off"
+          autoCorrect="off"
+          // 显示明文时去掉遮蔽属性（frontend-rules.css 以它为钩子画圆点）
+          data-shard-password={revealed ? undefined : "true"}
+          spellCheck={false}
+          type="text"
+          onBlur={() => setCapsLockOn(false)}
+          onCompositionStart={blockComposition}
+          onBeforeInput={(event) => {
+            // 组合类输入能取消的引擎直接取消；不能取消的由组合结束后的恢复兜底
+            const inputType = (event.nativeEvent as InputEvent).inputType
+            if (inputType === "insertCompositionText" || inputType === "insertFromComposition") event.preventDefault()
+          }}
+          onCompositionEnd={(event) => restoreBeforeComposition(event.currentTarget)}
+          onCopy={(event) => event.preventDefault()}
+          onCut={(event) => event.preventDefault()}
+          onKeyDown={(event) => {
+            syncCapsLock(event)
+            // 切回英文后正常敲下一个字符，提示随之消失
+            if (imeBlocked && !event.nativeEvent.isComposing && event.key.length === 1) setBlocked(false)
+          }}
+          onKeyUp={syncCapsLock}
+          style={{
+            ...PASSWORD_INPUT_STYLE,
+            // 右侧给显示/隐藏按钮留位；大写锁定提示出现时再多留一格
+            paddingRight: capsLockOn
+              ? "calc(var(--control-height-sm) + var(--shard-space-6))"
+              : "var(--control-height-sm)",
+          }}
+          {...props}
+          ref={assignRef}
+        />
         <span
-          role="status"
           style={{
             position: "absolute",
             top: 0,
             bottom: 0,
-            right: "var(--shard-space-3)",
+            right: "var(--shard-space-1)",
             display: "inline-flex",
             alignItems: "center",
+            gap: "var(--shard-space-1)",
             color: "var(--muted-foreground)",
-            pointerEvents: "none",
           }}
         >
-          <ArrowBigUpIcon className="size-(--shard-icon-size-sm)" />
-          <span className="sr-only">大写锁定已开启</span>
+          {capsLockOn ? (
+            <span role="status" style={{ display: "inline-flex", pointerEvents: "none" }}>
+              <ArrowBigUpIcon className="size-(--shard-icon-size-sm)" />
+              <span className="sr-only">大写锁定已开启</span>
+            </span>
+          ) : null}
+          {/* 输入框内的显隐开关：嵌在输入边界里的图标控件，静止时保持安静（kiln Password Input） */}
+          <Button
+            aria-label={revealed ? "隐藏密码" : "显示密码"}
+            aria-pressed={revealed}
+            disabled={disabled}
+            onClick={() => setRevealed((value) => !value)}
+            // 点按不抢走输入框焦点，光标留在原位继续输入
+            onMouseDown={(event) => event.preventDefault()}
+            size="icon-sm"
+            type="button"
+            variant="ghost"
+          >
+            {revealed ? <EyeOffIcon /> : <EyeIcon />}
+          </Button>
         </span>
+      </div>
+      {imeBlocked && !onImeBlockedChange ? (
+        <p
+          role="status"
+          style={{
+            margin: "var(--shard-space-1) 0 0",
+            color: "var(--muted-foreground)",
+            fontSize: "var(--text-meta)",
+          }}
+        >
+          {PASSWORD_IME_HINT}
+        </p>
       ) : null}
     </div>
   )

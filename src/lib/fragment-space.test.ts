@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { conversionTitle, EMPTY_FRAGMENT_FILTERS, isPublicStreamFragment, matchesFragmentFilters } from "./fragment-space"
+import { EMPTY_FRAGMENT_FILTERS, isPublicStreamFragment, matchesFragmentFilters } from "./fragment-space"
 import type { Fragment } from "@/types"
 
 const sample = (overrides: Partial<Fragment> = {}): Fragment => ({
@@ -62,9 +62,5 @@ describe("fragment space ownership", () => {
       sample({ tags: ["document", "flowchart"] }),
       { ...EMPTY_FRAGMENT_FILTERS, kind: "flowchart" }
     )).toBe(true)
-  })
-  it("uses a document title without turning an image URL into a file name", () => {
-    expect(conversionTitle(sample({ content: "![图片](assets/photo.png)" }))).toBe("未命名文档")
-    expect(conversionTitle(sample({ content: "![图片](assets/photo.png)\n\n# 决策记录" }))).toBe("决策记录")
   })
 })

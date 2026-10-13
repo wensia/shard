@@ -357,7 +357,7 @@ test("碎片切入禅模式、文档切入禅模式并保存读回仍使用同�
   await expect.poll(() => readEditor(page, zen.id)).toBe("- [ ] 任务正文")
   await expect(zen.editor.locator(".ProseMirror")).not.toContainText("-")
   await zen.editor.getByRole("checkbox").click()
-  await page.getByRole("button", { name: "退出编辑", exact: true }).click()
+  await page.getByRole("button", { name: "退出禅模式", exact: true }).click()
   await expect.poll(() => latestSavedContent(page, "task-fragment")).toBe("- [x] 任务正文")
   await expect(page.locator('[data-shard-fragment-id="task-fragment"]')
     .getByRole("button", { name: "标记为未完成", exact: true })).toHaveAttribute("aria-pressed", "true")

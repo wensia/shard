@@ -261,7 +261,7 @@ test("lockbox result remains inside lockbox space", async ({ page }) => {
   await openSearch(page, "Private 搜索目标")
   await selectResult(page, /Private 搜索目标/)
   await expect(page.locator('[data-shard-editor="zen:private"]')).toBeVisible()
-  await page.getByRole("button", { name: "退出编辑" }).click()
+  await page.getByRole("button", { name: "退出禅模式", exact: true }).click()
   await expect(page.getByRole("heading", { name: "密匣", exact: true })).toBeVisible()
 })
 

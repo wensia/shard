@@ -1,6 +1,5 @@
 /* 密匣空间的样式：几何对齐资料库树与时间线空态，全部消费 Kiln token */
 
-/* 上锁态主体区：解锁表单占据时间线空态的位置，视觉沿用空态的居中列 */
 /* 上锁态的返回条：与解锁面板同列，靠左，不参与居中 */
 .gateTopBar {
   display: flex;
@@ -13,46 +12,55 @@
   display: flex;
   flex: 1;
   min-height: 0;
+  flex-direction: column;
   align-items: center;
-  justify-content: center;
   overflow-y: auto;
+  overscroll-behavior-y: none;
   padding: var(--space-6) var(--space-4);
 }
 
-.gateCard {
-  display: flex;
+/* 解锁卡片：只装标题与表单，在工作区内上下左右居中；窗口太矮放不下时 margin-block:auto 退化为顶端对齐并可滚动，不会被裁掉顶部 */
+.lid {
+  flex: none;
   width: 100%;
-  max-width: 320px;
+  margin-block: auto;
+  max-width: calc(var(--space-12) * 7.5);
+  overflow: hidden;
+  border-radius: var(--radius-card);
+  background: var(--card);
+  box-shadow: var(--shadow-card);
+}
+
+.lidBody {
+  display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: var(--space-3);
-  color: var(--muted-foreground);
-  text-align: center;
+  gap: var(--space-4);
+  padding: var(--space-6);
 }
 
 .gateTitle {
+  margin: 0;
   color: var(--foreground);
-  font-size: var(--text-body);
-  font-weight: 600;
-  text-wrap: balance;
+  font-size: var(--text-page-title);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-tight);
+  text-align: center;
 }
 
 .gateHint {
   margin: 0;
-  font-size: var(--text-small);
-  line-height: var(--space-5);
-  text-wrap: pretty;
+  color: var(--muted-foreground);
+  font-size: var(--text-meta);
+  line-height: var(--leading-normal);
 }
 
 .gateForm {
   display: flex;
-  width: 100%;
   flex-direction: column;
-  gap: var(--space-2);
-  text-align: left;
+  gap: var(--space-3);
 }
 
-/* 密码框与解锁按钮同排，让上锁态只剩一个动作 */
+/* 密码框与解锁按钮同排、同高（都走 --control-height），上锁态只有一个动作 */
 .gateRow {
   display: flex;
   align-items: center;
@@ -64,15 +72,65 @@
   min-width: 0;
 }
 
-.gateActions {
+/* 字段下方唯一的一行：自动上锁时长 | 出错时的错误，右侧是忘记密码 */
+.gateMeta {
   display: flex;
+  min-height: var(--control-height-sm);
   align-items: center;
   justify-content: space-between;
-  gap: var(--space-2);
+  gap: var(--space-3);
+  margin-top: calc(var(--space-1) * -1);
+  color: var(--muted-foreground);
+  font-size: var(--text-meta);
 }
 
+.gateError {
+  margin: 0;
+  color: var(--destructive);
+  font-size: var(--text-meta);
+  line-height: var(--leading-normal);
+}
+
+/* 忘记密码：次要入口，行内文字链接，静止即可见 */
 .gateLink {
-  align-self: center;
+  flex-shrink: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted-foreground);
+  font: inherit;
+  cursor: pointer;
+  transition: color 150ms ease;
+}
+
+.gateLink:hover:not(:disabled) {
+  color: var(--foreground);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.gateLink:disabled {
+  cursor: default;
+  opacity: var(--shard-alpha-55);
+}
+
+.gateField {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.gateField > label {
+  color: var(--foreground);
+  font-size: var(--text-meta);
+  font-weight: var(--weight-medium);
+}
+
+.gateActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
 }
 
 /* 密匣空间的笔记树：几何对齐资料库树（treeButton 规格），全部消费 Kiln token */

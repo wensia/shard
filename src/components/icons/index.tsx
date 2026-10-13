@@ -64,6 +64,8 @@ import {
   ListTreeIcon as LListTree,
   Loader2Icon as LLoader2,
   LockKeyholeIcon as LLockKeyhole,
+  EyeIcon as LEye,
+  EyeOffIcon as LEyeOff,
   Maximize2Icon as LMaximize2,
   MoreHorizontalIcon as LMoreHorizontal,
   MoveIcon as LMove,
@@ -160,6 +162,8 @@ export const ListTodoIcon = /*#__PURE__*/ withIconDefaults(LListTodo)
 export const ListTreeIcon = /*#__PURE__*/ withIconDefaults(LListTree)
 export const Loader2Icon = /*#__PURE__*/ withIconDefaults(LLoader2)
 export const LockKeyholeIcon = /*#__PURE__*/ withIconDefaults(LLockKeyhole)
+export const EyeIcon = /*#__PURE__*/ withIconDefaults(LEye)
+export const EyeOffIcon = /*#__PURE__*/ withIconDefaults(LEyeOff)
 export const Maximize2Icon = /*#__PURE__*/ withIconDefaults(LMaximize2)
 export const MoreHorizontalIcon = /*#__PURE__*/ withIconDefaults(LMoreHorizontal)
 export const MoveIcon = /*#__PURE__*/ withIconDefaults(LMove)

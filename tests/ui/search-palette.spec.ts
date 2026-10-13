@@ -440,9 +440,10 @@ test("palette is available in standalone mindmap workspace", async ({
   await expect(
     page.getByRole("button", { name: "退出思维导图", exact: true }),
   ).toHaveCount(0);
+  // 侧栏只标记当前叶子（浅底叶子选中）：回到碎片空间后是「全部碎片」带 aria-current
   await expect(
-    page.getByRole("button", { name: "碎片", exact: true }),
-  ).toHaveAttribute("aria-current", "page");
+    page.getByRole("navigation", { name: "工作台导航" }).locator('[aria-current="page"]'),
+  ).toHaveText(/^全部碎片/u);
 });
 
 test("states distinguish indexing stale locked and failure", async ({
@@ -677,8 +678,11 @@ test("header stays on one line and keeps controls ordered in narrow viewports", 
       modes: rect(modes),
     };
   });
-  expect(layout.input?.top).toBeCloseTo(layout.modes?.top ?? 0, 0);
-  expect(layout.close?.top).toBeCloseTo(layout.modes?.top ?? 0, 0);
+  // 模式页签是墨迹 bar 档，撑满整条标题栏（下划线落在分隔线上），顶边不再与输入框相同；
+  // 单行的判据改为三者垂直中心对齐。
+  const center = (box: { top: number; height: number } | null) => (box ? box.top + box.height / 2 : 0);
+  expect(Math.abs(center(layout.input) - center(layout.modes))).toBeLessThanOrEqual(1);
+  expect(Math.abs(center(layout.close) - center(layout.modes))).toBeLessThanOrEqual(1);
   expect(layout.close?.left ?? 0).toBeGreaterThan(layout.modes?.right ?? 0);
   expect(layout.header?.height ?? 0).toBeLessThanOrEqual(52);
 

@@ -188,6 +188,7 @@ export interface LibraryTreeSnapshot {
   fragmentStream: LibraryFragmentStream
   trashEntries: LibraryTreeEntry[]
   fragmentTrashEntries?: LibraryTreeEntry[]
+  fragmentEntries?: LibraryTreeEntry[]
 }
 
 export interface LibraryMutationResult {

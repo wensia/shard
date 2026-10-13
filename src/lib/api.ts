@@ -227,20 +227,8 @@ export function purgeFromTrash(path: string) {
   return invokeLibraryMutation("purge_from_trash", { path })
 }
 
-export function emptyTrash(scope: "library" | "fragments" = "library") {
+export function emptyTrash(scope: "all" | "library" | "fragments" = "all") {
   return invokeLibraryMutation("empty_trash", { scope })
-}
-
-export function convertFragmentToNote(
-  id: string,
-  destinationDirectory?: string,
-  title?: string
-) {
-  return invokeLibraryMutation("convert_fragment_to_note", {
-    id,
-    destinationDirectory: destinationDirectory ?? null,
-    title: title ?? null,
-  })
 }
 
 export function convertNoteToFragment(id: string) {
@@ -377,18 +365,6 @@ export function removeFragmentProperty(id: string, key: string) {
 
 export function updateFragmentTags(id: string, tags: string[]) {
   return invokeFragment("update_fragment_tags", { id, tags })
-}
-
-export type OrganizeTemplate = "summary" | "article" | "weekly"
-
-export function organizeFragments(
-  fragmentPaths: string[],
-  target: string,
-  template: OrganizeTemplate
-) {
-  return invokeFragment("organize_fragments", {
-    request: { fragmentPaths, target, template },
-  })
 }
 
 export function linkFragments(

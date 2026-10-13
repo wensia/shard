@@ -3,7 +3,7 @@
    对应 kiln 的 line tabs；Shard 所有标签（视图切换、检查器、表格视图、小窗导航）统一用这一种。
 
    用法：tablist 挂 .shard-tabs（可选 data-size），每个 tab 挂 .shard-tab，文字包进 TabLabel。
-   选中态认 aria-selected（页签）或 aria-current="page"（导航）。
+   选中态认 aria-selected（页签）、aria-current="page"（导航）或 aria-pressed="true"（互斥切换按钮）。
    尺寸档：
    - 默认：面板内（检查器），高 --control-height-lg，底部一条通栏分隔由宿主画
    - bar：嵌在标题栏 / 工具栏里，页签撑满栏高，下划线落在栏的底边
@@ -42,12 +42,12 @@
   color: var(--foreground);
 }
 
-.shard-tab:is([aria-selected="true"], [aria-current="page"]) {
+.shard-tab:is([aria-selected="true"], [aria-current="page"], [aria-pressed="true"]) {
   color: var(--foreground);
   font-weight: var(--weight-medium);
 }
 
-.shard-tab:is([aria-selected="true"], [aria-current="page"])::after {
+.shard-tab:is([aria-selected="true"], [aria-current="page"], [aria-pressed="true"])::after {
   position: absolute;
   right: 0;
   bottom: 0;
@@ -64,7 +64,7 @@
   --shard-icon-stroke: var(--shard-icon-stroke-sm);
 }
 
-.shard-tab:is([aria-selected="true"], [aria-current="page"]) > svg {
+.shard-tab:is([aria-selected="true"], [aria-current="page"], [aria-pressed="true"]) > svg {
   color: var(--primary-text);
 }
 
@@ -120,7 +120,7 @@
   --shard-icon-stroke: inherit;
 }
 
-.shard-tabs[data-size="nav"] > .shard-tab:is([aria-selected="true"], [aria-current="page"])::after {
+.shard-tabs[data-size="nav"] > .shard-tab:is([aria-selected="true"], [aria-current="page"], [aria-pressed="true"])::after {
   top: 0;
   bottom: auto;
   left: 50%;

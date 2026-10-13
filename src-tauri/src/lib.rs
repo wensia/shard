@@ -448,6 +448,7 @@ struct LibraryAssetEntry {
 #[serde(rename_all = "camelCase")]
 struct LibraryTreeSnapshot {
     entries: Vec<LibraryTreeEntry>,
+    fragment_entries: Vec<LibraryTreeEntry>,
     trash_entries: Vec<LibraryTreeEntry>,
     fragment_trash_entries: Vec<LibraryTreeEntry>,
     fragment_stream: FragmentStreamSummary,
@@ -460,6 +461,7 @@ enum ContentScope {
     #[default]
     Library,
     Fragments,
+    All,
 }
 
 #[derive(Debug, Serialize)]
@@ -1139,12 +1141,12 @@ async fn rename_library_entry(
 ) -> Result<LibraryMutationResult, String> {
     run_blocking(move || {
         let vault = ensure_vault_dirs(&app)?;
-        let updated_links = {
+        let (fragment, updated_links) = {
             let _gate = lock_vault_gate(&vault);
             checkpoint_before_structural_locked(&vault);
             rename_library_entry_in_vault(&vault, &path, &new_name)?
         };
-        library_mutation_result(&vault, None, updated_links)
+        library_mutation_result(&vault, fragment, updated_links)
     })
     .await
 }
@@ -3521,6 +3523,28 @@ fn collect_markdown_files(dir: &Path, files: &mut Vec<PathBuf>) -> Result<(), St
 
 
 fn build_library_tree(vault: &Path) -> Result<LibraryTreeSnapshot, String> {
+    fn flatten_markdown(entry: LibraryTreeEntry, entries: &mut Vec<LibraryTreeEntry>) {
+        if let Some(children) = entry.children {
+            for child in children {
+                flatten_markdown(child, entries);
+            }
+        } else if entry.kind == "markdown" {
+            entries.push(entry);
+        }
+    }
+    let mut fragment_entries = Vec::new();
+    let fragments_root = vault.join("fragments");
+    if fragments_root.exists() {
+        for entry in collect_library_entries(vault, &fragments_root)? {
+            flatten_markdown(entry, &mut fragment_entries);
+        }
+    }
+    fragment_entries.sort_by(|left, right| {
+        right
+            .modified_at
+            .cmp(&left.modified_at)
+            .then_with(|| left.path.cmp(&right.path))
+    });
     let trash_root = vault.join(".trash");
     let mut trash_entries = if trash_root.exists() {
         collect_library_entries(vault, &trash_root)?
@@ -3551,6 +3575,7 @@ fn build_library_tree(vault: &Path) -> Result<LibraryTreeSnapshot, String> {
     });
     Ok(LibraryTreeSnapshot {
         entries: collect_library_entries(vault, &vault.join("notes"))?,
+        fragment_entries,
         trash_entries,
         fragment_trash_entries,
         fragment_stream: summarize_fragment_stream(vault)?,
@@ -4130,8 +4155,35 @@ fn rename_library_entry_in_vault(
     vault: &Path,
     rel_path: &str,
     new_name: &str,
-) -> Result<usize, String> {
-    let source = existing_library_path(vault, rel_path)?;
+) -> Result<(Option<Fragment>, usize), String> {
+    let relative = safe_vault_relative_path(rel_path)?;
+    let is_fragment = relative.starts_with("fragments");
+    let source = if is_fragment {
+        let source = vault.join(relative);
+        let metadata = fs::symlink_metadata(&source).map_err(|error| error.to_string())?;
+        if !metadata.is_file()
+            || !source
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("md"))
+        {
+            return Err("碎片分类只允许重命名单个 Markdown 文件。".to_string());
+        }
+        let root = vault.join("fragments").canonicalize().map_err(|error| error.to_string())?;
+        let canonical = source.canonicalize().map_err(|error| error.to_string())?;
+        let canonical_vault = vault.canonicalize().map_err(|error| error.to_string())?;
+        if !root.starts_with(&canonical_vault) || !canonical.starts_with(&root) {
+            return Err("不能操作碎片目录外路径。".to_string());
+        }
+        source
+    } else {
+        existing_library_path(vault, rel_path)?
+    };
+    let fragment = if is_fragment {
+        Some(read_fragment(&source, vault, &HashSet::new(), None)?)
+    } else {
+        None
+    };
     let new_name = validate_library_name_characters(new_name)?;
     let file_type = fs::metadata(&source).map_err(|error| error.to_string())?;
     let old_stem = source
@@ -4214,6 +4266,7 @@ fn rename_library_entry_in_vault(
             .extension()
             .and_then(|extension| extension.to_str())
             == Some("md")
+        && !fragment.as_ref().is_some_and(|fragment| fragment.id == old_stem)
     {
         plan_vault_wikilink_updates(vault, &old_stem, new_stem)?
     } else {
@@ -4253,7 +4306,12 @@ fn rename_library_entry_in_vault(
         &changed_paths,
         &format!("rename library entry {old_stem}"),
     );
-    Ok(updated_links)
+    let fragment = if is_fragment {
+        Some(read_fragment(&destination, vault, &dirty_paths(vault), None)?)
+    } else {
+        None
+    };
+    Ok((fragment, updated_links))
 }
 
 fn move_library_entry_in_vault(
@@ -4474,7 +4532,7 @@ fn empty_trash_in_vault(vault: &Path, scope: ContentScope) -> Result<(), String>
         let entry = entry.map_err(|error| error.to_string())?;
         let candidate = entry.path();
         let is_fragment_trash = entry.file_name() == "fragments";
-        if is_fragment_trash != (scope == ContentScope::Fragments) {
+        if scope != ContentScope::All && is_fragment_trash != (scope == ContentScope::Fragments) {
             continue;
         }
         if entry
@@ -7829,7 +7887,7 @@ pub fn run() {
                 app.state::<Arc<search_index::IndexRegistry>>().set_root(root);
             }
             for window in app.webview_windows().values() {
-                window_frame::set_startup_minimum(window)?;
+                window_frame::configure_startup(window)?;
             }
             reminder_badge::spawn_badge_worker(app.handle().clone())?;
 
@@ -10643,6 +10701,40 @@ mod tests {
     }
 
     #[test]
+    fn library_tree_fragment_entries_are_flat_public_markdown_metadata() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let vault = tempdir.path();
+        ensure_vault_layout(vault).unwrap();
+        fs::create_dir_all(vault.join("fragments/2026/08")).unwrap();
+        fs::create_dir_all(vault.join(".trash/fragments/2026/08")).unwrap();
+        fs::create_dir_all(vault.join("lockbox/fragments")).unwrap();
+        write_t6_fragment(&vault.join("fragments/2026/08/a.md"), "a", vec!["inbox"], "body");
+        fs::write(vault.join("fragments/b.MD"), "root fragment").unwrap();
+        fs::write(vault.join("fragments/2026/08/ignored.csv"), "a,b").unwrap();
+        fs::write(vault.join("notes/note.md"), "library").unwrap();
+        fs::write(vault.join(".trash/fragments/2026/08/deleted.md"), "deleted").unwrap();
+        fs::write(vault.join("lockbox/fragments/secret.md"), "secret").unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(vault.join("lockbox/fragments"), vault.join("fragments/private"))
+            .unwrap();
+
+        let tree = build_library_tree(vault).unwrap();
+
+        assert_eq!(tree.fragment_entries.len(), 2);
+        for entry in &tree.fragment_entries {
+            assert_eq!(entry.kind, "markdown");
+            assert!(entry.children.is_none());
+            assert!(matches!(entry.path.as_str(), "fragments/2026/08/a.md" | "fragments/b.MD"));
+            assert_eq!(entry.size, fs::metadata(vault.join(&entry.path)).unwrap().len());
+            assert!(DateTime::parse_from_rfc3339(&entry.modified_at).is_ok());
+        }
+        let serialized = serde_json::to_value(&tree).unwrap();
+        assert_eq!(serialized["fragmentEntries"].as_array().unwrap().len(), 2);
+        assert_eq!(tree.entries.len(), 1);
+        assert_eq!(tree.fragment_trash_entries.len(), 1);
+    }
+
+    #[test]
     fn library_tree_entries_include_size_and_modified_at() {
         let tempdir = tempfile::tempdir().unwrap();
         let vault = tempdir.path();
@@ -11168,7 +11260,14 @@ mod tests {
         empty_trash_in_vault(vault, ContentScope::Fragments).unwrap();
         assert!(!vault.join(".trash/fragments").exists());
         assert!(vault.join(".trash/notes/keep.md").is_file());
-        assert!(serde_json::from_str::<ContentScope>("\"all\"").is_err());
+        assert_eq!(
+            serde_json::from_str::<ContentScope>("\"all\"").unwrap(),
+            ContentScope::All
+        );
+        fs::create_dir_all(vault.join(".trash/fragments/2025/03")).unwrap();
+        fs::write(vault.join(".trash/fragments/2025/03/second.md"), "fragment").unwrap();
+        empty_trash_in_vault(vault, ContentScope::All).unwrap();
+        assert!(fs::read_dir(vault.join(".trash")).unwrap().next().is_none());
     }
     #[test]
     fn library_tree_lists_mind_maps_in_notes_with_metadata() {
@@ -11738,6 +11837,8 @@ mod tests {
         ensure_vault_layout(vault).unwrap();
         fs::create_dir_all(vault.join(".trash/notes")).unwrap();
         fs::write(vault.join(".trash/notes/keep.md"), "keep").unwrap();
+        fs::create_dir_all(vault.join(".trash/fragments")).unwrap();
+        fs::write(vault.join(".trash/fragments/keep.md"), "fragment").unwrap();
         fs::write(vault.join("notes/outside.md"), "outside").unwrap();
         symlink(
             vault.join("notes/outside.md"),
@@ -11745,9 +11846,12 @@ mod tests {
         )
         .unwrap();
 
-        assert!(empty_trash_in_vault(vault, ContentScope::Library).is_err());
-        assert!(vault.join(".trash/notes/keep.md").is_file());
-        assert!(vault.join("notes/outside.md").is_file());
+        for scope in [ContentScope::Library, ContentScope::All] {
+            assert!(empty_trash_in_vault(vault, scope).is_err());
+            assert!(vault.join(".trash/notes/keep.md").is_file());
+            assert!(vault.join(".trash/fragments/keep.md").is_file());
+            assert!(vault.join("notes/outside.md").is_file());
+        }
     }
 
     #[test]
@@ -11806,6 +11910,80 @@ mod tests {
     }
 
     #[test]
+    fn renaming_fragment_returns_new_path_and_preserves_id_wikilinks() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let vault = tempdir.path();
+        ensure_vault_layout(vault).unwrap();
+        fs::create_dir_all(vault.join("fragments/2026/08")).unwrap();
+        let old_path = "fragments/2026/08/fragment-id.md";
+        write_t6_fragment(&vault.join(old_path), "fragment-id", vec!["inbox", "test"], "# 标题\n[[fragment-id]]");
+        fs::write(vault.join("notes/ref.md"), "[[fragment-id]] [[fragment-id|别名]]").unwrap();
+        let before = fs::read_to_string(vault.join(old_path)).unwrap();
+
+        let (fragment, updated_links) = rename_library_entry_in_vault(vault, old_path, "新文件名").unwrap();
+        let result = library_mutation_result(vault, fragment, updated_links).unwrap();
+
+        assert_eq!(result.updated_links, 0);
+        let fragment = result.fragment.unwrap();
+        assert_eq!(fragment.id, "fragment-id");
+        assert_eq!(fragment.path, "fragments/2026/08/新文件名.md");
+        assert_eq!(fragment.tags, vec!["inbox", "test"]);
+        assert!(!vault.join(old_path).exists());
+        assert_eq!(fs::read_to_string(vault.join(&fragment.path)).unwrap(), before);
+        assert_eq!(fs::read_to_string(vault.join("notes/ref.md")).unwrap(), "[[fragment-id]] [[fragment-id|别名]]");
+        assert_eq!(find_fragment_path(vault, "fragment-id").unwrap(), Some(vault.join(&fragment.path)));
+        assert_eq!(result.tree.fragment_entries[0].path, fragment.path);
+    }
+
+    #[test]
+    fn renaming_named_fragment_updates_filename_links_but_keeps_id_links() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let vault = tempdir.path();
+        ensure_vault_layout(vault).unwrap();
+        write_t6_fragment(&vault.join("fragments/旧文件名.md"), "stable-id", vec!["inbox"], "body");
+        fs::write(vault.join("notes/ref.md"), "[[旧文件名]] [[旧文件名|别名]] [[stable-id]]").unwrap();
+
+        let (fragment, count) = rename_library_entry_in_vault(vault, "fragments/旧文件名.md", "新文件名.md").unwrap();
+
+        assert_eq!(count, 2);
+        assert_eq!(fragment.unwrap().id, "stable-id");
+        assert_eq!(fs::read_to_string(vault.join("notes/ref.md")).unwrap(), "[[新文件名]] [[新文件名|别名]] [[stable-id]]");
+    }
+
+    #[test]
+    fn fragment_file_rename_rejects_directories_other_spaces_and_type_changes() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let vault = tempdir.path();
+        ensure_vault_layout(vault).unwrap();
+        fs::create_dir_all(vault.join("fragments/2026/08")).unwrap();
+        fs::create_dir_all(vault.join("lockbox/fragments")).unwrap();
+        fs::create_dir_all(vault.join(".trash/fragments")).unwrap();
+        let source = "fragments/2026/08/fragment.md";
+        write_t6_fragment(&vault.join(source), "fragment-id", vec!["inbox"], "body");
+        fs::write(vault.join("fragments/data.csv"), "a,b").unwrap();
+        fs::write(vault.join("lockbox/fragments/secret.md"), "private").unwrap();
+        fs::write(vault.join(".trash/fragments/deleted.md"), "deleted").unwrap();
+        for path in ["fragments", "fragments/2026/08", "fragments/data.csv", "lockbox/fragments/secret.md", ".trash/fragments/deleted.md", "fragments/../../notes/escape.md"] {
+            assert!(rename_library_entry_in_vault(vault, path, "新名称").is_err(), "{path}");
+        }
+        for name in ["changed.csv", "notes/changed", "../changed"] {
+            assert!(rename_library_entry_in_vault(vault, source, name).is_err(), "{name}");
+        }
+        assert!(move_library_entry_in_vault(vault, source, None).is_err());
+        fs::write(vault.join("notes/note.md"), "note").unwrap();
+        assert!(move_library_entry_in_vault(vault, "notes/note.md", Some("fragments/2026/08")).is_err());
+        assert!(vault.join(source).exists());
+        assert!(vault.join("notes/note.md").exists());
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(vault.join("notes"), vault.join("fragments/escape")).unwrap();
+            assert!(rename_library_entry_in_vault(vault, "fragments/escape/note.md", "escaped").is_err());
+            std::os::unix::fs::symlink(vault.join(source), vault.join("fragments/link.md")).unwrap();
+            assert!(rename_library_entry_in_vault(vault, "fragments/link.md", "linked").is_err());
+        }
+    }
+
+    #[test]
     fn renaming_markdown_updates_plain_and_aliased_wikilinks_across_public_vault() {
         let tempdir = tempfile::tempdir().unwrap();
         let vault = tempdir.path();
@@ -11826,8 +12004,9 @@ mod tests {
         );
         fs::write(vault.join("lockbox/fragments/secret.md"), "[[旧名]]").unwrap();
 
-        let updated = rename_library_entry_in_vault(vault, "notes/旧名.md", "新名").unwrap();
+        let (fragment, updated) = rename_library_entry_in_vault(vault, "notes/旧名.md", "新名").unwrap();
 
+        assert!(fragment.is_none());
         assert_eq!(updated, 2);
         assert!(vault.join("notes/新名.md").is_file());
         let source = fs::read_to_string(vault.join("fragments/2026/08/source.md")).unwrap();

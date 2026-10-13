@@ -47,60 +47,13 @@
   box-shadow: none;
 }
 
+/* 模式页签：外观见 components/ui/tabs.css（墨迹 bar 档）。这里只让它抵消标题栏上下内边距、
+   撑满整条标题栏，下划线就落在标题栏底部分隔线上。 */
 .modeGroup {
-  display: inline-flex;
   flex: 0 0 auto;
-  align-items: center;
-  gap: var(--space-1);
-  height: var(--control-height);
-  padding: var(--space-1);
-  border: 1px solid color-mix(in srgb, var(--border-visible) 50%, transparent);
-  border-radius: var(--radius-control);
-  background: var(--segment-track-bg);
+  margin-block: calc(-1 * var(--space-2));
+  margin-inline-end: var(--space-2);
   white-space: nowrap;
-}
-
-.modeButton {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  height: calc(var(--control-height-sm) - var(--space-1));
-  padding-inline: var(--space-2);
-  border: 0;
-  border-radius: var(--radius-control);
-  background: transparent;
-  color: var(--muted-foreground);
-  font-size: var(--text-body);
-  font-weight: 500;
-  transition:
-    background-color 150ms ease,
-    color 150ms ease,
-    box-shadow 150ms ease;
-}
-
-.modeButton:hover {
-  background: var(--segment-hover-bg);
-  color: var(--foreground);
-}
-
-.modeButton[aria-pressed="true"] {
-  background: var(--segment-active-bg);
-  color: var(--segment-active-fg);
-  box-shadow: var(--segment-active-shadow);
-}
-
-/* 选中标记：暗色里激活片与 hover 只差一点亮度，选中身份靠这道短横；亮色 token 为透明 */
-.modeButton[aria-pressed="true"]::after {
-  position: absolute;
-  bottom: 2px;
-  left: 50%;
-  width: var(--space-3);
-  height: 2px;
-  border-radius: 1px;
-  background: var(--segment-active-mark);
-  content: "";
-  translate: -50% 0;
 }
 
 .closeButton {

@@ -6,9 +6,10 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import styles from "./directory-selection-toolbar.module.css"
 
 export function DirectorySelectionToolbar({
-  busy, count, total, destinations, progress, error, visible, onSizeChange, onSelectAll, onDeselectAll, onMove, onDelete, onDone,
+  busy, count, total, destinations, progress, error, visible, allowMove = true, onSizeChange, onSelectAll, onDeselectAll, onMove, onDelete, onDone,
 }: {
   visible: boolean
+  allowMove?: boolean
   onSizeChange(size: { width: number; height: number }): void
   busy: boolean
   count: number
@@ -44,7 +45,7 @@ export function DirectorySelectionToolbar({
           {count === total && total > 0 ? "取消全选" : "全选"}
         </Button>
         <div className={styles.actions}>
-          <DropdownMenu>
+          {allowMove ? <DropdownMenu>
             <DropdownMenuTrigger disabled={busy || count === 0 || destinations.length === 0} render={<Button size="sm" variant="outline" />}>
               <FolderIcon aria-hidden="true" />移动到…
             </DropdownMenuTrigger>
@@ -55,7 +56,7 @@ export function DirectorySelectionToolbar({
                 </DropdownMenuItem>
               ))}
             </DropdownMenuContent>
-          </DropdownMenu>
+          </DropdownMenu> : null}
           <Button aria-label="批量删除" disabled={busy || count === 0} onClick={onDelete} size="sm" variant="destructive">
             <Trash2Icon aria-hidden="true" />删除
           </Button>

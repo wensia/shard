@@ -316,35 +316,6 @@ test("leaving lockbox clears query results and pending navigation", async ({
   await expect(reopenedPalette.getByRole("option")).toHaveCount(0)
 })
 
-test("moving a public fragment into a locked lockbox needs no unlock and keeps it locked", async ({
-  page,
-}) => {
-  await installSearchScopeMock(page)
-  await page.goto("/")
-
-  const fragment = page.locator('[data-shard-fragment-id="public-result"]')
-  await expect(fragment).toBeVisible()
-  page.once("dialog", (dialog) => dialog.accept())
-  await fragment.getByRole("button", { name: "片段操作" }).click()
-  await page.getByRole("menuitem", { name: "移入密匣", exact: true }).click()
-
-  await expect.poll(() => commandCalls(page, "move_fragment_to_lockbox")).toHaveLength(1)
-  await expect(fragment).toHaveCount(0)
-  await expect(page.getByRole("heading", { name: "解锁密匣" })).toHaveCount(0)
-  expect(await commandCalls(page, "unlock_lockbox")).toHaveLength(0)
-  await expect
-    .poll(() =>
-      page.evaluate(() =>
-        (
-          globalThis as typeof globalThis & {
-            __SHARD_SEARCH_LOCKBOX_UNLOCKED__?: () => boolean
-          }
-        ).__SHARD_SEARCH_LOCKBOX_UNLOCKED__?.()
-      )
-    )
-    .toBe(false)
-})
-
 test("silent refresh during unlock does not relock", async ({ page }) => {
   await installSearchScopeMock(page, { delayUnlock: true })
   await page.goto("/")

@@ -12,9 +12,6 @@
 .brandRow {
   display: flex;
   align-items: center;
-}
-
-.brandRow {
   height: var(--shard-titlebar-height);
   flex: none;
   padding-right: var(--space-2);
@@ -24,46 +21,41 @@
   box-shadow: var(--shadow-topbar);
 }
 
+.searchSection {
+  flex: none;
+  padding-block: var(--space-3);
+}
+
 .searchButton {
   position: relative;
   display: flex;
   align-items: center;
   width: 100%;
-  height: var(--nav-item-height);
-  gap: var(--shard-space-2);
-  border-radius: var(--shard-radius-control);
-  border: 1px solid var(--sidebar-border);
+  height: var(--control-height);
+  gap: var(--space-2);
+  border-radius: var(--radius-control);
+  border: 1px solid var(--input);
   background: var(--card);
-  padding-inline: var(--shard-space-3);
+  padding-inline: var(--space-3);
   text-align: left;
-  font-size: 14px;
+  font-size: var(--text-section-title);
   color: var(--muted-foreground);
   transition:
     border-color 0.15s ease,
     color 0.15s ease;
 }
 
-.searchShortcut {
-  border: 1px solid var(--border);
-  border-radius: var(--radius-control);
-  background: var(--muted);
-  padding-inline: var(--space-1);
+.shortcutHint {
+  flex: none;
   color: var(--muted-foreground);
   font-size: var(--text-tiny);
-  font-weight: 600;
+  font-weight: var(--weight-medium);
   line-height: var(--leading-normal);
 }
 
 .searchButton:hover {
-  border-color: var(--ring);
+  border-color: var(--border-visible);
   color: var(--sidebar-foreground);
-}
-
-.searchButton:focus-visible {
-  border-color: var(--ring);
-  outline: none;
-  box-shadow: 0 0 0 3px
-    color-mix(in oklab, var(--ring) calc(var(--shard-alpha-34) * 100%), transparent);
 }
 
 .navItem {
@@ -72,6 +64,8 @@
   align-items: center;
   height: var(--nav-item-height);
   gap: var(--space-3);
+  /* Match the search button's border box while keeping its icon edge aligned. */
+  border: 1px solid transparent;
   border-radius: var(--radius-control);
   padding-inline: var(--space-3);
   text-align: left;
@@ -84,20 +78,14 @@
 }
 
 .navItemActive {
-  background: var(--sidebar-primary);
-  color: var(--sidebar-primary-foreground);
-  font-weight: 600;
+  background: var(--primary-subtle);
+  color: var(--primary-text);
+  font-weight: var(--weight-medium);
 }
 
 .navItemInactive:hover {
   background: var(--sidebar-accent);
   color: var(--sidebar-accent-foreground);
-}
-
-.navItem:focus-visible,
-.navSubItem:focus-visible {
-  outline: none;
-  box-shadow: var(--ring-focus);
 }
 
 .navGroup {
@@ -107,11 +95,15 @@
   gap: var(--space-1);
 }
 
+/* 导航与记录概览共用的滚动区：首行贴着滚动区顶边，键盘焦点环必须内收，否则上沿被裁 */
 .navigation {
+  --shard-focus-offset: -2px;
+  flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
-  overscroll-behavior: contain;
-  padding-block: var(--space-1);
+  overscroll-behavior-y: none;
+  gap: var(--space-1);
+  padding-bottom: var(--space-3);
 }
 
 .navSubGroup {
@@ -138,30 +130,14 @@
     color 0.15s ease;
 }
 
-/* Secondary rows are a Shard extension on top of kiln's single-level nav.
-   The solid clay plate stays with the primary item; the active sub-item uses a
-   subtle clay tint plus a rail marker so a space and its current view never
-   read as two stacked selections. Mirrors bottom-tabs' secondaryTabActive. */
 .navSubItemActive {
   background: var(--primary-subtle);
   color: var(--primary-text);
-  font-weight: 500;
-}
-
-.navSubItemActive::before {
-  content: "";
-  position: absolute;
-  left: var(--space-4);
-  top: 50%;
-  width: var(--space-0\.5);
-  height: var(--space-4);
-  transform: translateY(-50%);
-  border-radius: var(--radius-pill);
-  background: var(--primary);
+  font-weight: var(--weight-medium);
 }
 
 .navSubItemActive:hover {
-  background: color-mix(in oklab, var(--primary) 16%, var(--sidebar));
+  background: var(--primary-subtle);
 }
 
 .navSubItemInactive:hover {
@@ -170,30 +146,37 @@
 }
 
 .navCount {
-  min-width: var(--space-8);
-  border-radius: var(--radius-control);
-  background: var(--muted);
-  padding-inline: var(--space-2);
-  padding-block: var(--space-1);
-  text-align: center;
+  flex: none;
+  margin-left: auto;
+  text-align: right;
   font-size: var(--text-meta);
-  font-weight: 500;
   color: var(--muted-foreground);
   font-variant-numeric: tabular-nums;
 }
 
-.navItemActive .navCount {
-  background: color-mix(
-    in oklab,
-    var(--sidebar-primary-foreground) 22%,
-    transparent
-  );
-  color: var(--sidebar-primary-foreground);
+.overview {
+  flex: none;
+  margin-top: calc(var(--space-6) - var(--space-1));
 }
 
-.navSubItemActive .navCount {
-  background: color-mix(in oklab, var(--primary) 20%, var(--sidebar));
-  color: var(--primary-text);
+.overviewSummary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+  color: var(--muted-foreground);
+  font-size: var(--text-meta);
+  font-variant-numeric: tabular-nums;
+}
+
+.heatmapMonths {
+  position: relative;
+  height: var(--space-4);
+  margin-top: var(--space-2);
+  color: var(--muted-foreground);
+  font-size: var(--text-tiny);
+  font-weight: var(--weight-medium);
+  line-height: var(--leading-tight);
 }
 
 .collapsedGroupMarker {
@@ -259,10 +242,4 @@
 
 .sidebar[data-collapsed="true"] .navSubItemInactive {
   color: var(--muted-foreground);
-}
-
-/* The rail has no indent column, so the marker has nowhere to sit; the tint
-   plus the clay icon carry the active sub-item there. */
-.sidebar[data-collapsed="true"] .navSubItemActive::before {
-  display: none;
 }

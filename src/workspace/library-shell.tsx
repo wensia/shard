@@ -21,6 +21,7 @@ import {
   FolderIcon,
   FolderPlusIcon,
   ImageIcon,
+  InboxIcon,
   LockKeyholeIcon,
   Maximize2Icon,
   PlusIcon,
@@ -46,6 +47,7 @@ import {
 } from "@/components/shard/directory-view"
 import { MindMapCanvas, type MindMapCanvasHandle } from "@/components/shard/mind-map-workspace"
 import { ZenSurface } from "@/components/shard/zen-surface"
+import { formatSaveState, type SaveState } from "@/lib/save-state"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -87,7 +89,7 @@ import {
   renameLibraryEntry,
   restoreFromTrash,
 } from "@/lib/api"
-import { deriveKind } from "@/lib/content-kind"
+import { countPlainTextCharacters, deriveKind } from "@/lib/content-kind"
 import { readFlowchartContent } from "@/lib/flowchart-content"
 import { openDatasetEditor } from "@/features/datasets/open-dataset"
 import { extractTags, normalizeTagList } from "@/lib/editor-format"
@@ -161,6 +163,7 @@ interface LibraryShellProps {
   vaultPath: string
   csvFiles?: CsvFileSummary[]
   fragments: Fragment[]
+  trashedFragments: Fragment[]
   isLoading: boolean
   libraryTree: LibraryTreeSnapshot | null
   knownTags: string[]
@@ -194,7 +197,6 @@ interface LibraryShellProps {
   onSaveStateChange: (state: SaveState | null) => void
 }
 
-export type SaveState = "dirty" | "error" | "saved" | "saving"
 type TreeDialogState =
   | { kind: "delete"; entry: LibraryTreeEntry }
   | { kind: "batchDelete"; entries: LibraryTreeEntry[] }
@@ -206,6 +208,7 @@ type LibrarySelection =
   | { kind: "mindmap"; path: string }
   | { kind: "canvas" | "flowchart"; path: string }
   | { kind: "trash" }
+  | { kind: "fragments" }
   | { kind: "assets"; path?: string }
   | { kind: "directory"; path: string }
   | null
@@ -213,6 +216,8 @@ type LibrarySelection =
 function readLibrarySelection(vaultPath: string): LibrarySelection {
   try {
     const value = JSON.parse(sessionStorage.getItem(`shard.library-selection:${vaultPath}`) ?? "null")
+    if (value?.kind === "trash") return { kind: "trash" }
+    if (value?.kind === "fragments") return { kind: "fragments" }
     if (value?.kind === "note" && typeof value.id === "string") return { kind: "note", id: value.id }
     if (["directory", "mindmap", "canvas", "flowchart"].includes(value?.kind) &&
       typeof value.path === "string" && (value.path === "notes" || value.path.startsWith("notes/"))) {
@@ -256,6 +261,7 @@ export function LibraryShell({
   vaultPath,
   csvFiles = [],
   fragments,
+  trashedFragments,
   isLoading,
   libraryTree,
   knownTags,
@@ -281,9 +287,14 @@ export function LibraryShell({
     () => fragments.filter((fragment) => deriveKind(fragment.tags) === "note"),
     [fragments]
   )
+  const fragmentFiles = useMemo(
+    () => fragments.filter(fragment => !fragment.archived && !fragment.lockbox && fragment.path.startsWith("fragments/")),
+    [fragments]
+  )
+  const editableFiles = useMemo(() => [...notes, ...fragmentFiles], [notes, fragmentFiles])
   const markdownContentByPath = useMemo(
-    () => new Map(notes.map((note) => [note.path, note.content])),
-    [notes]
+    () => new Map(editableFiles.map(file => [file.path, file.content])),
+    [editableFiles]
   )
   const [selection, setSelection] = useState<LibrarySelection>(() => readLibrarySelection(vaultPath))
   const [searchNote, setSearchNote] = useState<Fragment | null>(null)
@@ -355,8 +366,8 @@ export function LibraryShell({
   const selectedNoteId = selection?.kind === "note" ? selection.id : null
   const selectedNote = useMemo(
     () => (searchNote?.id === selectedNoteId ? searchNote : null) ??
-      notes.find((note) => note.id === selectedNoteId) ?? null,
-    [notes, searchNote, selectedNoteId]
+      editableFiles.find((note) => note.id === selectedNoteId) ?? null,
+    [editableFiles, searchNote, selectedNoteId]
   )
   const selectedNoteReadOnly = Boolean(
     activeSearchNavigation?.kind === "note" &&
@@ -384,6 +395,7 @@ export function LibraryShell({
     [libraryTree, selection]
   )
   const selectedDirectoryEntries = useMemo(() => {
+    if (selection?.kind === "fragments") return libraryTree?.fragmentEntries ?? []
     if (selection?.kind !== "directory") return []
     if (selection.path === "notes") return libraryTree?.entries ?? []
     return findTreeEntry(libraryTree?.entries ?? [], selection.path)?.children ?? []
@@ -397,7 +409,7 @@ export function LibraryShell({
       ),
     [markdownContentByPath, selectedDirectoryEntries]
   )
-  const directoryScope = selection?.kind === "directory" ? selection.path : null
+  const directoryScope = selection?.kind === "fragments" ? "fragments" : selection?.kind === "directory" ? selection.path : null
   const fileSelection = useLibraryFileSelection(
     directoryScope, selectedDirectoryEntries, directorySort, busyAction !== null || renaming !== null || treeDialog !== null,
   )
@@ -420,14 +432,22 @@ export function LibraryShell({
       return current.width === width && current.height === nextHeight ? current : { width, height: nextHeight }
     })
   }, [])
+  const trashEntries = useMemo(() => [
+    ...(libraryTree?.trashEntries ?? []),
+    ...(libraryTree?.fragmentTrashEntries ?? []),
+  ], [libraryTree])
+  const trashContentByPath = useMemo(
+    () => new Map(trashedFragments.filter(fragment => fragment.archived && !fragment.lockbox)
+      .map(fragment => [fragment.path, fragment.content])),
+    [trashedFragments]
+  )
   const selectedTrashEntries = useMemo(() => {
     if (selection?.kind !== "trash") return []
-    if (trashDirectoryPath === ".trash") return libraryTree?.trashEntries ?? []
-    return (
-      findTreeEntry(libraryTree?.trashEntries ?? [], trashDirectoryPath)
-        ?.children ?? []
-    )
-  }, [libraryTree, selection, trashDirectoryPath])
+    const entries = trashDirectoryPath === ".trash" ? trashEntries
+      : findTreeEntry(trashEntries, trashDirectoryPath)?.children ?? []
+    return entries.map(entry => entry.kind === "markdown"
+      ? { ...entry, content: trashContentByPath.get(entry.path) } : entry)
+  }, [trashEntries, trashContentByPath, selection, trashDirectoryPath])
   const draftRef = useRef(draft)
   const lastSavedContentRef = useRef("")
   /** 上次读到/存下完整文件的 SHA-256，保存时作为基线校验；null=暂缺（放行保存）。 */
@@ -491,13 +511,14 @@ export function LibraryShell({
   useEffect(() => {
     if (isLoading || !libraryTree) return
     const missingNote = selection?.kind === "note" &&
-      !notes.some((note) => note.id === selection.id) &&
+      !editableFiles.some((note) => note.id === selection.id) &&
       searchNote?.id !== selection.id
     const missingFile = selection && ["directory", "mindmap", "canvas", "flowchart"].includes(selection.kind) &&
       "path" in selection && selection.path !== "notes" && !findTreeEntry(libraryTree.entries, selection.path!)
     if (!selection || missingNote || missingFile) {
-      setSelection({ kind: "directory", path: "notes" })
-      setSelectedTreePath("notes")
+      const fragmentMissing = selection?.kind === "note" && selectedTreePath.startsWith("fragments/")
+      setSelection(fragmentMissing ? { kind: "fragments" } : { kind: "directory", path: "notes" })
+      setSelectedTreePath(fragmentMissing ? "::fragments" : "notes")
       if (missingNote) {
         setDraft("")
         draftRef.current = ""
@@ -512,11 +533,11 @@ export function LibraryShell({
       setSelection({ kind: "assets" })
       return
     }
-    if (selection.kind === "trash") return
-    if (selection.kind !== "note") setSelectedTreePath(selection.kind === "assets" ? "::assets" : selection.path)
+    if (selection.kind === "trash") setSelectedTreePath("::trash")
+    else if (selection.kind !== "note") setSelectedTreePath(selection.kind === "assets" ? "::assets" : selection.kind === "fragments" ? "::fragments" : selection.path)
     try { sessionStorage.setItem(`shard.library-selection:${vaultPath}`, JSON.stringify(selection)) }
     catch { /* Browsing remains available when session storage is unavailable. */ }
-  }, [isLoading, libraryTree, notes, searchNote?.id, selection, vaultPath])
+  }, [isLoading, libraryTree, editableFiles, searchNote?.id, selection, vaultPath, selectedTreePath])
 
   useEffect(() => {
     if (!selectedNote) return
@@ -597,8 +618,7 @@ export function LibraryShell({
       setSaveState("saving")
       try {
         const tags = normalizeTagList([
-          "inbox",
-          "note",
+          ...(note.path.startsWith("fragments/") ? note.tags : ["inbox", "note"]),
           ...extractTags(content),
         ])
         const updated = await onSave(
@@ -721,11 +741,12 @@ export function LibraryShell({
     if (noteId !== selectedNoteRef.current?.id) {
       const saved = await saveCurrentNote()
       if (!saved) return false
-      if (searchNote?.id !== noteId) setSearchNote(null)
       setSelection({ kind: "note", id: noteId })
-      const note = notes.find((candidate) => candidate.id === noteId)
+      const note = editableFiles.find((candidate) => candidate.id === noteId)
       if (note) setSelectedTreePath(note.path)
     }
+    setActiveSearchNavigation(null)
+    setSearchNote(null)
     setIsZen(false)
     setMobilePane("editor")
     if (edit) window.requestAnimationFrame(() => {
@@ -841,7 +862,15 @@ export function LibraryShell({
 
   async function selectDirectoryView(path: string) {
     if (!(await saveCurrentNote())) return
-    setSelection({ kind: "directory", path })
+    setActiveSearchNavigation(null)
+    setSearchNote(null)
+    // Refresh disk metadata when returning from a saved fragment or another space.
+    if (path === "fragments" && onRefreshLibrary) {
+      setBusyAction("读取碎片文件")
+      try { await onRefreshLibrary() }
+      finally { setBusyAction(null) }
+    }
+    setSelection(path === "fragments" ? { kind: "fragments" } : { kind: "directory", path })
     setSelectedTreePath(path)
     setIsZen(false)
     setMobilePane("editor")
@@ -849,6 +878,8 @@ export function LibraryShell({
 
   async function selectTrashView(path = ".trash") {
     if (!(await saveCurrentNote())) return false
+    setActiveSearchNavigation(null)
+    setSearchNote(null)
     setSelection({ kind: "trash" })
     setTrashDirectoryPath(path)
     setSelectedTreePath("::trash")
@@ -949,6 +980,8 @@ export function LibraryShell({
   const openedFileParentPath = (() => {
     const path = selectedFilePath
     if (!path) return null
+    if (path.startsWith(".trash/")) return ".trash"
+    if (path.startsWith("fragments/")) return "fragments"
     const separator = path.lastIndexOf("/")
     return separator > 0 ? path.slice(0, separator) : "notes"
   })()
@@ -956,6 +989,8 @@ export function LibraryShell({
   const selectedTitle =
     selection?.kind === "trash"
         ? "回收站"
+      : selection?.kind === "fragments"
+        ? "碎片"
       : selection?.kind === "assets"
         ? "图片"
       : selection?.kind === "directory"
@@ -974,9 +1009,9 @@ export function LibraryShell({
     () => ["notes", ...collectDirectoryPaths(libraryTree?.entries ?? [])],
     [libraryTree]
   )
-  const batchDestinations = useMemo(() => fileSelection.selectedEntries.reduce(
+  const batchDestinations = useMemo(() => selection?.kind === "fragments" ? [] : fileSelection.selectedEntries.reduce(
     (available, entry) => libraryEntryDestinations(entry, available), directories,
-  ), [directories, fileSelection.selectedEntries])
+  ), [directories, fileSelection.selectedEntries, selection?.kind])
   const selectedDirectory = useMemo(() => {
     if (selectedTreePath === "notes") return "notes"
     const selectedEntry = findTreeEntry(libraryTree?.entries ?? [], selectedTreePath)
@@ -984,7 +1019,8 @@ export function LibraryShell({
     const separator = selectedTreePath.lastIndexOf("/")
     return separator > 0 ? selectedTreePath.slice(0, separator) : "notes"
   }, [libraryTree, selectedTreePath])
-  const activeFileDirectory = selection && !["assets", "trash"].includes(selection.kind)
+  const fragmentCategoryActive = selection?.kind === "fragments" || Boolean(selectedNote?.path.startsWith("fragments/"))
+  const activeFileDirectory = selection && !fragmentCategoryActive && !["assets", "trash"].includes(selection.kind)
     ? selectedDirectory : null
   const fileCount = useMemo(() => countLibraryFiles(libraryTree?.entries ?? []), [libraryTree])
 
@@ -1008,7 +1044,7 @@ export function LibraryShell({
     try {
       const result = await mutation()
       onLibraryMutation(result)
-      if (result.fragment && deriveKind(result.fragment.tags) === "note") {
+      if (result.fragment && !result.fragment.archived && !result.fragment.lockbox) {
         if (revealNote) {
           setSelection({ kind: "note", id: result.fragment.id })
           setMobilePane("editor")
@@ -1105,7 +1141,7 @@ export function LibraryShell({
           if (latest) onLibraryMutation({ ...latest, updatedLinks })
           try {
             const tree = await listLibraryTree()
-            hasRemainingFiles = entries.some(entry => findTreeEntry(tree.entries, entry.path) !== null)
+            hasRemainingFiles = entries.some(entry => findTreeEntry([...tree.entries, ...(tree.fragmentEntries ?? [])], entry.path) !== null)
             onLibraryMutation({ tree, updatedLinks: 0 })
           } catch {
             message += " 目录刷新失败，请重新打开资料库核对结果。"
@@ -1197,7 +1233,7 @@ export function LibraryShell({
   }
 
   function moveEntryToLockbox(entry: LibraryTreeEntry) {
-    const note = notes.find((candidate) => candidate.path === entry.path)
+    const note = editableFiles.find((candidate) => candidate.path === entry.path)
     if (!note || busyAction) return
     void (async () => {
       if (!(await saveCurrentNote())) return
@@ -1231,7 +1267,7 @@ export function LibraryShell({
       setRenaming(null)
       return
     }
-    const entry = findTreeEntry(libraryTree?.entries ?? [], renaming.path)
+    const entry = findTreeEntry([...(libraryTree?.entries ?? []), ...(libraryTree?.fragmentEntries ?? [])], renaming.path)
     const extension = entry ? entry.name.slice(libraryEntryName(entry).length) : ""
     const nameError = libraryNameError(value, extension)
     if (nameError) {
@@ -1462,16 +1498,17 @@ export function LibraryShell({
       (selectedTreePath === deletedPath ||
         selectedTreePath.startsWith(`${deletedPath}/`))
     ) {
-      setSelection({ kind: "directory", path: "notes" })
-      setSelectedTreePath("notes")
+      const isFragment = deletedPath.startsWith("fragments/")
+      setSelection(isFragment ? { kind: "fragments" } : { kind: "directory", path: "notes" })
+      setSelectedTreePath(isFragment ? "::fragments" : "notes")
       setIsZen(false)
-      setMobilePane("list")
+      setMobilePane("editor")
     }
     setTreeDialog(null)
   }
 
   function restoreTrashEntry(entry: LibraryTreeEntry) {
-    void runMutation("恢复", () => restoreFromTrash(entry.path))
+    void runMutation("恢复", () => restoreFromTrash(entry.path), { revealNote: false })
   }
 
   function handleTreeEntryClick(entry: LibraryTreeEntry) {
@@ -1493,8 +1530,15 @@ export function LibraryShell({
       openDatasetEditor(entry.path)
       return
     }
-    const note = notes.find((candidate) => candidate.path === entry.path)
+    const note = editableFiles.find((candidate) => candidate.path === entry.path)
     if (note) {
+      if (note.path.startsWith("fragments/") && (
+        (deriveKind(note.tags) === "outline" && note.content.includes("```shardmap")) ||
+        (deriveKind(note.tags) === "flowchart" && note.content.includes("```shardflow"))
+      )) {
+        void (async () => { if (await saveCurrentNote()) onOpenGraphFragment?.(note) })()
+        return
+      }
       void selectNote(note.id)
     } else {
       notify.warning("文档还在准备中", { description: "请稍后再试。" })
@@ -1558,19 +1602,20 @@ export function LibraryShell({
   )
 
   function renderSelectedViewer(zen: boolean) {
-    if (selection?.kind === "directory") {
+    if (directoryScope) {
       return (
         <div ref={directoryWorkspaceRef} className={styles.directoryWorkspace}>
           <DirectoryView
             bottomInset={selectionDockSize.height}
             busy={busyAction !== null}
-            destinations={directories}
+            destinations={selection?.kind === "fragments" ? [] : directories}
+            emptyMessage={selection?.kind === "fragments" ? "暂无碎片" : undefined}
             entries={selectedDirectoryViewEntries}
             sort={directorySort}
             onSortChange={changeDirectorySort}
             onConvertToFragment={convertEntryToFragment}
-            onCreateNote={() => void createNoteAndEdit()}
-            onCreateDirectory={startCreateDirectory}
+            onCreateNote={selection?.kind === "fragments" ? undefined : () => void createNoteAndEdit()}
+            onCreateDirectory={selection?.kind === "fragments" ? undefined : startCreateDirectory}
             onBatchDelete={entries => setTreeDialog({ kind: "batchDelete", entries })}
             onBatchMove={(entries, destination) => void runBatchMutation(entries, destination)}
             onCopyDocumentLink={copyDiagramLink}
@@ -1588,12 +1633,13 @@ export function LibraryShell({
               )
             }
             onRenameSubmit={() => void submitRename()}
-            path={selection.path}
+            path={directoryScope}
             renaming={renaming?.source === "directory" ? renaming : null}
             selection={fileSelection}
             viewMode={directoryViewMode}
           />
           <DirectorySelectionToolbar
+            allowMove={selection?.kind !== "fragments"}
             visible={fileSelection.paths.size > 0 || batchPending.current}
             onSizeChange={measureSelectionDock}
             busy={busyAction !== null}
@@ -1708,7 +1754,7 @@ export function LibraryShell({
           <div className="min-h-0 flex-1">
             <ShardRichEditor
               ref={richNoteEditor}
-              ariaLabel="资料库文档编辑器"
+              ariaLabel={selectedNote.path.startsWith("fragments/") ? "资料库碎片编辑器" : "资料库文档编辑器"}
               autoFocus={zen || mobilePane === "editor"}
               editorId={`library:${selectedNote.id}`}
               getKnownTags={() => knownTagsRef.current}
@@ -1731,10 +1777,10 @@ export function LibraryShell({
               onOpenDocumentLink={(link) => void openCanvasLink(link)}
               onPasteFiles={selectedNoteReadOnly ? undefined : (files) => void uploadPastedImages(files)}
               onSubmit={selectedNoteReadOnly ? undefined : () => void saveCurrentNote()}
-              placeholder="开始写文档…"
+              placeholder={selectedNote.path.startsWith("fragments/") ? "编辑碎片…" : "开始写文档…"}
               readOnly={selectedNoteReadOnly || interactionBlocked || structureBusy || busyAction !== null}
-              // 资料库里全是文档：工具集合按文档档开放（产品框架 §2）。
-              tier="document"
+              // 资料库文档按文档档开放工具（产品框架 §2）；碎片（非 document 类型）仍按碎片档。
+              tier={selectedNote.path.startsWith("fragments/") && deriveKind(selectedNote.tags) !== "document" ? "fragment" : "document"}
               value={draft}
               variant="library"
             />
@@ -1783,7 +1829,7 @@ export function LibraryShell({
     treeDialog?.kind === "importGraph"
       ? "确认加入时间线"
       : treeDialog?.kind === "emptyTrash"
-      ? "确认清空资料库回收站"
+      ? "确认清空回收站"
       : treeDialog?.kind === "purge"
         ? "确认彻底删除"
         : "确认删除"
@@ -1791,7 +1837,7 @@ export function LibraryShell({
     treeDialog?.kind === "importGraph"
       ? `将生成一篇同名的${treeDialog.entry.kind === "mindmap" ? "大纲" : "流程图"}，原文件移入回收站，之后仍可从回收站恢复。`
       : treeDialog?.kind === "emptyTrash"
-      ? "资料库回收站中的文档和文件将被永久删除，此操作不可恢复。"
+      ? "回收站中的碎片、文档和文件将被永久删除，此操作不可恢复。"
       : treeDialog?.kind === "purge"
         ? `「${treeDialog.entry.name}」将被永久删除，此操作不可恢复。`
         : treeDialog?.kind === "batchDelete"
@@ -1868,6 +1914,18 @@ export function LibraryShell({
             <>
               <nav aria-label="资料库浏览" className={styles.browseNavigation}>
                 <button
+                  aria-current={fragmentCategoryActive ? "page" : undefined}
+                  aria-label={`碎片（${libraryTree.fragmentEntries?.length ?? 0}）`}
+                  className={styles.navigationButton}
+                  disabled={busyAction !== null}
+                  onClick={() => void selectDirectoryView("fragments")}
+                  type="button"
+                >
+                  <InboxIcon aria-hidden="true" />
+                  <span className={styles.treeLabel}>碎片</span>
+                  <span className={styles.treeCount}>{libraryTree.fragmentEntries?.length ?? 0}</span>
+                </button>
+                <button
                   aria-current={selection?.kind === "assets" ? "page" : undefined}
                   aria-label={`图片（${libraryTree.assets.length}）`}
                   className={styles.navigationButton}
@@ -1936,7 +1994,7 @@ export function LibraryShell({
           {libraryTree ? (
             <div className={styles.paneFooter} data-library-footer="true">
               <button
-                aria-label={`回收站（${countTreeEntries(libraryTree.trashEntries)}）`}
+                aria-label={`回收站（${countTreeEntries(trashEntries)}）`}
                 className={styles.navigationButton}
                 aria-current={selection?.kind === "trash" ? "page" : undefined}
                 disabled={busyAction !== null}
@@ -1946,7 +2004,7 @@ export function LibraryShell({
                 <Trash2Icon aria-hidden="true" />
                 <span>回收站</span>
                 <span className={styles.treeCount}>
-                  {countTreeEntries(libraryTree.trashEntries)}
+                  {countTreeEntries(trashEntries)}
                 </span>
               </button>
               <button
@@ -1987,7 +2045,7 @@ export function LibraryShell({
             >
               <ChevronLeftIcon aria-hidden="true" />
             </Button>
-            {selection?.kind === "directory" ? (
+            {directoryScope ? (
               <DirectoryViewToolbar
                 action={
                   <Button
@@ -2006,12 +2064,12 @@ export function LibraryShell({
                 onSelectDirectory={(path) => void selectDirectoryView(path)}
                 sort={directorySort}
                 onSortChange={changeDirectorySort}
-                rootLabel="文件"
+                rootLabel={selection?.kind === "fragments" ? "碎片" : "文件"}
                 onViewModeChange={(mode) => {
                   setDirectoryViewMode(mode)
                   writeDirectoryViewPreference(mode)
                 }}
-                path={selection.path}
+                path={directoryScope}
                 viewMode={directoryViewMode}
               />
             ) : selection?.kind === "trash" ? (
@@ -2020,7 +2078,7 @@ export function LibraryShell({
                   <Button
                     disabled={
                       busyAction !== null ||
-                      countTreeEntries(libraryTree?.trashEntries ?? []) === 0
+                      countTreeEntries(trashEntries) === 0
                     }
                     onClick={() => setTreeDialog({ kind: "emptyTrash" })}
                     size="sm"
@@ -2053,7 +2111,8 @@ export function LibraryShell({
                       // A fast blur failure may finish before click; keep its editable draft visible.
                       if (renaming?.source === "editor" && !renamePromiseRef.current) return
                       if (renamePromiseRef.current && !(await renamePromiseRef.current)) return
-                      await selectDirectoryView(openedFileParentPath)
+                      if (openedFileParentPath === ".trash") await selectTrashView()
+                      else await selectDirectoryView(openedFileParentPath)
                     }}
                     size="icon-sm"
                     title="返回所在目录"
@@ -2168,6 +2227,11 @@ export function LibraryShell({
       {isZen && selection?.kind === "note" ? (
         <ZenSurface
           ariaLabel="资料库文档禅模式"
+          bar={{
+            meta: <LibraryZenWordCount content={draft} />,
+            saveState: selectedNoteReadOnly ? "readOnly" : saveState,
+            title: selectedTitle,
+          }}
           onRequestClose={() => setIsZen(false)}
         >
           {renderSelectedViewer(true)}
@@ -2461,6 +2525,20 @@ function toggleSetValue(
   })
 }
 
+/** 与碎片文档档同一口径：只数正文纯文本，语法标记与围栏源码不计。 */
+function LibraryZenWordCount({ content }: { content: string }) {
+  const count = useMemo(() => countPlainTextCharacters(content), [content])
+  return (
+    <span
+      aria-label={`${count} 字`}
+      data-zen-word-count="document"
+      title="字数只计正文，不含语法标记、空格与换行"
+    >
+      {count.toLocaleString("zh-CN")} 字
+    </span>
+  )
+}
+
 function LibraryEmptyState({ message }: { message: string }) {
   return (
     <div className={styles.emptyState}>
@@ -2471,18 +2549,4 @@ function LibraryEmptyState({ message }: { message: string }) {
 
 function escapeMarkdownImageAlt(alt: string) {
   return alt.replace(/\\/g, "\\\\").replace(/]/g, "\\]")
-}
-
-export function formatSaveState(state: SaveState) {
-  switch (state) {
-    case "dirty":
-      return "待保存"
-    case "error":
-      return "保存失败"
-    case "saving":
-      return "保存中…"
-    case "saved":
-    default:
-      return "已保存"
-  }
 }

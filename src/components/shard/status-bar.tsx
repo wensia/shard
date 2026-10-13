@@ -21,7 +21,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip"
 import { formatSyncedAgo } from "@/lib/relative-time"
-import { formatSaveState, type SaveState } from "@/workspace/library-shell"
+import { formatSaveState, type SaveState } from "@/lib/save-state"
 import type { GitInfo } from "@/types"
 
 import styles from "./status-bar.module.css"

@@ -12,6 +12,7 @@ import {
   XIcon,
   type LucideIcon,
 } from "@/components/icons";
+import { TabLabel } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -308,22 +309,28 @@ export function SearchPalette({
             role="combobox"
             value={inputValue}
           />
-          <div aria-label="搜索模式" className={styles.modeGroup} role="group">
+          {/* 模式切换走墨迹页签（components/ui/tabs.css bar 档），与全应用页签同一语言 */}
+          <div
+            aria-label="搜索模式"
+            className={`shard-tabs ${styles.modeGroup}`}
+            data-size="bar"
+            role="group"
+          >
             <button
               aria-pressed={session.mode === "fullText"}
-              className={styles.modeButton}
+              className="shard-tab"
               onClick={() => onModeChange("fullText")}
               type="button"
             >
-              全文
+              <TabLabel>全文</TabLabel>
             </button>
             <button
               aria-pressed={session.mode === "open"}
-              className={styles.modeButton}
+              className="shard-tab"
               onClick={() => onModeChange("open")}
               type="button"
             >
-              打开
+              <TabLabel>打开</TabLabel>
             </button>
           </div>
           <Button

@@ -18,8 +18,8 @@ import {
 import appStyles from "@/App.module.css"
 import { FragmentTimeline } from "@/components/shard/fragment-timeline"
 import {
-  LockboxFormError,
   LockboxPasswordInput,
+  PASSWORD_IME_HINT,
   validateLockboxPasswordPair,
 } from "@/components/shard/lockbox-dialog"
 import type { TaggedSummary } from "@/components/shard/tagged-panel"
@@ -99,7 +99,11 @@ export function LockboxShell({
               <FragmentTimeline {...timeline} />
             </>
           ) : (
-            <LockboxGate onReset={onResetPassword} onUnlock={onUnlock} />
+            <LockboxGate
+              onReset={onResetPassword}
+              onUnlock={onUnlock}
+              ttlSeconds={lockbox?.ttlSeconds}
+            />
           )}
         </div>
 
@@ -118,16 +122,26 @@ function LockboxBackButton({ onBack }: { onBack: () => void }) {
   )
 }
 
+/** 「闲置 3 分钟后自动上锁」——用真实时长，不说「数分钟」。 */
+function describeAutoLock(ttlSeconds?: number) {
+  if (!ttlSeconds || ttlSeconds <= 0) return "闲置一段时间后自动上锁"
+  if (ttlSeconds < 60) return `闲置 ${ttlSeconds} 秒后自动上锁`
+  return `闲置 ${Math.round(ttlSeconds / 60)} 分钟后自动上锁`
+}
+
 /**
- * 上锁态的主体区：解锁就在这里完成，不再弹窗。忘记密码切到同一块面板内的
- * 恢复密钥重置，重置成功后的「保存恢复密钥」仍由 LockboxDialog 承接。
+ * 上锁态的主体区：解锁就在这里完成，不再弹窗。一张居中卡片只装标题与表单；
+ * 忘记密码切到同一张卡片内的恢复密钥重置，重置成功后的「保存恢复密钥」仍由
+ * LockboxDialog 承接。
  */
 function LockboxGate({
   onReset,
   onUnlock,
+  ttlSeconds,
 }: {
   onReset: (recoveryKey: string, newPassword: string) => Promise<void>
   onUnlock: (password: string) => Promise<void>
+  ttlSeconds?: number
 }) {
   const [mode, setMode] = useState<"reset" | "unlock">("unlock")
   const [password, setPassword] = useState("")
@@ -136,6 +150,7 @@ function LockboxGate({
   const [repeatPassword, setRepeatPassword] = useState("")
   const [error, setError] = useState("")
   const [isBusy, setIsBusy] = useState(false)
+  const [imeBlocked, setImeBlocked] = useState(false)
   const passwordRef = useRef<HTMLInputElement>(null)
   const recoveryRef = useRef<HTMLInputElement>(null)
 
@@ -154,13 +169,15 @@ function LockboxGate({
     setRepeatPassword("")
   }
 
-  async function submit(action: () => Promise<void>) {
+  async function submit(action: () => Promise<void>, retry?: HTMLInputElement | null) {
     setError("")
     setIsBusy(true)
     try {
       await action()
     } catch (error) {
       setError(getApiErrorMessage(error))
+      // 输错后选中已输入内容，直接重打即可覆盖
+      requestAnimationFrame(() => retry?.select())
     } finally {
       setIsBusy(false)
     }
@@ -168,136 +185,146 @@ function LockboxGate({
 
   return (
     <div className={styles.gate}>
-      <div className={styles.gateCard}>
-        <LockKeyholeIcon
-          aria-hidden="true"
-          className="size-(--shard-icon-size-xl)"
-        />
-        <h2 className={styles.gateTitle}>
-          {mode === "unlock" ? "密匣已上锁" : "重置密匣密码"}
-        </h2>
-        <p className={styles.gateHint}>
-          {mode === "unlock"
-            ? "解锁后闲置数分钟自动上锁。"
-            : "用恢复密钥设置新密码，密匣内容保持不变。"}
-        </p>
+      <section aria-labelledby="lockbox-gate-title" className={styles.lid}>
+        <div className={styles.lidBody}>
+          <h1 className={styles.gateTitle} id="lockbox-gate-title">
+            {mode === "unlock" ? "密匣已上锁" : "重置密码"}
+          </h1>
 
-        {mode === "unlock" ? (
-          <form
-            aria-label="解锁密匣"
-            className={styles.gateForm}
-            onSubmit={(event) => {
-              event.preventDefault()
-              void submit(() => onUnlock(password))
-            }}
-          >
-            <label className="sr-only" htmlFor="lockbox-gate-password">
-              密匣密码
-            </label>
-            <div className={styles.gateRow}>
-              <LockboxPasswordInput
-                disabled={isBusy}
-                id="lockbox-gate-password"
-                onChange={(event) => setPassword(event.target.value)}
-                placeholder="密匣密码"
-                ref={passwordRef}
-                value={password}
-              />
-              <Button
-                disabled={isBusy || !password}
-                size="sm"
-                type="submit"
-                variant="primary"
-              >
-                {isBusy ? "解锁中" : "解锁"}
-              </Button>
-            </div>
-            <LockboxFormError message={error} />
-            <Button
-              className={styles.gateLink}
-              disabled={isBusy}
-              onClick={() => switchMode("reset")}
-              size="sm"
-              type="button"
-              variant="ghost"
+          {mode === "unlock" ? (
+            <form
+              aria-label="解锁密匣"
+              className={styles.gateForm}
+              onSubmit={(event) => {
+                event.preventDefault()
+                void submit(() => onUnlock(password), passwordRef.current)
+              }}
             >
-              忘记密码
-            </Button>
-          </form>
-        ) : (
-          <form
-            aria-label="重置密匣密码"
-            className={styles.gateForm}
-            onSubmit={(event) => {
-              event.preventDefault()
-              const message = validateLockboxPasswordPair(
-                newPassword,
-                repeatPassword
-              )
-              if (message) {
-                setError(message)
-                return
-              }
-              void submit(async () => {
-                await onReset(recoveryInput, newPassword)
-                switchMode("unlock")
-              })
-            }}
-          >
-            <label className="sr-only" htmlFor="lockbox-gate-recovery-key">
-              恢复密钥
-            </label>
-            <Input
-              disabled={isBusy}
-              id="lockbox-gate-recovery-key"
-              onChange={(event) => setRecoveryInput(event.target.value)}
-              placeholder="恢复密钥"
-              ref={recoveryRef}
-              value={recoveryInput}
-            />
-            <label className="sr-only" htmlFor="lockbox-gate-new-password">
-              新密码，至少 8 个字符
-            </label>
-            <LockboxPasswordInput
-              disabled={isBusy}
-              id="lockbox-gate-new-password"
-              onChange={(event) => setNewPassword(event.target.value)}
-              placeholder="新密码，至少 8 个字符"
-              value={newPassword}
-            />
-            <label className="sr-only" htmlFor="lockbox-gate-repeat-password">
-              再次输入新密码
-            </label>
-            <LockboxPasswordInput
-              disabled={isBusy}
-              id="lockbox-gate-repeat-password"
-              onChange={(event) => setRepeatPassword(event.target.value)}
-              placeholder="再次输入新密码"
-              value={repeatPassword}
-            />
-            <LockboxFormError message={error} />
-            <div className={styles.gateActions}>
-              <Button
-                disabled={isBusy}
-                onClick={() => switchMode("unlock")}
-                size="sm"
-                type="button"
-                variant="ghost"
-              >
-                返回解锁
-              </Button>
-              <Button
-                disabled={isBusy || !recoveryInput}
-                size="sm"
-                type="submit"
-                variant="primary"
-              >
-                {isBusy ? "重置中" : "重置密码"}
-              </Button>
-            </div>
-          </form>
-        )}
-      </div>
+              <label className="sr-only" htmlFor="lockbox-gate-password">
+                密匣密码
+              </label>
+              <div className={styles.gateRow}>
+                <LockboxPasswordInput
+                  aria-describedby="lockbox-gate-meta"
+                  aria-invalid={error ? true : undefined}
+                  disabled={isBusy}
+                  id="lockbox-gate-password"
+                  onImeBlockedChange={setImeBlocked}
+                  onChange={(event) => {
+                    setPassword(event.target.value)
+                    if (error) setError("")
+                  }}
+                  placeholder="密匣密码"
+                  ref={passwordRef}
+                  value={password}
+                />
+                <Button
+                  disabled={isBusy || !password}
+                  type="submit"
+                  variant="primary"
+                >
+                  {isBusy ? "解锁中" : "解锁"}
+                </Button>
+              </div>
+              {/* 字段下方唯一的一行（kiln）：错误 > 输入法提示 > 自动上锁时长 */}
+              <div className={styles.gateMeta} id="lockbox-gate-meta">
+                {error ? (
+                  <p className={styles.gateError} role="alert">
+                    {error}
+                  </p>
+                ) : imeBlocked ? (
+                  <span role="status">{PASSWORD_IME_HINT}</span>
+                ) : (
+                  <span>{describeAutoLock(ttlSeconds)}</span>
+                )}
+                <button
+                  className={styles.gateLink}
+                  disabled={isBusy}
+                  onClick={() => switchMode("reset")}
+                  type="button"
+                >
+                  忘记密码
+                </button>
+              </div>
+            </form>
+          ) : (
+            <form
+              aria-label="重置密匣密码"
+              className={styles.gateForm}
+              onSubmit={(event) => {
+                event.preventDefault()
+                const message = validateLockboxPasswordPair(
+                  newPassword,
+                  repeatPassword
+                )
+                if (message) {
+                  setError(message)
+                  return
+                }
+                void submit(async () => {
+                  await onReset(recoveryInput, newPassword)
+                  switchMode("unlock")
+                }, recoveryRef.current)
+              }}
+            >
+              <p className={styles.gateHint}>密匣里的内容不受影响。</p>
+              <div className={styles.gateField}>
+                <label htmlFor="lockbox-gate-recovery-key">恢复密钥</label>
+                <Input
+                  disabled={isBusy}
+                  id="lockbox-gate-recovery-key"
+                  onChange={(event) => setRecoveryInput(event.target.value)}
+                  placeholder="设置密匣时保存的恢复密钥"
+                  ref={recoveryRef}
+                  value={recoveryInput}
+                />
+              </div>
+              <div className={styles.gateField}>
+                <label htmlFor="lockbox-gate-new-password">新密码</label>
+                <LockboxPasswordInput
+                  disabled={isBusy}
+                  id="lockbox-gate-new-password"
+                  onChange={(event) => setNewPassword(event.target.value)}
+                  placeholder="至少 8 个字符"
+                  value={newPassword}
+                />
+              </div>
+              <div className={styles.gateField}>
+                <label htmlFor="lockbox-gate-repeat-password">确认新密码</label>
+                <LockboxPasswordInput
+                  disabled={isBusy}
+                  id="lockbox-gate-repeat-password"
+                  onChange={(event) => setRepeatPassword(event.target.value)}
+                  placeholder="再次输入新密码"
+                  value={repeatPassword}
+                />
+              </div>
+              {error ? (
+                <p className={styles.gateError} role="alert">
+                  {error}
+                </p>
+              ) : null}
+              <div className={styles.gateActions}>
+                <Button
+                  disabled={isBusy}
+                  onClick={() => switchMode("unlock")}
+                  type="button"
+                  variant="outline"
+                >
+                  返回解锁
+                </Button>
+                <Button
+                  disabled={isBusy || !recoveryInput}
+                  type="submit"
+                  variant="primary"
+                >
+                  {isBusy ? "重置中" : "重置密码"}
+                </Button>
+              </div>
+            </form>
+          )}
+        </div>
+      </section>
     </div>
   )
 }

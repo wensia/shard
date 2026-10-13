@@ -4,7 +4,6 @@ import {
   InboxIcon,
   PanelLeftIcon,
   SearchIcon,
-  Trash2Icon,
   type LucideIcon,
 } from "@/components/icons"
 import {
@@ -36,26 +35,27 @@ interface SidebarNavProps {
   route: WorkspaceRoute
 }
 
-const SPACE_ITEMS: Array<{
-  id: WorkspaceRoute["space"]
-  icon: typeof InboxIcon
-  route: WorkspaceRoute
-}> = [
+export const SPACE_ITEMS = [
   {
     id: "fragments",
     icon: InboxIcon,
     route: { space: "fragments", params: {} },
+    shortcut: "1",
   },
-  { id: "calendar", icon: CalendarDaysIcon, route: { space: "calendar", params: {} } },
-  { id: "library", icon: BookOpenIcon, route: { space: "library", params: {} } },
-]
+  { id: "calendar", icon: CalendarDaysIcon, route: { space: "calendar", params: {} }, shortcut: "2" },
+  { id: "library", icon: BookOpenIcon, route: { space: "library", params: {} }, shortcut: "3" },
+] as const satisfies ReadonlyArray<{
+  id: Exclude<WorkspaceRoute["space"], "lockbox">
+  icon: typeof InboxIcon
+  route: WorkspaceRoute
+  shortcut: "1" | "2" | "3"
+}>
 
 const FRAGMENT_ITEMS: Array<{
-  id: FragmentsView
+  id: Extract<FragmentsView, "all">
   icon: typeof InboxIcon
 }> = [
   { id: "all", icon: InboxIcon },
-  { id: "trash", icon: Trash2Icon },
 ]
 
 type SidebarLanguage = "en" | "zh"
@@ -74,15 +74,14 @@ const SIDEBAR_COPY: Record<
       fragments: string
       workbench: string
     }
-    nav: Record<FragmentsView, string>
+    nav: Record<Extract<FragmentsView, "all">, string>
     spaces: Record<WorkspaceRoute["space"], string>
     search: string
     searchPlaceholder: string
     searchShortcut: string
     stats: {
-      days: string
-      fragments: string
       tags: string
+      daySpan: string
     }
     vaultNotLoaded: string
   }
@@ -101,7 +100,6 @@ const SIDEBAR_COPY: Record<
     },
     nav: {
       all: "全部碎片",
-      trash: "回收站",
     },
     spaces: {
       fragments: "碎片",
@@ -113,9 +111,8 @@ const SIDEBAR_COPY: Record<
     searchPlaceholder: "搜索或打开…",
     searchShortcut: "⌘K",
     stats: {
-      days: "天",
-      fragments: "碎片",
-      tags: "标签",
+      tags: "个标签",
+      daySpan: "记录跨度",
     },
     vaultNotLoaded: "资料库未加载",
   },
@@ -133,7 +130,6 @@ const SIDEBAR_COPY: Record<
     },
     nav: {
       all: "All fragments",
-      trash: "Trash",
     },
     spaces: {
       fragments: "Fragments",
@@ -145,9 +141,8 @@ const SIDEBAR_COPY: Record<
     searchPlaceholder: "Search or open…",
     searchShortcut: "⌘K",
     stats: {
-      days: "Days",
-      fragments: "Fragments",
-      tags: "Tags",
+      tags: "tags",
+      daySpan: "Record span",
     },
     vaultNotLoaded: "Vault not loaded",
   },
@@ -204,9 +199,8 @@ export function SidebarNav({
   const copy = SIDEBAR_COPY[language]
   const ownedFragments = fragments.filter((fragment) => fragment.kind === "fragment" && !fragment.lockbox)
   const activeFragments = ownedFragments.filter((fragment) => !fragment.archived)
-  const counts: Record<FragmentsView, number> = {
+  const counts = {
     all: activeFragments.length,
-    trash: ownedFragments.length - activeFragments.length,
   }
   const heatmap = buildSidebarHeatmap(activeFragments, language)
 
@@ -239,8 +233,7 @@ export function SidebarNav({
         style={{
           paddingInline: isCollapsed
             ? "var(--space-2)"
-            : "var(--shard-sidebar-inset)",
-          paddingBottom: "var(--shard-space-4)",
+            : "var(--space-3)",
         }}
       >
         <Tooltip>
@@ -262,7 +255,7 @@ export function SidebarNav({
             {isCollapsed ? null : (
               <>
                 <span style={NAV_LABEL_STYLE}>{copy.searchPlaceholder}</span>
-                <kbd className={styles.searchShortcut}>
+                <kbd aria-hidden="true" className={styles.shortcutHint}>
                   {copy.searchShortcut}
                 </kbd>
               </>
@@ -274,84 +267,12 @@ export function SidebarNav({
         </Tooltip>
       </div>
 
-      {isCollapsed ? null : (
-        <div
-          style={{
-            paddingInline: "var(--shard-sidebar-inset)",
-            paddingBottom: "var(--shard-space-5)",
-          }}
-        >
-          <div
-            aria-label={copy.aria.stats}
-            className="grid grid-cols-3 gap-2"
-          >
-            <SidebarStat
-              label={copy.stats.fragments}
-              value={activeFragments.length}
-            />
-            <SidebarStat label={copy.stats.tags} value={heatmap.tagCount} />
-            <SidebarStat label={copy.stats.days} value={heatmap.daySpan} />
-          </div>
-
-          <div
-            aria-label={copy.aria.heatmap}
-            role="img"
-            style={{ marginTop: "var(--shard-space-4)" }}
-          >
-            <div className="shard-heatmap-grid">
-              {heatmap.cells.map((cell) => (
-                <span
-                  aria-label={formatHeatmapCellLabel(cell, language)}
-                  key={cell.key}
-                  style={{
-                    width: "var(--shard-heatmap-cell)",
-                    height: "var(--shard-heatmap-cell)",
-                    borderRadius: "calc(var(--shard-radius-control) / 2)",
-                    background: HEATMAP_LEVEL_BACKGROUNDS[cell.level],
-                    boxShadow: cell.isToday
-                      ? "0 0 0 1px rgb(var(--shard-ink-rgb) / var(--shard-alpha-21))"
-                      : undefined,
-                  }}
-                  title={formatHeatmapCellLabel(cell, language)}
-                />
-              ))}
-            </div>
-
-            <div
-              style={{
-                position: "relative",
-                marginTop: "var(--shard-space-2)",
-                height: 12,
-                fontSize: 10,
-                lineHeight: "12px",
-                fontWeight: 500,
-                color: "var(--muted-foreground)",
-              }}
-            >
-              {heatmap.monthLabels.map((month) => (
-                <span
-                  key={`${month.column}-${month.label}`}
-                  style={{
-                    position: "absolute",
-                    whiteSpace: "nowrap",
-                    left: `calc(${month.column} * (var(--shard-heatmap-cell) + var(--shard-heatmap-column-gap)))`,
-                  }}
-                >
-                  {month.label}
-                </span>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
-
       <nav
         aria-label={copy.aria.navigation}
         className={styles.navigation}
         style={{
           display: "flex",
           flexDirection: "column",
-          gap: "var(--space-1)",
           paddingInline: isCollapsed ? "var(--space-2)" : "var(--space-3)",
         }}
       >
@@ -360,7 +281,7 @@ export function SidebarNav({
         ) : null}
         {SPACE_ITEMS.map((item) => {
           const Icon = item.icon
-          const isActive = item.id === route.space
+          const isActive = item.id === route.space && item.id !== "fragments"
 
           return (
             <div className={styles.navGroup} key={item.id}>
@@ -374,9 +295,10 @@ export function SidebarNav({
                 isCollapsed={isCollapsed}
                 label={copy.spaces[item.id]}
                 onClick={() => onRouteChange(item.route)}
+                shortcut={item.shortcut}
               />
 
-              {item.id === "fragments" && route.space === "fragments" ? (
+              {item.id === "fragments" ? (
                 <>
                   {isCollapsed ? (
                     <CollapsedGroupMarker label={copy.groups.fragments} />
@@ -387,7 +309,8 @@ export function SidebarNav({
                   >
                     {FRAGMENT_ITEMS.map((subItem) => {
                       const SubIcon = subItem.icon
-                      const isSubItemActive = (route.params.view ?? "all") === subItem.id
+                      const isSubItemActive = route.space === "fragments" &&
+                        (route.params.view ?? "all") === subItem.id
                       return (
                         <SidebarNavigationButton
                           className={`${styles.navSubItem} ${
@@ -422,6 +345,48 @@ export function SidebarNav({
             </div>
           )
         })}
+        {isCollapsed ? null : (
+          <div className={styles.overview}>
+            <div aria-label={copy.aria.stats} className={styles.overviewSummary}>
+              <span>{heatmap.tagCount} {copy.stats.tags}</span>
+              <span>{copy.stats.daySpan} {heatmap.daySpan} {language === "zh" ? "天" : "days"}</span>
+            </div>
+            <div aria-label={copy.aria.heatmap} role="img">
+              <div className="shard-heatmap-grid">
+                {heatmap.cells.map((cell) => (
+                  <span
+                    aria-label={formatHeatmapCellLabel(cell, language)}
+                    key={cell.key}
+                    style={{
+                      width: "var(--shard-heatmap-cell)",
+                      height: "var(--shard-heatmap-cell)",
+                      borderRadius: "calc(var(--shard-radius-control) / 2)",
+                      background: HEATMAP_LEVEL_BACKGROUNDS[cell.level],
+                      boxShadow: cell.isToday
+                        ? "0 0 0 1px rgb(var(--shard-ink-rgb) / var(--shard-alpha-21))"
+                        : undefined,
+                    }}
+                    title={formatHeatmapCellLabel(cell, language)}
+                  />
+                ))}
+              </div>
+              <div className={styles.heatmapMonths}>
+                {heatmap.monthLabels.map((month) => (
+                  <span
+                    key={`${month.column}-${month.label}`}
+                    style={{
+                      position: "absolute",
+                      whiteSpace: "nowrap",
+                      left: `calc(${month.column} * (var(--shard-heatmap-cell) + var(--shard-heatmap-column-gap)))`,
+                    }}
+                  >
+                    {month.label}
+                  </span>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
       </nav>
     </aside>
   )
@@ -463,6 +428,7 @@ function SidebarNavigationButton({
   label,
   level = "primary",
   onClick,
+  shortcut,
   trailing,
 }: {
   className: string
@@ -473,6 +439,7 @@ function SidebarNavigationButton({
   label: string
   level?: "primary" | "secondary"
   onClick: () => void
+  shortcut?: "1" | "2" | "3"
   trailing?: ReactNode
 }) {
   const content = (
@@ -485,7 +452,11 @@ function SidebarNavigationButton({
       {isCollapsed ? null : (
         <>
           <span style={NAV_LABEL_STYLE}>{label}</span>
-          {trailing}
+          {shortcut ? (
+            <span aria-hidden="true" className={styles.shortcutHint}>
+              ⌘{shortcut}
+            </span>
+          ) : trailing}
         </>
       )}
     </>
@@ -493,8 +464,11 @@ function SidebarNavigationButton({
   const renderButton = (children?: ReactNode) => (
     <button
       aria-current={isActive ? "page" : undefined}
+      aria-keyshortcuts={shortcut ? `Meta+${shortcut}` : undefined}
+      // 带快捷键提示的一级项显式命名：提示是 aria-hidden，但整棵侧栏被 inert / aria-hidden
+      // 时（如关闭窗口期间）隐藏子树会被计入名称，变成「碎片⌘1」
       aria-label={
-        isCollapsed ? formatNavAccessibleName(group, label) : undefined
+        isCollapsed ? formatNavAccessibleName(group, label) : shortcut ? label : undefined
       }
       className={className}
       data-sidebar-level={level}
@@ -547,47 +521,6 @@ function getSidebarLanguage(): SidebarLanguage {
 }
 
 
-
-interface SidebarStatProps {
-  label: string
-  value: number
-}
-
-function SidebarStat({ label, value }: SidebarStatProps) {
-  return (
-    <div
-      style={{
-        minWidth: 0,
-        paddingInline: "var(--shard-space-1)",
-        paddingBlock: "var(--shard-space-2)",
-        textAlign: "center",
-      }}
-    >
-      <div
-        style={{
-          fontSize: 21,
-          lineHeight: "24px",
-          fontWeight: 500,
-          color: "var(--sidebar-foreground)",
-          fontVariantNumeric: "tabular-nums",
-        }}
-      >
-        {value}
-      </div>
-      <div
-        style={{
-          marginTop: "var(--shard-space-1)",
-          fontSize: 11,
-          lineHeight: "12px",
-          fontWeight: 500,
-          color: "var(--muted-foreground)",
-        }}
-      >
-        {label}
-      </div>
-    </div>
-  )
-}
 
 interface HeatmapCell {
   count: number

@@ -237,34 +237,6 @@ test("late target read cannot navigate after vault switch", async ({ page }) => 
   expect((await searchCalls(page, "read_search_target"))[0].request.expectedVaultPath).toBe(VAULT_A)
 })
 
-test("moving public content into lockbox removes old search and recent", async ({ page }) => {
-  await page.goto("/")
-  const palette = await openSearch(page, "oldword")
-  await palette.getByRole("option").click()
-  await expect(palette).toHaveCount(0)
-  await expect.poll(() => page.evaluate((vaultPath) =>
-    JSON.parse(localStorage.getItem(`shard.recent.${vaultPath}`) ?? "[]").length,
-    VAULT_A
-  )).toBe(1)
-
-  const card = page.locator('[data-shard-fragment-id="public-target"]')
-  await expect(card).toBeVisible()
-  page.once("dialog", (dialog) => dialog.accept())
-  await card.getByRole("button", { name: "片段操作" }).click()
-  await page.getByRole("menuitem", { name: "移入密匣", exact: true }).click()
-  await expect(card).toHaveCount(0)
-  await expect.poll(() => page.evaluate((vaultPath) =>
-    JSON.parse(localStorage.getItem(`shard.recent.${vaultPath}`) ?? "[]").length,
-    VAULT_A
-  )).toBe(0)
-
-  const reopened = await openSearch(page, "oldword")
-  await expect(reopened.getByRole("option")).toHaveCount(0)
-  await expect(reopened.getByText("没有找到“oldword”")).toBeVisible()
-  const requests = await searchCalls(page, "search_vault")
-  expect(requests.at(-1)?.request.scope).toBe("public")
-})
-
 test("stale results update without another keystroke", async ({ page }) => {
   await page.goto("/")
   await updateSearchIpcMock(page, { indexState: "stale" })

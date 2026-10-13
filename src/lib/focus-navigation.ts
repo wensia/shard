@@ -130,6 +130,17 @@ function enterRegion(region: HTMLElement) {
   return region.contains(document.activeElement)
 }
 
+/** Enter a named shell region after navigation replaces its previous content. */
+export function focusRegion(id: string) {
+  const region = Array.from(document.querySelectorAll<HTMLElement>(REGION_SELECTOR))
+    .find(candidate => candidate.dataset.focusRegion === id && isVisible(candidate))
+  if (!region) return false
+  if (enterRegion(region)) return true
+  // A region can be temporarily empty while its workspace finishes mounting.
+  region.focus({ preventScroll: true })
+  return region === document.activeElement
+}
+
 function topmostModal() {
   const modals = Array.from(document.querySelectorAll<HTMLElement>(MODAL_SELECTOR))
     .filter(modal => modal.getClientRects().length > 0 && !modal.closest("[inert]"))

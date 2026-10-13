@@ -6,7 +6,6 @@ import {
   MoreHorizontalIcon,
   SearchIcon,
   SettingsIcon,
-  Trash2Icon,
 } from "@/components/icons"
 import { useState } from "react"
 
@@ -66,12 +65,11 @@ const SPACE_TABS: Array<{
 ]
 
 const FRAGMENT_TABS: Array<{
-  id: FragmentsView
+  id: Extract<FragmentsView, "all">
   label: string
   icon: typeof InboxIcon
 }> = [
   { id: "all", label: "全部", icon: InboxIcon },
-  { id: "trash", label: "回收站", icon: Trash2Icon },
 ]
 
 export function BottomTabs({
@@ -88,9 +86,8 @@ export function BottomTabs({
   const appVersion = useAppVersion()
   const ownedFragments = fragments.filter((fragment) => fragment.kind === "fragment" && !fragment.lockbox)
   const activeFragments = ownedFragments.filter((fragment) => !fragment.archived)
-  const counts: Record<FragmentsView, number> = {
+  const counts = {
     all: activeFragments.length,
-    trash: ownedFragments.length - activeFragments.length,
   }
 
   return (

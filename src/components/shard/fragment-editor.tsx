@@ -8,13 +8,11 @@ import {
   type CSSProperties,
   type FocusEvent,
 } from "react"
-import { isTauri } from "@tauri-apps/api/core"
 import {
   GitBranchIcon,
   Loader2Icon,
   LockKeyholeIcon,
   SendHorizontalIcon,
-  XIcon,
 } from "@/components/icons"
 
 import { EditorToolbar } from "@/components/shard/editor-toolbar"
@@ -32,18 +30,19 @@ import {
 import { useImageUpload } from "@/hooks/use-image-upload"
 import {
   extractTags,
+  getTagRanges,
   normalizeTagList,
   parseMarkdownImageLine,
 } from "@/lib/editor-format"
 import {
   getApiErrorMessage,
   openCsvFile,
-  setWindowControlsHidden,
 } from "@/lib/api"
 import {
   applyTypeTag,
   CONTENT_KIND_LABELS,
   countPlainTextCharacters,
+  deriveDocumentDigest,
   deriveKind,
   stripProtectedTypeTags,
 } from "@/lib/content-kind"
@@ -358,20 +357,6 @@ export function FragmentEditor({
     baseFileShaRef.current = fragment.fileSha ?? null
     setSaveState("saved")
   }, [draftContent, fragment])
-
-  useEffect(() => {
-    if (!isOpen || !isZen || !isTauri()) return
-
-    void setWindowControlsHidden(true).catch((error) => {
-      console.warn("Unable to hide window controls for zen editor", error)
-    })
-
-    return () => {
-      void setWindowControlsHidden(false).catch((error) => {
-        console.warn("Unable to restore window controls", error)
-      })
-    }
-  }, [draft?.id, fragment?.id, isOpen, isZen])
 
   /**
    * 文档类型不提供行内编辑：打开即换成禅模式（产品框架 §2）。
@@ -981,8 +966,39 @@ export function FragmentEditor({
     )
   }
 
-  const zenTrailing = (
+  const zenTitle = isOutlineSurface
+    ? (outlineFile?.nodes[outlineFile.rootId]?.text ?? "").trim() || "未命名大纲"
+    : deriveZenTitle(content) ||
+      (isDraft ? "新碎片" : isDocumentSurface ? "未命名文档" : "未命名碎片")
+  const zenActions = (
     <>
+      {isOutlineSurface ? (
+        // 导图是同一棵树的另一个视图，不是另一种文件（产品框架 §2）。
+        <div
+          aria-label="大纲视图"
+          role="group"
+          style={{ display: "flex", alignItems: "center", gap: "var(--shard-space-1)" }}
+        >
+          <Button
+            aria-pressed={outlineView === "outline"}
+            onClick={() => setOutlineView("outline")}
+            size="sm"
+            type="button"
+            variant={outlineView === "outline" ? "secondary" : "ghost"}
+          >
+            大纲
+          </Button>
+          <Button
+            aria-pressed={outlineView === "mindmap"}
+            onClick={() => setOutlineView("mindmap")}
+            size="sm"
+            type="button"
+            variant={outlineView === "mindmap" ? "secondary" : "ghost"}
+          >
+            导图
+          </Button>
+        </div>
+      ) : null}
       {willRouteToLockbox ? (
         <span
           className="shard-tag shard-tag-lockbox"
@@ -992,109 +1008,37 @@ export function FragmentEditor({
           {fragment ? "将移入密匣" : "将保存到密匣"}
         </span>
       ) : null}
-      <span
-        aria-hidden="true"
-        style={{
-          marginInline: "var(--shard-space-1)",
-          height: 20,
-          width: 1,
-          background: "var(--border)",
-          opacity: "var(--shard-alpha-55)",
-        }}
-      />
-      <ToolbarIconButton
-        className="shard-edge-action"
-        label="退出编辑"
-        onMouseDown={(event) => {
-          event.preventDefault()
-          void handleClose()
-        }}
-        style={{
-          borderRadius: "var(--shard-radius-control)",
-          color: "var(--muted-foreground)",
-        }}
-        type="button"
-        variant="ghost"
-      >
-        <XIcon />
-      </ToolbarIconButton>
     </>
+  )
+  // 大纲正文是受管 JSON，数它的字符没有意义，只给文字类型计数。
+  const zenMeta = isOutlineSurface ? null : isDocumentSurface ? (
+    // 文档档的字数是正文纯文本字符数，语法标记与围栏源码都不计。
+    <span
+      aria-label={`${documentCharacterCount} 字`}
+      data-zen-word-count="document"
+      title="字数只计正文，不含语法标记、空格与换行"
+    >
+      {documentCharacterCount.toLocaleString("zh-CN")} 字
+    </span>
+  ) : (
+    <span
+      aria-label={`${characterCount} 字，${lineCount} 行`}
+      title="字数不计空格与换行"
+    >
+      {characterCount.toLocaleString("zh-CN")} 字 ·{" "}
+      {lineCount.toLocaleString("zh-CN")} 行
+    </span>
   )
 
   return (
     <ZenSurface
       ariaLabel="禅模式"
-      footer={
-        <div className={`shard-content-inset ${styles.zenFooter}`}>
-          <div
-            className={styles.zenToolbar}
-            style={{
-              width: "fit-content",
-              maxWidth: "100%",
-              borderRadius: "var(--shard-surface-radius)",
-              background: "var(--card)",
-              padding: "var(--shard-space-3)",
-              boxShadow: "var(--shard-composer-shadow)",
-            }}
-          >
-            {isOutlineSurface ? (
-              <div
-                style={{
-                  display: "flex",
-                  minWidth: 0,
-                  alignItems: "center",
-                  gap: "var(--shard-space-2)",
-                }}
-              >
-                {outlineBadge}
-                {/* 导图是同一棵树的另一个视图，不是另一种文件（产品框架 §2）。 */}
-                <Button
-                  onClick={() => setOutlineView("outline")}
-                  size="sm"
-                  type="button"
-                  variant={outlineView === "outline" ? "secondary" : "ghost"}
-                >
-                  大纲
-                </Button>
-                <Button
-                  onClick={() => setOutlineView("mindmap")}
-                  size="sm"
-                  type="button"
-                  variant={outlineView === "mindmap" ? "secondary" : "ghost"}
-                >
-                  导图
-                </Button>
-                {zenTrailing}
-              </div>
-            ) : (
-              <EditorToolbar
-                disabled={readOnly || saveState === "saving"}
-                trailing={zenTrailing}
-              />
-            )}
-          </div>
-          {isDocumentSurface ? (
-            // 文档档的字数是正文纯文本字符数，语法标记与围栏源码都不计。
-            <span
-              aria-label={`${documentCharacterCount} 字`}
-              className={styles.zenStats}
-              data-zen-word-count="document"
-              title="字数只计正文，不含语法标记、空格与换行"
-            >
-              {documentCharacterCount.toLocaleString("zh-CN")} 字
-            </span>
-          ) : (
-            <span
-              aria-label={`${characterCount} 字，${lineCount} 行`}
-              className={styles.zenStats}
-              title="字数不计空格与换行"
-            >
-              {characterCount.toLocaleString("zh-CN")} 字 ·{" "}
-              {lineCount.toLocaleString("zh-CN")} 行
-            </span>
-          )}
-        </div>
-      }
+      bar={{
+        actions: zenActions,
+        meta: zenMeta,
+        saveState: readOnly ? "readOnly" : saveState,
+        title: zenTitle,
+      }}
       onRequestClose={() => closeEditorRef.current()}
     >
       <div
@@ -1117,6 +1061,24 @@ export function FragmentEditor({
       </div>
     </ZenSurface>
   )
+}
+
+/**
+ * 禅模式操作条的标题：与文档卡片同一口径（首个标题行，否则首行纯文本），
+ * 但先剔掉 `#标签`——标签是分类不是名字，`#灵感 随手记` 的名字是「随手记」。
+ */
+function deriveZenTitle(content: string) {
+  const ranges = getTagRanges(content)
+  if (ranges.length === 0) return deriveDocumentDigest(content).title
+
+  let withoutTags = ""
+  let cursor = 0
+  for (const range of ranges) {
+    withoutTags += content.slice(cursor, range.start)
+    cursor = range.end
+  }
+  withoutTags += content.slice(cursor)
+  return deriveDocumentDigest(withoutTags).title
 }
 
 function splitContentImageAttachments(value: string) {

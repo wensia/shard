@@ -83,7 +83,7 @@ function LibraryEntryMenuItems({ entry, destinations, batch, run, ...actions }: 
       ) : null}
       <DropdownMenuItem onClick={() => run(() => actions.onRename(entry))}><PencilLineIcon />重命名</DropdownMenuItem>
     </>}
-    <DropdownMenuSub>
+    {!entry.path.startsWith("fragments/") ? <DropdownMenuSub>
       <DropdownMenuSubTrigger disabled={destinations.length === 0}>
         <FolderIcon />{batch ? `移动 ${batch.count} 项到…` : "移动到…"}
       </DropdownMenuSubTrigger>
@@ -92,9 +92,9 @@ function LibraryEntryMenuItems({ entry, destinations, batch, run, ...actions }: 
           {directory === "notes" ? "资料库根目录" : directory.replace(/^notes\//u, "")}
         </DropdownMenuItem>)}
       </DropdownMenuSubContent>
-    </DropdownMenuSub>
+    </DropdownMenuSub> : null}
     {!batch && entry.kind === "markdown" ? <>
-      <DropdownMenuItem onClick={() => run(() => actions.onConvertToFragment(entry))}>转回碎片</DropdownMenuItem>
+      {entry.path.startsWith("notes/") ? <DropdownMenuItem onClick={() => run(() => actions.onConvertToFragment(entry))}>转回碎片</DropdownMenuItem> : null}
       <DropdownMenuItem onClick={() => actions.onMoveToLockbox(entry)}><LockKeyholeIcon />移入密匣</DropdownMenuItem>
     </> : null}
     <DropdownMenuSeparator />

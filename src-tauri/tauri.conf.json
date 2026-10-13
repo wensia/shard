@@ -13,6 +13,7 @@
     "windows": [
       {
         "title": "Shard",
+        "visible": false,
         "width": 1180,
         "height": 820,
         "center": true,

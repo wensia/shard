@@ -115,6 +115,9 @@ export function MindMapShortcuts({ view, onClose }: Props) {
         )}
         <ShortcutGroup title="通用" shortcuts={[
           { action: "保存", keys: `${command} + S` },
+          { action: "碎片", keys: `${command} + 1` },
+          { action: "日历", keys: `${command} + 2` },
+          { action: "资料库", keys: `${command} + 3` },
           { action: "撤销", keys: `${command} + Z` },
           { action: "重做", keys: `${command} + Shift + Z` },
           { action: "全选 / 复制 / 粘贴文字", keys: `${command} + A / C / V`, detail: "文字输入框内使用原生文字选区" },

@@ -66,7 +66,6 @@ export interface CaptureBoxHandle {
 
 interface CaptureBoxProps {
   initialContent?: string
-  secondarySubmit?: boolean
   csvFiles?: CsvFileSummary[]
   fragments: Fragment[]
   isCreating: boolean
@@ -100,7 +99,6 @@ interface PendingImage {
 }
 
 export const CaptureBox = forwardRef<CaptureBoxHandle, CaptureBoxProps>(function CaptureBox({
-  secondarySubmit = false,
   initialContent = "",
   csvFiles = [],
   fragments,
@@ -525,7 +523,7 @@ export const CaptureBox = forwardRef<CaptureBoxHandle, CaptureBoxProps>(function
       label={isCreating ? "保存中" : "保存片段"}
       onClick={() => void submit()}
       type="button"
-      variant={secondarySubmit ? "default" : "primary"}
+      variant="primary"
     >
       {isCreating ? (
         <Loader2Icon className={styles.spin} />

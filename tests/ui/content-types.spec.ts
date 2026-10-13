@@ -508,14 +508,6 @@ test.describe("时间线与瀑布流的类型卡片", () => {
     ).toHaveAttribute("aria-selected", "true")
   })
 
-  test("大纲卡片操作菜单不提供移入密匣", async ({ page }) => {
-    const target = card(page, "card-outline")
-    await revealCard(target)
-    await target.getByRole("button", { name: "片段操作" }).click()
-
-    await expect(page.getByRole("menuitem", { name: "移入密匣", exact: true })).toHaveCount(0)
-  })
-
   test("文档卡片只给标题、摘要与徽标，不渲染全文", async ({ page }) => {
     const target = card(page, "card-document")
     await revealCard(target)

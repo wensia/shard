@@ -60,7 +60,7 @@ async function installTauriMock(
       updatedAt: "2026-07-31T10:00:00.000Z",
       tags: ["inbox", "archive"],
       category: null,
-      path: "fragments/2026/07/archived-1.md",
+      path: ".trash/fragments/2026/07/archived-1.md",
       gitStatus: "committed",
       error: null,
       archived: true,
@@ -104,6 +104,19 @@ async function installTauriMock(
       git,
       lockbox,
     }
+    const libraryTree = () => ({
+      entries: [],
+      assets: [],
+      trashEntries: [],
+      fragmentTrashEntries: fragments.filter(fragment => fragment.archived).map(fragment => ({
+        name: fragment.path.split("/").at(-1),
+        path: fragment.path,
+        kind: "markdown",
+        size: 0,
+        modifiedAt: fragment.updatedAt,
+      })),
+      fragmentStream: { totalCount: 0, years: [] },
+    })
     const mapSummary = {
       id: "map-1",
       title: "测试导图",
@@ -295,22 +308,10 @@ async function installTauriMock(
             case "list_csv_files":
               return []
             case "list_library_tree":
-              return {
-                entries: [],
-                assets: [],
-                trashEntries: [],
-                fragmentTrashEntries: [],
-                fragmentStream: { totalCount: 0, years: [] },
-              }
+              return clone(libraryTree())
             case "migrate_legacy_notes":
               return {
-                tree: {
-                  entries: [],
-                  assets: [],
-                  trashEntries: [],
-                  fragmentTrashEntries: [],
-                  fragmentStream: { totalCount: 0, years: [] },
-                },
+                tree: clone(libraryTree()),
                 migratedCount: 0,
               }
             case "create_library_note":
@@ -402,10 +403,10 @@ test("editor toolbars expose visible labels through the shared icon button", asy
   await fillEditor(page, "composer", "禅模式工具栏提示回归")
   await focusEditor(page, "composer")
   await page.keyboard.press("Control+Shift+f")
-  await expect(page.getByRole("button", { name: "退出编辑" })).toBeVisible()
+  await expect(page.getByRole("button", { name: "退出禅模式", exact: true })).toBeVisible()
 
-  await page.getByRole("button", { name: "退出编辑" }).hover()
-  await expect(page.getByRole("tooltip", { name: "退出编辑" })).toBeVisible()
+  await page.getByRole("button", { name: "退出禅模式", exact: true }).hover()
+  await expect(page.getByRole("tooltip", { name: "退出禅模式" })).toBeVisible()
 })
 
 test("inline 浮动条操作一步撤销，切换片段后 history 隔离", async ({
@@ -926,7 +927,7 @@ test("search recall mode preserves context, focus, and timeline scrolling", asyn
   await expect(selectedOption).toHaveAttribute("aria-selected", "true")
   await search.press("Enter")
 
-  await expect(page.getByRole("button", { name: "碎片", exact: true })).toHaveAttribute("aria-current", "page")
+  await expect(page.getByRole("button", { name: /^全部碎片 24$/u })).toHaveAttribute("aria-current", "page")
   await expect(page.getByRole("complementary", { name: "资料库目录" })).toHaveCount(0)
   await expect(
     page.getByRole("button", { name: "返回搜索结果" })
@@ -1545,17 +1546,49 @@ test("mind map workspace keeps toolbar Tab traversal without creating topics", a
   await expect(page.locator("[data-mind-map-node]")).toHaveCount(initialCount)
 })
 
-test("fragment navigation only exposes all fragments and trash", async ({ page }) => {
+test("fragment navigation only exposes all fragments and library owns trash", async ({ page }) => {
   const navigation = page.getByRole("navigation", { name: "工作台导航" })
   await expect(navigation.getByRole("button", { name: /^全部碎片 24$/u })).toBeVisible()
-  await expect(navigation.getByRole("button", { name: /^回收站 1$/u })).toBeVisible()
+  await expect(navigation.getByRole("button", { name: /^回收站(?: |$)/u })).toHaveCount(0)
   await expect(page.getByRole("button", { name: /每日回顾|洞察视角|随机漫步/u })).toHaveCount(0)
 
-  await navigation.getByRole("button", { name: /^回收站 1$/u }).click()
-  await expect(page.getByRole("region", { name: "碎片回收站", exact: true })).toBeVisible()
+  await navigation.getByRole("button", { name: "资料库", exact: true }).click()
+  const tree = page.getByRole("complementary", { name: "资料库目录" })
+  await tree.getByRole("button", { name: "回收站（1）", exact: true }).click()
+  await expect(page.getByRole("region", { name: ".trash 目录列表", exact: true })
+    .locator('[data-path=".trash/fragments/2026/07/archived-1.md"]')).toBeVisible()
   await navigation.getByRole("button", { name: /^全部碎片 24$/u }).click()
   await expect(page.locator("[data-shard-fragment-id]")).toHaveCount(24)
   await expect(page.locator('[data-shard-editor="composer"] .ProseMirror')).toBeVisible()
+})
+
+test("旧回收站路由在冷启动仍回到碎片，资料库可以访问统一回收站", async ({ page }) => {
+  await page.evaluate(() => {
+    localStorage.setItem("shard.workspace-route", JSON.stringify({ space: "fragments", params: { view: "trash" } }))
+  })
+  await page.reload()
+  const navigation = page.getByRole("navigation", { name: "工作台导航" })
+  await expect(page.locator('[data-shard-editor="composer"] .ProseMirror')).toBeVisible()
+  await expect(page.locator("[data-shard-fragment-id]")).toHaveCount(24)
+  await expect(navigation.getByRole("button", { name: /^全部碎片 24$/u })).toHaveAttribute("aria-current", "page")
+  await expect(page.getByRole("region", { name: "碎片回收站", exact: true })).toHaveCount(0)
+
+  await navigation.getByRole("button", { name: "资料库", exact: true }).click()
+  const tree = page.getByRole("complementary", { name: "资料库目录" })
+  const trash = page.getByRole("region", { name: ".trash 目录列表", exact: true })
+  await tree.getByRole("button", { name: "回收站（1）", exact: true }).click()
+  await expect(tree.getByRole("button", { name: "回收站（1）", exact: true })).toHaveAttribute("aria-current", "page")
+  await expect(trash.locator('[data-path=".trash/fragments/2026/07/archived-1.md"]')).toBeVisible()
+  await expect(page.locator('[data-shard-editor="composer"]')).toHaveCount(0)
+  await expect.poll(() => page.evaluate(() => localStorage.getItem("shard.workspace-route"))).toBe(
+    JSON.stringify({ space: "library", params: {} })
+  )
+
+  await navigation.getByRole("button", { name: "碎片", exact: true }).click()
+  await expect(page.locator('[data-shard-editor="composer"] .ProseMirror')).toBeVisible()
+  await navigation.getByRole("button", { name: "资料库", exact: true }).click()
+  await expect(tree.getByRole("button", { name: "回收站（1）", exact: true })).toHaveAttribute("aria-current", "page")
+  await expect(trash.locator('[data-path=".trash/fragments/2026/07/archived-1.md"]')).toBeVisible()
 })
 
 for (const mode of ["dailyReview", "insight", "walk"]) {
@@ -1585,9 +1618,9 @@ test("small windows use bottom tabs without document scrolling", async ({
     .toBeVisible()
   const views = page.getByRole("navigation", { name: "碎片视图" })
   await expect(views).toBeVisible()
-  await expect(views.getByRole("button")).toHaveCount(2)
+  await expect(views.getByRole("button")).toHaveCount(1)
   await expect(views.getByRole("button", { name: /^全部 24$/u })).toBeVisible()
-  await expect(views.getByRole("button", { name: /^回收站 1$/u })).toBeVisible()
+  await expect(views.getByRole("button", { name: /^回收站(?: |$)/u })).toHaveCount(0)
   await expect(page.getByRole("button", { name: /每日回顾|洞察|漫步/u })).toHaveCount(0)
   await expect(page.locator("aside").first()).toBeHidden()
 
@@ -1631,153 +1664,26 @@ test.describe("片段关系层", () => {
 
     // 点击跳转后目标卡片进入高亮
     await linkedRow.click()
-    await expect(page.getByRole("button", { name: "碎片", exact: true })).toHaveAttribute("aria-current", "page")
+    await expect(page.getByRole("button", { name: /^全部碎片 24$/u })).toHaveAttribute("aria-current", "page")
     await expect(page.getByRole("complementary", { name: "资料库目录" })).toHaveCount(0)
     await expect(page.locator('[data-shard-fragment-id="fragment-3"]')).toHaveClass(/shard-fragment-card-highlight/)
   })
 
-  test("没有关联的卡片不占用垂直空间，可从菜单显式打开", async ({ page }) => {
+  test("片段操作菜单只保留编辑、复制、禅模式、置顶、分享与删除", async ({ page }) => {
     const card = page.locator('[data-shard-fragment-id="fragment-5"]')
 
-    // 默认时间线密度不变：无边的卡片没有任何关系入口
+    // 无边的卡片没有任何关系入口，也不再从菜单打开相关片段
     await expect(card.getByRole("button", { name: /条关联/ })).toHaveCount(0)
-    await expect(card.getByRole("button", { name: "相关片段" })).toHaveCount(0)
 
     await card.getByRole("button", { name: "片段操作" }).click()
-    await page.getByRole("menuitem", { name: "相关片段" }).click()
-
-    // 展开后按标签共现给出候选
-    await expect(card.getByRole("button", { name: "相关片段" })).toHaveAttribute(
-      "aria-expanded",
-      "true"
-    )
-    await expect(card.locator('span[aria-label="同标签"]').first()).toBeVisible()
-  })
-
-  test("可从卡片菜单搜索目标并建立手动关联", async ({ page }) => {
-    const card = page.locator('[data-shard-fragment-id="fragment-5"]')
-    await card.getByRole("button", { name: "片段操作" }).click()
-    await page.getByRole("menuitem", { name: "关联到片段…" }).click()
-
-    const dialog = page.getByRole("dialog", { name: "关联到片段" })
-    await expect(dialog).toBeVisible()
-    await dialog.getByRole("textbox", { name: "搜索片段" }).fill("第 8 条")
-    await dialog.getByRole("option", { name: /第 8 条回归片段/ }).click()
-
-    await expect(dialog).toBeHidden()
-    await expect(card.getByRole("button", { name: "1 条关联" })).toBeVisible()
-
-    const linkCall = await page.evaluate(() => {
-      const calls = (globalThis as typeof globalThis & {
-        __SHARD_TEST_CALLS__: Array<{
-          args: Record<string, unknown>
-          command: string
-        }>
-      }).__SHARD_TEST_CALLS__
-      return calls.find(
-        (call) =>
-          call.command === "link_fragments" && call.args.origin === "manual"
-      )
-    })
-    expect(linkCall?.args).toMatchObject({
-      origin: "manual",
-      sourceId: "fragment-5",
-      targetId: "fragment-8",
-    })
-  })
-
-  test("关闭的关联弹窗不计算候选，按需打开后保留搜索与焦点恢复", async ({ page }) => {
-    await page.addInitScript(() => {
-      const work = { indexNormalizations: 0, candidateDates: 0 }
-      Object.assign(globalThis, { __SHARD_LINK_DIALOG_WORK__: work })
-      // Count the actual normalization/formatting work without a production test hook.
-      const fromLinkDialog = () => new Error().stack?.includes("/fragment-link-dialog.tsx")
-      const normalize = String.prototype.toLocaleLowerCase
-      String.prototype.toLocaleLowerCase = function (...args) {
-        if (fromLinkDialog()) work.indexNormalizations += 1
-        return normalize.apply(this, args)
-      }
-      const formatDate = Date.prototype.toLocaleString
-      Date.prototype.toLocaleString = function (...args) {
-        if (fromLinkDialog()) work.candidateDates += 1
-        return formatDate.apply(this, args)
-      }
-    })
-    await page.reload()
-    await expect(page.locator("[data-shard-fragment-id]")).toHaveCount(24)
-    const readWork = () => page.evaluate(() => (
-      globalThis as typeof globalThis & {
-        __SHARD_LINK_DIALOG_WORK__: { indexNormalizations: number; candidateDates: number }
-      }
-    ).__SHARD_LINK_DIALOG_WORK__)
-    expect(await readWork()).toEqual({ indexNormalizations: 0, candidateDates: 0 })
-
-    const card = page.locator('[data-shard-fragment-id="fragment-5"]')
-    const trigger = card.getByRole("button", { name: "片段操作" })
-    const openLinkDialog = async () => {
-      await trigger.click()
-      await page.getByRole("menuitem", { name: "关联到片段…" }).click()
-    }
-    await openLinkDialog()
-    const dialog = page.getByRole("dialog", { name: "关联到片段" })
-    const search = dialog.getByRole("textbox", { name: "搜索片段" })
-    await expect(search).toBeFocused()
-    await expect(dialog.getByRole("option")).toHaveCount(20)
-    const openedWork = await readWork()
-    expect(openedWork.indexNormalizations).toBeGreaterThan(0)
-    expect(openedWork.candidateDates).toBeGreaterThan(0)
-    await search.fill("第 24 条")
-    await expect(dialog.getByRole("option")).toHaveCount(1)
-    await search.press("Escape")
-    await expect(page.locator('[data-slot="dialog-content"]')).toHaveCount(0)
-    await expect(trigger).toBeFocused()
-
-    const afterClose = await readWork()
-    // A later card render must not retain the closed dialog's expensive body.
-    await trigger.click()
-    await page.getByRole("menuitem", { name: "编辑", exact: true }).press("Escape")
-    await expect(trigger).toBeFocused()
-    expect(await readWork()).toEqual(afterClose)
-
-    await openLinkDialog()
-    await expect(search).toBeFocused()
-    await expect(search).toHaveValue("")
-    await expect(dialog.getByRole("option")).toHaveCount(20)
-    await search.fill("第 24 条")
-    await expect(dialog.getByRole("option")).toHaveCount(1)
-    await search.press("Enter")
-    await expect(page.locator('[data-slot="dialog-content"]')).toHaveCount(0)
-    await expect(trigger).toBeFocused()
-    await expect(card.getByRole("button", { name: "1 条关联" })).toBeVisible()
-  })
-
-  test("移除反向关联使用真实边 owner，且不会触发卡片跳转", async ({ page }) => {
-    const card = page.locator('[data-shard-fragment-id="fragment-3"]')
-    await card.getByRole("button", { name: "片段操作" }).click()
-    await page.getByRole("menuitem", { name: "相关片段" }).click()
-
-    const removeButton = card.getByRole("button", { name: "移除关联" })
-    await expect(removeButton).toBeVisible()
-    await removeButton.click()
-
-    await expect(removeButton).toBeHidden()
-    await expect(
-      page.locator('[data-shard-fragment-id="fragment-1"]')
-    ).not.toHaveClass(/shard-fragment-card-highlight/)
-
-    const unlinkCall = await page.evaluate(() => {
-      const calls = (globalThis as typeof globalThis & {
-        __SHARD_TEST_CALLS__: Array<{
-          args: Record<string, unknown>
-          command: string
-        }>
-      }).__SHARD_TEST_CALLS__
-      return calls.find((call) => call.command === "unlink_fragments")
-    })
-    expect(unlinkCall?.args).toMatchObject({
-      sourceId: "fragment-1",
-      targetId: "fragment-3",
-    })
+    await expect(page.getByRole("menuitem")).toHaveText([
+      "编辑",
+      "复制",
+      "禅模式",
+      "置顶",
+      "分享",
+      "删除",
+    ])
   })
 
 

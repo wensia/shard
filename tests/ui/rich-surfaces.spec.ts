@@ -149,9 +149,9 @@ test.describe("行内编辑与禅模式", () => {
     )
 
     const zen = zenSurface(page)
-    // 插入与块级转换全部走 `/` 命令，底部操作条不再放格式按钮。
+    // 插入与块级转换全部走 `/` 命令，操作条不放格式按钮。
     await expect(zen.getByRole("button", { name: "插入标签", exact: true })).toHaveCount(0)
-    // 基础档的角落仍是既有的字数 · 行数。
+    // 基础档给字数 · 行数，不是文档档的纯文本字数。
     await expect(zen.locator("[data-zen-word-count]")).toHaveCount(0)
 
     await expect(proseMirror(page, "zen:card-fragment")).toBeFocused()
@@ -371,13 +371,47 @@ test.describe("行内编辑与禅模式", () => {
     await expect(outline).toHaveCount(0)
   })
 
+  test("禅模式顶部操作条给出标题、保存态与字数，写字时淡出，动鼠标或停笔后淡回", async ({ page }) => {
+    await openFromCardMenu(page, "card-fragment", "禅模式")
+    const bar = zenSurface(page).locator("[data-zen-bar]")
+    const saveState = bar.locator("[data-zen-save-state]")
+
+    // 标签是分类不是名字：`#灵感 随手记的碎片` 的标题是「随手记的碎片」。
+    await expect(bar.locator("[data-zen-title]")).toHaveText("随手记的碎片")
+    await expect(saveState).toHaveText("已保存")
+    await expect(bar).toContainText(/\d+ 字 · \d+ 行/u)
+    await expect(bar).toHaveAttribute("data-hidden", "false")
+
+    // Playwright 输入非 ASCII 走 insertText、不发 keydown；真实输入法会发 Process 键。
+    await focusEditor(page, "zen:card-fragment")
+    await page.keyboard.type("a")
+    await expect(bar).toHaveAttribute("data-hidden", "true")
+    await expect(bar).toHaveCSS("opacity", "0")
+    await page.mouse.move(400, 400)
+    await page.mouse.move(420, 420)
+    await expect(bar).toHaveAttribute("data-hidden", "false", { timeout: 500 })
+
+    await page.keyboard.type("b")
+    await expect(bar).toHaveAttribute("data-hidden", "true")
+    // 停笔 1.5 秒后不动鼠标也淡回，期间 800ms 的自动保存已落盘。
+    await expect(bar).toHaveAttribute("data-hidden", "false", { timeout: 3_000 })
+    await expect(saveState).toHaveText("已保存")
+
+    await bar.getByRole("button", { name: "退出禅模式", exact: true }).click()
+    await expect(zenSurface(page)).toHaveCount(0)
+    await expect.poll(() => lastSavedFragment(page, "card-fragment"))
+      .toMatchObject({ content: expect.stringContaining("ab") })
+  })
+
   test("大纲类型的禅模式在幕布与只读导图之间切换", async ({ page }) => {
     await openFromCardMenu(page, "card-outline", "禅模式")
 
     const zen = zenSurface(page)
     await expect(zen).toHaveCount(1)
     await expect(zen.locator(OUTLINE)).toHaveCount(1)
-    await expect(zen.locator('[data-editor-type-badge="outline"]')).toBeVisible()
+    // 操作条标题取根节点；大纲的计数没有意义，不给字数。
+    await expect(zen.locator("[data-zen-bar] [data-zen-title]")).toHaveText("项目大纲")
+    await expect(zen.locator("[data-zen-bar]")).not.toContainText("字")
 
     await zen.getByRole("button", { name: "导图", exact: true }).click()
     await expect(zen.getByRole("img", { name: "思维导图预览" })).toBeVisible()
