@@ -6,6 +6,11 @@ struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var confirmingDisconnect = false
 
+    private var disconnectWarning: String {
+        let base = "断开后会删除手机上的离线副本和令牌，GitHub 上的内容不受影响。"
+        return model.pending.isEmpty ? base : base + "还有 \(model.pending.count) 条没推送的碎片会一起丢失。"
+    }
+
     var body: some View {
         Form {
             Section("资料库") {
@@ -40,6 +45,25 @@ struct SettingsView: View {
                 }
             }
 
+            if !model.pending.isEmpty {
+                Section {
+                    ForEach(model.pending) { item in
+                        Text(Preview.compact(VaultDocument.parse(path: item.path, text: item.text).body))
+                            .lineLimit(3)
+                            .foregroundStyle(Theme.ink)
+                            .swipeActions {
+                                Button("放弃", role: .destructive) {
+                                    Task { await model.discardPending(item.id) }
+                                }
+                            }
+                    }
+                } header: {
+                    Text("待同步（\(model.pending.count)）")
+                } footer: {
+                    Text("联网后自动推送到 GitHub。左滑可以放弃一条。")
+                }
+            }
+
             Section {
                 Button("断开并清除本机数据", role: .destructive) {
                     confirmingDisconnect = true
@@ -59,7 +83,7 @@ struct SettingsView: View {
                 Button("完成") { dismiss() }
             }
         }
-        .confirmationDialog("断开后会删除手机上的离线副本和令牌，GitHub 上的内容不受影响。", isPresented: $confirmingDisconnect, titleVisibility: .visible) {
+        .confirmationDialog(disconnectWarning, isPresented: $confirmingDisconnect, titleVisibility: .visible) {
             Button("断开并清除", role: .destructive) {
                 Task {
                     await model.disconnect()

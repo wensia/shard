@@ -38,6 +38,14 @@ struct SetupView: View {
                 }
             }
 
+            if isReplacing, !model.pending.isEmpty {
+                Section {
+                    Text("还有 \(model.pending.count) 条碎片没推送。换到别的仓库或分支会清掉本机副本和这些碎片；只更新令牌不受影响。")
+                        .font(.footnote)
+                        .foregroundStyle(Theme.accent)
+                }
+            }
+
             if let errorMessage {
                 Section {
                     Text(errorMessage).foregroundStyle(Theme.accent)

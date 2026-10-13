@@ -17,9 +17,13 @@ final class AppModel {
     private(set) var syncState = SyncState.idle
     private(set) var lastSyncedAt: Date?
     private(set) var headCommit: String?
+    /// Fragments captured here that are not committed yet.
+    private(set) var pending: [PendingFragment] = []
 
     @ObservationIgnored private var store: VaultStore?
     @ObservationIgnored private var token: String?
+    /// A sync asked for while one was running; run once more when it ends.
+    @ObservationIgnored private var syncRequested = false
     private static let repositoryKey = "repository"
     private static let lastSyncedKey = "lastSyncedAt"
 
@@ -70,14 +74,28 @@ final class AppModel {
         token = nil
         store = nil
         index = .empty
+        pending = []
         syncState = .idle
         lastSyncedAt = nil
         headCommit = nil
     }
 
+    /// Pushes captured fragments first, then pulls the remote head.
     func sync() async {
-        guard let store, let remote, syncState != .syncing else { return }
+        guard let store, let remote else { return }
+        guard syncState != .syncing else {
+            syncRequested = true
+            return
+        }
         syncState = .syncing
+        var failure: Error?
+        do {
+            if try await store.pushPending(to: remote) > 0 {
+                await reloadIndex()
+            }
+        } catch {
+            failure = error
+        }
         do {
             let summary = try await store.sync(with: remote)
             headCommit = summary.headCommit
@@ -86,10 +104,31 @@ final class AppModel {
             }
             lastSyncedAt = Date()
             UserDefaults.standard.set(lastSyncedAt, forKey: Self.lastSyncedKey)
-            syncState = .idle
         } catch {
-            syncState = .failed(Self.describe(error))
+            failure = failure ?? error
         }
+        pending = await store.pending
+        syncState = failure.map { .failed(Self.describe($0)) } ?? .idle
+        if syncRequested {
+            syncRequested = false
+            await sync()
+        }
+    }
+
+    /// Queues a fragment (it shows in the timeline at once) and pushes it in the background.
+    func capture(_ text: String) async throws {
+        guard let store else { throw RemoteError.notFound }
+        let fragment = try NewFragment.make(content: text)
+        try await store.enqueue(fragment)
+        pending = await store.pending
+        await reloadIndex()
+        Task { await sync() }
+    }
+
+    func discardPending(_ id: String) async {
+        try? await store?.discard(id)
+        pending = await store?.pending ?? []
+        await reloadIndex()
     }
 
     /// Serves `shard://vault/<path>` for the renderer (images under `assets/`).
@@ -135,6 +174,7 @@ final class AppModel {
         guard let store else { return }
         let documents = await store.loadDocuments()
         headCommit = await store.headCommit
+        pending = await store.pending
         index = VaultIndex(documents: documents)
     }
 
@@ -153,6 +193,12 @@ final class AppModel {
             return "仓库文件太多，GitHub 返回的目录不完整。"
         case RemoteError.checksumMismatch(let path):
             return "下载的文件校验失败：\(path)"
+        case RemoteError.conflict(let path):
+            return "远端已有同名文件且内容不同：\(path)。可在设置里查看这条待同步内容。"
+        case NewFragment.Failure.emptyContent:
+            return "写点什么再发送。"
+        case NewFragment.Failure.lockboxNotSupported:
+            return "手机端暂不支持密匣，去掉 #密匣 再发送。"
         case RemoteError.http(let status, let message):
             return "GitHub 返回 \(status)：\(message)"
         case let error as URLError:

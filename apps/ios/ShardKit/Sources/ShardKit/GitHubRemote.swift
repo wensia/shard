@@ -38,6 +38,8 @@ public enum RemoteError: Error, Equatable, Sendable {
     case invalidResponse
     case truncatedTree
     case checksumMismatch(path: String)
+    /// `createFile` target already exists (GitHub answers 422 without the existing sha).
+    case alreadyExists
     /// The path already exists remotely with different content (never expected for new fragment ids).
     case conflict(path: String)
 }
@@ -53,10 +55,6 @@ public protocol VaultRemote: Sendable {
     func fileBlobSHA(path: String) async throws -> String?
 }
 
-extension RemoteError {
-    /// GitHub answers 422 when `PUT contents` targets an existing path without its sha.
-    static let alreadyExists = RemoteError.http(status: 422, message: "already exists")
-}
 
 /// GitHub REST v3 (`api.github.com`), authenticated with a fine-grained token.
 public struct GitHubRemote: VaultRemote {

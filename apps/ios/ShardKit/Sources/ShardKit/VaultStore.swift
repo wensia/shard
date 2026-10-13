@@ -10,10 +10,19 @@ public struct SyncSummary: Equatable, Sendable {
     public var unchanged: Bool { downloaded == 0 && removed == 0 }
 }
 
-/// Offline mirror of the vault's Markdown, plus lazily cached attachments.
+/// A fragment captured on the phone and waiting to be committed.
+public struct PendingFragment: Codable, Equatable, Sendable, Identifiable {
+    public let id: String
+    public let path: String
+    public let text: String
+}
+
+/// Offline mirror of the vault's Markdown, lazily cached attachments, and the outbox of
+/// fragments captured here.
 ///
-/// Layout under `root`: `files/<vault path>` for content and `manifest.json` mapping each
-/// mirrored path to its git blob SHA, so a sync downloads only blobs that changed.
+/// Layout under `root`: `files/<vault path>` for content, `manifest.json` mapping each
+/// mirrored path to its git blob SHA (so a sync downloads only blobs that changed), and
+/// `outbox.json`, kept apart from the mirror so a pull never drops unsent fragments.
 public actor VaultStore {
     struct Manifest: Codable {
         var headCommit: String?
@@ -28,12 +37,15 @@ public actor VaultStore {
 
     public let root: URL
     private var manifest: Manifest
+    private var outbox: [PendingFragment]
+    private var isPushing = false
     private let downloadConcurrency = 8
 
     public init(root: URL) {
         self.root = root
-        let url = root.appending(path: "manifest.json")
-        manifest = (try? JSONDecoder().decode(Manifest.self, from: Data(contentsOf: url))) ?? Manifest()
+        let decoder = JSONDecoder()
+        manifest = (try? decoder.decode(Manifest.self, from: Data(contentsOf: root.appending(path: "manifest.json")))) ?? Manifest()
+        outbox = (try? decoder.decode([PendingFragment].self, from: Data(contentsOf: root.appending(path: "outbox.json")))) ?? []
     }
 
     /// `Application Support/Vaults/<owner>/<repo>/<branch>`; one mirror per repository and branch.
@@ -46,14 +58,73 @@ public actor VaultStore {
 
     public var headCommit: String? { manifest.headCommit }
 
+    public var pending: [PendingFragment] { outbox }
+
+    /// Mirrored documents plus outbox fragments the mirror does not have yet.
     public func loadDocuments() -> [VaultDocument] {
-        manifest.documents.keys.compactMap { path in
+        let mirrored: [VaultDocument] = manifest.documents.keys.compactMap { path in
             guard let url = try? fileURL(path),
                   let data = try? Data(contentsOf: url),
                   let text = String(data: data, encoding: .utf8)
             else { return nil }
             return VaultDocument.parse(path: path, text: text)
         }
+        let unsent = outbox
+            .filter { manifest.documents[$0.path] == nil }
+            .map { VaultDocument.parse(path: $0.path, text: $0.text, isPending: true) }
+        return mirrored + unsent
+    }
+
+    // MARK: - Outbox
+
+    public func enqueue(_ fragment: NewFragment) throws {
+        outbox.append(PendingFragment(id: fragment.id, path: fragment.path, text: fragment.text))
+        try saveOutbox()
+    }
+
+    /// Gives up on a queued fragment (only offered for one that keeps failing).
+    public func discard(_ id: String) throws {
+        outbox.removeAll { $0.id == id }
+        try saveOutbox()
+    }
+
+    /// Commits queued fragments oldest first, stopping at the first failure so the
+    /// remaining ones keep their order. Returns how many were committed.
+    public func pushPending(to remote: any VaultRemote) async throws -> Int {
+        guard !isPushing else { return 0 }
+        isPushing = true
+        defer { isPushing = false }
+
+        var pushed = 0
+        while let next = outbox.first {
+            let data = Data(next.text.utf8)
+            try await create(next, data: data, on: remote)
+            outbox.removeFirst()
+            try saveOutbox()
+            // Mirror it right away so the timeline does not flicker before the next pull;
+            // the pull then finds the same blob SHA and downloads nothing.
+            try write(data, to: next.path)
+            manifest.documents[next.path] = Self.gitBlobSHA(data)
+            try saveManifest()
+            pushed += 1
+        }
+        return pushed
+    }
+
+    private func create(_ item: PendingFragment, data: Data, on remote: any VaultRemote) async throws {
+        do {
+            try await remote.createFile(path: item.path, content: data, message: "手机记录：新增碎片 \(item.id)")
+        } catch RemoteError.alreadyExists {
+            // A retry after a lost response: the commit already landed if the content matches.
+            guard try await remote.fileBlobSHA(path: item.path) == Self.gitBlobSHA(data) else {
+                throw RemoteError.conflict(path: item.path)
+            }
+        }
+    }
+
+    private func saveOutbox() throws {
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try JSONEncoder().encode(outbox).write(to: root.appending(path: "outbox.json"), options: .atomic)
     }
 
     /// Brings the mirror up to the remote head: downloads changed blobs, removes deleted ones.
@@ -84,6 +155,7 @@ public actor VaultStore {
         }
 
         // Only now does the mirror claim this head; an interrupted sync simply re-diffs.
+        // The outbox lives in its own file and is untouched here.
         manifest = Manifest(headCommit: head.commit, documents: documents, assets: assets)
         try saveManifest()
         return SyncSummary(headCommit: head.commit, downloaded: changed.count, removed: removed.count)
@@ -104,12 +176,13 @@ public actor VaultStore {
         return data
     }
 
-    /// Deletes the whole mirror (e.g. when switching repositories).
+    /// Deletes the whole mirror and outbox (e.g. when switching repositories).
     public func reset() throws {
         if FileManager.default.fileExists(atPath: root.path) {
             try FileManager.default.removeItem(at: root)
         }
         manifest = Manifest()
+        outbox = []
     }
 
     // MARK: - Internals
@@ -117,7 +190,7 @@ public actor VaultStore {
     private func download(_ blobs: [String: String], from remote: any VaultRemote) async throws {
         var pending = blobs.makeIterator()
         try await withThrowingTaskGroup(of: (String, Data).self) { group in
-            func enqueue() -> Bool {
+            func startNext() -> Bool {
                 guard let (path, sha) = pending.next() else { return false }
                 group.addTask {
                     let data = try await remote.blob(sha)
@@ -126,10 +199,10 @@ public actor VaultStore {
                 }
                 return true
             }
-            for _ in 0..<downloadConcurrency where !enqueue() { break }
+            for _ in 0..<downloadConcurrency where !startNext() { break }
             while let (path, data) = try await group.next() {
                 try write(data, to: path)
-                _ = enqueue()
+                _ = startNext()
             }
         }
     }

@@ -54,6 +54,31 @@ final class ShardUITests: XCTestCase {
     }
 
     @MainActor
+    func testCaptureFragmentIsQueuedThenPushed() throws {
+        let app = launchConnected()
+        XCTAssertTrue(app.buttons.matching(identifier: "document-card").firstMatch.waitForExistence(timeout: 60))
+
+        let marker = "UITEST\(Int(Date().timeIntervalSince1970))"
+        app.buttons["compose-button"].tap()
+        let editor = app.textViews["compose-editor"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 5))
+        editor.typeText("手机上记一条 \(marker) #手机测试")
+        snapshot("08-compose")
+        app.buttons["compose-send"].tap()
+
+        let card = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", marker)).firstMatch
+        XCTAssertTrue(card.waitForExistence(timeout: 10), "captured fragment not in timeline")
+        snapshot("09-captured")
+
+        // The badge goes away once the commit lands on the (mock) remote.
+        let badge = app.descendants(matching: .any).matching(identifier: "pending-badge").firstMatch
+        let pushed = expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: badge)
+        wait(for: [pushed], timeout: 30)
+        snapshot("10-pushed")
+        print("UITEST_MARKER=\(marker)")
+    }
+
+    @MainActor
     private func launchConnected() -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments += [

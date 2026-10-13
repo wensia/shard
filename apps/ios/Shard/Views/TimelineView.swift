@@ -5,6 +5,7 @@ struct TimelineView: View {
     @Environment(AppModel.self) private var model
     @State private var query = ""
     @State private var showingSettings = false
+    @State private var composing = false
 
     var body: some View {
         NavigationStack {
@@ -20,6 +21,22 @@ struct TimelineView: View {
                 }
             }
             .safeAreaInset(edge: .top, spacing: 0) { SyncBanner() }
+            .safeAreaInset(edge: .bottom, alignment: .trailing, spacing: 0) {
+                Button {
+                    composing = true
+                } label: {
+                    Image(systemName: "square.and.pencil")
+                        .font(.title2.weight(.medium))
+                        .foregroundStyle(.white)
+                        .frame(width: 56, height: 56)
+                        .background(Theme.accent, in: Circle())
+                        .shadow(color: .black.opacity(0.15), radius: 8, y: 3)
+                }
+                .accessibilityLabel("记一条")
+                .accessibilityIdentifier("compose-button")
+                .padding(.trailing, 20)
+                .padding(.bottom, 12)
+            }
             .refreshable { await model.sync() }
             .searchable(text: $query, prompt: "搜索碎片和笔记")
             .navigationTitle("碎片")
@@ -33,6 +50,9 @@ struct TimelineView: View {
             }
             .sheet(isPresented: $showingSettings) {
                 NavigationStack { SettingsView() }
+            }
+            .sheet(isPresented: $composing) {
+                ComposeView()
             }
             .vaultDestinations()
         }

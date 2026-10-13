@@ -287,3 +287,74 @@ source: desktop
         #expect(spans.map { String($0.dropFirst()) } == ShardTags.extractTags(text))
     }
 }
+
+@Suite struct OutboxTests {
+    private func capture(_ text: String, id: String) throws -> NewFragment {
+        try NewFragment.make(content: text, now: Date(timeIntervalSince1970: 1_791_886_953), timeZone: TimeZone(secondsFromGMT: 8 * 3600)!, id: id)
+    }
+
+    @Test func queuedFragmentsShowAsPendingAndSurviveAPull() async throws {
+        let remote = FakeRemote(["notes/a.md": "a"])
+        let root = temporaryRoot()
+        let store = VaultStore(root: root)
+        try await store.enqueue(capture("手机上记的 #测试", id: "20261013-182233-00000000-000001"))
+
+        _ = try await store.sync(with: remote)
+        let pending = await store.loadDocuments().filter(\.isPending)
+        #expect(pending.map(\.path) == ["fragments/2026/10/20261013-182233-00000000-000001.md"])
+        #expect(pending.first?.tags == ["inbox", "测试"])
+
+        // The outbox is persisted on its own, independent of the mirror manifest.
+        #expect(await VaultStore(root: root).pending.count == 1)
+    }
+
+    @Test func pushCommitsInOrderAndMirrorsWithoutRedownloading() async throws {
+        let remote = FakeRemote(["notes/a.md": "a"])
+        let store = VaultStore(root: temporaryRoot())
+        _ = try await store.sync(with: remote)
+        let first = try capture("第一条", id: "20261013-182233-00000000-000001")
+        let second = try capture("第二条", id: "20261013-182233-00000000-000002")
+        try await store.enqueue(first)
+        try await store.enqueue(second)
+
+        #expect(try await store.pushPending(to: remote) == 2)
+        #expect(await remote.createRequests == [first.path, second.path])
+        #expect(await remote.files[first.path] == Data(first.text.utf8))
+        #expect(await store.pending.isEmpty)
+
+        let before = await remote.blobRequests.count
+        let summary = try await store.sync(with: remote)
+        #expect(summary.downloaded == 0)
+        #expect(await remote.blobRequests.count == before)
+        #expect(await store.loadDocuments().filter(\.isPending).isEmpty)
+    }
+
+    @Test func retryAfterLostResponseDoesNotDuplicate() async throws {
+        let remote = FakeRemote([:])
+        let store = VaultStore(root: temporaryRoot())
+        let fragment = try capture("网络断了", id: "20261013-182233-00000000-000003")
+        try await store.enqueue(fragment)
+
+        await remote.dropNextCreateResponse()
+        await #expect(throws: URLError.self) { try await store.pushPending(to: remote) }
+        #expect(await store.pending.count == 1)
+
+        #expect(try await store.pushPending(to: remote) == 1)
+        #expect(await remote.files.count == 1)
+        #expect(await store.pending.isEmpty)
+    }
+
+    @Test func differentContentAtTheSamePathIsAConflict() async throws {
+        let fragment = try capture("我的内容", id: "20261013-182233-00000000-000004")
+        let remote = FakeRemote([fragment.path: "别人的内容"])
+        let store = VaultStore(root: temporaryRoot())
+        try await store.enqueue(fragment)
+
+        await #expect(throws: RemoteError.conflict(path: fragment.path)) {
+            try await store.pushPending(to: remote)
+        }
+        #expect(await store.pending.count == 1)
+        try await store.discard(fragment.id)
+        #expect(await store.pending.isEmpty)
+    }
+}

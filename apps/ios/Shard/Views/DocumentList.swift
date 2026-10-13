@@ -50,7 +50,7 @@ struct DocumentCard: View {
     @ViewBuilder private var header: some View {
         let typeLabel = ContentType.label(for: document.typeTag)
         let date = DisplayDate.short(document.createdAt)
-        if document.kind == .fragment, !date.isEmpty || typeLabel != nil || document.pinned {
+        if document.kind == .fragment, !date.isEmpty || typeLabel != nil || document.pinned || document.isPending {
             HStack(spacing: 6) {
                 Text(date)
                 if let typeLabel {
@@ -60,6 +60,11 @@ struct DocumentCard: View {
                         .background(Theme.fill, in: RoundedRectangle(cornerRadius: 4))
                 }
                 Spacer(minLength: 0)
+                if document.isPending {
+                    Label("待同步", systemImage: "arrow.up.circle")
+                        .foregroundStyle(Theme.accent)
+                        .accessibilityIdentifier("pending-badge")
+                }
                 if document.pinned {
                     Image(systemName: "pin.fill").foregroundStyle(Theme.accent)
                 }
