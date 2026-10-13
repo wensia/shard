@@ -20,6 +20,7 @@ const ENTITY_AT = /^&(?:#[0-9]+|#[xX][0-9a-fA-F]+|[a-zA-Z][a-zA-Z0-9]*);/u
 const WORD_CHAR = /[\p{L}\p{N}_]/u
 const LINE_HORIZONTAL_RULE = /^(?:-{3,}|\*{3,}|_{3,})[ \t]*$/u
 const LINE_SETEXT = /^(?:={1,}|-{1,})[ \t]*$/u
+const LINE_TABLE_DELIMITER = /^\|?[ \t]*:?-+:?[ \t]*(?:\|[ \t]*:?-+:?[ \t]*)*\|?[ \t]*$/u
 
 interface MarkSpec {
   type: string
@@ -45,6 +46,8 @@ export function serializeShardMarkdown(doc: JSONContent, frontmatter?: string | 
  * 中间不留空行，否则重新解析会得到松散列表、文件里多出一行空白。
  */
 function serializeBlocks(nodes: JSONContent[], tightLists: boolean): string {
+  if (!tightLists) return serializeLineBlocks(nodes)
+
   const parts: string[] = []
   nodes.forEach((node, index) => {
     const text = serializeBlock(node)
@@ -59,6 +62,36 @@ function serializeBlocks(nodes: JSONContent[], tightLists: boolean): string {
 
   const joined = parts.join("")
   return joined.replace(/^\s+|\s+$/gu, "")
+}
+
+/**
+ * 顶层文档与引用块：源码一行就是显示的一行。相邻两段用一个换行连接；
+ * 有一侧是标题、列表等其他块时，中间留一个 Markdown 分隔空行。
+ * 每个空段落再多写一个空行，读回来就是一行空白。与 parseLineBlocks 互逆。
+ */
+function serializeLineBlocks(nodes: JSONContent[]): string {
+  const parts: string[] = []
+  let previous: JSONContent | null = null
+  let emptyRows = 0
+  for (const node of nodes) {
+    let text = serializeBlock(node)
+    if (node.type === "paragraph") {
+      // 行尾两个空格会被读成硬换行，把下一行并进这一段。
+      text = text.replace(/[ \t]+$/u, "")
+      if (!text.trim()) {
+        if (previous) emptyRows += 1
+        continue
+      }
+    }
+    if (previous) {
+      const bothParagraphs = previous.type === "paragraph" && node.type === "paragraph"
+      parts.push(`${bothParagraphs ? "\n" : "\n\n"}${"\n".repeat(emptyRows)}`)
+    }
+    parts.push(text)
+    previous = node
+    emptyRows = 0
+  }
+  return parts.join("").replace(/^\s+|\s+$/gu, "")
 }
 
 function serializeBlock(node: JSONContent): string {
@@ -432,7 +465,7 @@ function escapeLine(line: string, atLineStart: boolean, previousChar: string, in
   let index = 0
 
   if (atLineStart) {
-    const consumed = escapeLineStart(line)
+    const consumed = escapeLineStart(line, inTable)
     if (consumed) {
       out += consumed.text
       index = consumed.length
@@ -480,8 +513,12 @@ function escapeLine(line: string, atLineStart: boolean, previousChar: string, in
   return out
 }
 
-function escapeLineStart(line: string): { text: string; length: number } | null {
+function escapeLineStart(line: string, inTable: boolean): { text: string; length: number } | null {
   if (LINE_HORIZONTAL_RULE.test(line) || LINE_SETEXT.test(line)) {
+    return { text: `\\${line[0]}`, length: 1 }
+  }
+  // 段落行之间只隔一个换行，长得像表格分隔行的一行会把上一行变成表头。
+  if (!inTable && /[|:]/u.test(line) && LINE_TABLE_DELIMITER.test(line)) {
     return { text: `\\${line[0]}`, length: 1 }
   }
   const heading = /^#{1,6}(?:[ \t]|$)/u.exec(line)

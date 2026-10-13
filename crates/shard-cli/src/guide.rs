@@ -25,6 +25,8 @@ Shard 是用户的本地 Markdown 资料库（vault）加桌面应用。读写�
 ## 格式规则
 
 - 正文是普通 Markdown。不要写 YAML frontmatter，id、时间和标签由 shard 生成。
+- Shard 按源码的行显示：换一行就是新的一行，空一行就显示一行空白，空几行显示几行。
+  分段照常空一行即可，不要为了显示效果多空行。
 - 标签直接写在正文里：`#标签`。`#` 前面要是行首、空格或标点，标签延续到空白为止。
   先运行 `shard --tags` 看已有标签，优先复用，不要造近义的新标签。
 - `inbox`、`note`、`outline`、`flowchart`、`document` 是系统标签，不要手写。

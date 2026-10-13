@@ -867,6 +867,7 @@ fn load_lockbox_markdown(
         frontmatter,
         frontmatter_raw,
         body,
+        ..
     } = payload;
     Ok(markdown_document(
         vault,

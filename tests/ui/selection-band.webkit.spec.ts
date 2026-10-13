@@ -232,7 +232,8 @@ test("卡片选区按文字行盒绘制，清除后消失，复制文本保持�
 })
 
 test("composer 跨段选区逐行绘制，首行不延伸到右边缘", async ({ page }) => {
-  await fillEditor(page, "composer", BODY)
+  // 编辑区里源码一行就是一段：两行相邻，不隔空行。
+  await fillEditor(page, "composer", `${FIRST_LINE}\n${SECOND_LINE}`)
   await expect(page.locator(`${EDITOR} p`)).toHaveCount(2)
   await selectLines(page, EDITOR)
   await expectBandGeometry(page, EDITOR)

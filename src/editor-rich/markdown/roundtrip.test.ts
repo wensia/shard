@@ -23,7 +23,7 @@ const cases = readdirSync(GOLDEN_DIR, { withFileTypes: true })
   .sort()
 
 describe("Shard Markdown 方言往返", () => {
-  it.each([1, 2])("保留普通段落之间的 %i 个显式空段落", (emptyLines) => {
+  it.each([0, 1, 2])("段落之间 %i 个空段落就是源码里的 %i 个空行", (emptyLines) => {
     const doc = {
       type: "doc",
       content: [
@@ -32,7 +32,7 @@ describe("Shard Markdown 方言往返", () => {
         { type: "paragraph", content: [{ type: "text", text: "终究要为它赎罪" }] },
       ],
     }
-    const markdown = `始于欲望${"\n".repeat(emptyLines + 2)}终究要为它赎罪`
+    const markdown = `始于欲望${"\n".repeat(emptyLines + 1)}终究要为它赎罪`
     expect(serializeShardMarkdown(doc)).toBe(markdown)
     expect(parseShardMarkdown(markdown).doc).toEqual(doc)
   })

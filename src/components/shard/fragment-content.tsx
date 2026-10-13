@@ -92,7 +92,6 @@ export function FragmentContent({
 
   return (
     <MarkdownContent
-      compactParagraphs
       className={className}
       content={content}
       hideTags={hideTags}

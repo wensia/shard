@@ -415,7 +415,7 @@ test.describe("富文本块级组件", () => {
     await composerBlock(page, "raw").getByRole("button", { name: "删除原始内容" }).click()
 
     await expect(composerBlock(page, "raw")).toHaveCount(0)
-    await expect.poll(() => readEditor(page, "composer")).toBe("前面的段落\n\n后面的段落")
+    await expect.poll(() => readEditor(page, "composer")).toBe("前面的段落\n后面的段落")
   })
 })
 
