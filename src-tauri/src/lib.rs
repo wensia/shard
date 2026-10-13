@@ -66,6 +66,7 @@ use tauri::Manager;
 mod cli_install;
 mod canvas_commands;
 mod export_commands;
+mod markdown_dialect;
 mod window_frame;
 mod reminder_badge;
 mod search_commands;
@@ -598,6 +599,10 @@ struct LockboxFragmentPayload {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     frontmatter_raw: Option<String>,
     body: String,
+    /// 正文的 Markdown 方言版本（见 markdown_dialect.rs）。旧载荷没有这个字段，按 v1 读；
+    /// 只改元数据的写回原样带着它，只有写入新正文时才标成当前版本。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    markdown_dialect: Option<u32>,
 }
 
 #[derive(Default)]
@@ -923,6 +928,59 @@ async fn list_fragments(
     run_blocking(move || {
         let vault = ensure_vault_dirs(&app)?;
         list_fragments_in_vault(&vault, &lockbox_runtime)
+    })
+    .await
+}
+
+/// 公开内容还是方言 v1 时，列出全部 Markdown 原文交给前端改写；已是 v2 时列表为空。
+#[tauri::command]
+async fn list_markdown_dialect_migration(
+    app: tauri::AppHandle,
+) -> Result<markdown_dialect::PublicMigrationPlan, String> {
+    run_blocking(move || markdown_dialect::list_public_sources(&ensure_vault_dirs(&app)?)).await
+}
+
+/// 写回前端改写好的原文并把资料库标成方言 v2；sha 有一个对不上就整批不写。
+#[tauri::command]
+async fn apply_markdown_dialect_migration(
+    app: tauri::AppHandle,
+    files: Vec<markdown_dialect::MigratedPublicSource>,
+) -> Result<usize, String> {
+    run_blocking(move || {
+        let vault = ensure_vault_dirs(&app)?;
+        let _gate = lock_vault_gate(&vault);
+        markdown_dialect::apply_public_migration(&vault, files)
+    })
+    .await
+}
+
+/// 解锁后列出还是方言 v1 的密匣正文。
+#[tauri::command]
+async fn list_lockbox_dialect_migration(
+    app: tauri::AppHandle,
+    lockbox_runtime: tauri::State<'_, LockboxRuntime>,
+) -> Result<Vec<markdown_dialect::LockboxSource>, String> {
+    let lockbox_runtime = lockbox_runtime.inner().clone();
+    run_blocking(move || {
+        let vault = ensure_vault_dirs(&app)?;
+        let read_keys = require_unlocked_lockbox_read_keys(&vault, &lockbox_runtime)?;
+        markdown_dialect::list_lockbox_sources(&vault, &read_keys)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn apply_lockbox_dialect_migration(
+    app: tauri::AppHandle,
+    lockbox_runtime: tauri::State<'_, LockboxRuntime>,
+    files: Vec<markdown_dialect::MigratedLockboxSource>,
+) -> Result<usize, String> {
+    let lockbox_runtime = lockbox_runtime.inner().clone();
+    run_blocking(move || {
+        let vault = ensure_vault_dirs(&app)?;
+        let _gate = lock_vault_gate(&vault);
+        let read_keys = require_unlocked_lockbox_read_keys(&vault, &lockbox_runtime)?;
+        markdown_dialect::apply_lockbox_migration(&vault, &read_keys, files)
     })
     .await
 }
@@ -1530,8 +1588,12 @@ async fn set_vault_path(
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
             {
                 let _gate = lock_vault_gate(&vault);
+                let fresh = markdown_dialect::is_fresh_vault(&vault);
                 fs::create_dir_all(&vault).map_err(|error| error.to_string())?;
                 ensure_vault_layout(&vault)?;
+                if fresh {
+                    markdown_dialect::mark_vault_markdown_dialect(&vault)?;
+                }
                 if initialize_git {
                     ensure_git_repo(&vault)?;
                 }
@@ -6052,6 +6114,7 @@ fn update_lockbox_fragment_in_vault(
     payload.frontmatter.updated_at = Local::now().to_rfc3339();
     payload.frontmatter_raw = Some(apply_frontmatter(&raw, &payload.frontmatter)?);
     payload.body = content.to_string();
+    payload.markdown_dialect = Some(markdown_dialect::MARKDOWN_DIALECT);
     let write_key = LockboxWriteKey::Master(read_keys.master_key.clone());
     write_lockbox_payload(path, &write_key, &payload)?;
 
@@ -6381,6 +6444,7 @@ fn write_lockbox_fragment_file(
         frontmatter: next,
         frontmatter_raw: Some(raw),
         body: body.trim_end().to_string(),
+        markdown_dialect: Some(markdown_dialect::MARKDOWN_DIALECT),
     };
     write_lockbox_payload(path, write_key, &payload)
 }
@@ -7839,6 +7903,10 @@ pub fn run() {
             search_commands::search_vault,
             search_commands::read_search_target,
             watch_vault,
+            list_markdown_dialect_migration,
+            apply_markdown_dialect_migration,
+            list_lockbox_dialect_migration,
+            apply_lockbox_dialect_migration,
             cli_install_status,
             install_cli,
             uninstall_cli,
@@ -9495,6 +9563,7 @@ mod tests {
             frontmatter,
             frontmatter_raw: None,
             body: "旧正文".into(),
+            markdown_dialect: None,
         };
         let write_key = LockboxWriteKey::Master(read_keys.master_key.clone());
         write_lockbox_payload(&path, &write_key, &legacy).unwrap();

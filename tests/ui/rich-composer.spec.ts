@@ -154,12 +154,12 @@ test.describe("速记框富文本", () => {
     await page.keyboard.press("Enter")
     await typeEditor(page, "composer", "**加粗**结尾")
 
-    await expect.poll(() => readEditor(page, "composer")).toBe("第一段\n\n**加粗**结尾")
+    await expect.poll(() => readEditor(page, "composer")).toBe("第一段\n**加粗**结尾")
     await expect(proseMirror(page).locator("strong")).toHaveText("加粗")
     await expect(proseMirror(page)).not.toContainText("**")
 
     await submitComposer(page)
-    await expect.poll(() => createdContents(page)).toEqual(["第一段\n\n**加粗**结尾"])
+    await expect.poll(() => createdContents(page)).toEqual(["第一段\n**加粗**结尾"])
     // 提交后草稿清空，占位符回来。
     await expect(proseMirror(page).locator(":scope > p.is-empty:only-child")).toHaveCount(1)
   })
@@ -383,7 +383,7 @@ test.describe("速记框富文本", () => {
     const box = async () => (await composer(page).boundingBox())!.height
     const baseline = await box()
 
-    await fillEditor(page, "composer", ["一", "二", "三", "四", "五"].join("\n\n"))
+    await fillEditor(page, "composer", ["一", "二", "三", "四", "五"].join("\n"))
     await expect(proseMirror(page).locator("p")).toHaveCount(5)
     await expect.poll(box).toBeGreaterThan(baseline)
   })

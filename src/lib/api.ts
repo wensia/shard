@@ -1,6 +1,7 @@
 import { invoke, isTauri } from "@tauri-apps/api/core"
 
 import { deriveKind } from "@/lib/content-kind"
+import { migrateLockboxMarkdownDialect, migratePublicMarkdownDialect } from "@/lib/markdown-dialect-migration"
 import type { PropertyRequestValue, PropertyType } from "@/lib/properties"
 import type { CanvasFile } from "@/features/canvas/model"
 import type { DatasetSnapshot } from "@/features/datasets/types"
@@ -134,7 +135,23 @@ function invokeVaultState(command: string, args?: Record<string, unknown>) {
   return desktopInvoke<StoredVaultState>(command, args).then(hydrateVaultState)
 }
 
-export function listFragments() {
+/** 方言迁移成功一次即可；失败（包括不认识这些命令的测试替身）时照常读取，下次读取再试。 */
+let publicMarkdownDialectReady = false
+
+async function ensurePublicMarkdownDialect() {
+  if (publicMarkdownDialectReady) return 0
+  try {
+    const written = await migratePublicMarkdownDialect(desktopInvokeRaw)
+    publicMarkdownDialectReady = true
+    return written
+  } catch (error) {
+    console.warn("[shard] Markdown 格式迁移未完成，下次读取时重试", error)
+    return 0
+  }
+}
+
+export async function listFragments() {
+  await ensurePublicMarkdownDialect()
   return invokeVaultState("list_fragments")
 }
 
@@ -486,8 +503,11 @@ export function setReminderSchedule(dueAt: number[]) {
   return desktopInvoke<void>("set_reminder_schedule", { dueAt })
 }
 
-export function setVaultPath(path: string, initializeGit: boolean) {
-  return invokeVaultState("set_vault_path", { path, initializeGit })
+export async function setVaultPath(path: string, initializeGit: boolean) {
+  const state = await invokeVaultState("set_vault_path", { path, initializeGit })
+  publicMarkdownDialectReady = false
+  // 换到一个旧库时，返回的列表还是迁移前读的，改写过就重读。
+  return (await ensurePublicMarkdownDialect()) > 0 ? invokeVaultState("list_fragments") : state
 }
 
 export function initializeVaultGit() {
@@ -503,8 +523,15 @@ export function setupLockbox(password: string) {
   }))
 }
 
-export function unlockLockbox(password: string) {
-  return invokeVaultState("unlock_lockbox", { password })
+export async function unlockLockbox(password: string) {
+  const state = await invokeVaultState("unlock_lockbox", { password })
+  try {
+    // 解锁返回的密匣列表还是迁移前读的，改写过就重读。
+    if ((await migrateLockboxMarkdownDialect(desktopInvokeRaw)) > 0) return invokeVaultState("list_fragments")
+  } catch (error) {
+    console.warn("[shard] 密匣 Markdown 格式迁移未完成，下次解锁时重试", error)
+  }
+  return state
 }
 
 export function lockLockbox() {

@@ -395,7 +395,7 @@ test("fragment reveal keeps document and composer stationary", async ({ page }) 
   await fillEditor(
     page,
     "composer",
-    Array.from({ length: 18 }, (_, index) => `保持展开的 composer 第 ${index + 1} 行`).join("\n\n")
+    Array.from({ length: 18 }, (_, index) => `保持展开的 composer 第 ${index + 1} 行`).join("\n")
   )
   const composerFrame = page.locator('[data-shard-editor="composer"]')
     .locator("xpath=ancestor::div[@data-expanded='true'][1]")

@@ -52,10 +52,33 @@ const CSV_EMBED_LINE_PATTERN = /^!\[\[([^\]\n|]+)\]\]$/u
 const UNDERLINE_OPEN = /^<u\s*>$/iu
 const UNDERLINE_CLOSE = /^<\/u\s*>$/iu
 
-export function parseShardMarkdown(markdown: string): ShardMarkdownDocument {
+export interface ParseShardMarkdownOptions {
+  /**
+   * 按旧方言（v1）解析：段落之间的一个空行只是分隔符，多出来的空行才是空段落，
+   * 段内软换行不拆段。只给一次性数据迁移比对用。
+   */
+  legacyParagraphs?: boolean
+}
+
+/**
+ * 块级上下文。`lines` 为真时（顶层文档、引用块内部）按「源码一行显示一行、
+ * 空一行显示一行空白」解析；列表项内部保持原规则，备忘卡片的懒续行细节依赖它。
+ */
+interface BlockMode {
+  legacy: boolean
+  lines: boolean
+}
+
+export function parseShardMarkdown(
+  markdown: string,
+  options: ParseShardMarkdownOptions = {}
+): ShardMarkdownDocument {
   const { body, frontmatter } = splitFrontmatter(markdown)
   const tree = markdownParser.parse(body)
-  const content = parseBlocks(childrenOf(tree.topNode), body)
+  const content = parseBlocks(childrenOf(tree.topNode), body, {
+    legacy: options.legacyParagraphs === true,
+    lines: true,
+  })
   return {
     doc: { type: "doc", content: content.length > 0 ? content : [{ type: "paragraph" }] },
     frontmatter,
@@ -72,7 +95,9 @@ function childrenOf(node: LezerNode): LezerNode[] {
 // 块级
 // ---------------------------------------------------------------------------
 
-function parseBlocks(nodes: LezerNode[], src: string): JSONContent[] {
+function parseBlocks(nodes: LezerNode[], src: string, mode: BlockMode): JSONContent[] {
+  if (mode.lines && !mode.legacy) return parseLineBlocks(nodes, src, mode)
+
   const blocks: JSONContent[] = []
   for (const node of nodes) {
     const previous = node.prevSibling
@@ -83,22 +108,99 @@ function parseBlocks(nodes: LezerNode[], src: string): JSONContent[] {
         for (let index = 0; index < extraLines; index += 1) blocks.push({ type: "paragraph" })
       }
     }
-    const block = parseBlock(node, src)
+    const block = parseBlock(node, src, mode)
     if (Array.isArray(block)) blocks.push(...block)
     else if (block) blocks.push(block)
   }
   return blocks
 }
 
-function parseBlock(node: LezerNode, src: string): JSONContent | JSONContent[] | null {
+/**
+ * 「源码一行显示一行」：段落按软换行拆成一行一段；块与块之间的空行显示为空段落。
+ * 两侧都是段落时每个空行就是一个空段落；有一侧是标题、列表等其他块时，
+ * 第一个空行只是 Markdown 的分隔符，多出来的才是空段落。与 serializeLineBlocks 互逆。
+ */
+function parseLineBlocks(nodes: LezerNode[], src: string, mode: BlockMode): JSONContent[] {
+  const blocks: JSONContent[] = []
+  let previous: { node: LezerNode; last: JSONContent } | null = null
+  for (const node of nodes) {
+    const parsed =
+      node.name === "Paragraph" ? paragraphLineBlocks(parseInlineContainer(node, src)) : parseBlock(node, src, mode)
+    const produced = Array.isArray(parsed) ? parsed : parsed ? [parsed] : []
+    if (produced.length === 0) continue
+
+    if (previous) {
+      const gap = src.slice(previous.node.to, node.from)
+      // 引用块内部的空行带着 `>`。
+      if (/^[\s>]*$/u.test(gap)) {
+        const newlines = gap.match(/\n/gu)?.length ?? 0
+        const bothParagraphs = previous.last.type === "paragraph" && produced[0].type === "paragraph"
+        const empty = bothParagraphs ? newlines - 1 : newlines - 2
+        for (let index = 0; index < empty; index += 1) blocks.push({ type: "paragraph" })
+      }
+    }
+    blocks.push(...produced)
+    previous = { node, last: produced[produced.length - 1] }
+  }
+  return blocks
+}
+
+/**
+ * 一个 Markdown 段落按软换行拆成一行一段。硬换行（`\` 换行、行尾两个空格）不拆，
+ * 行内代码里的换行也不拆；单独一行的 `![[x.csv]]` 是数据集嵌入块。
+ */
+export function paragraphLineBlocks(inline: JSONContent[]): JSONContent[] {
+  const lines: JSONContent[][] = [[]]
+  for (const node of inline) {
+    const text = node.text ?? ""
+    const code = (node.marks ?? []).some((mark) => mark.type === "code")
+    if (node.type !== "text" || code || !text.includes("\n")) {
+      lines[lines.length - 1].push(node)
+      continue
+    }
+    text.split("\n").forEach((part, index) => {
+      if (index > 0) lines.push([])
+      if (part) lines[lines.length - 1].push({ ...node, text: part })
+    })
+  }
+  return lines.map((line) => {
+    const content = trimLineEnd(line)
+    const csv = csvEmbedLine(content)
+    if (csv) return { type: "csvEmbed", attrs: { path: csv } }
+    return content.length > 0 ? { type: "paragraph", content } : { type: "paragraph" }
+  })
+}
+
+function trimLineEnd(line: JSONContent[]): JSONContent[] {
+  const last = line[line.length - 1]
+  if (last?.type !== "text") return line
+  const text = (last.text ?? "").replace(/[ \t]+$/u, "")
+  if (text === last.text) return line
+  return text ? [...line.slice(0, -1), { ...last, text }] : line.slice(0, -1)
+}
+
+/** 解析器把 `![[x.csv]]` 读成字面 `!` 加一个双链；整行只有它时才是嵌入块。 */
+function csvEmbedLine(line: JSONContent[]): string | null {
+  if (line.length !== 2) return null
+  const [bang, link] = line
+  if (bang.type !== "text" || bang.text !== "!" || (bang.marks?.length ?? 0) > 0) return null
+  if (link.type !== "wikilink" || link.attrs?.alias || (link.marks?.length ?? 0) > 0) return null
+  const target = String(link.attrs?.target ?? "")
+  return isCsvWikilinkTarget(target) ? target.trim() : null
+}
+
+function parseBlock(node: LezerNode, src: string, mode: BlockMode): JSONContent | JSONContent[] | null {
   const name = node.name
 
   if (name === "Paragraph") return parseParagraph(node, src)
   if (name === "Blockquote") {
-    const content = parseBlocks(childrenOf(node).filter((child) => child.name !== "QuoteMark"), src)
+    const content = parseBlocks(childrenOf(node).filter((child) => child.name !== "QuoteMark"), src, {
+      ...mode,
+      lines: true,
+    })
     return { type: "blockquote", content: content.length > 0 ? content : [{ type: "paragraph" }] }
   }
-  if (name === "BulletList" || name === "OrderedList") return parseList(node, src)
+  if (name === "BulletList" || name === "OrderedList") return parseList(node, src, mode)
   if (name === "FencedCode" || name === "CodeBlock") return parseCode(node, src)
   if (name === "HorizontalRule") return { type: "horizontalRule" }
   if (name === "Table") return parseTable(node, src)
@@ -131,7 +233,7 @@ function parseParagraph(node: LezerNode, src: string): JSONContent {
   return content.length > 0 ? { type: "paragraph", content } : { type: "paragraph" }
 }
 
-function parseList(node: LezerNode, src: string): JSONContent[] {
+function parseList(node: LezerNode, src: string, mode: BlockMode): JSONContent[] {
   const ordered = node.name === "OrderedList"
   const items = childrenOf(node).filter((child) => child.name === "ListItem")
   const groups: { task: boolean; items: JSONContent[] }[] = []
@@ -141,11 +243,12 @@ function parseList(node: LezerNode, src: string): JSONContent[] {
     const task = children.find((child) => child.name === "Task")
     const empty = task ? null : emptyTaskMarker(children, src)
     const isTask = Boolean(task) || empty !== null
+    const itemMode = { ...mode, lines: false }
     const parsed = task
-      ? parseTaskItem(task, children, src)
+      ? parseTaskItem(task, children, src, itemMode)
       : empty
-        ? parseEmptyTaskItem(empty, children, src)
-        : parseListItem(children, src)
+        ? parseEmptyTaskItem(empty, children, src, itemMode)
+        : parseListItem(children, src, itemMode)
     const last = groups[groups.length - 1]
     if (last && last.task === isTask) last.items.push(parsed)
     else groups.push({ task: isTask, items: [parsed] })
@@ -170,18 +273,19 @@ function listStart(item: LezerNode | undefined, src: string) {
   return Number.isFinite(start) ? start : 1
 }
 
-function parseListItem(children: LezerNode[], src: string): JSONContent {
-  const content = parseBlocks(children.filter((child) => child.name !== "ListMark"), src)
+function parseListItem(children: LezerNode[], src: string, mode: BlockMode): JSONContent {
+  const content = parseBlocks(children.filter((child) => child.name !== "ListMark"), src, mode)
   return { type: "listItem", content: ensureLeadingParagraph(content) }
 }
 
-function parseTaskItem(task: LezerNode, children: LezerNode[], src: string): JSONContent {
+function parseTaskItem(task: LezerNode, children: LezerNode[], src: string, mode: BlockMode): JSONContent {
   const marker = childrenOf(task).find((child) => child.name === "TaskMarker")
   const checked = marker ? /\[[xX]\]/u.test(src.slice(marker.from, marker.to)) : false
   const first = parseInlineContainer(task, src)
   const rest = parseBlocks(
     children.filter((child) => child.name !== "ListMark" && child.name !== "Task"),
-    src
+    src,
+    mode
   )
   const lifted = liftTrailingReminder(first)
   const title = lifted?.content ?? first
@@ -236,11 +340,13 @@ function emptyTaskMarker(children: LezerNode[], src: string) {
 function parseEmptyTaskItem(
   empty: { paragraph: LezerNode; checked: boolean },
   children: LezerNode[],
-  src: string
+  src: string,
+  mode: BlockMode
 ): JSONContent {
   const rest = parseBlocks(
     children.filter((child) => child.name !== "ListMark" && child !== empty.paragraph),
-    src
+    src,
+    mode
   )
   return { type: "taskItem", attrs: { checked: empty.checked }, content: [{ type: "paragraph" }, ...rest] }
 }
