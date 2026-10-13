@@ -89,8 +89,8 @@ function App() {
         </header>
       ) : null}
       {payload.kind === "fragment" ? (
+        // Dialect v2: every blank source line shows as a blank line, like desktop cards (no compactParagraphs).
         <MarkdownContent
-          compactParagraphs
           className="shard-ios-body"
           content={payload.content}
           hideTags={payload.hideTags}

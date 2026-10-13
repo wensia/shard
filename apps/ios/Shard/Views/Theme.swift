@@ -69,15 +69,15 @@ enum Preview {
         return attributed
     }
 
-    /// Images become a marker, task items get boxes, blank runs collapse (like the desktop's
-    /// compact paragraphs) and long bodies are cut; the detail view renders everything.
+    /// Images become a marker, task items get boxes and long bodies are cut; blank lines stay
+    /// as written (Markdown dialect v2: one source line is one displayed line). The detail
+    /// view renders everything.
     static func compact(_ body: String) -> String {
         var text = body.replacing(/!\[([^\]]*)\]\([^)]*\)/) { match in
             match.output.1.isEmpty ? "[图片]" : "[图片：\(match.output.1)]"
         }
         text = text.replacing(/^([ \t]*)[-*+][ \t]+\[[xX]\][ \t]+/.anchorsMatchLineEndings()) { "\($0.output.1)☑ " }
         text = text.replacing(/^([ \t]*)[-*+][ \t]+\[ \][ \t]+/.anchorsMatchLineEndings()) { "\($0.output.1)☐ " }
-        text = text.replacing(/\n[ \t]*\n(?:[ \t]*\n)+/, with: "\n\n")
         if text.count > characterLimit {
             text = String(text.prefix(characterLimit)) + "…"
         }
