@@ -1,0 +1,50 @@
+/* Maps @shard/markdown variables onto kiln tokens, as src/styles/frontend-rules.css
+   does on desktop; geometry is tuned for phone reading instead of memo cards. */
+:root {
+  --md-font-size: 16px;
+  --md-detail-font-size: 13px;
+  --md-line-height: 1.7;
+  --md-radius: 6px;
+  --md-card: var(--card);
+  --md-card-radius: 10px;
+  --md-border: var(--border);
+  --md-border-visible: var(--border-visible);
+  --md-foreground: var(--foreground);
+  --md-muted: var(--muted);
+  --md-muted-foreground: var(--muted-foreground);
+  --md-accent: var(--primary);
+  --md-on-accent: var(--primary-foreground);
+  --md-divider-opacity: 0.55;
+  --md-focus-shadow: none;
+  --md-task-row-gap: 4px;
+
+  color-scheme: light dark;
+  -webkit-text-size-adjust: 100%;
+}
+
+html,
+body {
+  margin: 0;
+  background: var(--background);
+  color: var(--foreground);
+}
+
+body {
+  padding: 16px 20px calc(32px + env(safe-area-inset-bottom));
+  font-family: -apple-system, "PingFang SC", "Helvetica Neue", sans-serif;
+  font-size: var(--md-font-size);
+  line-height: var(--md-line-height);
+  -webkit-tap-highlight-color: transparent;
+}
+
+a {
+  color: var(--md-accent);
+}
+
+.shard-ios-image {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin-block: 8px;
+  border-radius: var(--md-radius);
+}
