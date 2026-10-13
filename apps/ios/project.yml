@@ -45,6 +45,9 @@ targets:
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
         ITSAppUsesNonExemptEncryption: false
+        # Lets debug builds reach scripts/mock-github.py on the host; public internet stays HTTPS-only.
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.shard.mobile
@@ -53,3 +56,24 @@ targets:
         TARGETED_DEVICE_FAMILY: "1"
         ENABLE_USER_SCRIPT_SANDBOXING: NO
         GENERATE_INFOPLIST_FILE: NO
+
+  ShardUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: ShardUITests
+    dependencies:
+      - target: Shard
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.shard.mobile.uitests
+        GENERATE_INFOPLIST_FILE: YES
+schemes:
+  Shard:
+    build:
+      targets:
+        Shard: all
+        ShardUITests: [test]
+    test:
+      targets:
+        - ShardUITests

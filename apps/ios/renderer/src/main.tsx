@@ -10,16 +10,25 @@ import "../../../../vendor/kiln/tokens/colors.css"
 import "../../../../vendor/kiln/tokens/dark.css"
 import "./renderer.css"
 
-/** One page shown by the native detail view. */
+/** One page shown by the native detail view (mirrors RenderPayload in MarkdownWebView.swift). */
 export interface RenderPayload {
   kind: "fragment" | "document"
   content: string
+  /** Fragments show their tags in the footer instead of inline, like desktop cards. */
+  hideTags?: boolean
+  meta?: {
+    date?: string
+    typeLabel?: string
+    pinned?: boolean
+    tags?: string[]
+  }
 }
 
 /** Messages posted to the native `shard` script message handler. */
 type NativeMessage =
   | { type: "ready" }
   | { type: "rendered" }
+  | { type: "openTag"; tag: string }
   | { type: "error"; message: string }
 
 declare global {
@@ -69,10 +78,37 @@ function App() {
   }, [payload])
 
   if (!payload) return null
-  return payload.kind === "fragment" ? (
-    <MarkdownContent compactParagraphs className="shard-ios-body" content={payload.content} renderImage={renderImage} />
-  ) : (
-    <MarkdownDocument className="shard-ios-body" content={payload.content} />
+  const { meta } = payload
+  return (
+    <article>
+      {meta && (meta.date || meta.typeLabel || meta.pinned) ? (
+        <header className="shard-ios-meta">
+          {meta.date ? <time>{meta.date}</time> : null}
+          {meta.typeLabel ? <span className="shard-ios-badge">{meta.typeLabel}</span> : null}
+          {meta.pinned ? <span className="shard-ios-badge">置顶</span> : null}
+        </header>
+      ) : null}
+      {payload.kind === "fragment" ? (
+        <MarkdownContent
+          compactParagraphs
+          className="shard-ios-body"
+          content={payload.content}
+          hideTags={payload.hideTags}
+          renderImage={renderImage}
+        />
+      ) : (
+        <MarkdownDocument className="shard-ios-body" content={payload.content} />
+      )}
+      {meta?.tags?.length ? (
+        <footer className="shard-ios-tags">
+          {meta.tags.map((tag) => (
+            <button key={tag} className="shard-ios-tag" type="button" onClick={() => postToNative({ type: "openTag", tag })}>
+              #{tag}
+            </button>
+          ))}
+        </footer>
+      ) : null}
+    </article>
   )
 }
 

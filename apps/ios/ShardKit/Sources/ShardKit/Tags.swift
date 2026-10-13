@@ -66,6 +66,30 @@ public enum ShardTags {
         return tags
     }
 
+    /// `#tag` spans exactly where `extractTags` finds tags (from `#` through the tag,
+    /// trailing punctuation excluded), for highlighting like `getTagRanges` in text.ts.
+    public static func tagRanges(in value: String) -> [Range<String.Index>] {
+        let scalars = Array(value.unicodeScalars)
+        let indices = Array(value.unicodeScalars.indices) + [value.unicodeScalars.endIndex]
+        var ranges: [Range<String.Index>] = []
+        for (index, scalar) in scalars.enumerated() where scalar == "#" {
+            if index > 0, !isTagBoundary(scalars[index - 1]) {
+                continue
+            }
+            var end = index + 1
+            while end < scalars.count, !isWhitespace(scalars[end]), scalars[end] != "#" {
+                end += 1
+            }
+            while end > index + 1, isTrailingTagPunctuation(scalars[end - 1]) {
+                end -= 1
+            }
+            if normalizeTag(string(scalars[(index + 1)..<end])) != nil {
+                ranges.append(indices[index]..<indices[end])
+            }
+        }
+        return ranges
+    }
+
     /// Tags written into a new fragment captured on iOS, following the desktop capture
     /// box: `inbox` plus extracted tags, minus `outline`/`flowchart` (those types are
     /// only created by their structured editors), then the backend normalization.

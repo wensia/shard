@@ -9,14 +9,24 @@ struct RenderPayload: Encodable, Equatable {
         case document
     }
 
+    struct Meta: Encodable, Equatable {
+        var date: String?
+        var typeLabel: String?
+        var pinned = false
+        var tags: [String] = []
+    }
+
     var kind: Kind
     var content: String
+    var hideTags = false
+    var meta: Meta?
 }
 
 /// Renders Markdown with the desktop's `@shard/markdown` components inside WKWebView.
 struct MarkdownWebView: UIViewRepresentable {
     var payload: RenderPayload
     var loadVaultFile: (@MainActor (String) async throws -> Data)?
+    var onOpenTag: (@MainActor (String) -> Void)?
 
     func makeCoordinator() -> Coordinator {
         Coordinator()
@@ -25,6 +35,7 @@ struct MarkdownWebView: UIViewRepresentable {
     func makeUIView(context: Context) -> WKWebView {
         let coordinator = context.coordinator
         coordinator.schemeHandler.loadVaultFile = loadVaultFile
+        coordinator.onOpenTag = onOpenTag
 
         let configuration = WKWebViewConfiguration()
         configuration.setURLSchemeHandler(coordinator.schemeHandler, forURLScheme: ShardSchemeHandler.scheme)
@@ -47,6 +58,7 @@ struct MarkdownWebView: UIViewRepresentable {
 
     func updateUIView(_ webView: WKWebView, context: Context) {
         context.coordinator.schemeHandler.loadVaultFile = loadVaultFile
+        context.coordinator.onOpenTag = onOpenTag
         context.coordinator.render(payload)
     }
 
@@ -59,6 +71,7 @@ struct MarkdownWebView: UIViewRepresentable {
         static let messageName = "shard"
 
         let schemeHandler = ShardSchemeHandler()
+        var onOpenTag: (@MainActor (String) -> Void)?
         weak var webView: WKWebView?
         private var pending: RenderPayload?
         private var shown: RenderPayload?
@@ -86,6 +99,10 @@ struct MarkdownWebView: UIViewRepresentable {
                 isReady = true
                 shown = nil
                 flush()
+            case "openTag":
+                if let tag = body["tag"] as? String {
+                    onOpenTag?(tag)
+                }
             case "error":
                 print("renderer error:", body["message"] ?? "")
             default:

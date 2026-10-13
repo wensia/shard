@@ -18,6 +18,9 @@
   --md-focus-shadow: none;
   --md-task-row-gap: 4px;
 
+  /* --shard-editor-tag-fg: peacock in light, its soft tint in dark (src/index.css). */
+  --shard-ios-tag: rgb(46 110 121 / 0.89);
+
   color-scheme: light dark;
   -webkit-text-size-adjust: 100%;
 }
@@ -47,4 +50,43 @@ a {
   height: auto;
   margin-block: 8px;
   border-radius: var(--md-radius);
+}
+
+[data-theme="dark"] {
+  --shard-ios-tag: rgb(130 168 175 / 0.89);
+}
+
+.shard-ios-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  color: var(--muted-foreground);
+  font-size: var(--md-detail-font-size);
+}
+
+.shard-ios-badge {
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--muted);
+  color: var(--muted-foreground);
+}
+
+.shard-ios-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin-top: 20px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+/* Tinted text, not chips — the desktop's inline TagBadge. */
+.shard-ios-tag {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--shard-ios-tag);
+  font: inherit;
+  font-size: 15px;
 }
