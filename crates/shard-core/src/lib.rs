@@ -8,6 +8,7 @@ pub mod dataset;
 pub mod frontmatter;
 pub mod graph_model;
 pub mod graph_region;
+pub mod library;
 pub mod outline_import;
 pub mod search;
 pub mod vault_lock;

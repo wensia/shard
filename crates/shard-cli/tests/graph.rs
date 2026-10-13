@@ -345,7 +345,7 @@ fn rejects_stale_sha_wrong_type_root_removal_and_archived_writes() {
         ],
         None,
     );
-    assert_eq!(stale.status.code(), Some(1));
+    assert_eq!(stale.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&stale.stderr).contains("文件已被修改，请重新读取"));
     assert_eq!(fs::read(&fixture.outline_path).unwrap(), bytes);
 

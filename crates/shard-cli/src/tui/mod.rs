@@ -16,8 +16,8 @@ pub fn run(
     lock_dir: &Path,
     timeout: Duration,
 ) -> Result<(), String> {
-    let entries = crate::find::load_fragments(vault)?;
-    let store = store::VaultStore::new(lock_dir, timeout);
+    let entries = crate::find::load_entries(vault)?;
+    let store = store::VaultStore::new(vault, lock_dir, timeout);
     let mut app = App::new(entries, Box::new(store));
     if let Some(query) = initial_query {
         app.handle(Event::Paste(query.to_string()));

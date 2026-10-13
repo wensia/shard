@@ -16,24 +16,23 @@ pub struct VaultStore {
     sessions: HashMap<String, Session>,
     lock_dir: PathBuf,
     timeout: Duration,
-    vault: Option<PathBuf>,
+    vault: PathBuf,
 }
 
 impl VaultStore {
-    pub fn new(lock_dir: &Path, timeout: Duration) -> Self {
+    pub fn new(vault: &Path, lock_dir: &Path, timeout: Duration) -> Self {
         Self {
             sessions: HashMap::new(),
             lock_dir: lock_dir.to_path_buf(),
             timeout,
-            vault: None,
+            vault: vault.to_path_buf(),
         }
     }
 }
 
 impl Store for VaultStore {
     fn open(&mut self, entry: &FragmentEntry) -> Result<String, String> {
-        let session = edit::open_session(entry)?;
-        self.vault = Some(session.vault.clone());
+        let session = edit::open_session(&self.vault, entry)?;
         let body = session.body.clone();
         self.sessions.insert(entry.id.clone(), session);
         Ok(body)
@@ -48,7 +47,6 @@ impl Store for VaultStore {
     }
 
     fn reload(&mut self) -> Result<Vec<FragmentEntry>, String> {
-        let vault = self.vault.as_ref().ok_or("尚未打开资料库".to_string())?;
-        find::load_fragments(vault)
+        find::load_entries(&self.vault)
     }
 }

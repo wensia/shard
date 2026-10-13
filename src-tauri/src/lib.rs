@@ -25,12 +25,19 @@ use shard_core::{
     graph_region::{
         find_region, render_region, replace_region, GraphRegionKind, MISSING_REGION_ERROR,
     },
+    library::{
+        bounded_library_filename, create_library_dataset_files, create_library_note_file,
+        existing_library_directory, existing_library_path, note_title,
+        sanitized_note_stem, unique_mind_map_path, unique_note_path, unique_titled_path,
+        validate_library_file_name, validate_library_name, validate_library_name_characters,
+        validate_library_name_length,
+    },
     outline_import::{
         import_outline, OutlineImport, OutlineImportError, OutlineImportNode, OutlineLossIssue,
     },
     temporary_filename, unique_suffix, write_bytes_atomically, write_fragment_file,
     write_text_atomically, AppConfig, FragmentFrontmatter, FragmentRelation, LOCKBOX_TAG,
-    LIBRARY_FILENAME_MAX_BYTES, PROTECTED_TYPE_TAGS, TYPE_TAGS,
+    PROTECTED_TYPE_TAGS, TYPE_TAGS,
 };
 pub(crate) use shard_core::graph_model::{
     CanvasFile, CanvasNode, ShardDocumentLink, ShardMapFile, ShardMapNode, SHARD_MAP_KIND,
@@ -4048,183 +4055,6 @@ fn library_mutation_result(
     })
 }
 
-const LIBRARY_NAME_MAX_LENGTH: usize = 64;
-
-fn validate_library_name_characters(name: &str) -> Result<&str, String> {
-    let name = name.trim();
-    if name.is_empty() || name == "." || name == ".." {
-        return Err("名称不能为空。".to_string());
-    }
-    if name.chars().any(|character| {
-        character.is_control()
-            || matches!(
-                character,
-                '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|'
-            )
-    }) {
-        return Err("名称包含不允许的路径字符。".to_string());
-    }
-    Ok(name)
-}
-
-fn validate_library_name_length(stem: &str, extension: &str) -> Result<(), String> {
-    if stem.chars().count() > LIBRARY_NAME_MAX_LENGTH {
-        return Err("名称最多 64 个字符（不含扩展名）。".to_string());
-    }
-    if stem.len() + extension.len() > LIBRARY_FILENAME_MAX_BYTES {
-        return Err("名称占用空间过长，请减少部分字符。".to_string());
-    }
-    Ok(())
-}
-
-fn validate_library_name(name: &str) -> Result<&str, String> {
-    let name = validate_library_name_characters(name)?;
-    validate_library_name_length(name, "")?;
-    Ok(name)
-}
-
-fn validate_library_file_name<'a>(name: &'a str, extension: &str) -> Result<&'a str, String> {
-    let name = validate_library_name_characters(name)?;
-    let stem = name.strip_suffix(extension).unwrap_or(name);
-    validate_library_name_characters(stem)?;
-    validate_library_name_length(stem, extension)?;
-    Ok(name)
-}
-
-fn library_relative_path(rel_path: &str) -> Result<&Path, String> {
-    let rel_path = rel_path.trim();
-    let path = Path::new(rel_path);
-    if rel_path.is_empty() || rel_path.contains('\\') || path.is_absolute() {
-        return Err("资料库路径必须是 notes/ 下的相对路径。".to_string());
-    }
-    let mut components = path.components();
-    if !matches!(components.next(), Some(Component::Normal(value)) if value == "notes")
-        || components.any(|component| !matches!(component, Component::Normal(_)))
-    {
-        return Err("资料库路径必须位于 notes/ 且不能包含 . 或 ..。".to_string());
-    }
-    Ok(path)
-}
-
-fn existing_library_path(vault: &Path, rel_path: &str) -> Result<PathBuf, String> {
-    let path = vault.join(library_relative_path(rel_path)?);
-    if !path.exists() {
-        return Err(format!("找不到资料库条目 {rel_path}"));
-    }
-    if fs::symlink_metadata(&path)
-        .map_err(|error| error.to_string())?
-        .file_type()
-        .is_symlink()
-    {
-        return Err("资料库操作不允许符号链接。".to_string());
-    }
-    let notes = vault
-        .join("notes")
-        .canonicalize()
-        .map_err(|error| error.to_string())?;
-    let canonical = path.canonicalize().map_err(|error| error.to_string())?;
-    if !canonical.starts_with(&notes) || canonical == notes {
-        return Err("不能操作资料库根目录或 vault 外路径。".to_string());
-    }
-    Ok(path)
-}
-
-fn existing_library_directory(vault: &Path, rel_path: Option<&str>) -> Result<PathBuf, String> {
-    let path = match rel_path.map(str::trim).filter(|path| !path.is_empty()) {
-        Some("notes") | None => vault.join("notes"),
-        Some(path) => existing_library_path(vault, path)?,
-    };
-    if !path.is_dir() {
-        return Err("目标必须是资料库目录。".to_string());
-    }
-    Ok(path)
-}
-
-fn sanitized_note_stem(title: &str) -> String {
-    let mut stem = title
-        .trim()
-        .chars()
-        .filter(|character| !character.is_control())
-        .map(|character| {
-            if matches!(
-                character,
-                '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|'
-            ) {
-                ' '
-            } else {
-                character
-            }
-        })
-        .collect::<String>();
-    stem = stem.split_whitespace().collect::<Vec<_>>().join(" ");
-    stem = stem
-        .trim_matches(|character| character == '.' || character == ' ')
-        .to_string();
-    if stem.is_empty() {
-        "未命名笔记".to_string()
-    } else {
-        stem
-    }
-}
-
-// Filename limits apply to new names, never to the content/title of an existing document.
-// Generated names reserve both character and byte space for the collision suffix.
-fn bounded_library_filename(stem: &str, collision_suffix: &str, extension: &str) -> String {
-    let max_chars = LIBRARY_NAME_MAX_LENGTH.saturating_sub(collision_suffix.chars().count());
-    let max_bytes = LIBRARY_FILENAME_MAX_BYTES.saturating_sub(collision_suffix.len() + extension.len());
-    let mut bytes = 0;
-    let stem: String = stem
-        .chars()
-        .take(max_chars)
-        .take_while(|character| {
-            bytes += character.len_utf8();
-            bytes <= max_bytes
-        })
-        .collect();
-    format!("{stem}{collision_suffix}{extension}")
-}
-
-fn unique_titled_path(directory: &Path, title: &str, extension: &str) -> PathBuf {
-    let stem = sanitized_note_stem(title);
-    let first = directory.join(bounded_library_filename(&stem, "", extension));
-    if !first.exists() {
-        return first;
-    }
-    let mut collision_index = 2;
-    loop {
-        let candidate = directory.join(bounded_library_filename(
-            &stem,
-            &format!("-{collision_index}"),
-            extension,
-        ));
-        if !candidate.exists() {
-            return candidate;
-        }
-        collision_index += 1;
-    }
-}
-
-fn unique_note_path(directory: &Path, title: &str) -> PathBuf {
-    unique_titled_path(directory, title, ".md")
-}
-
-fn unique_mind_map_path(directory: &Path, title: &str) -> PathBuf {
-    unique_titled_path(directory, title, ".shardmap.json")
-}
-
-fn note_title(body: &str) -> String {
-    body.lines()
-        .find_map(|line| {
-            line.trim()
-                .strip_prefix("# ")
-                .map(str::trim)
-                .filter(|line| !line.is_empty())
-        })
-        .or_else(|| body.lines().map(str::trim).find(|line| !line.is_empty()))
-        .unwrap_or("未命名笔记")
-        .to_string()
-}
-
 fn create_library_note_in_vault(
     vault: &Path,
     title: &str,
@@ -4239,28 +4069,7 @@ fn create_library_note_with_body(
     directory: Option<&str>,
     body: &str,
 ) -> Result<Fragment, String> {
-    let title = title.trim();
-    if title.is_empty() {
-        return Err("笔记标题不能为空。".to_string());
-    }
-    validate_library_name_length(title, ".md")?;
-    let directory = existing_library_directory(vault, directory)?;
-    let path = unique_note_path(&directory, title);
-    let now = Local::now();
-    let created_at = now.to_rfc3339();
-    let frontmatter = FragmentFrontmatter {
-        id: new_fragment_id(&now),
-        created_at: created_at.clone(),
-        updated_at: created_at,
-        tags: vec!["note".to_string()],
-        category: None,
-        ai_status: Some("none".to_string()),
-        pinned: false,
-        source: "desktop".to_string(),
-        conflict_of: None,
-        related: Vec::new(),
-    };
-    write_fragment_file(&path, &frontmatter, body)?;
+    let path = create_library_note_file(vault, title, directory, body, Vec::new(), "desktop")?;
     read_fragment(
         &path,
         vault,
@@ -4279,46 +4088,17 @@ fn create_library_dataset_in_vault(
     primary_key: Option<String>,
     directory: Option<&str>,
 ) -> Result<(DatasetSnapshot, Fragment), String> {
-    #[derive(Serialize)]
-    struct DatatableSource<'a> {
-        title: &'a str,
-        src: &'a str,
-    }
-    let title = title.trim();
-    if title.is_empty() {
-        return Err("数据集名称不能为空。".to_string());
-    }
-    validate_library_name_length(title, ".md")?;
-    existing_library_directory(vault, directory)?;
-    let dataset = dataset::create_dataset(
+    let (dataset, note) = create_library_dataset_files(
         vault,
         title,
         header,
         rows,
         primary_key,
-        &DatasetLimits::default(),
-    )
-    .map_err(|error| error.to_string())?;
-    let created = (|| {
-        let block = serde_json::to_string_pretty(&DatatableSource {
-            title,
-            src: &dataset.path,
-        })
-        .map_err(|error| error.to_string())?;
-        let body = format!("# {title}\n\n```datatable\n{block}\n```\n");
-        create_library_note_with_body(vault, title, directory, &body)
-    })();
-    match created {
-        Ok(fragment) => Ok((dataset, fragment)),
-        Err(error) => {
-            let csv = vault.join(&dataset.path);
-            if let Some(name) = csv.file_name().and_then(|name| name.to_str()) {
-                let _ = fs::remove_file(csv.with_file_name(format!("{name}.schema.json")));
-            }
-            let _ = fs::remove_file(&csv);
-            Err(error)
-        }
-    }
+        directory,
+        "desktop",
+    )?;
+    let fragment = read_fragment(&note, vault, &dirty_paths(vault), None)?;
+    Ok((dataset, fragment))
 }
 
 fn create_library_directory_in_vault(

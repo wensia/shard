@@ -398,9 +398,11 @@ fn save_graph(vault: &Path, mut loaded: LoadedGraph) -> Result<String, String> {
     Ok(content_sha256_hex(&next_text))
 }
 
+pub const STALE_MESSAGE: &str = "文件已被修改，请重新读取";
+
 fn ensure_expected_sha(text: &str, expected_sha: &str) -> Result<(), String> {
     if content_sha256_hex(text) != expected_sha {
-        return Err("文件已被修改，请重新读取".to_string());
+        return Err(STALE_MESSAGE.to_string());
     }
     Ok(())
 }

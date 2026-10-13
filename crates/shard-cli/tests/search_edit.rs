@@ -412,8 +412,11 @@ fn rejects_outline_and_keeps_capture_commands() {
     assert_eq!(fs::read(outline).unwrap(), before);
     assert_success(&f.run(&["今天心情很好"]));
     assert_success(&f.run(&["search", "银行"]));
-    let files = fs::read_dir(f.vault.join("fragments/2026/09"))
-        .unwrap()
+    // 新碎片落在当月目录，夹具在 2026/09：两处一起读，测试不随日期失效。
+    let month = chrono::Local::now().format("%Y/%m").to_string();
+    let files = ["2026/09", month.as_str()]
+        .iter()
+        .flat_map(|dir| fs::read_dir(f.vault.join("fragments").join(dir)).into_iter().flatten())
         .flatten()
         .map(|entry| fs::read_to_string(entry.path()).unwrap())
         .collect::<Vec<_>>();

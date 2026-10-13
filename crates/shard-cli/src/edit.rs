@@ -48,29 +48,17 @@ pub struct Session {
     sha: String,
 }
 
-pub fn open_session(entry: &FragmentEntry) -> Result<Session, String> {
+pub fn open_session(vault: &Path, entry: &FragmentEntry) -> Result<Session, String> {
     let raw = fs::read_to_string(&entry.path)
         .map_err(|error| format!("读取 {} 失败：{error}", entry.path.display()))?;
     let parsed = parse_fragment(&raw)?;
     if derive_type(&parsed.frontmatter.tags).is_some_and(|kind| PROTECTED_TYPE_TAGS.contains(&kind))
     {
-        return Err("大纲与流程图请在 Shard 中编辑，或使用 --graph-* 命令。".to_string());
+        return Err(PROTECTED_MESSAGE.to_string());
     }
-    let vault = entry
-        .path
-        .ancestors()
-        .find(|path| path.file_name().is_some_and(|name| name == "fragments"))
-        .and_then(Path::parent)
-        .ok_or_else(|| {
-            format!(
-                "碎片路径不在资料库 fragments 目录中：{}",
-                entry.path.display()
-            )
-        })?
-        .to_path_buf();
     Ok(Session {
         path: entry.path.clone(),
-        vault,
+        vault: vault.to_path_buf(),
         id: entry.id.clone(),
         body: parsed.body.trim_start_matches('\n').trim_end().to_string(),
         sha: content_sha256_hex(&raw),
@@ -84,53 +72,123 @@ pub fn save_session(
     lock_dir: &Path,
     timeout: Duration,
 ) -> Result<SaveReport, SaveError> {
-    let next_body = body.trim_start_matches('\n').trim_end();
+    let next_body = body.trim_start_matches('\n').trim_end().to_string();
+    let written = rewrite_body(
+        &session.vault,
+        &session.path,
+        Some(&session.sha),
+        |_| next_body.clone(),
+        lock_dir,
+        timeout,
+    );
+    match written {
+        Ok(written) => {
+            session.raw = written.raw;
+            session.sha = written.sha;
+            session.body = next_body;
+            Ok(SaveReport)
+        }
+        Err(RewriteError::Stale) => {
+            let draft = draft_path(&session.id);
+            fs::write(&draft, format!("{next_body}\n"))
+                .map_err(|error| SaveError::Invalid(format!("创建临时文件失败：{error}")))?;
+            Err(SaveError::Conflict { draft_path: draft })
+        }
+        Err(RewriteError::Locked) => Err(SaveError::Locked),
+        Err(RewriteError::Invalid(message)) => Err(SaveError::Invalid(message)),
+    }
+}
+
+pub const PROTECTED_MESSAGE: &str = "大纲与流程图请在 Shard 中编辑，或使用 --graph-* 命令。";
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum RewriteError {
+    /// 文件哈希与调用方的基线不一致：期间被 App、同步或其他进程改过。
+    Stale,
+    Locked,
+    Invalid(String),
+}
+
+pub struct Rewritten {
+    pub raw: String,
+    pub sha: String,
+    /// 新正文与原正文相同时不落盘，`updated_at` 也不动。
+    pub changed: bool,
+}
+
+/// 持资料库进程锁改写一篇碎片或笔记的正文，语义与 App 编辑保存一致：正文里的 `#标签`
+/// 重新收进 frontmatter，type 标签原样保留，`updated_at` 刷新，frontmatter 其余内容逐字节不动。
+///
+/// `expected_sha` 是调用方读到的整文件哈希；给了就在锁内核对，不一致返回 `Stale` 且不写。
+/// `next` 拿到当前正文、返回新正文，追加之类的读改写因此也在同一把锁里完成。
+pub fn rewrite_body(
+    vault: &Path,
+    path: &Path,
+    expected_sha: Option<&str>,
+    next: impl FnOnce(&str) -> String,
+    lock_dir: &Path,
+    timeout: Duration,
+) -> Result<Rewritten, RewriteError> {
+    let _lock = VaultProcessLock::acquire(lock_dir, vault, Some(timeout)).map_err(|error| {
+        if error == "Shard 正在写入资料库，请稍后重试" {
+            RewriteError::Locked
+        } else {
+            RewriteError::Invalid(error)
+        }
+    })?;
+    let raw = fs::read_to_string(path)
+        .map_err(|error| RewriteError::Invalid(format!("读取 {} 失败：{error}", path.display())))?;
+    let sha = content_sha256_hex(&raw);
+    if expected_sha.is_some_and(|expected| expected != sha) {
+        return Err(RewriteError::Stale);
+    }
+    let parsed = parse_fragment(&raw).map_err(RewriteError::Invalid)?;
+    if derive_type(&parsed.frontmatter.tags).is_some_and(|kind| PROTECTED_TYPE_TAGS.contains(&kind))
+    {
+        return Err(RewriteError::Invalid(PROTECTED_MESSAGE.to_string()));
+    }
+    let current_body = parsed.body.trim_start_matches('\n').trim_end();
+    let next_body = next(current_body);
+    let next_body = next_body.trim_start_matches('\n').trim_end();
     if next_body.trim().is_empty() {
-        return Err(SaveError::Invalid(
-            "内容为空，未保存。删除碎片请在 Shard 中操作。".into(),
+        return Err(RewriteError::Invalid(
+            "内容为空，未保存。删除请在 Shard 中操作。".into(),
         ));
     }
-    let parsed = parse_fragment(&session.raw).map_err(SaveError::Invalid)?;
+    if next_body == current_body {
+        return Ok(Rewritten {
+            raw,
+            sha,
+            changed: false,
+        });
+    }
     let tags = edited_tags(&parsed.frontmatter.tags, next_body);
     if contains_lockbox_tag(&tags) {
-        return Err(SaveError::Invalid(
+        return Err(RewriteError::Invalid(
             "终端不支持写入密匣，请在 Shard 中保存。".into(),
         ));
-    }
-    let _lock =
-        VaultProcessLock::acquire(lock_dir, &session.vault, Some(timeout)).map_err(|error| {
-            if error == "Shard 正在写入资料库，请稍后重试" {
-                SaveError::Locked
-            } else {
-                SaveError::Invalid(error)
-            }
-        })?;
-    let current = fs::read_to_string(&session.path).ok();
-    if current.as_deref().map(content_sha256_hex).as_deref() != Some(session.sha.as_str()) {
-        let draft = draft_path(&session.id);
-        fs::write(&draft, format!("{next_body}\n"))
-            .map_err(|error| SaveError::Invalid(format!("创建临时文件失败：{error}")))?;
-        return Err(SaveError::Conflict { draft_path: draft });
     }
     let mut frontmatter = parsed.frontmatter;
     frontmatter.tags = tags;
     frontmatter.updated_at = now_rfc3339();
-    write_fragment_update(&session.path, &parsed.raw, &frontmatter, next_body)
-        .map_err(|error| SaveError::Invalid(format!("保存失败：{error}")))?;
-    session.raw = fs::read_to_string(&session.path)
-        .map_err(|error| SaveError::Invalid(format!("读取保存结果失败：{error}")))?;
-    session.sha = content_sha256_hex(&session.raw);
-    session.body = next_body.to_string();
-    Ok(SaveReport)
+    write_fragment_update(path, &parsed.raw, &frontmatter, next_body)
+        .map_err(|error| RewriteError::Invalid(format!("保存失败：{error}")))?;
+    let raw = fs::read_to_string(path)
+        .map_err(|error| RewriteError::Invalid(format!("读取保存结果失败：{error}")))?;
+    Ok(Rewritten {
+        sha: content_sha256_hex(&raw),
+        raw,
+        changed: true,
+    })
 }
 
 pub fn edit_fragment(
-    _vault: &Path,
+    vault: &Path,
     entry: &FragmentEntry,
     lock_dir: &Path,
     lock_timeout: Duration,
 ) -> Result<EditOutcome, EditFailure> {
-    let mut session = open_session(entry).map_err(EditFailure::from)?;
+    let mut session = open_session(vault, entry).map_err(EditFailure::from)?;
     let original_body = session.body.clone();
 
     let draft = draft_path(&entry.id);
@@ -178,7 +236,7 @@ pub fn edit_fragment(
 
 /// 标签规则 = 碎片编辑器提交（`fragment-editor.tsx`：`inbox` + 正文标签，非碎片类型
 /// 换回原 type）再过一遍后端 `normalize_updated_type_tags`（受保护类型不可增删）。
-fn edited_tags(current: &[String], body: &str) -> Vec<String> {
+pub fn edited_tags(current: &[String], body: &str) -> Vec<String> {
     let mut tags = vec![INBOX_TAG.to_string()];
     tags.extend(extract_tags(body));
     let mut tags = normalize_tags(tags, false);
@@ -265,7 +323,7 @@ mod tests {
     #[test]
     fn session_saves_twice_with_updated_baseline() {
         let (directory, entry) = session_fixture();
-        let mut session = open_session(&entry).unwrap();
+        let mut session = open_session(&directory.path().join("vault"), &entry).unwrap();
         let locks = directory.path().join("locks");
         save_session(
             &mut session,
@@ -289,7 +347,7 @@ mod tests {
     #[test]
     fn session_conflict_writes_draft_without_overwrite() {
         let (directory, entry) = session_fixture();
-        let mut session = open_session(&entry).unwrap();
+        let mut session = open_session(&directory.path().join("vault"), &entry).unwrap();
         fs::write(&entry.path, "其他进程修改").unwrap();
         let error = save_session(
             &mut session,
@@ -309,7 +367,7 @@ mod tests {
     #[test]
     fn session_lock_timeout_keeps_original() {
         let (directory, entry) = session_fixture();
-        let mut session = open_session(&entry).unwrap();
+        let mut session = open_session(&directory.path().join("vault"), &entry).unwrap();
         let before = fs::read(&entry.path).unwrap();
         let locks = directory.path().join("locks");
         let held = VaultProcessLock::acquire(&locks, &session.vault, None).unwrap();

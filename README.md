@@ -144,7 +144,7 @@ source: desktop
 shard 今天心情很好
 shard #备忘 /任务列表 买咖啡   # 前导 #标签 与 /块命令，其余是正文
 pbpaste | shard #摘录          # 没有内容参数时读标准输入
-shard -s 银行 房贷             # 多个关键词须同时命中；不带关键词列出最近修改的碎片
+shard -s 银行 房贷             # 搜碎片与资料库笔记，关键词须同时命中；不带关键词列出最近修改
 shard -i 银行 房贷             # 在交互界面搜索、预览和编辑；不带关键词显示最近修改
 shard -e 2                   # 在终端内编辑上次搜索结果的第 2 条，也可用 id 或关键词
 shard -e --external 2        # 强制用外部编辑器
@@ -156,10 +156,25 @@ shard --graph-outline <碎片id> # 将大纲只读导出为两空格缩进列表
 - 资料库依次取 `--vault`、`SHARD_VAULT`、App 设置里的资料库、`~/Documents/ShardVault`。
 - 只写文件（`source: cli`），提交交给 App 的检查点；App 运行中切回窗口即可看到新碎片。
 - `-s` 的匹配与排序规则同 App 搜索，结果序号可供 `-e` 引用。`-i` 须在终端中运行；`-e` 在标准输入和标准输出均为终端时打开内置编辑器，关键词命中多条时进入搜索页供选择。内置编辑器用 Ctrl+S 保存、Esc 返回、Ctrl+Z 撤销、Ctrl+Y 重做、Ctrl+Q 退出；未保存时返回或退出会询问如何处理。
-- `-e --external` 或标准输入、标准输出不全是终端时使用 `$VISUAL`、`$EDITOR`（默认 `vi`）；图形编辑器须带等待参数，如 `EDITOR='code -w'`。鼠标捕获期间，用 Option（iTerm2）或 Fn（Terminal）拖动可原生选择复制。保存后按正文重算标签；编辑期间文件被改动时不覆盖，退出码为 2。大纲与流程图请使用图命令，密匣只能在 App 中编辑；双链关系会在 App 下次保存该碎片时更新。
+- `-e --external` 或标准输入、标准输出不全是终端时使用 `$VISUAL`、`$EDITOR`（终端里默认 `vi`；非交互环境未设置编辑器时直接报错，提示改用 `--update`）；图形编辑器须带等待参数，如 `EDITOR='code -w'`。鼠标捕获期间，用 Option（iTerm2）或 Fn（Terminal）拖动可原生选择复制。保存后按正文重算标签；编辑期间文件被改动时不覆盖，退出码为 2。大纲与流程图请使用图命令，密匣只能在 App 中编辑；双链关系会在 App 下次保存该碎片时更新。
 - bash 等把 `#` 当注释的 shell 里给标签加引号，或用全角 `＃备忘`。`#密匣` 只能在 App 中保存。
 - 图命令直接读写公开的大纲/流程图片段：`--graph-write <碎片id> --expect <fileSha>` 从标准输入读取完整图 JSON，`--graph-set-text <碎片id> <节点id> <文字> --expect <fileSha>` 修改节点文字，`--graph-add-child <碎片id> <父节点id> <文字> --expect <fileSha>` 添加大纲子节点，`--graph-remove <碎片id> <节点id> --expect <fileSha>` 删除大纲子树。
 - 所有图写命令都必须使用最近一次 `--graph-read` 返回的 `fileSha`；文件已被其他进程修改时会拒绝写入。图写入只落盘，提交仍由 App 检查点聚合。
+
+### 给 AI 助手使用
+
+Claude Code、Codex 等能执行命令的助手直接用 `shard` 读写资料库，不需要 MCP：
+
+```bash
+shard --install-skill            # 把使用说明装成 skill（~/.claude、~/.codex 存在时各装一份）
+shard --agent-guide              # 打印完整说明：格式规则、全部命令、JSON 结构、退出码
+```
+
+- 读写命令：`--read <目标>`、`--update <目标> --expect <sha>`（正文从标准输入读）、`--append <目标> [内容]`、`--note <标题> [--folder 文件夹]`、`--tags`、`--ls [文件夹]`、`--read-dataset`、`--create-dataset`。目标是 id、vault 相对路径、上次搜索序号或唯一的 id 片段，不做关键词猜测。
+- 任何命令加 `--json`：成功时 stdout 只有一个 JSON 值，失败时 stderr 输出 `{"error":{"code","message"}}`；退出码 2 表示内容已被改过（`CONFLICT`），需重新读取后再改。
+- `--source <名称>`（或 `SHARD_SOURCE`）写入 frontmatter 的 `source`，标明内容出自哪个助手。
+- 正文带 YAML frontmatter 会被拒绝；标签直接写在正文里。CLI 不提供删除。
+- skill 内容随 CLI 版本走，升级 Shard 后重新运行 `shard --install-skill` 即可更新；目录里已有非 shard 生成的同名 skill 时不覆盖（`--force` 强制）。
 
 开发者可以运行 `pnpm install:cli` 在本地构建并安装 CLI；该脚本仅用于开发，默认安装到 `~/.local/bin/shard`，也可以通过 `PREFIX` 覆盖安装目录。
 

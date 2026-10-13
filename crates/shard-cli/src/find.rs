@@ -1,5 +1,5 @@
-//! 终端搜索碎片。查询解析、Markdown 投影与排序直接复用 App 搜索的
-//! `shard_core::search`，同一个关键词在终端和 ⌘K 里命中同一批碎片、排序一致。
+//! 终端搜索碎片与资料库笔记。查询解析、Markdown 投影与排序直接复用 App 搜索的
+//! `shard_core::search`，同一个关键词在终端和 ⌘K 里命中同一批内容、排序一致。
 //! 结果按序号列出并记下，`shard -e <序号>` 可以直接引用。
 
 use chrono::{DateTime, Datelike, Local};
@@ -22,8 +22,8 @@ pub const DEFAULT_LIMIT: usize = 20;
 /// 预览列的显示宽度（中日韩字符按 2 列计）。
 const PREVIEW_COLUMNS: usize = 64;
 
-/// 碎片流里能按文本处理的一条碎片。大纲与流程图的正文是受管 JSON，
-/// App 也不允许按文本保存，这里不收录，改走 `--graph-*` 命令。
+/// 能按文本处理的一条内容：`fragments/` 下的碎片或 `notes/` 下的资料库笔记。
+/// 大纲与流程图的正文是受管 JSON，App 也不允许按文本保存，这里不收录，改走 `--graph-*` 命令。
 #[derive(Debug, Clone)]
 pub struct FragmentEntry {
     pub id: String,
@@ -56,11 +56,12 @@ pub struct SearchOutcome<'a> {
     pub total: usize,
 }
 
-/// 读取 `fragments/` 下的公开碎片（回收站在 `.trash/`，密匣另存加密文件，都不在这里）。
-/// 解析失败的文件跳过：终端搜索不该因为一篇坏文件整体失败。
-pub fn load_fragments(vault: &Path) -> Result<Vec<FragmentEntry>, String> {
+/// 读取 `fragments/` 下的公开碎片与 `notes/` 下的资料库笔记（回收站在 `.trash/`，
+/// 密匣另存加密文件，都不在这里）。解析失败的文件跳过：终端搜索不该因为一篇坏文件整体失败。
+pub fn load_entries(vault: &Path) -> Result<Vec<FragmentEntry>, String> {
     let mut files = Vec::new();
     collect_markdown(&vault.join("fragments"), &mut files)?;
+    collect_markdown(&vault.join("notes"), &mut files)?;
     let mut entries = Vec::new();
     for path in files {
         let Ok(text) = fs::read_to_string(&path) else {
@@ -129,6 +130,17 @@ fn fragment_title(kind: Option<&str>, body: &str) -> String {
             .or_else(first_line)
             .map(|title| truncate_chars(title, 40))
             .unwrap_or_else(|| "未命名文档".to_string()),
+        Some("note") => body
+            .lines()
+            .find_map(|line| {
+                line.trim()
+                    .strip_prefix("# ")
+                    .map(|title| title.trim().trim_end_matches('#').trim_end().to_string())
+                    .filter(|title| !title.is_empty())
+            })
+            .or_else(first_line)
+            .map(|title| truncate_chars(title, 48))
+            .unwrap_or_else(|| "未命名笔记".to_string()),
         _ => first_line().unwrap_or_else(|| "未命名碎片".to_string()),
     }
 }
@@ -296,11 +308,18 @@ pub fn hits_json(hits: &[Hit<'_>], vault: &Path) -> String {
                 "kind": hit.entry.kind.unwrap_or("fragment"),
                 "tags": hit.entry.tags,
                 "createdAt": hit.entry.created_at,
+                "updatedAt": millis_rfc3339(hit.entry.modified_at),
                 "preview": hit.preview.iter().map(|part| part.text.as_str()).collect::<String>(),
             })
         })
         .collect::<Vec<_>>();
     serde_json::to_string_pretty(&items).unwrap_or_else(|_| "[]".to_string())
+}
+
+pub fn millis_rfc3339(millis: i64) -> String {
+    DateTime::from_timestamp_millis(millis)
+        .map(|value| value.with_timezone(&Local).to_rfc3339())
+        .unwrap_or_default()
 }
 
 /// 标准 id `20260926-061830-81b8ea9d-a2237f` 取第三段；其他 id 原样返回。
@@ -547,6 +566,71 @@ pub fn select<'a>(
                 .ok_or_else(|| format!("没有第 {answer} 条"))
         }
     }
+}
+
+pub enum Resolved<'a> {
+    Found(&'a FragmentEntry),
+    NotFound,
+    Ambiguous(Vec<&'a FragmentEntry>),
+}
+
+/// 非交互命令（`--read`、`--update`、`--append`）的目标：完整 id、vault 相对路径
+/// （或 vault 内的绝对路径）、上次搜索的序号，或 id 中至少 4 个字符且只命中一条的片段。
+/// 不做关键词搜索：写入目标必须确定，关键词请先用 `-s` 查出 id。
+pub fn resolve_target<'a>(
+    entries: &'a [FragmentEntry],
+    vault: &Path,
+    target: &str,
+) -> Resolved<'a> {
+    let target = target.trim();
+    if target.is_empty() {
+        return Resolved::NotFound;
+    }
+    if let Some(entry) = entries.iter().find(|entry| entry.id == target) {
+        return Resolved::Found(entry);
+    }
+    if target.contains('/') || target.ends_with(".md") {
+        let relative = vault_relative(vault, target);
+        return entries
+            .iter()
+            .find(|entry| Some(entry.relative_path(vault)) == relative)
+            .map_or(Resolved::NotFound, Resolved::Found);
+    }
+    if let Ok(index) = target.parse::<usize>() {
+        if let Some(ids) = recall_search(vault).filter(|ids| (1..=ids.len()).contains(&index)) {
+            let id = &ids[index - 1];
+            return entries
+                .iter()
+                .find(|entry| &entry.id == id)
+                .map_or(Resolved::NotFound, Resolved::Found);
+        }
+    }
+    let needle = target.to_lowercase();
+    if needle.chars().count() < 4 {
+        return Resolved::NotFound;
+    }
+    let matched = entries
+        .iter()
+        .filter(|entry| entry.id.to_lowercase().contains(&needle))
+        .collect::<Vec<_>>();
+    match matched.as_slice() {
+        [] => Resolved::NotFound,
+        [entry] => Resolved::Found(entry),
+        _ => Resolved::Ambiguous(matched),
+    }
+}
+
+fn vault_relative(vault: &Path, target: &str) -> Option<String> {
+    let path = Path::new(target);
+    if !path.is_absolute() {
+        return Some(target.trim_start_matches("./").to_string());
+    }
+    let canonical = vault.canonicalize().ok();
+    let stripped = path
+        .strip_prefix(vault)
+        .ok()
+        .or_else(|| path.strip_prefix(canonical.as_ref()?).ok())?;
+    Some(stripped.display().to_string())
 }
 
 #[cfg(test)]

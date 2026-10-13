@@ -1,15 +1,20 @@
 //! Shard 终端快捷创建。直接往资料库写一条碎片，App 不运行也能用；
 //! 提交交给 App 的检查点，切回 App 窗口时碎片流会自动刷新。
+//! 给 AI 助手的非交互读写在 `agent`，使用说明与 skill 安装在 `guide`。
 
+mod agent;
 mod edit;
 mod find;
 mod graph;
+mod guide;
 mod parse;
 mod tui;
 
 use serde::Deserialize;
 use shard_core::{
     create_public_fragment_in_vault,
+    frontmatter::parse_fragment,
+    graph_model::content_sha256_hex,
     dataset::{read_dataset, write_dataset_ops, DatasetLimits, DatasetOp},
     default_vault_path,
     vault_lock::{app_settings_path, cli_lock_dir, VaultProcessLock},
@@ -21,11 +26,14 @@ use std::{
     io::{self, IsTerminal, Read},
     path::{Path, PathBuf},
     process::ExitCode,
+    sync::atomic::{AtomicBool, Ordering},
     time::Duration,
 };
 
 const HELP: &str = "\
 shard — 在终端里记一条 Shard 碎片
+
+AI 助手与脚本：先运行 shard --agent-guide 查看完整说明（格式规则、JSON 输出、退出码）。
 
 用法:
   shard [选项] [#标签…] [/块命令] 内容
@@ -33,6 +41,14 @@ shard — 在终端里记一条 Shard 碎片
   shard -i [关键词…]                打开交互搜索与编辑界面
   shard -e [序号 | id | 关键词…]    在终端内编辑一条已有碎片
   shard -e --external [目标]        改用外部编辑器
+  shard --read <目标>                读取全文；--json 时带 sha 等元数据
+  shard --update <目标> --expect <sha> < 正文.md   改写全文（sha 不符即拒绝）
+  shard --append <目标> [内容…]      追加到末尾，无内容参数时读标准输入
+  shard --note <标题> [--folder <文件夹>] [内容…]   新建资料库笔记
+  shard --tags                       列出标签及使用次数
+  shard --ls [文件夹]                列出资料库目录与数据集
+  shard --read-dataset <vault 相对路径>
+  shard --create-dataset <名称> [--folder <文件夹>] < dataset.json
   shard [--vault <路径>] --append-dataset <vault 相对路径> < records.json
   shard [--vault <路径>] --graph-read <碎片id>
   shard [--vault <路径>] --graph-outline <碎片id>
@@ -77,6 +93,10 @@ shard — 在终端里记一条 Shard 碎片
 
 选项:
   --vault <路径>   指定资料库（默认读 Shard 设置，或环境变量 SHARD_VAULT）
+  --json           输出 JSON；出错时 stderr 输出带 code 的 JSON 错误
+  --source <名称>  写入 frontmatter 的来源（默认 cli，或环境变量 SHARD_SOURCE）
+  --agent-guide    打印给 AI 助手的使用说明
+  --install-skill [claude|codex|<目录>]  把使用说明装成 Claude Code / Codex skill
   --append-dataset <路径>  从标准输入读取 JSON，按主键幂等追加记录
   --graph-read <id>        读取大纲或流程图 JSON
   --graph-outline <id>     把大纲导出为两空格缩进列表
@@ -91,24 +111,53 @@ shard — 在终端里记一条 Shard 碎片
   bash 等把 # 当注释的 shell 里请给标签加引号：shard '#备忘' 买咖啡，
   或使用全角 ＃备忘。#密匣 只能在 App 中保存。";
 
+/// 出现过 `--json` 时错误也输出 JSON，方便调用方按 code 分支。
+static JSON_OUTPUT: AtomicBool = AtomicBool::new(false);
+
 fn main() -> ExitCode {
     match run() {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("shard: {}", error.message);
+            if JSON_OUTPUT.load(Ordering::Relaxed) {
+                eprintln!(
+                    "{}",
+                    serde_json::json!({ "error": { "code": error.kind, "message": error.message } })
+                );
+            } else {
+                eprintln!("shard: {}", error.message);
+            }
             ExitCode::from(error.code)
         }
     }
 }
 
-struct CliError {
+#[derive(Debug)]
+pub struct CliError {
+    /// 退出码：2 = 内容已被改过（CONFLICT/HEADER_CHANGED），3 = 数据集主键冲突，其余 1。
     code: u8,
+    /// 机器可读的错误码，`--json` 时输出。
+    kind: &'static str,
     message: String,
+}
+
+impl CliError {
+    fn new(kind: &'static str, message: impl Into<String>) -> Self {
+        let code = match kind {
+            "CONFLICT" | "HEADER_CHANGED" => 2,
+            "KEY_CONFLICT" => 3,
+            _ => 1,
+        };
+        Self {
+            code,
+            kind,
+            message: message.into(),
+        }
+    }
 }
 
 impl From<String> for CliError {
     fn from(message: String) -> Self {
-        Self { code: 1, message }
+        Self::new("ERROR", message)
     }
 }
 
@@ -132,6 +181,8 @@ fn run() -> Result<(), CliError> {
     let mut graph_command = None;
     let mut find_mode = None;
     let mut external = false;
+    let mut json = false;
+    let mut source_arg = None;
 
     // 选项只认内容之前的部分，正文里的 `--xxx` 原样保留。
     while let Some(arg) = args.peek() {
@@ -151,6 +202,51 @@ fn run() -> Result<(), CliError> {
             "--append-dataset" => {
                 args.next();
                 append_path = Some(args.next().ok_or("--append-dataset 需要 vault 相对路径")?);
+            }
+            "--json" => {
+                args.next();
+                json = true;
+                JSON_OUTPUT.store(true, Ordering::Relaxed);
+            }
+            "--source" => {
+                args.next();
+                source_arg = Some(args.next().ok_or("--source 需要一个名称")?);
+            }
+            other if other.starts_with("--source=") => {
+                source_arg = Some(other["--source=".len()..].to_string());
+                args.next();
+            }
+            "--agent-guide" => {
+                print!("{}", guide::AGENT_GUIDE);
+                return Ok(());
+            }
+            "--install-skill" => {
+                args.next();
+                let mut force = false;
+                let targets = args
+                    .by_ref()
+                    .filter(|arg| {
+                        let is_force = arg == "--force";
+                        force |= is_force;
+                        !is_force
+                    })
+                    .collect::<Vec<_>>();
+                return guide::install_skill(&targets, force);
+            }
+            command if AGENT_COMMANDS.contains(&command) => {
+                let command = args.next().expect("peeked argument must exist");
+                let parsed = parse_agent_command(&command, args.by_ref().collect())?;
+                if append_path.is_some() {
+                    return Err(format!("{command} 不能与 --append-dataset 同时使用").into());
+                }
+                let context = agent::Context {
+                    vault: resolve_vault(parsed.vault.or(vault_arg))?,
+                    lock_dir: lock_dir()?,
+                    timeout: lock_timeout()?,
+                    json: json || parsed.json,
+                    source: resolve_source(parsed.source.or(source_arg))?,
+                };
+                return agent::run(parsed.command, &context);
             }
             "--external" => {
                 external = true;
@@ -190,7 +286,7 @@ fn run() -> Result<(), CliError> {
         if append_path.is_some() {
             return Err("搜索与编辑不能与 --append-dataset 同时使用".into());
         }
-        return run_find(mode, args.collect(), vault_arg, external);
+        return run_find(mode, args.collect(), vault_arg, external, json);
     }
     if external {
         return Err("--external 只能与 -e 一起使用".into());
@@ -220,15 +316,187 @@ fn run() -> Result<(), CliError> {
     }
 
     let (body, tags) = parse::compose(&capture)?;
+    agent::ensure_plain_markdown(&body)?;
+    let source = resolve_source(source_arg)?;
     let vault = resolve_vault(vault_arg)?;
     let lock_dir = lock_dir()?;
     let timeout = lock_timeout()?;
-    let _lock = VaultProcessLock::acquire(&lock_dir, &vault, Some(timeout))?;
-    let path = create_public_fragment_in_vault(&vault, &body, tags, "cli")?;
+    let lock = VaultProcessLock::acquire(&lock_dir, &vault, Some(timeout)).map_err(agent::lock_error)?;
+    let path = create_public_fragment_in_vault(&vault, &body, tags, &source)?;
+    drop(lock);
 
     let shown = path.strip_prefix(&vault).unwrap_or(&path);
-    println!("{}", shown.display());
+    if json {
+        let raw = fs::read_to_string(&path).map_err(|error| format!("读取 {} 失败：{error}", path.display()))?;
+        let parsed = parse_fragment(&raw)?;
+        agent::print_json(&serde_json::json!({
+            "id": parsed.frontmatter.id,
+            "path": shown.display().to_string(),
+            "sha": content_sha256_hex(&raw),
+            "tags": parsed.frontmatter.tags,
+        }));
+    } else {
+        println!("{}", shown.display());
+    }
     Ok(())
+}
+
+const AGENT_COMMANDS: &[&str] = &[
+    "--read",
+    "--update",
+    "--append",
+    "--note",
+    "--tags",
+    "--ls",
+    "--read-dataset",
+    "--create-dataset",
+];
+
+struct ParsedAgentCommand {
+    command: agent::Command,
+    json: bool,
+    vault: Option<String>,
+    source: Option<String>,
+}
+
+/// 命令之后的参数：`--json`、`--vault`、`--source`、`--expect`、`--folder` 可以写在任意位置，
+/// `--` 之后全部按位置参数处理（正文里要出现这些字样时用它）。
+fn parse_agent_command(command: &str, args: Vec<String>) -> Result<ParsedAgentCommand, CliError> {
+    let mut positional = Vec::new();
+    let mut json = false;
+    let mut vault = None;
+    let mut source = None;
+    let mut expect = None;
+    let mut folder = None;
+    let mut args = args.into_iter();
+    while let Some(arg) = args.next() {
+        let mut value = |name: &str| {
+            args.next()
+                .ok_or_else(|| CliError::from(format!("{name} 需要一个值")))
+        };
+        match arg.as_str() {
+            "--" => {
+                positional.extend(args.by_ref());
+                break;
+            }
+            "--json" => {
+                json = true;
+                JSON_OUTPUT.store(true, Ordering::Relaxed);
+            }
+            "--vault" => vault = Some(value("--vault")?),
+            "--source" => source = Some(value("--source")?),
+            "--expect" => expect = Some(value("--expect")?),
+            "--folder" => folder = Some(value("--folder")?),
+            other if other.starts_with("--vault=") => vault = Some(other["--vault=".len()..].to_string()),
+            other if other.starts_with("--source=") => source = Some(other["--source=".len()..].to_string()),
+            other if other.starts_with("--expect=") => expect = Some(other["--expect=".len()..].to_string()),
+            other if other.starts_with("--folder=") => folder = Some(other["--folder=".len()..].to_string()),
+            _ => positional.push(arg),
+        }
+    }
+
+    let mut positional = positional.into_iter();
+    let mut first = |name: &str| {
+        positional
+            .next()
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| CliError::from(format!("{command} 缺少{name}")))
+    };
+    let reject = |option: Option<&String>, name: &str| match option {
+        Some(_) => Err(CliError::from(format!("{command} 不接受 {name}"))),
+        None => Ok(()),
+    };
+    let command = match command {
+        "--read" => {
+            reject(expect.as_ref(), "--expect")?;
+            reject(folder.as_ref(), "--folder")?;
+            agent::Command::Read { target: first("目标")? }
+        }
+        "--update" => {
+            reject(folder.as_ref(), "--folder")?;
+            let target = first("目标")?;
+            let expect = expect.ok_or_else(|| CliError::from("--update 必须带 --expect <sha>（先用 --read --json 读取）"))?;
+            agent::Command::Update { target, expect }
+        }
+        "--append" => {
+            reject(folder.as_ref(), "--folder")?;
+            agent::Command::Append {
+                target: first("目标")?,
+                expect,
+                content: positional.by_ref().collect(),
+            }
+        }
+        "--note" => {
+            reject(expect.as_ref(), "--expect")?;
+            agent::Command::Note {
+                title: first("标题")?,
+                folder,
+                content: positional.by_ref().collect(),
+            }
+        }
+        "--tags" => {
+            reject(expect.as_ref(), "--expect")?;
+            reject(folder.as_ref(), "--folder")?;
+            agent::Command::Tags
+        }
+        "--ls" => {
+            reject(expect.as_ref(), "--expect")?;
+            reject(folder.as_ref(), "--folder")?;
+            agent::Command::List { folder: positional.next() }
+        }
+        "--read-dataset" => {
+            reject(expect.as_ref(), "--expect")?;
+            reject(folder.as_ref(), "--folder")?;
+            agent::Command::ReadDataset { path: first("数据集路径")? }
+        }
+        "--create-dataset" => {
+            reject(expect.as_ref(), "--expect")?;
+            agent::Command::CreateDataset {
+                title: first("名称")?,
+                folder,
+            }
+        }
+        _ => unreachable!("AGENT_COMMANDS 已限定命令"),
+    };
+    if !matches!(command, agent::Command::Append { .. } | agent::Command::Note { .. }) {
+        if let Some(extra) = positional.next() {
+            return Err(format!("{command_name} 多出参数：{extra}", command_name = command_label(&command)).into());
+        }
+    }
+    Ok(ParsedAgentCommand {
+        command,
+        json,
+        vault,
+        source,
+    })
+}
+
+fn command_label(command: &agent::Command) -> &'static str {
+    match command {
+        agent::Command::Read { .. } => "--read",
+        agent::Command::Update { .. } => "--update",
+        agent::Command::Append { .. } => "--append",
+        agent::Command::Note { .. } => "--note",
+        agent::Command::Tags => "--tags",
+        agent::Command::List { .. } => "--ls",
+        agent::Command::ReadDataset { .. } => "--read-dataset",
+        agent::Command::CreateDataset { .. } => "--create-dataset",
+    }
+}
+
+/// `--source` → `SHARD_SOURCE` → `cli`。只是 frontmatter 里的来源标记，限制成单行短名称。
+fn resolve_source(explicit: Option<String>) -> Result<String, CliError> {
+    let Some(source) = explicit.or_else(|| env::var("SHARD_SOURCE").ok()) else {
+        return Ok("cli".to_string());
+    };
+    let source = source.trim();
+    if source.is_empty() {
+        return Ok("cli".to_string());
+    }
+    if source.chars().count() > 40 || source.chars().any(char::is_control) {
+        return Err("--source 必须是不超过 40 个字符的单行名称".into());
+    }
+    Ok(source.to_string())
 }
 
 fn parse_graph_command(command: &str, args: Vec<String>) -> Result<graph::GraphCommand, CliError> {
@@ -309,8 +577,24 @@ fn parse_graph_command(command: &str, args: Vec<String>) -> Result<graph::GraphC
 }
 
 fn run_graph(command: graph::GraphCommand, vault_arg: Option<String>) -> Result<(), CliError> {
-    use graph::GraphCommand;
     let vault = resolve_vault(vault_arg)?;
+    let lock_dir = lock_dir()?;
+    let timeout = lock_timeout()?;
+    run_graph_in(command, &vault, &lock_dir, timeout).map_err(|message| match message.as_str() {
+        graph::STALE_MESSAGE => CliError::new("CONFLICT", message),
+        "Shard 正在写入资料库，请稍后重试" => CliError::new("LOCKED", message),
+        _ => message.into(),
+    })
+}
+
+fn run_graph_in(
+    command: graph::GraphCommand,
+    vault: &Path,
+    lock_dir: &Path,
+    timeout: Duration,
+) -> Result<(), String> {
+    use graph::GraphCommand;
+    let vault = vault.to_path_buf();
     match command {
         GraphCommand::Read { fragment_id } => graph::run_read(&vault, &fragment_id)?,
         GraphCommand::Outline { fragment_id } => graph::run_outline(&vault, &fragment_id)?,
@@ -324,8 +608,8 @@ fn run_graph(command: graph::GraphCommand, vault_arg: Option<String>) -> Result<
                 &fragment_id,
                 &expect,
                 value,
-                &lock_dir()?,
-                lock_timeout()?,
+                lock_dir,
+                timeout,
             )?;
         }
         GraphCommand::SetText {
@@ -339,8 +623,8 @@ fn run_graph(command: graph::GraphCommand, vault_arg: Option<String>) -> Result<
             &node_id,
             text,
             &expect,
-            &lock_dir()?,
-            lock_timeout()?,
+            lock_dir,
+            timeout,
         )?,
         GraphCommand::AddChild {
             fragment_id,
@@ -353,8 +637,8 @@ fn run_graph(command: graph::GraphCommand, vault_arg: Option<String>) -> Result<
             &parent_id,
             text,
             &expect,
-            &lock_dir()?,
-            lock_timeout()?,
+            lock_dir,
+            timeout,
         )?,
         GraphCommand::Remove {
             fragment_id,
@@ -365,8 +649,8 @@ fn run_graph(command: graph::GraphCommand, vault_arg: Option<String>) -> Result<
             &fragment_id,
             &node_id,
             &expect,
-            &lock_dir()?,
-            lock_timeout()?,
+            lock_dir,
+            timeout,
         )?,
     }
     Ok(())
@@ -422,6 +706,7 @@ fn parse_find_args(mode: FindMode, args: Vec<String>) -> Result<FindArgs, CliErr
             "--json" => {
                 search_only("--json")?;
                 parsed.json = true;
+                JSON_OUTPUT.store(true, Ordering::Relaxed);
             }
             "--external" if mode == FindMode::Edit => parsed.external = true,
             "--external" => return Err("--external 只能与 -e 一起使用".into()),
@@ -448,8 +733,15 @@ fn run_find(
     args: Vec<String>,
     vault_arg: Option<String>,
     external: bool,
+    json: bool,
 ) -> Result<(), CliError> {
-    let args = parse_find_args(mode, args)?;
+    let mut args = parse_find_args(mode, args)?;
+    if json {
+        if mode != FindMode::Search {
+            return Err("--json 只能用于搜索".into());
+        }
+        args.json = true;
+    }
     if external && mode != FindMode::Edit {
         return Err("--external 只能与 -e 一起使用".into());
     }
@@ -462,7 +754,7 @@ fn run_find(
         return tui::run(&vault, Some(&query), None, &lock_dir()?, lock_timeout()?)
             .map_err(Into::into);
     }
-    let entries = find::load_fragments(&vault)?;
+    let entries = find::load_entries(&vault)?;
 
     if mode == FindMode::Search {
         let outcome = find::search(&entries, &query, args.limit)?;
@@ -507,6 +799,13 @@ fn run_find(
             .map_err(Into::into);
     }
 
+    let has_editor = ["VISUAL", "EDITOR"]
+        .iter()
+        .any(|name| env::var(name).is_ok_and(|value| !value.trim().is_empty()));
+    let interactive = io::stdin().is_terminal() && io::stdout().is_terminal();
+    if !has_editor && !interactive {
+        return Err("非交互环境没有可用的编辑器。脚本与 AI 助手请用 shard --read / --update / --append（见 shard --agent-guide）".into());
+    }
     let entry = match find::select(&entries, &vault, &args.terms, true)? {
         find::Selection::Found(entry) => entry,
         find::Selection::Ambiguous(total) => {
@@ -523,10 +822,10 @@ fn run_find(
             println!("没有改动");
             Ok(())
         }
-        Err(failure) => Err(CliError {
-            code: failure.code,
-            message: failure.message,
-        }),
+        Err(failure) => Err(CliError::new(
+            if failure.code == 2 { "CONFLICT" } else { "ERROR" },
+            failure.message,
+        )),
     }
 }
 
@@ -558,14 +857,12 @@ fn append_dataset(path: &str, vault_arg: Option<String>) -> Result<(), CliError>
     let request: AppendInput =
         serde_json::from_str(&input).map_err(|error| format!("追加记录 JSON 无效：{error}"))?;
     let vault = resolve_vault(vault_arg)?;
-    let _lock = VaultProcessLock::acquire(&lock_dir()?, &vault, Some(lock_timeout()?))?;
+    let _lock = VaultProcessLock::acquire(&lock_dir()?, &vault, Some(lock_timeout()?))
+        .map_err(agent::lock_error)?;
     let limits = DatasetLimits::default();
     let current = read_dataset(&vault, path, &limits).map_err(|error| error.to_string())?;
     if current.table.header != request.expected_header {
-        return Err(CliError {
-            code: 2,
-            message: "表头已变化".into(),
-        });
+        return Err(CliError::new("HEADER_CHANGED", "表头已变化"));
     }
     if !current.editable {
         return Err(current
@@ -611,10 +908,7 @@ fn append_dataset(path: &str, vault_arg: Option<String>) -> Result<(), CliError>
         }
         if let Some(existing) = known.get(id) {
             if existing != &row {
-                return Err(CliError {
-                    code: 3,
-                    message: "主键冲突".into(),
-                });
+                return Err(CliError::new("KEY_CONFLICT", "主键冲突"));
             }
             skipped += 1;
         } else {
