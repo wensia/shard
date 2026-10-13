@@ -77,6 +77,7 @@ mod search_reconcile;
 mod search_runtime;
 mod search_lockbox;
 mod search_sources;
+mod vault_watch;
 mod xlsx;
 
 const DEFAULT_WINDOW_TITLE: &str = "Shard";
@@ -922,6 +923,16 @@ async fn list_fragments(
     run_blocking(move || {
         let vault = ensure_vault_dirs(&app)?;
         list_fragments_in_vault(&vault, &lockbox_runtime)
+    })
+    .await
+}
+
+/// 开始监听当前 vault 的外部写入，变化以 `vault-changed` 事件推给前端；重复调用无副作用。
+#[tauri::command]
+async fn watch_vault(app: tauri::AppHandle) -> Result<(), String> {
+    run_blocking(move || {
+        let vault = configured_vault_path(&app)?;
+        vault_watch::watch(app, vault)
     })
     .await
 }
@@ -7827,6 +7838,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             search_commands::search_vault,
             search_commands::read_search_target,
+            watch_vault,
             cli_install_status,
             install_cli,
             uninstall_cli,

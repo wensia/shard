@@ -14,6 +14,7 @@ import { notify } from "@/lib/notify"
 import { applyDatasetOps as saveDatasetOps, isStaleBaseError, readDataset } from "./api"
 import { applyDatasetOps, DatasetOpError, invertDatasetOps, newRowId } from "./ops"
 import type { CsvTable, DatasetOp, DatasetSnapshot } from "./types"
+import { VAULT_FILES_CHANGED_DOM_EVENT } from "@/lib/vault-changes"
 
 export type DatasetEditorHandle = { flush(): Promise<boolean>; isDirty(): boolean }
 export type DatasetEditorProps = { path: string; onSnapshot?: (snapshot: DatasetSnapshot) => void }
@@ -196,14 +197,22 @@ export const DatasetEditor = forwardRef<DatasetEditorHandle, DatasetEditorProps>
     setHistoryVersion(value => value + 1)
   }, [commit])
 
+  // 切回窗口或文件监听报告外部改了这份 CSV：有待存修改先存（基线过期即进冲突），否则按 sha 比对重载。
   useEffect(() => {
-    const onFocus = () => {
+    const reconcile = () => {
       if (pending.current.length || inFlight.current) { void flush(); return }
       if (!paused.current) void load()
     }
-    window.addEventListener("focus", onFocus)
-    return () => window.removeEventListener("focus", onFocus)
-  }, [flush, load])
+    const onExternalChange = (event: Event) => {
+      if ((event as CustomEvent<{ paths: string[] }>).detail.paths.includes(path)) reconcile()
+    }
+    window.addEventListener("focus", reconcile)
+    window.addEventListener(VAULT_FILES_CHANGED_DOM_EVENT, onExternalChange)
+    return () => {
+      window.removeEventListener("focus", reconcile)
+      window.removeEventListener(VAULT_FILES_CHANGED_DOM_EVENT, onExternalChange)
+    }
+  }, [flush, load, path])
 
   const keyColumn = snapshot?.schema?.primaryKey ? table?.header.indexOf(snapshot.schema.primaryKey) ?? -1 : -1
   const blocked = !snapshot?.editable || paused.current

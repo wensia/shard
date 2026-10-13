@@ -179,6 +179,9 @@ export async function installContentTypesMock(page: Page, options: { fragmentBod
       }
       let propertyRegistrySha = "property-registry-sha-1"
       let callbackId = 0
+      // Tauri 事件：listen 时登记的回调，供测试模拟后端推送（如 vault-changed）。
+      const callbacks = new Map<number, (event: unknown) => void>()
+      const listeners: Array<{ event: string; handler: number }> = []
       let createdCount = 0
       let createdGraphCount = 0
       let savedRevision = 1
@@ -228,13 +231,32 @@ export async function installContentTypesMock(page: Page, options: { fragmentBod
         __SHARD_TYPE_CALLS__: calls,
         __SHARD_TYPE_CONTROL__: control,
         __TAURI_EVENT_PLUGIN_INTERNALS__: { unregisterListener() {} },
+        __SHARD_TYPE_EMIT__: (event: string, payload: unknown) => {
+          for (const listener of listeners.filter((item) => item.event === event)) {
+            callbacks.get(listener.handler)?.({ event, id: listener.handler, payload })
+          }
+        },
+        __SHARD_TYPE_EXTERNAL_EDIT__: (id: string, content: string) => {
+          const fragment = fragments.find((item) => item.id === id)
+          if (!fragment) throw new Error(`Fragment not found: ${id}`)
+          fragment.content = content
+          fragment.fileSha = `file-sha-${id}-external-${++savedRevision}`
+          return { path: fragment.path, sha: fragment.fileSha }
+        },
         __TAURI_INTERNALS__: {
           metadata: { currentWindow: { label: "main" }, currentWebview: { label: "main" } },
-          transformCallback: () => ++callbackId,
+          transformCallback: (callback?: (event: unknown) => void) => {
+            const id = ++callbackId
+            if (callback) callbacks.set(id, callback)
+            return id
+          },
           invoke: async (command: string, args: Record<string, unknown> = {}) => {
             calls.push({ command, args: clone(args) })
             switch (command) {
-              case "plugin:event|listen": return ++callbackId
+              case "plugin:event|listen":
+                listeners.push({ event: String(args.event), handler: Number(args.handler) })
+                return ++callbackId
+              case "watch_vault": return null
               case "plugin:event|unlisten":
               case "set_canvas_grab_cursor":
               case "set_reminder_schedule":
@@ -469,6 +491,29 @@ export async function installContentTypesMock(page: Page, options: { fragmentBod
       outlineBody: CARD_OUTLINE,
     }
   )
+}
+
+/** 模拟后端 vault 文件监听推来的一批变化。 */
+export async function emitVaultChanged(
+  page: Page,
+  changes: Array<{ path: string; exists: boolean; sha: string | null }>
+) {
+  await page.evaluate((changes) => {
+    const root = globalThis as typeof globalThis & {
+      __SHARD_TYPE_EMIT__: (event: string, payload: unknown) => void
+    }
+    root.__SHARD_TYPE_EMIT__("vault-changed", { vault: "/tmp/shard-content-types-mock-vault", changes })
+  }, changes)
+}
+
+/** 模拟 App 之外（终端 shard、AI 助手）改写一条碎片，返回新的路径与 sha。 */
+export function editFragmentExternally(page: Page, id: string, content: string) {
+  return page.evaluate(({ content, id }) => {
+    const root = globalThis as typeof globalThis & {
+      __SHARD_TYPE_EXTERNAL_EDIT__: (id: string, content: string) => { path: string; sha: string }
+    }
+    return root.__SHARD_TYPE_EXTERNAL_EDIT__(id, content)
+  }, { content, id })
 }
 
 export function readTypeCalls(page: Page) {

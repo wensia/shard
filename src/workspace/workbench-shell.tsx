@@ -179,6 +179,8 @@ import {
 import { useAutoCheckpoint } from "@/workspace/use-auto-checkpoint"
 import { useReminderBadge } from "@/workspace/use-reminder-badge"
 import { useSearchController } from "@/workspace/use-search-controller"
+import { useVaultWatch } from "@/workspace/use-vault-watch"
+import { planVaultChanges, VAULT_FILES_CHANGED_DOM_EVENT, type VaultFileChange } from "@/lib/vault-changes"
 import { DatasetZen, type DatasetZenHandle } from "@/features/datasets/dataset-zen"
 import { OPEN_DATASET_EVENT } from "@/features/datasets/open-dataset"
 
@@ -592,7 +594,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     clearQuickOpenMatchCache()
   }, [])
 
-  // 没有文件监听：终端 `shard` 等外部写入的碎片，在切回窗口时静默对账一次。
+  // 切回窗口时静默对账一次：文件监听不可用（浏览器预览）或漏报时的兜底。
   const refreshFragmentsRef = useRef(refreshFragments)
   refreshFragmentsRef.current = refreshFragments
   useEffect(() => {
@@ -609,6 +611,36 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     window.addEventListener("focus", handleFocus)
     return () => window.removeEventListener("focus", handleFocus)
   }, [])
+
+  // 终端 `shard`、AI 助手、其他编辑器写入后实时刷新；App 自己的保存 sha 一致，不会触发。
+  const externalRefreshRef = useRef({ running: false, again: false })
+  function refreshFragmentsAfterExternalChange() {
+    const gate = externalRefreshRef.current
+    if (gate.running) {
+      gate.again = true
+      return
+    }
+    gate.running = true
+    void refreshFragments({ silent: true }).finally(() => {
+      gate.running = false
+      if (!gate.again) return
+      gate.again = false
+      refreshFragmentsAfterExternalChange()
+    })
+  }
+  function handleVaultFilesChanged(changes: VaultFileChange[]) {
+    const plan = planVaultChanges(changes, { fragments, libraryTree, csvFiles })
+    if (plan.fragments) refreshFragmentsAfterExternalChange()
+    if (plan.libraryTree) void refreshLibraryTree()
+    if (plan.mindMaps) void refreshMindMaps()
+    if (plan.csvFiles) void refreshCsvFiles()
+    if (plan.datasets.length === 0) return
+    window.dispatchEvent(new CustomEvent(VAULT_FILES_CHANGED_DOM_EVENT, { detail: { paths: plan.datasets } }))
+    for (const path of plan.datasets) {
+      window.dispatchEvent(new CustomEvent("shard:dataset-changed", { detail: { path } }))
+    }
+  }
+  useVaultWatch(vaultPath, handleVaultFilesChanged)
 
   useEffect(() => {
     routeRef.current = route
