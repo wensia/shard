@@ -1,6 +1,6 @@
 # Shard iOS 首版实施计划
 
-状态：2026-10-13 用户批准，分支 `feat/ios-app`。本文修订了 [产品框架](./product-framework.md) 与 [碎片版设计](./fragment-only-design.md) 中「不开发独立手机 App」的旧决定：手机端在聊天 Agent 之外，增加一个原生 iOS App，承担浏览与快速记录。
+状态：2026-10-13 用户批准，分支 `feat/ios-app`。M0–M3 已完成并验证，M4 待真机安装（见 §6）。本文修订了 [产品框架](./product-framework.md) 与 [碎片版设计](./fragment-only-design.md) 中「不开发独立手机 App」的旧决定：手机端在聊天 Agent 之外，增加一个原生 iOS App，承担浏览与快速记录。
 
 ## 1. 范围
 
@@ -47,3 +47,15 @@ apps/ios/
 - 大陆移动网络访问 GitHub 不稳定：首版接受，同步层可替换。
 - 令牌安全：细粒度、单仓库、钥匙串存储，不进日志与仓库。
 - 格式漂移：对照样例 + 双向测试；改标签规则须三处同改。
+
+## 6. 进度与验证记录
+
+| 阶段 | 验证 |
+| --- | --- |
+| M0 | 模拟器渲染碎片、文档与 6 万字长文（走解析 Worker），亮暗两套 kiln 配色 |
+| M1 | `swift test`：标签提取/规范化、近百个 YAML 标量、时间格式、完整碎片文件与 Rust 逐字节一致；`cargo test -p shard-core` 通过 |
+| M2 | `ShardUITests` 经 `scripts/mock-github.py` 浏览真实 vault 克隆；`LiveGitHubTests` 用真实 GitHub API 只读同步 68 个文件，lockbox/.trash/.shard 均未下载 |
+| M3 | UI 测试记录并推送；桌面克隆 `fetch` + `rebase --autostash` 无冲突，`shard --read` 读出 `source: ios`；队列测试覆盖响应丢失重试与同路径冲突 |
+| M4 | Release 构建签名通过（团队 LN8XZQ6ZX7）；真机安装待手机解锁 |
+
+已知限制：手机端不编辑已有内容、不支持密匣与图片附件上传；GitHub 在大陆移动网络可能不稳定；搜索不含拼音匹配。

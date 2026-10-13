@@ -7,7 +7,7 @@ options:
   developmentLanguage: zh-Hans
 settings:
   base:
-    DEVELOPMENT_TEAM: LB69LR6TBL
+    DEVELOPMENT_TEAM: LN8XZQ6ZX7
     CODE_SIGN_STYLE: Automatic
     SWIFT_VERSION: "6.0"
     MARKETING_VERSION: "0.1.0"
