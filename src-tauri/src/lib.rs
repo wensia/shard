@@ -3258,6 +3258,31 @@ async fn fragment_image_file_path(app: tauri::AppHandle, path: String) -> Result
     .await
 }
 
+/// 表格单元格里的图片引用哪些真的指向 vault 里的图片：只有存在的才画成缩略图，
+/// 写错的路径照常显示文字。一次批量查，避免逐格 IPC。
+#[tauri::command]
+async fn existing_vault_images(
+    app: tauri::AppHandle,
+    paths: Vec<String>,
+) -> Result<Vec<String>, String> {
+    run_blocking(move || {
+        let vault = ensure_vault_dirs(&app)?;
+        Ok(existing_vault_images_in(&vault, paths))
+    })
+    .await
+}
+
+fn existing_vault_images_in(vault: &Path, paths: Vec<String>) -> Vec<String> {
+    paths
+        .into_iter()
+        .take(20_000)
+        .filter(|path| {
+            shard_core::image_refs::is_local_image_reference(path)
+                && resolve_vault_asset_path(vault, path).is_ok()
+        })
+        .collect()
+}
+
 /// 用系统默认应用打开 vault 里的一张图片（HEIC 等 webview 显示不了时的出路）。
 #[tauri::command]
 async fn open_vault_image(app: tauri::AppHandle, path: String) -> Result<(), String> {
@@ -7484,7 +7509,8 @@ fn resolve_vault_asset_path(vault: &Path, raw_path: &str) -> Result<PathBuf, Str
             .to_string_lossy()
             .replace('\\', "/")
     } else {
-        trimmed.to_string()
+        // `./notes/a.png` 与 `notes/a.png` 是同一个引用。
+        trimmed.strip_prefix("./").unwrap_or(trimmed).to_string()
     };
 
     shard_core::ensure_public_vault_file_path(vault, &relative)
@@ -8390,6 +8416,7 @@ pub fn run() {
             import_library_files,
             image_references,
             open_vault_image,
+            existing_vault_images,
             normalize_csv_file,
             read_fragment_image,
             fragment_image_file_path,
@@ -11764,6 +11791,32 @@ mod tests {
         assert_eq!(skipped.len(), 4);
         assert!(skipped[1].reason.contains("50 MiB"), "{:?}", skipped[1]);
         assert!(import_library_images_in_vault(vault, &[path("营业执照.png")], Some("assets")).is_err());
+    }
+
+    #[test]
+    fn existing_vault_images_filters_missing_private_and_non_image_refs() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let vault = tempdir.path();
+        ensure_vault_layout(vault).unwrap();
+        fs::create_dir_all(vault.join("notes/相册")).unwrap();
+        fs::create_dir_all(vault.join("lockbox")).unwrap();
+        fs::write(vault.join("notes/相册/a.png"), TEST_PNG).unwrap();
+        fs::write(vault.join("lockbox/b.png"), TEST_PNG).unwrap();
+        fs::write(vault.join("notes/说明.md"), "x").unwrap();
+        assert_eq!(
+            existing_vault_images_in(
+                vault,
+                vec![
+                    "notes/相册/a.png".into(),
+                    "./notes/相册/a.png".into(),
+                    "notes/相册/missing.png".into(),
+                    "lockbox/b.png".into(),
+                    "notes/说明.md".into(),
+                    "https://e.com/a.png".into(),
+                ]
+            ),
+            vec!["notes/相册/a.png".to_string(), "./notes/相册/a.png".to_string()]
+        );
     }
 
     #[test]

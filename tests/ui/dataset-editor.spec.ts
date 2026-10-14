@@ -286,6 +286,8 @@ test("GBK 等外部编码只读打开，确认转换后才可编辑", async ({ p
     { command: "normalize_csv_file", args: { path: PATH, expectedSha: "sha-0" } },
   ])
   await expect(editor(page).getByRole("alert")).toHaveCount(0)
+  // 确认框收起（含退场动画）后再点表格，否则点击落在遮罩上。
+  await expect(dialog).toHaveCount(0)
   await editCell(page, 1, 0, "王五")
   await expect.poll(() => calls(page, "apply_dataset_ops")).toHaveLength(1)
 })
@@ -353,3 +355,99 @@ test("对话框底栏：桌面右对齐同排、主按钮在最右；窄屏竖�
 })
 
 datasetEditingCases()
+
+async function withPhotoColumn(page: Page) {
+  await page.evaluate(() => {
+    const state = (window as unknown as { __DATASET_TEST__: { state: { table: { header: string[]; rows: string[][] } } } }).__DATASET_TEST__.state
+    state.table = {
+      header: ["id", "姓名", "照片"],
+      rows: [
+        ["r_000000000001", "张三", "assets/ab/cover.png"],
+        ["r_000000000002", "李四", "assets/ab/missing.png"],
+        ["r_000000000003", "王五", ""],
+      ],
+    }
+  })
+}
+
+const cellKind = (page: Page, column: number, row: number) =>
+  editor(page).evaluate((element, [x, y]) => {
+    const cell = (element as HTMLElement & { __datasetGetCellContent: (item: [number, number]) => { kind: string; data?: unknown } }).__datasetGetCellContent([x, y])
+    return { kind: cell.kind, data: cell.data }
+  }, [column, row] as [number, number])
+
+test("写着图片路径且文件存在的格画成缩略图，路径写错的照常显示文字", async ({ page }) => {
+  await withPhotoColumn(page)
+  await openFromCard(page)
+  await expect.poll(() => cellKind(page, 2, 0)).toEqual({
+    kind: "custom",
+    data: { kind: "shard-image-cell", raw: "assets/ab/cover.png", refs: ["assets/ab/cover.png"] },
+  })
+  expect((await cellKind(page, 2, 1)).kind).toBe("text")
+  expect((await cellKind(page, 1, 0)).kind).toBe("text")
+  await expect.poll(() => calls(page, "existing_vault_images")).toContainEqual({
+    command: "existing_vault_images",
+    args: { paths: ["assets/ab/cover.png", "assets/ab/missing.png"] },
+  })
+})
+
+test("双击图片格看大图，改路径后按原文写回", async ({ page }) => {
+  await withPhotoColumn(page)
+  await openFromCard(page)
+  await expect.poll(async () => (await cellKind(page, 2, 0)).kind).toBe("custom")
+  await clickCell(page, 2, 0, 2)
+  const dialog = page.getByRole("dialog", { name: "图片单元格" })
+  await expect(dialog).toBeVisible()
+  const preview = dialog.getByRole("img", { name: "cover.png" })
+  await expect(preview).toHaveAttribute("src", `/__shard-asset/${encodeURIComponent("assets/ab/cover.png")}`)
+  await expect.poll(() => preview.evaluate((node: HTMLImageElement) => node.naturalWidth)).toBe(1)
+  await dialog.getByRole("textbox", { name: "图片路径" }).fill("assets/ab/cover.png\nassets/ab/back.png")
+  await dialog.getByRole("button", { name: "完成" }).click()
+  await expect.poll(() => calls(page, "apply_dataset_ops")).toHaveLength(1)
+  expect((await calls(page, "apply_dataset_ops"))[0].args.ops).toEqual([
+    { op: "setCells", cells: [{ row: 0, column: 2, value: "assets/ab/cover.png\nassets/ab/back.png" }] },
+  ])
+})
+
+test("把截图粘到选中的空格：存进附件仓，再把路径写进这一格", async ({ page }) => {
+  await withPhotoColumn(page)
+  await openFromCard(page)
+  // 第 0 行有图，加高到 88px；等它生效后按实际行高点第 2 行（clickCell 假定每行 40px）。
+  await expect.poll(async () => (await cellKind(page, 2, 0)).kind).toBe("custom")
+  const box = (await zen(page).boundingBox())!
+  await page.mouse.click(box.x + 67 + 2 * 192 + 30, box.y + 154 + 88 + 40 + 20)
+  await expect.poll(() => editor(page).evaluate(element => (element as HTMLElement & { __datasetSelection?: { current?: { cell: [number, number] } } }).__datasetSelection?.current?.cell)).toEqual([2, 2])
+  await editor(page).locator("canvas").first().evaluate((canvas) => {
+    const clipboardData = new DataTransfer()
+    clipboardData.items.add(new File([new Uint8Array([137, 80, 78, 71])], "截图.png", { type: "image/png" }))
+    canvas.dispatchEvent(new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData }))
+  })
+  await expect.poll(() => calls(page, "save_fragment_image")).toEqual([
+    { command: "save_fragment_image", args: { bytes: [137, 80, 78, 71], fileName: "截图.png" } },
+  ])
+  await expect.poll(() => calls(page, "apply_dataset_ops")).toHaveLength(1)
+  expect((await calls(page, "apply_dataset_ops"))[0].args.ops).toEqual([
+    { op: "setCells", cells: [{ row: 2, column: 2, value: "assets/ab/截图.png" }] },
+  ])
+})
+
+test("从访达把图片拖到图片格上：接在原有图片后面", async ({ page }) => {
+  await withPhotoColumn(page)
+  await openFromCard(page)
+  await expect.poll(async () => (await cellKind(page, 2, 0)).kind).toBe("custom")
+  const box = (await zen(page).boundingBox())!
+  const x = box.x + 67 + 2 * 192 + 30
+  const y = box.y + 174
+  await page.evaluate(async ({ x, y }) => {
+    const test = (window as unknown as { __DATASET_TEST__: { drag(type: string, paths: string[], x: number, y: number): Promise<void> } }).__DATASET_TEST__
+    await test.drag("enter", ["/Users/me/背面.jpg"], x, y)
+    await test.drag("drop", ["/Users/me/背面.jpg", "/Users/me/说明.pdf"], x, y)
+  }, { x, y })
+  await expect.poll(() => calls(page, "save_image_attachment_from_path")).toEqual([
+    { command: "save_image_attachment_from_path", args: { path: "/Users/me/背面.jpg" } },
+  ])
+  await expect.poll(() => calls(page, "apply_dataset_ops")).toHaveLength(1)
+  expect((await calls(page, "apply_dataset_ops"))[0].args.ops).toEqual([
+    { op: "setCells", cells: [{ row: 0, column: 2, value: "assets/ab/cover.png\nassets/ab/背面.jpg" }] },
+  ])
+})

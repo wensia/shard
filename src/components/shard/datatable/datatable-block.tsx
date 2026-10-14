@@ -61,6 +61,7 @@ import {
 } from "@/lib/datatable"
 
 import styles from "./datatable-block.module.css"
+import { CsvCellValue } from "@/components/shard/csv-cell-value"
 
 export interface DatatableBlockProps {
   /** 围栏正文（JSON 原文）。 */
@@ -534,7 +535,7 @@ function DatatableGrid({
               />
             ) : (
               <span className={styles.cellText}>
-                {formatDatatableCell(entry.row[column.key], column.type)}
+                <CsvCellValue value={formatDatatableCell(entry.row[column.key], column.type)} />
               </span>
             )}
           </td>

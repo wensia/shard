@@ -1,0 +1,20 @@
+.images {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+/* 表格里的缩略图压到一行文字左右的高度，点开再看原图。 */
+.images :global(.shard-image-attachment-preview) {
+  display: inline-flex;
+  max-width: 96px;
+  max-height: 64px;
+}
+
+.images :global(.shard-image-attachment-preview img) {
+  max-width: 96px;
+  max-height: 64px;
+  border-radius: var(--radius-control);
+  object-fit: cover;
+}

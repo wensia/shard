@@ -2,6 +2,7 @@ import { expect, test, type Locator, type Page } from "@playwright/test"
 
 import { fillEditor, focusEditor } from "./editor-helpers"
 import { installSearchIpcMock } from "./search-ipc-mock"
+import { routeShardAssets } from "./shard-asset-mock"
 
 interface CsvPreviewCall {
   args: Record<string, unknown>
@@ -10,6 +11,7 @@ interface CsvPreviewCall {
 
 async function installCsvPreviewMock(page: Page) {
   await installSearchIpcMock(page)
+  await routeShardAssets(page, { missing: ["notes/相册/丢了.png"] })
   await page.addInitScript(() => {
     const now = "2026-08-30T12:00:00.000Z"
     const fragment = (id: string, content: string, tags = ["inbox"]) => ({
@@ -38,6 +40,7 @@ async function installCsvPreviewMock(page: Page) {
       fragment("timeline-gbk", "![[data/gbk.csv]]"),
       fragment("timeline-link", "普通链接：[[data/large.csv]]"),
       fragment("timeline-slow", "![[data/slow.csv]]"),
+      fragment("timeline-photos", "![[data/photos.csv]]"),
     ]
     fragments[0].path = "notes/CSV 资料笔记.md"
     const csvFiles = [
@@ -45,6 +48,7 @@ async function installCsvPreviewMock(page: Page) {
       { name: "wide.csv", path: "data/wide.csv" },
       { name: "gbk.csv", path: "data/gbk.csv" },
       { name: "slow.csv", path: "data/slow.csv" },
+      { name: "photos.csv", path: "data/photos.csv" },
     ]
     const largeCsv = [
       "序号,名称,说明",
@@ -77,6 +81,7 @@ async function installCsvPreviewMock(page: Page) {
       isTauri: true,
       __SHARD_CSV_PREVIEW_CALLS__: calls,
       __TAURI_INTERNALS__: {
+        convertFileSrc: (file: string, scheme?: string) => `/__${scheme ?? "asset"}/${encodeURIComponent(file)}`,
         invoke: async (command: string, args: Record<string, unknown> = {}) => {
           calls.push({ command, args: clone(args) })
 
@@ -110,6 +115,7 @@ async function installCsvPreviewMock(page: Page) {
             if (path === "data/large.csv") return utf8(largeCsv)
             if (path === "data/wide.csv") return utf8(wideCsv)
             if (path === "data/gbk.csv") return clone(gbk)
+            if (path === "data/photos.csv") return utf8("名称,照片\n执照,notes/证件/营业执照.jpg\n丢失,notes/相册/丢了.png\n备注,不是图片\n")
             if (path === "data/slow.csv") {
               await new Promise<void>((resolve) => {
                 Object.assign(globalThis, { __SHARD_CSV_SLOW_RELEASE__: resolve })
@@ -337,4 +343,15 @@ test("CSV 底部显示完整总行数并提供默认程序打开动作", async (
     command: "open_csv_file",
     args: { path: "data/large.csv" },
   })
+})
+
+test("嵌入表格里的图片路径显示缩略图，取不到的退回原文", async ({ page }) => {
+  const preview = csvPreview(fragmentCard(page, "timeline-photos"), "data/photos.csv")
+  const thumbnail = preview.locator('[data-csv-image-cell] img[data-source-path="notes/证件/营业执照.jpg"]')
+  await expect(thumbnail).toBeVisible()
+  await expect.poll(() => thumbnail.evaluate((node: HTMLImageElement) => node.naturalWidth)).toBe(1)
+  await expect(preview.getByRole("cell", { name: "notes/相册/丢了.png", exact: true })).toBeVisible()
+  await expect(preview.getByRole("cell", { name: "不是图片", exact: true })).toBeVisible()
+  await preview.getByRole("button", { name: "放大查看图片附件：营业执照" }).click()
+  await expect(page.locator(".shard-image-preview-dialog img")).toBeVisible()
 })

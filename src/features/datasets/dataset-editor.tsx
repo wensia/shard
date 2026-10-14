@@ -9,9 +9,11 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Input } from "@/components/ui/input"
 import { readKilnGridTheme } from "./kiln-grid-theme"
 import { createTextCellEditorProvider } from "./text-cell-editor"
-import { getApiErrorMessage } from "@/lib/api"
+import { getApiErrorMessage, saveFragmentImage, saveImageAttachmentFromPath } from "@/lib/api"
+import { isImageFilePath, useNativeFileDrop } from "@/lib/use-native-file-drop"
+import { IMAGE_ROW_HEIGHT, imageCell, imageCellRenderer, isImageCell, isLocalImageRef, isRemoteImageRef, parseCellImageRefs, withAddedImages } from "./image-cell"
 import { notify } from "@/lib/notify"
-import { applyDatasetOps as saveDatasetOps, isStaleBaseError, normalizeCsvFile, readDataset } from "./api"
+import { applyDatasetOps as saveDatasetOps, existingVaultImages, isStaleBaseError, normalizeCsvFile, readDataset } from "./api"
 import { applyDatasetOps, DatasetOpError, invertDatasetOps, newRowId } from "./ops"
 import type { CsvTable, DatasetOp, DatasetSnapshot } from "./types"
 import { VAULT_FILES_CHANGED_DOM_EVENT } from "@/lib/vault-changes"
@@ -22,6 +24,7 @@ type SaveStatus = "保存中" | "已保存" | "未保存" | "冲突" | "出错"
 type History = { undo: DatasetOp[]; redo: DatasetOp[] }
 
 function failure(error: unknown): string { return getApiErrorMessage(error) }
+const IMAGE_RENDERERS = [imageCellRenderer]
 /** `CODE:说明` 只给用户看说明部分。 */
 function readOnlyMessage(reason: string | null) { return reason?.replace(/^[A-Z][A-Z0-9_]*:/u, "") ?? "" }
 function explicitCells(ops: DatasetOp[]): number {
@@ -217,6 +220,41 @@ export const DatasetEditor = forwardRef<DatasetEditorHandle, DatasetEditorProps>
     }
   }, [flush, load, path])
 
+  // 格里写的是图片引用、且本地文件确实存在的，才画成缩略图；写错的路径照常显示文字。
+  const [existingImages, setExistingImages] = useState<ReadonlySet<string>>(() => new Set())
+  const localImageRefs = useMemo(() => {
+    const refs = new Set<string>()
+    for (const row of table?.rows ?? []) for (const value of row) {
+      for (const ref of parseCellImageRefs(value) ?? []) if (isLocalImageRef(ref)) refs.add(ref)
+    }
+    return [...refs].sort()
+  }, [table])
+  const localImageKey = localImageRefs.join("\n")
+  useEffect(() => {
+    if (!localImageRefs.length) { setExistingImages(new Set()); return }
+    let cancelled = false
+    const handle = setTimeout(() => {
+      void existingVaultImages(localImageRefs)
+        .then(found => { if (!cancelled) setExistingImages(new Set(found.map(ref => ref.replace(/^\.\//u, "")))) })
+        .catch(() => { if (!cancelled) setExistingImages(new Set()) })
+    }, 120)
+    return () => { cancelled = true; clearTimeout(handle) }
+    // localImageKey 变了才重查：同一组引用的表格编辑不必再走 IPC。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [localImageKey])
+  const imageCells = useMemo(() => {
+    const cells = new Map<string, string[]>()
+    const rows = new Set<number>()
+    table?.rows.forEach((values, row) => values.forEach((value, column) => {
+      const refs = parseCellImageRefs(value)
+      if (refs && refs.every(ref => isRemoteImageRef(ref) || existingImages.has(ref))) {
+        cells.set(`${row}:${column}`, refs)
+        rows.add(row)
+      }
+    }))
+    return { cells, rows }
+  }, [existingImages, table])
+
   const keyColumn = snapshot?.schema?.primaryKey ? table?.header.indexOf(snapshot.schema.primaryKey) ?? -1 : -1
   const blocked = !snapshot?.editable || paused.current
   const columns = useMemo(() => table?.header.map((title, index) => ({ id: `${index}:${title}`, title, width: widths[title] ?? metrics?.columnWidth ?? 180, hasMenu: !blocked, icon: index === keyColumn ? "lock" : undefined })) ?? [], [table?.header, metrics?.columnWidth, blocked, keyColumn, widths])
@@ -224,8 +262,47 @@ export const DatasetEditor = forwardRef<DatasetEditorHandle, DatasetEditorProps>
   const firstEditableColumn = table?.header.findIndex((_, index) => index !== keyColumn) ?? -1
   const getCellContent = useCallback(([column, row]: Item): GridCell => {
     const text = table?.rows[row]?.[column] ?? ""
+    const refs = imageCells.cells.get(`${row}:${column}`)
+    if (refs) return imageCell(text, refs, blocked || column === keyColumn)
     return { kind: GridCellKind.Text, data: text, displayData: text, allowOverlay: !blocked && column !== keyColumn, readonly: blocked || column === keyColumn }
-  }, [blocked, keyColumn, table])
+  }, [blocked, imageCells, keyColumn, table])
+  const rowHeight = useMemo(() => {
+    const base = metrics?.rowHeight ?? 0
+    if (!imageCells.rows.size) return base
+    const tall = Math.max(base, IMAGE_ROW_HEIGHT)
+    return (row: number) => imageCells.rows.has(row) ? tall : base
+  }, [imageCells.rows, metrics?.rowHeight])
+
+  /** 把新存好的图片放进一格：原来是图片格就接在后面，否则替换（可撤销）。 */
+  const placeImages = useCallback(async ([column, row]: Item, uploads: (() => Promise<string>)[]) => {
+    if (blocked || column === keyColumn) return
+    const saved: string[] = []
+    try {
+      for (const upload of uploads) saved.push(await upload())
+    } catch (error) {
+      notify.failure("图片保存失败", error)
+    }
+    const current = tableRef.current
+    if (!saved.length || !current || row >= current.rows.length) return
+    commit([{ op: "setCells", cells: [{ row, column, value: withAddedImages(current.rows[row][column], saved) }] }])
+  }, [blocked, commit, keyColumn])
+  // 从访达把图片拖到某一格上：存进附件仓，再把路径写进这一格。
+  useNativeFileDrop({
+    frameRef: host,
+    // 画布上盖着 Glide 的滚动层，落点元素不一定是 canvas：落在表格区域里就收，具体哪一格由网格换算。
+    accepts: (paths, element) => !blocked && paths.some(isImageFilePath) &&
+      element.closest("[data-dataset-grid]") !== null && element.closest("textarea, input, button, [role='dialog']") === null,
+    onDrop: (paths, _element, point) => {
+      const target = grid.current?.getMouseArgsForPosition(point.clientX, point.clientY)
+      if (target?.kind !== "cell") return
+      const [column, row] = target.location
+      if (column < 0 || column === keyColumn || row >= (tableRef.current?.rows.length ?? 0)) {
+        notify.info("请把图片拖到要放图的那一格上")
+        return
+      }
+      void placeImages([column, row], paths.filter(isImageFilePath).map(path => () => saveImageAttachmentFromPath(path)))
+    },
+  })
   useEffect(() => {
     if (!import.meta.env.DEV || !host.current) return
     const element = host.current as HTMLDivElement & { __datasetGetCellContent?: typeof getCellContent }
@@ -238,8 +315,12 @@ export const DatasetEditor = forwardRef<DatasetEditorHandle, DatasetEditorProps>
     element.__datasetSelection = selection
     return () => { delete element.__datasetSelection }
   }, [selection])
+  // Glide 在 window 捕获阶段监听粘贴并异步读系统剪贴板里的文字；我们刚接手了一次图片粘贴，
+  // 紧随其后交来的文字（剪贴板里图片旁的文字或 HTML）不再写进表格。
+  const imagePasteAt = useRef(Number.NEGATIVE_INFINITY)
   const paste = useCallback(([column, row]: Item, values: readonly (readonly string[])[]) => {
     const current = tableRef.current
+    if (performance.now() - imagePasteAt.current < 1500) return false
     if (blocked || !current || !values.length) return false
     const cells: { row: number; column: number; value: string }[] = []
     const inserted: string[][] = []
@@ -323,6 +404,17 @@ export const DatasetEditor = forwardRef<DatasetEditorHandle, DatasetEditorProps>
   }
 
   return <section ref={host} className="flex h-full min-h-0 min-w-0 flex-col gap-[var(--space-2)] bg-background text-foreground" data-density="compact" aria-label="数据集编辑器"
+    onPasteCapture={event => {
+      // 截图、复制的图片文件粘到选中的格：存进附件仓，再写路径。编辑框里的粘贴照常。
+      if (!(event.target instanceof HTMLCanvasElement) && event.target !== host.current) return
+      const files = Array.from(event.clipboardData?.files ?? []).filter(file => file.type.startsWith("image/"))
+      const cell = selection.current?.cell
+      if (!files.length || !cell || blocked || cell[0] === keyColumn) return
+      event.preventDefault()
+      event.stopPropagation()
+      imagePasteAt.current = performance.now()
+      void placeImages(cell, files.map(file => async () => saveFragmentImage(file.name, new Uint8Array(await file.arrayBuffer()))))
+    }}
     onCompositionStartCapture={() => { composing.current = true }} onCompositionEndCapture={() => { composing.current = false }}
     onKeyDownCapture={event => {
       if (!(event.target instanceof HTMLCanvasElement) || event.metaKey || event.ctrlKey || event.altKey || event.key.length !== 1 || composing.current || event.nativeEvent.isComposing) return
@@ -350,9 +442,9 @@ export const DatasetEditor = forwardRef<DatasetEditorHandle, DatasetEditorProps>
     </div>}
     {status === "冲突" && <div className="mx-[var(--space-3)] flex items-center gap-[var(--space-2)] rounded-md bg-destructive/10 px-[var(--space-3)] py-[var(--space-2)] text-[length:var(--text-body)]" role="alert"><span>{problem}</span><Button size="sm" variant="outline" onClick={() => { void load(true) }}>放弃我的修改并载入磁盘版</Button><Button size="sm" variant="outline" onClick={() => { /* Keep the paused queue intact. */ }}>稍后处理</Button></div>}
     {status === "出错" && <div className="mx-[var(--space-3)] flex items-center gap-[var(--space-2)] rounded-md bg-destructive/10 px-[var(--space-3)] py-[var(--space-2)] text-[length:var(--text-body)]" role="alert"><span>{problem}</span><Button size="sm" variant="outline" onClick={() => { if (snapshotRef.current) { paused.current = false; void drain() } else void load() }}>重试</Button></div>}
-    <div className="min-h-0 min-w-0 flex-1" aria-busy={loading}>
+    <div className="min-h-0 min-w-0 flex-1" aria-busy={loading} data-dataset-grid>
       {loading && !table ? <div className="p-[var(--space-4)]" role="status">正在读取数据集…</div> : !table ? <div className="p-[var(--space-4)]">无法打开数据集</div> : metrics && <DataEditor ref={grid} width="100%" height="100%" columns={columns} rows={table.rows.length} getCellContent={getCellContent} getCellsForSelection={true}
-        theme={metrics.theme} rowHeight={metrics.rowHeight} headerHeight={metrics.headerHeight} headerIcons={{ lock: ({ bgColor }) => `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="${bgColor}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>` }}
+        theme={metrics.theme} rowHeight={rowHeight} headerHeight={metrics.headerHeight} customRenderers={IMAGE_RENDERERS} headerIcons={{ lock: ({ bgColor }) => `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="${bgColor}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>` }}
         rowMarkers={{ kind: "both", width: metrics.headerHeight }} rowSelect="multi" rowSelectionMode="multi" columnSelect="none" rangeSelect="rect" cellActivationBehavior="double-click"
         onCellActivated={() => {
           // Glide 已决定打开编辑框（它在打开前回调）；只作最后保险的超时，正常由挂载或结束编辑清空。
@@ -364,7 +456,7 @@ export const DatasetEditor = forwardRef<DatasetEditorHandle, DatasetEditorProps>
         gridSelection={selection} onGridSelectionChange={setSelection} provideEditor={provideEditor} portalElementRef={portal as RefObject<HTMLElement>}
         onColumnResize={(column, size) => setWidths(current => ({ ...current, [column.title]: size }))}
         trailingRowOptions={blocked ? undefined : { hint: "新增行", sticky: false, ...(firstEditableColumn >= 0 ? { targetColumn: firstEditableColumn } : {}) }} onRowAppended={async () => { if (!blocked) appendRow(); return undefined }}
-        onCellsEdited={edits => { if (blocked) return true; const cells = edits.flatMap(({ location: [column, row], value }) => value.kind === GridCellKind.Text && column !== keyColumn && tableRef.current?.rows[row]?.[column] !== value.data ? [{ row, column, value: value.data }] : []); if (cells.length) commit([{ op: "setCells", cells }]); return true }}
+        onCellsEdited={edits => { if (blocked) return true; const cells = edits.flatMap(({ location: [column, row], value }) => { const next = value.kind === GridCellKind.Text ? value.data : isImageCell(value) ? value.data.raw : null; return next !== null && column !== keyColumn && tableRef.current?.rows[row]?.[column] !== next ? [{ row, column, value: next }] : [] }); if (cells.length) commit([{ op: "setCells", cells }]); return true }}
         onPaste={paste} onDelete={clear} onHeaderMenuClick={(column, bounds: Rectangle) => { if (!blocked) setMenu({ column, anchor: { getBoundingClientRect: () => DOMRect.fromRect(bounds) } }) }}
         smoothScrollX smoothScrollY />}
     </div>

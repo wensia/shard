@@ -2,6 +2,7 @@
 import { expect, type Page } from "@playwright/test"
 
 import { installSearchIpcMock } from "./search-ipc-mock"
+import { routeShardAssets } from "./shard-asset-mock"
 
 export const PATH = "datasets/阅读记录.csv"
 export const FENCE = "```"
@@ -10,6 +11,7 @@ export type Call = { command: string; args: Record<string, unknown> }
 
 export async function installMock(page: Page, withLockbox = false) {
   await installSearchIpcMock(page)
+  await routeShardAssets(page)
   await page.addInitScript(({ path, fence, withLockbox }) => {
     const now = "2026-09-27T08:00:00.000Z"
     const csvFence = [fence + "datatable", JSON.stringify({ title: "阅读记录", src: path }), fence].join("\n")
@@ -30,19 +32,41 @@ export async function installMock(page: Page, withLockbox = false) {
     const state = { table: { header: ["id", "姓名", "城市"], rows: [["r_000000000001", "张三", "北京"], ["r_000000000002", "李四", "上海"]] }, sha: "sha-0", schemaSha: "schema-sha", editable: true, readOnlyReason: null as string | null, convertible: false, staleNext: false }
     const calls: Call[] = []
     const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T
+    // 原生拖放（tauri://drag-*）：测试经 __DATASET_TEST__.drag 触发。
+    const callbacks = new Map<number, (event: unknown) => unknown>()
+    const listeners = new Map<number, { event: string; handler: number }>()
+    let nextId = 100
+    const drag = async (type: string, paths: string[], x: number, y: number) => {
+      const ratio = window.devicePixelRatio || 1
+      const event = `tauri://drag-${type}`
+      for (const [id, entry] of listeners) {
+        if (entry.event === event) await callbacks.get(entry.handler)?.({ event, id, payload: { paths, position: { x: x * ratio, y: y * ratio } } })
+      }
+    }
     const snapshot = () => clone({ path, ...state, schema })
     const utf8 = () => Array.from(new TextEncoder().encode([state.table.header.join(","), ...state.table.rows.map(row => row.join(","))].join("\n") + "\n"))
     Object.assign(globalThis, {
       isTauri: true,
-      __DATASET_TEST__: { state, calls },
+      __DATASET_TEST__: { state, calls, drag },
       __TAURI_EVENT_PLUGIN_INTERNALS__: { unregisterListener() {} },
       __TAURI_INTERNALS__: {
         metadata: { currentWindow: { label: "main" }, currentWebview: { label: "main" } },
-        transformCallback: () => 1,
-        invoke: async (command: string, args: Record<string, unknown> = {}) => {
+        transformCallback: (callback: (event: unknown) => unknown) => { callbacks.set(++nextId, callback); return nextId },
+        convertFileSrc: (file: string, scheme?: string) => `/__${scheme ?? "asset"}/${encodeURIComponent(file)}`,
+        invoke: async (command: string, rawArgs: unknown = {}, options?: { headers?: Record<string, string> }) => {
+          const args = (rawArgs instanceof Uint8Array
+            ? { bytes: Array.from(rawArgs), fileName: decodeURIComponent(options?.headers?.["x-shard-file-name"] ?? "") }
+            : rawArgs) as Record<string, unknown>
           calls.push({ command, args: clone(args) })
           switch (command) {
-            case "plugin:event|listen": return 1
+            case "plugin:event|listen": {
+              const entry = args as { event: string; handler: number }
+              listeners.set(++nextId, entry)
+              return nextId
+            }
+            case "existing_vault_images": return (args.paths as string[]).filter(file => !file.includes("missing"))
+            case "save_fragment_image": return `assets/ab/${String(args.fileName)}`
+            case "save_image_attachment_from_path": return `assets/ab/${String(args.path).split("/").pop()}`
             case "plugin:event|unlisten":
             case "unhide_pointer":
             case "set_window_controls_hidden":

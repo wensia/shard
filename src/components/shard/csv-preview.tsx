@@ -5,6 +5,7 @@ import { isNonUtf8CsvEncoding, type CsvDocument } from "@/lib/csv"
 import { parseCsvBytesInWorker } from "@/lib/csv-worker"
 import { notify } from "@/lib/notify"
 import { openDatasetEditor } from "@/features/datasets/open-dataset"
+import { CsvCellValue } from "@/components/shard/csv-cell-value"
 
 import styles from "./csv-preview.module.css"
 
@@ -135,7 +136,7 @@ export function CsvPreview({ maxRows, path }: CsvPreviewProps) {
               {visibleRows.map((row, rowIndex) => (
                 <tr key={rowIndex}>
                   {Array.from({ length: columnCount }, (_, cellIndex) => (
-                    <td key={cellIndex}>{row[cellIndex] ?? ""}</td>
+                    <td key={cellIndex}><CsvCellValue value={row[cellIndex] ?? ""} /></td>
                   ))}
                 </tr>
               ))}

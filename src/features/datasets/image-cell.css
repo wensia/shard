@@ -1,0 +1,59 @@
+/* 图片单元格的编辑浮层：大图在上，路径在下，可从访达追加图片。 */
+.dataset-image-editor {
+  display: flex;
+  width: min(480px, 80vw);
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border-radius: var(--radius-card);
+  background: var(--card);
+  box-shadow: var(--shadow-popover);
+  color: var(--foreground);
+}
+
+.dataset-image-editor__previews {
+  display: flex;
+  max-height: 320px;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  overflow: auto;
+}
+
+.dataset-image-editor__image {
+  max-width: 100%;
+  max-height: 300px;
+  border-radius: var(--radius-card);
+  background: var(--muted);
+  object-fit: contain;
+}
+
+.dataset-image-editor__empty {
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: var(--text-meta);
+}
+
+.dataset-image-editor__paths {
+  display: block;
+  width: 100%;
+  resize: none;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  outline: none;
+  background: var(--background);
+  color: var(--foreground);
+  font: inherit;
+  font-size: var(--text-meta);
+  line-height: var(--leading-normal);
+}
+
+.dataset-image-editor__paths:focus-visible {
+  box-shadow: var(--ring-focus);
+}
+
+.dataset-image-editor__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}

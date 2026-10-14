@@ -35,6 +35,11 @@ export function createDataset(
   return desktopInvoke("create_dataset", { title, header, rows, primaryKey: primaryKey ?? null })
 }
 
+/** 表格里的本地图片引用中真正存在的那些（只有它们画成缩略图）。 */
+export function existingVaultImages(paths: string[]): Promise<string[]> {
+  return desktopInvoke("existing_vault_images", { paths })
+}
+
 export function isStaleBaseError(error: unknown): boolean {
   return getApiErrorMessage(error).startsWith("STALE_BASE:")
 }
