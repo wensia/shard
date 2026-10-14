@@ -1345,6 +1345,11 @@ async fn read_csv_file(app: tauri::AppHandle, path: String) -> Result<Vec<u8>, S
     run_blocking(move || {
         let vault = ensure_vault_dirs(&app)?;
         let csv_path = ensure_public_csv_path(&vault, &path)?;
+        // 嵌入预览整份读进前端解析；超过数据集上限的文件只给出提示，不拖垮界面。
+        let limit = DatasetLimits::default().max_file_bytes as u64;
+        if fs::metadata(&csv_path).map_err(|error| error.to_string())?.len() > limit {
+            return Err(format!("CSV 超过 {} MiB，请用「编辑」或默认程序打开", limit / 1024 / 1024));
+        }
         fs::read(csv_path).map_err(|error| error.to_string())
     })
     .await
@@ -1460,6 +1465,25 @@ async fn apply_dataset_ops(
             expected_schema_sha.as_deref(),
             &ops,
         )
+    })
+    .await
+}
+
+/// 用户确认后把 GBK/UTF-16 或列数不齐的 CSV 转换成可编辑的 UTF-8 文件。
+#[tauri::command]
+async fn normalize_csv_file(
+    app: tauri::AppHandle,
+    path: String,
+    expected_sha: String,
+) -> Result<DatasetSnapshot, String> {
+    run_blocking(move || {
+        let vault = ensure_vault_dirs(&app)?;
+        let _gate = lock_vault_gate(&vault);
+        let snapshot =
+            dataset::normalize_csv_file(&vault, &path, &expected_sha, &DatasetLimits::default())
+                .map_err(|error| error.to_string())?;
+        commit_paths_best_effort(&vault, &[path.trim().to_string()], "convert csv to utf-8");
+        Ok(snapshot)
     })
     .await
 }
@@ -8366,6 +8390,7 @@ pub fn run() {
             import_library_files,
             image_references,
             open_vault_image,
+            normalize_csv_file,
             read_fragment_image,
             fragment_image_file_path,
             reveal_fragment_image_in_dir,

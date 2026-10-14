@@ -90,12 +90,13 @@ pub fn markdown_image_references(text: &str) -> Vec<String> {
     references
 }
 
-/// CSV 全文里的图片格引用（按逗号分隔解析；解析失败的记录跳过）。
+/// CSV 全文里的图片格引用（分隔符按文件自己的写法识别；解析失败的记录跳过）。
 pub fn csv_image_references(text: &str) -> Vec<String> {
     let text = text.strip_prefix('\u{feff}').unwrap_or(text);
     let mut reader = csv::ReaderBuilder::new()
         .has_headers(false)
         .flexible(true)
+        .delimiter(crate::dataset::detect_delimiter(text) as u8)
         .from_reader(text.as_bytes());
     let mut references = Vec::new();
     for record in reader.records().map_while(Result::ok) {
@@ -471,6 +472,7 @@ mod tests {
         );
         // 文件名可以带空格，「见 notes/c.png」在格式上也是合法路径；是不是图片由文件是否存在决定。
         assert_eq!(csv_image_references("见 notes/c.png\n"), vec!["见 notes/c.png"]);
+        assert_eq!(csv_image_references("名称;照片\n执照;notes/d.png\n"), vec!["notes/d.png"]);
     }
 
     #[test]

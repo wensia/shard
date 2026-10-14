@@ -4692,6 +4692,7 @@ version = "0.1.3"
 dependencies = [
  "chrono",
  "csv",
+ "encoding_rs",
  "rand 0.8.6",
  "serde",
  "serde_json",

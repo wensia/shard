@@ -266,6 +266,30 @@ test("不可编辑原因显示且保留只读截图", async ({ page }) => {
   await page.screenshot({ path: "tests/evidence/datasets/read-only.png" })
 })
 
+test("GBK 等外部编码只读打开，确认转换后才可编辑", async ({ page }) => {
+  await page.evaluate(() => {
+    const state = (window as unknown as { __DATASET_TEST__: { state: Record<string, unknown> } }).__DATASET_TEST__.state
+    Object.assign(state, { editable: false, convertible: true, readOnlyReason: "CSV_NOT_UTF8:这是 GBK 编码的 CSV，转换为 UTF-8 后才能编辑" })
+  })
+  await openFromCard(page)
+  const alert = editor(page).getByRole("alert")
+  await expect(alert).toHaveText(/^只读：这是 GBK 编码的 CSV/u)
+  await alert.getByRole("button", { name: "转换为 UTF-8 后编辑" }).click()
+  const dialog = page.getByRole("dialog", { name: "转换为 UTF-8 后编辑" })
+  await expect(dialog).toContainText("会改写这个文件")
+  await dialog.getByRole("button", { name: "取消" }).click()
+  expect(await calls(page, "normalize_csv_file")).toHaveLength(0)
+
+  await alert.getByRole("button", { name: "转换为 UTF-8 后编辑" }).click()
+  await dialog.getByRole("button", { name: "转换", exact: true }).click()
+  await expect.poll(() => calls(page, "normalize_csv_file")).toEqual([
+    { command: "normalize_csv_file", args: { path: PATH, expectedSha: "sha-0" } },
+  ])
+  await expect(editor(page).getByRole("alert")).toHaveCount(0)
+  await editCell(page, 1, 0, "王五")
+  await expect.poll(() => calls(page, "apply_dataset_ops")).toHaveLength(1)
+})
+
 test("焦点刷新保持网格与选区；sha 变化后替换数据并清空撤销", async ({ page }) => {
   await openFromCard(page)
   await editCell(page, 1, 0, "新值")

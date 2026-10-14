@@ -11,7 +11,7 @@ import { readKilnGridTheme } from "./kiln-grid-theme"
 import { createTextCellEditorProvider } from "./text-cell-editor"
 import { getApiErrorMessage } from "@/lib/api"
 import { notify } from "@/lib/notify"
-import { applyDatasetOps as saveDatasetOps, isStaleBaseError, readDataset } from "./api"
+import { applyDatasetOps as saveDatasetOps, isStaleBaseError, normalizeCsvFile, readDataset } from "./api"
 import { applyDatasetOps, DatasetOpError, invertDatasetOps, newRowId } from "./ops"
 import type { CsvTable, DatasetOp, DatasetSnapshot } from "./types"
 import { VAULT_FILES_CHANGED_DOM_EVENT } from "@/lib/vault-changes"
@@ -22,6 +22,8 @@ type SaveStatus = "保存中" | "已保存" | "未保存" | "冲突" | "出错"
 type History = { undo: DatasetOp[]; redo: DatasetOp[] }
 
 function failure(error: unknown): string { return getApiErrorMessage(error) }
+/** `CODE:说明` 只给用户看说明部分。 */
+function readOnlyMessage(reason: string | null) { return reason?.replace(/^[A-Z][A-Z0-9_]*:/u, "") ?? "" }
 function explicitCells(ops: DatasetOp[]): number {
   return ops.reduce((count, op) => count + (op.op === "setCells" ? op.cells.length : op.op === "insertRows" ? op.rows.reduce((sum, row) => sum + row.length, 0) : 0), 0)
 }
@@ -69,6 +71,7 @@ export const DatasetEditor = forwardRef<DatasetEditorHandle, DatasetEditorProps>
   const generation = useRef(0)
 
   const replaceTable = useCallback((next: CsvTable) => { tableRef.current = next; setTable(next) }, [])
+  const [converting, setConverting] = useState<"confirm" | "running" | null>(null)
   const resetHistory = useCallback(() => { history.current = []; redo.current = []; setHistoryVersion(value => value + 1) }, [])
   const cancelTimer = useCallback(() => { if (timer.current) clearTimeout(timer.current); timer.current = null }, [])
 
@@ -287,6 +290,30 @@ export const DatasetEditor = forwardRef<DatasetEditorHandle, DatasetEditorProps>
   }
   const deleteColumn = (column: number) => { setMenu(null); commit([{ op: "deleteColumn", column }]) }
   const selectedRows = selection.rows.toArray().filter(row => row < (table?.rows.length ?? 0))
+  async function convert() {
+    const base = snapshotRef.current
+    if (!base) return
+    setConverting("running")
+    try {
+      const next = await normalizeCsvFile(path, base.sha)
+      if (!alive.current) return
+      snapshotRef.current = next
+      setSnapshot(next)
+      onSnapshot?.(next)
+      replaceTable(next.table)
+      resetHistory()
+      setStatus("已保存")
+      setConverting(null)
+      window.dispatchEvent(new CustomEvent("shard:dataset-changed", { detail: { path } }))
+      notify.success("已转换为 UTF-8，可以编辑了")
+    } catch (error) {
+      if (!alive.current) return
+      setConverting(null)
+      notify.failure("转换失败", error)
+      void load()
+    }
+  }
+
   const appendRow = () => {
     const current = tableRef.current
     if (!current) return
@@ -317,7 +344,10 @@ export const DatasetEditor = forwardRef<DatasetEditorHandle, DatasetEditorProps>
       <Button size="icon-sm" variant="outline" aria-label="重做" title="重做" disabled={blocked || !redo.current.length} onClick={doRedo}><Redo2Icon /></Button>
       <span className="ml-auto text-[length:var(--text-meta)] text-muted-foreground" role="status" aria-live="polite" data-history-version={historyVersion}>{status}</span>
     </div>
-    {snapshot && !snapshot.editable && <div className="mx-[var(--space-3)] rounded-md bg-warning/10 px-[var(--space-3)] py-[var(--space-2)] text-[length:var(--text-body)]" role="alert">只读：{snapshot.readOnlyReason}</div>}
+    {snapshot && !snapshot.editable && <div className="mx-[var(--space-3)] flex flex-wrap items-center gap-[var(--space-2)] rounded-md bg-warning/10 px-[var(--space-3)] py-[var(--space-2)] text-[length:var(--text-body)]" role="alert">
+      <span>只读：{readOnlyMessage(snapshot.readOnlyReason)}</span>
+      {snapshot.convertible && <Button size="sm" variant="outline" disabled={converting !== null} onClick={() => setConverting("confirm")}>转换为 UTF-8 后编辑</Button>}
+    </div>}
     {status === "冲突" && <div className="mx-[var(--space-3)] flex items-center gap-[var(--space-2)] rounded-md bg-destructive/10 px-[var(--space-3)] py-[var(--space-2)] text-[length:var(--text-body)]" role="alert"><span>{problem}</span><Button size="sm" variant="outline" onClick={() => { void load(true) }}>放弃我的修改并载入磁盘版</Button><Button size="sm" variant="outline" onClick={() => { /* Keep the paused queue intact. */ }}>稍后处理</Button></div>}
     {status === "出错" && <div className="mx-[var(--space-3)] flex items-center gap-[var(--space-2)] rounded-md bg-destructive/10 px-[var(--space-3)] py-[var(--space-2)] text-[length:var(--text-body)]" role="alert"><span>{problem}</span><Button size="sm" variant="outline" onClick={() => { if (snapshotRef.current) { paused.current = false; void drain() } else void load() }}>重试</Button></div>}
     <div className="min-h-0 min-w-0 flex-1" aria-busy={loading}>
@@ -348,6 +378,11 @@ export const DatasetEditor = forwardRef<DatasetEditorHandle, DatasetEditorProps>
         <DropdownMenuItem variant="destructive" disabled={menu.column === keyColumn || table?.header.length === 1} onClick={() => deleteColumn(menu.column)}>删除列</DropdownMenuItem>
       </DropdownMenuContent>}
     </DropdownMenu>
+    <Dialog open={converting !== null} onOpenChange={open => { if (!open && converting !== "running") setConverting(null) }}><DialogContent>
+      <DialogHeader><DialogTitle>转换为 UTF-8 后编辑</DialogTitle></DialogHeader>
+      <p className="text-[length:var(--text-body)]">会改写这个文件：文字编码转成 UTF-8{path.startsWith("datasets/") ? "，按数据集规范格式保存" : "（带 BOM，Excel 双击仍能正确显示中文），分隔符与换行保持不变"}；列数不齐的行补齐空格。改写前的版本留在 Git 历史里。</p>
+      <DialogFooter><Button variant="outline" disabled={converting === "running"} onClick={() => setConverting(null)}>取消</Button><Button disabled={converting === "running"} onClick={() => { void convert() }}>{converting === "running" ? "转换中…" : "转换"}</Button></DialogFooter>
+    </DialogContent></Dialog>
     <Dialog open={!!nameDialog} onOpenChange={open => { if (!open) setNameDialog(null) }}><DialogContent>
       <DialogHeader><DialogTitle>{nameDialog?.action === "rename" ? "重命名列" : "插入列"}</DialogTitle></DialogHeader>
       <Input aria-label="列名" value={name} onChange={event => { setName(event.target.value); setNameError("") }} onKeyDown={event => { if (event.key === "Enter") { event.preventDefault(); submitName() } }} />

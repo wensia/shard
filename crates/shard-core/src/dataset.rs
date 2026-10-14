@@ -27,6 +27,58 @@ pub struct DatasetSchema {
     pub primary_key: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CsvEncoding {
+    #[default]
+    Utf8,
+    Utf16le,
+    Utf16be,
+    Gb18030,
+}
+
+impl CsvEncoding {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Utf8 => "UTF-8",
+            Self::Utf16le | Self::Utf16be => "UTF-16",
+            Self::Gb18030 => "GBK",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LineEnding {
+    #[default]
+    Lf,
+    Crlf,
+}
+
+/// 文件原来的写法。受管目录 `datasets/` 下一律按规范格式（UTF-8 无 BOM、逗号、LF）写回；
+/// 其余位置保留原写法：Excel 导出的带 BOM 文件双击打开中文不乱码，Git 里只显示改动的行。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CsvDialect {
+    pub encoding: CsvEncoding,
+    pub bom: bool,
+    pub delimiter: char,
+    pub line_ending: LineEnding,
+    pub trailing_newline: bool,
+}
+
+impl Default for CsvDialect {
+    fn default() -> Self {
+        Self {
+            encoding: CsvEncoding::Utf8,
+            bom: false,
+            delimiter: ',',
+            line_ending: LineEnding::Lf,
+            trailing_newline: true,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DatasetSnapshot {
@@ -37,6 +89,11 @@ pub struct DatasetSnapshot {
     pub schema_sha: Option<String>,
     pub editable: bool,
     pub read_only_reason: Option<String>,
+    #[serde(default)]
+    pub dialect: CsvDialect,
+    /// 只读只因为编码不是 UTF-8 或列数不齐：显式转换（`normalize_csv_file`）后即可编辑。
+    #[serde(default)]
+    pub convertible: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -157,6 +214,117 @@ fn parse_unlimited(bytes: &[u8]) -> Result<CsvTable, DatasetError> {
     Ok(CsvTable { header, rows })
 }
 
+/// 识别编码与 BOM。UTF-8 优先；不是 UTF-8 时按 UTF-16 BOM、再按 GB18030 严格解码，
+/// 解不出来才报错——绝不用替换字符糊过去。
+fn decode_csv(bytes: &[u8]) -> Result<(String, CsvDialect), DatasetError> {
+    let mut dialect = CsvDialect::default();
+    let text = if let Some(rest) = bytes.strip_prefix(b"\xef\xbb\xbf") {
+        dialect.bom = true;
+        std::str::from_utf8(rest)
+            .map_err(|_| DatasetError::new("CSV_NOT_UTF8", "CSV 带 UTF-8 BOM 但内容不是 UTF-8"))?
+            .to_string()
+    } else if bytes.starts_with(b"\xff\xfe") || bytes.starts_with(b"\xfe\xff") {
+        let (encoding, kind) = if bytes[0] == 0xff {
+            (encoding_rs::UTF_16LE, CsvEncoding::Utf16le)
+        } else {
+            (encoding_rs::UTF_16BE, CsvEncoding::Utf16be)
+        };
+        dialect.encoding = kind;
+        dialect.bom = true;
+        encoding
+            .decode_without_bom_handling_and_without_replacement(&bytes[2..])
+            .ok_or_else(|| DatasetError::new("CSV_NOT_UTF8", "CSV 的 UTF-16 内容无法解码"))?
+            .into_owned()
+    } else if let Ok(text) = std::str::from_utf8(bytes) {
+        text.to_string()
+    } else {
+        dialect.encoding = CsvEncoding::Gb18030;
+        encoding_rs::GB18030
+            .decode_without_bom_handling_and_without_replacement(bytes)
+            .ok_or_else(|| DatasetError::new("CSV_NOT_UTF8", "无法识别 CSV 的文字编码"))?
+            .into_owned()
+    };
+    dialect.delimiter = detect_delimiter(&text);
+    dialect.line_ending = detect_line_ending(&text);
+    dialect.trailing_newline = text.is_empty() || text.ends_with('\n');
+    Ok((text, dialect))
+}
+
+/// 看第一条记录（引号外）里哪种分隔符最多；打平时逗号优先，其次制表符。
+pub(crate) fn detect_delimiter(text: &str) -> char {
+    let mut counts = [0usize; 3];
+    let mut quoted = false;
+    for character in text.chars() {
+        match character {
+            '"' => quoted = !quoted,
+            '\n' if !quoted => break,
+            ',' if !quoted => counts[0] += 1,
+            '\t' if !quoted => counts[1] += 1,
+            ';' if !quoted => counts[2] += 1,
+            _ => {}
+        }
+    }
+    let best = (0..3).max_by_key(|index| (counts[*index], 2 - index)).unwrap_or(0);
+    if counts[best] == 0 {
+        ','
+    } else {
+        [',', '\t', ';'][best]
+    }
+}
+
+fn detect_line_ending(text: &str) -> LineEnding {
+    let mut quoted = false;
+    let mut previous = '\0';
+    for character in text.chars() {
+        match character {
+            '"' => quoted = !quoted,
+            '\n' if !quoted => {
+                return if previous == '\r' { LineEnding::Crlf } else { LineEnding::Lf };
+            }
+            _ => {}
+        }
+        previous = character;
+    }
+    LineEnding::Lf
+}
+
+/// 按识别出的分隔符解析；列数不齐时补齐（缺的格为空、多出的列起名「列N」）并报告，
+/// 供只读预览与显式转换使用。
+fn parse_records(text: &str, delimiter: char) -> Result<(CsvTable, bool), DatasetError> {
+    let mut reader = ReaderBuilder::new()
+        .has_headers(false)
+        .flexible(true)
+        .delimiter(delimiter as u8)
+        .quote(b'"')
+        .double_quote(true)
+        .from_reader(text.as_bytes());
+    let mut records = reader.records();
+    let mut header = records
+        .next()
+        .transpose()
+        .map_err(|error| DatasetError::new("CSV_PARSE", format!("CSV 格式解析失败：{error}")))?
+        .ok_or_else(|| DatasetError::new("HEADER_INVALID", "CSV 文件缺少表头"))?
+        .iter()
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    let mut rows = Vec::new();
+    for record in records {
+        let record = record.map_err(|error| {
+            DatasetError::new("CSV_PARSE", format!("CSV 格式解析失败：{error}"))
+        })?;
+        rows.push(record.iter().map(str::to_string).collect::<Vec<_>>());
+    }
+    let width = rows.iter().map(Vec::len).max().unwrap_or(0).max(header.len());
+    let ragged = rows.iter().any(|row| row.len() != header.len());
+    while header.len() < width {
+        header.push(format!("列{}", header.len() + 1));
+    }
+    for row in &mut rows {
+        row.resize(width, String::new());
+    }
+    Ok((CsvTable { header, rows }, ragged))
+}
+
 fn validate_header(table: &CsvTable) -> Result<(), DatasetError> {
     let mut names = HashSet::new();
     if table.header.is_empty()
@@ -219,10 +387,20 @@ pub fn parse_csv_bytes(bytes: &[u8], limits: &DatasetLimits) -> Result<CsvTable,
 }
 
 pub fn serialize_csv(table: &CsvTable) -> Vec<u8> {
+    serialize_csv_with(table, &CsvDialect::default())
+}
+
+/// 按给定写法输出（只输出 UTF-8；其他编码的文件须先显式转换）。
+pub fn serialize_csv_with(table: &CsvTable, dialect: &CsvDialect) -> Vec<u8> {
+    let terminator = match dialect.line_ending {
+        LineEnding::Lf => Terminator::Any(b'\n'),
+        LineEnding::Crlf => Terminator::CRLF,
+    };
     let mut writer = WriterBuilder::new()
         .has_headers(false)
+        .delimiter(dialect.delimiter as u8)
         .quote_style(QuoteStyle::Necessary)
-        .terminator(Terminator::Any(b'\n'))
+        .terminator(terminator)
         .from_writer(Vec::new());
     writer
         .write_record(&table.header)
@@ -230,7 +408,27 @@ pub fn serialize_csv(table: &CsvTable) -> Vec<u8> {
     for row in &table.rows {
         writer.write_record(row).expect("写入内存 CSV 不应失败");
     }
-    writer.into_inner().expect("写入内存 CSV 不应失败")
+    let mut bytes = writer.into_inner().expect("写入内存 CSV 不应失败");
+    if !dialect.trailing_newline {
+        let cut = match dialect.line_ending {
+            LineEnding::Lf => 1,
+            LineEnding::Crlf => 2,
+        };
+        bytes.truncate(bytes.len().saturating_sub(cut));
+    }
+    if dialect.bom {
+        bytes.splice(0..0, *b"\xef\xbb\xbf");
+    }
+    bytes
+}
+
+/// `datasets/` 是受管目录，写回一律用规范格式；其余位置保留文件原写法。
+fn write_dialect(rel: &str, current: &CsvDialect) -> CsvDialect {
+    if rel.trim().starts_with("datasets/") {
+        CsvDialect::default()
+    } else {
+        *current
+    }
 }
 
 fn validate_schema(schema: &DatasetSchema) -> Result<(), DatasetError> {
@@ -399,7 +597,21 @@ fn snapshot(
     let rel = rel.trim();
     let path = ensure_public_csv_path(vault, rel).map_err(invalid_path)?;
     let bytes = fs::read(&path).map_err(io_error)?;
-    let table = parse_unlimited(&bytes)?;
+    let (text, dialect) = decode_csv(&bytes)?;
+    let (table, ragged) = parse_records(&text, dialect.delimiter)?;
+    let conversion = if dialect.encoding != CsvEncoding::Utf8 {
+        Some(DatasetError::new(
+            "CSV_NOT_UTF8",
+            format!("这是 {} 编码的 CSV，转换为 UTF-8 后才能编辑", dialect.encoding.label()),
+        ))
+    } else if ragged {
+        Some(DatasetError::new(
+            "CSV_RAGGED",
+            "有记录的字段数与表头不一致，补齐后才能编辑",
+        ))
+    } else {
+        None
+    };
     let (schema_bytes, schema_path_error) = read_schema(vault, &path, rel)?;
     let schema_sha = schema_bytes.as_deref().map(sha);
     let parsed = schema_bytes.as_deref().map(parse_schema).transpose();
@@ -407,7 +619,7 @@ fn snapshot(
         Ok(schema) => (schema, schema_path_error),
         Err(error) => (None, Some(error)),
     };
-    let read_only = schema_error
+    let other = schema_error
         .or_else(|| validate_header(&table).err())
         .or_else(|| validate_key(&table, schema.as_ref()).err())
         .or_else(|| {
@@ -417,6 +629,9 @@ fn snapshot(
                 validate_limits(&table, limits).err()
             }
         });
+    // 转换只解决编码与列数；还有别的只读原因（表头重复、超限……）时转换也无济于事。
+    let convertible = conversion.is_some() && other.is_none();
+    let read_only = conversion.or(other);
     Ok(DatasetSnapshot {
         path: rel.to_string(),
         table,
@@ -425,6 +640,8 @@ fn snapshot(
         schema_sha,
         editable: read_only.is_none(),
         read_only_reason: read_only.map(|error| error.to_string()),
+        dialect,
+        convertible,
     })
 }
 
@@ -462,7 +679,46 @@ pub fn write_dataset_ops(
     if latest.sha != expected_sha || latest.schema_sha.as_deref() != expected_schema_sha {
         return Err(stale());
     }
-    write_bytes_atomically(&path, &serialize_csv(&next))
+    write_bytes_atomically(&path, &serialize_csv_with(&next, &write_dialect(rel, &current.dialect)))
+        .map_err(|error| DatasetError::new("IO_ERROR", format!("文件写入失败：{error}")))?;
+    snapshot(vault, rel, limits)
+}
+
+/// 把非 UTF-8 或列数不齐的 CSV 显式转换成可编辑的 UTF-8 文件（用户确认后调用）。
+/// 受管目录按规范格式；其余位置写成带 BOM 的 UTF-8，保持分隔符与换行，Excel 双击仍能
+/// 正确识别中文。必须在持 vault 写锁时调用。
+pub fn normalize_csv_file(
+    vault: &Path,
+    rel: &str,
+    expected_sha: &str,
+    limits: &DatasetLimits,
+) -> Result<DatasetSnapshot, DatasetError> {
+    let current = snapshot(vault, rel, limits)?;
+    if current.sha != expected_sha {
+        return Err(stale());
+    }
+    if current.editable {
+        return Ok(current);
+    }
+    if !current.convertible {
+        let reason = current.read_only_reason.unwrap_or_default();
+        let (code, message) = reason
+            .split_once(':')
+            .unwrap_or(("OP_INVALID", reason.as_str()));
+        return Err(DatasetError::new(code, message));
+    }
+    let dialect = if rel.trim().starts_with("datasets/") {
+        CsvDialect::default()
+    } else {
+        CsvDialect {
+            encoding: CsvEncoding::Utf8,
+            bom: true,
+            trailing_newline: true,
+            ..current.dialect
+        }
+    };
+    let path = ensure_public_csv_path(vault, rel).map_err(invalid_path)?;
+    write_bytes_atomically(&path, &serialize_csv_with(&current.table, &dialect))
         .map_err(|error| DatasetError::new("IO_ERROR", format!("文件写入失败：{error}")))?;
     snapshot(vault, rel, limits)
 }
@@ -690,6 +946,108 @@ mod tests {
         };
         let snapshot = read_dataset(vault.path(), "bad.csv", &small).unwrap();
         assert_eq!(snapshot.table.rows.len(), 1);
+    }
+
+    fn cell(row: usize, column: usize, value: &str) -> DatasetOp {
+        DatasetOp::SetCells {
+            cells: vec![CellEdit { row, column, value: value.into() }],
+        }
+    }
+
+    #[test]
+    fn external_csv_keeps_its_own_dialect_on_write() {
+        let limits = DatasetLimits::default();
+        let vault = tempfile::tempdir().unwrap();
+        let vault = vault.path();
+        for (name, original, expected) in [
+            // Excel 导出：BOM + CRLF。
+            (
+                "excel.csv",
+                b"\xef\xbb\xbf\xe5\x90\x8d\xe7\xa7\xb0,\xe6\x95\xb0\xe9\x87\x8f\r\n\xe8\x8b\xb9\xe6\x9e\x9c,3\r\n".to_vec(),
+                "\u{feff}名称,数量\r\n苹果,4\r\n",
+            ),
+            // 欧洲区域设置的分号分隔、末尾无换行。
+            ("semicolon.csv", "名称;数量\n苹果;3".as_bytes().to_vec(), "名称;数量\n苹果;4"),
+            // 制表符。
+            ("tabs.csv", "名称\t数量\n苹果\t3\n".as_bytes().to_vec(), "名称\t数量\n苹果\t4\n"),
+        ] {
+            fs::write(vault.join(name), &original).unwrap();
+            let snapshot = read_dataset(vault, name, &limits).unwrap();
+            assert!(snapshot.editable, "{name}: {:?}", snapshot.read_only_reason);
+            assert_eq!(snapshot.table.header, vec!["名称", "数量"], "{name}");
+            let written = write_dataset_ops(
+                vault,
+                name,
+                &snapshot.sha,
+                None,
+                &[cell(0, 1, "4")],
+                &limits,
+            )
+            .unwrap();
+            assert_eq!(fs::read_to_string(vault.join(name)).unwrap(), expected, "{name}");
+            assert_eq!(written.dialect, snapshot.dialect, "{name}");
+        }
+    }
+
+    #[test]
+    fn managed_datasets_are_written_canonically() {
+        let limits = DatasetLimits::default();
+        let vault = tempfile::tempdir().unwrap();
+        let vault = vault.path();
+        fs::create_dir_all(vault.join("datasets")).unwrap();
+        fs::write(vault.join("datasets/外来.csv"), "\u{feff}a;b\r\n1;2\r\n").unwrap();
+        let snapshot = read_dataset(vault, "datasets/外来.csv", &limits).unwrap();
+        write_dataset_ops(vault, "datasets/外来.csv", &snapshot.sha, None, &[cell(0, 0, "9")], &limits)
+            .unwrap();
+        assert_eq!(fs::read_to_string(vault.join("datasets/外来.csv")).unwrap(), "a,b\n9,2\n");
+    }
+
+    #[test]
+    fn foreign_encodings_and_ragged_rows_open_read_only_and_convert_explicitly() {
+        let limits = DatasetLimits::default();
+        let vault = tempfile::tempdir().unwrap();
+        let vault = vault.path();
+        let (gbk, _, _) = encoding_rs::GB18030.encode("姓名,城市\r\n张三,北京\r\n");
+        fs::write(vault.join("gbk.csv"), &gbk).unwrap();
+        let snapshot = read_dataset(vault, "gbk.csv", &limits).unwrap();
+        assert!(!snapshot.editable);
+        assert!(snapshot.convertible);
+        assert_eq!(snapshot.dialect.encoding, CsvEncoding::Gb18030);
+        assert_eq!(snapshot.table.rows[0], vec!["张三", "北京"]);
+        assert!(snapshot.read_only_reason.as_deref().unwrap().starts_with("CSV_NOT_UTF8:这是 GBK"));
+        // 写操作照旧拒绝，文件不动。
+        assert_eq!(
+            code(write_dataset_ops(vault, "gbk.csv", &snapshot.sha, None, &[cell(0, 0, "李四")], &limits)),
+            "CSV_NOT_UTF8"
+        );
+        assert_eq!(fs::read(vault.join("gbk.csv")).unwrap(), gbk.to_vec());
+        assert_eq!(code(normalize_csv_file(vault, "gbk.csv", "stale", &limits)), "STALE_BASE");
+        let converted = normalize_csv_file(vault, "gbk.csv", &snapshot.sha, &limits).unwrap();
+        assert!(converted.editable);
+        assert_eq!(
+            fs::read_to_string(vault.join("gbk.csv")).unwrap(),
+            "\u{feff}姓名,城市\r\n张三,北京\r\n"
+        );
+
+        let mut utf16 = vec![0xff, 0xfe];
+        utf16.extend("a,b\n1,2\n".encode_utf16().flat_map(u16::to_le_bytes));
+        fs::write(vault.join("utf16.csv"), utf16).unwrap();
+        let snapshot = read_dataset(vault, "utf16.csv", &limits).unwrap();
+        assert_eq!(snapshot.dialect.encoding, CsvEncoding::Utf16le);
+        assert_eq!(snapshot.table.rows, vec![vec!["1", "2"]]);
+
+        fs::write(vault.join("ragged.csv"), "a,b\n1\n2,3,4\n").unwrap();
+        let snapshot = read_dataset(vault, "ragged.csv", &limits).unwrap();
+        assert!(snapshot.convertible);
+        assert_eq!(snapshot.table.header, vec!["a", "b", "列3"]);
+        assert_eq!(snapshot.table.rows, vec![vec!["1", "", ""], vec!["2", "3", "4"]]);
+
+        // 表头重复这种转换解决不了的问题：不可转换。
+        fs::write(vault.join("dup.csv"), "a,a\n1\n").unwrap();
+        assert!(!read_dataset(vault, "dup.csv", &limits).unwrap().convertible);
+        // 真正无法解码的字节仍是错误，不用替换字符糊过去。
+        fs::write(vault.join("binary.csv"), [0x81, 0x30, 0xff, 0xff]).unwrap();
+        assert_eq!(code(read_dataset(vault, "binary.csv", &limits)), "CSV_NOT_UTF8");
     }
 
     #[test]

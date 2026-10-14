@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 
 import { getApiErrorMessage, openCsvFile, readCsvFile } from "@/lib/api"
 import { isNonUtf8CsvEncoding, type CsvDocument } from "@/lib/csv"
@@ -29,8 +29,24 @@ type LoadState =
 export function CsvPreview({ maxRows, path }: CsvPreviewProps) {
   const [loadState, setLoadState] = useState<LoadState>({ state: "loading" })
   const [isOpening, setIsOpening] = useState(false)
+  const sectionRef = useRef<HTMLElement>(null)
+  // 长文档里可能嵌着很多张表：滚到附近才读文件、解析。
+  const [visible, setVisible] = useState(() => typeof IntersectionObserver === "undefined")
 
   useEffect(() => {
+    const target = sectionRef.current
+    if (visible || !target) return
+    const observer = new IntersectionObserver((entries) => {
+      if (!entries.some((entry) => entry.isIntersecting)) return
+      observer.disconnect()
+      setVisible(true)
+    }, { rootMargin: "400px 0px" })
+    observer.observe(target)
+    return () => observer.disconnect()
+  }, [visible])
+
+  useEffect(() => {
+    if (!visible) return
     let cancelled = false
     setLoadState({ state: "loading" })
     const reload = () => {
@@ -52,7 +68,7 @@ export function CsvPreview({ maxRows, path }: CsvPreviewProps) {
       cancelled = true
       window.removeEventListener("shard:dataset-changed", changed)
     }
-  }, [path])
+  }, [path, visible])
 
   async function openWithDefaultProgram() {
     if (isOpening) return
@@ -73,6 +89,7 @@ export function CsvPreview({ maxRows, path }: CsvPreviewProps) {
         aria-label={`CSV 预览：${path}`}
         className={styles.preview}
         data-csv-path={path}
+        ref={sectionRef}
       >
         <div className={styles.status} role={loadState.state === "error" ? "alert" : "status"}>
           {loadState.state === "loading"
@@ -95,6 +112,7 @@ export function CsvPreview({ maxRows, path }: CsvPreviewProps) {
       className={styles.preview}
       data-csv-path={path}
       data-visible-rows={visibleRows.length}
+      ref={sectionRef}
     >
       {document.records.length === 0 ? (
         <div className={styles.status}>CSV 文件为空</div>

@@ -27,7 +27,7 @@ export async function installMock(page: Page, withLockbox = false) {
     const git = { branch: "main", shortCommit: "abc1234", hasRemote: false, status: "ready", error: null, ahead: 0, behind: 0 }
     const tree = { entries: [{ name: "阅读记录.csv", path, kind: "csv", size: 0, modifiedAt: now }], assets: [], trashEntries: [], fragmentTrashEntries: [], fragmentStream: { totalCount: 1, years: [] } }
     const schema = { schemaVersion: 1, datasetId: "ds_0123456789abcdef0123456789abcdef", title: "阅读记录", primaryKey: "id" }
-    const state = { table: { header: ["id", "姓名", "城市"], rows: [["r_000000000001", "张三", "北京"], ["r_000000000002", "李四", "上海"]] }, sha: "sha-0", schemaSha: "schema-sha", editable: true, readOnlyReason: null as string | null, staleNext: false }
+    const state = { table: { header: ["id", "姓名", "城市"], rows: [["r_000000000001", "张三", "北京"], ["r_000000000002", "李四", "上海"]] }, sha: "sha-0", schemaSha: "schema-sha", editable: true, readOnlyReason: null as string | null, convertible: false, staleNext: false }
     const calls: Call[] = []
     const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T
     const snapshot = () => clone({ path, ...state, schema })
@@ -68,6 +68,11 @@ export async function installMock(page: Page, withLockbox = false) {
                 if (op.op === "insertRows") state.table.rows.splice(op.at!, 0, ...(op.rows ?? []))
               }
               state.sha = `sha-${calls.filter(call => call.command === "apply_dataset_ops").length}`
+              return snapshot()
+            }
+            case "normalize_csv_file": {
+              if (args.expectedSha !== state.sha) throw new Error("STALE_BASE:数据文件已在别处被修改")
+              Object.assign(state, { editable: true, readOnlyReason: null, convertible: false, sha: "sha-converted" })
               return snapshot()
             }
             case "create_dataset": {

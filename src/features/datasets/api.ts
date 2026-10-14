@@ -21,6 +21,11 @@ export function applyDatasetOps(
   return desktopInvoke("apply_dataset_ops", { path, expectedSha, expectedSchemaSha, ops })
 }
 
+/** 用户确认后把 GBK/UTF-16 或列数不齐的 CSV 转换成可编辑的 UTF-8 文件（会改写原文件）。 */
+export function normalizeCsvFile(path: string, expectedSha: string): Promise<DatasetSnapshot> {
+  return desktopInvoke("normalize_csv_file", { path, expectedSha })
+}
+
 export function createDataset(
   title: string,
   header: string[],
