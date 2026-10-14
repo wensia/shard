@@ -3654,3 +3654,17 @@ test("从访达把图片拖进打开的文档：当作配图插在落点，不�
     "# 旧笔记\n\n待重命名![白板](assets/ab/白板.png)"
   )
 })
+
+test("删除还被文档用到的图片时，确认框说明有几处在用", async ({ page }) => {
+  await installLibraryImageMock(page)
+  await page.getByRole("button", { name: "资料库", exact: true }).click()
+  await page.getByRole("complementary", { name: "资料库目录" }).getByRole("button", { name: "项目", exact: true }).click()
+  await page.getByRole("button", { name: "营业执照.png 操作", exact: true }).click()
+  await page.getByRole("menuitem", { name: "删除", exact: true }).click()
+  const dialog = page.getByRole("alertdialog").or(page.getByRole("dialog")).filter({ hasText: "营业执照.png" })
+  await expect(dialog).toContainText("有 1 个文档或表格用到这张图片，删除后那里会显示为失效图片。")
+  await expect.poll(() => commandCalls(page, "image_references")).toContainEqual({
+    command: "image_references",
+    args: { path: "notes/项目/营业执照.png" },
+  })
+})

@@ -4680,8 +4680,15 @@ fn rename_library_entry_in_vault(
     let updates: Vec<_> = link_updates.into_iter().chain(image_updates).collect();
     let written = apply_reference_updates(&source, &destination, updates.iter().map(|(path, text, next, _)| (path, text, next)))?;
     let updated_links: usize = updates[..link_count].iter().map(|update| update.3).sum();
-    let updated_image_refs: usize = updates[link_count..].iter().map(|update| update.3).sum();
+    let mut updated_image_refs: usize = updates[link_count..].iter().map(|update| update.3).sum();
+    let csv_changes = if !file_type.is_file() || shard_core::image::is_image_path(&destination) {
+        rewrite_csv_image_references(vault, &[(old_rel.clone(), new_rel.clone())])
+    } else {
+        (0, Vec::new())
+    };
+    updated_image_refs += csv_changes.0;
     let mut changed_paths = vec![old_rel, new_rel];
+    append_unique_paths(&mut changed_paths, csv_changes.1);
     for (path, _) in &written {
         let rel_path = relative_path(vault, path)?;
         if !changed_paths.contains(&rel_path) {
@@ -4788,6 +4795,11 @@ fn move_library_entry_in_vault(
         &destination,
         updates.iter().map(|(path, text, next, _)| (path, text, next)),
     )?;
+    let csv_changes = if destination.is_dir() || shard_core::image::is_image_path(&destination) {
+        rewrite_csv_image_references(vault, &[(rel_path.trim().to_string(), new_rel.clone())])
+    } else {
+        (0, Vec::new())
+    };
     let mut changed_paths = vec![rel_path.to_string(), new_rel];
     for (path, _) in &written {
         let rel_path = relative_path(vault, path)?;
@@ -4795,8 +4807,89 @@ fn move_library_entry_in_vault(
             changed_paths.push(rel_path);
         }
     }
+    append_unique_paths(&mut changed_paths, csv_changes.1);
     commit_paths_best_effort(vault, &changed_paths, "move library entry");
-    Ok(updates.iter().map(|update| update.3).sum())
+    Ok(updates.iter().map(|update| update.3).sum::<usize>() + csv_changes.0)
+}
+
+/// 图片或目录改名、移动之后，改写公开 CSV 单元格里指向它们的路径。经数据集核心写回
+/// （校验 sha、保留文件原写法）。尽力而为：只读或写入失败的表格跳过并记日志，不回滚
+/// 已完成的移动——那一格只是退回显示路径文字。返回（改写的格数、改过的表格）。
+fn rewrite_csv_image_references(vault: &Path, moves: &[(String, String)]) -> (usize, Vec<String>) {
+    let mut files = Vec::new();
+    if collect_csv_files(vault, vault, &mut files).is_err() {
+        return (0, Vec::new());
+    }
+    let limits = DatasetLimits::default();
+    let mut count = 0;
+    let mut changed = Vec::new();
+    for path in files {
+        let Ok(rel) = relative_path(vault, &path) else {
+            continue;
+        };
+        if rel.starts_with(".trash/") {
+            continue;
+        }
+        let Ok(bytes) = fs::read(&path) else {
+            continue;
+        };
+        let text = String::from_utf8_lossy(&bytes);
+        if !moves.iter().any(|(old, _)| text.contains(old.as_str())) {
+            continue;
+        }
+        let snapshot = match dataset::read_dataset(vault, &rel, &limits) {
+            Ok(snapshot) if snapshot.editable => snapshot,
+            Ok(_) | Err(_) => {
+                eprintln!("[shard] {rel} 不可编辑，未改写其中的图片引用");
+                continue;
+            }
+        };
+        let mut cells = Vec::new();
+        for (row, values) in snapshot.table.rows.iter().enumerate() {
+            for (column, value) in values.iter().enumerate() {
+                if shard_core::image_refs::csv_cell_image_references(value).is_none() {
+                    continue;
+                }
+                let mut hit = false;
+                let next = value
+                    .lines()
+                    .map(|line| {
+                        let reference = line.trim();
+                        match shard_core::image_refs::remap_reference(reference, moves) {
+                            Some(next) if shard_core::image_refs::is_local_image_reference(reference) => {
+                                hit = true;
+                                next
+                            }
+                            _ => line.to_string(),
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                if hit {
+                    cells.push(dataset::CellEdit { row, column, value: next });
+                }
+            }
+        }
+        if cells.is_empty() {
+            continue;
+        }
+        let edited = cells.len();
+        match dataset::write_dataset_ops(
+            vault,
+            &rel,
+            &snapshot.sha,
+            snapshot.schema_sha.as_deref(),
+            &[DatasetOp::SetCells { cells }],
+            &limits,
+        ) {
+            Ok(_) => {
+                count += edited;
+                changed.push(rel);
+            }
+            Err(error) => eprintln!("[shard] 改写 {rel} 里的图片引用失败：{error}"),
+        }
+    }
+    (count, changed)
 }
 
 fn safe_vault_relative_path(rel_path: &str) -> Result<&Path, String> {
@@ -11834,10 +11927,20 @@ mod tests {
         )
         .unwrap();
         let fragment = write_public_test_fragment(vault, "碎片里也引用 ![海边](notes/旅行/a.jpg)");
+        // 资料库外的表格：带 BOM、CRLF，改写后照旧。
+        fs::write(
+            vault.join("notes/旅行/行程.csv"),
+            "\u{feff}地点,照片\r\n海边,notes/旅行/a.jpg\r\n山上,notes/旅行/a.jpg.bak\r\n",
+        )
+        .unwrap();
 
         let (_, links, images) =
             rename_library_entry_in_vault(vault, "notes/旅行/a.jpg", "海边 日落").unwrap();
-        assert_eq!((links, images), (0, 2));
+        assert_eq!((links, images), (0, 3));
+        assert_eq!(
+            fs::read_to_string(vault.join("notes/旅行/行程.csv")).unwrap(),
+            "\u{feff}地点,照片\r\n海边,notes/旅行/海边 日落.jpg\r\n山上,notes/旅行/a.jpg.bak\r\n"
+        );
         assert!(vault.join("notes/旅行/海边 日落.jpg").is_file());
         assert_eq!(
             fs::read_to_string(vault.join("notes/旅行/游记.md")).unwrap(),
@@ -11855,14 +11958,17 @@ mod tests {
 
         // 整个目录移走：目录里的文档跟着走，也要按新位置写回。
         let images = move_library_entry_in_vault(vault, "notes/旅行", Some("notes/归档")).unwrap();
-        assert_eq!(images, 2);
+        assert_eq!(images, 3);
+        assert!(fs::read_to_string(vault.join("notes/归档/旅行/行程.csv"))
+            .unwrap()
+            .contains("海边,notes/归档/旅行/海边 日落.jpg\r\n"));
         assert_eq!(
             fs::read_to_string(vault.join("notes/归档/旅行/游记.md")).unwrap(),
             "![海边](<notes/归档/旅行/海边 日落.jpg>) ![备份](notes/旅行/a.jpg.bak)\n"
         );
         assert_eq!(
             image_references_in_vault(vault, "notes/归档/旅行/海边 日落.jpg").unwrap().len(),
-            2
+            3
         );
         assert!(image_references_in_vault(vault, "notes/旅行/a.jpg").unwrap().is_empty());
     }

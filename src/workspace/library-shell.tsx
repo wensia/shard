@@ -76,6 +76,7 @@ import {
   createLibraryNote,
   createMindMap,
   importGraphFileToTimeline,
+  imageReferences,
   importLibraryFiles,
   listDiagramDocuments,
   listLibraryTree,
@@ -1176,6 +1177,19 @@ export function LibraryShell({
     setTreeDialog({ kind: "delete", entry })
   }
 
+  // 删图片前查一下还有谁在用它：删了那些文档、表格里会变成失效图片。
+  const [deleteImageUsers, setDeleteImageUsers] = useState<string[]>([])
+  const deletingImagePath = treeDialog?.kind === "delete" && treeDialog.entry.kind === "image" ? treeDialog.entry.path : null
+  useEffect(() => {
+    setDeleteImageUsers([])
+    if (!deletingImagePath) return
+    let cancelled = false
+    void imageReferences(deletingImagePath)
+      .then((paths) => { if (!cancelled) setDeleteImageUsers(paths) })
+      .catch(() => undefined)
+    return () => { cancelled = true }
+  }, [deletingImagePath])
+
   function requestPurge(entry: LibraryTreeEntry) {
     setTreeDialog({ kind: "purge", entry })
   }
@@ -1955,7 +1969,7 @@ export function LibraryShell({
         : treeDialog?.kind === "batchDelete"
           ? `选中的 ${treeDialog.entries.length} 项及所选目录中的内容将移入回收站，之后仍可恢复。`
         : treeDialog?.kind === "delete"
-          ? `「${treeDialog.entry.name}」将移入回收站，之后仍可恢复。`
+          ? `「${treeDialog.entry.name}」将移入回收站，之后仍可恢复。${deleteImageUsers.length > 0 ? `有 ${deleteImageUsers.length} 个文档或表格用到这张图片，删除后那里会显示为失效图片。` : ""}`
           : ""
   const dialogConfirmLabel =
     treeDialog?.kind === "importGraph"
