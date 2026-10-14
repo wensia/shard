@@ -9,6 +9,8 @@ use std::{fs, path::Path, time::UNIX_EPOCH};
 use tauri::http::{header, Method, Request, Response, StatusCode};
 
 pub const SCHEME: &str = "shard-asset";
+/// 单张图片的上限：再大的文件不往内存里整份读。
+const MAX_SERVED_BYTES: u64 = 64 * 1024 * 1024;
 
 pub fn handle(app: &tauri::AppHandle, request: &Request<Vec<u8>>) -> Response<Vec<u8>> {
     let origin = request
@@ -44,6 +46,13 @@ pub fn serve(
     let Ok(metadata) = fs::metadata(&path) else {
         return empty(StatusCode::NOT_FOUND, origin);
     };
+    if metadata.len() > MAX_SERVED_BYTES {
+        return empty(StatusCode::NOT_FOUND, origin);
+    }
+    // 先只读文件头认类型（改了扩展名的大文件不整份读进内存），确认是图片再读全文。
+    let Some(mime_type) = crate::sniff_library_asset_mime_type(&path) else {
+        return empty(StatusCode::NOT_FOUND, origin);
+    };
     let modified = metadata
         .modified()
         .ok()
@@ -59,10 +68,6 @@ pub fn serve(
             .unwrap_or_else(|_| empty(StatusCode::NOT_FOUND, origin));
     }
     let Ok(bytes) = fs::read(&path) else {
-        return empty(StatusCode::NOT_FOUND, origin);
-    };
-    // 只认文件头：扩展名是 .png、内容却是 HTML 的文件不供出去。
-    let Some(mime_type) = shard_core::image::sniff_image_mime_type(&bytes) else {
         return empty(StatusCode::NOT_FOUND, origin);
     };
     let mut builder = with_common_headers(Response::builder(), origin, &etag, immutable)

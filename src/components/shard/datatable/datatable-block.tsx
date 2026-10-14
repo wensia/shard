@@ -387,6 +387,7 @@ function DatatableSurface({ spec, readOnly, onChange, allowDatasetActions }: Dat
       collapsed={collapsed}
       columns={columns}
       editable={editable}
+      imageCells={Boolean(spec.src)}
       entries={entries}
       group={group}
       groups={groups}
@@ -472,6 +473,8 @@ function DatatableSurface({ spec, readOnly, onChange, allowDatasetActions }: Dat
 }
 
 interface DatatableGridProps {
+  /** 只有引用 CSV 的表把图片路径画成缩略图：CSV 里的引用改名时会被改写，内联小表不会。 */
+  imageCells: boolean
   columns: DatatableColumn[]
   entries: DatatableEntry[]
   groups: { value: string; entries: DatatableEntry[] }[] | null
@@ -495,6 +498,7 @@ function DatatableGrid({
   collapsed,
   columns,
   editable,
+  imageCells,
   entries,
   group,
   groups,
@@ -535,7 +539,11 @@ function DatatableGrid({
               />
             ) : (
               <span className={styles.cellText}>
-                <CsvCellValue value={formatDatatableCell(entry.row[column.key], column.type)} />
+                {imageCells ? (
+                  <CsvCellValue value={formatDatatableCell(entry.row[column.key], column.type)} />
+                ) : (
+                  formatDatatableCell(entry.row[column.key], column.type)
+                )}
               </span>
             )}
           </td>

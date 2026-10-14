@@ -360,6 +360,11 @@ test.describe("资料库编辑器", () => {
     await expect.poll(() => readEditor(page, `library:${NOTE_ID}`)).toBe(
       "# 文档样例![slow](assets/slow.png)\n\n正文第一段 #工作\n\n- 列表项，再补一句"
     )
+    // 上传完成不拽走光标：接着打的字仍跟在「再补一句」后面。
+    await page.keyboard.type("。")
+    await expect.poll(() => readEditor(page, `library:${NOTE_ID}`)).toBe(
+      "# 文档样例![slow](assets/slow.png)\n\n正文第一段 #工作\n\n- 列表项，再补一句。"
+    )
   })
 })
 

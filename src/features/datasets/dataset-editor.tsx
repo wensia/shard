@@ -25,6 +25,12 @@ type History = { undo: DatasetOp[]; redo: DatasetOp[] }
 
 function failure(error: unknown): string { return getApiErrorMessage(error) }
 const IMAGE_RENDERERS = [imageCellRenderer]
+function encodingLabel(encoding: string) {
+  return encoding === "gb18030" ? "GBK" : encoding.startsWith("utf16") ? "UTF-16" : "UTF-8"
+}
+function delimiterLabel(delimiter: string) {
+  return delimiter === "\t" ? "制表符" : delimiter === ";" ? "分号" : "逗号"
+}
 /** `CODE:说明` 只给用户看说明部分。 */
 function readOnlyMessage(reason: string | null) { return reason?.replace(/^[A-Z][A-Z0-9_]*:/u, "") ?? "" }
 function explicitCells(ops: DatasetOp[]): number {
@@ -273,9 +279,16 @@ export const DatasetEditor = forwardRef<DatasetEditorHandle, DatasetEditorProps>
     return (row: number) => imageCells.rows.has(row) ? tall : base
   }, [imageCells.rows, metrics?.rowHeight])
 
-  /** 把新存好的图片放进一格：原来是图片格就接在后面，否则替换（可撤销）。 */
+  /**
+   * 把新存好的图片放进一格：原来是图片格就接在后面，否则替换（可撤销）。
+   * 上传要时间，期间表格可能增删行列、撤销或被外部改动重载：写回前核对目标格还是
+   * 原来那张表、那一格、那个值，变了就不写，免得把路径写进别的格。
+   */
   const placeImages = useCallback(async ([column, row]: Item, uploads: (() => Promise<string>)[]) => {
-    if (blocked || column === keyColumn) return
+    const start = tableRef.current
+    if (blocked || column === keyColumn || !start || row >= start.rows.length) return
+    const header = start.header[column]
+    const original = start.rows[row][column]
     const saved: string[] = []
     try {
       for (const upload of uploads) saved.push(await upload())
@@ -283,8 +296,12 @@ export const DatasetEditor = forwardRef<DatasetEditorHandle, DatasetEditorProps>
       notify.failure("图片保存失败", error)
     }
     const current = tableRef.current
-    if (!saved.length || !current || row >= current.rows.length) return
-    commit([{ op: "setCells", cells: [{ row, column, value: withAddedImages(current.rows[row][column], saved) }] }])
+    if (!saved.length || !current) return
+    if (current.header[column] !== header || current.rows[row]?.[column] !== original || current.rows.length !== start.rows.length) {
+      notify.warning("表格在上传期间变了，图片没有放进去", { description: `已存进附件仓：${saved.join("、")}` })
+      return
+    }
+    commit([{ op: "setCells", cells: [{ row, column, value: withAddedImages(original, saved) }] }])
   }, [blocked, commit, keyColumn])
   // 从访达把图片拖到某一格上：存进附件仓，再把路径写进这一格。
   useNativeFileDrop({
@@ -473,6 +490,7 @@ export const DatasetEditor = forwardRef<DatasetEditorHandle, DatasetEditorProps>
     <Dialog open={converting !== null} onOpenChange={open => { if (!open && converting !== "running") setConverting(null) }}><DialogContent>
       <DialogHeader><DialogTitle>转换为 UTF-8 后编辑</DialogTitle></DialogHeader>
       <p className="text-[length:var(--text-body)]">会改写这个文件：文字编码转成 UTF-8{path.startsWith("datasets/") ? "，按数据集规范格式保存" : "（带 BOM，Excel 双击仍能正确显示中文），分隔符与换行保持不变"}；列数不齐的行补齐空格。改写前的版本留在 Git 历史里。</p>
+      {snapshot?.dialect && <p className="text-[length:var(--text-body)] text-muted-foreground">识别为 {encodingLabel(snapshot.dialect.encoding)}、{delimiterLabel(snapshot.dialect.delimiter)}分隔。请先看一眼表格里的文字和分列是否正常，不正常就取消，改用其他工具另存为 UTF-8。</p>}
       <DialogFooter><Button variant="outline" disabled={converting === "running"} onClick={() => setConverting(null)}>取消</Button><Button disabled={converting === "running"} onClick={() => { void convert() }}>{converting === "running" ? "转换中…" : "转换"}</Button></DialogFooter>
     </DialogContent></Dialog>
     <Dialog open={!!nameDialog} onOpenChange={open => { if (!open) setNameDialog(null) }}><DialogContent>

@@ -188,20 +188,20 @@ pub fn markdown_link_destinations(text: &str) -> Vec<LinkDestination> {
     for line in text.split_inclusive('\n') {
         let line_start = offset;
         offset += line.len();
-        let trimmed = line.trim_start_matches(' ');
-        if line.len() - trimmed.len() <= 3 {
-            if let Some((marker, length)) = fence_marker(trimmed) {
-                match fence {
-                    None => {
-                        fence = Some((marker, length));
-                        continue;
-                    }
-                    Some((open, open_length)) if open == marker && length >= open_length && trimmed.trim_end()[length..].trim().is_empty() => {
-                        fence = None;
-                        continue;
-                    }
-                    _ => {}
+        // 列表、引用块里的围栏缩进可以超过 3 格：去掉前导空白与引用标记再认，宁可多跳过
+        // 也不改代码示例里的字面文本。
+        let trimmed = line.trim_start_matches([' ', '\t', '>']);
+        if let Some((marker, length)) = fence_marker(trimmed) {
+            match fence {
+                None => {
+                    fence = Some((marker, length));
+                    continue;
                 }
+                Some((open, open_length)) if open == marker && length >= open_length && trimmed.trim_end()[length..].trim().is_empty() => {
+                    fence = None;
+                    continue;
+                }
+                _ => {}
             }
         }
         if fence.is_some() {
@@ -499,6 +499,17 @@ mod tests {
             markdown_image_references(text),
             vec!["notes/截屏 2.png", "notes/a(1).jpg", "assets/ab/c.png"]
         );
+    }
+
+    #[test]
+    fn skips_fences_nested_in_lists_and_quotes() {
+        let moves = vec![("notes/a.png".to_string(), "notes/b.png".to_string())];
+        let text = "- 项\n    ```\n    ![x](notes/a.png)\n    ```\n> ```\n> ![x](notes/a.png)\n> ```\n![x](notes/a.png)\n";
+        let (next, count) = rewrite_markdown_image_references(text, &moves);
+        assert_eq!(count, 1);
+        assert!(next.ends_with("```\n![x](notes/b.png)\n"));
+        assert!(next.contains("    ![x](notes/a.png)"));
+        assert!(next.contains("> ![x](notes/a.png)"));
     }
 
     #[test]

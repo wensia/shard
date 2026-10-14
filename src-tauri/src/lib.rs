@@ -3289,6 +3289,10 @@ async fn open_vault_image(app: tauri::AppHandle, path: String) -> Result<(), Str
     run_blocking(move || {
         let vault = ensure_vault_dirs(&app)?;
         let image_path = resolve_vault_asset_path(&vault, &path)?;
+        // 只交给系统打开真正的图片，改了扩展名的可执行文件之类一律拒绝。
+        if sniff_library_asset_mime_type(&image_path).is_none() {
+            return Err("不是图片文件".to_string());
+        }
         tauri_plugin_opener::open_path(image_path, None::<&str>).map_err(|error| error.to_string())
     })
     .await

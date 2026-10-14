@@ -2,6 +2,8 @@ import { Extension, type Editor } from "@tiptap/core"
 import { Plugin, PluginKey, type EditorState } from "@tiptap/pm/state"
 import { Decoration, DecorationSet } from "@tiptap/pm/view"
 
+import { notify } from "@/lib/notify"
+
 type PlaceholderMeta = { add: { id: string; pos: number } } | { remove: string }
 
 const placeholderKey = new PluginKey<DecorationSet>("shardImageUploadPlaceholder")
@@ -90,12 +92,23 @@ export async function insertImageUploads(editor: Editor, uploads: RichImageUploa
     editor.view.dispatch(
       editor.state.tr.setMeta(placeholderKey, { remove: id }).setMeta("addToHistory", false)
     )
-    if (!result || current === null || !editor.isEditable) continue
+    if (!result) continue
+    if (current === null || !editor.isEditable) {
+      // 图片已经存进附件仓，只是这时文档插不进去（只读、占位已随所在段落被删）。
+      notify.warning("图片已保存，但没有插入文档", { description: result.path })
+      continue
+    }
+    const before = editor.state.doc.content.size
+    // 不移动选区：用户在上传期间接着打的字留在原处，光标也不会被拽到图片后面。
     editor
       .chain()
-      .insertContentAt(current, { type: "image", attrs: { src: result.path, alt: result.alt } })
+      .insertContentAt(
+        current,
+        { type: "image", attrs: { src: result.path, alt: result.alt } },
+        { updateSelection: false }
+      )
       .run()
-    // 图片是行内原子节点，占一个位置。
-    at = current + 1
+    // 落在块边界时图片会被包进新段落，按文档实际增长量算出下一张的位置，多图顺序不反。
+    at = current + (editor.state.doc.content.size - before)
   }
 }

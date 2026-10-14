@@ -97,6 +97,7 @@ export const imageCellRenderer: CustomRenderer<ImageCell> = {
 /** 双击图片格：看大图、改路径、从访达选图片追加进来。 */
 const ImageCellEditor: ProvideEditorComponent<ImageCell> = ({ value, onChange, onFinishedEditing }) => {
   const [raw, setRaw] = useState(value.data.raw)
+  const rawRef = useRef(value.data.raw)
   const [busy, setBusy] = useState(false)
   const latest = useRef(value)
   const input = useRef<HTMLTextAreaElement>(null)
@@ -110,6 +111,7 @@ const ImageCellEditor: ProvideEditorComponent<ImageCell> = ({ value, onChange, o
   }, [])
 
   function update(next: string) {
+    rawRef.current = next
     setRaw(next)
     const cell = { ...value, copyData: next, data: { ...value.data, raw: next, refs: parseCellImageRefs(next) ?? [] } }
     latest.current = cell
@@ -129,7 +131,8 @@ const ImageCellEditor: ProvideEditorComponent<ImageCell> = ({ value, onChange, o
     try {
       const saved: string[] = []
       for (const path of paths) saved.push(await saveImageAttachmentFromPath(path))
-      update(withAddedImages(raw, saved))
+      // 保存期间用户可能改了文本框：接在最新内容后面。
+      update(withAddedImages(rawRef.current, saved))
     } catch (error) {
       notify.failure("图片保存失败", error)
     } finally {

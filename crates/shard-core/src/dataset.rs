@@ -250,8 +250,38 @@ fn decode_csv(bytes: &[u8]) -> Result<(String, CsvDialect), DatasetError> {
     Ok((text, dialect))
 }
 
-/// 看第一条记录（引号外）里哪种分隔符最多；打平时逗号优先，其次制表符。
+/// 先看第一条记录（引号外）哪种分隔符最多，再用前 50 条记录核对：猜的那个让各行列数
+/// 不一致、而另一个一致时改用后者（表头里恰好带分号的逗号文件不会被误判）。
 pub(crate) fn detect_delimiter(text: &str) -> char {
+    let guess = first_record_delimiter(text);
+    let consistent = |delimiter: char| -> bool {
+        let mut reader = ReaderBuilder::new()
+            .has_headers(false)
+            .flexible(true)
+            .delimiter(delimiter as u8)
+            .from_reader(text.as_bytes());
+        let mut width = None;
+        for record in reader.records().take(50) {
+            let Ok(record) = record else { return false };
+            match width {
+                None => width = Some(record.len()),
+                Some(width) if width != record.len() => return false,
+                _ => {}
+            }
+        }
+        width.is_some_and(|width| width > 1)
+    };
+    if consistent(guess) {
+        return guess;
+    }
+    [',', '\t', ';']
+        .into_iter()
+        .find(|candidate| *candidate != guess && consistent(*candidate))
+        .unwrap_or(guess)
+}
+
+/// 第一条记录（引号外）里哪种分隔符最多；打平时逗号优先，其次制表符。
+fn first_record_delimiter(text: &str) -> char {
     let mut counts = [0usize; 3];
     let mut quoted = false;
     for character in text.chars() {
@@ -987,6 +1017,14 @@ mod tests {
             assert_eq!(fs::read_to_string(vault.join(name)).unwrap(), expected, "{name}");
             assert_eq!(written.dialect, snapshot.dialect, "{name}");
         }
+    }
+
+    #[test]
+    fn delimiter_is_checked_against_following_records() {
+        // 表头里带分号的逗号文件：按第一行会猜成分号，核对后续记录改回逗号。
+        assert_eq!(detect_delimiter("a;b;c,d\n\"x,y\",z\n1,2\n"), ',');
+        assert_eq!(detect_delimiter("名称;数量\n苹果;3\n"), ';');
+        assert_eq!(detect_delimiter("单列\n值\n"), ',');
     }
 
     #[test]
