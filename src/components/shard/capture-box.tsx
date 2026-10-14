@@ -32,7 +32,6 @@ import {
   normalizeTagList,
 } from "@/lib/editor-format"
 import {
-  openCsvFile,
   saveFragmentImage,
 } from "@/lib/api"
 import {
@@ -59,6 +58,7 @@ import {
 import type { CsvFileSummary, Fragment, MindMapSummary, ShardMapFile } from "@/types"
 
 import styles from "./capture-box.module.css"
+import { openDatasetEditor } from "@/features/datasets/open-dataset"
 
 export interface CaptureBoxHandle {
   collapse: () => void
@@ -182,9 +182,8 @@ export const CaptureBox = forwardRef<CaptureBoxHandle, CaptureBoxProps>(function
           ? target
           : undefined
     if (csvPath) {
-      void openCsvFile(csvPath).catch((error) => {
-        notify.failure("CSV 文件打开失败", error)
-      })
+      // 与资料库、嵌入预览同一入口：在 Shard 里打开表格，表头另有「用默认程序打开」。
+      openDatasetEditor(csvPath)
       return
     }
 

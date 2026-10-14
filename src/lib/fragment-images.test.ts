@@ -2,19 +2,16 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest"
 
 import { vaultImageUrl } from "./fragment-images"
 
-type TauriGlobals = typeof globalThis & {
-  isTauri?: boolean
-  window?: { __TAURI_INTERNALS__?: { convertFileSrc: (path: string, scheme: string) => string } }
-}
-
-const globals = globalThis as TauriGlobals
+// isTauri() 看 globalThis.isTauri，convertFileSrc 取 window.__TAURI_INTERNALS__。
+const globals = globalThis as unknown as Record<string, unknown>
 
 describe("vaultImageUrl", () => {
   beforeEach(() => {
     globals.isTauri = true
     globals.window = {
       __TAURI_INTERNALS__: {
-        convertFileSrc: (path, scheme) => `${scheme}://localhost/${encodeURIComponent(path)}`,
+        convertFileSrc: (path: string, scheme: string) =>
+          `${scheme}://localhost/${encodeURIComponent(path)}`,
       },
     }
   })

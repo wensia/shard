@@ -36,7 +36,6 @@ import {
 } from "@/lib/editor-format"
 import {
   getApiErrorMessage,
-  openCsvFile,
 } from "@/lib/api"
 import {
   applyTypeTag,
@@ -59,6 +58,7 @@ import {
 } from "@/lib/wikilink"
 import type { CsvFileSummary, Fragment } from "@/types"
 import styles from "./fragment-editor.module.css"
+import { openDatasetEditor } from "@/features/datasets/open-dataset"
 
 export interface FragmentEditorDraft {
   content: string
@@ -224,9 +224,8 @@ export function FragmentEditor({
           ? target
           : undefined
     if (csvPath) {
-      void openCsvFile(csvPath).catch((error) => {
-        notify.failure("CSV 文件打开失败", error)
-      })
+      // 与资料库、嵌入预览同一入口：在 Shard 里打开表格，表头另有「用默认程序打开」。
+      openDatasetEditor(csvPath)
       return
     }
 

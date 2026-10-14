@@ -297,12 +297,13 @@ test.describe("资料库编辑器", () => {
     })
   })
 
-  test("芯片导航：CSV 交给系统打开，待建链接只提示", async ({ page }) => {
+  test("芯片导航：CSV 在 Shard 里打开表格，待建链接只提示", async ({ page }) => {
     await fillEditor(page, `library:${NOTE_ID}`, "[[data/small.csv]]")
     await chips(page).click()
-    await expect.poll(() => commandCalls(page, "open_csv_file")).toEqual([
-      { path: "data/small.csv" },
-    ])
+    await expect(page.getByRole("region", { name: "数据集禅模式" })).toBeVisible()
+    await expect.poll(() => commandCalls(page, "read_dataset")).toContainEqual({ path: "data/small.csv" })
+    expect(await commandCalls(page, "open_csv_file")).toEqual([])
+    await page.getByRole("region", { name: "数据集禅模式" }).getByRole("button", { name: "关闭" }).click()
 
     await fillEditor(page, `library:${NOTE_ID}`, "[[尚未创建]]")
     await expect(chips(page)).toHaveClass(/shard-rich-wikilink--missing/u)

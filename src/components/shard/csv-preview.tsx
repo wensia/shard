@@ -14,16 +14,8 @@ interface CsvPreviewProps {
 }
 
 export function CsvInlineLink({ label, path }: { label: string; path: string }) {
-  async function open() {
-    try {
-      await openCsvFile(path)
-    } catch (error) {
-      notify.failure("CSV 文件打开失败", error)
-    }
-  }
-
   return (
-    <button className={styles.inlineLink} onClick={() => void open()} type="button">
+    <button className={styles.inlineLink} onClick={() => openDatasetEditor(path)} type="button">
       {label}
     </button>
   )

@@ -84,7 +84,6 @@ import {
   emptyTrash,
   getApiErrorMessage,
   moveLibraryEntry,
-  openCsvFile,
   purgeFromTrash,
   renameLibraryEntry,
   restoreFromTrash,
@@ -761,7 +760,7 @@ export function LibraryShell({
 
   /**
    * 富文本双链芯片的点击：分派规则——
-   * CSV 交给系统打开，导图切到画布，碎片 / 笔记走宿主导航，待建只提示。
+   * CSV 打开表格，导图切到画布，碎片 / 笔记走宿主导航，待建只提示。
    */
   function navigateWikilink(target: string) {
     const candidate = resolveWikilinkTarget(target, wikilinkCandidatesRef.current)
@@ -772,9 +771,8 @@ export function LibraryShell({
           ? target
           : undefined
     if (csvPath) {
-      void openCsvFile(csvPath).catch((error) => {
-        notify.failure("CSV 文件打开失败", error)
-      })
+      // 与资料库、嵌入预览同一入口：在 Shard 里打开表格，表头另有「用默认程序打开」。
+      openDatasetEditor(csvPath)
       return
     }
 

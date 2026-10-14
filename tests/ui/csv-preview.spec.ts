@@ -301,17 +301,19 @@ test("GBK CSV 正确转码中文并显示建议另存为 UTF-8 角标", async ({
   ).toBeVisible()
 })
 
-test("普通 CSV wikilink 不嵌入表格且点击调用默认程序打开", async ({ page }) => {
+test("普通 CSV wikilink 不嵌入表格，点击在 Shard 里打开表格而非默认程序", async ({ page }) => {
   const card = fragmentCard(page, "timeline-link")
   await expect(card.locator('section[data-csv-path="data/large.csv"]')).toHaveCount(0)
   await card
     .getByRole("button", { name: "data/large.csv", exact: true })
     .click()
 
-  await expect.poll(() => csvCalls(page, "open_csv_file")).toContainEqual({
-    command: "open_csv_file",
+  await expect(page.getByRole("region", { name: "数据集禅模式" })).toBeVisible()
+  await expect.poll(() => csvCalls(page, "read_dataset")).toContainEqual({
+    command: "read_dataset",
     args: { path: "data/large.csv" },
   })
+  expect(await csvCalls(page, "open_csv_file")).toHaveLength(0)
 })
 
 test("CSV 异步读取期间暴露 aria-busy 并在完成后恢复", async ({ page }) => {
