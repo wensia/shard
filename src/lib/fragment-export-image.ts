@@ -2,7 +2,7 @@ import { parseMarkdownImageLine } from "@/lib/editor-format"
 import { stripInlineMarkdown } from "@/lib/markdown-preview"
 import { stripMarkdownHardBreaks } from "@shard/markdown/core"
 import {
-  loadFragmentImageSrc,
+  loadReadableImageSrc,
   toDrawableImageSource,
 } from "@/lib/fragment-images"
 import {
@@ -139,7 +139,6 @@ export async function drawFragmentExportImage(
     templateId,
     showCreatedDate = true,
     showCreatedTime = false,
-    vaultPath,
   }: {
     fragment: Fragment
     pixelRatio?: number
@@ -154,7 +153,7 @@ export async function drawFragmentExportImage(
   const template = getExportTemplate(templateId)
   const textStyle = readMemoTextStyle(template)
   const blocks = fragmentToBlocks(fragment)
-  const images = await loadImages(blocks, vaultPath)
+  const images = await loadImages(blocks)
   const logicalHeight = measureImageHeight(blocks, images, template, textStyle)
 
   canvas.dataset.logicalWidth = String(template.width)
@@ -906,7 +905,7 @@ export function fragmentToBlocks(fragment: Fragment): ExportBlock[] {
   return blocks
 }
 
-async function loadImages(blocks: ExportBlock[], vaultPath?: string) {
+async function loadImages(blocks: ExportBlock[]) {
   const images: LoadedImages = new Map()
   const imageBlocks = blocks.filter(
     (block): block is Extract<ExportBlock, { kind: "image" }> =>
@@ -915,7 +914,7 @@ async function loadImages(blocks: ExportBlock[], vaultPath?: string) {
 
   await Promise.all(
     imageBlocks.map(async (block) => {
-      const source = await loadFragmentImageSrc(block.path, vaultPath)
+      const source = await loadReadableImageSrc(block.path)
       if (!source) return
 
       let drawable = ""

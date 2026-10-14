@@ -3,51 +3,46 @@ import { save } from "@tauri-apps/plugin-dialog"
 
 import { readFragmentImage, saveExportedImage } from "@/lib/api"
 
-const ABSOLUTE_WINDOWS_PATH_PATTERN = /^[a-z]:[\\/]/i
 const URL_LIKE_PATTERN = /^(?:[a-z][a-z\d+.-]*:|\/\/)/i
 export const ATTACHMENT_SCHEME = "shard-attachment:"
 const ATTACHMENT_HASH_PATTERN = /^[a-f\d]{64}$/i
-const imageSrcCache = new Map<string, string>()
+/** Rust 端 `vault_asset_protocol` 注册的协议名。 */
+export const VAULT_IMAGE_SCHEME = "shard-asset"
 
-// 正文里的引用 → webview 能直接取的地址。
-//
-// 内容寻址的附件走自定义协议由 webview 自己取，不再经 base64-over-IPC——
-// 那条路要为每张图付 33% 的编码膨胀，并把整张图常驻在 JS 堆里。
-export function resolveFragmentImageSrc(path: string, vaultPath?: string) {
-  const normalizedPath = path.trim()
-  if (!normalizedPath) return ""
+/**
+ * 正文、表格里的图片引用 → `<img>` 能直接用的地址。
+ *
+ * vault 内的图片（`assets/…`、`notes/证件/营业执照.jpg`、`shard-attachment:<hash>`）走
+ * `shard-asset` 协议由 webview 自己取，不经 base64 IPC、不在 JS 堆里常驻整张图；远程
+ * 与 data/blob 地址原样返回。`version` 用于同名替换后让 WebKit 丢掉旧的内存缓存。
+ */
+export function vaultImageUrl(reference: string, version?: string | number | null) {
+  const trimmed = reference.trim()
+  if (!trimmed) return ""
+  if (!attachmentHash(trimmed) && URL_LIKE_PATTERN.test(trimmed)) return trimmed
+  if (!isTauri()) return ""
 
-  const hash = attachmentHash(normalizedPath)
-  if (hash) {
-    return isTauri() ? convertFileSrc(hash, "shard-attachment") : ""
-  }
-
-  if (URL_LIKE_PATTERN.test(normalizedPath)) return normalizedPath
-
-  return resolveFragmentImagePath(normalizedPath, vaultPath)
+  const url = convertFileSrc(trimmed, VAULT_IMAGE_SCHEME)
+  return version === undefined || version === null || version === ""
+    ? url
+    : `${url}?v=${encodeURIComponent(String(version))}`
 }
 
-// Vault 中跟踪的 assets/... 引用不能直接作为 WKWebView 的 img src 使用。
-// 这类本地路径通过异步 Tauri command 读取；旧的内容寻址引用仍走自定义协议。
-export async function loadFragmentImageSrc(path: string, vaultPath?: string) {
-  const normalizedPath = path.trim()
-  if (!normalizedPath) return ""
+/** 兼容旧调用：显示用地址现在可以同步算出。 */
+export async function loadFragmentImageSrc(path: string, _vaultPath?: string) {
+  return vaultImageUrl(path)
+}
 
-  const hash = attachmentHash(normalizedPath)
-  if (!hash && URL_LIKE_PATTERN.test(normalizedPath)) {
-    return resolveFragmentImageSrc(normalizedPath, vaultPath)
-  }
-
-  if (!isTauri()) {
-    return resolveFragmentImageSrc(normalizedPath, vaultPath)
-  }
-
-  const cachedSrc = imageSrcCache.get(normalizedPath)
-  if (cachedSrc) return cachedSrc
-
-  const loadedSrc = await readFragmentImage(normalizedPath)
-  imageSrcCache.set(normalizedPath, loadedSrc)
-  return loadedSrc
+/**
+ * 要读像素的场景（导出分享图、下载）用 data URL：不依赖跨 scheme 的 CORS 协商，
+ * 画布不会被污染。
+ */
+export async function loadReadableImageSrc(path: string) {
+  const trimmed = path.trim()
+  if (!trimmed) return ""
+  if (!attachmentHash(trimmed) && URL_LIKE_PATTERN.test(trimmed)) return trimmed
+  if (!isTauri()) return ""
+  return readFragmentImage(trimmed)
 }
 
 // 引用指向的附件 hash；不是附件引用时返回 null。
@@ -73,9 +68,9 @@ export async function toDrawableImageSource(source: string) {
 export async function downloadFragmentImageAttachment(
   path: string,
   alt: string,
-  vaultPath?: string
+  _vaultPath?: string
 ) {
-  const source = await loadFragmentImageSrc(path, vaultPath)
+  const source = await loadReadableImageSrc(path)
   if (!source) {
     throw new Error("图片附件无法载入。")
   }
@@ -89,7 +84,7 @@ export async function downloadFragmentImageAttachment(
       defaultPath: fileName,
       filters: extension
         ? [{ name: extension.toUpperCase(), extensions: [extension] }]
-        : [{ name: "Image", extensions: ["png", "jpg", "jpeg", "gif", "webp", "svg"] }],
+        : [{ name: "Image", extensions: ["png", "jpg", "jpeg", "gif", "webp", "svg", "heic", "avif"] }],
       title: "下载图片附件",
     })
 
@@ -101,20 +96,6 @@ export async function downloadFragmentImageAttachment(
 
   downloadBlob(blob, fileName)
   return true
-}
-
-function resolveFragmentImagePath(path: string, vaultPath?: string) {
-  if (isAbsolutePath(path) || !vaultPath) {
-    return path
-  }
-
-  const base = vaultPath.replace(/[\\/]+$/u, "")
-  const relative = path.replace(/^\.?[\\/]+/u, "")
-  return `${base}/${relative}`
-}
-
-function isAbsolutePath(path: string) {
-  return path.startsWith("/") || ABSOLUTE_WINDOWS_PATH_PATTERN.test(path)
 }
 
 async function imageSourceToBlob(source: string) {
@@ -171,8 +152,14 @@ function sanitizeDownloadFileName(fileName: string) {
 
 function imageExtensionForMimeType(mimeType: string) {
   switch (mimeType.toLowerCase()) {
+    case "image/avif":
+      return "avif"
     case "image/gif":
       return "gif"
+    case "image/heic":
+      return "heic"
+    case "image/heif":
+      return "heif"
     case "image/jpeg":
       return "jpg"
     case "image/png":
@@ -203,5 +190,5 @@ function hasImageExtension(fileName: string) {
 }
 
 function hasSupportedImageExtension(extension: string) {
-  return ["gif", "jpg", "jpeg", "png", "svg", "webp"].includes(extension)
+  return ["avif", "gif", "heic", "heif", "jpg", "jpeg", "png", "svg", "webp"].includes(extension)
 }

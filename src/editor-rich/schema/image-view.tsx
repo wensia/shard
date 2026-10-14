@@ -59,6 +59,7 @@ export function ImageNodeView({ deleteNode, editor, node, selected }: ReactNodeV
       {state === "ready" ? (
         <FragmentImageAttachment
           alt={alt}
+          onLoadError={() => setState("failed")}
           path={path}
           previewable
           src={src}

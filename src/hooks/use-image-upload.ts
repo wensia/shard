@@ -53,7 +53,7 @@ export function useImageUpload({
 
     const previewUrl = URL.createObjectURL(file)
     try {
-      const bytes = Array.from(new Uint8Array(await file.arrayBuffer()))
+      const bytes = new Uint8Array(await file.arrayBuffer())
       const path = await saveFragmentImage(file.name, bytes)
       onUploadedRef.current({
         alt: getMarkdownImageAlt(file.name),

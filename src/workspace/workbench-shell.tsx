@@ -224,6 +224,19 @@ function readSidebarCollapsed(): boolean {
   }
 }
 
+const warnedLargeFiles = new Set<string>()
+
+// 大文件留在工作区不提交；同一个文件只提醒一次，免得每轮自动检查点都弹。
+function warnSkippedLargeFiles(paths: string[] | undefined) {
+  const fresh = (paths ?? []).filter((path) => !warnedLargeFiles.has(path))
+  if (fresh.length === 0) return
+  fresh.forEach((path) => warnedLargeFiles.add(path))
+  notify.warning("有文件太大，没有同步", {
+    description: "单个文件超过 95 MiB 会让 GitHub 拒收推送，已留在本机未提交。",
+    detail: fresh.join("\n"),
+  })
+}
+
 export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
   const {
     acceptsVaultStateResponse,
@@ -1097,6 +1110,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     try {
       const result = await checkpointVault("手动")
       setGit(result.git)
+      warnSkippedLargeFiles(result.skippedLarge)
       switch (result.status) {
         case "committed":
           notify.success(`${result.changes} 项变更已提交`)
@@ -2822,6 +2836,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
       try {
         const result = await checkpointVault(trigger)
         setGit(result.git)
+        warnSkippedLargeFiles(result.skippedLarge)
         if (result.status === "committed") {
           // 逐文件 gitStatus 来自读取时的脏检测，必须整体刷新才会退回 clean
           void refreshFragments()

@@ -9,6 +9,7 @@ import {
   typeEditor,
 } from "./editor-helpers"
 import { installSearchIpcMock } from "./search-ipc-mock"
+import { routeShardAssets } from "./shard-asset-mock"
 
 interface TestCall {
   command: string
@@ -35,6 +36,7 @@ const IMAGE_DATA_URL =
  * 这条命令取地址）。
  */
 async function installRichInlineMock(page: Page) {
+  await routeShardAssets(page)
   await installSearchIpcMock(page)
   await page.addInitScript((imageDataUrl: string) => {
     const now = "2026-09-10T08:00:00.000Z"
@@ -71,6 +73,8 @@ async function installRichInlineMock(page: Page) {
       __SHARD_RICH_CALLS__: calls,
       __TAURI_EVENT_PLUGIN_INTERNALS__: { unregisterListener() {} },
       __TAURI_INTERNALS__: {
+        convertFileSrc: (path: string, scheme?: string) =>
+          `/__${scheme ?? "asset"}/${encodeURIComponent(path)}`,
         metadata: { currentWindow: { label: "main" }, currentWebview: { label: "main" } },
         transformCallback: () => ++callbackId,
         invoke: async (command: string, args: Record<string, unknown> = {}) => {

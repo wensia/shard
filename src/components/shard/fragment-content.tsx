@@ -148,6 +148,8 @@ function renderRegisteredFence({
 interface FragmentImageAttachmentProps {
   alt: string
   downloadable?: boolean
+  /** 图片取不到（文件不存在、格式 webview 不支持）时通知宿主。 */
+  onLoadError?: () => void
   onRemove?: () => void
   path: string
   previewable?: boolean
@@ -159,6 +161,7 @@ interface FragmentImageAttachmentProps {
 export function FragmentImageAttachment({
   alt,
   downloadable = false,
+  onLoadError,
   onRemove,
   path,
   previewable = true,
@@ -208,6 +211,11 @@ export function FragmentImageAttachment({
   useEffect(() => {
     if (!imageSrc) setIsPreviewOpen(false)
   }, [imageSrc])
+
+  const handleImageError = () => {
+    setImageSrc("")
+    onLoadError?.()
+  }
 
   useEffect(() => {
     if (!canUseFileActions) setContextMenuPosition(null)
@@ -341,6 +349,7 @@ export function FragmentImageAttachment({
             alt={label}
             data-source-path={path}
             loading="lazy"
+            onError={handleImageError}
             src={imageSrc}
           />
         </button>
@@ -350,6 +359,7 @@ export function FragmentImageAttachment({
             alt={label}
             data-source-path={path}
             loading="lazy"
+            onError={handleImageError}
             src={imageSrc}
           />
         </span>

@@ -87,6 +87,8 @@ export interface CheckpointResult {
   status: "not_git" | "blocked" | "no_changes" | "committed"
   changes: number
   reason: string | null
+  /** 超过 95 MiB、没有进提交的文件（GitHub 拒收超过 100 MB 的单个文件）。 */
+  skippedLarge?: string[]
   git: GitInfo
 }
 

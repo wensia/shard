@@ -7,6 +7,7 @@ import {
   typeEditor,
 } from "./editor-helpers"
 import { installSearchIpcMock } from "./search-ipc-mock"
+import { routeShardAssets } from "./shard-asset-mock"
 
 /**
  * 阶段 D2a：资料库编辑器切富文本（技术方案 §5、§6 阶段 3）。
@@ -33,6 +34,7 @@ interface TestCall {
  */
 async function installRichLibraryMock(page: Page, noteBody = NOTE_BODY) {
   await installSearchIpcMock(page)
+  await routeShardAssets(page)
   await page.addInitScript((noteBody: string) => {
     const now = "2026-09-10T08:00:00.000Z"
     const fragments = [
@@ -82,8 +84,19 @@ async function installRichLibraryMock(page: Page, noteBody = NOTE_BODY) {
       __TAURI_EVENT_PLUGIN_INTERNALS__: { unregisterListener() {} },
       __TAURI_INTERNALS__: {
         metadata: { currentWindow: { label: "main" }, currentWebview: { label: "main" } },
+        convertFileSrc: (path: string, scheme?: string) =>
+          `/__${scheme ?? "asset"}/${encodeURIComponent(path)}`,
         transformCallback: () => ++callbackId,
-        invoke: async (command: string, args: Record<string, unknown> = {}) => {
+        invoke: async (command: string, rawArgs: unknown = {}, options?: { headers?: unknown }) => {
+          // 原始字节 IPC（如 save_fragment_image）：把字节与 header 摊平成可断言的参数。
+          if (rawArgs instanceof Uint8Array) {
+            const headers = (options?.headers ?? {}) as Record<string, string>
+            rawArgs = {
+              bytes: Array.from(rawArgs),
+              fileName: decodeURIComponent(headers["x-shard-file-name"] ?? ""),
+            }
+          }
+          const args = rawArgs as Record<string, unknown>
           calls.push({ command, args: clone(args) })
           switch (command) {
             case "plugin:event|listen": return ++callbackId

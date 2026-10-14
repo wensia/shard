@@ -10,6 +10,7 @@ import {
   typeEditor,
 } from "./editor-helpers"
 import { installSearchIpcMock } from "./search-ipc-mock"
+import { routeShardAssets } from "./shard-asset-mock"
 
 async function installTauriMock(
   page: Page,
@@ -175,6 +176,8 @@ async function installTauriMock(
       __SHARD_TEST_COMMANDS__: commands,
       __SHARD_TEST_CALLS__: calls,
       __TAURI_INTERNALS__: {
+        convertFileSrc: (path: string, scheme?: string) =>
+          `/__${scheme ?? "asset"}/${encodeURIComponent(path)}`,
         invoke: async (command: string, args: Record<string, unknown> = {}) => {
           commands.push(command)
           calls.push({ command, args: clone(args) })
@@ -531,10 +534,8 @@ test("分割线在编辑区渲染为分隔线，编辑区看不到源码", async
   await expect.poll(() => readEditor(page, "composer")).toBe("---\n\n后文")
 })
 
-test("图片附件使用 read_fragment_image 结果渲染", async ({ page }) => {
-  const imageSrc =
-    "data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs="
-  await installTauriMock(page, { imageSrc })
+test("图片附件直接走 shard-asset 协议地址渲染", async ({ page }) => {
+  const requested = await routeShardAssets(page)
   await page.reload()
   await expect(page.locator("[data-shard-fragment-id]")).toHaveCount(24)
 
@@ -544,12 +545,28 @@ test("图片附件使用 read_fragment_image 结果渲染", async ({ page }) => 
   const image = editor.locator(
     '[data-shard-rich-inline="image"] img[data-source-path="assets/test.png"]'
   )
+  const imageSrc = `/__shard-asset/${encodeURIComponent("assets/test.png")}`
   await expect(image).toHaveAttribute("src", imageSrc)
+  await expect.poll(() => image.evaluate((node: HTMLImageElement) => node.naturalWidth)).toBe(1)
+  expect(requested).toContain("assets/test.png")
+  // 显示不再经 base64 IPC。
+  expect(await page.evaluate(() => (window as unknown as { __SHARD_TEST_COMMANDS__: string[] }).__SHARD_TEST_COMMANDS__)).not.toContain("read_fragment_image")
   await expect(editor.locator(".ProseMirror")).not.toContainText("![测试图]")
 
   // 光标进入同一段不再揭示源码：附件节点一直在
   await selectEditorText(page, "composer", "正文", { collapse: "end" })
   await expect(image).toHaveAttribute("src", imageSrc)
+})
+
+test("取不到的图片显示载入失败与原路径", async ({ page }) => {
+  await routeShardAssets(page, { missing: ["assets/missing.png"] })
+  await page.reload()
+  await expect(page.locator("[data-shard-fragment-id]")).toHaveCount(24)
+
+  await fillEditor(page, "composer", "![丢失](assets/missing.png)")
+  const node = page.locator('[data-shard-editor="composer"] [data-shard-rich-inline="image"]')
+  await expect(node).toContainText("图片载入失败：assets/missing.png")
+  await expect.poll(() => readEditor(page, "composer")).toBe("![丢失](assets/missing.png)")
 })
 
 test("code span 内的 == 不高亮", async ({ page }) => {

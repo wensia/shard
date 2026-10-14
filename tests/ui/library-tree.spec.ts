@@ -7,6 +7,7 @@ import { selectOption } from "./select-helpers"
 import { mkdirSync, writeFileSync } from "node:fs"
 import type { MindMapReadResult, ShardMapFile } from "../../src/types"
 import { installSearchIpcMock } from "./search-ipc-mock"
+import { routeShardAssets } from "./shard-asset-mock"
 
 async function createLibraryEntry(page: Page, name: "新建文档" | "新建目录" | "新建数据集") {
   const directory = page.getByRole("complementary", { name: "资料库目录" })
@@ -66,6 +67,7 @@ async function installLibraryTreeMock(
   includeAssets = true
 ) {
   await installSearchIpcMock(page)
+  await routeShardAssets(page)
   await page.addInitScript(({ includeAssets, lockbox }: {
     includeAssets: boolean
     lockbox: LockboxMockState
@@ -346,10 +348,19 @@ async function installLibraryTreeMock(
       isTauri: true,
       __SHARD_LIBRARY_TREE_CALLS__: calls,
       __TAURI_INTERNALS__: {
-        // 自定义协议：真实环境由 Tauri 注入，测试里回一个可辨识的占位地址。
+        // 自定义协议：真实环境由 Tauri 注入，测试里指向同源地址，由 routeShardAssets 接住。
         convertFileSrc: (path: string, scheme?: string) =>
-          `${scheme ?? "asset"}://localhost/${path}`,
-        invoke: async (command: string, args: Record<string, unknown> = {}) => {
+          `/__${scheme ?? "asset"}/${encodeURIComponent(path)}`,
+        invoke: async (command: string, rawArgs: unknown = {}, options?: { headers?: unknown }) => {
+          // 原始字节 IPC（如 save_fragment_image）：把字节与 header 摊平成可断言的参数。
+          if (rawArgs instanceof Uint8Array) {
+            const headers = (options?.headers ?? {}) as Record<string, string>
+            rawArgs = {
+              bytes: Array.from(rawArgs),
+              fileName: decodeURIComponent(headers["x-shard-file-name"] ?? ""),
+            }
+          }
+          const args = rawArgs as Record<string, unknown>
           calls.push({ command, args: clone(args) })
           if (command === "list_fragments") {
             return clone({
@@ -2514,12 +2525,13 @@ test("资料库图片分组在第三栏打开网格并保留侧栏与目录树",
 
   // 网格就地展示，不接管窗口——侧栏与目录树都还在。
   await expect(page.getByRole("list", { name: "图片列表" })).toBeVisible()
-  await expect(
-    page.getByRole("list", { name: "图片列表" }).locator("img")
-  ).toHaveAttribute(
+  // 缩略图直接走 shard-asset 协议，地址带修改时间作缓存版本。
+  const thumbnail = page.getByRole("list", { name: "图片列表" }).locator("img")
+  await expect(thumbnail).toHaveAttribute(
     "src",
-    "data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs="
+    /^\/__shard-asset\/assets%2F.+\?v=/u
   )
+  await expect.poll(() => thumbnail.evaluate((node: HTMLImageElement) => node.naturalWidth)).toBe(1)
   await expect(sidebar).toBeVisible()
   await expect(treePane).toBeVisible()
 

@@ -428,8 +428,17 @@ export function convertTableDocumentToMarkdown(path: string) {
 }
 
 // 返回 assets 目录下的相对路径，可直接写入 Markdown 正文。
-export function saveFragmentImage(fileName: string, bytes: number[]) {
-  return desktopInvoke<string>("save_fragment_image", { fileName, bytes })
+// 原始字节 IPC：大图不在 UI 线程序列化成 number[]；文件名只作日志与将来的命名参考。
+export function saveFragmentImage(fileName: string, bytes: Uint8Array) {
+  if (!isTauri()) return Promise.reject(DESKTOP_RUNTIME_MESSAGE)
+  return invoke<string>("save_fragment_image", bytes, {
+    headers: { "x-shard-file-name": encodeURIComponent(fileName) },
+  }).catch((error) => Promise.reject(getApiErrorMessage(error)))
+}
+
+// 从访达拖进来的图片：Rust 直接按路径读，字节不经过前端。
+export function saveImageAttachmentFromPath(path: string) {
+  return desktopInvoke<string>("save_image_attachment_from_path", { path })
 }
 
 export function readFragmentImage(path: string) {

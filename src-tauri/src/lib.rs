@@ -78,6 +78,7 @@ mod search_reconcile;
 mod search_runtime;
 mod search_lockbox;
 mod search_sources;
+mod vault_asset_protocol;
 mod vault_watch;
 mod xlsx;
 
@@ -2984,34 +2985,91 @@ fn measure_markdown_tables(markdown: &str) -> (usize, usize) {
     (rows, cells)
 }
 
+/// 单张图片上限：GitHub 单文件 100 MB 硬上限之下留足余量，超限的图会让同步永久失败。
+const MAX_IMAGE_BYTES: u64 = 50 * 1024 * 1024;
+
+fn image_too_large_message() -> String {
+    format!("图片超过 {} MiB，无法保存", MAX_IMAGE_BYTES / 1024 / 1024)
+}
+
+/// 笔记配图按内容寻址存进 `assets/<hh>/<sha256>.<ext>`：同一张图只存一份，名字与内容绑定。
+fn store_image_attachment(vault: &Path, bytes: &[u8]) -> Result<String, String> {
+    if bytes.is_empty() {
+        return Err("图片内容为空".to_string());
+    }
+    if bytes.len() as u64 > MAX_IMAGE_BYTES {
+        return Err(image_too_large_message());
+    }
+    let _gate = lock_vault_gate(vault);
+    let mime_type = sniff_image_mime_type(bytes)?;
+    let extension = shard_core::image::image_extension_for_mime_type(mime_type)
+        .ok_or_else(|| "不支持的图片格式".to_string())?;
+    let hash = hash_bytes(bytes);
+    let dir = vault.join("assets").join(&hash[..2]);
+    fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+    let path = dir.join(format!("{hash}.{extension}"));
+
+    if !path.exists() {
+        write_bytes_atomically(&path, bytes)?;
+    }
+    relative_path(vault, &path)
+}
+
+/// 粘贴、选取的图片：原始字节 IPC，不再在 UI 线程把整张图序列化成 number[]。
 #[tauri::command]
 async fn save_fragment_image(
     app: tauri::AppHandle,
-    _file_name: String,
-    bytes: Vec<u8>,
+    request: tauri::ipc::Request<'_>,
 ) -> Result<String, String> {
+    let bytes = match request.body() {
+        tauri::ipc::InvokeBody::Raw(bytes) => bytes.clone(),
+        _ => return Err("图片需要二进制内容".to_string()),
+    };
     run_blocking(move || {
-        if bytes.is_empty() {
-            return Err("图片内容为空".to_string());
-        }
-
         let vault = ensure_vault_dirs(&app)?;
-        let _gate = lock_vault_gate(&vault);
-        let mime_type = sniff_image_mime_type(&bytes)?;
-        let extension = image_extension_for_mime_type(mime_type)
-            .ok_or_else(|| "不支持的图片格式".to_string())?;
-        let hash = hash_bytes(&bytes);
-        let dir = vault.join("assets").join(&hash[..2]);
-        fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
-        let path = dir.join(format!("{hash}.{extension}"));
-
-        if !path.exists() {
-            write_bytes_atomically(&path, &bytes)?;
-        }
-        let rel_path = relative_path(&vault, &path)?;
-        Ok(rel_path)
+        store_image_attachment(&vault, &bytes)
     })
     .await
+}
+
+/// 从访达拖进来的图片：直接按磁盘路径读，字节不经过前端。
+#[tauri::command]
+async fn save_image_attachment_from_path(
+    app: tauri::AppHandle,
+    path: String,
+) -> Result<String, String> {
+    run_blocking(move || {
+        let vault = ensure_vault_dirs(&app)?;
+        let bytes = read_external_image(&vault, Path::new(&path))?;
+        store_image_attachment(&vault, &bytes)
+    })
+    .await
+}
+
+/// 读 vault 外（或 vault 内公开位置）的一张图片；密匣里的文件与超限文件一律拒绝。
+fn read_external_image(vault: &Path, source: &Path) -> Result<Vec<u8>, String> {
+    if !source.is_absolute() {
+        return Err("图片路径无效".to_string());
+    }
+    let canonical = source
+        .canonicalize()
+        .map_err(|_| "找不到图片文件".to_string())?;
+    if let Ok(canonical_vault) = vault.canonicalize() {
+        if let Ok(relative) = canonical.strip_prefix(&canonical_vault) {
+            let relative = relative.to_string_lossy().replace('\\', "/");
+            shard_core::ensure_public_vault_file_path(vault, &relative)?;
+        }
+    }
+    let metadata = fs::metadata(&canonical).map_err(|error| error.to_string())?;
+    if !metadata.is_file() {
+        return Err("只能导入文件".to_string());
+    }
+    if metadata.len() > MAX_IMAGE_BYTES {
+        return Err(image_too_large_message());
+    }
+    let bytes = fs::read(&canonical).map_err(|error| error.to_string())?;
+    sniff_image_mime_type(&bytes)?;
+    Ok(bytes)
 }
 
 #[tauri::command]
@@ -7082,6 +7140,11 @@ fn commit_override_status(
     }
 }
 
+/// 正文/表格里的图片引用 → vault 内的规范路径。
+///
+/// 引用是 vault 相对路径（`assets/…`、`notes/证件/营业执照.jpg`）或旧格式
+/// `shard-attachment:<sha256>`；旧调用方传的绝对路径只要落在 vault 内也折算回来。
+/// 能读到哪里由 `ensure_public_vault_file_path` 一处决定：密匣与内部目录一律拒绝。
 fn resolve_vault_asset_path(vault: &Path, raw_path: &str) -> Result<PathBuf, String> {
     let trimmed = raw_path.trim();
     if trimmed.is_empty() {
@@ -7091,115 +7154,38 @@ fn resolve_vault_asset_path(vault: &Path, raw_path: &str) -> Result<PathBuf, Str
         return Err("不支持读取外部图片地址".to_string());
     }
 
-    let attachment_hash = trimmed.strip_prefix("shard-attachment:");
-    let candidate = if let Some(hash) = attachment_hash {
+    let relative = if let Some(hash) = trimmed.strip_prefix("shard-attachment:") {
         if hash.len() != 64 || !hash.bytes().all(|byte| byte.is_ascii_hexdigit()) {
             return Err("附件引用无效".to_string());
         }
-
-        ["gif", "jpg", "png", "svg", "webp"]
-            .into_iter()
-            .map(|extension| {
-                vault
-                    .join("assets")
-                    .join(&hash[..2])
-                    .join(format!("{hash}.{extension}"))
-            })
-            .find(|path| path.is_file())
+        shard_core::image::IMAGE_EXTENSIONS
+            .iter()
+            .map(|extension| format!("assets/{}/{hash}.{extension}", &hash[..2]))
+            .find(|candidate| vault.join(candidate).is_file())
             .ok_or_else(|| "图片文件不存在".to_string())?
+    } else if Path::new(trimmed).is_absolute() {
+        let canonical_vault = vault.canonicalize().map_err(|error| error.to_string())?;
+        let canonical = Path::new(trimmed)
+            .canonicalize()
+            .map_err(|_| "图片文件不存在".to_string())?;
+        canonical
+            .strip_prefix(&canonical_vault)
+            .map_err(|_| "只能读取 vault 内的图片".to_string())?
+            .to_string_lossy()
+            .replace('\\', "/")
     } else {
-        let requested_path = PathBuf::from(trimmed);
-        if requested_path.is_absolute() {
-            requested_path
-        } else {
-            vault.join(requested_path)
-        }
+        trimmed.to_string()
     };
 
-    let asset_root = vault
-        .join("assets")
-        .canonicalize()
-        .map_err(|error| error.to_string())?;
-    let image_path = candidate
-        .canonicalize()
-        .map_err(|error| error.to_string())?;
-
-    let in_trash = (|| {
-        let trash = vault.join(".trash");
-        if !trash.is_dir()
-            || fs::symlink_metadata(&trash).ok()?.file_type().is_symlink()
-        {
-            return None;
-        }
-        let canonical_vault = vault.canonicalize().ok()?;
-        let trash_root = trash.canonicalize().ok()?;
-        (trash_root.parent() == Some(canonical_vault.as_path())
-            && image_path.starts_with(&trash_root))
-        .then_some(())
-    })()
-    .is_some();
-    if !image_path.starts_with(&asset_root) && !in_trash {
-        return Err("只能读取 vault assets 或回收站中的图片".to_string());
-    }
-    if !image_path.is_file() {
-        return Err("图片文件不存在".to_string());
-    }
-
-    Ok(image_path)
+    shard_core::ensure_public_vault_file_path(vault, &relative)
 }
 
 fn image_mime_type(path: &Path, bytes: &[u8]) -> Result<&'static str, String> {
-    let extension = path
-        .extension()
-        .and_then(|extension| extension.to_str())
-        .unwrap_or_default();
-
-    image_mime_type_from_extension(extension).or_else(|_| sniff_image_mime_type(bytes))
-}
-
-fn image_mime_type_from_extension(extension: &str) -> Result<&'static str, String> {
-    match extension.to_ascii_lowercase().as_str() {
-        "gif" => Ok("image/gif"),
-        "jpg" | "jpeg" => Ok("image/jpeg"),
-        "png" => Ok("image/png"),
-        "svg" => Ok("image/svg+xml"),
-        "webp" => Ok("image/webp"),
-        _ => Err("不支持的图片格式".to_string()),
-    }
+    shard_core::image::image_mime_type(path, bytes).ok_or_else(|| "不支持的图片格式".to_string())
 }
 
 fn sniff_image_mime_type(bytes: &[u8]) -> Result<&'static str, String> {
-    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
-        return Ok("image/png");
-    }
-    if bytes.starts_with(&[0xff, 0xd8, 0xff]) {
-        return Ok("image/jpeg");
-    }
-    if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
-        return Ok("image/gif");
-    }
-    if bytes.len() >= 12 && bytes.starts_with(b"RIFF") && &bytes[8..12] == b"WEBP" {
-        return Ok("image/webp");
-    }
-    if let Ok(text) = std::str::from_utf8(bytes) {
-        let trimmed = text.trim_start_matches('\u{feff}').trim_start();
-        if trimmed.starts_with("<svg") || trimmed.starts_with("<?xml") && trimmed.contains("<svg") {
-            return Ok("image/svg+xml");
-        }
-    }
-
-    Err("不支持的图片格式".to_string())
-}
-
-fn image_extension_for_mime_type(mime_type: &str) -> Option<&'static str> {
-    match mime_type {
-        "image/gif" => Some("gif"),
-        "image/jpeg" => Some("jpg"),
-        "image/png" => Some("png"),
-        "image/svg+xml" => Some("svg"),
-        "image/webp" => Some("webp"),
-        _ => None,
-    }
+    shard_core::image::sniff_image_mime_type(bytes).ok_or_else(|| "不支持的图片格式".to_string())
 }
 
 fn ensure_git_repo(vault: &Path) -> Result<(), String> {
@@ -7222,8 +7208,41 @@ fn commit_path_if_git(vault: &Path, rel_path: &str, message: &str) -> Result<Opt
     commit_path(vault, rel_path, message).map(Some)
 }
 
+/// GitHub 拒收超过 100 MB 的单个文件，一旦进了提交，推送就会永久失败。
+const MAX_COMMITTED_FILE_BYTES: u64 = 95 * 1024 * 1024;
+
+/// 待提交路径里超过上限的文件：不进暂存区，留在工作区由界面提示用户处理。
+fn oversized_paths(vault: &Path, rel_paths: impl IntoIterator<Item = impl AsRef<str>>) -> Vec<String> {
+    let mut oversized: Vec<String> = rel_paths
+        .into_iter()
+        .filter(|rel_path| {
+            fs::symlink_metadata(vault.join(rel_path.as_ref()))
+                .is_ok_and(|metadata| metadata.is_file() && metadata.len() > MAX_COMMITTED_FILE_BYTES)
+        })
+        .map(|rel_path| rel_path.as_ref().to_string())
+        .collect();
+    oversized.sort();
+    oversized
+}
+
+fn literal_exclusions(paths: &[String]) -> Vec<String> {
+    paths.iter().map(|path| format!(":(exclude,literal){path}")).collect()
+}
+
 fn commit_paths(vault: &Path, rel_paths: &[String], message: &str) -> Result<(), String> {
-    let exclusions = managed_exclusion_pathspecs();
+    let mut exclusions = managed_exclusion_pathspecs();
+    let requested: Vec<String> = rel_paths
+        .iter()
+        .filter(|pathspec| !is_exclusion_pathspec(pathspec))
+        .cloned()
+        .collect();
+    if !requested.is_empty() {
+        let oversized = oversized_paths(vault, dirty_paths_for(vault, &requested).unwrap_or_default());
+        for path in &oversized {
+            eprintln!("[shard] 跳过超过 95 MiB 的文件，不提交：{path}");
+        }
+        exclusions.extend(literal_exclusions(&oversized));
+    }
     let mut rel_paths = rel_paths
         .iter()
         .filter(|pathspec| !is_exclusion_pathspec(pathspec))
@@ -7308,6 +7327,8 @@ struct CheckpointResult {
     changes: usize,
     /// blocked 时的原因说明
     reason: Option<String>,
+    /// 超过单文件上限、没有提交的路径
+    skipped_large: Vec<String>,
     git: GitInfo,
 }
 
@@ -7365,27 +7386,33 @@ fn checkpoint_message(trigger: Option<&str>, entries: &[StagedChange]) -> (Strin
 
 /// 聚合检查点。必须在持 vault gate 的前提下调用（本函数不取门）。
 fn checkpoint_vault_locked(vault: &Path, trigger: Option<&str>) -> Result<CheckpointResult, String> {
-    let done = |status: &str, changes: usize, reason: Option<String>, vault: &Path| CheckpointResult {
+    let mut skipped_large = Vec::new();
+    let done = |status: &str, changes: usize, reason: Option<String>, skipped_large: Vec<String>, vault: &Path| CheckpointResult {
         status: status.to_string(),
         changes,
         reason,
+        skipped_large,
         git: git_info(vault),
     };
 
     if !vault.join(".git").exists() {
-        return Ok(done("not_git", 0, None, vault));
+        return Ok(done("not_git", 0, None, skipped_large, vault));
     }
     // 外部 Git 操作进行中：不 add、不 commit、更不 abort——静默让路，等下轮再试。
     if let Err(reason) = ensure_no_unfinished_git_operation(vault) {
-        return Ok(done("blocked", 0, Some(reason), vault));
+        return Ok(done("blocked", 0, Some(reason), skipped_large, vault));
     }
     ensure_git_identity(vault)?;
 
     // 先用 status 拿脏路径：pathspec 无匹配时 status 安全返回空，而 git add
     // 对无匹配 pathspec（如空的 lockbox/ 目录）会直接 fatal。
-    let dirty = managed_dirty_paths(vault)?;
+    let mut dirty = managed_dirty_paths(vault)?;
+    skipped_large = oversized_paths(vault, dirty.iter());
+    for path in &skipped_large {
+        dirty.remove(path);
+    }
     if dirty.is_empty() {
-        return Ok(done("no_changes", 0, None, vault));
+        return Ok(done("no_changes", 0, None, skipped_large, vault));
     }
     // :(literal) 防止路径里的 [ ] 等字符被当 glob（文件名校验并未禁掉方括号）；
     // 路径过多时回退到涉及的根目录，避免超出命令行长度（根目录必有匹配）。
@@ -7402,6 +7429,8 @@ fn checkpoint_vault_locked(vault: &Path, trigger: Option<&str>) -> Result<Checkp
     };
     specs.sort();
     specs.extend(managed_exclusion_pathspecs());
+    // 回退到根目录时大文件也会被根目录匹配上，必须显式排除。
+    specs.extend(literal_exclusions(&skipped_large));
 
     let mut add_args: Vec<String> = vec!["add".into(), "-A".into(), "--".into()];
     add_args.extend(specs.iter().cloned());
@@ -7420,7 +7449,7 @@ fn checkpoint_vault_locked(vault: &Path, trigger: Option<&str>) -> Result<Checkp
     let staged = run_git(vault, &diff_refs)?;
     let entries = parse_name_status_z(&staged);
     if entries.is_empty() {
-        return Ok(done("no_changes", 0, None, vault));
+        return Ok(done("no_changes", 0, None, skipped_large, vault));
     }
 
     let (subject, body) = checkpoint_message(trigger, &entries);
@@ -7436,7 +7465,7 @@ fn checkpoint_vault_locked(vault: &Path, trigger: Option<&str>) -> Result<Checkp
     let commit_refs: Vec<&str> = commit_args.iter().map(String::as_str).collect();
     run_git(vault, &commit_refs)?;
 
-    Ok(done("committed", entries.len(), None, vault))
+    Ok(done("committed", entries.len(), None, skipped_large, vault))
 }
 
 /// 结构操作（rename/move/delete/convert/移入密匣）前先把已有内容变更收进检查点，
@@ -7495,6 +7524,10 @@ fn dirty_paths(vault: &Path) -> HashSet<String> {
 /// NUL 分隔解析：普通 porcelain 会对中文/特殊字符路径做 C 风格转义、
 /// 折叠未跟踪目录，rename 还是 `old -> new` 双路径，行数解析全都会坑。
 fn managed_dirty_paths(vault: &Path) -> Result<HashSet<String>, String> {
+    dirty_paths_for(vault, &managed_pathspecs())
+}
+
+fn dirty_paths_for(vault: &Path, pathspecs: &[String]) -> Result<HashSet<String>, String> {
     let mut paths = HashSet::new();
     if !vault.join(".git").exists() {
         return Ok(paths);
@@ -7507,7 +7540,7 @@ fn managed_dirty_paths(vault: &Path) -> Result<HashSet<String>, String> {
         "--untracked-files=all".to_string(),
         "--".to_string(),
     ];
-    args.extend(managed_pathspecs());
+    args.extend(pathspecs.iter().cloned());
     let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
     let output = run_git(vault, &arg_refs)?;
 
@@ -7944,6 +7977,15 @@ pub fn run() {
         .manage(reminder_badge::ReminderSchedule::default())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .register_asynchronous_uri_scheme_protocol(
+            vault_asset_protocol::SCHEME,
+            |context, request, responder| {
+                let app = context.app_handle().clone();
+                tauri::async_runtime::spawn_blocking(move || {
+                    responder.respond(vault_asset_protocol::handle(&app, &request));
+                });
+            },
+        )
         .setup(|app| {
             let lock_dir = app.path().app_config_dir()?.join(LOCKS_DIR_NAME);
             VAULT_LOCK_DIR.set(lock_dir).expect("vault 锁目录只能初始化一次");
@@ -8034,6 +8076,7 @@ pub fn run() {
             move_fragment_to_lockbox,
             convert_table_document_to_markdown,
             save_fragment_image,
+            save_image_attachment_from_path,
             read_fragment_image,
             fragment_image_file_path,
             reveal_fragment_image_in_dir,
@@ -8796,6 +8839,39 @@ mod tests {
 
         let result = checkpoint_vault_locked(vault, None).unwrap();
         assert_eq!(result.status, "no_changes");
+    }
+
+    #[test]
+    fn oversized_files_never_enter_commits() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let vault = tempdir.path();
+        ensure_vault_layout(vault).unwrap();
+        ensure_git_repo(vault).unwrap();
+        fs::create_dir_all(vault.join("notes/相册")).unwrap();
+        // 稀疏文件：长度超限但不真占磁盘，git 也不会去读它。
+        let big = File::create(vault.join("notes/相册/[大] 视频.png")).unwrap();
+        big.set_len(MAX_COMMITTED_FILE_BYTES + 1).unwrap();
+        fs::write(vault.join("notes/相册/小.png"), b"\x89PNG\r\n\x1a\n").unwrap();
+
+        let result = checkpoint_vault_locked(vault, None).unwrap();
+        assert_eq!(result.status, "committed");
+        // 小图 + datasets/.gitattributes
+        assert_eq!(result.changes, 2);
+        assert_eq!(result.skipped_large, vec!["notes/相册/[大] 视频.png".to_string()]);
+        let tracked = run_git(vault, &["-c", "core.quotepath=false", "ls-files"]).unwrap();
+        assert!(tracked.lines().any(|path| path == "notes/相册/小.png"));
+        assert!(!tracked.contains("视频"));
+
+        let result = checkpoint_vault_locked(vault, None).unwrap();
+        assert_eq!(result.status, "no_changes");
+        assert_eq!(result.skipped_large.len(), 1);
+
+        // 语义提交按目录提交时同样排除。
+        fs::write(vault.join("notes/相册/另一张.png"), b"\x89PNG\r\n\x1a\n").unwrap();
+        commit_paths(vault, &["notes/相册".to_string()], "导入图片").unwrap();
+        let tracked = run_git(vault, &["-c", "core.quotepath=false", "ls-files"]).unwrap();
+        assert!(tracked.lines().any(|path| path == "notes/相册/另一张.png"));
+        assert!(!tracked.contains("视频"));
     }
 
     #[test]

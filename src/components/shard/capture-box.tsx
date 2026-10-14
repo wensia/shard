@@ -92,7 +92,7 @@ interface CaptureBoxProps {
 
 interface PendingImage {
   alt: string
-  bytes: number[]
+  bytes: Uint8Array
   fileName: string
   id: string
   previewUrl: string
@@ -475,7 +475,7 @@ export const CaptureBox = forwardRef<CaptureBoxHandle, CaptureBoxProps>(function
     const previewUrl = URL.createObjectURL(file)
 
     try {
-      const bytes = Array.from(new Uint8Array(await file.arrayBuffer()))
+      const bytes = new Uint8Array(await file.arrayBuffer())
       setIsEditorExpanded(true)
       setPendingImages((current) => [
         ...current,

@@ -8,6 +8,7 @@ pub mod dataset;
 pub mod frontmatter;
 pub mod graph_model;
 pub mod graph_region;
+pub mod image;
 pub mod library;
 pub mod outline_import;
 pub mod search;
@@ -177,6 +178,55 @@ pub fn ensure_public_csv_path(vault: &Path, rel_path: &str) -> Result<PathBuf, S
         return Err("当前版本不允许读取密匣路径。".to_string());
     }
     Ok(canonical_path)
+}
+
+/// vault 内任意公开文件的规范路径：资料库图片可以放在任何目录，读取口只拦内部与私密区域。
+///
+/// 只收 `/` 分隔的相对路径；拒绝 `.`/`..`、密匣（大小写不敏感）与隐藏组件（`.git`、
+/// `.shard`……），只有开头的 `.trash` 例外——回收站里的图片仍要能预览。符号链接按
+/// canonicalize 后的落点再查一遍，越出 vault 或绕进密匣都算违规。
+pub fn ensure_public_vault_file_path(vault: &Path, rel_path: &str) -> Result<PathBuf, String> {
+    let trimmed = rel_path.trim();
+    if trimmed.is_empty() {
+        return Err("路径不能为空。".to_string());
+    }
+    if trimmed.contains('\\') {
+        return Err("路径必须使用 / 分隔。".to_string());
+    }
+    let path = Path::new(trimmed);
+    if path.is_absolute() {
+        return Err("路径必须是 vault 内相对路径。".to_string());
+    }
+    check_public_components(path)?;
+    let full_path = vault.join(path);
+    if !full_path.is_file() {
+        return Err(format!("找不到文件 {trimmed}"));
+    }
+    let canonical_vault = vault.canonicalize().map_err(|error| error.to_string())?;
+    let canonical_path = full_path
+        .canonicalize()
+        .map_err(|error| error.to_string())?;
+    let relative = canonical_path
+        .strip_prefix(&canonical_vault)
+        .map_err(|_| "路径不能越出 vault。".to_string())?;
+    check_public_components(relative)?;
+    Ok(canonical_path)
+}
+
+fn check_public_components(path: &Path) -> Result<(), String> {
+    for (index, component) in path.components().enumerate() {
+        let Component::Normal(value) = component else {
+            return Err("路径不能包含 . 或 ..。".to_string());
+        };
+        let value = value.to_string_lossy();
+        if value.eq_ignore_ascii_case("lockbox") {
+            return Err("不允许读取密匣路径。".to_string());
+        }
+        if value.starts_with('.') && !(index == 0 && value == ".trash") {
+            return Err("不允许读取 Shard 内部路径。".to_string());
+        }
+    }
+    Ok(())
 }
 
 pub fn ensure_vault_layout(vault: &Path) -> Result<(), String> {
@@ -520,6 +570,67 @@ mod tests {
         fs::write(&attributes, "*.csv merge=ours\n").unwrap();
         ensure_vault_layout(vault.path()).unwrap();
         assert_eq!(fs::read_to_string(attributes).unwrap(), "*.csv merge=ours\n");
+    }
+
+    #[test]
+    fn public_vault_file_paths_reject_internal_and_private_areas() {
+        let vault = tempfile::tempdir().unwrap();
+        let vault = vault.path();
+        ensure_vault_layout(vault).unwrap();
+        for (path, bytes) in [
+            ("notes/证件/营业执照 1.png", "x"),
+            ("assets/ab/abc.png", "x"),
+            (".trash/notes/old.png", "x"),
+            ("lockbox/a.png", "x"),
+            ("LockBox/b.png", "x"),
+            (".shard/c.png", "x"),
+            ("notes/.hidden/d.png", "x"),
+            (".trash/.git/e.png", "x"),
+        ] {
+            let full = vault.join(path);
+            fs::create_dir_all(full.parent().unwrap()).unwrap();
+            fs::write(full, bytes).unwrap();
+        }
+        for ok in ["notes/证件/营业执照 1.png", "assets/ab/abc.png", ".trash/notes/old.png"] {
+            assert!(ensure_public_vault_file_path(vault, ok).is_ok(), "{ok}");
+        }
+        for bad in [
+            "",
+            "lockbox/a.png",
+            "LockBox/b.png",
+            ".shard/c.png",
+            "notes/.hidden/d.png",
+            ".trash/.git/e.png",
+            "notes/../lockbox/a.png",
+            "./notes/证件/营业执照 1.png",
+            "notes\\证件\\营业执照 1.png",
+            "/etc/hosts",
+            "notes/missing.png",
+            "notes",
+        ] {
+            assert!(ensure_public_vault_file_path(vault, bad).is_err(), "{bad}");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn public_vault_file_paths_follow_symlinks_to_their_target() {
+        use std::os::unix::fs::symlink;
+
+        let root = tempfile::tempdir().unwrap();
+        let vault = root.path().join("vault");
+        ensure_vault_layout(&vault).unwrap();
+        fs::write(root.path().join("outside.png"), "x").unwrap();
+        fs::create_dir_all(vault.join("lockbox")).unwrap();
+        fs::write(vault.join("lockbox/secret.png"), "x").unwrap();
+        symlink(root.path().join("outside.png"), vault.join("notes/out.png")).unwrap();
+        symlink(vault.join("lockbox/secret.png"), vault.join("notes/secret.png")).unwrap();
+        fs::write(vault.join("notes/real.png"), "x").unwrap();
+        symlink(vault.join("notes/real.png"), vault.join("notes/alias.png")).unwrap();
+
+        assert!(ensure_public_vault_file_path(&vault, "notes/out.png").is_err());
+        assert!(ensure_public_vault_file_path(&vault, "notes/secret.png").is_err());
+        assert!(ensure_public_vault_file_path(&vault, "notes/alias.png").is_ok());
     }
 
     #[test]

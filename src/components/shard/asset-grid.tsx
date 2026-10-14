@@ -11,7 +11,7 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { revealFragmentImageInDir } from "@/lib/api"
 import { formatBytes, formatModifiedAt } from "@/lib/file-metadata"
 import { libraryEntryName, libraryEntryTypeLabel } from "@/lib/library-entry"
-import { loadFragmentImageSrc } from "@/lib/fragment-images"
+import { vaultImageUrl } from "@/lib/fragment-images"
 import { notify } from "@/lib/notify"
 import {
   loadLibraryPreview,
@@ -71,40 +71,33 @@ interface AssetViewerProps {
   onBack: () => void
 }
 
-// 走 loadFragmentImageSrc 而非 resolveFragmentImageSrc 的自定义协议：
-// `shard-attachment` 从未在 Tauri 端 register_uri_scheme_protocol 注册，
-// 它只是 resolve_vault_asset_path 认的内部引用格式。convertFileSrc 拼出的
-// 地址指向不存在的协议，真机上缩略图会全部裂图（曾在第十一批真机验证时踩到）。
-// loadFragmentImageSrc 内部有 imageSrcCache，同一路径不会重复走 IPC。
+// 缩略图直接用 shard-asset 协议地址，由 webview 按需取图；取不到时什么都不画，
+// 由外层的类型图标兜底。`version`（修改时间）让同名替换后的缓存失效。
 function AssetThumbnail({
   alt,
   className,
   path,
+  version,
 }: {
   alt: string
   className: string
   path: string
+  version?: number | string | null
 }) {
-  const [src, setSrc] = useState("")
+  const src = vaultImageUrl(path, version)
+  const [failedSrc, setFailedSrc] = useState("")
 
-  useEffect(() => {
-    let cancelled = false
-    void loadFragmentImageSrc(path)
-      .then((next) => {
-        if (!cancelled) setSrc(next)
-      })
-      .catch(() => {
-        if (!cancelled) setSrc("")
-      })
+  if (!src || failedSrc === src) return null
 
-    return () => {
-      cancelled = true
-    }
-  }, [path])
-
-  if (!src) return null
-
-  return <img alt={alt} className={className} loading="lazy" src={src} />
+  return (
+    <img
+      alt={alt}
+      className={className}
+      loading="lazy"
+      onError={() => setFailedSrc(src)}
+      src={src}
+    />
+  )
 }
 
 function assetLabel(path: string) {
@@ -314,7 +307,12 @@ function PreviewBlockLine({ block }: { block: MarkdownPreviewBlock }) {
 function LibraryItemThumbnail({ item }: { item: LibraryGridItem }) {
   if (item.kind === "image") {
     return (
-      <AssetThumbnail alt="" className={styles.image} path={item.path} />
+      <AssetThumbnail
+        alt=""
+        className={styles.image}
+        path={item.path}
+        version={`${item.modifiedAt}-${item.size}`}
+      />
     )
   }
 
@@ -521,6 +519,7 @@ export function AssetViewer({ asset, onBack }: AssetViewerProps) {
           alt={assetLabel(asset.path)}
           className={styles.viewerImage}
           path={asset.path}
+          version={`${asset.modifiedAt}-${asset.size}`}
         />
       </div>
 
