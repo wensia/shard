@@ -2,7 +2,7 @@ import { Menu } from "@base-ui/react/menu"
 import { cloneElement, createContext, type HTMLAttributes, type KeyboardEvent, type MouseEvent, type ReactElement, type ReactNode, useContext, useId, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 
-import { ArchiveRestoreIcon, FileTextIcon, FolderIcon, InboxIcon, LockKeyholeIcon, MoreHorizontalIcon, PencilLineIcon, Trash2Icon } from "@/components/icons"
+import { ArchiveRestoreIcon, FileTextIcon, FolderIcon, ImageIcon, InboxIcon, LockKeyholeIcon, MoreHorizontalIcon, PencilLineIcon, Trash2Icon } from "@/components/icons"
 import { Button } from "@/components/ui/button"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import type { LibraryTreeEntry } from "@/types"
@@ -68,7 +68,7 @@ function LibraryEntryMenuItems({ entry, destinations, batch, run, ...actions }: 
     <div className={styles.menuHeading} title={entry.name}>{batch ? `已选 ${batch.count} 项` : entry.name}</div>
     {batch ? null : <>
       {actions.onOpenEntry ? <DropdownMenuItem onClick={() => run(() => actions.onOpenEntry?.(entry))}>
-        {entry.kind === "directory" ? <FolderIcon /> : <FileTextIcon />}打开
+        {entry.kind === "directory" ? <FolderIcon /> : entry.kind === "image" ? <ImageIcon /> : <FileTextIcon />}打开
       </DropdownMenuItem> : null}
       {actions.onImportDataset && /\.(?:csv|xlsx)$/iu.test(entry.name) ? (
         <DropdownMenuItem onClick={() => run(() => actions.onImportDataset?.(entry))}>导入为数据集</DropdownMenuItem>

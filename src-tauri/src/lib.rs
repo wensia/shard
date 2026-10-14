@@ -473,6 +473,8 @@ struct LibraryMutationResult {
     #[serde(skip_serializing_if = "Option::is_none")]
     fragment: Option<Fragment>,
     updated_links: usize,
+    /// 改名、移动图片或目录时，正文里随之改写的图片引用处数。
+    updated_image_refs: usize,
 }
 
 #[derive(Debug, Serialize)]
@@ -1200,12 +1202,14 @@ async fn rename_library_entry(
 ) -> Result<LibraryMutationResult, String> {
     run_blocking(move || {
         let vault = ensure_vault_dirs(&app)?;
-        let (fragment, updated_links) = {
+        let (fragment, updated_links, updated_image_refs) = {
             let _gate = lock_vault_gate(&vault);
             checkpoint_before_structural_locked(&vault);
             rename_library_entry_in_vault(&vault, &path, &new_name)?
         };
-        library_mutation_result(&vault, fragment, updated_links)
+        let mut result = library_mutation_result(&vault, fragment, updated_links)?;
+        result.updated_image_refs = updated_image_refs;
+        Ok(result)
     })
     .await
 }
@@ -1218,12 +1222,14 @@ async fn move_library_entry(
 ) -> Result<LibraryMutationResult, String> {
     run_blocking(move || {
         let vault = ensure_vault_dirs(&app)?;
-        {
+        let updated_image_refs = {
             let _gate = lock_vault_gate(&vault);
             checkpoint_before_structural_locked(&vault);
-            move_library_entry_in_vault(&vault, &path, destination_directory.as_deref())?;
-        }
-        library_mutation_result(&vault, None, 0)
+            move_library_entry_in_vault(&vault, &path, destination_directory.as_deref())?
+        };
+        let mut result = library_mutation_result(&vault, None, 0)?;
+        result.updated_image_refs = updated_image_refs;
+        Ok(result)
     })
     .await
 }
@@ -3046,6 +3052,137 @@ async fn save_image_attachment_from_path(
     .await
 }
 
+#[derive(Debug, Serialize, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+struct LibraryImportSkip {
+    path: String,
+    reason: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LibraryImportResult {
+    tree: LibraryTreeSnapshot,
+    imported: Vec<String>,
+    skipped: Vec<LibraryImportSkip>,
+}
+
+/// 把访达里的图片按原文件名复制进资料库目录（缺省为 `notes/` 根）。
+#[tauri::command]
+async fn import_library_files(
+    app: tauri::AppHandle,
+    paths: Vec<String>,
+    directory: Option<String>,
+) -> Result<LibraryImportResult, String> {
+    run_blocking(move || {
+        let vault = ensure_vault_dirs(&app)?;
+        let (imported, skipped) = {
+            let _gate = lock_vault_gate(&vault);
+            import_library_images_in_vault(&vault, &paths, directory.as_deref())?
+        };
+        Ok(LibraryImportResult {
+            tree: build_library_tree(&vault)?,
+            imported,
+            skipped,
+        })
+    })
+    .await
+}
+
+/// 逐个导入，单个失败（不是图片、超限、来自密匣）只记入 skipped，不影响其余文件。
+/// 重名加 `-2` 后缀，绝不覆盖已有文件。调用方持有 vault 写门。
+fn import_library_images_in_vault(
+    vault: &Path,
+    paths: &[String],
+    directory: Option<&str>,
+) -> Result<(Vec<String>, Vec<LibraryImportSkip>), String> {
+    let target = existing_library_directory(vault, directory)?;
+    let mut imported = Vec::new();
+    let mut skipped = Vec::new();
+    for raw in paths {
+        let source = Path::new(raw);
+        let result = (|| {
+            let bytes = read_external_image(vault, source)?;
+            let stem = source
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .unwrap_or_default();
+            let extension = source
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .filter(|extension| shard_core::image::is_image_extension(extension))
+                .map(str::to_string)
+                .or_else(|| {
+                    shard_core::image::sniff_image_mime_type(&bytes)
+                        .and_then(shard_core::image::image_extension_for_mime_type)
+                        .map(str::to_string)
+                })
+                .ok_or_else(|| "不支持的图片格式".to_string())?;
+            let stem = if stem.trim().is_empty() { "图片" } else { stem };
+            let destination = unique_titled_path(&target, stem, &format!(".{extension}"));
+            write_bytes_atomically(&destination, &bytes)?;
+            relative_path(vault, &destination)
+        })();
+        match result {
+            Ok(rel_path) => imported.push(rel_path),
+            Err(reason) => skipped.push(LibraryImportSkip {
+                path: raw.clone(),
+                reason,
+            }),
+        }
+    }
+    if !imported.is_empty() {
+        commit_paths_best_effort(vault, &imported, "import library images");
+    }
+    Ok((imported, skipped))
+}
+
+/// 哪些公开文档、表格用到了这张图（不含回收站）；供图片查看器显示「引用处」与删除前提示。
+#[tauri::command]
+async fn image_references(app: tauri::AppHandle, path: String) -> Result<Vec<String>, String> {
+    run_blocking(move || {
+        let vault = ensure_vault_dirs(&app)?;
+        image_references_in_vault(&vault, &path)
+    })
+    .await
+}
+
+fn image_references_in_vault(vault: &Path, target: &str) -> Result<Vec<String>, String> {
+    let target = shard_core::image_refs::normalize_reference(target);
+    // 内容寻址附件也可能被写成 shard-attachment:<hash>。
+    let attachment = Path::new(&target)
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .filter(|stem| target.starts_with("assets/") && stem.len() == 64)
+        .map(|hash| format!("shard-attachment:{hash}"));
+    let mut sources = Vec::new();
+    collect_public_vault_markdown(vault, vault, &mut sources)?;
+    collect_csv_files(vault, vault, &mut sources)?;
+    let mut referencing = Vec::new();
+    for source in sources {
+        let Ok(relative) = relative_path(vault, &source) else {
+            continue;
+        };
+        if relative.starts_with(".trash/") {
+            continue;
+        }
+        let Ok(bytes) = fs::read(&source) else {
+            continue;
+        };
+        let references =
+            extract_library_image_references(Path::new(&relative), &String::from_utf8_lossy(&bytes));
+        if references
+            .iter()
+            .any(|reference| *reference == target || Some(reference) == attachment.as_ref())
+        {
+            referencing.push(relative);
+        }
+    }
+    referencing.sort();
+    referencing.dedup();
+    Ok(referencing)
+}
+
 /// 读 vault 外（或 vault 内公开位置）的一张图片；密匣里的文件与超限文件一律拒绝。
 fn read_external_image(vault: &Path, source: &Path) -> Result<Vec<u8>, String> {
     if !source.is_absolute() {
@@ -3093,6 +3230,17 @@ async fn fragment_image_file_path(app: tauri::AppHandle, path: String) -> Result
         let image_path = resolve_vault_asset_path(&vault, &path)?;
 
         Ok(image_path.to_string_lossy().to_string())
+    })
+    .await
+}
+
+/// 用系统默认应用打开 vault 里的一张图片（HEIC 等 webview 显示不了时的出路）。
+#[tauri::command]
+async fn open_vault_image(app: tauri::AppHandle, path: String) -> Result<(), String> {
+    run_blocking(move || {
+        let vault = ensure_vault_dirs(&app)?;
+        let image_path = resolve_vault_asset_path(&vault, &path)?;
+        tauri_plugin_opener::open_path(image_path, None::<&str>).map_err(|error| error.to_string())
     })
     .await
 }
@@ -3707,11 +3855,15 @@ fn library_asset_references(vault: &Path) -> HashSet<String> {
     library_asset_references_with_index(vault, LIBRARY_INDEX_REGISTRY.get().map(Arc::as_ref))
 }
 
+/// 资料库「图片」只收资料库内容用到的附件：`notes/` 下的文档、导图、画布与 CSV，
+/// 以及 `datasets/` 下的数据集（由资料库「新建数据集」创建）。碎片、回收站、密匣不算。
 fn is_library_reference_source(path: &Path) -> bool {
     let mut parts = path.components();
-    if !matches!(parts.next(), Some(Component::Normal(root)) if root == "notes") {
-        return false;
-    }
+    let root = match parts.next() {
+        Some(Component::Normal(root)) if root == "notes" => "notes",
+        Some(Component::Normal(root)) if root == "datasets" => "datasets",
+        _ => return false,
+    };
     let mut has_child = false;
     for part in parts {
         let Component::Normal(name) = part else { return false };
@@ -3720,10 +3872,39 @@ fn is_library_reference_source(path: &Path) -> bool {
         }
         has_child = true;
     }
-    has_child && (matches!(path.extension().and_then(|extension| extension.to_str()), Some("md" | "csv"))
+    let is_csv = path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("csv"));
+    if root == "datasets" {
+        return has_child && is_csv;
+    }
+    has_child && (is_csv
+        || matches!(path.extension().and_then(|extension| extension.to_str()), Some("md"))
         || is_mind_map_file(path)
         || canvas_commands::is_canvas(path)
         || canvas_commands::is_flow(path))
+}
+
+/// 一份资料库来源里的图片引用：旧的 `assets/`、`shard-attachment:` 子串扫描兜底（导图、
+/// 画布 JSON 也靠它），Markdown 再按链接目标解析（带空格、括号的命名图片），CSV 按单元格。
+fn extract_library_image_references(relative: &Path, text: &str) -> Vec<String> {
+    let mut references: Vec<String> = extract_asset_references(text);
+    let extension = relative
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(str::to_ascii_lowercase);
+    let structured = match extension.as_deref() {
+        Some("md") => shard_core::image_refs::markdown_image_references(text),
+        Some("csv") => shard_core::image_refs::csv_image_references(text),
+        _ => Vec::new(),
+    };
+    for reference in structured {
+        if !references.contains(&reference) {
+            references.push(reference);
+        }
+    }
+    references
 }
 
 fn extract_asset_references(text: &str) -> Vec<String> {
@@ -3790,20 +3971,20 @@ fn library_asset_references_full_scan(vault: &Path) -> HashSet<String> {
             let path = entry.path();
             if file_type.is_dir() {
                 collect(vault, &path, references);
-            } else if file_type.is_file()
-                && path
-                    .strip_prefix(vault)
-                    .is_ok_and(is_library_reference_source)
-            {
-                let Ok(file) = File::open(path) else { continue };
-                for line in BufReader::new(file).lines().map_while(Result::ok) {
-                    references.extend(extract_asset_references(&line));
+            } else if file_type.is_file() {
+                let Ok(relative) = path.strip_prefix(vault) else { continue };
+                if !is_library_reference_source(relative) {
+                    continue;
                 }
+                let Ok(bytes) = fs::read(&path) else { continue };
+                let text = String::from_utf8_lossy(&bytes);
+                references.extend(extract_library_image_references(relative, &text));
             }
         }
     }
     let mut references = HashSet::new();
     collect(vault, &vault.join("notes"), &mut references);
+    collect(vault, &vault.join("datasets"), &mut references);
     references
 }
 
@@ -3877,6 +4058,7 @@ fn collect_library_assets(vault: &Path) -> Vec<LibraryAssetEntry> {
     if !references.is_empty() {
         collect(vault, &vault.join("assets"), &references, &mut assets);
     }
+    collect_named_library_images(vault, &vault.join("notes"), &mut assets);
     assets.sort_by(|left, right| {
         right
             .modified_at
@@ -3884,6 +4066,46 @@ fn collect_library_assets(vault: &Path) -> Vec<LibraryAssetEntry> {
             .then_with(|| left.path.cmp(&right.path))
     });
     assets
+}
+
+/// 资料库目录里显式导入的命名图片：位置本身就说明它属于资料库，不需要被引用。
+/// 类型按扩展名定，建宫格时不逐个打开文件。
+fn collect_named_library_images(vault: &Path, directory: &Path, assets: &mut Vec<LibraryAssetEntry>) {
+    let Ok(entries) = fs::read_dir(directory) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if file_type.is_symlink() || entry.file_name().to_string_lossy().starts_with('.') {
+            continue;
+        }
+        let path = entry.path();
+        if file_type.is_dir() {
+            collect_named_library_images(vault, &path, assets);
+            continue;
+        }
+        let Some(mime_type) = path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .and_then(shard_core::image::image_mime_type_from_extension)
+        else {
+            continue;
+        };
+        let Some(asset) = (|| {
+            let metadata = entry.metadata().ok()?;
+            Some(LibraryAssetEntry {
+                path: relative_path(vault, &path).ok()?,
+                size: metadata.len(),
+                modified_at: system_time_to_rfc3339(metadata.modified().ok()?),
+                mime_type: mime_type.to_string(),
+            })
+        })() else {
+            continue;
+        };
+        assets.push(asset);
+    }
 }
 
 fn sniff_library_asset_mime_type(path: &Path) -> Option<&'static str> {
@@ -4069,8 +4291,10 @@ where
                 {
                     Some("md") => "markdown",
                     Some("csv") => "csv",
-                    Some("gif" | "jpg" | "jpeg" | "png" | "svg" | "webp")
-                        if directory.starts_with(vault.join(".trash")) =>
+                    // 资料库里的命名图片（营业执照.jpg、IMG_1234.heic）与文档平级上树。
+                    Some(extension)
+                        if shard_core::image::is_image_extension(extension)
+                            && !name.starts_with('.') =>
                     {
                         "image"
                     }
@@ -4208,6 +4432,7 @@ fn library_mutation_result(
         tree: build_library_tree(vault)?,
         fragment,
         updated_links,
+        updated_image_refs: 0,
     })
 }
 
@@ -4271,11 +4496,12 @@ fn create_library_directory_in_vault(
     fs::create_dir(&path).map_err(|error| error.to_string())
 }
 
+/// 返回（重命名后的碎片、改写的双链处数、改写的图片引用处数）。
 fn rename_library_entry_in_vault(
     vault: &Path,
     rel_path: &str,
     new_name: &str,
-) -> Result<(Option<Fragment>, usize), String> {
+) -> Result<(Option<Fragment>, usize, usize), String> {
     let relative = safe_vault_relative_path(rel_path)?;
     let is_fragment = relative.starts_with("fragments");
     let source = if is_fragment {
@@ -4333,9 +4559,11 @@ fn rename_library_entry_in_vault(
             let extension = source
                 .extension()
                 .and_then(|extension| extension.to_str())
-                .ok_or_else(|| "只允许重命名 Markdown、CSV 或思维导图文件。".to_string())?;
-            if !matches!(extension.to_ascii_lowercase().as_str(), "md" | "csv") {
-                return Err("只允许重命名 Markdown、CSV 或思维导图文件。".to_string());
+                .ok_or_else(|| "只允许重命名 Markdown、CSV、图片或思维导图文件。".to_string())?;
+            if !matches!(extension.to_ascii_lowercase().as_str(), "md" | "csv")
+                && !shard_core::image::is_image_extension(extension)
+            {
+                return Err("只允许重命名 Markdown、CSV、图片或思维导图文件。".to_string());
             }
             let requested = Path::new(new_name);
             match requested.extension().and_then(|value| value.to_str()) {
@@ -4392,28 +4620,18 @@ fn rename_library_entry_in_vault(
     } else {
         Vec::new()
     };
-    fs::rename(&source, &destination).map_err(|error| error.to_string())?;
-
-    let mut written = Vec::<(PathBuf, String)>::new();
-    let mut updated_links = 0;
-    for (original_path, original_text, next_text, count) in link_updates {
-        let path = if original_path == source {
-            destination.clone()
-        } else {
-            original_path
-        };
-        if let Err(error) = write_text_atomically(&path, &next_text) {
-            for (written_path, previous_text) in written.into_iter().rev() {
-                let _ = write_text_atomically(&written_path, &previous_text);
-            }
-            let _ = fs::rename(&destination, &source);
-            return Err(format!("重命名后的 wikilink 更新失败，已回滚：{error}"));
-        }
-        written.push((path, original_text));
-        updated_links += count;
-    }
     let old_rel = rel_path.to_string();
     let new_rel = relative_path(vault, &destination)?;
+    let image_updates = if !file_type.is_file() || shard_core::image::is_image_path(&source) {
+        plan_image_reference_updates(vault, &[(old_rel.clone(), new_rel.clone())])?
+    } else {
+        Vec::new()
+    };
+    let link_count = link_updates.len();
+    let updates: Vec<_> = link_updates.into_iter().chain(image_updates).collect();
+    let written = apply_reference_updates(&source, &destination, updates.iter().map(|(path, text, next, _)| (path, text, next)))?;
+    let updated_links: usize = updates[..link_count].iter().map(|update| update.3).sum();
+    let updated_image_refs: usize = updates[link_count..].iter().map(|update| update.3).sum();
     let mut changed_paths = vec![old_rel, new_rel];
     for (path, _) in &written {
         let rel_path = relative_path(vault, path)?;
@@ -4431,14 +4649,68 @@ fn rename_library_entry_in_vault(
     } else {
         None
     };
-    Ok((fragment, updated_links))
+    Ok((fragment, updated_links, updated_image_refs))
 }
 
+/// 改名/移动前算好要改写的公开 Markdown：命中 `moves` 的图片引用换成新路径。
+fn plan_image_reference_updates(
+    vault: &Path,
+    moves: &[(String, String)],
+) -> Result<Vec<(PathBuf, String, String, usize)>, String> {
+    let mut files = Vec::new();
+    collect_public_vault_markdown(vault, vault, &mut files)?;
+    let mut updates = Vec::new();
+    for path in files {
+        let Ok(text) = fs::read_to_string(&path) else {
+            continue;
+        };
+        if !text.contains("](") {
+            continue;
+        }
+        let (next, count) = shard_core::image_refs::rewrite_markdown_image_references(&text, moves);
+        if count > 0 {
+            updates.push((path, text, next, count));
+        }
+    }
+    Ok(updates)
+}
+
+/// `source` 已改名/移动到 `destination` 后写回正文改动；位于被移动目录里的文档按新位置写。
+/// 任何一处失败就把已写的恢复原文并把条目挪回原处。返回实际写过的（新路径、原文）。
+fn apply_reference_updates<'a>(
+    source: &Path,
+    destination: &Path,
+    updates: impl Iterator<Item = (&'a PathBuf, &'a String, &'a String)>,
+) -> Result<Vec<(PathBuf, String)>, String> {
+    let updates: Vec<_> = updates.collect();
+    fs::rename(source, destination).map_err(|error| error.to_string())?;
+    let mut written = Vec::<(PathBuf, String)>::new();
+    for (original_path, original_text, next_text) in updates {
+        let path = if original_path == source {
+            destination.to_path_buf()
+        } else if let Ok(rest) = original_path.strip_prefix(source) {
+            destination.join(rest)
+        } else {
+            original_path.clone()
+        };
+        if let Err(error) = write_text_atomically(&path, next_text) {
+            for (written_path, previous_text) in written.into_iter().rev() {
+                let _ = write_text_atomically(&written_path, &previous_text);
+            }
+            let _ = fs::rename(destination, source);
+            return Err(format!("移动后的引用更新失败，已回滚：{error}"));
+        }
+        written.push((path, original_text.clone()));
+    }
+    Ok(written)
+}
+
+/// 返回改写的图片引用处数。
 fn move_library_entry_in_vault(
     vault: &Path,
     rel_path: &str,
     target_directory: Option<&str>,
-) -> Result<(), String> {
+) -> Result<usize, String> {
     let source = existing_library_path(vault, rel_path)?;
     let target_directory = existing_library_directory(vault, target_directory)?;
     if source.is_dir() && target_directory.starts_with(&source) {
@@ -4450,18 +4722,32 @@ fn move_library_entry_in_vault(
             .ok_or_else(|| "资料库条目名称无效。".to_string())?,
     );
     if destination == source {
-        return Ok(());
+        return Ok(0);
     }
     if destination.exists() {
         return Err("目标目录中已有同名条目。".to_string());
     }
-    fs::rename(&source, &destination).map_err(|error| error.to_string())?;
-    commit_paths_best_effort(
-        vault,
-        &[rel_path.to_string(), relative_path(vault, &destination)?],
-        "move library entry",
-    );
-    Ok(())
+    let new_rel = relative_path(vault, &destination)?;
+    // 目录里可能有图片，图片本身被移动也要改；文档移动不影响图片引用（引用是 vault 相对路径）。
+    let updates = if source.is_dir() || shard_core::image::is_image_path(&source) {
+        plan_image_reference_updates(vault, &[(rel_path.trim().to_string(), new_rel.clone())])?
+    } else {
+        Vec::new()
+    };
+    let written = apply_reference_updates(
+        &source,
+        &destination,
+        updates.iter().map(|(path, text, next, _)| (path, text, next)),
+    )?;
+    let mut changed_paths = vec![rel_path.to_string(), new_rel];
+    for (path, _) in &written {
+        let rel_path = relative_path(vault, path)?;
+        if !changed_paths.contains(&rel_path) {
+            changed_paths.push(rel_path);
+        }
+    }
+    commit_paths_best_effort(vault, &changed_paths, "move library entry");
+    Ok(updates.iter().map(|update| update.3).sum())
 }
 
 fn safe_vault_relative_path(rel_path: &str) -> Result<&Path, String> {
@@ -8077,6 +8363,9 @@ pub fn run() {
             convert_table_document_to_markdown,
             save_fragment_image,
             save_image_attachment_from_path,
+            import_library_files,
+            image_references,
+            open_vault_image,
             read_fragment_image,
             fragment_image_file_path,
             reveal_fragment_image_in_dir,
@@ -11362,6 +11651,144 @@ mod tests {
         }
     }
 
+    const TEST_PNG: &[u8] = b"\x89PNG\r\n\x1a\npng";
+
+    #[test]
+    fn named_library_images_are_tree_entries_and_gallery_items() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let vault = tempdir.path();
+        ensure_vault_layout(vault).unwrap();
+        fs::create_dir_all(vault.join("notes/证件")).unwrap();
+        fs::write(vault.join("notes/证件/营业执照.JPG"), TEST_PNG).unwrap();
+        fs::write(vault.join("notes/证件/说明.txt"), "不是图片").unwrap();
+        fs::write(vault.join("notes/证件/.隐藏.png"), TEST_PNG).unwrap();
+        // 数据集单元格引用的附件也属于资料库；只被碎片用到的仍不收。
+        fs::write(vault.join("assets/表格.png"), TEST_PNG).unwrap();
+        fs::write(vault.join("assets/碎片.png"), TEST_PNG).unwrap();
+        fs::write(vault.join("datasets/证件.csv"), "名称,照片\n执照,assets/表格.png\n").unwrap();
+        write_public_test_fragment(vault, "![碎片](assets/碎片.png)");
+
+        let tree = build_library_tree(vault).unwrap();
+        let folder = tree.entries.iter().find(|entry| entry.name == "证件").unwrap();
+        let children = folder.children.as_ref().unwrap();
+        assert_eq!(children.len(), 1);
+        assert_eq!(children[0].name, "营业执照.JPG");
+        assert_eq!(children[0].kind, "image");
+
+        let gallery: HashSet<_> = tree.assets.iter().map(|asset| asset.path.as_str()).collect();
+        assert_eq!(gallery, HashSet::from(["notes/证件/营业执照.JPG", "assets/表格.png"]));
+        let named = tree.assets.iter().find(|asset| asset.path.ends_with(".JPG")).unwrap();
+        assert_eq!(named.mime_type, "image/jpeg");
+    }
+
+    #[test]
+    fn library_references_follow_markdown_destinations_and_csv_cells() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let vault = &tempdir.path().join("vault");
+        ensure_vault_layout(vault).unwrap();
+        fs::write(
+            vault.join("notes/doc.md"),
+            "![截屏](<assets/截屏 1.png>) ![括号](assets/a\\(1\\).png)\n",
+        )
+        .unwrap();
+        fs::write(vault.join("datasets/相册.csv"), "照片\n\"assets/x.png\nassets/y.png\"\n").unwrap();
+        let registry = search_index::IndexRegistry::default();
+        registry.set_root(tempdir.path().join("cache"));
+
+        let indexed = library_asset_references_with_index(vault, Some(&registry));
+        assert_eq!(indexed, library_asset_references_full_scan(vault));
+        for expected in ["assets/截屏 1.png", "assets/a(1).png", "assets/x.png", "assets/y.png"] {
+            assert!(indexed.contains(expected), "missing {expected}: {indexed:?}");
+        }
+    }
+
+    #[test]
+    fn importing_images_keeps_names_and_never_overwrites() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let vault = &tempdir.path().join("vault");
+        ensure_vault_layout(vault).unwrap();
+        fs::create_dir_all(vault.join("notes/证件")).unwrap();
+        fs::write(vault.join("notes/证件/营业执照.png"), b"old").unwrap();
+        let outside = tempdir.path().join("outside");
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(outside.join("营业执照.png"), TEST_PNG).unwrap();
+        fs::write(outside.join("无扩展名"), TEST_PNG).unwrap();
+        fs::write(outside.join("readme.txt"), "text").unwrap();
+        let big = File::create(outside.join("大图.png")).unwrap();
+        big.set_len(MAX_IMAGE_BYTES + 1).unwrap();
+        fs::create_dir_all(vault.join("lockbox")).unwrap();
+        fs::write(vault.join("lockbox/secret.png"), TEST_PNG).unwrap();
+        let path = |name: &str| outside.join(name).to_string_lossy().into_owned();
+
+        let (imported, skipped) = import_library_images_in_vault(
+            vault,
+            &[
+                path("营业执照.png"),
+                path("无扩展名"),
+                path("readme.txt"),
+                path("大图.png"),
+                vault.join("lockbox/secret.png").to_string_lossy().into_owned(),
+                "relative.png".to_string(),
+            ],
+            Some("notes/证件"),
+        )
+        .unwrap();
+        assert_eq!(imported, vec!["notes/证件/营业执照-2.png", "notes/证件/无扩展名.png"]);
+        assert_eq!(fs::read(vault.join("notes/证件/营业执照.png")).unwrap(), b"old");
+        assert_eq!(fs::read(vault.join("notes/证件/营业执照-2.png")).unwrap(), TEST_PNG);
+        assert_eq!(skipped.len(), 4);
+        assert!(skipped[1].reason.contains("50 MiB"), "{:?}", skipped[1]);
+        assert!(import_library_images_in_vault(vault, &[path("营业执照.png")], Some("assets")).is_err());
+    }
+
+    #[test]
+    fn renaming_or_moving_images_rewrites_document_references() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let vault = tempdir.path();
+        ensure_vault_layout(vault).unwrap();
+        fs::create_dir_all(vault.join("notes/旅行")).unwrap();
+        fs::create_dir_all(vault.join("notes/归档")).unwrap();
+        fs::write(vault.join("notes/旅行/a.jpg"), TEST_PNG).unwrap();
+        fs::write(vault.join("notes/旅行/a.jpg.bak"), "x").unwrap();
+        fs::write(
+            vault.join("notes/旅行/游记.md"),
+            "![海边](notes/旅行/a.jpg) ![备份](notes/旅行/a.jpg.bak)\n",
+        )
+        .unwrap();
+        let fragment = write_public_test_fragment(vault, "碎片里也引用 ![海边](notes/旅行/a.jpg)");
+
+        let (_, links, images) =
+            rename_library_entry_in_vault(vault, "notes/旅行/a.jpg", "海边 日落").unwrap();
+        assert_eq!((links, images), (0, 2));
+        assert!(vault.join("notes/旅行/海边 日落.jpg").is_file());
+        assert_eq!(
+            fs::read_to_string(vault.join("notes/旅行/游记.md")).unwrap(),
+            "![海边](<notes/旅行/海边 日落.jpg>) ![备份](notes/旅行/a.jpg.bak)\n"
+        );
+        let mut fragment_files = Vec::new();
+        collect_markdown_files(&vault.join("fragments"), &mut fragment_files).unwrap();
+        let fragment_text = fragment_files
+            .iter()
+            .map(|path| fs::read_to_string(path).unwrap())
+            .find(|text| text.contains("碎片里也引用"))
+            .unwrap();
+        assert!(fragment_text.contains("<notes/旅行/海边 日落.jpg>"), "{fragment_text}");
+        let _ = fragment;
+
+        // 整个目录移走：目录里的文档跟着走，也要按新位置写回。
+        let images = move_library_entry_in_vault(vault, "notes/旅行", Some("notes/归档")).unwrap();
+        assert_eq!(images, 2);
+        assert_eq!(
+            fs::read_to_string(vault.join("notes/归档/旅行/游记.md")).unwrap(),
+            "![海边](<notes/归档/旅行/海边 日落.jpg>) ![备份](notes/旅行/a.jpg.bak)\n"
+        );
+        assert_eq!(
+            image_references_in_vault(vault, "notes/归档/旅行/海边 日落.jpg").unwrap().len(),
+            2
+        );
+        assert!(image_references_in_vault(vault, "notes/旅行/a.jpg").unwrap().is_empty());
+    }
+
     #[test]
     fn converting_content_changes_asset_visibility_without_moving_shared_images() {
         let tempdir = tempfile::tempdir().unwrap();
@@ -12065,7 +12492,7 @@ mod tests {
         fs::write(vault.join("notes/ref.md"), "[[fragment-id]] [[fragment-id|别名]]").unwrap();
         let before = fs::read_to_string(vault.join(old_path)).unwrap();
 
-        let (fragment, updated_links) = rename_library_entry_in_vault(vault, old_path, "新文件名").unwrap();
+        let (fragment, updated_links, _) = rename_library_entry_in_vault(vault, old_path, "新文件名").unwrap();
         let result = library_mutation_result(vault, fragment, updated_links).unwrap();
 
         assert_eq!(result.updated_links, 0);
@@ -12088,7 +12515,7 @@ mod tests {
         write_t6_fragment(&vault.join("fragments/旧文件名.md"), "stable-id", vec!["inbox"], "body");
         fs::write(vault.join("notes/ref.md"), "[[旧文件名]] [[旧文件名|别名]] [[stable-id]]").unwrap();
 
-        let (fragment, count) = rename_library_entry_in_vault(vault, "fragments/旧文件名.md", "新文件名.md").unwrap();
+        let (fragment, count, _) = rename_library_entry_in_vault(vault, "fragments/旧文件名.md", "新文件名.md").unwrap();
 
         assert_eq!(count, 2);
         assert_eq!(fragment.unwrap().id, "stable-id");
@@ -12149,7 +12576,7 @@ mod tests {
         );
         fs::write(vault.join("lockbox/fragments/secret.md"), "[[旧名]]").unwrap();
 
-        let (fragment, updated) = rename_library_entry_in_vault(vault, "notes/旧名.md", "新名").unwrap();
+        let (fragment, updated, _) = rename_library_entry_in_vault(vault, "notes/旧名.md", "新名").unwrap();
 
         assert!(fragment.is_none());
         assert_eq!(updated, 2);

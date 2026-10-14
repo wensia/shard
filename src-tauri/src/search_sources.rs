@@ -336,7 +336,7 @@ fn load_public_documents(
             // Reuse the same Markdown read for projection and asset extraction.
             read_public_markdown_text(vault, &source.path).and_then(|(text, revision)| {
                 references_from_text = Some(if library_source {
-                    crate::extract_asset_references(&text)
+                    crate::extract_library_image_references(Path::new(&source.relative), &text)
                 } else {
                     Vec::new()
                 });
@@ -539,12 +539,9 @@ fn read_asset_references(path: &Path, library_source: bool) -> std::io::Result<V
     if !library_source {
         return Ok(Vec::new());
     }
-    let file = File::open(path)?;
-    let mut references = std::collections::HashSet::new();
-    for line in BufReader::new(file).lines().map_while(Result::ok) {
-        references.extend(crate::extract_asset_references(&line));
-    }
-    Ok(references.into_iter().collect())
+    // 非 UTF-8 的 CSV 也不能让索引失败：有损解码后照常抽取。
+    let bytes = std::fs::read(path)?;
+    Ok(crate::extract_library_image_references(path, &String::from_utf8_lossy(&bytes)))
 }
 
 pub(crate) fn sync_public(vault: &Path, index: &IndexStore) -> Result<(), SearchError> {

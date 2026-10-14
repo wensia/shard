@@ -3434,3 +3434,195 @@ test.describe("文档内查找（Cmd+F）", () => {
     await expect(palette).toBeVisible()
   })
 })
+
+type LibraryImageState = {
+  images: Array<{ path: string; size: number; modifiedAt: string }>
+  drag(type: "enter" | "over" | "drop" | "leave", paths: string[], x: number, y: number): Promise<void>
+}
+
+/** 资料库目录里的命名图片：树条目、导入、引用处与原生拖放（tauri://drag-*）。 */
+async function installLibraryImageMock(page: Page) {
+  await page.addInitScript(() => {
+    const runtime = window as unknown as {
+      __TAURI_INTERNALS__: {
+        invoke(command: string, args?: unknown, options?: unknown): Promise<any>
+        metadata: unknown
+        transformCallback(callback: (event: unknown) => unknown): number
+      }
+      __SHARD_LIBRARY_TREE_CALLS__: LibraryCall[]
+      __libraryImages: LibraryImageState
+    }
+    const original = runtime.__TAURI_INTERNALS__.invoke
+    const now = "2026-10-15T08:00:00.000Z"
+    const callbacks = new Map<number, (event: unknown) => unknown>()
+    const listeners = new Map<number, { event: string; handler: number }>()
+    let next = 1000
+    const state: LibraryImageState = {
+      images: [{ path: "notes/项目/营业执照.png", size: 4_096, modifiedAt: now }],
+      async drag(type, paths, x, y) {
+        const ratio = window.devicePixelRatio || 1
+        const event = `tauri://drag-${type}`
+        const payload = type === "leave" ? null : { paths, position: { x: x * ratio, y: y * ratio } }
+        for (const [id, entry] of listeners) {
+          if (entry.event === event) await callbacks.get(entry.handler)?.({ event, id, payload })
+        }
+      },
+    }
+    runtime.__libraryImages = state
+    runtime.__TAURI_INTERNALS__.metadata = { currentWindow: { label: "main" }, currentWebview: { label: "main" } }
+    runtime.__TAURI_INTERNALS__.transformCallback = (callback) => { callbacks.set(++next, callback); return next }
+    Object.assign(window, { __TAURI_EVENT_PLUGIN_INTERNALS__: { unregisterListener() {} } })
+    const withImages = (tree: any) => {
+      const copy = structuredClone(tree)
+      const directory = (path: string, items: any[] = copy.entries): any => {
+        for (const item of items) {
+          if (item.path === path) return item
+          const found = directory(path, item.children ?? [])
+          if (found) return found
+        }
+        return null
+      }
+      for (const image of state.images) {
+        const parent = image.path.slice(0, image.path.lastIndexOf("/"))
+        const name = image.path.split("/").pop()
+        const target = parent === "notes" ? copy.entries : directory(parent)?.children
+        if (target && !target.some((item: any) => item.path === image.path)) {
+          target.push({ name, path: image.path, kind: "image", size: image.size, modifiedAt: image.modifiedAt })
+        }
+        copy.assets.push({ ...image, mimeType: "image/png" })
+      }
+      return copy
+    }
+    const record = (command: string, args: unknown) =>
+      runtime.__SHARD_LIBRARY_TREE_CALLS__.push({ command, args: structuredClone(args) as Record<string, unknown> })
+    runtime.__TAURI_INTERNALS__.invoke = async (command, args = {}, options) => {
+      if (command === "plugin:event|listen") {
+        const entry = args as { event: string; handler: number }
+        if (entry.event.startsWith("tauri://drag-")) {
+          listeners.set(++next, entry)
+          return next
+        }
+      }
+      if (command === "plugin:dialog|open") {
+        record(command, args)
+        return ["/Users/me/Desktop/合同 扫描.jpg", "/Users/me/Desktop/说明.txt"]
+      }
+      if (command === "import_library_files") {
+        record(command, args)
+        const { paths, directory } = args as { paths: string[]; directory: string }
+        const imported = paths
+          .filter((path) => /\.(png|jpe?g)$/iu.test(path))
+          .map((path) => `${directory}/${path.split("/").pop()}`)
+        for (const path of imported) state.images.push({ path, size: 1_024, modifiedAt: now })
+        const skipped = paths
+          .filter((path) => !/\.(png|jpe?g)$/iu.test(path))
+          .map((path) => ({ path, reason: "不支持的图片格式" }))
+        const tree = withImages(await original("list_library_tree", {}))
+        return { tree, imported, skipped }
+      }
+      if (command === "image_references") {
+        record(command, args)
+        return (args as { path: string }).path === "notes/项目/营业执照.png" ? ["notes/旧笔记.md"] : []
+      }
+      if (command === "open_vault_image") {
+        record(command, args)
+        return null
+      }
+      const result = await original(command, args, options)
+      if (command === "list_library_tree") return withImages(result)
+      if (result && typeof result === "object" && "tree" in result && result.tree?.entries) {
+        return { ...result, tree: withImages(result.tree) }
+      }
+      return result
+    }
+  })
+  await page.reload()
+}
+
+test("资料库目录里的图片是条目：点开看大图、引用处可跳转、返回所在目录", async ({ page }) => {
+  await installLibraryImageMock(page)
+  await page.getByRole("button", { name: "资料库", exact: true }).click()
+  const treePane = page.getByRole("complementary", { name: "资料库目录" })
+  await expect(treePane.getByRole("button", { name: "图片（2）", exact: true })).toBeVisible()
+  await treePane.getByRole("button", { name: "项目", exact: true }).click()
+  const listing = page.getByRole("region", { name: "notes/项目 目录列表", exact: true })
+  await listing.getByRole("button", { name: "打开文件 营业执照.png", exact: true }).click()
+
+  const viewerImage = page.locator('img[alt="营业执照"]')
+  await expect(viewerImage).toHaveAttribute("src", /^\/__shard-asset\/notes%2F%E9%A1%B9%E7%9B%AE%2F.+\?v=/u)
+  await expect.poll(() => viewerImage.evaluate((node: HTMLImageElement) => node.naturalWidth)).toBe(1)
+  await expect(page.getByText("notes/项目/营业执照.png", { exact: true })).toBeVisible()
+
+  await page.getByRole("button", { name: "用默认应用打开", exact: true }).click()
+  await expect.poll(() => commandCalls(page, "open_vault_image")).toEqual([
+    { command: "open_vault_image", args: { path: "notes/项目/营业执照.png" } },
+  ])
+
+  const references = page.getByRole("list", { name: "引用这张图片的文件" })
+  await references.getByRole("button", { name: "旧笔记", exact: true }).click()
+  await expect(page.locator('[data-shard-editor="library:note-old"]')).toBeVisible()
+
+  await treePane.getByRole("button", { name: "项目", exact: true }).click()
+  await listing.getByRole("button", { name: "打开文件 营业执照.png", exact: true }).click()
+  await page.getByRole("button", { name: "返回所在目录", exact: true }).click()
+  await expect(listing.getByRole("button", { name: "打开文件 营业执照.png", exact: true })).toBeVisible()
+})
+
+test("导入图片按原文件名复制进当前目录，单张导入后直接打开", async ({ page }) => {
+  await installLibraryImageMock(page)
+  await page.getByRole("button", { name: "资料库", exact: true }).click()
+  const treePane = page.getByRole("complementary", { name: "资料库目录" })
+  await treePane.getByRole("button", { name: "项目", exact: true }).click()
+  await page.getByRole("button", { name: "新建", exact: true }).click()
+  await page.getByRole("menuitem", { name: "导入图片…", exact: true }).click()
+
+  await expect.poll(() => commandCalls(page, "import_library_files")).toEqual([{
+    command: "import_library_files",
+    args: { paths: ["/Users/me/Desktop/合同 扫描.jpg", "/Users/me/Desktop/说明.txt"], directory: "notes/项目" },
+  }])
+  await expect(page.locator('[data-sonner-toast]').filter({ hasText: "已导入 1 张图片" })).toBeVisible()
+  await expect(page.locator('[data-sonner-toast]').filter({ hasText: "1 个文件没有导入" })).toBeVisible()
+  await expect(page.locator('img[alt="合同 扫描"]')).toBeVisible()
+  await expect(page.getByRole("button", { name: "返回所在目录", exact: true })).toBeVisible()
+})
+
+test("从访达把图片拖到目录行：悬停高亮该目录，松手导入到该目录", async ({ page }) => {
+  await installLibraryImageMock(page)
+  await page.getByRole("button", { name: "资料库", exact: true }).click()
+  const treePane = page.getByRole("complementary", { name: "资料库目录" })
+  const row = treePane.locator('[data-library-drop-directory="notes/项目"]')
+  await expect(row).toBeVisible()
+  const box = (await row.boundingBox())!
+  const x = box.x + box.width / 2
+  const y = box.y + box.height / 2
+  const drag = (type: "enter" | "over" | "drop" | "leave", paths: string[]) =>
+    page.evaluate(({ type, paths, x, y }) =>
+      (window as unknown as { __libraryImages: LibraryImageState }).__libraryImages.drag(type, paths, x, y),
+    { type, paths, x, y })
+
+  // 非图片不响应。
+  await drag("enter", ["/Users/me/报告.pdf"])
+  await expect(row).not.toHaveAttribute("data-drop-target", "true")
+  await drag("leave", [])
+
+  await drag("enter", ["/Users/me/IMG_0001.jpg"])
+  await drag("over", [])
+  await expect(row).toHaveAttribute("data-drop-target", "true")
+  await drag("drop", ["/Users/me/IMG_0001.jpg", "/Users/me/报告.pdf"])
+  await expect(row).not.toHaveAttribute("data-drop-target", "true")
+  await expect.poll(() => commandCalls(page, "import_library_files")).toEqual([{
+    command: "import_library_files",
+    args: { paths: ["/Users/me/IMG_0001.jpg"], directory: "notes/项目" },
+  }])
+  await expect(page.locator('img[alt="IMG_0001"]')).toBeVisible()
+})
+
+test("⌘O 按文件名找到资料库里的图片并打开查看器", async ({ page }) => {
+  await installLibraryImageMock(page)
+  await page.getByRole("button", { name: "资料库", exact: true }).click()
+  await page.keyboard.press("Control+o")
+  await page.getByRole("combobox", { name: "搜索内容" }).fill("营业执照")
+  await page.getByRole("option", { name: /营业执照/u }).first().click()
+  await expect(page.locator('img[alt="营业执照"]')).toBeVisible()
+  await expect(page.getByRole("button", { name: "返回所在目录", exact: true })).toBeVisible()
+})

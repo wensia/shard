@@ -12,6 +12,8 @@ export interface VaultFileChange {
 /** 数据集编辑器订阅：外部改了它打开的 CSV 时，按聚焦重载的同一规则处理。 */
 export const VAULT_FILES_CHANGED_DOM_EVENT = "shard:vault-files-changed"
 
+const IMAGE_PATH_PATTERN = /\.(?:avif|gif|heic|heif|jpe?g|png|svg|webp)$/iu
+
 export interface VaultChangePlan {
   /** 碎片或笔记的内容、增删与内存不一致：静默重读碎片列表。 */
   fragments: boolean
@@ -58,6 +60,8 @@ export function planVaultChanges(
     if (path.startsWith("notes/")) {
       const structural = treePaths !== null && exists !== treePaths.has(path)
       if (structural) plan.libraryTree = true
+      // 图片被外部原地替换：树里的修改时间是缩略图的缓存版本号，要重读才会换图。
+      if (exists && IMAGE_PATH_PATTERN.test(path)) plan.libraryTree = true
       if (structural && path.endsWith(".shardmap.json")) plan.mindMaps = true
     }
   }

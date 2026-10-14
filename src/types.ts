@@ -197,6 +197,15 @@ export interface LibraryMutationResult {
   tree: LibraryTreeSnapshot
   fragment?: Fragment
   updatedLinks: number
+  /** 改名、移动图片或目录时，正文里随之改写的图片引用处数。 */
+  updatedImageRefs?: number
+}
+
+export interface LibraryImportResult {
+  tree: LibraryTreeSnapshot
+  /** 导入后的 vault 相对路径。 */
+  imported: string[]
+  skipped: { path: string; reason: string }[]
 }
 
 export interface LegacyNoteMigrationResult {

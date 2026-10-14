@@ -209,6 +209,11 @@ fn file_sha(path: &Path) -> Option<String> {
     if !metadata.is_file() {
         return None;
     }
+    // sha 只给编辑器判断「是不是自己刚写的」；资料库里的图片不在编辑器里，不值得每个事件
+    // 整张读一遍。前端把 None 当作已变化处理。
+    if shard_core::image::is_image_path(path) {
+        return None;
+    }
     let bytes = fs::read(path).ok()?;
     let digest = Sha256::digest(&bytes);
     Some(digest.iter().map(|byte| format!("{byte:02x}")).collect())

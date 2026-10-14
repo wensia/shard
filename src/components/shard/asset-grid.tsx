@@ -1,6 +1,7 @@
 import { Fragment, type KeyboardEvent, type ReactElement, type ReactNode, useEffect, useRef, useState } from "react"
 import {
   ArrowLeftIcon,
+  CopyIcon,
   FolderOpenIcon,
   ImageIcon,
 } from "@/components/icons"
@@ -8,7 +9,7 @@ import {
 import { LibraryFileIcon } from "@/components/shard/library-file-icon"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
-import { revealFragmentImageInDir } from "@/lib/api"
+import { imageReferences, openVaultImage, revealFragmentImageInDir } from "@/lib/api"
 import { formatBytes, formatModifiedAt } from "@/lib/file-metadata"
 import { libraryEntryName, libraryEntryTypeLabel } from "@/lib/library-entry"
 import { vaultImageUrl } from "@/lib/fragment-images"
@@ -68,7 +69,11 @@ export interface LibrarySelectionModifiers {
 
 interface AssetViewerProps {
   asset: LibraryAssetEntry
+  /** 从目录树打开时回到所在目录，从图片宫格打开时回到宫格。 */
+  backLabel?: string
   onBack: () => void
+  /** 点「引用处」里的文件：打开那篇文档或那张表。 */
+  onOpenReference?: (path: string) => void
 }
 
 // 缩略图直接用 shard-asset 协议地址，由 webview 按需取图；取不到时什么都不画，
@@ -100,8 +105,10 @@ function AssetThumbnail({
   )
 }
 
+// 附件仓里的文件名是内容哈希，显示它毫无意义，只给格式；资料库目录里的命名图片显示文件名。
 function assetLabel(path: string) {
   const fileName = path.split("/").pop() ?? path
+  if (!path.startsWith("assets/")) return fileName.replace(/\.[^.]+$/u, "") || fileName
   const extension = fileName.match(/\.([a-z0-9]+)$/iu)?.[1]?.toUpperCase()
 
   return extension ?? "图片"
@@ -480,7 +487,30 @@ export function AssetGrid({ assets, onSelectAsset }: AssetGridProps) {
   )
 }
 
-export function AssetViewer({ asset, onBack }: AssetViewerProps) {
+export function AssetViewer({
+  asset,
+  backLabel = "返回图片列表",
+  onBack,
+  onOpenReference,
+}: AssetViewerProps) {
+  const name = assetLabel(asset.path)
+  const [references, setReferences] = useState<string[] | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    setReferences(null)
+    void imageReferences(asset.path)
+      .then((paths) => {
+        if (!cancelled) setReferences(paths)
+      })
+      .catch(() => {
+        if (!cancelled) setReferences([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [asset.path, asset.modifiedAt])
+
   async function revealInDir() {
     try {
       await revealFragmentImageInDir(asset.path)
@@ -491,17 +521,34 @@ export function AssetViewer({ asset, onBack }: AssetViewerProps) {
     }
   }
 
+  async function openWithDefaultApp() {
+    try {
+      await openVaultImage(asset.path)
+    } catch (error) {
+      notify.failure("图片打开失败", error)
+    }
+  }
+
+  async function copyReference() {
+    try {
+      await navigator.clipboard.writeText(markdownImageReference(name, asset.path))
+      notify.success("已复制图片引用", { description: "粘贴到文档里即显示这张图片。" })
+    } catch (error) {
+      notify.failure("复制失败", error)
+    }
+  }
+
   return (
     <div className={styles.viewer}>
       <div className={styles.viewerToolbar}>
         <Button
-          aria-label="返回图片列表"
+          aria-label={backLabel}
           onClick={onBack}
           size="sm"
           variant="ghost"
         >
           <ArrowLeftIcon aria-hidden="true" />
-          返回图片列表
+          {backLabel}
         </Button>
         <Button
           aria-label="在访达中显示"
@@ -512,11 +559,28 @@ export function AssetViewer({ asset, onBack }: AssetViewerProps) {
           <FolderOpenIcon aria-hidden="true" />
           在访达中显示
         </Button>
+        <Button
+          aria-label="用默认应用打开"
+          onClick={() => void openWithDefaultApp()}
+          size="sm"
+          variant="ghost"
+        >
+          用默认应用打开
+        </Button>
+        <Button
+          aria-label="复制图片引用"
+          onClick={() => void copyReference()}
+          size="sm"
+          variant="ghost"
+        >
+          <CopyIcon aria-hidden="true" />
+          复制图片引用
+        </Button>
       </div>
 
       <div className={styles.viewerStage}>
         <AssetThumbnail
-          alt={assetLabel(asset.path)}
+          alt={name}
           className={styles.viewerImage}
           path={asset.path}
           version={`${asset.modifiedAt}-${asset.size}`}
@@ -540,7 +604,46 @@ export function AssetViewer({ asset, onBack }: AssetViewerProps) {
             {formatModifiedAt(asset.modifiedAt) || "未知"}
           </dd>
         </div>
+        <div className={styles.viewerMetaRow}>
+          <dt className={styles.viewerMetaKey}>引用处</dt>
+          <dd className={styles.viewerMetaValue} aria-busy={references === null}>
+            {references === null ? (
+              "查找中…"
+            ) : references.length === 0 ? (
+              "没有文档或表格用到它"
+            ) : (
+              <ul aria-label="引用这张图片的文件" className={styles.referenceList}>
+                {references.map((path) => (
+                  <li key={path}>
+                    <button
+                      className={styles.referenceLink}
+                      disabled={!onOpenReference}
+                      onClick={() => onOpenReference?.(path)}
+                      type="button"
+                    >
+                      {referenceLabel(path)}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </dd>
+        </div>
       </dl>
     </div>
   )
+}
+
+function referenceLabel(path: string) {
+  if (path.startsWith("fragments/")) return `碎片 · ${path.split("/").pop()?.replace(/\.md$/u, "")}`
+  return path.replace(/^notes\//u, "").replace(/\.md$/u, "")
+}
+
+/** 粘进富文本编辑器即成图片节点；路径写法与编辑器序列化一致。 */
+export function markdownImageReference(alt: string, path: string) {
+  const safeAlt = alt.replace(/[[\]\\]/gu, "\\$&")
+  const destination = /[\s<>]/u.test(path)
+    ? `<${path.replace(/([<>])/gu, "\\$1")}>`
+    : path.replace(/([()])/gu, "\\$1")
+  return `![${safeAlt}](${destination})`
 }

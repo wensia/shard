@@ -44,6 +44,8 @@ export interface SearchTargetRouterAdapters {
     requestId: string,
     signal: AbortSignal
   ): Promise<{ reveal: SearchRevealHandle | null }>
+  /** 资料库里的命名图片：交给资料库的图片查看器。 */
+  openImage(target: SearchTarget): void
 }
 
 export interface CreateSearchTargetRouterOptions {
@@ -127,6 +129,12 @@ export function createSearchTargetRouter({
 
       if (target.kind === "csv") {
         openDatasetEditor(target.path)
+        throwIfAborted(signal)
+        return { status: "externalAccepted" }
+      }
+
+      if (target.kind === "image") {
+        adapters.openImage(target)
         throwIfAborted(signal)
         return { status: "externalAccepted" }
       }

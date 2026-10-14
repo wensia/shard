@@ -1954,7 +1954,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     target:
       | { kind: "note"; id: string; edit?: boolean }
       | { kind: "trash" }
-      | { kind: "mindmap" | "flowchart"; path: string }
+      | { kind: "mindmap" | "flowchart" | "image"; path: string }
   ) {
     nextLibraryNavigationIdRef.current += 1
     setPendingLibraryTarget({
@@ -2330,6 +2330,9 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
           setRoute({ space: "library", params: {} })
           await waitForSearchHost(requestId, signal)
           return { reveal: null }
+        },
+        openImage: (target) => {
+          requestLibraryTarget({ kind: "image", path: target.path })
         },
         openGraphFragment: async (_target, result, requestId, signal) => {
           setPendingLibrarySearchTarget(null)

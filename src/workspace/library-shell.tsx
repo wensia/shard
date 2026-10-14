@@ -76,6 +76,7 @@ import {
   createLibraryNote,
   createMindMap,
   importGraphFileToTimeline,
+  importLibraryFiles,
   listDiagramDocuments,
   listLibraryTree,
   listFragments,
@@ -93,6 +94,7 @@ import { readFlowchartContent } from "@/lib/flowchart-content"
 import { openDatasetEditor } from "@/features/datasets/open-dataset"
 import { extractTags, normalizeTagList } from "@/lib/editor-format"
 import { libraryEntryName, libraryNameError, type LibrarySort } from "@/lib/library-entry"
+import { isImageFilePath, useNativeFileDrop } from "@/lib/use-native-file-drop"
 import { notify } from "@/lib/notify"
 import { readOutlineContent } from "@/lib/mind-map-outline"
 import { useLibraryFileSelection } from "@/lib/use-library-file-selection"
@@ -135,6 +137,7 @@ export type LibraryNavigationTarget =
   | { kind: "note"; id: string; requestId: number; edit?: boolean }
   | { kind: "trash"; requestId: number }
   | { kind: "mindmap" | "flowchart"; path: string; requestId: number }
+  | { kind: "image"; path: string; requestId: number }
 
 export type LibrarySearchNavigationTarget =
   | {
@@ -209,6 +212,8 @@ type LibrarySelection =
   | { kind: "trash" }
   | { kind: "fragments" }
   | { kind: "assets"; path?: string }
+  /** 资料库目录里的命名图片：在第三栏看大图，返回回到所在目录。 */
+  | { kind: "image"; path: string }
   | { kind: "directory"; path: string }
   | null
 
@@ -218,7 +223,7 @@ function readLibrarySelection(vaultPath: string): LibrarySelection {
     if (value?.kind === "trash") return { kind: "trash" }
     if (value?.kind === "fragments") return { kind: "fragments" }
     if (value?.kind === "note" && typeof value.id === "string") return { kind: "note", id: value.id }
-    if (["directory", "mindmap", "canvas", "flowchart"].includes(value?.kind) &&
+    if (["directory", "mindmap", "canvas", "flowchart", "image"].includes(value?.kind) &&
       typeof value.path === "string" && (value.path === "notes" || value.path.startsWith("notes/"))) {
       return { kind: value.kind, path: value.path }
     }
@@ -388,7 +393,7 @@ export function LibraryShell({
   )
   const selectedAsset = useMemo<LibraryAssetEntry | null>(
     () =>
-      selection?.kind === "assets" && selection.path
+      (selection?.kind === "assets" || selection?.kind === "image") && selection.path
         ? libraryTree?.assets.find((asset) => asset.path === selection.path) ?? null
         : null,
     [libraryTree, selection]
@@ -418,6 +423,19 @@ export function LibraryShell({
   }, [fileSelection.active])
   const [selectionDockSize, setSelectionDockSize] = useState({ width: 0, height: 0 })
   const directoryWorkspaceRef = useRef<HTMLDivElement>(null)
+  const shellRef = useRef<HTMLElement>(null)
+  // 从访达拖图片到目录树的某个目录、或打开中的目录视图：按原文件名导入到那个目录。
+  const { target: imageDropTarget } = useNativeFileDrop({
+    frameRef: shellRef,
+    accepts: (paths, element) =>
+      paths.some(isImageFilePath) && libraryDropDirectory(element) !== null,
+    onDrop: (paths, element) => {
+      const directory = libraryDropDirectory(element)
+      const images = paths.filter(isImageFilePath)
+      if (directory && images.length > 0) void importImagesInto(images, directory)
+    },
+  })
+  const dropDirectory = imageDropTarget ? libraryDropDirectory(imageDropTarget) : null
   function clearFileSelectionFromDock() {
     directoryWorkspaceRef.current?.querySelector<HTMLElement>('[data-selection-active="true"]')?.focus({ preventScroll: true })
     fileSelection.onClear()
@@ -530,6 +548,11 @@ export function LibraryShell({
     }
     if (selection.kind === "assets" && selection.path && !libraryTree.assets.some(asset => asset.path === selection.path)) {
       setSelection({ kind: "assets" })
+      return
+    }
+    // 图片被改名、移走或删除：回到它原来所在的目录。
+    if (selection.kind === "image" && !libraryTree.assets.some(asset => asset.path === selection.path)) {
+      setSelection({ kind: "directory", path: parentLibraryPath(selection.path) })
       return
     }
     if (selection.kind === "trash") setSelectedTreePath("::trash")
@@ -858,6 +881,68 @@ export function LibraryShell({
     setMobilePane("editor")
   }
 
+  async function selectImageView(path: string) {
+    if (!(await saveCurrentNote())) return
+    setActiveSearchNavigation(null)
+    setSearchNote(null)
+    setSelection({ kind: "image", path })
+    setSelectedTreePath(path)
+    setIsZen(false)
+    setMobilePane("editor")
+  }
+
+  /** 图片查看器「引用处」：文档在资料库里打开，表格打开数据集，碎片交给碎片空间。 */
+  function openImageReference(path: string) {
+    if (/\.csv$/iu.test(path)) {
+      openDatasetEditor(path)
+      return
+    }
+    const note = editableFiles.find((candidate) => candidate.path === path)
+    if (!note) {
+      notify.warning("文档还在准备中", { description: "请稍后再试。" })
+      return
+    }
+    if (path.startsWith("fragments/")) onNavigateToFragment?.(note.id)
+    else void selectNote(note.id)
+  }
+
+  async function startImageImport(directory: string) {
+    if (busyAction || !(await saveCurrentNote())) return
+    const chosen = await openFileDialog({
+      title: "导入图片",
+      multiple: true,
+      directory: false,
+      filters: [{ name: "图片", extensions: ["png", "jpg", "jpeg", "gif", "webp", "svg", "heic", "heif", "avif"] }],
+    })
+    const paths = Array.isArray(chosen) ? chosen : typeof chosen === "string" ? [chosen] : []
+    if (paths.length > 0) await importImagesInto(paths, directory)
+  }
+
+  async function importImagesInto(paths: string[], directory: string) {
+    if (busyAction) return
+    setBusyAction("导入图片")
+    try {
+      const result = await importLibraryFiles(paths, directory)
+      onLibraryMutation({ tree: result.tree, updatedLinks: 0 })
+      if (result.imported.length > 0) {
+        notify.success(`已导入 ${result.imported.length} 张图片`, {
+          description: directory === "notes" ? "放在资料库根目录。" : `放在「${directory.replace(/^notes\//u, "")}」。`,
+        })
+      }
+      if (result.skipped.length > 0) {
+        notify.warning(`${result.skipped.length} 个文件没有导入`, {
+          detail: result.skipped.map((item) => `${item.path.split(/[\\/]/u).pop()}：${item.reason}`).join("\n"),
+        })
+      }
+      if (result.imported.length === 1) await selectImageView(result.imported[0])
+      else if (result.imported.length > 1) await selectDirectoryView(directory)
+    } catch (error) {
+      notify.failure("导入图片失败", error)
+    } finally {
+      setBusyAction(null)
+    }
+  }
+
   async function selectDirectoryView(path: string) {
     if (!(await saveCurrentNote())) return
     setActiveSearchNavigation(null)
@@ -902,6 +987,12 @@ export function LibraryShell({
       void selectTrashView().then((selected) => {
         if (selected) consumedNavigationRef.current = navigateTo.requestId
       })
+      return
+    }
+    if (navigateTo.kind === "image") {
+      if (!libraryTree?.assets.some((asset) => asset.path === navigateTo.path)) return
+      consumedNavigationRef.current = navigateTo.requestId
+      void selectImageView(navigateTo.path)
       return
     }
     if (!findTreeEntry(libraryTree?.entries ?? [], navigateTo.path)) return
@@ -974,7 +1065,7 @@ export function LibraryShell({
   const selectedFilePath = selectedNote?.path ?? selectedMindMap?.path ??
     activeSearchNavigation?.target.path ?? selectedCanvasPath
   const canEnterZen = selection?.kind === "note" || selection?.kind === "mindmap" ||
-    (selection?.kind === "assets" && Boolean(selection.path))
+    (selection?.kind === "assets" && Boolean(selection.path)) || selection?.kind === "image"
   const openedFileParentPath = (() => {
     const path = selectedFilePath
     if (!path) return null
@@ -991,6 +1082,8 @@ export function LibraryShell({
         ? "碎片"
       : selection?.kind === "assets"
         ? "图片"
+      : selection?.kind === "image"
+        ? libraryEntryName({ name: selection.path.split("/").pop() ?? "图片", kind: "image" })
       : selection?.kind === "directory"
         ? selection.path === "notes"
           ? "资料库"
@@ -1051,6 +1144,9 @@ export function LibraryShell({
       }
       if (result.updatedLinks > 0) {
         notify.success(`${result.updatedLinks} 处双链引用已更新`)
+      }
+      if ((result.updatedImageRefs ?? 0) > 0) {
+        notify.success(`${result.updatedImageRefs} 处图片引用已更新`)
       }
       // Keep path selection and the new tree in one update, before a missing-file effect can clear the viewer.
       onSuccess?.(result)
@@ -1117,6 +1213,7 @@ export function LibraryShell({
     const completed: string[] = []
     let latest: LibraryMutationResult | null = null
     let updatedLinks = 0
+    let updatedImageRefs = 0
     setBatchError(null)
     setBusyAction(`${label}中（0/${entries.length}）`)
     const saving = saveCurrentNote()
@@ -1130,6 +1227,7 @@ export function LibraryShell({
             ? await moveLibraryEntry(entry.path, destination)
             : await deleteLibraryEntry(entry.path)
           updatedLinks += latest.updatedLinks
+          updatedImageRefs += latest.updatedImageRefs ?? 0
           completed.push(entry.path)
         } catch (error) {
           let message = `已完成 ${completed.length}/${entries.length} 项；「${entry.name}」操作失败：${getApiErrorMessage(error)}，已停止后续操作。`
@@ -1156,7 +1254,11 @@ export function LibraryShell({
       if (latest) onLibraryMutation({ ...latest, updatedLinks })
       fileSelection.finish(completed, true)
       setTreeDialog(null)
-      notify.success(`${completed.length} 项已${label}`, updatedLinks ? { description: `同时更新了 ${updatedLinks} 处双链引用。` } : undefined)
+      const updatedSummary = [
+        updatedLinks ? `${updatedLinks} 处双链引用` : "",
+        updatedImageRefs ? `${updatedImageRefs} 处图片引用` : "",
+      ].filter(Boolean).join("、")
+      notify.success(`${completed.length} 项已${label}`, updatedSummary ? { description: `同时更新了 ${updatedSummary}。` } : undefined)
     } finally {
       structurePending.current = false
       batchPending.current = false
@@ -1528,6 +1630,10 @@ export function LibraryShell({
       openDatasetEditor(entry.path)
       return
     }
+    if (entry.kind === "image") {
+      void selectImageView(entry.path)
+      return
+    }
     const note = editableFiles.find((candidate) => candidate.path === entry.path)
     if (note) {
       if (note.path.startsWith("fragments/") && (
@@ -1602,7 +1708,12 @@ export function LibraryShell({
   function renderSelectedViewer(zen: boolean) {
     if (directoryScope) {
       return (
-        <div ref={directoryWorkspaceRef} className={styles.directoryWorkspace}>
+        <div
+          ref={directoryWorkspaceRef}
+          className={styles.directoryWorkspace}
+          data-drop-target={dropDirectory !== null && dropDirectory === directoryScope ? "true" : undefined}
+          data-library-drop-directory={directoryScope === "fragments" ? undefined : directoryScope}
+        >
           <DirectoryView
             bottomInset={selectionDockSize.height}
             busy={busyAction !== null}
@@ -1698,12 +1809,24 @@ export function LibraryShell({
       )
     }
 
+    if (selection?.kind === "image" && selectedAsset) {
+      return (
+        <AssetViewer
+          asset={selectedAsset}
+          backLabel="返回所在目录"
+          onBack={() => void selectDirectoryView(parentLibraryPath(selectedAsset.path))}
+          onOpenReference={openImageReference}
+        />
+      )
+    }
+
     if (selection?.kind === "assets") {
       if (selection.path && selectedAsset) {
         return (
           <AssetViewer
             asset={selectedAsset}
             onBack={() => void selectAssetsView()}
+            onOpenReference={openImageReference}
           />
         )
       }
@@ -1856,7 +1979,7 @@ export function LibraryShell({
         : "删除"
 
   return (
-    <section aria-label="资料库" className={styles.shell}>
+    <section aria-label="资料库" className={styles.shell} ref={shellRef}>
       <div className={styles.workspace} data-table-open={selectedCanvasPath || selectedMindMap ? "true" : undefined}>
         <aside
           aria-busy={busyAction !== null || isLoading ? true : undefined}
@@ -1902,6 +2025,9 @@ export function LibraryShell({
                   </DropdownMenuItem>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem onClick={() => queueCreateAction(() => void startDatasetImport(selectedDirectory))}>从 CSV / Excel 导入…</DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => queueCreateAction(() => void startImageImport(selectedDirectory))}>
+                    <ImageIcon aria-hidden="true" />导入图片…
+                  </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
             </div>
@@ -1939,7 +2065,11 @@ export function LibraryShell({
               </nav>
 
               <div className={styles.filesSection}>
-                <div className={styles.filesRoot}>
+                <div
+                  className={styles.filesRoot}
+                  data-drop-target={dropDirectory === "notes" ? "true" : undefined}
+                  data-library-drop-directory="notes"
+                >
                   <button
                     aria-current={activeFileDirectory === "notes" ? "page" : undefined}
                     aria-label={`文件（${fileCount}）`}
@@ -1976,6 +2106,7 @@ export function LibraryShell({
                         onRenameSubmit={() => void submitRename()}
                         renaming={renaming?.source === "tree" ? renaming : null}
                         renderCreateRow={renderCreateDirectoryRow}
+                        dropDirectory={dropDirectory}
                         selectedPath={activeFileDirectory ?? ""}
                       />
                     </ul>
@@ -2237,7 +2368,7 @@ export function LibraryShell({
         </ZenSurface>
       ) : null}
 
-      {isZen && selection?.kind === "assets" && selectedAsset ? (
+      {isZen && (selection?.kind === "assets" || selection?.kind === "image") && selectedAsset ? (
         <ZenSurface
           ariaLabel="资料库图片禅模式"
           onRequestClose={() => setIsZen(false)}
@@ -2349,6 +2480,8 @@ interface TreeEntriesProps {
   onRenameSubmit: () => void
   renaming: { path: string; value: string } | null
   renderCreateRow: (parentPath: string) => ReactNode
+  /** 从访达拖图片悬停中的目录。 */
+  dropDirectory: string | null
   selectedPath: string
 }
 
@@ -2369,6 +2502,7 @@ function TreeEntries({
   onRenameSubmit,
   renaming,
   renderCreateRow,
+  dropDirectory,
   selectedPath,
 }: TreeEntriesProps) {
   return entries.filter((entry) => entry.kind === "directory").map((entry) => {
@@ -2414,6 +2548,8 @@ function TreeEntries({
         ) : (
           <div
             className={styles.treeRow}
+            data-drop-target={dropDirectory === entry.path ? "true" : undefined}
+            data-library-drop-directory={entry.path}
             data-selected={selectedPath === entry.path ? "true" : undefined}
           >
             {canExpand ? (
@@ -2472,6 +2608,7 @@ function TreeEntries({
               onRenameSubmit={onRenameSubmit}
               renaming={renaming}
               renderCreateRow={renderCreateRow}
+              dropDirectory={dropDirectory}
               selectedPath={selectedPath}
             />
           </ul>
@@ -2479,6 +2616,15 @@ function TreeEntries({
       </li>
     )
   })
+}
+
+function libraryDropDirectory(element: Element) {
+  return element.closest("[data-library-drop-directory]")?.getAttribute("data-library-drop-directory") ?? null
+}
+
+function parentLibraryPath(path: string) {
+  const separator = path.lastIndexOf("/")
+  return separator > 0 ? path.slice(0, separator) : "notes"
 }
 
 function collectDirectoryPaths(entries: LibraryTreeEntry[]): string[] {

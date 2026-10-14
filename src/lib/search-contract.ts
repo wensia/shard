@@ -12,6 +12,8 @@ export type SearchKind =
   | "flowchart"
   | "canvas"
   | "csv"
+  /** 资料库目录里的命名图片；只来自前端 ⌘O 目录，Rust 搜索不产出。 */
+  | "image"
 
 export type SearchField = "title" | "tags" | "body" | "path"
 

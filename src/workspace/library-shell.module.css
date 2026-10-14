@@ -260,6 +260,17 @@
   color: var(--primary-text);
 }
 
+/* 从访达拖图片悬停的目标目录。 */
+.treeRow[data-drop-target="true"],
+.filesRoot[data-drop-target="true"] {
+  background: var(--primary-subtle);
+  box-shadow: inset var(--ring-focus);
+}
+
+.directoryWorkspace[data-drop-target="true"] {
+  box-shadow: inset var(--ring-focus);
+}
+
 .treeButton {
   min-height: var(--nav-item-height);
   flex: 1;

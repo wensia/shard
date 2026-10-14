@@ -40,7 +40,7 @@ const suffixes: Partial<Record<LibraryTreeEntryKind, RegExp>> = {
   mindmap: /\.shardmap\.json$/i,
   flowchart: /\.shardflow\.json$/i,
   canvas: /\.shardcanvas\.json$/i,
-  image: /\.(gif|jpe?g|png|svg|webp)$/i,
+  image: /\.(avif|gif|heic|heif|jpe?g|png|svg|webp)$/i,
   file: /\.[^.]+$/,
 }
 

@@ -21,7 +21,8 @@ use sha2::{Digest, Sha256};
 use shard_core::search::SearchProjectionBlock;
 
 const SCHEMA_VERSION: i64 = 2;
-const INDEX_FORMAT: &str = "search-projection-assets-v4";
+// v5：图片引用按 Markdown 目标与 CSV 单元格解析，datasets/ 下的 CSV 也是资料库来源。
+const INDEX_FORMAT: &str = "search-projection-assets-v5";
 const BATCH_SIZE: usize = 1_000;
 
 #[derive(Default)]
@@ -219,7 +220,7 @@ impl IndexStore {
         let conn = self.conn.lock().unwrap_or_else(|error| error.into_inner());
         let mut statement = conn.prepare(
             "SELECT l.src_path, l.target FROM links l JOIN files f ON f.path = l.src_path \
-             WHERE l.kind = 'asset' AND l.src_path LIKE 'notes/%'",
+             WHERE l.kind = 'asset'",
         )?;
         let rows = statement.query_map([], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))

@@ -16,6 +16,7 @@ import type {
   GitInfo,
   LockboxSetupResult,
   LegacyNoteMigrationResult,
+  LibraryImportResult,
   LibraryMutationResult,
   LibraryTreeSnapshot,
   MindMapReadResult,
@@ -439,6 +440,20 @@ export function saveFragmentImage(fileName: string, bytes: Uint8Array) {
 // 从访达拖进来的图片：Rust 直接按路径读，字节不经过前端。
 export function saveImageAttachmentFromPath(path: string) {
   return desktopInvoke<string>("save_image_attachment_from_path", { path })
+}
+
+/** 把访达里的图片按原文件名复制进资料库目录（缺省 notes/ 根），重名加 -2。 */
+export function importLibraryFiles(paths: string[], directory?: string | null) {
+  return desktopInvoke<LibraryImportResult>("import_library_files", { paths, directory: directory ?? null })
+}
+
+/** 用到这张图片的公开文档与表格（vault 相对路径，不含回收站）。 */
+export function imageReferences(path: string) {
+  return desktopInvoke<string[]>("image_references", { path })
+}
+
+export function openVaultImage(path: string) {
+  return desktopInvoke<void>("open_vault_image", { path })
 }
 
 export function readFragmentImage(path: string) {

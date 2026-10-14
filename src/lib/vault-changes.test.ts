@@ -57,6 +57,20 @@ describe("planVaultChanges", () => {
     expect(planVaultChanges([change("notes/新目录", null, true)], { ...known, libraryTree: null }).libraryTree).toBe(false)
   })
 
+  it("refreshes the tree when a library image is replaced in place", () => {
+    const withImage = {
+      ...known,
+      libraryTree: {
+        ...tree,
+        entries: [{ name: "照片.jpg", path: "notes/照片.jpg", kind: "image", size: 1, modifiedAt: "" }],
+      } as unknown as LibraryTreeSnapshot,
+    }
+    // 图片的 sha 不计算（null），存在即视为可能已被替换。
+    expect(planVaultChanges([change("notes/照片.jpg", null, true)], withImage).libraryTree).toBe(true)
+    expect(planVaultChanges([change("notes/照片.jpg", null, false)], withImage).libraryTree).toBe(true)
+    expect(planVaultChanges([change("notes/说明.txt", null, false)], withImage).libraryTree).toBe(false)
+  })
+
   it("hands csv paths to dataset views and refreshes the csv list on add or remove", () => {
     expect(planVaultChanges([change("datasets/阅读.csv", "sha")], known)).toMatchObject({ csvFiles: false, datasets: ["datasets/阅读.csv"] })
     expect(planVaultChanges([change("datasets/新.csv", "sha")], known)).toMatchObject({ csvFiles: true, datasets: ["datasets/新.csv"] })

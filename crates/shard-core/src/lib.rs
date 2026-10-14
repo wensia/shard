@@ -9,6 +9,7 @@ pub mod frontmatter;
 pub mod graph_model;
 pub mod graph_region;
 pub mod image;
+pub mod image_refs;
 pub mod library;
 pub mod outline_import;
 pub mod search;

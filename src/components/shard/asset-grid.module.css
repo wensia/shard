@@ -472,3 +472,36 @@ button.cardBody {
   color: var(--foreground);
   font-size: var(--shard-text-xs);
 }
+
+.referenceList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--shard-space-1) var(--shard-space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.referenceLink {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--primary);
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.referenceLink:hover:not(:disabled) {
+  text-decoration: underline;
+}
+
+.referenceLink:disabled {
+  color: var(--foreground);
+  cursor: default;
+}
+
+.referenceLink:focus-visible {
+  outline: none;
+  box-shadow: var(--ring-focus);
+}
