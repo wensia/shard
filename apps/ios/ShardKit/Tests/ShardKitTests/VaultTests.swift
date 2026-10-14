@@ -139,6 +139,12 @@ source: desktop
         #expect(VaultPaths.isExcluded(".trash/fragments/a.md"))
         #expect(VaultPaths.isExcluded(".shard/notes.sqlite3"))
         #expect(VaultPaths.isAsset("assets/52/abc.png"))
+        #expect(VaultPaths.isAsset("notes/证件/营业执照 1.JPG"))
+        #expect(VaultPaths.isAsset("notes/旅行/IMG_0001.heic"))
+        #expect(!VaultPaths.isAsset("notes/证件/说明.md"))
+        #expect(!VaultPaths.isAsset("notes/.hidden/a.png"))
+        #expect(!VaultPaths.isAsset("fragments/a.png"))
+        #expect(!VaultPaths.isAsset("lockbox/a.png"))
     }
 }
 

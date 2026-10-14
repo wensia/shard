@@ -46,8 +46,8 @@ function postToNative(message: NativeMessage) {
   window.webkit?.messageHandlers?.shard?.postMessage(message)
 }
 
-// Vault files are content-addressed under `assets/`; the native scheme
-// handler serves them from the offline cache or fetches them on demand.
+// Vault images (content-addressed `assets/…` or named images under `notes/`); the
+// native scheme handler serves them from the offline cache or fetches them on demand.
 function vaultAssetURL(path: string) {
   const relative = path.replace(/^\.?\//, "")
   return `shard://vault/${relative.split("/").map(encodeURIComponent).join("/")}`

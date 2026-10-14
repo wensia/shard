@@ -11,9 +11,16 @@ public enum VaultPaths {
         documentRoots.contains(where: path.hasPrefix) && path.hasSuffix(".md") && !hasHiddenComponent(path)
     }
 
-    /// Attachments referenced from Markdown, fetched lazily when an image is shown.
+    /// Image extensions the desktop library treats as images (`shard-core::image`).
+    static let imageExtensions: Set<String> = ["avif", "gif", "heic", "heif", "jpeg", "jpg", "png", "svg", "webp"]
+
+    /// Images fetched lazily when shown: content-addressed attachments under `assets/`, and
+    /// named images the desktop library keeps next to documents under `notes/`.
     public static func isAsset(_ path: String) -> Bool {
-        path.hasPrefix("assets/") && !hasHiddenComponent(path)
+        guard !hasHiddenComponent(path) else { return false }
+        if path.hasPrefix("assets/") { return true }
+        guard path.hasPrefix("notes/"), let dot = path.lastIndex(of: ".") else { return false }
+        return imageExtensions.contains(path[path.index(after: dot)...].lowercased())
     }
 
     public static func isExcluded(_ path: String) -> Bool {
