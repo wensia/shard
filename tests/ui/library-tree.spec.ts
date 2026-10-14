@@ -3528,6 +3528,10 @@ async function installLibraryImageMock(page: Page) {
         record(command, args)
         return null
       }
+      if (command === "save_image_attachment_from_path") {
+        record(command, args)
+        return `assets/ab/${String((args as { path: string }).path).split("/").pop()}`
+      }
       const result = await original(command, args, options)
       if (command === "list_library_tree") return withImages(result)
       if (result && typeof result === "object" && "tree" in result && result.tree?.entries) {
@@ -3625,4 +3629,28 @@ test("⌘O 按文件名找到资料库里的图片并打开查看器", async ({ 
   await page.getByRole("option", { name: /营业执照/u }).first().click()
   await expect(page.locator('img[alt="营业执照"]')).toBeVisible()
   await expect(page.getByRole("button", { name: "返回所在目录", exact: true })).toBeVisible()
+})
+
+test("从访达把图片拖进打开的文档：当作配图插在落点，不导入成资料库条目", async ({ page }) => {
+  await installLibraryImageMock(page)
+  await page.getByRole("button", { name: "资料库", exact: true }).click()
+  await page.getByRole("button", { name: /^文件（/u, exact: true }).click()
+  await page.getByRole("button", { name: "打开文件 旧笔记.md", exact: true }).click()
+  const editor = page.locator('[data-shard-editor="library:note-old"] .ProseMirror')
+  await expect(editor).toContainText("待重命名")
+  const box = (await editor.getByText("待重命名", { exact: true }).boundingBox())!
+  const drop = (type: "enter" | "over" | "drop", paths: string[]) =>
+    page.evaluate(({ type, paths, x, y }) =>
+      (window as unknown as { __libraryImages: LibraryImageState }).__libraryImages.drag(type, paths, x, y),
+    { type, paths, x: box.x + box.width + 2, y: box.y + box.height / 2 })
+
+  await drop("enter", ["/Users/me/白板.png"])
+  await drop("drop", ["/Users/me/白板.png"])
+  await expect.poll(() => commandCalls(page, "save_image_attachment_from_path")).toEqual([
+    { command: "save_image_attachment_from_path", args: { path: "/Users/me/白板.png" } },
+  ])
+  expect(await commandCalls(page, "import_library_files")).toEqual([])
+  await expect.poll(() => readEditor(page, "library:note-old")).toBe(
+    "# 旧笔记\n\n待重命名![白板](assets/ab/白板.png)"
+  )
 })

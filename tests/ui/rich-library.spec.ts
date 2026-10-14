@@ -4,6 +4,7 @@ import {
   fillEditor,
   focusEditor,
   readEditor,
+  selectEditorText,
   typeEditor,
 } from "./editor-helpers"
 import { installSearchIpcMock } from "./search-ipc-mock"
@@ -110,7 +111,12 @@ async function installRichLibraryMock(page: Page, noteBody = NOTE_BODY) {
             case "open_csv_file": return null
             case "read_fragment_image":
               return "data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs="
-            case "save_fragment_image": return `assets/${String(args.fileName)}`
+            case "save_fragment_image": {
+              // 测试可以把上传挂起，核对占位与期间输入。
+              const hold = (window as unknown as { __holdImageUpload?: Promise<void> }).__holdImageUpload
+              if (hold) await hold
+              return `assets/${String(args.fileName)}`
+            }
             case "list_library_tree": return clone(tree)
             case "migrate_legacy_notes": return { tree: clone(tree), migratedCount: 0 }
             case "sync_vault": return clone(git)
@@ -135,6 +141,14 @@ async function installRichLibraryMock(page: Page, noteBody = NOTE_BODY) {
       },
     })
   }, noteBody)
+}
+
+async function pasteImage(page: Page, fileName: string) {
+  await proseMirror(page).evaluate((element, name) => {
+    const clipboardData = new DataTransfer()
+    clipboardData.items.add(new File([new Uint8Array([137, 80, 78, 71])], name, { type: "image/png" }))
+    element.dispatchEvent(new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData }))
+  }, fileName)
 }
 
 function proseMirror(page: Page) {
@@ -312,18 +326,9 @@ test.describe("资料库编辑器", () => {
     await expect.poll(() => readEditor(page, `library:${NOTE_ID}`)).toBe("[[尚未创建]]")
   })
 
-  test("粘贴图片走共享上传命令，并把附件追加到正文", async ({ page }) => {
-    await proseMirror(page).evaluate((element) => {
-      const clipboardData = new DataTransfer()
-      clipboardData.items.add(
-        new File([new Uint8Array([137, 80, 78, 71])], "library-paste.png", {
-          type: "image/png",
-        })
-      )
-      element.dispatchEvent(
-        new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData })
-      )
-    })
+  test("粘贴图片走共享上传命令，图片插在光标处而不是文末", async ({ page }) => {
+    await selectEditorText(page, `library:${NOTE_ID}`, "正文第一段", { collapse: "end" })
+    await pasteImage(page, "library-paste.png")
 
     await expect.poll(() => commandCalls(page, "save_fragment_image")).toEqual([
       { bytes: [137, 80, 78, 71], fileName: "library-paste.png" },
@@ -331,9 +336,29 @@ test.describe("资料库编辑器", () => {
     await expect(
       proseMirror(page).locator('[data-shard-rich-inline="image"]')
     ).toHaveCount(1)
-    // 附件按方言独占一个块，alt 由文件名推出。
+    // alt 由文件名推出；列表仍在最后，图片没有被追加到文末。
     await expect.poll(() => readEditor(page, `library:${NOTE_ID}`)).toBe(
-      `${NOTE_BODY}\n\n![library paste](assets/library-paste.png)`
+      "# 文档样例\n\n正文第一段![library paste](assets/library-paste.png) #工作\n\n- 列表项"
+    )
+  })
+
+  test("上传期间先显示占位，期间继续输入，图片仍落在原来的位置", async ({ page }) => {
+    await page.evaluate(() => {
+      const runtime = window as unknown as { __holdImageUpload?: Promise<void>; __releaseImageUpload?: () => void }
+      runtime.__holdImageUpload = new Promise<void>((resolve) => { runtime.__releaseImageUpload = resolve })
+    })
+    await selectEditorText(page, `library:${NOTE_ID}`, "文档样例", { collapse: "end" })
+    await pasteImage(page, "slow.png")
+    const placeholder = proseMirror(page).locator(".shard-rich-image-uploading")
+    await expect(placeholder).toHaveText("图片上传中…")
+
+    await selectEditorText(page, `library:${NOTE_ID}`, "列表项", { collapse: "end" })
+    await page.keyboard.type("，再补一句")
+    await page.evaluate(() => (window as unknown as { __releaseImageUpload: () => void }).__releaseImageUpload())
+
+    await expect(placeholder).toHaveCount(0)
+    await expect.poll(() => readEditor(page, `library:${NOTE_ID}`)).toBe(
+      "# 文档样例![slow](assets/slow.png)\n\n正文第一段 #工作\n\n- 列表项，再补一句"
     )
   })
 })

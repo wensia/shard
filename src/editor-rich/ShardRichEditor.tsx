@@ -47,6 +47,11 @@ import {
   previewConvergedDoc,
 } from "./extensions/inline-converge"
 import { ShardDocumentFind } from "./extensions/document-find"
+import {
+  insertImageUploads,
+  ShardImageUploadPlaceholder,
+  type RichUploadedImage,
+} from "./extensions/image-upload-placeholder"
 import { ShardCaret } from "./extensions/shard-caret"
 import { ShardSelectionBand } from "./extensions/shard-selection-band"
 import { ShardMemoGuard } from "./extensions/memo-guard"
@@ -109,6 +114,13 @@ export interface ShardRichEditorProps {
   onDropFiles?: (files: File[]) => void
   getKnownTags?: () => string[]
   onImageFiles?: (files: File[]) => void
+  /**
+   * 宿主存图：传了它，粘贴、拖放、`/图片` 的图片就由编辑器在光标或落点原位插入
+   * （先放「上传中」占位），`onPasteFiles`/`onDropFiles`/`onImageFiles` 不再收到图片。
+   */
+  uploadImage?: (file: File) => Promise<RichUploadedImage | null>
+  /** 原生拖放（访达）交来的文件路径；配合句柄的 `insertImagesFromPaths`。 */
+  uploadImageFromPath?: (path: string) => Promise<RichUploadedImage | null>
   /** `/大纲`：宿主把整个速记框切成幕布式大纲态。不传即不提供该命令。 */
   onEnterOutline?: () => void
   /** `/流程图`：宿主立即创建空流程图。不传即不提供该命令。 */
@@ -128,6 +140,8 @@ export interface ShardRichEditorProps {
 export interface ShardRichEditorHandle extends SearchRevealHandle {
   focus(): void
   insertDatasetReference(path: string): void
+  /** 访达拖进来的图片：按页面坐标找落点（不给坐标就插在光标处），逐张存好后原位插入。 */
+  insertImagesFromPaths(paths: string[], point?: { clientX: number; clientY: number }): void
   getMarkdown(): string
   /**
    * 自动保存取值：与 getMarkdown 同一套收敛口径，但只算不改——编辑器里的字面
@@ -204,6 +218,8 @@ export const ShardRichEditor = forwardRef<ShardRichEditorHandle, ShardRichEditor
       onDropFiles,
       getKnownTags,
       onImageFiles,
+      uploadImage,
+      uploadImageFromPath,
       onEnterOutline,
       onCreateFlowchart,
       onMarkDocument,
@@ -237,6 +253,8 @@ export const ShardRichEditor = forwardRef<ShardRichEditorHandle, ShardRichEditor
       onPasteFiles,
       onDropFiles,
       onImageFiles,
+      uploadImage,
+      uploadImageFromPath,
       onEnterOutline,
       onCreateFlowchart,
       onMarkDocument,
@@ -255,6 +273,8 @@ export const ShardRichEditor = forwardRef<ShardRichEditorHandle, ShardRichEditor
       onPasteFiles,
       onDropFiles,
       onImageFiles,
+      uploadImage,
+      uploadImageFromPath,
       onEnterOutline,
       onCreateFlowchart,
       onMarkDocument,
@@ -295,6 +315,21 @@ export const ShardRichEditor = forwardRef<ShardRichEditorHandle, ShardRichEditor
     placeholderRef.current = placeholder
     const tierRef = useRef(tier)
     tierRef.current = tier
+
+    /** 宿主接了 uploadImage 就原位插入，返回 true；没接交回旧回调。 */
+    function uploadFilesAt(files: File[], pos: number) {
+      const upload = callbacks.current.uploadImage
+      const instance = editorRef.current
+      if (!upload || !instance || instance.isDestroyed) return false
+      void insertImageUploads(instance, files.map((file) => () => upload(file)), pos)
+      return true
+    }
+
+    function imageFilesAtSelection(files: File[]) {
+      const instance = editorRef.current
+      if (instance && uploadFilesAt(files, instance.state.selection.from)) return
+      callbacks.current.onImageFiles?.(files)
+    }
 
     function hostCommands() {
       const {
@@ -410,8 +445,12 @@ export const ShardRichEditor = forwardRef<ShardRichEditorHandle, ShardRichEditor
           },
           onToggleZen: () => callbacks.current.onToggleZen?.(),
           onEscape: () => callbacks.current.onEscape?.(),
-          onPasteFiles: (files) => callbacks.current.onPasteFiles?.(files),
-          onDropFiles: (files) => callbacks.current.onDropFiles?.(files),
+          onPasteFiles: (files, pos) => {
+            if (!uploadFilesAt(files, pos)) callbacks.current.onPasteFiles?.(files)
+          },
+          onDropFiles: (files, pos) => {
+            if (!uploadFilesAt(files, pos)) callbacks.current.onDropFiles?.(files)
+          },
           onCompositionEnd: () => emitChange(),
           onOpenDocumentLink: (link) => callbacks.current.onOpenDocumentLink?.(link),
         }),
@@ -421,7 +460,7 @@ export const ShardRichEditor = forwardRef<ShardRichEditorHandle, ShardRichEditor
         }),
         ShardSlashSuggestion.configure({
           menu,
-          onImageFiles: (files) => callbacks.current.onImageFiles?.(files),
+          onImageFiles: (files) => imageFilesAtSelection(files),
           // 宿主命令按「有没有传回调」进菜单：没接大纲/文档的编辑面不展示它们。
           getHostCommands: () => hostCommands(),
           isDocumentTier: () => tierRef.current === "document",
@@ -438,6 +477,7 @@ export const ShardRichEditor = forwardRef<ShardRichEditorHandle, ShardRichEditor
         ShardSearchHighlight,
         ShardDocumentFind,
         ShardCaret,
+        ShardImageUploadPlaceholder,
         ShardSelectionBand,
       ],
       // 扩展集一次成型：回调全部经 callbacks ref 取最新值。
@@ -646,8 +686,26 @@ export const ShardRichEditor = forwardRef<ShardRichEditorHandle, ShardRichEditor
         insertCommand(id) {
           const instance = editorRef.current
           if (instance) {
-            runRichSlashCommand(instance, id, callbacks.current.onImageFiles, hostCommands())
+            runRichSlashCommand(instance, id, imageFilesAtSelection, hostCommands())
           }
+        },
+        insertImagesFromPaths(paths, point) {
+          const instance = editorRef.current
+          const upload = callbacks.current.uploadImageFromPath
+          if (!instance || instance.isDestroyed || !instance.isEditable || !upload) return
+          // 落在正文两侧留白也算：把坐标收进编辑区再换算成最近的文档位置。
+          const rect = instance.view.dom.getBoundingClientRect()
+          const pos = point
+            ? instance.view.posAtCoords({
+              left: Math.min(Math.max(point.clientX, rect.left + 1), rect.right - 1),
+              top: Math.min(Math.max(point.clientY, rect.top + 1), rect.bottom - 1),
+            })?.pos
+            : undefined
+          void insertImageUploads(
+            instance,
+            paths.map((path) => () => upload(path)),
+            pos ?? instance.state.selection.from
+          )
         },
         insertDatasetReference(path) {
           const instance = editorRef.current

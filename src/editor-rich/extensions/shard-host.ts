@@ -10,8 +10,10 @@ export interface ShardRichHostOptions {
   onToggleZen?: () => void
   /** Escape：宿主收尾（退出禅模式等）。不传即不处理。 */
   onEscape?: () => void
-  onPasteFiles?: (files: File[]) => void
-  onDropFiles?: (files: File[]) => void
+  /** `pos` 是粘贴时的光标位置，宿主要原位插入时用。 */
+  onPasteFiles?: (files: File[], pos: number) => void
+  /** `pos` 是松手处的文档位置（取不到时退回光标）。 */
+  onDropFiles?: (files: File[], pos: number) => void
   /** 组合输入结束后回调宿主补发 onChange（组合期间不报值）。 */
   onCompositionEnd?: () => void
   /** 点击正文里的图文档链接（`shard://map|flow/<id>`）。不传即按普通链接不处理。 */
@@ -102,18 +104,19 @@ export const ShardRichHost = Extension.create<ShardRichHostOptions>({
               options.onOpenDocumentLink(link)
               return true
             },
-            paste: (_view, event) => {
+            paste: (view, event) => {
               const files = getClipboardImageFiles(event)
               if (files.length === 0 || !options.onPasteFiles) return false
               event.preventDefault()
-              options.onPasteFiles(files)
+              options.onPasteFiles(files, view.state.selection.from)
               return true
             },
-            drop: (_view, event) => {
+            drop: (view, event) => {
               const files = droppedImageFiles(event)
               if (files.length === 0 || !options.onDropFiles) return false
               event.preventDefault()
-              options.onDropFiles(files)
+              const pos = view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos
+              options.onDropFiles(files, pos ?? view.state.selection.from)
               return true
             },
             compositionend: (view) => {

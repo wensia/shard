@@ -423,16 +423,22 @@ export function LibraryShell({
   }, [fileSelection.active])
   const [selectionDockSize, setSelectionDockSize] = useState({ width: 0, height: 0 })
   const directoryWorkspaceRef = useRef<HTMLDivElement>(null)
-  const shellRef = useRef<HTMLElement>(null)
-  // 从访达拖图片到目录树的某个目录、或打开中的目录视图：按原文件名导入到那个目录。
+  // 从访达拖图片：落在目录树的某个目录或打开中的目录视图，按原文件名导入到那个目录；
+  // 落在打开中的文档（含禅模式），当作配图插在落点。
   const { target: imageDropTarget } = useNativeFileDrop({
-    frameRef: shellRef,
     accepts: (paths, element) =>
-      paths.some(isImageFilePath) && libraryDropDirectory(element) !== null,
-    onDrop: (paths, element) => {
-      const directory = libraryDropDirectory(element)
+      paths.some(isImageFilePath) &&
+      (libraryDropDirectory(element) !== null || isLibraryDocumentDrop(element)),
+    onDrop: (paths, element, point) => {
       const images = paths.filter(isImageFilePath)
-      if (directory && images.length > 0) void importImagesInto(images, directory)
+      if (images.length === 0) return
+      // 拖进打开中的文档：当作配图插在落点；拖到目录：按原名导入成资料库条目。
+      if (isLibraryDocumentDrop(element)) {
+        richNoteEditor.current?.insertImagesFromPaths(images, point)
+        return
+      }
+      const directory = libraryDropDirectory(element)
+      if (directory) void importImagesInto(images, directory)
     },
   })
   const dropDirectory = imageDropTarget ? libraryDropDirectory(imageDropTarget) : null
@@ -502,27 +508,11 @@ export function LibraryShell({
   draftRef.current = draft
   selectedNoteRef.current = selectedNote
 
-  const { uploadPastedImages } = useImageUpload({
+  // 资料库文档：图片由编辑器在光标或落点原位插入（先放「上传中」占位），不再追加到文末。
+  const { saveImage } = useImageUpload({
     getContent: () => draftRef.current,
     isLockbox: selectedNote?.lockbox,
-    onUploaded: ({ alt, path, previewUrl }) => {
-      if (selectedNoteReadOnly) {
-        URL.revokeObjectURL(previewUrl)
-        return
-      }
-      const imageMarkdown = `![${escapeMarkdownImageAlt(alt)}](${path})`
-      // 空行分隔：图片附件按方言要独占一个块（技术方案 §3）。只隔一个换行时，
-      // 正文末尾若是列表或段落，图片会被当成它的续行。
-      const nextDraft = [draftRef.current.trimEnd(), imageMarkdown]
-        .filter(Boolean)
-        .join("\n\n")
-      draftRef.current = nextDraft
-      setDraft(nextDraft)
-      setSaveState(
-        nextDraft === lastSavedContentRef.current ? "saved" : "dirty"
-      )
-      URL.revokeObjectURL(previewUrl)
-    },
+    canUpload: () => !selectedNoteReadOnly,
   })
 
   useEffect(() => {
@@ -1865,6 +1855,7 @@ export function LibraryShell({
       return (
         <div
           className={`${zen ? styles.zenNoteViewport : styles.editorViewport} flex flex-col`}
+          data-library-document-drop={selectedNoteReadOnly ? undefined : selectedNote.id}
         >
           <PropertiesPanel
             fragment={selectedNote}
@@ -1890,15 +1881,14 @@ export function LibraryShell({
                   content === lastSavedContentRef.current ? "saved" : "dirty"
                 )
               }}
-              onDropFiles={selectedNoteReadOnly ? undefined : (files) => void uploadPastedImages(files)}
               // ProseMirror 对 Esc 一律 preventDefault，ZenSurface 挂在 window 上的
               // 监听因此等不到这个键；由编辑器转交回宿主（见 shard-host.ts）。
               onEscape={zen ? () => setIsZen(false) : undefined}
-              onImageFiles={selectedNoteReadOnly ? undefined : (files) => void uploadPastedImages(files)}
               onNavigateWikilink={navigateWikilink}
               onOpenDocumentLink={(link) => void openCanvasLink(link)}
-              onPasteFiles={selectedNoteReadOnly ? undefined : (files) => void uploadPastedImages(files)}
               onSubmit={selectedNoteReadOnly ? undefined : () => void saveCurrentNote()}
+              uploadImage={selectedNoteReadOnly ? undefined : saveImage}
+              uploadImageFromPath={selectedNoteReadOnly ? undefined : saveImage}
               placeholder={selectedNote.path.startsWith("fragments/") ? "编辑碎片…" : "开始写文档…"}
               readOnly={selectedNoteReadOnly || interactionBlocked || structureBusy || busyAction !== null}
               // 资料库文档按文档档开放工具（产品框架 §2）；碎片（非 document 类型）仍按碎片档。
@@ -1979,7 +1969,7 @@ export function LibraryShell({
         : "删除"
 
   return (
-    <section aria-label="资料库" className={styles.shell} ref={shellRef}>
+    <section aria-label="资料库" className={styles.shell}>
       <div className={styles.workspace} data-table-open={selectedCanvasPath || selectedMindMap ? "true" : undefined}>
         <aside
           aria-busy={busyAction !== null || isLoading ? true : undefined}
@@ -2618,6 +2608,11 @@ function TreeEntries({
   })
 }
 
+function isLibraryDocumentDrop(element: Element) {
+  const surface = element.closest("[data-library-document-drop]")
+  return surface !== null && surface.querySelector('.ProseMirror[contenteditable="true"]') !== null
+}
+
 function libraryDropDirectory(element: Element) {
   return element.closest("[data-library-drop-directory]")?.getAttribute("data-library-drop-directory") ?? null
 }
@@ -2690,8 +2685,4 @@ function LibraryEmptyState({ message }: { message: string }) {
       <p>{message}</p>
     </div>
   )
-}
-
-function escapeMarkdownImageAlt(alt: string) {
-  return alt.replace(/\\/g, "\\\\").replace(/]/g, "\\]")
 }

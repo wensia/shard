@@ -5,7 +5,7 @@ import {
   getMarkdownImageAlt,
   normalizeTagList,
 } from "@/lib/editor-format"
-import { saveFragmentImage } from "@/lib/api"
+import { saveFragmentImage, saveImageAttachmentFromPath } from "@/lib/api"
 import { wantsLockbox } from "@/lib/lockbox"
 import { notify } from "@/lib/notify"
 
@@ -20,7 +20,8 @@ interface UseImageUploadOptions {
   canUpload?: () => boolean
   getContent: () => string
   isLockbox?: boolean
-  onUploaded: (image: UploadedImage) => void
+  /** uploadImage/uploadPastedImages 存好后回调；只用 saveImage 原位插图的宿主不传。 */
+  onUploaded?: (image: UploadedImage) => void
 }
 
 export function useImageUpload({
@@ -55,7 +56,7 @@ export function useImageUpload({
     try {
       const bytes = new Uint8Array(await file.arrayBuffer())
       const path = await saveFragmentImage(file.name, bytes)
-      onUploadedRef.current({
+      onUploadedRef.current?.({
         alt: getMarkdownImageAlt(file.name),
         fileName: file.name,
         path,
@@ -67,6 +68,35 @@ export function useImageUpload({
     }
   }, [])
 
+  /**
+   * 原位插图用：存好返回 vault 相对路径与 alt，被拒（密匣）或失败时提示并返回 null。
+   * 由编辑器自己在光标或落点插入，不经 onUploaded。
+   */
+  const saveImage = useCallback(
+    async (source: File | string): Promise<{ alt: string; path: string } | null> => {
+      if (canUploadRef.current && !canUploadRef.current()) return null
+      const content = getContentRef.current()
+      const tags = normalizeTagList(["inbox", ...extractTags(content)])
+      if (isLockboxRef.current || wantsLockbox(content, tags)) {
+        notify.error("密匣暂不支持图片", {
+          description: "请先移除 #密匣，或在公开笔记中上传图片。",
+        })
+        return null
+      }
+      const fileName = typeof source === "string" ? source.split(/[\\/]/u).pop() ?? "" : source.name
+      try {
+        const path = typeof source === "string"
+          ? await saveImageAttachmentFromPath(source)
+          : await saveFragmentImage(source.name, new Uint8Array(await source.arrayBuffer()))
+        return { alt: getMarkdownImageAlt(fileName), path }
+      } catch (error) {
+        notify.failure("图片上传失败", error)
+        return null
+      }
+    },
+    []
+  )
+
   const uploadPastedImages = useCallback(
     async (files: File[]) => {
       for (const file of files) {
@@ -76,5 +106,5 @@ export function useImageUpload({
     [uploadImage]
   )
 
-  return { uploadImage, uploadPastedImages }
+  return { saveImage, uploadImage, uploadPastedImages }
 }

@@ -332,6 +332,18 @@
 }
 
 /* 图片附件：缩略图 + alt/路径说明 + 删除，几何沿用附件行的方块规格。 */
+/* 粘贴、拖放图片后、存好之前的占位（装饰，不进文档）。 */
+.shard-rich-editor .ProseMirror .shard-rich-image-uploading {
+  display: inline-flex;
+  align-items: center;
+  padding: var(--shard-space-1) var(--shard-space-2);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-card);
+  color: var(--muted-foreground);
+  font-size: var(--shard-text-xs);
+  vertical-align: top;
+}
+
 .shard-rich-editor .ProseMirror .shard-rich-image {
   display: inline-flex;
   max-width: 100%;

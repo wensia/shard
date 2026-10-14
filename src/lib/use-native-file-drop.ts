@@ -10,10 +10,14 @@ type DragDropPayload =
 
 interface NativeFileDropOptions {
   enabled?: boolean
-  /** 只处理落在这个元素里的拖放；不同区域各自订阅、按命中点互不抢。 */
-  frameRef: RefObject<HTMLElement | null>
+  /**
+   * 只处理落在这个元素里的拖放；不同区域各自订阅、按命中点互不抢。不传则整页
+   * 都算（由 accepts 按落点元素自行筛选，禅模式这类挂在 body 上的浮层也能接住）。
+   */
+  frameRef?: RefObject<HTMLElement | null>
   accepts: (paths: string[], target: Element) => boolean
-  onDrop: (paths: string[], target: Element) => void
+  /** `point` 是落点的页面坐标，交给编辑器换算文档位置。 */
+  onDrop: (paths: string[], target: Element, point: { clientX: number; clientY: number }) => void
 }
 
 const IMAGE_PATH_PATTERN = /\.(?:avif|gif|heic|heif|jpe?g|png|svg|webp)$/iu
@@ -38,12 +42,18 @@ export function useNativeFileDrop({ enabled = true, frameRef, accepts, onDrop }:
     let unlisten: (() => void) | null = null
     let paths: string[] = []
 
-    function hit(position: { x: number; y: number }) {
-      const frame = frameRef.current
-      if (!frame) return null
+    function clientPoint(position: { x: number; y: number }) {
       const ratio = window.devicePixelRatio || 1
-      const element = document.elementFromPoint(position.x / ratio, position.y / ratio)
-      return element && frame.contains(element) ? element : null
+      return { clientX: position.x / ratio, clientY: position.y / ratio }
+    }
+
+    function hit(position: { x: number; y: number }) {
+      const { clientX, clientY } = clientPoint(position)
+      const element = document.elementFromPoint(clientX, clientY)
+      if (!element) return null
+      if (!frameRef) return element
+      const frame = frameRef.current
+      return frame?.contains(element) ? element : null
     }
 
     function handle(event: { payload: DragDropPayload }) {
@@ -64,7 +74,7 @@ export function useNativeFileDrop({ enabled = true, frameRef, accepts, onDrop }:
       setTarget(null)
       paths = []
       if (element && handlers.current.accepts(payload.paths, element)) {
-        handlers.current.onDrop(payload.paths, element)
+        handlers.current.onDrop(payload.paths, element, clientPoint(payload.position))
       }
     }
 
