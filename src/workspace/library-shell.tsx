@@ -1757,6 +1757,7 @@ export function LibraryShell({
               ariaLabel={selectedNote.path.startsWith("fragments/") ? "资料库碎片编辑器" : "资料库文档编辑器"}
               autoFocus={zen || mobilePane === "editor"}
               editorId={`library:${selectedNote.id}`}
+              findable
               getKnownTags={() => knownTagsRef.current}
               getWikilinkCandidates={() => wikilinkCandidatesRef.current}
               // 换一篇文档就换一个编辑器实例：正文与撤销历史一起重置。

@@ -2,7 +2,7 @@ import { expect, test, type Locator, type Page } from "@playwright/test"
 
 import { applyFragmentTag } from "./fragment-filter-helpers"
 
-import { fillEditor, readEditor, readEditorSnapshot } from "./editor-helpers"
+import { fillEditor, readEditor, readEditorSnapshot, selectEditorText } from "./editor-helpers"
 import { selectOption } from "./select-helpers"
 import { mkdirSync, writeFileSync } from "node:fs"
 import type { MindMapReadResult, ShardMapFile } from "../../src/types"
@@ -3291,4 +3291,134 @@ test("碎片文件分类：受管大纲与流程图打开原图编辑器，关�
   await page.getByRole("button", { name: "退出流程图", exact: true }).click()
   await expect(page.getByRole("region", { name: "fragments 目录列表", exact: true })).toBeVisible()
   expect(await commandCalls(page, "update_fragment")).toHaveLength(0)
+})
+
+test.describe("文档内查找（Cmd+F）", () => {
+  const editorId = "library:note-old"
+  const lines = Array.from({ length: 80 }, (_, index) =>
+    index % 20 === 5 ? `第${index}行 停顿 在这里` : `第${index}行 普通内容`
+  )
+  const longDocument = `# 旧笔记\n\n${lines.join("\n\n")}`
+
+  async function openLongNote(page: Page) {
+    await page.getByRole("button", { name: "资料库", exact: true }).click()
+    await page.getByRole("button", { name: /^文件（/u, exact: true }).click()
+    await page.getByRole("button", { name: "打开文件 旧笔记.md", exact: true }).click()
+    await expect(page.getByRole("textbox", { name: "资料库文档编辑器", exact: true })).toBeVisible()
+    await fillEditor(page, editorId, longDocument)
+    await expect.poll(() => readEditor(page, editorId)).toBe(longDocument)
+  }
+
+  function findBar(page: Page) {
+    const bar = page.getByRole("search", { name: "文档内查找", exact: true })
+    return {
+      bar,
+      count: bar.locator(".shard-rich-find-count"),
+      input: bar.getByRole("textbox", { name: "查找文档内容", exact: true }),
+    }
+  }
+
+  test("打开查找条，逐个跳到命中并滚进视口，Esc 关闭后选中当前命中", async ({ page }) => {
+    await openLongNote(page)
+    const { bar, count, input } = findBar(page)
+    await page.keyboard.press("ControlOrMeta+f")
+    await expect(input).toBeFocused()
+    await input.fill("停顿")
+    await expect(count).toHaveText("1/4")
+    await expect(page.locator('[data-find-hit]')).toHaveCount(4)
+    await expect(page.locator('[data-find-hit="active"]')).toHaveText("停顿")
+
+    await page.keyboard.press("Enter")
+    await page.keyboard.press("Enter")
+    await expect(count).toHaveText("3/4")
+    const active = page.locator('[data-find-hit="active"]')
+    await expect(active).toBeInViewport()
+    // 查找条吸在视口顶上，跟着正文滚下来仍然看得见。
+    await expect(bar).toBeInViewport()
+    expect(await page.locator('[data-shard-editor="library:note-old"]').evaluate(element => {
+      let current = element.parentElement
+      while (current && getComputedStyle(current).overflowY !== "auto") current = current.parentElement
+      return current?.scrollTop ?? 0
+    })).toBeGreaterThan(0)
+
+    await page.keyboard.press("Shift+Enter")
+    await expect(count).toHaveText("2/4")
+    await page.keyboard.press("ControlOrMeta+g")
+    await expect(count).toHaveText("3/4")
+    await page.keyboard.press("ControlOrMeta+Shift+g")
+    await expect(count).toHaveText("2/4")
+    await page.keyboard.press("ArrowUp")
+    await bar.getByRole("button", { name: "下一处", exact: true }).click()
+    await expect(count).toHaveText("3/4")
+    await expect(input).toBeFocused()
+
+    await page.keyboard.press("Escape")
+    await expect(bar).toHaveCount(0)
+    await expect(page.locator("[data-find-hit]")).toHaveCount(0)
+    await expect(page.getByRole("textbox", { name: "资料库文档编辑器", exact: true })).toBeFocused()
+    expect(await page.evaluate(() => window.getSelection()?.toString())).toBe("停顿")
+
+    // 再按 Cmd+F 回到上次的查找词，整段选中方便直接改。
+    await page.keyboard.press("ControlOrMeta+f")
+    await expect(input).toHaveValue("停顿")
+    expect(await input.evaluate((element: HTMLInputElement) => element.selectionEnd! - element.selectionStart!)).toBe(2)
+  })
+
+  test("选中文字后按 Cmd+F 用它查找，当前命中就是选中的那一处", async ({ page }) => {
+    await openLongNote(page)
+    await selectEditorText(page, editorId, "普通内容", { occurrence: 3 })
+    await page.keyboard.press("ControlOrMeta+f")
+    const { count, input } = findBar(page)
+    await expect(input).toHaveValue("普通内容")
+    await expect(count).toHaveText("4/76")
+  })
+
+  test("开着查找条改正文，计数跟着更新；查不到时显示无结果", async ({ page }) => {
+    await openLongNote(page)
+    const { bar, count, input } = findBar(page)
+    await page.keyboard.press("ControlOrMeta+f")
+    await input.fill("停顿")
+    await expect(count).toHaveText("1/4")
+    await fillEditor(page, editorId, "# 旧笔记\n\n停顿 停顿\n\n停顿")
+    await expect(count).toHaveText(/^\d\/3$/u)
+    // 查找坞零高度、不参与编辑面的纵向伸展：短文档里正文也不被它往下推。
+    expect(await page.locator(`[data-shard-editor="${editorId}"]`).evaluate(element => {
+      const body = element.querySelector(".ProseMirror")!
+      return Math.round(body.getBoundingClientRect().top - element.getBoundingClientRect().top)
+    })).toBe(0)
+
+    await input.fill("不存在的词")
+    await expect(count).toHaveText("无结果")
+    await expect(page.locator("[data-find-hit]")).toHaveCount(0)
+    await expect(bar.getByRole("button", { name: "下一处", exact: true })).toBeDisabled()
+    await bar.getByRole("button", { name: "关闭查找", exact: true }).click()
+    await expect(bar).toHaveCount(0)
+  })
+
+  test("禅模式里同样可查找，Esc 先关查找条、再按才退出禅模式", async ({ page }) => {
+    await openLongNote(page)
+    await page.getByRole("button", { name: "进入禅模式", exact: true }).click()
+    const zen = page.getByRole("region", { name: "资料库文档禅模式", exact: true })
+    await expect(zen).toBeVisible()
+    const { bar, count, input } = findBar(page)
+    await page.keyboard.press("ControlOrMeta+f")
+    await expect(input).toBeFocused()
+    await input.fill("停顿")
+    await expect(count).toHaveText("1/4")
+    await page.keyboard.press("Escape")
+    await expect(bar).toHaveCount(0)
+    await expect(zen).toBeVisible()
+    await page.keyboard.press("Escape")
+    await expect(zen).toHaveCount(0)
+  })
+
+  test("搜索面板开着时 Cmd+F 不抢焦点", async ({ page }) => {
+    await openLongNote(page)
+    await page.keyboard.press("ControlOrMeta+k")
+    const palette = page.getByRole("dialog", { name: "搜索", exact: true })
+    await expect(palette).toBeVisible()
+    await page.keyboard.press("ControlOrMeta+f")
+    await expect(findBar(page).bar).toHaveCount(0)
+    await expect(palette).toBeVisible()
+  })
 })

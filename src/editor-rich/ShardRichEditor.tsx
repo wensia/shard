@@ -23,6 +23,7 @@ import { createDataset } from "@/features/datasets/api"
 import { openDatasetEditor } from "@/features/datasets/open-dataset"
 import { notify } from "@/lib/notify"
 import { findBlockSlashItem } from "./blocks/registry-ui"
+import { useDocumentFind } from "./document-find-bar"
 import { registerShardRichEditorTest } from "./test-bridge"
 
 import {
@@ -45,6 +46,7 @@ import {
   convergeShardInlineAtoms,
   previewConvergedDoc,
 } from "./extensions/inline-converge"
+import { ShardDocumentFind } from "./extensions/document-find"
 import { ShardCaret } from "./extensions/shard-caret"
 import { ShardSelectionBand } from "./extensions/shard-selection-band"
 import { ShardMemoGuard } from "./extensions/memo-guard"
@@ -119,6 +121,8 @@ export interface ShardRichEditorProps {
   onNavigateWikilink?: (target: string) => void
   /** 点击正文里的图文档链接（`shard://map|flow/<id>`），宿主负责保存与跳转。 */
   onOpenDocumentLink?: (link: ShardDocumentLink) => void
+  /** 开放文档内查找（Cmd+F）。只给独占一块视口的长文编辑面开，碎片流里的卡片不开。 */
+  findable?: boolean
 }
 
 export interface ShardRichEditorHandle extends SearchRevealHandle {
@@ -206,6 +210,7 @@ export const ShardRichEditor = forwardRef<ShardRichEditorHandle, ShardRichEditor
       getWikilinkCandidates,
       onNavigateWikilink,
       onOpenDocumentLink,
+      findable = false,
     },
     forwardedRef
   ) {
@@ -431,6 +436,7 @@ export const ShardRichEditor = forwardRef<ShardRichEditorHandle, ShardRichEditor
         ShardInlineConverge,
         ShardMemoGuard,
         ShardSearchHighlight,
+        ShardDocumentFind,
         ShardCaret,
         ShardSelectionBand,
       ],
@@ -481,6 +487,12 @@ export const ShardRichEditor = forwardRef<ShardRichEditorHandle, ShardRichEditor
     })
 
     editorRef.current = editor ?? null
+    const documentFind = useDocumentFind({
+      editor: editor ?? null,
+      enabled: findable,
+      getViewport: () => findEditorScrollViewport(editorElementRef.current),
+      rootRef: editorElementRef,
+    })
     // 渲染期同步写入：初始正文的 CSV NodeView 挂载时就要读到本宿主的行数上限。
     if (editor) {
       editor.storage.csvEmbed.maxRows =
@@ -682,6 +694,7 @@ export const ShardRichEditor = forwardRef<ShardRichEditorHandle, ShardRichEditor
           data-shard-editor-tier={tier}
           data-shard-editor-variant={variant}
         >
+          {documentFind.bar}
           <EditorContent editor={editor} />
         </div>
         {menuState ? <SuggestionMenu host={menu} state={menuState} /> : null}

@@ -58,7 +58,7 @@ interface TextPosition {
   to: number
 }
 
-interface TextSegment {
+export interface TextSegment {
   normalized: string
   positions: TextPosition[]
 }
@@ -177,7 +177,7 @@ function dispatchMeta(editor: Editor, meta: SearchHighlightMeta) {
   )
 }
 
-function appendText(segment: TextSegment, text: string, start: number) {
+export function appendText(segment: TextSegment, text: string, start: number) {
   let offset = 0
   for (const character of text) {
     const width = character.length
@@ -190,7 +190,7 @@ function appendText(segment: TextSegment, text: string, start: number) {
   }
 }
 
-function findTermRanges(segment: TextSegment, terms: readonly string[]) {
+export function findTermRanges(segment: TextSegment, terms: readonly string[]) {
   const ranges: SearchHighlightMatch[] = []
   for (const term of terms) {
     if (!term) continue
@@ -218,7 +218,7 @@ function mergeRanges(ranges: readonly SearchHighlightMatch[]) {
   return merged
 }
 
-function atomSearchText(node: ProseMirrorNode) {
+export function atomSearchText(node: ProseMirrorNode) {
   if (node.type.name === "tag") return `#${String(node.attrs.name ?? "")}`
   if (node.type.name === "wikilink") {
     return String(node.attrs.alias ?? node.attrs.target ?? "")

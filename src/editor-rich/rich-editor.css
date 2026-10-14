@@ -168,6 +168,53 @@
   box-shadow: none;
 }
 
+/* 文档内查找（Cmd+F）：零高度的吸顶坞排在正文前面，不占排版；查找条从坞里向下
+ * 溢出，随视口停在编辑面右上角。表面与选区浮动条同一套，命中沿用上面的搜索样式。 */
+.shard-rich-editor > .shard-rich-find-dock {
+  position: sticky;
+  z-index: 30;
+  top: var(--shard-space-2);
+  display: flex;
+  height: 0;
+  min-height: 0;
+  /* 编辑面变体给每个直接子元素都设了纵向 flex: 1 1 auto（见上方「三个变体」），
+   * 坞要排除在外：不参与伸展，查找条横排、贴右、从坞顶往下溢出。 */
+  flex: none;
+  flex-direction: row;
+  align-items: flex-start;
+  justify-content: flex-end;
+  pointer-events: none;
+}
+
+.shard-rich-find-bar {
+  display: flex;
+  width: calc(var(--shard-space-6) * 14);
+  max-width: 100%;
+  align-items: center;
+  gap: var(--shard-space-micro);
+  padding: var(--shard-space-1);
+  border: 1px solid var(--border-visible);
+  border-radius: var(--radius-card);
+  background: var(--popover);
+  box-shadow: var(--shard-shadow-popover);
+  color: var(--popover-foreground);
+  pointer-events: auto;
+}
+
+.shard-rich-find-bar .shard-rich-find-input {
+  flex: 1 1 auto;
+}
+
+.shard-rich-find-count {
+  flex: none;
+  min-width: calc(var(--shard-space-6) * 2);
+  color: var(--muted-foreground);
+  font-size: var(--text-meta);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  white-space: nowrap;
+}
+
 .shard-rich-editor .ProseMirror strong {
   font-weight: var(--weight-semibold);
 }
