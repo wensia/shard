@@ -17,7 +17,7 @@ const MARK_DELIMITERS: Record<string, string> = {
 const LIST_TYPES = new Set(["bulletList", "orderedList", "taskList"])
 const AUTOLINKABLE = /^(?:https?:\/\/|www\.)\S+$/iu
 const ENTITY_AT = /^&(?:#[0-9]+|#[xX][0-9a-fA-F]+|[a-zA-Z][a-zA-Z0-9]*);/u
-const WORD_CHAR = /[\p{L}\p{N}_]/u
+const WORD_CHAR = /[\p{L}\p{N}]/u
 const LINE_HORIZONTAL_RULE = /^(?:-{3,}|\*{3,}|_{3,})[ \t]*$/u
 const LINE_SETEXT = /^(?:={1,}|-{1,})[ \t]*$/u
 const LINE_TABLE_DELIMITER = /^\|?[ \t]*:?-+:?[ \t]*(?:\|[ \t]*:?-+:?[ \t]*)*\|?[ \t]*$/u
@@ -253,14 +253,35 @@ function toTableRow(cells: string[]) {
 // 行内
 // ---------------------------------------------------------------------------
 
+/** 正文里先写成 `\[` 的方括号，整段写完后由 settleBrackets 决定反斜杠去留。 */
+interface PendingBracket {
+  /** 反斜杠在输出里的位置。 */
+  at: number
+  /** 这一行文字写到哪为止：配对的 `]` 不在这段里，说明方括号跨过了别的节点。 */
+  end: number
+  /** 写下时打开着几层标记。 */
+  depth: number
+}
+
+/** 每写一个标记符号后的位置与打开着的层数。 */
+interface MarkStep {
+  at: number
+  depth: number
+}
+
 class InlineWriter {
   private output = ""
   private lineStart = true
+  private depth = 0
+  private readonly brackets: PendingBracket[] = []
+  private readonly steps: MarkStep[] = []
+  /** 最近一段正文写到哪为止，用来判断末尾字符是不是正文写的。 */
+  private textEnd = -1
 
   constructor(private readonly options: InlineOptions) {}
 
   get text() {
-    return this.output
+    return settleBrackets(this.output, this.brackets, this.steps)
   }
 
   private get lastChar() {
@@ -273,7 +294,30 @@ class InlineWriter {
     this.lineStart = value.endsWith("\n")
   }
 
-  text_(value: string) {
+  /**
+   * 紧跟着要写语法符号时，正文末尾那个字符若会和它粘成别的语法就转义掉：`!` 贴着
+   * 链接的 `[` 成了图片；`=`、`~` 贴着高亮、删除线符号成了分不清的 `===`、`~~~`。
+   */
+  guardTextEnd(symbol: string) {
+    const end = this.output.length
+    if (this.textEnd !== end) return
+    const last = this.lastChar
+    const sticks = symbol === "[" ? last === "!" : (last === "=" || last === "~") && symbol.startsWith(last)
+    if (!sticks || isEscaped(this.output, end - 1)) return
+    this.output = `${this.output.slice(0, -1)}\\${last}`
+    for (const bracket of this.brackets) if (bracket.end === end) bracket.end += 1
+  }
+
+  /** 标记的开合符号：`delta` 为 1 是打开、-1 是关上。 */
+  mark(value: string, delta: 1 | -1) {
+    this.guardTextEnd(value)
+    this.raw(value)
+    this.depth += delta
+    this.steps.push({ at: this.output.length, depth: this.depth })
+  }
+
+  /** `inLink`：链接文字里的方括号一律转义，`]` 也要转义，否则会提前截断链接。 */
+  text_(value: string, inLink = false) {
     if (!value) return
     const source = this.options.inTable ? value.replace(/\n/gu, " ") : value
     const lines = source.split("\n")
@@ -283,8 +327,19 @@ class InlineWriter {
         this.lineStart = true
       }
       if (!line) return
-      this.output += escapeLine(line, this.lineStart, this.lastChar, Boolean(this.options.inTable))
+      const brackets: number[] = []
+      const escaped = escapeLine(line, this.lineStart, this.lastChar, {
+        brackets: inLink ? null : brackets,
+        inLink,
+        inTable: Boolean(this.options.inTable),
+      })
+      const start = this.output.length
+      this.output += escaped
+      for (const offset of brackets) {
+        this.brackets.push({ at: start + offset, depth: this.depth, end: this.output.length })
+      }
       this.lineStart = false
+      this.textEnd = this.output.length
     })
   }
 
@@ -304,7 +359,7 @@ function serializeInline(nodes: JSONContent[], options: InlineOptions = {}): str
 
   const closeTo = (keep: number) => {
     for (let index = active.length - 1; index >= keep; index -= 1) {
-      writer.raw(closeMark(active[index]))
+      writer.mark(closeMark(active[index]), -1)
     }
     active = active.slice(0, keep)
   }
@@ -316,10 +371,10 @@ function serializeInline(nodes: JSONContent[], options: InlineOptions = {}): str
     while (keep < active.length && keep < marks.length && sameMark(active[keep], marks[keep])) keep += 1
     closeTo(keep)
     for (let markIndex = keep; markIndex < marks.length; markIndex += 1) {
-      writer.raw(openMark(marks[markIndex]))
+      writer.mark(openMark(marks[markIndex]), 1)
       active.push(marks[markIndex])
     }
-    writeInlineNode(node, writer, prepared[index + 1]?.node, autolink)
+    writeInlineNode(node, writer, prepared[index + 1]?.node, autolink, index + 2 >= prepared.length)
   }
   closeTo(0)
 
@@ -330,7 +385,8 @@ function writeInlineNode(
   node: JSONContent,
   writer: InlineWriter,
   next: JSONContent | undefined,
-  autolink: boolean
+  autolink: boolean,
+  nextIsLast: boolean
 ) {
   if (node.type === "text") {
     const marks = (node.marks ?? []) as MarkSpec[]
@@ -343,7 +399,7 @@ function writeInlineNode(
       writer.raw(inlineCode(text))
       return
     }
-    writer.text_(text)
+    writer.text_(text, marks.some((mark) => mark.type === "link"))
     return
   }
 
@@ -353,10 +409,11 @@ function writeInlineNode(
   }
 
   if (node.type === "tag") {
-    writer.tag(String(node.attrs?.name ?? ""))
-    const following = next?.type === "text" ? (next.text ?? "") : ""
-    const head = following.charAt(0)
-    if (head && head !== "#" && !isTagBoundary(head)) writer.raw(" ")
+    const name = String(node.attrs?.name ?? "")
+    writer.tag(name)
+    if (next?.type === "text") {
+      if (tagSwallows(name, node, next, nextIsLast)) writer.raw(" ")
+    }
     // 标签一直吃到空白为止，紧跟的提醒不隔开就会被读成标签的一部分。
     else if (next?.type === "reminder") writer.raw(" ")
     return
@@ -371,6 +428,11 @@ function writeInlineNode(
   if (node.type === "wikilink") {
     const target = String(node.attrs?.target ?? "")
     const alias = node.attrs?.alias ? String(node.attrs.alias) : ""
+    // `![[笔记]]` 后面紧跟 `[`、`(` 时整段会被读成图片，把后面的链接吞掉；
+    // 只在这种时候转义 `!`，单独的 `![[笔记]]` 保持原样。
+    const head = next?.type === "text" ? (next.text ?? "").charAt(0) : ""
+    const opensLink = next?.type === "text" && (next.marks ?? []).some((mark) => mark.type === "link")
+    if (head === "[" || head === "(" || opensLink) writer.guardTextEnd("[")
     writer.raw(alias ? `[[${target}|${alias}]]` : `[[${target}]]`)
     return
   }
@@ -384,6 +446,25 @@ function writeInlineNode(
   }
 
   writer.text_(node.text ?? "")
+}
+
+/**
+ * 标签后面紧跟的文字会不会被读进标签。标签一直吃到空白或下一个 `#`，再去掉结尾
+ * 标点，`(#骑行)` 的 `)` 不算标签、`#骑行，今天` 却整串都是。能看到停止位置时
+ * （同样的标记、后面写到空白，或者就是行内最后一段）直接拿 getTagRanges 试读；
+ * 中间夹着标记符号时沿用按首字符判断的旧规则。
+ */
+function tagSwallows(name: string, tag: JSONContent, next: JSONContent, nextIsLast: boolean) {
+  const following = next.text ?? ""
+  const plain = (tag.marks ?? []).length === 0
+  const sameMarks = JSON.stringify(tag.marks ?? []) === JSON.stringify(next.marks ?? [])
+  if (sameMarks && (/[\s#]/u.test(following) || (nextIsLast && plain))) {
+    const written = `#${name}`
+    const range = getTagRanges(`${written}${following}`)[0]
+    return range?.start !== 0 || range.end !== written.length
+  }
+  const head = following.charAt(0)
+  return Boolean(head) && head !== "#" && !isTagBoundary(head)
 }
 
 /** 文本与目标相同的链接写回裸 URL，保持 GFM autolink 的原貌。 */
@@ -460,7 +541,15 @@ function inlineCode(text: string) {
 // 转义：只在会被重新解析成语法的位置加反斜杠，卡片按字面渲染源码，多转义即可见噪音。
 // ---------------------------------------------------------------------------
 
-function escapeLine(line: string, atLineStart: boolean, previousChar: string, inTable: boolean) {
+interface EscapeContext {
+  inTable: boolean
+  inLink: boolean
+  /** 收集正文 `[` 转义处的反斜杠位置，交给 settleBrackets；为 null 时一律保留转义。 */
+  brackets: number[] | null
+}
+
+function escapeLine(line: string, atLineStart: boolean, previousChar: string, context: EscapeContext) {
+  const { inTable, inLink, brackets } = context
   let out = ""
   let index = 0
 
@@ -477,13 +566,28 @@ function escapeLine(line: string, atLineStart: boolean, previousChar: string, in
     const next = line[index + 1] ?? ""
     const previous = out.length > 0 ? out[out.length - 1] : previousChar
 
-    if (char === "\\" || char === "`" || char === "*" || char === "[") {
+    if (char === "[") {
+      brackets?.push(out.length)
+      out += "\\["
+      continue
+    }
+    if (char === "]" && inLink) {
+      out += "\\]"
+      continue
+    }
+    if (char === "\\" || char === "`" || char === "*") {
       out += `\\${char}`
       continue
     }
     if (char === "_") {
+      // `_` 按连续的一串看：整串夹在字母数字中间才不会成强调（snake_case），否则整串
+      // 转义——`__init__` 只转义头尾各一个，剩下的 `_init_` 会被读成斜体。
+      let runEnd = index
+      while (line[runEnd] === "_") runEnd += 1
       const before = index > 0 ? line[index - 1] : ""
-      out += WORD_CHAR.test(before) && WORD_CHAR.test(next) ? "_" : "\\_"
+      const intraword = WORD_CHAR.test(before) && WORD_CHAR.test(line[runEnd] ?? "")
+      out += (intraword ? "_" : "\\_").repeat(runEnd - index)
+      index = runEnd - 1
       continue
     }
     if (char === "<" && /[A-Za-z/!?]/u.test(next)) {
@@ -494,7 +598,8 @@ function escapeLine(line: string, atLineStart: boolean, previousChar: string, in
       out += "\\&"
       continue
     }
-    if ((char === "~" || char === "=") && next === char) {
+    // 成对的 `==`、`~~` 是高亮、删除线；紧接在同样的符号后面也会粘成一串。
+    if ((char === "~" || char === "=") && (next === char || (out.length === 0 && previousChar === char))) {
       out += `\\${char}`
       continue
     }
@@ -529,4 +634,76 @@ function escapeLineStart(line: string, inTable: boolean): { text: string; length
   if (ordered) return { text: `${ordered[1]}\\${ordered[2]}`, length: ordered[1].length + 1 }
   if (line.startsWith(">")) return { text: "\\>", length: 1 }
   return null
+}
+
+/**
+ * 正文里的 `[` 写的时候一律先转义，整段写完再回头放行：读回来确定还是字面方括号的
+ * 去掉反斜杠，`[停顿]` 这类写法保存后原样不动。解析器把没有目标的 `[文本]` 读回字面
+ * 方括号（里面照常解析），所以只要拼不出真正的语法就能放行：
+ * - 后面有配对的 `]`，中间没有别的 `[`、换行和提醒；跨过别的节点时，中间打开的
+ *   标记要在方括号里关上、外层标记不能中途关掉，也不能夹着标签、行内代码、网址；
+ * - `]` 后面不是 `(`、`[`：否则是行内链接、图片、引用式链接；没有目标的 `![文本]`
+ *   同样读回字面；
+ * - 前面不是 `[`（双链）或反斜杠；前面的 `]` 无妨，上一对方括号后面紧跟 `[` 时
+ *   自己就不放行，这个 `]` 关不上任何东西；
+ * - 在行首时不是任务框 `[ ]`、`[x]`，也不是引用定义 `[文本]:`。
+ * 链接文字里的方括号不经过这里，始终转义。
+ */
+function settleBrackets(output: string, brackets: readonly PendingBracket[], steps: readonly MarkStep[]) {
+  if (brackets.length === 0) return output
+  let settled = ""
+  let cursor = 0
+  let firstStep = 0
+  for (const bracket of brackets) {
+    // 方括号按位置先后排列：在它之前的标记符号以后都用不上。
+    while (firstStep < steps.length && steps[firstStep].at <= bracket.at) firstStep += 1
+    if (!isLiteralBracket(output, bracket, steps, firstStep)) continue
+    settled += output.slice(cursor, bracket.at)
+    cursor = bracket.at + 1
+  }
+  return settled + output.slice(cursor)
+}
+
+/** 下一个方括号或换行：只找到这里为止，一段里再多 `[` 也是线性扫描。 */
+const NEXT_BRACKET = /[[\]\n]/gu
+
+function isLiteralBracket(
+  output: string,
+  bracket: PendingBracket,
+  steps: readonly MarkStep[],
+  firstStep: number
+) {
+  const { at, depth, end } = bracket
+  const before = output[at - 1] ?? ""
+  if (before === "[" || before === "\\") return false
+  NEXT_BRACKET.lastIndex = at + 2
+  const close = NEXT_BRACKET.exec(output)?.index ?? -1
+  if (close < 0 || output[close] !== "]") return false
+  const label = output.slice(at + 2, close)
+  if (label.includes("⏰")) return false
+  if (close >= end && (/[#`]|:\/\/|www\./iu.test(label) || !staysAtDepth(steps, firstStep, close, depth))) {
+    return false
+  }
+  const after = output[close + 1] ?? ""
+  if (after === "(" || after === "[" || (after === "\\" && output[close + 2] === "[")) return false
+  const lineStart = at === 0 || before === "\n"
+  if (lineStart && (after === ":" || /^[ xX]$/u.test(label))) return false
+  return true
+}
+
+/** 从 `firstStep` 起到 `to` 为止打开的标记都在这一段里关上，外层的标记也没有中途关掉。 */
+function staysAtDepth(steps: readonly MarkStep[], firstStep: number, to: number, depth: number) {
+  let current = depth
+  for (let index = firstStep; index < steps.length && steps[index].at <= to; index += 1) {
+    if (steps[index].depth < depth) return false
+    current = steps[index].depth
+  }
+  return current === depth
+}
+
+/** `index` 处的字符前面有奇数个反斜杠，已经是转义过的字面字符。 */
+function isEscaped(output: string, index: number) {
+  let count = 0
+  for (let cursor = index - 1; cursor >= 0 && output[cursor] === "\\"; cursor -= 1) count += 1
+  return count % 2 === 1
 }

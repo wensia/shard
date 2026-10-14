@@ -537,14 +537,14 @@ function scanAtoms(
     // 多带一个前置字符，让 getTagRanges 的边界判断和整行扫描一致。
     const offset = start > from ? 1 : 0
     const segment = src.slice(start - offset, end)
-    const links = parseWikilinks(segment)
+    // 双链不带前置字符：那个字符若是转义掉的 `[`，`\[[[x]]` 会被读成目标为 `[x` 的双链。
+    const links = parseWikilinks(src.slice(start, end))
 
     for (const link of links) {
-      if (link.from < offset) continue
       const embed = link.embed === true
       atoms.push({
-        from: start - offset + link.from,
-        to: start - offset + link.to,
+        from: start + link.from,
+        to: start + link.to,
         embed,
         node: {
           type: "wikilink",
@@ -557,7 +557,7 @@ function scanAtoms(
       if (range.start < offset) continue
       const absoluteFrom = start - offset + range.start
       const absoluteTo = start - offset + range.end
-      if (links.some((link) => absoluteFrom < start - offset + link.to && start - offset + link.from < absoluteTo)) {
+      if (links.some((link) => absoluteFrom < start + link.to && start + link.from < absoluteTo)) {
         continue
       }
       const name = normalizeTag(range.text)
@@ -694,6 +694,11 @@ function emitChild(
 
   if (name === "Image") {
     const parts = linkParts(node, src)
+    if (!parts.destination) {
+      // `![文本]` 没有 `(…)` 目标，不是图片：`!` 和方括号按字面留着。
+      emitBracketed(node, parts, marks, src, atoms, builder)
+      return
+    }
     builder.pushNode(
       {
         type: "image",
@@ -713,8 +718,9 @@ function emitChild(
   if (name === "Link") {
     const parts = linkParts(node, src)
     if (!parts.href) {
-      // 没有目标的 `[文本]` 是未定义的引用式链接，退回字面文本。
-      builder.pushText(src.slice(node.from, node.to), marks, true)
+      // 没有目标的 `[文本]` 是未定义的引用式链接：方括号退回字面，里面照常解析，
+      // `[**重点**]` 仍是加粗。
+      emitBracketed(node, parts, marks, src, atoms, builder)
       return
     }
     const linkMark: MarkSpec = { type: "link", attrs: { href: parts.href, target: null, rel: null, class: null, title: parts.title } }
@@ -723,6 +729,11 @@ function emitChild(
   }
 
   if (name === "Autolink" || name === "URL") {
+    // 链接文字里的网址不再套一层链接：一段文字只能有一个链接标记。
+    if (marks.some((mark) => mark.type === "link")) {
+      builder.pushText(src.slice(node.from, node.to), marks, true)
+      return
+    }
     const url = name === "URL" ? node : childrenOf(node).find((child) => child.name === "URL")
     const href = url ? src.slice(url.from, url.to) : src.slice(node.from, node.to)
     const linkMark: MarkSpec = { type: "link", attrs: { href, target: null, rel: null, class: null, title: null } }
@@ -758,19 +769,39 @@ interface LinkParts {
   title: string | null
   textFrom: number
   textTo: number
+  /** 写了 `(…)` 目标部分（哪怕是空的 `()`）；`[文本]`、`[文本][标签]` 没有。 */
+  destination: boolean
 }
 
 function linkParts(node: LezerNode, src: string): LinkParts {
   const children = childrenOf(node)
   const marks = children.filter((child) => child.name === "LinkMark")
-  const url = children.find((child) => child.name === "URL")
-  const title = children.find((child) => child.name === "LinkTitle")
+  const textFrom = marks[0]?.to ?? node.from
+  const textTo = marks[1]?.from ?? node.to
+  // 只认 `]` 之后的目标；方括号里的裸网址（GFM 自动链接）也是 URL 节点，不能当成目标。
+  const url = children.find((child) => child.name === "URL" && child.from >= textTo)
+  const title = children.find((child) => child.name === "LinkTitle" && child.from >= textTo)
   return {
     href: url ? decodeLinkDestination(src.slice(url.from, url.to)) : "",
     title: title ? src.slice(title.from + 1, title.to - 1) : null,
-    textFrom: marks[0]?.to ?? node.from,
-    textTo: marks[1]?.from ?? node.to,
+    textFrom,
+    textTo,
+    destination: marks.length > 2,
   }
+}
+
+/** 不成链接、图片的方括号：标记部分按字面写出，方括号里的内容照常解析。 */
+function emitBracketed(
+  node: LezerNode,
+  parts: LinkParts,
+  marks: MarkSpec[],
+  src: string,
+  atoms: AtomRange[],
+  builder: InlineBuilder
+) {
+  builder.pushText(src.slice(node.from, parts.textFrom), marks, true)
+  emitRange(node, parts.textFrom, parts.textTo, marks, src, atoms, builder)
+  builder.pushText(src.slice(parts.textTo, node.to), marks, true)
 }
 
 function decodeLinkDestination(value: string) {
