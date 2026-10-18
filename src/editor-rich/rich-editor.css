@@ -92,12 +92,20 @@
 
 /* 标题：只有文档档的工具栏与输入前缀能产出，但任何档位载入含标题的正文都要
  * 按层级显示（技术方案 §3「碎片不在工具栏暴露，但正确解析与保存」）。
- * 层级比例与卡片渲染（packages/markdown/styles.css 的 .md-document）同一套，
- * 相对编辑器字号取 em，编辑态所见与卡片一致。 */
+ * 层级比例与上下留白都与卡片渲染（packages/markdown/styles.css 的 .md-document）
+ * 同一套，相对标题字号取 em，编辑态所见与卡片一致。段落一行一段不留白，
+ * 标题却要自带留白：方言 v2 里标题前后的第一个空行只是 Markdown 分隔符、不显示，
+ * 没有这层留白，标准 Markdown 写成的文章（AI 经 shard 命令写入的笔记）标题会
+ * 紧贴上下文。正文开头的标题不留上白。 */
 .shard-rich-editor .ProseMirror :is(h1, h2, h3, h4, h5, h6) {
-  margin: 0;
+  margin-block: 1em 0.5em;
+  margin-inline: 0;
   font-weight: var(--weight-semibold);
   line-height: var(--leading-tight);
+}
+
+.shard-rich-editor .ProseMirror :is(h1, h2, h3, h4, h5, h6):first-child {
+  margin-top: 0;
 }
 
 .shard-rich-editor .ProseMirror h1 {
