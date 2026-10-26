@@ -4,6 +4,7 @@ import { SettingsGroup, SettingsGroupItem, SettingsRow } from "@/components/shar
 import { Button } from "@/components/ui/button"
 import { fetchAuthState, stepUp } from "@/features/auth/webauthn"
 import { notify } from "@/lib/notify"
+import { isWebRuntime } from "@/lib/transport"
 
 import { eraseDeletedEntries, exportZipUrl, listDeletedEntries, openRevisionHistory, restoreRevision, type DeletedEntry } from "./history-api"
 import { formatRevisionTime } from "./revision-history-dialog"
@@ -43,10 +44,14 @@ async function downloadExport() {
 }
 
 /**
- * 网页端设置里的「数据与备份」：导出全部为 zip（旧版桌面 App 能直接打开），以及最近 30 天彻底删除的内容——
+ * 设置里的「数据与备份」：导出全部为 zip（旧版桌面 App 能直接打开），以及最近 30 天彻底删除的内容——
  * 可以找回，也可以立即抹除（不可撤销，要求验证通行密钥）。
+ *
+ * 连接服务器的桌面凭设备令牌，能看最近删除、找回与看历史；导出全部与立即抹除要在浏览器里验证通行密钥，
+ * 这里只说明去网页版操作。
  */
 export function DataSettings() {
+  const canVerifyPasskey = isWebRuntime()
   const [entries, setEntries] = useState<DeletedEntry[] | null>(null)
   const [retentionDays, setRetentionDays] = useState(30)
   const [busy, setBusy] = useState<string | null>(null)
@@ -103,34 +108,43 @@ export function DataSettings() {
 
   return (
     <>
-      <SettingsGroup busy={busy === "export"}>
-        <SettingsRow
-          controlWidth="auto"
-          description="按原来的资料库目录打包成 zip，旧版桌面 App 能直接打开；密匣内容仍是加密的。需要验证通行密钥。"
-          label="导出全部"
-        >
-          <Button
-            aria-busy={busy === "export"}
-            disabled={busy !== null}
-            onClick={() =>
-              void (async () => {
-                setBusy("export")
-                try {
-                  await downloadExport()
-                } catch (error) {
-                  notify.failure("导出没有开始", error)
-                } finally {
-                  setBusy(null)
-                }
-              })()
-            }
-            size="sm"
-            variant="outline"
+      {canVerifyPasskey ? (
+        <SettingsGroup busy={busy === "export"}>
+          <SettingsRow
+            controlWidth="auto"
+            description="按原来的资料库目录打包成 zip，旧版桌面 App 能直接打开；密匣内容仍是加密的。需要验证通行密钥。"
+            label="导出全部"
           >
-            导出 zip
-          </Button>
-        </SettingsRow>
-      </SettingsGroup>
+            <Button
+              aria-busy={busy === "export"}
+              disabled={busy !== null}
+              onClick={() =>
+                void (async () => {
+                  setBusy("export")
+                  try {
+                    await downloadExport()
+                  } catch (error) {
+                    notify.failure("导出没有开始", error)
+                  } finally {
+                    setBusy(null)
+                  }
+                })()
+              }
+              size="sm"
+              variant="outline"
+            >
+              导出 zip
+            </Button>
+          </SettingsRow>
+        </SettingsGroup>
+      ) : (
+        <SettingsGroup>
+          <SettingsRow
+            description="需要在浏览器里验证通行密钥，请在网页版「设置 → 数据与备份」里操作。"
+            label="导出全部、立即抹除"
+          />
+        </SettingsGroup>
+      )}
 
       <SettingsGroup busy={busy !== null && busy !== "export"}>
         {entries === null ? (
@@ -166,14 +180,16 @@ export function DataSettings() {
                   >
                     找回
                   </Button>
-                  <Button
-                    disabled={busy !== null}
-                    onClick={() => eraseNow(entry)}
-                    size="sm"
-                    variant={confirmingErase === entry.nodeId ? "destructive" : "outline"}
-                  >
-                    {confirmingErase === entry.nodeId ? "再点一次抹除" : "立即抹除"}
-                  </Button>
+                  {canVerifyPasskey ? (
+                    <Button
+                      disabled={busy !== null}
+                      onClick={() => eraseNow(entry)}
+                      size="sm"
+                      variant={confirmingErase === entry.nodeId ? "destructive" : "outline"}
+                    >
+                      {confirmingErase === entry.nodeId ? "再点一次抹除" : "立即抹除"}
+                    </Button>
+                  ) : null}
                 </div>
               </SettingsRow>
             )

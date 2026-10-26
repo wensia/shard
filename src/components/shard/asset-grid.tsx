@@ -14,7 +14,7 @@ import { formatBytes, formatModifiedAt } from "@/lib/file-metadata"
 import { libraryEntryName, libraryEntryTypeLabel } from "@/lib/library-entry"
 import { vaultImageUrl } from "@/lib/fragment-images"
 import { notify } from "@/lib/notify"
-import { isWebRuntime } from "@/lib/transport"
+import { canOpenLocalFiles, isWebRuntime } from "@/lib/transport"
 import {
   loadLibraryPreview,
   type LibraryPreview,
@@ -556,7 +556,8 @@ export function AssetViewer({
           <ArrowLeftIcon aria-hidden="true" />
           {backLabel}
         </Button>
-        {isWebRuntime() ? null : (
+        {/* 连接服务器时图片不在这台电脑上：不提供在访达中显示、用默认应用打开。 */}
+        {canOpenLocalFiles() ? (
           <Button
             aria-label="在访达中显示"
             onClick={() => void revealInDir()}
@@ -566,15 +567,17 @@ export function AssetViewer({
             <FolderOpenIcon aria-hidden="true" />
             在访达中显示
           </Button>
-        )}
-        <Button
-          aria-label={isWebRuntime() ? "在新标签页打开" : "用默认应用打开"}
-          onClick={() => void openWithDefaultApp()}
-          size="sm"
-          variant="ghost"
-        >
-          {isWebRuntime() ? "在新标签页打开" : "用默认应用打开"}
-        </Button>
+        ) : null}
+        {isWebRuntime() || canOpenLocalFiles() ? (
+          <Button
+            aria-label={isWebRuntime() ? "在新标签页打开" : "用默认应用打开"}
+            onClick={() => void openWithDefaultApp()}
+            size="sm"
+            variant="ghost"
+          >
+            {isWebRuntime() ? "在新标签页打开" : "用默认应用打开"}
+          </Button>
+        ) : null}
         <Button
           aria-label="复制图片引用"
           onClick={() => void copyReference()}

@@ -5,7 +5,7 @@ import { ZenSurface } from "@/components/shard/zen-surface"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { downloadVaultCsv, openCsvFile } from "@/lib/api"
-import { isWebRuntime } from "@/lib/transport"
+import { canOpenLocalFiles, isWebRuntime } from "@/lib/transport"
 import { DatasetEditor, type DatasetEditorHandle } from "./dataset-editor"
 import type { DatasetSnapshot } from "./types"
 
@@ -62,7 +62,7 @@ export const DatasetZen = forwardRef<DatasetZenHandle, { path: string; onClose()
           <div className="truncate text-[length:var(--text-body)] font-semibold">{title}</div>
           <div className="truncate text-[length:var(--text-meta)] text-muted-foreground" title={path}>{path}</div>
         </div>
-        <Button size="sm" variant="outline" disabled={busy} onClick={() => { void openExternal() }}>{isWebRuntime() ? "下载 CSV" : "用默认程序打开"}</Button>
+        {isWebRuntime() || canOpenLocalFiles() ? <Button size="sm" variant="outline" disabled={busy} onClick={() => { void openExternal() }}>{isWebRuntime() ? "下载 CSV" : "用默认程序打开"}</Button> : null}
         <Button size="sm" variant="outline" disabled={busy} onClick={() => { void requestClose() }}>关闭</Button>
       </header>
       <div className="min-h-0 min-w-0 flex-1"><DatasetEditor ref={editor} path={path} onSnapshot={onSnapshot} /></div>

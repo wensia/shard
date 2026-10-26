@@ -7,6 +7,7 @@ import {
   HistoryIcon,
   KeyboardIcon,
   KeyRoundIcon,
+  LinkIcon,
   Loader2Icon,
   MonitorIcon,
   MoonIcon,
@@ -54,7 +55,7 @@ import {
   uninstallCli,
 } from "@/lib/api"
 import { notify } from "@/lib/notify"
-import { isWebRuntime } from "@/lib/transport"
+import { desktopRemoteStatus, isWebRuntime } from "@/lib/transport"
 import { AccountSettings } from "@/features/auth/account-settings"
 import { DataSettings } from "@/features/history/data-settings"
 import type {
@@ -72,6 +73,8 @@ import {
   SettingsRow,
   SettingsSegmented,
 } from "./settings-controls"
+import { ServerSettings } from "./server-settings"
+import { StatusIndicator, stationToneStyle, type StationTone } from "./settings-status"
 import styles from "./vault-guide.module.css"
 
 /*
@@ -112,14 +115,24 @@ const monoPathStyle: CSSProperties = {
   userSelect: "all",
 }
 
-export type SettingsSection = "account" | "appearance" | "cli" | "data" | "git" | "shortcuts" | "vault"
+export type SettingsSection = "account" | "appearance" | "cli" | "data" | "git" | "server" | "shortcuts" | "vault"
 
-/** 设置单页里的分区顺序，也是左侧锚点导航的顺序。网页端没有本机资料库、Git 与终端命令，换成账号与安全。 */
-const DESKTOP_SETTINGS_SECTIONS: SettingsSection[] = ["vault", "git", "appearance", "cli", "shortcuts"]
-const WEB_SETTINGS_SECTIONS: SettingsSection[] = ["account", "data", "appearance", "shortcuts"]
+/** 设置的运行形态：网页、连接了服务器的桌面、本机资料库的桌面。 */
+type SettingsRuntime = "local" | "remote" | "web"
 
-function settingsSections() {
-  return isWebRuntime() ? WEB_SETTINGS_SECTIONS : DESKTOP_SETTINGS_SECTIONS
+/**
+ * 设置单页里的分区顺序，也是左侧锚点导航的顺序。网页端没有本机资料库、Git 与终端命令，换成账号与安全；
+ * 桌面连接服务器后，本机资料库与 Git 换成服务器连接与数据找回（导出、抹除要在网页验证通行密钥）。
+ */
+const SETTINGS_SECTIONS: Record<SettingsRuntime, SettingsSection[]> = {
+  local: ["vault", "git", "server", "appearance", "cli", "shortcuts"],
+  remote: ["server", "data", "appearance", "cli", "shortcuts"],
+  web: ["account", "data", "appearance", "shortcuts"],
+}
+
+function settingsRuntime(): SettingsRuntime {
+  if (isWebRuntime()) return "web"
+  return desktopRemoteStatus() ? "remote" : "local"
 }
 
 interface VaultGuideProps {
@@ -215,6 +228,8 @@ interface SettingsCopy {
   remoteStatus: Record<"connected" | "connecting" | "creating" | "missing" | "pending", string>
   remoteUrlLabel: string
   repoNameLabel: string
+  serverDescription: string
+  serverTitle: string
   settingsTitle: string
   sideCurrent: string
   sideGit: string
@@ -351,6 +366,9 @@ const settingsCopy: Record<SettingsLocale, SettingsCopy> = {
     },
     remoteUrlLabel: "Git remote URL",
     repoNameLabel: "GitHub repository name",
+    serverDescription:
+      "Or connect this Mac to your Shard server: data lives on the server and needs a network connection.",
+    serverTitle: "Server",
     settingsTitle: "Settings",
     sideCurrent: "Folder",
     sideGit: "Local Git",
@@ -475,6 +493,8 @@ const settingsCopy: Record<SettingsLocale, SettingsCopy> = {
     },
     remoteUrlLabel: "Git 远端 URL",
     repoNameLabel: "GitHub 仓库名",
+    serverDescription: "或者把这台 Mac 连接到你的 Shard 服务器：数据以服务器为准，需要联网。",
+    serverTitle: "服务器",
     settingsTitle: "设置",
     sideCurrent: "目录",
     sideGit: "本地 Git",
@@ -573,8 +593,10 @@ export function VaultGuide({
   const [isCheckingGithub, setIsCheckingGithub] = useState(false)
   const [remoteUrl, setRemoteUrl] = useState("")
   const [repoName, setRepoName] = useState(defaultRepoName(vaultPath))
-  const startSection: SettingsSection =
-    isWebRuntime() && !WEB_SETTINGS_SECTIONS.includes(initialSection) ? "account" : initialSection
+  const runtime = settingsRuntime()
+  const sections = SETTINGS_SECTIONS[runtime]
+  // 请求的分区在当前形态下没有（例如网页、连接服务器时的「Vault」「Git」）：落在第一个分区。
+  const startSection: SettingsSection = sections.includes(initialSection) ? initialSection : sections[0]
   const [activeSection, setActiveSection] =
     useState<SettingsSection>(startSection)
   const [accentTheme, setAccentTheme] =
@@ -625,7 +647,8 @@ export function VaultGuide({
     setRepoName(defaultRepoName(vaultPath))
   }, [vaultPath])
 
-  const showsFullSettings = !required && Boolean(vaultPath)
+  // 连接服务器时没有「选择本机资料库」这一步：读不到资料库（离线）也直接给完整设置。
+  const showsFullSettings = runtime === "remote" || (!required && Boolean(vaultPath))
 
   /** 只滚设置内容区自身：WKWebView 里 scrollIntoView 会连带滚动外层容器。 */
   function scrollToSection(id: SettingsSection, behavior: ScrollBehavior) {
@@ -722,8 +745,8 @@ export function VaultGuide({
   }, [isOpen, showsFullSettings])
 
   useEffect(() => {
-    // 网页端没有本地 Git，也没有 github_cli_status 命令。
-    if (!isOpen || !needsRemote || isWebRuntime()) {
+    // 网页端与连接服务器时没有本地 Git，也没有 github_cli_status 命令。
+    if (!isOpen || !needsRemote || runtime !== "local") {
       setIsCheckingGithub(false)
       return
     }
@@ -771,7 +794,7 @@ export function VaultGuide({
         window.clearTimeout(timerId)
       }
     }
-  }, [isOpen, needsRemote])
+  }, [isOpen, needsRemote, runtime])
 
   useEffect(() => {
     if (isOpen) {
@@ -1141,7 +1164,7 @@ export function VaultGuide({
         : cliStatus.state === "unavailable"
           ? "empty"
           : "amber"
-  if (required || !vaultPath) {
+  if (!showsFullSettings) {
     return (
       <Dialog
         open={isOpen}
@@ -1213,6 +1236,15 @@ export function VaultGuide({
             {railSection}
             {gitSetupSections}
             {directorySection}
+            {runtime === "local" ? (
+              <section className={styles.sectionPad}>
+                <h3 style={sectionTitleStyle}>{copy.serverTitle}</h3>
+                <p style={sectionDescriptionStyle}>{copy.serverDescription}</p>
+                <div style={{ marginTop: "var(--shard-space-3)" }}>
+                  <ServerSettings />
+                </div>
+              </section>
+            ) : null}
           </main>
         </DialogContent>
       </Dialog>
@@ -1225,6 +1257,7 @@ export function VaultGuide({
     cli: { icon: SquareTerminalIcon, label: copy.cliTitle },
     data: { icon: HistoryIcon, label: copy.navData },
     git: { icon: GitBranchIcon, label: copy.navGit },
+    server: { icon: LinkIcon, label: copy.serverTitle },
     shortcuts: { icon: KeyboardIcon, label: copy.navShortcuts },
     vault: { icon: FolderOpenIcon, label: copy.vaultTitle },
   }
@@ -1258,7 +1291,7 @@ export function VaultGuide({
         }}
       >
         <DialogDescription className="sr-only">
-          配置 Shard 的目录、Git 同步、外观、终端命令与快捷键。
+          配置 Shard 的资料库、同步、外观、终端命令与快捷键。
         </DialogDescription>
         <header className={styles.settingsHeader}>
           <DialogTitle className={styles.settingsTitle}>
@@ -1282,7 +1315,7 @@ export function VaultGuide({
             className={styles.navRail}
             data-focus-region="settings-nav"
           >
-            {settingsSections().map((id) => {
+            {sections.map((id) => {
               const { icon: Icon, label } = navMeta[id]
               return (
                 <button
@@ -1307,10 +1340,19 @@ export function VaultGuide({
             onScroll={handleSettingsScroll}
             ref={scrollRef}
           >
-            {isWebRuntime() ? (
+            {runtime === "web" ? (
               <>
                 <SettingsBlock id="account" title={copy.navAccount}>
                   <AccountSettings />
+                </SettingsBlock>
+                <SettingsBlock id="data" title={copy.navData}>
+                  <DataSettings />
+                </SettingsBlock>
+              </>
+            ) : runtime === "remote" ? (
+              <>
+                <SettingsBlock id="server" title={copy.serverTitle}>
+                  <ServerSettings />
                 </SettingsBlock>
                 <SettingsBlock id="data" title={copy.navData}>
                   <DataSettings />
@@ -1546,6 +1588,10 @@ export function VaultGuide({
                 </SettingsRow>
               </SettingsGroup>
             </SettingsBlock>
+
+            <SettingsBlock id="server" title={copy.serverTitle}>
+              <ServerSettings />
+            </SettingsBlock>
               </>
             )}
 
@@ -1613,7 +1659,7 @@ export function VaultGuide({
               </SettingsGroup>
             </SettingsBlock>
 
-            {isWebRuntime() ? null : (
+            {runtime === "web" ? null : (
             <SettingsBlock id="cli" title={copy.cliTitle}>
               <SettingsGroup busy={cliAction !== null}>
                 <SettingsRow
@@ -1693,21 +1739,6 @@ function prefersReducedMotion() {
   )
 }
 
-function StatusIndicator({ label, tone }: { label: string; tone: StationTone }) {
-  return (
-    <span className={styles.statusIndicator}>
-      <span
-        aria-hidden="true"
-        className={
-          tone === "info" ? `${styles.statusDot} ${styles.pulseDot}` : styles.statusDot
-        }
-        style={stationToneStyle[tone]}
-      />
-      <span>{label}</span>
-    </span>
-  )
-}
-
 function defaultRepoName(vaultPath: string) {
   const name = vaultPath.split(/[\\/]/).filter(Boolean).pop() || "ShardVault"
   return (
@@ -1766,32 +1797,6 @@ function getGithubStatusText(
     ? copy.githubProtocol(githubStatus.protocol)
     : ""
   return copy.githubAuthenticated(account, protocol)
-}
-
-type StationTone = "amber" | "emerald" | "empty" | "info" | "ruby"
-
-const stationToneStyle: Record<StationTone, CSSProperties> = {
-  amber: {
-    background: "var(--shard-amber)",
-    boxShadow: "0 0 0 3px rgb(var(--shard-amber-rgb) / var(--shard-alpha-13))",
-  },
-  emerald: {
-    background: "var(--shard-emerald)",
-    boxShadow:
-      "0 0 0 3px rgb(var(--shard-emerald-rgb) / var(--shard-alpha-13))",
-  },
-  empty: {
-    border:
-      "1.5px solid color-mix(in srgb, var(--muted-foreground) 55%, transparent)",
-  },
-  info: {
-    background: "var(--shard-info)",
-    boxShadow: "0 0 0 3px rgb(var(--shard-info-rgb) / var(--shard-alpha-13))",
-  },
-  ruby: {
-    background: "var(--shard-ruby)",
-    boxShadow: "0 0 0 3px rgb(var(--shard-ruby-rgb) / var(--shard-alpha-13))",
-  },
 }
 
 function RailConnector() {

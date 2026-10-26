@@ -1,4 +1,6 @@
+import { writeExportFile } from "@/lib/export-file"
 import { transport } from "@/lib/transport"
+import { readRemoteRevision } from "@/lib/transport/desktop-remote"
 
 /** 一条修订（服务端 `shard_store::RevisionInfo`）。 */
 export interface RevisionInfo {
@@ -74,8 +76,35 @@ export function exportZipUrl() {
   return `/api/export.zip?utcOffset=${-new Date().getTimezoneOffset()}`
 }
 
+/**
+ * 桌面连接服务器：webview 与服务器不同源、也没有登录会话，修订原文经 Rust 带设备令牌读取
+ *（预览图片用 blob 地址，下载走系统的保存对话框）；网页直接用 {@link revisionUrl}。
+ */
+export function readsRevisionsViaDevice() {
+  return transport().kind === "tauri-remote"
+}
+
+/** 一条修订的原始字节（只在 {@link readsRevisionsViaDevice} 时用）。 */
+export async function readRevisionBytes(revId: number) {
+  return readRemoteRevision(revId)
+}
+
+/** 桌面连接服务器时的「下载这个版本」：选好位置后写到本机。返回是否保存了。 */
+export async function saveRevisionCopy(revision: Pick<RevisionInfo, "revId" | "path">) {
+  const { save } = await import("@tauri-apps/plugin-dialog")
+  const target = await save({ defaultPath: revision.path.split("/").pop() || "旧版本", title: "下载这个版本" })
+  if (!target) return false
+  const { bytes } = await readRemoteRevision(revision.revId)
+  await writeExportFile(target, bytes)
+  return true
+}
+
 /** 文本类修订的原文（预览用）。 */
 export async function readRevisionText(revId: number) {
+  if (readsRevisionsViaDevice()) {
+    const { bytes } = await readRemoteRevision(revId)
+    return new TextDecoder().decode(bytes)
+  }
   const response = await fetch(revisionUrl(revId), { credentials: "same-origin" })
   if (!response.ok) throw new Error(`读取旧版本失败（${response.status}）`)
   return response.text()

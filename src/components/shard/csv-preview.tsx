@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react"
 
 import { downloadVaultCsv, getApiErrorMessage, openCsvFile, readCsvFile } from "@/lib/api"
-import { isWebRuntime } from "@/lib/transport"
+import { canOpenLocalFiles, isWebRuntime } from "@/lib/transport"
 import { isNonUtf8CsvEncoding, type CsvDocument } from "@/lib/csv"
 import { parseCsvBytesInWorker } from "@/lib/csv-worker"
 import { notify } from "@/lib/notify"
@@ -150,14 +150,17 @@ export function CsvPreview({ maxRows, path }: CsvPreviewProps) {
         <span>共 {rows.length} 行</span>
         <span aria-hidden="true">·</span>
         <button className={styles.openButton} onClick={() => openDatasetEditor(path)} type="button">编辑</button>
-        <button
-          className={styles.openButton}
-          disabled={isOpening}
-          onClick={() => void openWithDefaultProgram()}
-          type="button"
-        >
-          {isOpening ? "正在打开…" : isWebRuntime() ? "下载 CSV" : "用默认程序打开"}
-        </button>
+        {/* 连接服务器时文件不在这台电脑上：远程版「打开副本」暂缓，先不提供。 */}
+        {isWebRuntime() || canOpenLocalFiles() ? (
+          <button
+            className={styles.openButton}
+            disabled={isOpening}
+            onClick={() => void openWithDefaultProgram()}
+            type="button"
+          >
+            {isOpening ? "正在打开…" : isWebRuntime() ? "下载 CSV" : "用默认程序打开"}
+          </button>
+        ) : null}
         {isNonUtf8CsvEncoding(document.encoding) ? (
           <span className={styles.encoding}>
             {document.encoding.toUpperCase()} · 建议另存为 UTF-8

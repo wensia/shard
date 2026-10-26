@@ -39,7 +39,7 @@ import { readOutlineContent } from "@/lib/mind-map-outline"
 import { readFlowchartContent } from "@/lib/flowchart-content"
 import { openRevisionHistory } from "@/features/history/history-api"
 import { notify } from "@/lib/notify"
-import { isWebRuntime } from "@/lib/transport"
+import { isServerBacked } from "@/lib/transport"
 import type { RelatedFragment } from "@/lib/relations"
 import { cn } from "@/lib/utils"
 import type { CsvFileSummary, Fragment } from "@/types"
@@ -343,7 +343,7 @@ export function FragmentCard({
                   openNextSurface(() => onExportImage?.(fragment))
                 }
               />
-              {isWebRuntime() && !fragment.lockbox ? (
+              {isServerBacked() && !fragment.lockbox ? (
                 <CardMenuItem
                   icon={<HistoryIcon aria-hidden="true" />}
                   label="版本历史"

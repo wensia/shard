@@ -3,7 +3,7 @@ import { cloneElement, createContext, type HTMLAttributes, type KeyboardEvent, t
 import { createPortal } from "react-dom"
 
 import { openRevisionHistory } from "@/features/history/history-api"
-import { isWebRuntime } from "@/lib/transport"
+import { isServerBacked } from "@/lib/transport"
 import { useLongPress } from "@/lib/use-long-press"
 
 import { ArchiveRestoreIcon, FileTextIcon, FolderIcon, HistoryIcon, ImageIcon, InboxIcon, LockKeyholeIcon, MoreHorizontalIcon, PencilLineIcon, Trash2Icon } from "@/components/icons"
@@ -86,8 +86,8 @@ function LibraryEntryMenuItems({ entry, destinations, batch, run, ...actions }: 
         </DropdownMenuItem>
       ) : null}
       <DropdownMenuItem onClick={() => run(() => actions.onRename(entry))}><PencilLineIcon />重命名</DropdownMenuItem>
-      {/* 版本历史存在服务器上，只有网页端有；密匣条目在服务器上只有密文，不提供。 */}
-      {isWebRuntime() && entry.kind !== "directory" && !entry.path.startsWith("lockbox/") ? (
+      {/* 版本历史存在服务器上（网页、连接了服务器的桌面）；密匣条目在服务器上只有密文，不提供。 */}
+      {isServerBacked() && entry.kind !== "directory" && !entry.path.startsWith("lockbox/") ? (
         <DropdownMenuItem onClick={() => openRevisionHistory({ target: { path: entry.path }, title: entry.name })}>
           <HistoryIcon />版本历史
         </DropdownMenuItem>

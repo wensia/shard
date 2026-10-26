@@ -9,10 +9,13 @@ import {
   OPEN_HISTORY_EVENT,
   REVISION_REASON_LABEL,
   listRevisions,
+  readRevisionBytes,
   readRevisionText,
+  readsRevisionsViaDevice,
   restoreRevision,
   revisionPreviewKind,
   revisionUrl,
+  saveRevisionCopy,
   type OpenHistoryDetail,
   type RevisionInfo,
 } from "./history-api"
@@ -35,10 +38,42 @@ function isStaleBase(error: unknown) {
   return String(error).includes("STALE_BASE")
 }
 
+/** 图片修订的地址：网页直接用服务器地址；桌面连接服务器时经 Rust 读字节，换成 blob 地址。 */
+function useRevisionImageSrc(revision: RevisionInfo, enabled: boolean) {
+  const viaDevice = readsRevisionsViaDevice()
+  const [src, setSrc] = useState<string | null>(viaDevice ? null : revisionUrl(revision.revId))
+  const [error, setError] = useState<string | null>(null)
+  useEffect(() => {
+    if (!enabled || !viaDevice) {
+      setSrc(revisionUrl(revision.revId))
+      return
+    }
+    let cancelled = false
+    let objectUrl: string | null = null
+    setSrc(null)
+    setError(null)
+    readRevisionBytes(revision.revId)
+      .then(({ bytes, contentType }) => {
+        if (cancelled) return
+        objectUrl = URL.createObjectURL(new Blob([bytes as BlobPart], { type: contentType ?? "" }))
+        setSrc(objectUrl)
+      })
+      .catch((reason: unknown) => {
+        if (!cancelled) setError(String(reason))
+      })
+    return () => {
+      cancelled = true
+      if (objectUrl) URL.revokeObjectURL(objectUrl)
+    }
+  }, [enabled, revision.revId, viaDevice])
+  return { src, error }
+}
+
 function RevisionPreview({ revision }: { revision: RevisionInfo }) {
   const kind = revisionPreviewKind(revision.path)
   const [text, setText] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const image = useRevisionImageSrc(revision, kind === "image" && Boolean(revision.sha))
 
   useEffect(() => {
     if (kind !== "text" || !revision.sha) return
@@ -58,7 +93,17 @@ function RevisionPreview({ revision }: { revision: RevisionInfo }) {
   }, [kind, revision.revId, revision.sha])
 
   if (!revision.sha) return <p className={styles.previewNote}>这一条记录的是删除时刻，没有内容。</p>
-  if (kind === "image") return <img alt="旧版本预览" className={styles.previewImage} src={revisionUrl(revision.revId)} />
+  if (kind === "image") {
+    if (image.error) return <p className={styles.previewNote}>{image.error}</p>
+    if (!image.src) {
+      return (
+        <p className={styles.previewNote}>
+          <Loader2Icon aria-hidden="true" className={styles.spin} /> 正在读取…
+        </p>
+      )
+    }
+    return <img alt="旧版本预览" className={styles.previewImage} src={image.src} />
+  }
   if (kind === "binary") return <p className={styles.previewNote}>这种文件不能预览，可以下载后查看。</p>
   if (error) return <p className={styles.previewNote}>{error}</p>
   if (text === null) {
@@ -73,7 +118,7 @@ function RevisionPreview({ revision }: { revision: RevisionInfo }) {
 
 /**
  * 一个文件的版本历史：选中一条预览，可下载或恢复为它。恢复会新增一个版本，当前内容仍留在历史里，所以不再二次确认。
- * 只在网页端出现（版本历史存在服务器上）。
+ * 只在以服务器为真相时出现（版本历史存在服务器上）：网页，以及连接了服务器的桌面。
  */
 export function RevisionHistoryDialog({ detail, onClose }: { detail: OpenHistoryDetail; onClose: () => void }) {
   const [revisions, setRevisions] = useState<RevisionInfo[] | null>(null)
@@ -101,6 +146,15 @@ export function RevisionHistoryDialog({ detail, onClose }: { detail: OpenHistory
   const current = revisions?.[0] ?? null
   const chosen = revisions?.find((revision) => revision.revId === selected) ?? null
   const canRestore = Boolean(chosen?.sha && current && chosen.revId !== current.revId && chosen.sha !== current.sha)
+
+  /** 桌面连接服务器：经 Rust 读字节，写到选好的位置。 */
+  async function downloadCopy(revision: RevisionInfo) {
+    try {
+      if (await saveRevisionCopy(revision)) notify.success("这个版本已保存")
+    } catch (error) {
+      notify.failure("下载没有完成", error)
+    }
+  }
 
   async function restore() {
     if (!chosen || !current) return
@@ -179,7 +233,12 @@ export function RevisionHistoryDialog({ detail, onClose }: { detail: OpenHistory
           </div>
         )}
         <div className={styles.footer}>
-          {chosen?.sha ? (
+          {chosen?.sha && readsRevisionsViaDevice() ? (
+            <Button disabled={busy} onClick={() => void downloadCopy(chosen)} size="sm" variant="outline">
+              <DownloadIcon aria-hidden="true" />
+              下载这个版本
+            </Button>
+          ) : chosen?.sha ? (
             <Button
               nativeButton={false}
               render={<a download href={revisionUrl(chosen.revId, true)} />}

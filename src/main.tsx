@@ -5,6 +5,7 @@ import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import App from "./App";
 import { installFocusNavigation } from "./lib/focus-navigation";
+import { initTransport } from "./lib/transport";
 import { initAccentTheme, initColorMode } from "./lib/theme";
 import { installVisualViewportSync } from "./lib/visual-viewport";
 import "./index.css";
@@ -70,11 +71,14 @@ document.addEventListener("auxclick", suppressSecondaryPointerAction, {
   capture: true,
 });
 
-ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
-  <React.StrictMode>
-    <TooltipProvider>
-      <App />
-      <Toaster />
-    </TooltipProvider>
-  </React.StrictMode>,
-);
+// 桌面先问 Rust 是否连接了服务器，决定之后所有命令走本机还是服务器；决定之前不渲染、不发任何数据命令。
+void initTransport().finally(() => {
+  ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
+    <React.StrictMode>
+      <TooltipProvider>
+        <App />
+        <Toaster />
+      </TooltipProvider>
+    </React.StrictMode>,
+  );
+});

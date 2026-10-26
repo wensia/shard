@@ -56,6 +56,27 @@ struct Connected {
     client: Client,
     config: RemoteConfig,
     stop: Arc<AtomicBool>,
+    /// 实时通道最近一次的状态（同 [`REMOTE_CONNECTION_EVENT`]）。webview 订阅事件之前发出的状态会丢，
+    /// 前端启动时从 [`remote_status`] 补读。
+    link: LinkState,
+}
+
+/// 实时通道的状态：桥接线程写，`remote_status` 读。
+#[derive(Clone)]
+struct LinkState(Arc<Mutex<&'static str>>);
+
+impl LinkState {
+    fn new() -> Self {
+        Self(Arc::new(Mutex::new("connecting")))
+    }
+
+    fn set(&self, state: &'static str) {
+        *self.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = state;
+    }
+
+    fn get(&self) -> &'static str {
+        *self.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
 }
 
 #[derive(Default)]
@@ -81,8 +102,9 @@ impl RemoteRuntime {
 
     fn connect(&self, app: &AppHandle, client: Client, config: RemoteConfig) {
         let stop = Arc::new(AtomicBool::new(false));
-        spawn_event_bridge(app.clone(), client.clone(), Arc::clone(&stop));
-        let previous = self.lock().connected.replace(Connected { client, config, stop });
+        let link = LinkState::new();
+        spawn_event_bridge(app.clone(), client.clone(), Arc::clone(&stop), link.clone());
+        let previous = self.lock().connected.replace(Connected { client, config, stop, link });
         if let Some(previous) = previous {
             previous.stop.store(true, Ordering::SeqCst);
         }
@@ -118,6 +140,8 @@ pub struct RemoteStatus {
     server: Option<String>,
     device_id: Option<String>,
     name: Option<String>,
+    /// 实时通道当前的状态（connecting / connected / reconnecting / signedOut）；未连接时为空。
+    connection: Option<&'static str>,
 }
 
 #[tauri::command]
@@ -129,8 +153,9 @@ pub fn remote_status(runtime: State<'_, RemoteRuntime>) -> RemoteStatus {
             server: Some(connected.config.server.clone()),
             device_id: Some(connected.config.device_id.clone()),
             name: Some(connected.config.name.clone()),
+            connection: Some(connected.link.get()),
         },
-        None => RemoteStatus { connected: false, server: None, device_id: None, name: None },
+        None => RemoteStatus { connected: false, server: None, device_id: None, name: None, connection: None },
     }
 }
 
@@ -170,7 +195,7 @@ pub async fn remote_pair_start(
 }
 
 #[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase", tag = "status")]
+#[serde(rename_all = "camelCase", rename_all_fields = "camelCase", tag = "status")]
 pub enum PairPollResult {
     Pending { interval_ms: u64 },
     Connected { server: String, name: String },
@@ -241,12 +266,28 @@ pub fn remote_disconnect(app: AppHandle, runtime: State<'_, RemoteRuntime>) -> R
 
 /// 给前端的错误：与网页端 `readError` 同形——有结构化错误就给它，否则给说明文字。
 fn frontend_error(app: &AppHandle, error: RemoteError) -> Value {
+    failure_value(app, error, false)
+}
+
+/// `detailed` 为真时（密匣客户端的服务器通道）与网页端 `readFailure` 同形：`{status, code, detail}`，
+/// `detail` 即 [`frontend_error`] 的值；没拿到 HTTP 响应（网络失败）时与网页一样只给说明文字。
+fn failure_value(app: &AppHandle, error: RemoteError, detailed: bool) -> Value {
     if error.is_unauthenticated() {
         let _ = app.emit(REMOTE_AUTH_REQUIRED_EVENT, json!({ "server": error.server }));
     }
-    match error.detail {
+    failure_payload(error, detailed)
+}
+
+fn failure_payload(error: RemoteError, detailed: bool) -> Value {
+    let status = error.status;
+    let code = error.code.clone();
+    let detail = match error.detail {
         Some(detail) => *detail,
         None => Value::String(error.message),
+    };
+    match status {
+        Some(status) if detailed => json!({ "status": status, "code": code, "detail": detail }),
+        _ => detail,
     }
 }
 
@@ -254,21 +295,73 @@ fn not_connected() -> Value {
     Value::String("还没有连接服务器。".to_string())
 }
 
+/// 不转发 RPC、由这里直接读的「命令」：一条修订的原始字节（`GET /api/history/{revId}`）。
+/// 网页端直接 fetch 这个地址；桌面 webview 与服务器不同源、也没有会话，只能带设备令牌在这里读。
+/// 名字带冒号，不会与服务器注册的命令重名。
+pub const REVISION_BYTES_COMMAND: &str = "remote:revision_bytes";
+
+/// 修订原文 → `{sha, contentType, data(base64)}`；sha 按收到的字节重算，前端据此核对。
+fn revision_bytes_payload(server: &str, fetched: shard_remote::FetchedBytes) -> Result<Value, RemoteError> {
+    use base64::Engine as _;
+    use sha2::Digest as _;
+    if !fetched.is_ok() {
+        let status = fetched.status;
+        let (code, message) = match status {
+            401 => ("UNAUTHENTICATED".to_string(), "登录已失效。".to_string()),
+            404 => ("NOT_FOUND".to_string(), "找不到这个版本。".to_string()),
+            _ => (format!("HTTP_{status}"), format!("读取旧版本失败（{status}）")),
+        };
+        return Err(RemoteError {
+            server: server.to_string(),
+            command: REVISION_BYTES_COMMAND.to_string(),
+            status: Some(status),
+            code,
+            message,
+            detail: None,
+        });
+    }
+    let sha: String = sha2::Sha256::digest(&fetched.bytes).iter().map(|byte| format!("{byte:02x}")).collect();
+    Ok(json!({
+        "sha": sha,
+        "contentType": fetched.content_type,
+        "data": base64::engine::general_purpose::STANDARD.encode(&fetched.bytes),
+    }))
+}
+
+fn read_revision_bytes(client: &Client, args: &Value) -> Result<Value, RemoteError> {
+    let rev_id = args.get("revId").and_then(Value::as_i64).ok_or_else(|| RemoteError {
+        server: client.server().to_string(),
+        command: REVISION_BYTES_COMMAND.to_string(),
+        status: Some(400),
+        code: "INVALID_ARGS".to_string(),
+        message: "需要 revId。".to_string(),
+        detail: None,
+    })?;
+    revision_bytes_payload(client.server(), client.get_bytes(&format!("api/history/{rev_id}"))?)
+}
+
 /// 把一个命令原样转发到服务器（`POST /api/rpc/{command}`）。每次都带新的幂等键：读命令服务器忽略它，
-/// 写命令据此保证重试只提交一次。
+/// 写命令据此保证重试只提交一次。`detailed` 见 [`failure_value`]；[`REVISION_BYTES_COMMAND`] 在这里直接读。
 #[tauri::command]
 pub async fn remote_invoke(
     app: AppHandle,
     runtime: State<'_, RemoteRuntime>,
     command: String,
     args: Option<Value>,
+    detailed: Option<bool>,
 ) -> Result<Value, Value> {
     let client = runtime.client().ok_or_else(not_connected)?;
     let args = args.unwrap_or_else(|| json!({}));
-    let result = tauri::async_runtime::spawn_blocking(move || client.write(&command, args))
-        .await
-        .map_err(|error| Value::String(error.to_string()))?;
-    result.map_err(|error| frontend_error(&app, error))
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        if command == REVISION_BYTES_COMMAND {
+            read_revision_bytes(&client, &args)
+        } else {
+            client.write(&command, args)
+        }
+    })
+    .await
+    .map_err(|error| Value::String(error.to_string()))?;
+    result.map_err(|error| failure_value(&app, error, detailed.unwrap_or(false)))
 }
 
 /// 上传附件字节（请求体是原始字节），返回 sha；前端再用 sha 调对应的登记命令。
@@ -368,11 +461,12 @@ pub async fn remote_import_library_files(
 
 /// 服务器的 SSE → Tauri 事件：`vault-changed`（与本地文件监听同形）、`lockbox-changed`、`vault-resync`。
 /// 断线按 1–60 秒退避加抖动重连，带上最后事件 id 续传；令牌失效时通知前端并停止。
-fn spawn_event_bridge(app: AppHandle, client: Client, stop: Arc<AtomicBool>) {
+fn spawn_event_bridge(app: AppHandle, client: Client, stop: Arc<AtomicBool>, link: LinkState) {
     thread::spawn(move || {
         let mut last_event_id: Option<String> = None;
         let mut retry = Duration::from_secs(1);
-        let emit_state = |state: &str| {
+        let emit_state = |state: &'static str| {
+            link.set(state);
             let _ = app.emit(REMOTE_CONNECTION_EVENT, json!({ "state": state }));
         };
         emit_state("connecting");
@@ -431,7 +525,7 @@ fn dispatch(app: &AppHandle, event: &str, data: &str) {
             }
         }
         "lockbox-changed" => {
-            let _ = app.emit(LOCKBOX_CHANGED_EVENT, json!({}));
+            let _ = app.emit(LOCKBOX_CHANGED_EVENT, lockbox_changed_payload(data));
         }
         "resync" => {
             let _ = app.emit(VAULT_RESYNC_EVENT, json!({}));
@@ -440,9 +534,22 @@ fn dispatch(app: &AppHandle, event: &str, data: &str) {
     }
 }
 
+/// 服务器的 `lockbox-changed` 数据原样转给前端：`{seq}`（这次提交的密匣 seq，密匣客户端据此认出自己写入的回声）。
+/// 解析不了就当没有 seq。
+fn lockbox_changed_payload(data: &str) -> Value {
+    serde_json::from_str::<Value>(data).ok().filter(Value::is_object).unwrap_or_else(|| json!({}))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lockbox_changes_keep_the_server_seq() {
+        assert_eq!(lockbox_changed_payload(r#"{"seq":42}"#), json!({ "seq": 42 }));
+        assert_eq!(lockbox_changed_payload("{}"), json!({}));
+        assert_eq!(lockbox_changed_payload("不是 JSON"), json!({}));
+    }
 
     #[test]
     fn jitter_stays_between_half_and_full() {
@@ -450,5 +557,79 @@ mod tests {
             let wait = rand_jitter(Duration::from_secs(10));
             assert!(wait >= Duration::from_secs(5) && wait <= Duration::from_secs(10));
         }
+    }
+
+    fn remote_error(status: Option<u16>, code: &str, message: &str, detail: Option<Value>) -> RemoteError {
+        RemoteError {
+            server: "https://shard.test".to_string(),
+            command: "update_fragment".to_string(),
+            status,
+            code: code.to_string(),
+            message: message.to_string(),
+            detail: detail.map(Box::new),
+        }
+    }
+
+    #[test]
+    fn failures_match_the_web_transport() {
+        // 普通调用：与网页 readError 同形，结构化错误优先，否则是说明文字。
+        let stale = remote_error(Some(409), "STALE_BASE", "STALE_BASE: 已在别处修改", None);
+        assert_eq!(failure_payload(stale.clone(), false), json!("STALE_BASE: 已在别处修改"));
+        let search = remote_error(Some(400), "SEARCH", "搜索失败", Some(json!({ "code": "QUERY_TOO_LONG" })));
+        assert_eq!(failure_payload(search, false), json!({ "code": "QUERY_TOO_LONG" }));
+        // 密匣客户端的通道：带上状态码与错误码。
+        let locked = remote_error(Some(409), "LOCKBOX_UNAVAILABLE", "这是密匣条目", None);
+        assert_eq!(
+            failure_payload(locked, true),
+            json!({ "status": 409, "code": "LOCKBOX_UNAVAILABLE", "detail": "这是密匣条目" })
+        );
+        // 没拿到响应：与网页一样只给说明文字。
+        let offline = remote_error(None, "NETWORK", "连不上 Shard 服务器：连接超时", None);
+        assert_eq!(failure_payload(offline, true), json!("连不上 Shard 服务器：连接超时"));
+    }
+
+    fn fetched(status: u16, bytes: &[u8]) -> shard_remote::FetchedBytes {
+        shard_remote::FetchedBytes {
+            status,
+            content_type: Some("text/plain; charset=utf-8".to_string()),
+            etag: None,
+            cache_control: None,
+            content_security_policy: None,
+            bytes: bytes.to_vec(),
+        }
+    }
+
+    #[test]
+    fn revision_bytes_keep_every_byte_and_report_their_sha() {
+        let text = "\u{feff}---\nid: a\n---\n正文\n".as_bytes();
+        let payload = revision_bytes_payload("https://shard.test", fetched(200, text)).unwrap();
+        use base64::Engine as _;
+        let data = base64::engine::general_purpose::STANDARD.decode(payload["data"].as_str().unwrap()).unwrap();
+        assert_eq!(data, text);
+        assert_eq!(payload["sha"], json!(shard_core::sha256_hex(text)));
+        assert_eq!(payload["contentType"], json!("text/plain; charset=utf-8"));
+
+        let missing = revision_bytes_payload("https://shard.test", fetched(404, b"")).unwrap_err();
+        assert_eq!((missing.status, missing.code.as_str()), (Some(404), "NOT_FOUND"));
+        let revoked = revision_bytes_payload("https://shard.test", fetched(401, b"")).unwrap_err();
+        assert!(revoked.is_unauthenticated());
+    }
+
+    #[test]
+    fn pairing_poll_results_use_camel_case_fields() {
+        assert_eq!(
+            serde_json::to_value(PairPollResult::Pending { interval_ms: 2000 }).unwrap(),
+            json!({ "status": "pending", "intervalMs": 2000 })
+        );
+        assert_eq!(serde_json::to_value(PairPollResult::Expired).unwrap(), json!({ "status": "expired" }));
+    }
+
+    #[test]
+    fn link_state_starts_connecting_and_follows_the_bridge() {
+        let link = LinkState::new();
+        let bridge = link.clone();
+        assert_eq!(link.get(), "connecting");
+        bridge.set("connected");
+        assert_eq!(link.get(), "connected");
     }
 }

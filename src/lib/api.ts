@@ -3,7 +3,7 @@ import { isTauri } from "@tauri-apps/api/core"
 import { deriveKind } from "@/lib/content-kind"
 import { migrateLockboxMarkdownDialect, migratePublicMarkdownDialect } from "@/lib/markdown-dialect-migration"
 import type { PropertyRequestValue, PropertyType } from "@/lib/properties"
-import { isWebRuntime, transport } from "@/lib/transport"
+import { isServerBacked, transport } from "@/lib/transport"
 import { uploadBlob } from "@/lib/transport/http"
 import { downloadBlob, fileBytes } from "@/lib/web-files"
 import type { CanvasFile } from "@/features/canvas/model"
@@ -182,10 +182,10 @@ export function listLibraryTree() {
 
 /**
  * 旧版 vault 的一次性笔记迁移（桌面本地资料库）。服务器上的资料库导入前已经过前置检查、
- * 不会有待迁移的旧笔记，网页端直接返回「无需迁移」，目录树随后照常读取。
+ * 不会有待迁移的旧笔记，以服务器为真相时（网页、连接了服务器的桌面）直接返回「无需迁移」，目录树随后照常读取。
  */
 export async function migrateLegacyNotes(): Promise<LegacyNoteMigrationResult> {
-  if (isWebRuntime()) return { migratedCount: 0, tree: await listLibraryTree() }
+  if (isServerBacked()) return { migratedCount: 0, tree: await listLibraryTree() }
   return desktopInvoke<LegacyNoteMigrationResult>("migrate_legacy_notes")
 }
 

@@ -41,7 +41,7 @@ import {
   revealFragmentImageInDir,
 } from "@/lib/api"
 import { notify } from "@/lib/notify"
-import { isWebRuntime } from "@/lib/transport"
+import { canOpenLocalFiles } from "@/lib/transport"
 import { CsvInlineLink, CsvPreview } from "@/components/shard/csv-preview"
 // 副作用导入：卡片渲染同样按围栏语言查 UI 注册表，启动时先让块完成注册。
 import { getBlockUI } from "@/editor-rich/blocks/registry-ui"
@@ -416,8 +416,8 @@ export function FragmentImageAttachment({
                 void downloadImage()
               }}
             />
-            {/* 网页端没有本机文件：不提供打开所在目录与复制本机路径。 */}
-            {isWebRuntime() ? null : (
+            {/* 网页与连接服务器的桌面没有本机文件：不提供打开所在目录与复制本机路径。 */}
+            {canOpenLocalFiles() ? (
               <>
                 <ImageAttachmentMenuItem
                   icon={<FolderOpenIcon data-icon="inline-start" />}
@@ -436,7 +436,7 @@ export function FragmentImageAttachment({
                   }}
                 />
               </>
-            )}
+            ) : null}
           </div>,
           document.body
         )

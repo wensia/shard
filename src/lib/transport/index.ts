@@ -1,7 +1,8 @@
-import { isTauri } from "@tauri-apps/api/core"
+import { invoke, isTauri } from "@tauri-apps/api/core"
 
 import { withLockboxClient } from "@/lib/lockbox-client/transport"
 
+import { createDesktopRemoteTransport, startRemoteConnectionTracking, type RemoteStatus } from "./desktop-remote"
 import { httpTransport } from "./http"
 import { tauriTransport } from "./tauri"
 
@@ -9,13 +10,15 @@ import { tauriTransport } from "./tauri"
  * 前端与后端之间唯一的通道。
  *
  * - 桌面（Tauri）：IPC 直达 Rust 命令，行为与改造前一致。
+ * - 桌面「连接服务器」（`tauri-remote`）：数据命令经 Rust 带设备令牌转发到服务器，与网页同一套命令；
+ *   本机能力（导出、红绿灯、Dock、终端命令）仍走本机 IPC。启动时由 {@link initTransport} 决定。
  * - 网页：`POST /api/rpc/<命令名>`，命令名与参数和 Tauri 命令一一对应；实时变化走 SSE。
  *
- * 两种实现的错误形态一致：领域错误 reject 成字符串（`STALE_BASE:` 等前缀照旧），
+ * 几种实现的错误形态一致：领域错误 reject 成字符串（`STALE_BASE:` 等前缀照旧），
  * 结构化错误（搜索）reject 成对象。
  */
 export interface ShardTransport {
-  readonly kind: "tauri" | "http"
+  readonly kind: "tauri" | "tauri-remote" | "http"
   invoke<T>(command: string, args?: Record<string, unknown>): Promise<T>
   /** 请求体是原始字节的命令（粘贴图片）；`headers` 与 Tauri 的 IPC 头同名。 */
   invokeBytes<T>(command: string, body: Uint8Array, headers: Record<string, string>): Promise<T>
@@ -47,9 +50,31 @@ export interface ServerChannel {
 
 let override: ShardTransport | null = null
 let webTransport: ShardTransport | null = null
+let desktopRemote: ShardTransport | null = null
+let remoteStatus: RemoteStatus | null = null
+
+/**
+ * 启动时决定桌面走哪条通道，必须在任何命令发出之前完成（`main.tsx` 渲染前 await）。
+ * 网页与没连接服务器的桌面什么也不改；问不到 Rust（旧版本、测试替身）时按未连接处理，行为与改造前一致。
+ */
+export async function initTransport() {
+  if (!isTauri()) return
+  let status: RemoteStatus | null = null
+  try {
+    status = await invoke<RemoteStatus>("remote_status")
+  } catch {
+    return
+  }
+  if (!status?.connected) return
+  remoteStatus = status
+  // 与网页一样套上密匣客户端：密匣命令在本机（wasm）执行，再把密文经服务器通道写回。
+  desktopRemote = withLockboxClient(createDesktopRemoteTransport())
+  await startRemoteConnectionTracking(status.connection)
+}
 
 export function transport(): ShardTransport {
   if (override) return override
+  if (desktopRemote) return desktopRemote
   if (isTauri()) return tauriTransport
   // 网页：密匣命令在浏览器里（wasm）执行，再把密文写回服务器。
   webTransport ??= withLockboxClient(httpTransport)
@@ -67,12 +92,22 @@ export function isWebRuntime() {
 }
 
 /**
- * 数据以服务器为真相（密匣在客户端解密、经服务器同步）。密匣客户端的启用、密匣命令的分流、`lockbox-changed`
- * 的监听等数据路径一律看它，不看 {@link isWebRuntime}。
+ * 数据以服务器为真相（密匣在客户端解密、经服务器同步）：网页，以及连接了服务器的桌面。密匣客户端的启用、
+ * 密匣命令的分流、`lockbox-changed` 的监听、版本历史等数据路径一律看它，不看 {@link isWebRuntime}。
  */
 export function isServerBacked() {
-  // 桌面连接服务器后也为真，S8a 接入。
-  return isWebRuntime()
+  const kind = transport().kind
+  return kind === "http" || kind === "tauri-remote"
+}
+
+/** 资料库文件就在这台电脑上（桌面且没连接服务器）：「用默认程序打开」「在访达中显示」等入口才有意义。 */
+export function canOpenLocalFiles() {
+  return transport().kind === "tauri"
+}
+
+/** 桌面已连接的服务器（地址、设备名）；本地模式与网页为 null。 */
+export function desktopRemoteStatus(): RemoteStatus | null {
+  return transport().kind === "tauri-remote" ? remoteStatus : null
 }
 
 /** 服务器要求重新登录时在 window 上派发；登录界面监听它。 */

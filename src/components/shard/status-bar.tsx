@@ -21,7 +21,8 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip"
 import { formatSyncedAgo } from "@/lib/relative-time"
-import { isWebRuntime } from "@/lib/transport"
+import { isServerBacked, transport } from "@/lib/transport"
+import { remoteConnectionState, subscribeRemoteConnection } from "@/lib/transport/desktop-remote"
 import { getConnectionState, subscribeConnection, type ConnectionState } from "@/lib/transport/sse"
 import { formatSaveState, type SaveState } from "@/lib/save-state"
 import type { GitInfo } from "@/types"
@@ -91,7 +92,7 @@ export function StatusBar({
       role="contentinfo"
     >
       <div className={styles.group}>
-        {isWebRuntime() ? (
+        {isServerBacked() ? (
           <ServerConnectionStatus onOpenSettings={onOpenSettings} />
         ) : git === null ? (
           <StatusBarAction onClick={onOpenSettings}>
@@ -107,7 +108,7 @@ export function StatusBar({
           </StatusBarAction>
         )}
 
-        {hasGit && !isWebRuntime() ? (
+        {hasGit && !isServerBacked() ? (
           <>
             <StatusBarSeparator />
             {!git.hasRemote ? (
@@ -363,13 +364,24 @@ const CONNECTION_LABEL: Record<ConnectionState, string> = {
   signedOut: "登录已过期",
 }
 
-/** 网页端没有本地 Git：左侧显示与服务器实时通道的状态，点开是账号设置。 */
+/** 桌面不登录（凭设备令牌）：令牌失效时说「连接已失效」，其余与网页同一套文案。 */
+const DESKTOP_SIGNED_OUT_LABEL = "连接已失效"
+
+/**
+ * 以服务器为真相时没有本地 Git：左侧显示与服务器实时通道的状态，点开是设置（网页落在账号，桌面落在服务器）。
+ * 网页的状态来自自己的 SSE 连接；桌面来自 Rust 转发的 `remote-connection` 事件。
+ */
 function ServerConnectionStatus({ onOpenSettings }: { onOpenSettings: () => void }) {
-  const [state, setState] = useState<ConnectionState>(getConnectionState)
-  useEffect(() => subscribeConnection(setState), [])
+  const desktop = transport().kind === "tauri-remote"
+  const [state, setState] = useState<ConnectionState>(desktop ? remoteConnectionState : getConnectionState)
+  useEffect(() => {
+    setState(desktop ? remoteConnectionState() : getConnectionState())
+    return desktop ? subscribeRemoteConnection(setState) : subscribeConnection(setState)
+  }, [desktop])
+  const label = desktop && state === "signedOut" ? DESKTOP_SIGNED_OUT_LABEL : CONNECTION_LABEL[state]
   return (
     <StatusBarAction onClick={onOpenSettings}>
-      <span aria-live="polite">{CONNECTION_LABEL[state]}</span>
+      <span aria-live="polite">{label}</span>
     </StatusBarAction>
   )
 }
