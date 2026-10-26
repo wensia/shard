@@ -1,0 +1,655 @@
+{
+  "$comment": [
+    "wikilink 规则的跨语言用例：Rust（crates/shard-core/tests/wikilink_fixtures.rs）与 TS（src/lib/wikilink.fixtures.test.ts）读同一份。",
+    "偏移单位两边不同（TS 是 UTF-16，Rust 是 UTF-8 字节），parse 只比较 target、alias、embed 和 content 里 from..to 对应的原文子串 text。",
+    "noteTitle 的 repeatPrefix 表示 content 前先拼上 text 重复 count 次。hardBreaks 比较 stripMarkdownHardBreaks(content, 32000)。",
+    "resolve 的 candidates 依次是碎片、CSV、导图候选（不比较只用于展示的 label）；lookups 在这三类合并后的候选里解析。",
+    "relations 模拟 src/workspace/workbench-shell.tsx 937-963 / 1170-1217 行的 wikilink 关系同步；expectedTargets 为 null 表示不做同步。"
+  ],
+  "parse": [
+    {
+      "name": "普通链接",
+      "content": "见 [[项目计划]] 和后文。",
+      "links": [{"target":"项目计划","alias":null,"embed":false,"text":"[[项目计划]]"}]
+    },
+    {
+      "name": "别名",
+      "content": "[[碎片-42|原始记录]]",
+      "links": [{"target":"碎片-42","alias":"原始记录","embed":false,"text":"[[碎片-42|原始记录]]"}]
+    },
+    {
+      "name": "目标与别名两侧去空白",
+      "content": "[[ notes/roadmap.md | 路线图 ]]",
+      "links": [{"target":"notes/roadmap.md","alias":"路线图","embed":false,"text":"[[ notes/roadmap.md | 路线图 ]]"}]
+    },
+    {
+      "name": "只按第一个竖线切分",
+      "content": "[[甲|乙|丙]]",
+      "links": [{"target":"甲","alias":"乙|丙","embed":false,"text":"[[甲|乙|丙]]"}]
+    },
+    {"name":"空别名整条丢弃","content":"[[目标|]] [[目标| ]] [[目标|\u3000]]","links":[]},
+    {"name":"空目标整条丢弃","content":"[[]] [[ ]] [[|别名]] [[\u3000|别名]]","links":[]},
+    {
+      "name": "未闭合时停止",
+      "content": "[[甲]] 之后 [[未闭合",
+      "links": [{"target":"甲","alias":null,"embed":false,"text":"[[甲]]"}]
+    },
+    {"name":"只有未闭合","content":"[[未闭合","links":[]},
+    {
+      "name": "未闭合的开头会吞到下一个闭合",
+      "content": "[[未闭合 后面 [[完整]]",
+      "links": [{"target":"未闭合 后面 [[完整","alias":null,"embed":false,"text":"[[未闭合 后面 [[完整]]"}]
+    },
+    {
+      "name": "嵌套方括号不配对",
+      "content": "[[a [[b]] c]]",
+      "links": [{"target":"a [[b","alias":null,"embed":false,"text":"[[a [[b]]"}]
+    },
+    {"name":"三个左括号","content":"[[[x]]]","links":[{"target":"[x","alias":null,"embed":false,"text":"[[[x]]"}]},
+    {"name":"多余的右括号","content":"]] [[a]]]","links":[{"target":"a","alias":null,"embed":false,"text":"[[a]]"}]},
+    {
+      "name": "多个链接与重复出现",
+      "content": "[[甲]]、[[乙|别名]] 与 [[甲]]",
+      "links": [
+        {"target":"甲","alias":null,"embed":false,"text":"[[甲]]"},
+        {"target":"乙","alias":"别名","embed":false,"text":"[[乙|别名]]"},
+        {"target":"甲","alias":null,"embed":false,"text":"[[甲]]"}
+      ]
+    },
+    {
+      "name": "相邻链接",
+      "content": "[[a]][[b]]",
+      "links": [
+        {"target":"a","alias":null,"embed":false,"text":"[[a]]"},
+        {"target":"b","alias":null,"embed":false,"text":"[[b]]"}
+      ]
+    },
+    {
+      "name": "只有 CSV 目标的 ![[ ]] 是嵌入",
+      "content": "![[data/report.csv]] 和 [[data/report.csv]] 与 ![[note.md]]",
+      "links": [
+        {"target":"data/report.csv","alias":null,"embed":true,"text":"![[data/report.csv]]"},
+        {"target":"data/report.csv","alias":null,"embed":false,"text":"[[data/report.csv]]"},
+        {"target":"note.md","alias":null,"embed":false,"text":"[[note.md]]"}
+      ]
+    },
+    {
+      "name": "CSV 判定按归一化（大小写、全角）",
+      "content": "![[Data/Report.CSV]] ![[报表．ｃｓｖ]] ![[ x.csv |别名]]",
+      "links": [
+        {"target":"Data/Report.CSV","alias":null,"embed":true,"text":"![[Data/Report.CSV]]"},
+        {"target":"报表．ｃｓｖ","alias":null,"embed":true,"text":"![[报表．ｃｓｖ]]"},
+        {"target":"x.csv","alias":"别名","embed":true,"text":"![[ x.csv |别名]]"}
+      ]
+    },
+    {
+      "name": "双感叹号只吃一个",
+      "content": "!![[x.csv]]",
+      "links": [{"target":"x.csv","alias":null,"embed":true,"text":"![[x.csv]]"}]
+    },
+    {
+      "name": "非 CSV 扩展名不是嵌入",
+      "content": "![[x.csvx]] ![[x.tsv]]",
+      "links": [
+        {"target":"x.csvx","alias":null,"embed":false,"text":"[[x.csvx]]"},
+        {"target":"x.tsv","alias":null,"embed":false,"text":"[[x.tsv]]"}
+      ]
+    },
+    {"name":"CSV 嵌入的空别名同样丢弃","content":"![[x.csv|]]","links":[]},
+    {
+      "name": "区间按原文子串对齐（emoji 前缀）",
+      "content": "😀前缀[[目标😀]]后缀",
+      "links": [{"target":"目标😀","alias":null,"embed":false,"text":"[[目标😀]]"}]
+    },
+    {
+      "name": "目标可以跨行",
+      "content": "[[第一行\n第二行]]",
+      "links": [{"target":"第一行\n第二行","alias":null,"embed":false,"text":"[[第一行\n第二行]]"}]
+    },
+    {
+      "name": "去空白按 JS trim：去 U+FEFF，不去 U+0085",
+      "content": "[[\ufeff目标\ufeff]] [[\u0085目标]]",
+      "links": [
+        {"target":"目标","alias":null,"embed":false,"text":"[[\ufeff目标\ufeff]]"},
+        {"target":"\u0085目标","alias":null,"embed":false,"text":"[[\u0085目标]]"}
+      ]
+    }
+  ],
+  "normalize": [
+    {"input":" 项目计划 ","expected":"项目计划"},
+    {"input":"ＡＢＣ１２３","expected":"abc123"},
+    {"input":"Ｒｅｐｏｒｔ．ＣＳＶ","expected":"report.csv"},
+    {"input":"\u3000全角空格\u3000","expected":"全角空格"},
+    {"input":"Roadmap Ｑ４","expected":"roadmap q4"},
+    {"input":"ﬁle","expected":"file"},
+    {"input":"①②","expected":"12"},
+    {"input":"㍿","expected":"株式会社"},
+    {"input":"Ⅻ","expected":"xii"},
+    {"input":"ｶﾞｷﾞ","expected":"ガギ"},
+    {"input":"e\u0301","expected":"é"},
+    {"input":"ΣΑΣ","expected":"σας"},
+    {"input":"İ","expected":"i\u0307"},
+    {"input":"A\u00a0B","expected":"a b"},
+    {"input":"\ufeffabc\ufeff","expected":"abc"},
+    {"input":"\u0085abc","expected":"\u0085abc"},
+    {"input":"","expected":""},
+    {"input":"  ","expected":""}
+  ],
+  "csvTarget": [
+    {"input":"data/report.csv","expected":true},
+    {"input":"Data/Report.CSV","expected":true},
+    {"input":"报表．ｃｓｖ","expected":true},
+    {"input":" report.csv ","expected":true},
+    {"input":".csv","expected":true},
+    {"input":"report.csvx","expected":false},
+    {"input":"report.tsv","expected":false},
+    {"input":"csv","expected":false},
+    {"input":"report.csv/","expected":false}
+  ],
+  "noteTitle": [
+    {"name":"首个一级标题","content":"# 项目计划\n\n正文","expected":"项目计划"},
+    {"name":"一级标题不必在首行","content":"前言\n\n# 真正的标题\n正文","expected":"真正的标题"},
+    {"name":"二级标题不算，取首行","content":"## 二级标题\n正文","expected":"## 二级标题"},
+    {"name":"井号后没有空白不算标题","content":"#标签 开头的一行","expected":"#标签 开头的一行"},
+    {"name":"至多三格缩进","content":"   # 缩进标题  ","expected":"缩进标题"},
+    {"name":"四格缩进不算标题","content":"    # 四格缩进\n第二行","expected":"# 四格缩进"},
+    {"name":"去掉结尾的井号","content":"# 标题 ###","expected":"标题"},
+    {"name":"紧贴文字的井号保留","content":"# C#","expected":"C#"},
+    {"name":"空白标题跳过，取下一个一级标题","content":"#   \n# 第二个标题","expected":"第二个标题"},
+    {"name":"只有空白标题时取首行","content":"#   \n正文","expected":"#"},
+    {"name":"标题里的全角空白按 \\s 处理","content":"#\u3000全角标题\u3000","expected":"全角标题"},
+    {"name":"标题中间有 U+2028 时正则不匹配，退回首行","content":"# 标题\u2028续","expected":"# 标题\u2028续"},
+    {"name":"无标题取首个非空行","content":"\n\n  第一行文字  \n第二行","expected":"第一行文字"},
+    {
+      "name": "超过 48 字截断",
+      "content": "一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十",
+      "expected": "一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八…"
+    },
+    {
+      "name": "恰好 48 字不截断",
+      "content": "一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八",
+      "expected": "一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八"
+    },
+    {
+      "name": "截断后去掉尾部空白",
+      "content": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx yyyyyyyyyy",
+      "expected": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…"
+    },
+    {
+      "name": "按 UTF-16 计长（emoji 占 2）",
+      "content": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀",
+      "expected": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀…"
+    },
+    {"name":"空文档","content":"","expected":""},
+    {"name":"只有空白","content":"   \n\t\n","expected":""},
+    {"name":"CRLF 标题","content":"# 标题\r\n正文","expected":"标题"},
+    {"name":"CRLF 首行","content":"首行\r\n次行","expected":"首行"},
+    {"name":"硬换行的反斜杠不进标题","content":"第一行\\\n第二行","expected":"第一行"},
+    {"name":"转义的反斜杠不是硬换行","content":"第一行\\\\\n第二行","expected":"第一行\\\\"},
+    {"name":"段落末尾的反斜杠保留","content":"第一行\\\n\n第二段","expected":"第一行\\"},
+    {"name":"行内代码里的反斜杠保留","content":"`代码\\\n续`","expected":"`代码\\"},
+    {"name":"未闭合的反引号不算代码","content":"`第一行\\\n续","expected":"`第一行"},
+    {"name":"列表项续行里的硬换行","content":"- 项目\\\n  续行","expected":"- 项目"},
+    {"name":"引用懒续行里的硬换行","content":"> 引用\\\n续","expected":"> 引用"},
+    {"name":"被 ATX 标题打断的段落","content":"第一行\\\n## 二级","expected":"第一行\\"},
+    {"name":"被列表打断的段落","content":"第一行\\\n- 项","expected":"第一行\\"},
+    {"name":"非 1 起始的有序列表不打断段落","content":"第一行\\\n2. 项","expected":"第一行"},
+    {"name":"Setext 下划线前的反斜杠保留","content":"第一行\\\n===","expected":"第一行\\"},
+    {"name":"Setext 标题内部的硬换行","content":"第一行\\\n第二行\n===","expected":"第一行"},
+    {"name":"缩进代码不处理","content":"    代码\\\n    续","expected":"代码\\"},
+    {"name":"围栏代码里的一级标题照样算标题","content":"```\n# 注释\n```","expected":"注释"},
+    {"name":"一级标题行末的反斜杠保留","content":"# 标题\\\n正文","expected":"标题\\"},
+    {"name":"只有反斜杠的首行被删成空行","content":"\\\n真正的首行","expected":"真正的首行"},
+    {
+      "name": "硬换行让 49 字变 48 字，不截断",
+      "content": "长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长\\\n续",
+      "expected": "长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长"
+    },
+    {
+      "name": "末尾反斜杠不是硬换行，49 字照样截断",
+      "content": "长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长\\",
+      "expected": "长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长…"
+    },
+    {"name":"带路径的裸链接吞掉反斜杠","content":"https://example.com/路径\\\n续","expected":"https://example.com/路径\\"},
+    {"name":"不带路径的裸链接不吞反斜杠","content":"http://a.com\\\n续","expected":"http://a.com"},
+    {"name":"跨行的 HTML 标签属性","content":"<a href=\"x\\\ny\">链接</a>","expected":"<a href=\"x\\"},
+    {"name":"链接引用定义","content":"[x]: /url\\\n正文","expected":"[x]: /url\\"},
+    {"name":"CRLF 下不识别硬换行","content":"第一行\\\r\n第二行","expected":"第一行\\"},
+    {"name":"emoji 后的硬换行","content":"😀😀😀😀😀😀😀😀😀😀\\\n续","expected":"😀😀😀😀😀😀😀😀😀😀"},
+    {
+      "name": "32000 个 UTF-16 单位内识别硬换行",
+      "repeatPrefix": {"text":"\n","count":31990},
+      "content": "第一行\\\n第二行\n",
+      "expected": "第一行"
+    },
+    {
+      "name": "超过 32000 个单位不再识别",
+      "repeatPrefix": {"text":"\n","count":32000},
+      "content": "第一行\\\n第二行",
+      "expected": "第一行\\"
+    },
+    {
+      "name": "解析范围恰好止于硬换行之后",
+      "repeatPrefix": {"text":"\n","count":31994},
+      "content": "第一行\\\n第二行",
+      "expected": "第一行\\"
+    }
+  ],
+  "hardBreaks": [
+    {"content":"a\\\nb","expected":"a\nb"},
+    {"content":"\\\nb","expected":"\nb"},
+    {"content":"a\\\\\nb","expected":"a\\\\\nb"},
+    {"content":"a\\\n\nb","expected":"a\\\n\nb"},
+    {"content":"a\\\n# b","expected":"a\\\n# b"},
+    {"content":"a\\\n- b","expected":"a\\\n- b"},
+    {"content":"a\\\n-","expected":"a\\\n-"},
+    {"content":"a\\\n2. b","expected":"a\n2. b"},
+    {"content":"a\\\n1. b","expected":"a\\\n1. b"},
+    {"content":"a\\\n1.","expected":"a\n1."},
+    {"content":"a\\\n> b","expected":"a\\\n> b"},
+    {"content":"> a\\\n> b","expected":"> a\n> b"},
+    {"content":"> a\\\nb","expected":"> a\nb"},
+    {"content":"> a\\\n>","expected":"> a\\\n>"},
+    {"content":"- a\\\n  b","expected":"- a\n  b"},
+    {"content":"- a\\\n- b","expected":"- a\\\n- b"},
+    {"content":"* a\\\n- b","expected":"* a\\\n- b"},
+    {"content":"- a\\\n  2. b","expected":"- a\n  2. b"},
+    {"content":"a\\\n===","expected":"a\\\n==="},
+    {"content":"a\\\nb\n===","expected":"a\nb\n==="},
+    {"content":"> a\\\n===","expected":"> a\n==="},
+    {"content":"a\\\n    b","expected":"a\n    b"},
+    {"content":"    a\\\n    b","expected":"    a\\\n    b"},
+    {"content":"```\na\\\nb\n```","expected":"```\na\\\nb\n```"},
+    {"content":"`a\\\nb`","expected":"`a\\\nb`"},
+    {"content":"`a\\\nb","expected":"`a\nb"},
+    {"content":"``a\\\nb`","expected":"``a\nb`"},
+    {"content":"\\`a\\\nb","expected":"\\`a\nb"},
+    {"content":"# a\\\nb","expected":"# a\\\nb"},
+    {"content":"a\\\r\nb","expected":"a\\\r\nb"},
+    {"content":"a\\\n<div>","expected":"a\\\n<div>"},
+    {"content":"<div>\na\\\nb","expected":"<div>\na\\\nb"},
+    {"content":"a\\\n<span>","expected":"a\n<span>"},
+    {"content":"<span>\na\\\nb","expected":"<span>\na\\\nb"},
+    {"content":"a | b\\\n--|--","expected":"a | b\\\n--|--"},
+    {"content":"| a | b |\\\n| - | - |","expected":"| a | b |\n| - | - |"},
+    {"content":"a\\\nb | c\n- | -","expected":"a\\\nb | c\n- | -"},
+    {"content":"[x]: /u\\\nb","expected":"[x]: /u\\\nb"},
+    {"content":"[x]: /u 'title'\\\nb","expected":"[x]: /u 'title'\nb"},
+    {"content":"<a href=\"x\\\ny\">","expected":"<a href=\"x\\\ny\">"},
+    {"content":"<!-- c\\\nd -->","expected":"<!-- c\\\nd -->"},
+    {"content":"[a](b 'x\\\ny')","expected":"[a](b 'x\\\ny')"},
+    {"content":"[a\\\nb]","expected":"[a\nb]"},
+    {"content":"[a](b\\\nc)","expected":"[a](b\nc)"},
+    {"content":"[a][b\\\nc]","expected":"[a][b\\\nc]"},
+    {"content":"https://a.com/x\\\nb","expected":"https://a.com/x\\\nb"},
+    {"content":"http://a.com\\\nb","expected":"http://a.com\nb"},
+    {"content":"_https://a.com/x\\\nb","expected":"_https://a.com/x\nb"},
+    {"content":"a\\\n\\\nb","expected":"a\n\nb"},
+    {"content":"a\\ \nb","expected":"a\\ \nb"},
+    {"content":"a\\","expected":"a\\"},
+    {"content":"a\\\n","expected":"a\\\n"},
+    {"content":"-     a\\\n      b","expected":"-     a\\\n      b"},
+    {"content":"- [ ] a\\\nb","expected":"- [ ] a\nb"}
+  ],
+  "resolve": [
+    {
+      "name": "基础候选：笔记标题、文件名、类型、密匣、回收站、CSV 与导图",
+      "fragments": [
+        {"id":"n-plan","path":"notes/项目计划.md","kind":"note","content":"# 项目计划\n\n正文"},
+        {
+          "id": "f-1",
+          "path": "fragments/2026/10/20261026-120000-aaaaaaaa-bbbb.md",
+          "kind": "fragment",
+          "content": "随手记一笔"
+        },
+        {"id":"n-roadmap","path":"notes/roadmap.md","kind":"note","content":"# Roadmap Ｑ４\n"},
+        {"id":"n-secret","path":"lockbox/notes/secret.md","kind":"note","content":"# 秘密计划","lockbox":true},
+        {"id":"d-1","path":"fragments/2026/10/doc.md","kind":"document","content":"# 文档标题\n正文"},
+        {"id":"f-trash","path":".trash/fragments/2026/10/旧碎片.md","kind":"fragment","content":"回收站里的碎片"},
+        {"id":"o-1","path":"fragments/2026/10/大纲.MD","kind":"outline","content":"- 一\n- 二"},
+        {"id":"n-untitled","path":"notes/无题.md","kind":"note","content":""},
+        {"id":"n-firstline","path":"notes/x1.md","kind":"note","content":"第一行就是标题\n第二行"},
+        {"id":"n-win","path":"notes\\win\\笔记.md","kind":"note","content":"## 不是一级\n"}
+      ],
+      "csvFiles": [{"name":"report.csv","path":"data/report.csv"},{"name":"Sales.CSV","path":"datasets/Sales.CSV"}],
+      "mindMaps": [{"path":"maps/project.shardmap.json","title":"项目导图"}],
+      "candidates": [
+        {"kind":"note","fragmentId":"n-plan","path":null,"target":"项目计划","matchKeys":["项目计划","项目计划.md"]},
+        {
+          "kind": "fragment",
+          "fragmentId": "f-1",
+          "path": null,
+          "target": "20261026-120000-aaaaaaaa-bbbb",
+          "matchKeys": ["20261026-120000-aaaaaaaa-bbbb","20261026-120000-aaaaaaaa-bbbb.md"]
+        },
+        {
+          "kind": "note",
+          "fragmentId": "n-roadmap",
+          "path": null,
+          "target": "Roadmap Ｑ４",
+          "matchKeys": ["roadmap q4","roadmap","roadmap.md"]
+        },
+        {"kind":"document","fragmentId":"d-1","path":null,"target":"doc","matchKeys":["doc","doc.md"]},
+        {"kind":"fragment","fragmentId":"f-trash","path":null,"target":"旧碎片","matchKeys":["旧碎片","旧碎片.md"]},
+        {"kind":"outline","fragmentId":"o-1","path":null,"target":"大纲","matchKeys":["大纲","大纲.md"]},
+        {"kind":"note","fragmentId":"n-untitled","path":null,"target":"无题","matchKeys":["无题","无题.md"]},
+        {
+          "kind": "note",
+          "fragmentId": "n-firstline",
+          "path": null,
+          "target": "第一行就是标题",
+          "matchKeys": ["第一行就是标题","x1","x1.md"]
+        },
+        {
+          "kind": "note",
+          "fragmentId": "n-win",
+          "path": null,
+          "target": "## 不是一级",
+          "matchKeys": ["## 不是一级","笔记","笔记.md"]
+        },
+        {
+          "kind": "csv",
+          "fragmentId": null,
+          "path": "data/report.csv",
+          "target": "data/report.csv",
+          "matchKeys": ["data/report.csv","report.csv"]
+        },
+        {
+          "kind": "csv",
+          "fragmentId": null,
+          "path": "datasets/Sales.CSV",
+          "target": "datasets/Sales.CSV",
+          "matchKeys": ["datasets/sales.csv","sales.csv"]
+        },
+        {
+          "kind": "mindmap",
+          "fragmentId": null,
+          "path": "maps/project.shardmap.json",
+          "target": "项目导图",
+          "matchKeys": ["maps/project.shardmap.json","项目导图"]
+        }
+      ],
+      "lookups": [
+        {"target":"项目计划","expected":{"kind":"note","fragmentId":"n-plan"}},
+        {"target":" 项目计划.MD ","expected":{"kind":"note","fragmentId":"n-plan"}},
+        {"target":"roadmap q4","expected":{"kind":"note","fragmentId":"n-roadmap"}},
+        {"target":"ROADMAP Ｑ４","expected":{"kind":"note","fragmentId":"n-roadmap"}},
+        {"target":"Roadmap","expected":{"kind":"note","fragmentId":"n-roadmap"}},
+        {"target":"秘密计划","expected":null},
+        {"target":"secret","expected":null},
+        {"target":"文档标题","expected":null},
+        {"target":"doc","expected":{"kind":"document","fragmentId":"d-1"}},
+        {"target":"旧碎片","expected":{"kind":"fragment","fragmentId":"f-trash"}},
+        {"target":"大纲.md","expected":{"kind":"outline","fragmentId":"o-1"}},
+        {"target":"无题","expected":{"kind":"note","fragmentId":"n-untitled"}},
+        {"target":"x1.md","expected":{"kind":"note","fragmentId":"n-firstline"}},
+        {"target":"## 不是一级","expected":{"kind":"note","fragmentId":"n-win"}},
+        {"target":"笔记","expected":{"kind":"note","fragmentId":"n-win"}},
+        {"target":"data/report.csv","expected":{"kind":"csv","path":"data/report.csv"}},
+        {"target":"REPORT.csv","expected":{"kind":"csv","path":"data/report.csv"}},
+        {"target":"Datasets/sales.csv","expected":{"kind":"csv","path":"datasets/Sales.CSV"}},
+        {"target":"项目导图","expected":{"kind":"mindmap","path":"maps/project.shardmap.json"}},
+        {
+          "target": "maps/project.shardmap.json",
+          "expected": {"kind":"mindmap","path":"maps/project.shardmap.json"}
+        },
+        {"target":"notes/项目计划.md","expected":null},
+        {"target":"不存在","expected":null},
+        {"target":"","expected":null},
+        {"target":"   ","expected":null}
+      ]
+    },
+    {
+      "name": "重名候选不解析，首选目标重复时退回文件名主干",
+      "fragments": [
+        {"id":"w1","path":"notes/a/周报.md","kind":"note","content":"# 周报"},
+        {"id":"w2","path":"notes/b/周报.md","kind":"note","content":"# 周报\n第二份"},
+        {"id":"m1","path":"notes/会议记录-1.md","kind":"note","content":"# 例会"},
+        {"id":"m2","path":"notes/会议记录-2.md","kind":"note","content":"# 例会"},
+        {"id":"f-idea","path":"fragments/2026/10/灵感.md","kind":"fragment","content":"一个想法"},
+        {"id":"n-idea","path":"notes/想法.md","kind":"note","content":"# 灵感"},
+        {"id":"abc-full","path":"notes/全角.md","kind":"note","content":"# ＡＢＣ"},
+        {"id":"abc-half","path":"notes/半角.md","kind":"note","content":"# abc"},
+        {"id":"diary","path":"notes/日记.md","kind":"note","content":"# 日记本"},
+        {"id":"diary-lock","path":"lockbox/notes/日记.md","kind":"note","content":"# 日记本","lockbox":true},
+        {"id":"only-id","path":"notes/.md","kind":"note","content":"# 周报"},
+        {"id":"no-path","path":"","kind":"note","content":"# 例会"}
+      ],
+      "csvFiles": [],
+      "mindMaps": [],
+      "candidates": [
+        {"kind":"note","fragmentId":"w1","path":null,"target":"周报","matchKeys":["周报","周报.md"]},
+        {"kind":"note","fragmentId":"w2","path":null,"target":"周报","matchKeys":["周报","周报.md"]},
+        {
+          "kind": "note",
+          "fragmentId": "m1",
+          "path": null,
+          "target": "会议记录-1",
+          "matchKeys": ["会议记录-1","例会","会议记录-1.md"]
+        },
+        {
+          "kind": "note",
+          "fragmentId": "m2",
+          "path": null,
+          "target": "会议记录-2",
+          "matchKeys": ["会议记录-2","例会","会议记录-2.md"]
+        },
+        {"kind":"fragment","fragmentId":"f-idea","path":null,"target":"灵感","matchKeys":["灵感","灵感.md"]},
+        {"kind":"note","fragmentId":"n-idea","path":null,"target":"想法","matchKeys":["想法","灵感","想法.md"]},
+        {"kind":"note","fragmentId":"abc-full","path":null,"target":"全角","matchKeys":["全角","abc","全角.md"]},
+        {"kind":"note","fragmentId":"abc-half","path":null,"target":"半角","matchKeys":["半角","abc","半角.md"]},
+        {"kind":"note","fragmentId":"diary","path":null,"target":"日记本","matchKeys":["日记本","日记","日记.md"]},
+        {"kind":"note","fragmentId":"only-id","path":null,"target":".md","matchKeys":[".md","周报"]},
+        {"kind":"note","fragmentId":"no-path","path":null,"target":"no-path","matchKeys":["no-path","例会"]}
+      ],
+      "lookups": [
+        {"target":"周报","expected":null},
+        {"target":"周报.md","expected":null},
+        {"target":"例会","expected":null},
+        {"target":"会议记录-1","expected":{"kind":"note","fragmentId":"m1"}},
+        {"target":"会议记录-2.MD","expected":{"kind":"note","fragmentId":"m2"}},
+        {"target":"灵感","expected":null},
+        {"target":"想法","expected":{"kind":"note","fragmentId":"n-idea"}},
+        {"target":"灵感.md","expected":{"kind":"fragment","fragmentId":"f-idea"}},
+        {"target":"abc","expected":null},
+        {"target":"ＡＢＣ","expected":null},
+        {"target":"全角","expected":{"kind":"note","fragmentId":"abc-full"}},
+        {"target":"日记本","expected":{"kind":"note","fragmentId":"diary"}},
+        {"target":"日记","expected":{"kind":"note","fragmentId":"diary"}},
+        {"target":".md","expected":{"kind":"note","fragmentId":"only-id"}},
+        {"target":"no-path","expected":{"kind":"note","fragmentId":"no-path"}}
+      ]
+    },
+    {
+      "name": "碎片与 CSV、导图同名时也算重名",
+      "fragments": [
+        {"id":"n-report","path":"notes/report.md","kind":"note","content":"# report.csv"},
+        {"id":"n-quarter","path":"notes/plan.md","kind":"note","content":"# 季度规划"}
+      ],
+      "csvFiles": [{"name":"report.csv","path":"data/report.csv"}],
+      "mindMaps": [{"path":"maps/a.shardmap.json","title":"季度规划"}],
+      "candidates": [
+        {
+          "kind": "note",
+          "fragmentId": "n-report",
+          "path": null,
+          "target": "report.csv",
+          "matchKeys": ["report.csv","report","report.md"]
+        },
+        {
+          "kind": "note",
+          "fragmentId": "n-quarter",
+          "path": null,
+          "target": "季度规划",
+          "matchKeys": ["季度规划","plan","plan.md"]
+        },
+        {
+          "kind": "csv",
+          "fragmentId": null,
+          "path": "data/report.csv",
+          "target": "data/report.csv",
+          "matchKeys": ["data/report.csv","report.csv"]
+        },
+        {
+          "kind": "mindmap",
+          "fragmentId": null,
+          "path": "maps/a.shardmap.json",
+          "target": "季度规划",
+          "matchKeys": ["maps/a.shardmap.json","季度规划"]
+        }
+      ],
+      "lookups": [
+        {"target":"report.csv","expected":null},
+        {"target":"data/report.csv","expected":{"kind":"csv","path":"data/report.csv"}},
+        {"target":"report","expected":{"kind":"note","fragmentId":"n-report"}},
+        {"target":"季度规划","expected":null},
+        {"target":"plan","expected":{"kind":"note","fragmentId":"n-quarter"}},
+        {"target":"maps/a.shardmap.json","expected":{"kind":"mindmap","path":"maps/a.shardmap.json"}}
+      ]
+    }
+  ],
+  "relations": [
+    {
+      "name": "新建：唯一命中、按首次出现去重，排除自身与解析不到的链接",
+      "corpus": [
+        {"id":"n-plan","path":"notes/项目计划.md","kind":"note","content":"# 项目计划"},
+        {"id":"f-2","path":"fragments/2026/10/f-2.md","kind":"fragment","content":"另一条碎片"}
+      ],
+      "source": {
+        "id": "src",
+        "path": "fragments/2026/10/src.md",
+        "kind": "fragment",
+        "content": "参见 [[项目计划]]、[[项目计划|别名]]、[[f-2]]、[[src]] 和 [[不存在]]"
+      },
+      "currentRelations": [],
+      "expectedTargets": ["n-plan","f-2"],
+      "expectedRemoved": [],
+      "expectedAdded": ["n-plan","f-2"],
+      "expectedRelations": [{"targetId":"n-plan","origin":"wikilink"},{"targetId":"f-2","origin":"wikilink"}]
+    },
+    {
+      "name": "更新：只删 wikilink 来源的旧关系，已有任意来源关系的目标不再新增",
+      "corpus": [
+        {"id":"n-plan","path":"notes/项目计划.md","kind":"note","content":"# 项目计划"},
+        {"id":"f-2","path":"fragments/2026/10/f-2.md","kind":"fragment","content":"另一条碎片"},
+        {"id":"f-3","path":"fragments/2026/10/f-3.md","kind":"fragment","content":"第三条"},
+        {"id":"f-4","path":"fragments/2026/10/f-4.md","kind":"fragment","content":"第四条"},
+        {"id":"src","path":"fragments/2026/10/src.md","kind":"fragment","content":"[[项目计划]] [[f-4]]"}
+      ],
+      "source": {"id":"src","path":"fragments/2026/10/src.md","kind":"fragment","content":"[[f-2]] 与 [[f-3]]"},
+      "currentRelations": [
+        {"targetId":"f-2","origin":"manual"},
+        {"targetId":"n-plan","origin":"wikilink"},
+        {"targetId":"f-4","origin":"tag"}
+      ],
+      "expectedTargets": ["f-2","f-3"],
+      "expectedRemoved": ["n-plan"],
+      "expectedAdded": ["f-3"],
+      "expectedRelations": [
+        {"targetId":"f-2","origin":"manual"},
+        {"targetId":"f-4","origin":"tag"},
+        {"targetId":"f-3","origin":"wikilink"}
+      ]
+    },
+    {
+      "name": "删光链接：清空 wikilink 关系，保留其他来源",
+      "corpus": [
+        {"id":"n-plan","path":"notes/项目计划.md","kind":"note","content":"# 项目计划"},
+        {"id":"f-2","path":"fragments/2026/10/f-2.md","kind":"fragment","content":"另一条碎片"},
+        {"id":"f-3","path":"fragments/2026/10/f-3.md","kind":"fragment","content":"第三条"},
+        {"id":"src","path":"fragments/2026/10/src.md","kind":"fragment","content":"[[项目计划]] [[f-3]]"}
+      ],
+      "source": {"id":"src","path":"fragments/2026/10/src.md","kind":"fragment","content":"不再有链接"},
+      "currentRelations": [
+        {"targetId":"n-plan","origin":"wikilink"},
+        {"targetId":"f-2","origin":"walk"},
+        {"targetId":"f-3","origin":"wikilink"}
+      ],
+      "expectedTargets": [],
+      "expectedRemoved": ["n-plan","f-3"],
+      "expectedAdded": [],
+      "expectedRelations": [{"targetId":"f-2","origin":"walk"}]
+    },
+    {
+      "name": "已有 wikilink 关系的目标保持不动",
+      "corpus": [
+        {"id":"n-plan","path":"notes/项目计划.md","kind":"note","content":"# 项目计划"},
+        {"id":"src","path":"fragments/2026/10/src.md","kind":"fragment","content":"[[项目计划]]"}
+      ],
+      "source": {"id":"src","path":"fragments/2026/10/src.md","kind":"fragment","content":"还是 [[项目计划]]"},
+      "currentRelations": [{"targetId":"n-plan","origin":"wikilink"}],
+      "expectedTargets": ["n-plan"],
+      "expectedRemoved": [],
+      "expectedAdded": [],
+      "expectedRelations": [{"targetId":"n-plan","origin":"wikilink"}]
+    },
+    {
+      "name": "密匣里的源文档不做 wikilink 同步",
+      "corpus": [{"id":"n-plan","path":"notes/项目计划.md","kind":"note","content":"# 项目计划"}],
+      "source": {"id":"src","path":"fragments/2026/10/src.md","kind":"fragment","content":"[[项目计划]]","lockbox":true},
+      "currentRelations": [{"targetId":"n-plan","origin":"wikilink"}],
+      "expectedTargets": null
+    },
+    {
+      "name": "重名目标不建关系，源文档自己的标题也参与重名计数",
+      "corpus": [{"id":"n-a","path":"notes/计划A.md","kind":"note","content":"# 计划"}],
+      "source": {"id":"n-b","path":"notes/计划B.md","kind":"note","content":"# 计划\n\n见 [[计划]] 与 [[计划A]]"},
+      "currentRelations": [],
+      "expectedTargets": ["n-a"],
+      "expectedRemoved": [],
+      "expectedAdded": ["n-a"],
+      "expectedRelations": [{"targetId":"n-a","origin":"wikilink"}]
+    },
+    {
+      "name": "更新时用保存后的内容参与候选（旧标题不再造成重名）",
+      "corpus": [
+        {"id":"n-y","path":"notes/y.md","kind":"note","content":"# 旧标题"},
+        {"id":"n-self","path":"notes/self.md","kind":"note","content":"# 旧标题\n旧正文"}
+      ],
+      "source": {"id":"n-self","path":"notes/self.md","kind":"note","content":"# 新标题\n\n[[旧标题]]"},
+      "currentRelations": [],
+      "expectedTargets": ["n-y"],
+      "expectedRemoved": [],
+      "expectedAdded": ["n-y"],
+      "expectedRelations": [{"targetId":"n-y","origin":"wikilink"}]
+    },
+    {
+      "name": "密匣碎片不是候选",
+      "corpus": [
+        {"id":"lb-1","path":"lockbox/fragments/2026/10/lb-1.md","kind":"note","content":"# 秘密","lockbox":true},
+        {"id":"n-public","path":"notes/公开.md","kind":"note","content":"# 公开"}
+      ],
+      "source": {"id":"src","path":"fragments/2026/10/src.md","kind":"fragment","content":"[[秘密]] [[公开]] [[lb-1]]"},
+      "currentRelations": [],
+      "expectedTargets": ["n-public"],
+      "expectedRemoved": [],
+      "expectedAdded": ["n-public"],
+      "expectedRelations": [{"targetId":"n-public","origin":"wikilink"}]
+    },
+    {
+      "name": "回收站里的碎片仍是候选",
+      "corpus": [{"id":"f-old","path":".trash/fragments/2026/09/旧碎片.md","kind":"fragment","content":"已删除"}],
+      "source": {"id":"src","path":"fragments/2026/10/src.md","kind":"fragment","content":"[[旧碎片]]"},
+      "currentRelations": [],
+      "expectedTargets": ["f-old"],
+      "expectedRemoved": [],
+      "expectedAdded": ["f-old"],
+      "expectedRelations": [{"targetId":"f-old","origin":"wikilink"}]
+    },
+    {
+      "name": "嵌入与 CSV 链接只按碎片候选解析，导图不参与",
+      "corpus": [{"id":"n-csvdoc","path":"notes/表格说明.md","kind":"note","content":"# data.csv"}],
+      "source": {
+        "id": "src",
+        "path": "fragments/2026/10/src.md",
+        "kind": "fragment",
+        "content": "![[data.csv]] 与 [[report.csv]] 以及 [[项目导图]]"
+      },
+      "currentRelations": [],
+      "expectedTargets": ["n-csvdoc"],
+      "expectedRemoved": [],
+      "expectedAdded": ["n-csvdoc"],
+      "expectedRelations": [{"targetId":"n-csvdoc","origin":"wikilink"}]
+    }
+  ]
+}

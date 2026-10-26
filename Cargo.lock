@@ -4699,6 +4699,7 @@ dependencies = [
  "serde_yaml",
  "sha2",
  "tempfile",
+ "unicode-normalization",
 ]
 
 [[package]]

@@ -14,6 +14,7 @@ pub mod library;
 pub mod outline_import;
 pub mod search;
 pub mod vault_lock;
+pub mod wikilink;
 
 use chrono::{DateTime, Local};
 use rand::{rngs::OsRng, RngCore};
