@@ -343,6 +343,34 @@ impl Store {
         }
     }
 
+    /// 不论闭包成功与否都提交：用于「先写下冲突副本、再报告冲突」的命令（导图、画布保存）。
+    /// 编码函数拿到成败两种结果，由调用方决定怎么存进幂等记录，重试时才能原样回放同一个错误。
+    /// 只有提交本身失败时才回滚。
+    pub fn write_keeping_partial<R, E>(
+        &self,
+        ctx: &WriteCtx,
+        f: impl FnOnce(&SqliteVfs<'_>) -> Result<R, E>,
+        encode: impl FnOnce(&Result<R, E>) -> Vec<u8>,
+    ) -> Result<(Result<R, E>, Committed), StoreError> {
+        let now = ctx.now.unwrap_or_else(Utc::now);
+        let conn = self.writer.lock().expect("写连接锁中毒");
+        conn.execute_batch("BEGIN IMMEDIATE")?;
+        let outcome = (|| {
+            let vfs = SqliteVfs::new(&conn, &self.blobs, &self.root, true, now_string(now));
+            let result = f(&vfs);
+            let response = encode(&result);
+            let committed = finalize(&conn, &vfs, ctx, now, Some(response))?;
+            Ok::<_, StoreError>((result, committed))
+        })();
+        match outcome.and_then(|result| conn.execute_batch("COMMIT").map(|_| result).map_err(StoreError::from)) {
+            Ok(result) => Ok(result),
+            Err(error) => {
+                let _ = conn.execute_batch("ROLLBACK");
+                Err(error)
+            }
+        }
+    }
+
     /// 一致快照：`VACUUM INTO` 把 shard.db 与 blobs.db 写进一个空目录。运行中的服务照常读写，
     /// 不能用 cp 复制 WAL 模式的库文件（会拿到不一致的副本）。
     pub fn snapshot_into(&self, out_dir: &Path) -> Result<(), StoreError> {

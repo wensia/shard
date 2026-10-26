@@ -269,3 +269,24 @@ fn read_snapshots_refuse_writes() {
     let refused = store.read(|vfs| vfs.write(&p("a.md"), b"x").is_err()).unwrap();
     assert!(refused);
 }
+
+#[test]
+fn partial_writes_are_kept_when_the_command_reports_a_conflict() {
+    let (_dir, store) = open();
+    let (result, committed) = store
+        .write_keeping_partial(
+            &ctx().with_op_id("conflict-1"),
+            |vfs| {
+                vfs.create_dir_all(&p("maps/.conflicts")).map_err(|error| error.to_string())?;
+                vfs.write(&p("maps/.conflicts/a.json"), b"{}").map_err(|error| error.to_string())?;
+                Err::<(), String>("导图已被外部修改，已另存冲突副本".to_string())
+            },
+            |result| format!("{result:?}").into_bytes(),
+        )
+        .unwrap();
+    assert!(result.is_err());
+    assert!(!committed.changes.is_empty(), "冲突副本必须留下");
+    assert!(store.read(|vfs| vfs.exists(&p("maps/.conflicts/a.json"))).unwrap());
+    let record = store.find_txn("conflict-1").unwrap().unwrap();
+    assert!(String::from_utf8(record.response.unwrap()).unwrap().starts_with("Err("));
+}

@@ -28,7 +28,7 @@ pub struct ClientMeta {
 #[derive(Clone, Debug)]
 pub enum Principal {
     Session { id_hash: Vec<u8>, step_up_at: Option<DateTime<Utc>> },
-    Device { device_id: String, name: String, scopes: String },
+    Device { device_id: String, name: String, kind: String, scopes: String },
 }
 
 #[derive(Clone, Debug)]
@@ -49,6 +49,15 @@ impl Caller {
     /// 修订合并按设备区分：每个浏览器会话、每台配对设备各算一个。
     pub fn device(&self) -> String {
         self.actor()
+    }
+
+    /// 新建内容写进 frontmatter 的 `source`：浏览器 web，配对的桌面 desktop，命令行 cli。
+    pub fn source(&self) -> &'static str {
+        match &self.principal {
+            Principal::Session { .. } => "web",
+            Principal::Device { kind, .. } if kind == "cli" => "cli",
+            Principal::Device { .. } => "desktop",
+        }
     }
 
     pub fn session_hash(&self) -> Option<&[u8]> {
@@ -148,7 +157,12 @@ async fn resolve(parts: &Parts, state: &AppState) -> Result<Option<Caller>, ApiE
             .map_err(ApiError::internal)??;
         return match device {
             Some(device) => Ok(Some(Caller {
-                principal: Principal::Device { device_id: device.device_id, name: device.name, scopes: device.scopes },
+                principal: Principal::Device {
+                    device_id: device.device_id,
+                    name: device.name,
+                    kind: device.kind,
+                    scopes: device.scopes,
+                },
                 meta,
             })),
             None => Err(ApiError::unauthorized()),

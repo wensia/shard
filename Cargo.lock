@@ -5094,6 +5094,7 @@ dependencies = [
  "sha2",
  "shard-core",
  "shard-store",
+ "shard-vault",
  "tempfile",
  "tokio",
  "tokio-stream",

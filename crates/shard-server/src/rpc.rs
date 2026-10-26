@@ -116,24 +116,65 @@ pub struct RpcEnv<'a> {
     /// 客户端时区（`X-Shard-UTC-Offset`，分钟）。碎片 id 与 `fragments/YYYY/MM` 按它算。
     pub utc_offset: FixedOffset,
     pub vault_identity: &'a str,
+    /// 新建内容的 `source`：web / desktop / cli。
+    pub source: &'static str,
     committed: RefCell<Vec<ChangeRecord>>,
 }
 
+/// 幂等记录里存的响应：成功的值，或当时返回的错误（重试时原样回放）。
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+enum RecordedResponse {
+    Ok(Value),
+    Err { status: u16, code: String, message: String },
+}
+
+fn encode_recorded(result: &Result<Value, RpcError>) -> Vec<u8> {
+    let recorded = match result {
+        Ok(value) => RecordedResponse::Ok(value.clone()),
+        Err(error) => RecordedResponse::Err {
+            status: error.status.as_u16(),
+            code: error.code.clone(),
+            message: error.message.clone(),
+        },
+    };
+    serde_json::to_vec(&recorded).unwrap_or_default()
+}
+
 impl RpcEnv<'_> {
+    /// 领域代码的上下文：内容库 + 无版本控制钩子 + 客户端时区 + 来源。
+    pub fn vault<'v>(&'v self, vfs: &'v SqliteVfs<'v>) -> shard_vault::VaultCtx<'v> {
+        shard_vault::VaultCtx::local(vfs, &shard_vault::NoHooks).with_clock(self.utc_offset, self.source)
+    }
+
     pub fn read<R>(&self, f: impl FnOnce(&SqliteVfs<'_>) -> R) -> Result<R, RpcError> {
         self.store.read(f).map_err(RpcError::from)
     }
 
-    /// 写命令：整个闭包是一个事务，响应与事务一起提交。
-    pub fn write(&self, f: impl FnOnce(&SqliteVfs<'_>) -> Result<Value, RpcError>) -> Result<Value, RpcError> {
+    fn write_ctx(&self) -> WriteCtx {
         let mut ctx = WriteCtx::new(self.command, self.actor.clone()).with_device(self.device.clone());
         ctx.op_id = self.op_id.clone();
         ctx.request_sha = Some(self.request_sha.clone());
-        let (value, committed) = self.store.write_recorded(&ctx, f, |value| {
-            serde_json::to_vec(value).unwrap_or_default()
-        })?;
+        ctx
+    }
+
+    /// 写命令：整个闭包是一个事务，出错整体回滚；成功的响应随事务记录。
+    pub fn write(&self, f: impl FnOnce(&SqliteVfs<'_>) -> Result<Value, RpcError>) -> Result<Value, RpcError> {
+        let (value, committed) =
+            self.store.write_recorded(&self.write_ctx(), f, |value| encode_recorded(&Ok(value.clone())))?;
         self.committed.borrow_mut().extend(committed.changes);
         Ok(value)
+    }
+
+    /// 出错也提交：「先写下冲突副本、再报告冲突」的命令（导图、画布保存）用它，
+    /// 否则回滚会把冲突副本一起丢掉。错误也记进幂等记录，重试不会再写一份副本。
+    pub fn write_keeping_partial(
+        &self,
+        f: impl FnOnce(&SqliteVfs<'_>) -> Result<Value, RpcError>,
+    ) -> Result<Value, RpcError> {
+        let (result, committed) = self.store.write_keeping_partial(&self.write_ctx(), f, encode_recorded)?;
+        self.committed.borrow_mut().extend(committed.changes);
+        result
     }
 }
 
@@ -160,6 +201,19 @@ fn idempotency_key(headers: &HeaderMap) -> Option<String> {
         .map(str::to_string)
 }
 
+fn replayed_response(bytes: Vec<u8>) -> Result<Response, ApiError> {
+    match serde_json::from_slice::<RecordedResponse>(&bytes).map_err(ApiError::internal)? {
+        RecordedResponse::Ok(value) => {
+            Ok(json_response(serde_json::to_vec(&value).map_err(ApiError::internal)?, true))
+        }
+        RecordedResponse::Err { status, code, message } => Err(ApiError {
+            status: StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_REQUEST),
+            code,
+            message,
+        }),
+    }
+}
+
 fn json_response(bytes: Vec<u8>, replayed: bool) -> Response {
     let mut response = (StatusCode::OK, bytes).into_response();
     let headers = response.headers_mut();
@@ -183,7 +237,7 @@ fn replay(store: &Store, op_id: &str, request_sha: &str) -> Result<Option<Vec<u8
             "同一个幂等键用在了不同的请求上。",
         ));
     }
-    Ok(Some(record.response.unwrap_or_else(|| b"null".to_vec())))
+    Ok(Some(record.response.unwrap_or_else(|| encode_recorded(&Ok(Value::Null)))))
 }
 
 async fn dispatch(
@@ -219,7 +273,7 @@ async fn dispatch(
             .await
             .map_err(ApiError::internal)??
         {
-            return Ok(json_response(bytes, true));
+            return replayed_response(bytes);
         }
     }
 
@@ -232,6 +286,7 @@ async fn dispatch(
         let env = RpcEnv {
             store: &task_state.store,
             command: &task_name,
+            source: caller.source(),
             actor: caller.actor(),
             device: caller.device(),
             op_id: task_op,
@@ -253,7 +308,7 @@ async fn dispatch(
         Err(error) if error.code == "DUPLICATE_OP" => {
             let op_id = op_id.unwrap_or_default();
             match replay(&state.store, &op_id, &request_sha)? {
-                Some(bytes) => Ok(json_response(bytes, true)),
+                Some(bytes) => replayed_response(bytes),
                 None => Err(ApiError::internal("幂等键冲突但找不到记录")),
             }
         }
