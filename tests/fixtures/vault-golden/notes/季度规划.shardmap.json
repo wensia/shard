@@ -1,0 +1,38 @@
+{
+  "kind": "shard.map",
+  "schemaVersion": 1,
+  "id": "map-20261020-090000-aaaa",
+  "title": "季度规划",
+  "createdAt": "2026-10-20T09:00:00+08:00",
+  "updatedAt": "2026-10-20T09:00:00+08:00",
+  "savedWithAppVersion": "0.1.3",
+  "revision": 1,
+  "rootId": "root",
+  "hasProtectedLinks": false,
+  "nodes": {
+    "root": {
+      "id": "root",
+      "parentId": null,
+      "sortKey": "a0",
+      "text": "季度规划",
+      "createdAt": "2026-10-20T09:00:00+08:00",
+      "updatedAt": "2026-10-20T09:00:00+08:00"
+    },
+    "n1": {
+      "id": "n1",
+      "parentId": "root",
+      "sortKey": "a0",
+      "text": "网页版上线",
+      "createdAt": "2026-10-20T09:00:00+08:00",
+      "updatedAt": "2026-10-20T09:00:00+08:00"
+    },
+    "n2": {
+      "id": "n2",
+      "parentId": "root",
+      "sortKey": "a1",
+      "text": "骑行 1000 公里",
+      "createdAt": "2026-10-20T09:00:00+08:00",
+      "updatedAt": "2026-10-20T09:00:00+08:00"
+    }
+  }
+}

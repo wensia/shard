@@ -39,6 +39,7 @@ GEMINI.md
 *.md
 !README.md
 !src/editor-rich/markdown/golden/**/*.md
+!tests/fixtures/**/*.md
 !AGENTS.md
 !design.md
 docs/*
