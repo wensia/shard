@@ -18,7 +18,8 @@ futures-util = "0.3"
 rand = "0.8"
 rusqlite = { version = "=0.40.2", features = ["bundled"] }
 serde = { workspace = true }
-serde_json = { workspace = true }
+# 画布坐标经 JSON 往返必须保持 IEEE-754 精确值（与 src-tauri、shard-vault 一致）。
+serde_json = { workspace = true, features = ["float_roundtrip"] }
 sha2 = { workspace = true }
 shard-core = { path = "../shard-core" }
 shard-store = { path = "../shard-store" }

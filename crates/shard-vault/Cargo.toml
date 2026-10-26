@@ -6,6 +6,8 @@ edition.workspace = true
 publish = false
 
 [dependencies]
+# XLSX 导入为数据集（首个工作表转字符串矩阵，见 src/xlsx.rs）；版本与原来的 src-tauri 一致。
+calamine = "=0.36.1"
 chrono = { workspace = true }
 rand = "0.8"
 serde = { workspace = true }
@@ -14,6 +16,8 @@ serde_json = { workspace = true, features = ["float_roundtrip"] }
 serde_yaml = "0.9"
 sha2 = { workspace = true }
 shard-core = { path = "../shard-core" }
+quick-xml = "=0.41.0"
+zip = { version = "=8.6.0", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
 # 双实现测试：同一组领域测试在 FsVfs 与 SqliteVfs（服务端内容库）上各跑一遍。

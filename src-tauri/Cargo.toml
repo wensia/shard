@@ -22,10 +22,6 @@ aes-gcm = "0.10"
 # 表格文档导入：Excel / CSV 等转 Markdown。按文件内容识别格式，
 # 扩展名只在无签名格式（CSV）时兜底。
 anydoc = "0.1.8"
-# XLSX 导入为数据集（首个工作表转字符串矩阵），与 Markdown 文档转换分开。
-calamine = "=0.36.1"
-quick-xml = "=0.41.0"
-zip = { version = "=8.6.0", default-features = false, features = ["deflate"] }
 argon2 = "0.5"
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
@@ -41,7 +37,7 @@ rsa = { version = "0.9", features = ["sha2"] }
 sha2 = { workspace = true }
 rusqlite = { version = "=0.40.2", features = ["bundled"] }
 shard-core = { path = "../crates/shard-core" }
-# 公开内容的领域逻辑（碎片、资料库树、回收站、图片、导图、画布、数据集），与服务端共用。
+# 公开内容的领域逻辑（碎片、资料库树、回收站、图片、导图、画布、数据集、XLSX 导入解析），与服务端共用。
 shard-vault = { path = "../crates/shard-vault" }
 # 监听 vault 的外部写入（终端 shard、AI 助手、其他编辑器），macOS 上走 FSEvents。
 notify = "8.2"

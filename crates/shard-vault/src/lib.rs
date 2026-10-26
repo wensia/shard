@@ -21,6 +21,7 @@
 //! - [`graph`]：碎片里的大纲 / 流程图受管区域。
 //! - [`canvas`]：独立流程图与旧混合画布（含拆分）。
 //! - [`datasets`]：CSV 数据集。
+//! - [`xlsx`]：XLSX 导入解析（字节 → 第一个工作表的字符串矩阵），纯函数。
 
 mod prelude;
 
@@ -36,6 +37,7 @@ pub mod refs;
 pub mod trash;
 pub mod types;
 pub mod util;
+pub mod xlsx;
 
 pub use datasets::*;
 pub use fragments::*;

@@ -10,6 +10,7 @@ use clap::{Parser, Subcommand};
 use shard_server::{
     app,
     auth::{db::AuthDb, tokens::random_token},
+    commands,
     config::Config,
     rpc,
     state::AppState,
@@ -164,7 +165,10 @@ async fn serve(
         tracing::warn!(%listen, "服务没有只监听本机：公网访问应当经过 Caddy 终止 TLS");
     }
     let config = Config::new(data_dir, origin, static_dir, trust_proxy)?;
-    let state = AppState::open(config, rpc::base_registry())?;
+    let mut registry = rpc::base_registry();
+    commands::register(&mut registry);
+    let state = AppState::open(config, registry)?;
+    commands::ensure_layout(&state.store)?;
     let router = app::build(state);
     let listener = tokio::net::TcpListener::bind(listen).await.map_err(|error| error.to_string())?;
     tracing::info!(%listen, "shard-server 已启动");
