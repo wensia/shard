@@ -3,6 +3,10 @@
   height: 100dvh;
   grid-template-rows: minmax(0, 1fr) auto;
   overflow: hidden;
+  /* 手机网页（viewport-fit=cover）让开刘海、圆角与横屏两侧；桌面 WebView 里这些值都是 0。 */
+  padding-top: env(safe-area-inset-top);
+  padding-right: env(safe-area-inset-right);
+  padding-left: env(safe-area-inset-left);
   background: var(--background);
   color: var(--foreground);
 }
@@ -43,6 +47,9 @@
 
 .bottomTabsSlot {
   display: block;
+  /* iPhone 底部横条 */
+  padding-bottom: env(safe-area-inset-bottom);
+  background: var(--sidebar);
 }
 
 /* 状态栏是桌面形态：移动端底部那一行归 bottom-tabs，两者不叠加 */
@@ -137,6 +144,7 @@
   .statusBarSlot {
     display: block;
     grid-column: 1 / -1;
+    padding-bottom: env(safe-area-inset-bottom);
   }
 
   .composerPadding {

@@ -32,6 +32,7 @@ import type {
 
 import { TabLabel } from "@/components/ui/tabs"
 import styles from "./bottom-tabs.module.css"
+import { isWebRuntime } from "@/lib/transport"
 
 interface BottomTabsProps {
   fragments: Fragment[]
@@ -144,18 +145,21 @@ export function BottomTabs({
             className="flex items-center justify-end gap-2"
             style={{ minWidth: 0, color: "var(--muted-foreground)" }}
           >
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <span className={`${styles.vaultPath} ${styles.truncate}`} />
-                }
-              >
-                {vaultPath || "Vault not loaded"}
-              </TooltipTrigger>
-              <TooltipContent side="top">
-                {vaultPath || "Vault not loaded"}
-              </TooltipContent>
-            </Tooltip>
+            {/* 网页端的 vaultPath 只是服务器身份标识，没有可看的本机路径。 */}
+            {isWebRuntime() ? null : (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <span className={`${styles.vaultPath} ${styles.truncate}`} />
+                  }
+                >
+                  {vaultPath || "Vault not loaded"}
+                </TooltipTrigger>
+                <TooltipContent side="top">
+                  {vaultPath || "Vault not loaded"}
+                </TooltipContent>
+              </Tooltip>
+            )}
           </div>
         </div>
 
