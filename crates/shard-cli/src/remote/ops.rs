@@ -14,7 +14,7 @@
 //! | `--graph-*` | `read_graph_fragment` → 本地改节点 → `write_graph_fragment`（带 expected 基线） |
 //! | `-i` / `-e` | `list_documents`（带正文）→ 本地搜索与编辑 → `read_document` / `rewrite_document` 带 sha 写回 |
 
-use super::{decode, Remote, RemoteError};
+use super::{decode, IntoCli, Remote, RemoteError};
 use crate::{
     agent::{
         self, note_parts, print_created, print_created_dataset, print_dataset, print_document, print_library,
@@ -699,15 +699,15 @@ mod tests {
             let listener = tokio::net::TcpListener::from_std(listener).unwrap();
             axum::serve(listener, router.into_make_service_with_connect_info::<SocketAddr>()).await.unwrap();
         });
-        let remote = Remote {
-            config: RemoteConfig {
+        let remote = Remote::connect(
+            RemoteConfig {
                 server: format!("http://127.0.0.1:{port}"),
                 device_id: "dev_tui".into(),
                 name: "测试".into(),
             },
             token,
-            agent: super::super::agent(),
-        };
+        )
+        .unwrap();
         Server { remote, _data: data, _runtime: runtime }
     }
 

@@ -7,16 +7,16 @@
 //! 登录与退出会改变之后所有命令读写的去处，只能由用户本人在终端里运行：标准输入与输出都必须是终端，
 //! 否则拒绝（防止被提示注入的 AI 一条命令就把读写转到别的服务器）；改登另一台服务器时还要输入 y 确认。
 
-use super::{agent, normalize_server, post_json, store, Remote, RemoteConfig};
+use super::{normalize_server, server_address_message, store, user_agent, Remote, RemoteConfig};
 use crate::{agent::print_json, CliError};
 use serde_json::{json, Value};
+use shard_remote::{start_pairing, PairingError, PairingRequest};
 use std::{
     env,
     io::{self, BufRead, IsTerminal, Write},
     path::PathBuf,
     process::Command,
-    thread,
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 pub const USAGE: &str = "\
@@ -80,93 +80,24 @@ pub fn login(server: Option<&str>, name: Option<String>) -> Result<(), CliError>
         .map(|name| name.trim().to_string())
         .filter(|name| !name.is_empty())
         .unwrap_or_else(default_device_name);
-    let agent = agent();
-    let unreachable = |message: String| {
-        CliError::new("NETWORK", format!("连不上 Shard 服务器 {server}（{message}）。请检查地址与网络。"))
-    };
+    let failed = |error: PairingError| pairing_error(error, &server);
+    let mut pairing = start_pairing(&server, PairingRequest { name: &name, kind: "cli" }, &user_agent()).map_err(failed)?;
+    if let Some(interval) = test_poll_interval() {
+        pairing.set_interval(interval);
+    }
 
-    let (status, text) = post_json(
-        &agent,
-        &format!("{server}/api/device/start"),
-        &[],
-        &json!({ "name": name, "kind": "cli" }),
-    )
-    .map_err(unreachable)?;
-    let start = response_json(status, &text, &server)?;
-    let field = |key: &str| {
-        start[key]
-            .as_str()
-            .map(str::to_string)
-            .ok_or_else(|| CliError::from(format!("{server} 的配对响应缺少 {key}，它可能不是 Shard 服务器")))
-    };
-    let device_code = field("deviceCode")?;
-    let user_code = field("userCode")?;
-    let verification = field("verificationUri")?;
-    let expires_in = start["expiresIn"].as_u64().unwrap_or(600);
-    let mut interval = poll_interval(start["interval"].as_u64().unwrap_or(3));
-
-    println!("在浏览器打开 {verification} 输入配对码 {user_code}");
+    println!("在浏览器打开 {} 输入配对码 {}", pairing.verification_uri(), pairing.user_code());
     eprintln!(
         "等待在浏览器里批准（{} 分钟内有效，Ctrl+C 取消）…",
-        expires_in.div_ceil(60).max(1)
+        pairing.expires_in().div_ceil(60).max(1)
     );
 
-    let deadline = Instant::now() + Duration::from_secs(expires_in + 5);
-    let mut failures = 0;
-    let issued = loop {
-        if Instant::now() >= deadline {
-            return Err("配对已过期，请重新运行 shard login".into());
-        }
-        thread::sleep(interval);
-        let polled = post_json(
-            &agent,
-            &format!("{server}/api/device/token"),
-            &[],
-            &json!({ "deviceCode": device_code }),
-        );
-        // 网络抖动或网关临时不可用（服务重启）：配对码还有效，退避后再试；一直不行就放弃。
-        let (status, text) = match polled {
-            Ok((status @ 502..=504, _)) => {
-                failures += 1;
-                if failures >= 10 {
-                    return Err(unreachable(format!("服务器暂时不可用（HTTP {status}）")));
-                }
-                interval = (interval * 2).min(Duration::from_secs(30));
-                continue;
-            }
-            Err(message) => {
-                failures += 1;
-                if failures >= 10 {
-                    return Err(unreachable(message));
-                }
-                interval = (interval * 2).min(Duration::from_secs(30));
-                continue;
-            }
-            Ok(response) => response,
-        };
-        failures = 0;
-        match status {
-            200 => break response_json(status, &text, &server)?,
-            428 => continue,
-            429 => interval += Duration::from_secs(2),
-            410 => return Err("配对已过期或被拒绝，请重新运行 shard login".into()),
-            _ => {
-                response_json(status, &text, &server)?;
-            }
-        }
-    };
-    let token = issued["token"]
-        .as_str()
-        .filter(|token| !token.is_empty())
-        .ok_or("服务器没有返回设备令牌")?;
-    let config = RemoteConfig {
-        server: server.clone(),
-        device_id: issued["deviceId"].as_str().unwrap_or_default().to_string(),
-        name: issued["name"].as_str().unwrap_or(&name).to_string(),
-    };
+    let issued = pairing.wait().map_err(failed)?;
+    let token = issued.token;
+    let config = RemoteConfig { server: server.clone(), device_id: issued.device_id, name: issued.name };
 
     // 先存新令牌与配置，再删旧服务器的令牌：令牌按服务器区分存放，不会删到刚存的新令牌。
-    store::save_token(&server, token)?;
+    store::save_token(&server, &token)?;
     store::save_config(&config)?;
     match previous {
         Some(previous) if previous.server != server => {
@@ -269,29 +200,28 @@ pub fn whoami(explicit_local: bool, local_vault: impl FnOnce() -> Result<PathBuf
     checked.map(|_| ())
 }
 
-fn response_json(status: u16, text: &str, server: &str) -> Result<Value, CliError> {
-    let body = serde_json::from_str::<Value>(text).unwrap_or(Value::Null);
-    if status == 200 {
-        return if body.is_object() {
-            Ok(body)
-        } else {
-            Err(format!("{server} 的响应不是 JSON，它可能不是 Shard 服务器").into())
-        };
+/// 配对失败 → 命令行的错误码与提示（带上服务器地址与重新登录的命令）。
+fn pairing_error(error: PairingError, server: &str) -> CliError {
+    match error {
+        PairingError::InvalidServer(error) => server_address_message(error).into(),
+        PairingError::Unreachable(message) => {
+            CliError::new("NETWORK", format!("连不上 Shard 服务器 {server}（{message}）。请检查地址与网络。"))
+        }
+        PairingError::NotJson => format!("{server} 的响应不是 JSON，它可能不是 Shard 服务器").into(),
+        PairingError::MissingField(key) => format!("{server} 的配对响应缺少 {key}，它可能不是 Shard 服务器").into(),
+        PairingError::Rejected(message) => format!("配对失败：{message}").into(),
+        PairingError::Gone => "配对已过期或被拒绝，请重新运行 shard login".into(),
+        PairingError::Expired => "配对已过期，请重新运行 shard login".into(),
+        PairingError::MissingToken => "服务器没有返回设备令牌".into(),
     }
-    let message = body["message"]
-        .as_str()
-        .map(str::to_string)
-        .unwrap_or_else(|| format!("服务器返回 HTTP {status}"));
-    Err(format!("配对失败：{message}").into())
 }
 
-/// 服务器建议的轮询间隔；`SHARD_LOGIN_POLL_MS` 只给测试缩短等待。
-fn poll_interval(seconds: u64) -> Duration {
+/// `SHARD_LOGIN_POLL_MS` 只给测试缩短轮询等待（代替服务器建议的间隔）。
+fn test_poll_interval() -> Option<Duration> {
     env::var("SHARD_LOGIN_POLL_MS")
         .ok()
         .and_then(|value| value.parse::<u64>().ok())
         .map(Duration::from_millis)
-        .unwrap_or_else(|| Duration::from_secs(seconds.clamp(1, 30)))
 }
 
 /// 网页「设置 → 设备」里显示的名字：`shard 命令行 · <电脑名>`。
