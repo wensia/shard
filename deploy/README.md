@@ -128,3 +128,37 @@ sudo -u shard shard-server recover --data-dir /var/lib/shard --origin https://sh
 ```
 
 打开输出的链接注册新的通行密钥。
+
+## 10. 正式切换：导入现有资料库（只在你确认后做一次）
+
+设计与风险见 `docs/dev/server-sqlite-plan.md` 第 9 节。导入在 Mac 上做（资料库在 Mac 上），全程只读原 vault：
+
+```bash
+# 1. 旧版 App 里同步一次 Git、确认没有未提交改动，然后退出 App；停用 iOS 快速记录（切换后它写的内容没人读）。
+# 2. 只读复制一份（APFS 克隆，秒完成，不动原件）：
+mkdir -p /tmp/shard-import && cp -c -R ~/Documents/ShardVault /tmp/shard-import/vault
+# 3. 导入到一个新的数据目录（前置检查不过会拒绝并列出原因：方言、archive/、带 note 标签的碎片、旧大纲）：
+shard-server import --data-dir /tmp/shard-import/data --vault /tmp/shard-import/vault
+# 4. 往返校验：导出后与原 vault 逐字节比对，只允许排除清单（.git、.DS_Store、.shard/notes.sqlite3* 等）不同：
+shard-server export --data-dir /tmp/shard-import/data --out /tmp/shard-import/roundtrip
+diff -r /tmp/shard-import/vault /tmp/shard-import/roundtrip
+shard-server verify --data-dir /tmp/shard-import/data
+```
+
+上传到 VPS（第一次部署时服务还没有内容库；以后重做导入时先停服务）：
+
+```bash
+ssh vps 'systemctl stop shard-server'
+rsync -a /tmp/shard-import/data/shard.db /tmp/shard-import/data/blobs.db vps:/var/lib/shard/   # auth.db 不动
+ssh vps 'chown shard:shard /var/lib/shard/*.db && rm -f /var/lib/shard/shard.db-wal /var/lib/shard/shard.db-shm /var/lib/shard/blobs.db-wal /var/lib/shard/blobs.db-shm && systemctl start shard-server'
+```
+
+收尾：
+
+```bash
+chflags -R uchg ~/Documents/ShardVault        # 冻结旧 vault：残留的旧版 App / 旧命令行写入会明确报错
+shard login https://shard.example.com         # 命令行改连服务器（在终端里由你本人运行）
+rm -rf /tmp/shard-import                      # 确认网页与命令行都正常后再删
+```
+
+回滚：网页「设置 → 数据与备份 → 导出 zip」解压后用旧版 App 打开；`chflags -R nouchg ~/Documents/ShardVault` 解冻旧 vault。
