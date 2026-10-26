@@ -251,6 +251,16 @@ wikilink 解析从 `src/lib/wikilink.ts` 移植到 `shard-core/wikilink.rs`，�
 
 ## 5. 桌面客户端模式与同步引擎
 
+**分两步交付**（2026-10-27 定）：
+
+- **S8a 在线客户端**：桌面「连接服务器」后，前端走与网页同一套命令（`invoke(命令, 参数)`），由 Rust 带设备令牌
+  （钥匙串，服务名与命令行分开，可单独吊销）转发到 `/api/rpc`；图片经 `shard-asset` 协议代理 `/api/files`；
+  Rust 订阅 SSE 并转成现有的 `vault-changed` / `lockbox-changed` 事件。界面与网页完全一致，密匣走 S7 的 wasm 客户端。
+  配对、令牌存取、带幂等键与重试的 RPC 客户端从命令行抽成共享的 `crates/shard-remote`，桌面与命令行同一份。
+  这一步之后桌面就能在切换后照常用（要联网）。
+- **S8b 离线**：下面的副本 + overlay + outbox，在 S8a 的转发层底下接入：在线照旧直发，离线落 overlay 与 outbox，
+  联网后先拉后推。
+
 `replica.db` 与服务器同一套 shard-store schema，作为「已确认层」，只在拉取时写入；另有乐观层 `overlay`
 与 `outbox`。读 = 「已确认层 ∪ overlay」上跑同一套读函数（离线浏览、搜索可用）。在线写直接转发服务器；
 离线写在 overlay 上跑同一套命令实现，并把 RPC 调用原样记进 outbox。
@@ -408,7 +418,7 @@ set_fragment_pinned、set/remove_fragment_property、save_fragment_image（内�
 | S5 | 前端传输层 + 网页版 | 现有 Playwright 在 Tauri mock 下全绿；新增 `tests/e2e/` 真服务器用例 |
 | S6 | 移动端布局 | WebKit iPhone 视口端到端用例；真机人工清单 |
 | S7 | 密匣端到端（S7a 加密格式 crate ✅；S7b 领域逻辑 + 服务端接口；S7c wasm + 网页客户端；v2 信封、KDF 升级、网页解锁开关） | 固定测试向量互解；写入金丝雀明文后 shard.db / blobs.db / WAL grep 命中 0 |
-| S8 | 桌面客户端模式（副本、outbox、离线子集、钥匙串、配对） | 双客户端断网脚本覆盖 server-and-sync-plan §十一 的 9 条 + 恢复后 epoch 对账找回数据 |
+| S8 | 桌面客户端模式：S8a 在线客户端（共享 shard-remote、Rust 转发 RPC、资源代理、SSE 桥）；S8b 离线（副本、outbox、离线子集） | 双客户端断网脚本覆盖 server-and-sync-plan §十一 的 9 条 + 恢复后 epoch 对账找回数据 |
 | S9 | 版本历史界面 + 导出 zip | 恢复任意修订后 sha 与当时一致 |
 | S10 | 生产加固 + 真实数据副本恢复演练 + 监控 | 每周自动恢复演练通过；healthz 监控 |
 | S11 | 正式切换 | 用户确认；切换后各类数量与哈希一致 |
