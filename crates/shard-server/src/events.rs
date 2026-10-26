@@ -63,6 +63,11 @@ async fn events(
 
     let (sender, receiver) = mpsc::channel::<Result<Event, Infallible>>(32);
     tokio::spawn(async move {
+        // Node 一类的代理（Vite 开发代理）要等第一块正文才转发响应头：先发一行注释，
+        // 否则客户端要到第一次心跳（20 秒后）才知道已经连上。
+        if sender.send(Ok(Event::default().comment("connected"))).await.is_err() {
+            return;
+        }
         // 补发。
         loop {
             let store = state.store.clone();

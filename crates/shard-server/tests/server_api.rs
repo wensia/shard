@@ -236,6 +236,9 @@ async fn events_replay_from_the_cursor_and_then_stream_live_changes() {
     assert_eq!(response.status(), StatusCode::OK);
     let mut body = response.into_body();
     let mut text = String::new();
+    // 第一块就是注释：代理立即转发响应头，客户端马上知道已连上。
+    read_until(": connected", &mut body, &mut text).await;
+    assert!(text.starts_with(": connected"), "{text}");
     read_until("notes/old.md", &mut body, &mut text).await;
     assert!(text.contains("event: vault-changed"));
 
