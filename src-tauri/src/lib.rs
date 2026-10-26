@@ -4228,6 +4228,8 @@ pub fn run() {
             remote_client::remote_disconnect,
             remote_client::remote_invoke,
             remote_client::remote_upload_blob,
+            remote_client::remote_save_image_from_path,
+            remote_client::remote_import_library_files,
             search_commands::search_vault,
             search_commands::read_search_target,
             watch_vault,

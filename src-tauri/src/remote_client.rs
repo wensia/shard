@@ -289,6 +289,83 @@ pub async fn remote_upload_blob(
     result.map_err(|error| frontend_error(&app, error))
 }
 
+/// 单个本机文件的上传上限（与桌面保存图片、服务器单次上传一致）。
+const MAX_LOCAL_FILE_BYTES: u64 = 50 * 1024 * 1024;
+
+fn read_local_file(path: &str) -> Result<(String, Vec<u8>), String> {
+    let path = std::path::Path::new(path);
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| "文件名无效。".to_string())?
+        .to_string();
+    let size = std::fs::metadata(path).map_err(|error| error.to_string())?.len();
+    if size > MAX_LOCAL_FILE_BYTES {
+        return Err(format!("{name} 超过 50 MB，没有上传。"));
+    }
+    Ok((name, std::fs::read(path).map_err(|error| error.to_string())?))
+}
+
+/// 桌面 `save_image_attachment_from_path` 的远程版：读本机文件 → 按内容哈希上传 → `save_fragment_image`。
+/// 返回资料库相对路径，与本地版一致。
+#[tauri::command]
+pub async fn remote_save_image_from_path(
+    app: AppHandle,
+    runtime: State<'_, RemoteRuntime>,
+    path: String,
+) -> Result<Value, Value> {
+    let client = runtime.client().ok_or_else(not_connected)?;
+    let result = tauri::async_runtime::spawn_blocking(move || -> Result<Value, Result<RemoteError, String>> {
+        let (_, bytes) = read_local_file(&path).map_err(Err)?;
+        let sha = client.upload_blob(&bytes).map_err(Ok)?;
+        client.write("save_fragment_image", json!({ "blobSha": sha })).map_err(Ok)
+    })
+    .await
+    .map_err(|error| Value::String(error.to_string()))?;
+    result.map_err(|error| match error {
+        Ok(remote) => frontend_error(&app, remote),
+        Err(message) => Value::String(message),
+    })
+}
+
+/// 桌面 `import_library_files` 的远程版：逐个读本机文件并上传，再一次 `import_library_blobs`。
+/// 读不了或超限的文件记进 `skipped`（与服务器对不是图片的文件同样处理），其余照常导入。
+#[tauri::command]
+pub async fn remote_import_library_files(
+    app: AppHandle,
+    runtime: State<'_, RemoteRuntime>,
+    paths: Vec<String>,
+    directory: Option<String>,
+) -> Result<Value, Value> {
+    let client = runtime.client().ok_or_else(not_connected)?;
+    let result = tauri::async_runtime::spawn_blocking(move || -> Result<Value, RemoteError> {
+        let mut files = Vec::new();
+        let mut skipped = Vec::new();
+        for path in &paths {
+            match read_local_file(path) {
+                Ok((name, bytes)) => {
+                    let sha = client.upload_blob(&bytes)?;
+                    files.push(json!({ "name": name, "blobSha": sha }));
+                }
+                Err(reason) => skipped.push(json!({ "path": path, "reason": reason })),
+            }
+        }
+        let mut result = if files.is_empty() {
+            // 形状与正常导入一致：前端用 tree 刷新目录。
+            json!({ "tree": client.read("list_library_tree", json!({}))?, "imported": [], "skipped": [] })
+        } else {
+            client.write("import_library_blobs", json!({ "files": files, "directory": directory }))?
+        };
+        if let Some(list) = result.get_mut("skipped").and_then(Value::as_array_mut) {
+            list.extend(skipped);
+        }
+        Ok(result)
+    })
+    .await
+    .map_err(|error| Value::String(error.to_string()))?;
+    result.map_err(|error| frontend_error(&app, error))
+}
+
 /// 服务器的 SSE → Tauri 事件：`vault-changed`（与本地文件监听同形）、`lockbox-changed`、`vault-resync`。
 /// 断线按 1–60 秒退避加抖动重连，带上最后事件 id 续传；令牌失效时通知前端并停止。
 fn spawn_event_bridge(app: AppHandle, client: Client, stop: Arc<AtomicBool>) {
