@@ -58,6 +58,20 @@ enum Command {
         #[arg(long)]
         data_dir: PathBuf,
     },
+    /// 把旧 vault 目录只读导入内容库（一个事务；前置检查不过就拒绝）。
+    Import {
+        #[arg(long)]
+        data_dir: PathBuf,
+        #[arg(long)]
+        vault: PathBuf,
+    },
+    /// 把内容库导出成 vault 目录（与原 vault 逐字节一致，旧版 App 可直接打开）。
+    Export {
+        #[arg(long)]
+        data_dir: PathBuf,
+        #[arg(long)]
+        out: PathBuf,
+    },
     /// 一致快照：把三个库写进一个空目录（服务运行中也可以执行）。备份脚本再打包加密上传。
     Snapshot {
         #[arg(long)]
@@ -123,6 +137,13 @@ async fn main() {
             .and_then(|store| store.rotate_epoch())
             .map(|epoch| println!("已轮换 epoch：{epoch}"))
             .map_err(|error| error.to_string()),
+        Command::Import { data_dir, vault } => import(&data_dir, &vault),
+        Command::Export { data_dir, out } => shard_store::Store::open(&data_dir)
+            .and_then(|store| shard_store::transfer::export_vault(&store, &out))
+            .map(|report| {
+                println!("已导出 {} 个文件、{} 个目录、{} 条密匣信封到 {}", report.files, report.dirs, report.lockbox_items, out.display())
+            })
+            .map_err(|error| error.to_string()),
         Command::Snapshot { data_dir, out_dir } => snapshot(&data_dir, &out_dir),
         Command::Verify { data_dir } => verify(&data_dir),
     };
@@ -187,4 +208,26 @@ fn verify(data_dir: &std::path::Path) -> Result<(), String> {
     } else {
         Err("校验没有通过。".to_string())
     }
+}
+
+fn import(data_dir: &std::path::Path, vault: &std::path::Path) -> Result<(), String> {
+    let store = shard_store::Store::open(data_dir).map_err(|error| error.to_string())?;
+    let report = shard_store::transfer::import_vault(&store, vault).map_err(|error| error.to_string())?;
+    println!(
+        "已导入 {} 个文件（{} 字节）、{} 个目录、{} 条密匣信封{}。",
+        report.files,
+        report.bytes,
+        report.dirs,
+        report.lockbox_items,
+        if report.lockbox_manifest { "、密匣 manifest" } else { "" }
+    );
+    if !report.skipped.is_empty() {
+        println!("没有导入的（按排除清单）：");
+        for (path, reason) in &report.skipped {
+            println!("  {path} —— {reason}");
+        }
+    }
+    AuthDb::open(&data_dir.join("auth.db"))
+        .map(|auth| auth.audit("admin", "vault.imported", None, None, Some(&vault.display().to_string())))
+        .map_err(|error| error.to_string())
 }

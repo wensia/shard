@@ -59,6 +59,8 @@ fn sample_vault(root: &Path) {
     write(root, ".shard/notes.sqlite3", b"old store");
     set_mtime(&root.join("notes/私人顾问/晚上上头的应对方案.md"), 1_760_000_000);
     set_mtime(&root.join("notes/证件/营业执照 1.jpg"), 1_750_000_000);
+    set_mtime(&root.join(".shard/lockbox.json"), 1_740_000_000);
+    set_mtime(&root.join("lockbox/notes/私密/标题.shard"), 1_730_000_000);
 }
 
 /// 相对路径 → (是否目录, 内容, 修改时间秒)。
@@ -110,9 +112,11 @@ fn import_then_export_reproduces_the_vault_byte_for_byte() {
         map.iter().map(|(path, (dir, bytes, _))| (path.clone(), (*dir, bytes.clone()))).collect::<BTreeMap<_, _>>()
     };
     assert_eq!(strip_dir_times(&exported), strip_dir_times(&original), "导出的内容必须与原 vault 逐字节一致");
-    // 修改时间保留（树与碎片按它排序）。
-    for path in ["notes/私人顾问/晚上上头的应对方案.md", "notes/证件/营业执照 1.jpg"] {
-        assert_eq!(exported[path].2, original[path].2, "{path} 的修改时间");
+    // 修改时间保留（树与碎片按它排序）：每个文件都要对上，包括密匣信封与 manifest。
+    for (path, (is_dir, _, mtime)) in &original {
+        if !is_dir {
+            assert_eq!(exported[path].2, *mtime, "{path} 的修改时间");
+        }
     }
 }
 

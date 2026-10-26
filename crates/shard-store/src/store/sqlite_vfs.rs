@@ -226,8 +226,9 @@ impl<'a> SqliteVfs<'a> {
         Ok(())
     }
 
-    /// 原样写入密匣 manifest（现 `.shard/lockbox.json` 的原文）。
-    pub fn put_lockbox_manifest_raw(&self, body: &str) -> io::Result<()> {
+    /// 原样写入密匣 manifest（现 `.shard/lockbox.json` 的原文）。`updated_at` 为空时记当前时间；
+    /// 导入时传源文件的修改时间，导出才能原样写回。
+    pub fn put_lockbox_manifest_raw(&self, body: &str, updated_at: Option<&str>) -> io::Result<()> {
         self.ensure_writable()?;
         let sha = sha256_hex(body.as_bytes());
         let existing: Option<String> = self
@@ -243,7 +244,7 @@ impl<'a> SqliteVfs<'a> {
                 "INSERT INTO lockbox_manifest (id, body, sha, revision, seq, updated_at) VALUES (1, ?1, ?2, 1, 0, ?3)
                  ON CONFLICT(id) DO UPDATE SET body = excluded.body, sha = excluded.sha,
                    revision = revision + 1, updated_at = excluded.updated_at",
-                params![body, sha, self.now],
+                params![body, sha, updated_at.unwrap_or(&self.now)],
             )
             .map_err(db_error)?;
         self.lockbox_touched
@@ -276,9 +277,12 @@ impl<'a> SqliteVfs<'a> {
         Ok(rows)
     }
 
-    pub fn lockbox_manifest_raw(&self) -> io::Result<Option<String>> {
+    /// (原文, 更新时间)
+    pub fn lockbox_manifest_raw(&self) -> io::Result<Option<(String, String)>> {
         self.conn
-            .query_row("SELECT body FROM lockbox_manifest WHERE id = 1", [], |row| row.get(0))
+            .query_row("SELECT body, updated_at FROM lockbox_manifest WHERE id = 1", [], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })
             .optional()
             .map_err(db_error)
     }

@@ -121,7 +121,7 @@ enum Planned {
     Dir { rel: String, times: (SystemTime, SystemTime) },
     File { rel: String, bytes: Vec<u8>, times: (SystemTime, SystemTime) },
     Lockbox(LockboxItemRaw),
-    Manifest(String),
+    Manifest { body: String, modified: SystemTime },
 }
 
 fn plan(source: &Path, report: &mut ImportReport) -> Result<Vec<Planned>, StoreError> {
@@ -178,7 +178,7 @@ fn plan(source: &Path, report: &mut ImportReport) -> Result<Vec<Planned>, StoreE
             if key == ".shard/lockbox.json" {
                 let text = String::from_utf8(bytes)
                     .map_err(|_| StoreError::Invalid("密匣 manifest 不是 UTF-8。".to_string()))?;
-                planned.push(Planned::Manifest(text));
+                planned.push(Planned::Manifest { body: text, modified: system_time(&metadata).1 });
                 continue;
             }
             planned.push(Planned::File { rel, bytes, times: system_time(&metadata) });
@@ -231,8 +231,8 @@ pub fn import_vault(store: &Store, source: &Path) -> Result<ImportReport, StoreE
                     vfs.put_lockbox_item_raw(item).map_err(io)?;
                     report.lockbox_items += 1;
                 }
-                Planned::Manifest(body) => {
-                    vfs.put_lockbox_manifest_raw(body).map_err(io)?;
+                Planned::Manifest { body, modified } => {
+                    vfs.put_lockbox_manifest_raw(body, Some(&to_rfc3339(*modified))).map_err(io)?;
                     report.lockbox_manifest = true;
                 }
             }
@@ -305,10 +305,14 @@ pub fn export_vault(store: &Store, target: &Path) -> Result<ExportReport, StoreE
             set_file_times(&out, parse(&item.created_at), parse(&item.updated_at)).map_err(io)?;
             report.lockbox_items += 1;
         }
-        if let Some(body) = vfs.lockbox_manifest_raw().map_err(io)? {
+        if let Some((body, updated_at)) = vfs.lockbox_manifest_raw().map_err(io)? {
             let out = target.join(".shard/lockbox.json");
             fs::create_dir_all(out.parent().expect("有父目录")).map_err(io)?;
             fs::write(&out, body.as_bytes()).map_err(io)?;
+            let modified = chrono::DateTime::parse_from_rfc3339(&updated_at)
+                .map(SystemTime::from)
+                .unwrap_or(SystemTime::UNIX_EPOCH);
+            set_file_times(&out, modified, modified).map_err(io)?;
             report.files += 1;
         }
         Ok(())
