@@ -34,6 +34,7 @@ pub mod images;
 pub mod library;
 pub mod maps;
 pub mod refs;
+pub mod search;
 pub mod trash;
 pub mod types;
 pub mod util;

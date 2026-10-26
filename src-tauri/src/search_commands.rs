@@ -1,26 +1,23 @@
 use std::{path::PathBuf, time::SystemTime};
 
 use chrono::{DateTime, Utc};
-use shard_core::search::{
-    scan_exact_filtered, MatchLocation, MatchedField, ParsedQuery, ProjectedDocument,
-    SearchQueryErrorReason,
+// 请求校验、查询解析与扫描组装（含 map_hit）在 shard-vault，与服务端共用；这里只剩运行时快照、
+// 上下文 / 代次校验与密匣租约。
+use shard_vault::search::{
+    invalid_request, parse_search_query, scan_documents, validate_search_request,
 };
 
 use crate::{
     configured_vault_path,
     search_contract::{
-        ReadSearchTargetRequest, ReadSearchTargetResponse, SearchContext, SearchError, SearchField,
-        SearchHit, SearchIndexState, SearchRevealHint, SearchScope, SearchTextPart,
-        SearchVaultRequest, SearchVaultResponse,
+        ReadSearchTargetRequest, ReadSearchTargetResponse, SearchContext, SearchError,
+        SearchIndexState, SearchScope, SearchVaultRequest, SearchVaultResponse,
     },
     search_lockbox::{peek_lockbox_read_lease, renew_lockbox_read_lease},
     search_runtime::{SearchRuntime, SnapshotFreshness},
-    search_sources::{read_search_document, SearchDocumentMetadata},
+    search_sources::read_search_document,
     LockboxRuntime,
 };
-
-const SEARCH_WIRE_VERSION: u32 = 1;
-const SEARCH_LIMIT_MAX: u32 = 200;
 
 #[tauri::command]
 pub(crate) async fn search_vault(
@@ -102,12 +99,7 @@ fn search_vault_in_vault(
             Some(lease)
         }
     };
-    let parsed = ParsedQuery::parse(&request.query).map_err(|error| {
-        invalid_request(match error.reason {
-            SearchQueryErrorReason::QueryTooLong => "queryTooLong",
-            SearchQueryErrorReason::TooManyTerms => "tooManyTerms",
-        })
-    })?;
+    let parsed = parse_search_query(&request.query)?;
 
     runtime.request_reconcile(
         context.clone(),
@@ -122,39 +114,17 @@ fn search_vault_in_vault(
     };
 
     let (snapshot_id, hits, total, skipped_files) = if let Some(snapshot) = view.snapshot {
-        let scanned = scan_exact_filtered(
+        let scanned = scan_documents(
             &snapshot.documents,
+            &snapshot.metadata,
             &parsed,
             request.limit as usize,
-            |document| {
-                request.include_trash
-                    || snapshot
-                        .metadata
-                        .get(&document.stable_key)
-                        .is_some_and(|metadata| !metadata.target.archived)
-            },
-        );
-        let hits = scanned
-            .matches
-            .into_iter()
-            .map(|matched| {
-                let metadata = snapshot
-                    .metadata
-                    .get(&matched.stable_key)
-                    .ok_or(SearchError::Internal { retryable: false })?;
-                let document = snapshot
-                    .documents
-                    .binary_search_by(|document| document.stable_key.cmp(&matched.stable_key))
-                    .ok()
-                    .and_then(|index| snapshot.documents.get(index))
-                    .ok_or(SearchError::Internal { retryable: false })?;
-                map_hit(document, metadata, matched)
-            })
-            .collect::<Result<Vec<_>, SearchError>>()?;
+            request.include_trash,
+        )?;
         (
             Some(snapshot.snapshot_id.clone()),
-            hits,
-            Some(u32::try_from(scanned.total).unwrap_or(u32::MAX)),
+            scanned.hits,
+            Some(scanned.total),
             snapshot.skipped_files,
         )
     } else {
@@ -224,22 +194,6 @@ fn read_search_target_in_vault(
     })
 }
 
-fn validate_search_request(request: &SearchVaultRequest) -> Result<(), SearchError> {
-    if request.client_request_id.trim().is_empty() {
-        return Err(invalid_request("missingClientRequestId"));
-    }
-    if request.query_version != SEARCH_WIRE_VERSION {
-        return Err(invalid_request("unsupportedQueryVersion"));
-    }
-    if request.projection_version != SEARCH_WIRE_VERSION {
-        return Err(invalid_request("unsupportedProjectionVersion"));
-    }
-    if request.limit == 0 || request.limit > SEARCH_LIMIT_MAX {
-        return Err(invalid_request("invalidLimit"));
-    }
-    Ok(())
-}
-
 fn resolve_context(
     vault: &PathBuf,
     runtime: &SearchRuntime,
@@ -257,67 +211,6 @@ fn resolve_context(
     runtime
         .active_context(vault)
         .ok_or(SearchError::Internal { retryable: true })
-}
-
-fn map_hit(
-    document: &ProjectedDocument,
-    metadata: &SearchDocumentMetadata,
-    matched: shard_core::search::ScanMatch,
-) -> Result<SearchHit, SearchError> {
-    let title_parts = matched
-        .title_parts
-        .into_iter()
-        .map(map_text_part)
-        .collect::<Vec<_>>();
-    if title_parts
-        .iter()
-        .map(|part| part.text.as_str())
-        .collect::<String>()
-        != document.title
-    {
-        return Err(SearchError::Internal { retryable: false });
-    }
-    let reveal_hint = match metadata.reveal_hint.clone() {
-        SearchRevealHint::External => SearchRevealHint::External,
-        SearchRevealHint::DocumentOnly => SearchRevealHint::DocumentOnly,
-        SearchRevealHint::Text if matched.location == MatchLocation::DocumentOnly => {
-            SearchRevealHint::DocumentOnly
-        }
-        SearchRevealHint::Text => SearchRevealHint::Text,
-    };
-
-    Ok(SearchHit {
-        target: metadata.target.clone(),
-        title: document.title.clone(),
-        title_parts,
-        tags: document.tags.clone(),
-        updated_at: metadata.updated_at.clone(),
-        revision: Some(metadata.revision.clone()),
-        matched_fields: matched
-            .matched_fields
-            .into_iter()
-            .map(|field| match field {
-                MatchedField::Title => SearchField::Title,
-                MatchedField::Tags => SearchField::Tags,
-                MatchedField::Body => SearchField::Body,
-            })
-            .collect(),
-        preview: matched.preview.into_iter().map(map_text_part).collect(),
-        reveal_hint,
-    })
-}
-
-fn map_text_part(part: shard_core::search::SearchTextPart) -> SearchTextPart {
-    SearchTextPart {
-        text: part.text,
-        hit: part.hit,
-    }
-}
-
-fn invalid_request(reason: &str) -> SearchError {
-    SearchError::InvalidRequest {
-        reason: reason.to_string(),
-    }
 }
 
 fn format_time(value: SystemTime) -> String {
@@ -338,8 +231,9 @@ mod tests {
 
     use super::*;
     use crate::{
-        search_contract::{SearchKind, SearchRefresh, SearchTarget},
+        search_contract::{SearchField, SearchKind, SearchRefresh, SearchRevealHint, SearchTarget},
         search_runtime::{SearchBuildRequest, SearchSnapshotDraft},
+        search_sources::SearchDocumentMetadata,
     };
 
     #[test]
