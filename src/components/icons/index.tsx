@@ -54,6 +54,7 @@ import {
   HelpCircleIcon as LHelpCircle,
   HighlighterIcon as LHighlighter,
   ImageIcon as LImage,
+  HistoryIcon as LHistory,
   InboxIcon as LInbox,
   InfoIcon as LInfo,
   KeyboardIcon as LKeyboard,
@@ -153,6 +154,7 @@ export const HashIcon = /*#__PURE__*/ withIconDefaults(LHash)
 export const HelpCircleIcon = /*#__PURE__*/ withIconDefaults(LHelpCircle)
 export const HighlighterIcon = /*#__PURE__*/ withIconDefaults(LHighlighter)
 export const ImageIcon = /*#__PURE__*/ withIconDefaults(LImage)
+export const HistoryIcon = /*#__PURE__*/ withIconDefaults(LHistory)
 export const InboxIcon = /*#__PURE__*/ withIconDefaults(LInbox)
 export const InfoIcon = /*#__PURE__*/ withIconDefaults(LInfo)
 export const KeyboardIcon = /*#__PURE__*/ withIconDefaults(LKeyboard)

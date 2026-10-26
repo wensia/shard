@@ -1,6 +1,7 @@
 import { useState } from "react"
 
 import { AuthGate } from "@/features/auth/auth-gate"
+import { RevisionHistoryHost } from "@/features/history/revision-history-dialog"
 import { isWebRuntime } from "@/lib/transport"
 
 import {
@@ -15,7 +16,15 @@ function App() {
 
   const shell = <WorkbenchShell route={route} setRoute={setRoute} />
   // 网页端先过登录门；桌面应用直接进工作台。
-  return isWebRuntime() ? <AuthGate>{shell}</AuthGate> : shell
+  // 版本历史只在网页端（存在服务器上）：菜单发事件，宿主弹出对话框。
+  return isWebRuntime() ? (
+    <AuthGate>
+      {shell}
+      <RevisionHistoryHost />
+    </AuthGate>
+  ) : (
+    shell
+  )
 }
 
 export default App

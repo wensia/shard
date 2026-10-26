@@ -2,9 +2,11 @@ import { Menu } from "@base-ui/react/menu"
 import { cloneElement, createContext, type HTMLAttributes, type KeyboardEvent, type MouseEvent, type PointerEvent, type ReactElement, type ReactNode, useContext, useId, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 
+import { openRevisionHistory } from "@/features/history/history-api"
+import { isWebRuntime } from "@/lib/transport"
 import { useLongPress } from "@/lib/use-long-press"
 
-import { ArchiveRestoreIcon, FileTextIcon, FolderIcon, ImageIcon, InboxIcon, LockKeyholeIcon, MoreHorizontalIcon, PencilLineIcon, Trash2Icon } from "@/components/icons"
+import { ArchiveRestoreIcon, FileTextIcon, FolderIcon, HistoryIcon, ImageIcon, InboxIcon, LockKeyholeIcon, MoreHorizontalIcon, PencilLineIcon, Trash2Icon } from "@/components/icons"
 import { Button } from "@/components/ui/button"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import type { LibraryTreeEntry } from "@/types"
@@ -84,6 +86,12 @@ function LibraryEntryMenuItems({ entry, destinations, batch, run, ...actions }: 
         </DropdownMenuItem>
       ) : null}
       <DropdownMenuItem onClick={() => run(() => actions.onRename(entry))}><PencilLineIcon />重命名</DropdownMenuItem>
+      {/* 版本历史存在服务器上，只有网页端有；密匣条目在服务器上只有密文，不提供。 */}
+      {isWebRuntime() && entry.kind !== "directory" && !entry.path.startsWith("lockbox/") ? (
+        <DropdownMenuItem onClick={() => openRevisionHistory({ target: { path: entry.path }, title: entry.name })}>
+          <HistoryIcon />版本历史
+        </DropdownMenuItem>
+      ) : null}
     </>}
     {!entry.path.startsWith("fragments/") ? <DropdownMenuSub>
       <DropdownMenuSubTrigger disabled={destinations.length === 0}>

@@ -4,6 +4,7 @@ import {
   FolderOpenIcon,
   FolderPlusIcon,
   GitBranchIcon,
+  HistoryIcon,
   KeyboardIcon,
   KeyRoundIcon,
   Loader2Icon,
@@ -55,6 +56,7 @@ import {
 import { notify } from "@/lib/notify"
 import { isWebRuntime } from "@/lib/transport"
 import { AccountSettings } from "@/features/auth/account-settings"
+import { DataSettings } from "@/features/history/data-settings"
 import type {
   CliInstallStatus,
   GithubCliInfo,
@@ -110,11 +112,11 @@ const monoPathStyle: CSSProperties = {
   userSelect: "all",
 }
 
-export type SettingsSection = "account" | "appearance" | "cli" | "git" | "shortcuts" | "vault"
+export type SettingsSection = "account" | "appearance" | "cli" | "data" | "git" | "shortcuts" | "vault"
 
 /** 设置单页里的分区顺序，也是左侧锚点导航的顺序。网页端没有本机资料库、Git 与终端命令，换成账号与安全。 */
 const DESKTOP_SETTINGS_SECTIONS: SettingsSection[] = ["vault", "git", "appearance", "cli", "shortcuts"]
-const WEB_SETTINGS_SECTIONS: SettingsSection[] = ["account", "appearance", "shortcuts"]
+const WEB_SETTINGS_SECTIONS: SettingsSection[] = ["account", "data", "appearance", "shortcuts"]
 
 function settingsSections() {
   return isWebRuntime() ? WEB_SETTINGS_SECTIONS : DESKTOP_SETTINGS_SECTIONS
@@ -201,6 +203,7 @@ interface SettingsCopy {
   manualRemoteHint: string
   navAccount: string
   navAppearance: string
+  navData: string
   navLabel: string
   navGit: string
   navShortcuts: string
@@ -329,6 +332,7 @@ const settingsCopy: Record<SettingsLocale, SettingsCopy> = {
       "The manual URL is saved as origin. You can also run git remote add origin <url> in the current folder.",
     navAccount: "Account & security",
     navAppearance: "Appearance",
+    navData: "Data & backup",
     navLabel: "Settings sections",
     navGit: "Git sync",
     navShortcuts: "Shortcuts",
@@ -453,6 +457,7 @@ const settingsCopy: Record<SettingsLocale, SettingsCopy> = {
       "手动 URL 会保存为 origin。也可以在当前目录运行 git remote add origin <url>。",
     navAccount: "账号与安全",
     navAppearance: "外观",
+    navData: "数据与备份",
     navLabel: "设置分区",
     navGit: "Git 同步",
     navShortcuts: "快捷键",
@@ -717,7 +722,8 @@ export function VaultGuide({
   }, [isOpen, showsFullSettings])
 
   useEffect(() => {
-    if (!isOpen || !needsRemote) {
+    // 网页端没有本地 Git，也没有 github_cli_status 命令。
+    if (!isOpen || !needsRemote || isWebRuntime()) {
       setIsCheckingGithub(false)
       return
     }
@@ -1217,6 +1223,7 @@ export function VaultGuide({
     account: { icon: KeyRoundIcon, label: copy.navAccount },
     appearance: { icon: PaletteIcon, label: copy.navAppearance },
     cli: { icon: SquareTerminalIcon, label: copy.cliTitle },
+    data: { icon: HistoryIcon, label: copy.navData },
     git: { icon: GitBranchIcon, label: copy.navGit },
     shortcuts: { icon: KeyboardIcon, label: copy.navShortcuts },
     vault: { icon: FolderOpenIcon, label: copy.vaultTitle },
@@ -1301,9 +1308,14 @@ export function VaultGuide({
             ref={scrollRef}
           >
             {isWebRuntime() ? (
-              <SettingsBlock id="account" title={copy.navAccount}>
-                <AccountSettings />
-              </SettingsBlock>
+              <>
+                <SettingsBlock id="account" title={copy.navAccount}>
+                  <AccountSettings />
+                </SettingsBlock>
+                <SettingsBlock id="data" title={copy.navData}>
+                  <DataSettings />
+                </SettingsBlock>
+              </>
             ) : (
               <>
             <SettingsBlock id="vault" title={copy.vaultTitle}>

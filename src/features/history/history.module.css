@@ -1,0 +1,154 @@
+/*
+ * history.module.css
+ *
+ * 版本历史对话框与「数据与备份」设置：数值全部取 kiln token。
+ * 对话框宽时左列表右预览，窄（手机）时上下堆叠，列表限高滚动。
+ */
+
+.layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  min-height: 0;
+}
+
+@media (min-width: 640px) {
+  .layout {
+    grid-template-columns: 220px minmax(0, 1fr);
+    height: min(60dvh, 520px);
+  }
+}
+
+.list {
+  margin: 0;
+  padding: var(--space-1);
+  list-style: none;
+  max-height: 32dvh;
+  overflow-y: auto;
+  border-bottom: 1px solid var(--border);
+}
+
+@media (min-width: 640px) {
+  .list {
+    max-height: none;
+    border-bottom: none;
+    border-right: 1px solid var(--border);
+  }
+}
+
+.listItem {
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  gap: var(--space-0\.5);
+  padding: var(--space-2) var(--space-3);
+  border: none;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--foreground);
+  text-align: left;
+  cursor: pointer;
+}
+
+.listItem:hover {
+  background: var(--accent);
+}
+
+.listItem[aria-pressed="true"] {
+  background: var(--accent);
+  box-shadow: inset 2px 0 0 var(--primary);
+}
+
+.listItem:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+
+.listTime {
+  font-size: var(--text-body);
+  line-height: 20px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.listMeta {
+  font-size: var(--text-meta);
+  line-height: 18px;
+  color: var(--muted-foreground);
+}
+
+.preview {
+  min-width: 0;
+  min-height: 160px;
+  max-height: 40dvh;
+  overflow: auto;
+  padding: var(--space-4);
+}
+
+@media (min-width: 640px) {
+  .preview {
+    max-height: none;
+  }
+}
+
+.previewText {
+  margin: 0;
+  font-family: inherit;
+  font-size: var(--text-body);
+  line-height: 1.7;
+  color: var(--foreground);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.previewImage {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  border-radius: var(--radius-card);
+  border: 1px solid var(--border);
+}
+
+.previewNote,
+.empty {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  font-size: var(--text-body);
+  color: var(--muted-foreground);
+}
+
+.empty {
+  padding: var(--space-6) var(--space-4);
+}
+
+.footer {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-top: 1px solid var(--border);
+}
+
+.spin {
+  animation: history-spin 0.9s linear infinite;
+}
+
+@keyframes history-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spin {
+    animation: none;
+  }
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}

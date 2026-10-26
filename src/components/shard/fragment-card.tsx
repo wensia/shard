@@ -3,6 +3,7 @@ import {
   CopyIcon,
   FileTextIcon,
   GitBranchIcon,
+  HistoryIcon,
   LockKeyholeIcon,
   MoreHorizontalIcon,
   PencilLineIcon,
@@ -36,7 +37,9 @@ import {
 } from "@/lib/content-kind"
 import { readOutlineContent } from "@/lib/mind-map-outline"
 import { readFlowchartContent } from "@/lib/flowchart-content"
+import { openRevisionHistory } from "@/features/history/history-api"
 import { notify } from "@/lib/notify"
+import { isWebRuntime } from "@/lib/transport"
 import type { RelatedFragment } from "@/lib/relations"
 import { cn } from "@/lib/utils"
 import type { CsvFileSummary, Fragment } from "@/types"
@@ -340,6 +343,20 @@ export function FragmentCard({
                   openNextSurface(() => onExportImage?.(fragment))
                 }
               />
+              {isWebRuntime() && !fragment.lockbox ? (
+                <CardMenuItem
+                  icon={<HistoryIcon aria-hidden="true" />}
+                  label="版本历史"
+                  onSelect={() =>
+                    openNextSurface(() =>
+                      openRevisionHistory({
+                        target: { id: fragment.id },
+                        title: fragment.content.split("\n")[0]?.trim().slice(0, 24) || "碎片",
+                      })
+                    )
+                  }
+                />
+              ) : null}
               <CardMenuItem
                 icon={
                   fragment.archived ? (
