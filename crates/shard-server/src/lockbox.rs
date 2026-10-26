@@ -46,10 +46,10 @@ fn web_unlock_allowed(env: &RpcEnv<'_>) -> Result<bool, RpcError> {
 fn lockbox_snapshot(env: &RpcEnv<'_>, _args: Value) -> Result<Value, RpcError> {
     let web_unlock = web_unlock_allowed(env)?;
     let withhold = env.source == "web" && !web_unlock;
-    let (manifest, items) = env.read(|vfs| -> std::io::Result<_> {
+    let (manifest, items, lockbox_seq) = env.read(|vfs| -> std::io::Result<_> {
         let manifest = vfs.lockbox_manifest_entry()?;
         let items = if withhold { Vec::new() } else { vfs.lockbox_item_entries()? };
-        Ok((manifest, items))
+        Ok((manifest, items, vfs.lockbox_seq()?))
     })?
     .map_err(io_error)?;
     Ok(json!({
@@ -58,6 +58,7 @@ fn lockbox_snapshot(env: &RpcEnv<'_>, _args: Value) -> Result<Value, RpcError> {
         "items": items,
         "itemsWithheld": withhold,
         "webUnlock": web_unlock,
+        "lockboxSeq": lockbox_seq,
     }))
 }
 
@@ -106,10 +107,29 @@ struct ApplyArgs {
     items: Vec<ItemWrite>,
 }
 
+/// 浏览器会话写 manifest（设置、改口令、重置、升级）：要求 10 分钟内验证过通行密钥，网页解锁关闭时拒绝。
+/// 被盗的浏览器会话不能整体换掉 manifest（换掉后口令失效，之后锁着记下的内容会加密到攻击者的公钥上）。
+/// 设备令牌（桌面、命令行）不受限：它们的配对本身经过了通行密钥批准。
+fn guard_manifest_write(env: &RpcEnv<'_>) -> Result<(), RpcError> {
+    if env.source != "web" {
+        return Ok(());
+    }
+    if !web_unlock_allowed(env)? {
+        return Err(RpcError::new(StatusCode::FORBIDDEN, "LOCKBOX_WEB_DISABLED", "网页解锁已关闭，不能在网页上修改密匣设置。"));
+    }
+    if !env.step_up_fresh {
+        return Err(RpcError::new(StatusCode::FORBIDDEN, "STEP_UP_REQUIRED", "这个操作需要重新验证通行密钥。"));
+    }
+    Ok(())
+}
+
 fn lockbox_apply(env: &RpcEnv<'_>, args: Value) -> Result<Value, RpcError> {
     let args: ApplyArgs = parse(args)?;
     if args.manifest.is_none() && args.items.is_empty() {
         return Err(RpcError::invalid_args("没有要写入的内容。"));
+    }
+    if args.manifest.is_some() {
+        guard_manifest_write(env)?;
     }
     // 先做不依赖库状态的校验，省得开写事务。
     if let Some(manifest) = &args.manifest {
@@ -162,6 +182,10 @@ fn lockbox_apply(env: &RpcEnv<'_>, args: Value) -> Result<Value, RpcError> {
         }
         Ok(json!({ "manifest": out_manifest, "items": out_items }))
     })
+    .map(|mut value| {
+        value["lockboxSeq"] = json!(env.lockbox_seq());
+        value
+    })
 }
 
 #[derive(Deserialize)]
@@ -212,6 +236,8 @@ fn seal_fragment_into_lockbox(env: &RpcEnv<'_>, args: Value) -> Result<Value, Rp
     if let Err(error) = env.store.truncate_wal() {
         tracing::warn!(%error, "移入密匣后截断 WAL 失败");
     }
+    let mut result = result;
+    result["lockboxSeq"] = json!(env.lockbox_seq());
     Ok(result)
 }
 

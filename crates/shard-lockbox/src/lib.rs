@@ -25,7 +25,12 @@ use rsa::{
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 
+/// 信封版本。
 pub const VERSION: u32 = 1;
+/// manifest 版本：记了派生参数（`password_kdf` / `recovery_kdf`）的是 2。旧客户端只认 1，遇到 2 会明确报
+/// 「不支持的密匣版本」，而不是按旧参数派生后误报「密码不正确」。没升级过的旧 manifest 保持 1，原文不变。
+pub const MANIFEST_VERSION: u32 = 2;
+const LEGACY_MANIFEST_VERSION: u32 = 1;
 pub const MASTER_KEY_BYTES: usize = 32;
 pub const FRAGMENT_KEY_BYTES: usize = 32;
 pub const WRITE_KEY_BITS: usize = 2048;
@@ -211,7 +216,7 @@ impl Manifest {
             wrap_master_key(&normalize_recovery_key(recovery_key), master_key)?;
         let now = now();
         let mut manifest = Self {
-            version: VERSION,
+            version: MANIFEST_VERSION,
             created_at: now.clone(),
             updated_at: now,
             password_salt,
@@ -233,7 +238,7 @@ impl Manifest {
     /// 解析 `.shard/lockbox.json` 原文。
     pub fn parse(text: &str) -> Result<Self, String> {
         let manifest = serde_json::from_str::<Self>(text).map_err(|error| error.to_string())?;
-        if manifest.version != VERSION {
+        if manifest.version != LEGACY_MANIFEST_VERSION && manifest.version != MANIFEST_VERSION {
             return Err("不支持的密匣版本。".to_string());
         }
         Ok(manifest)
@@ -272,6 +277,7 @@ impl Manifest {
         self.password_nonce = nonce;
         self.password_encrypted_master_key = encrypted;
         self.password_kdf = Some(CURRENT_KDF);
+        self.version = MANIFEST_VERSION;
         self.ensure_write_key(master_key)?;
         self.updated_at = now();
         Ok(())
@@ -293,6 +299,7 @@ impl Manifest {
         self.password_nonce = nonce;
         self.password_encrypted_master_key = encrypted;
         self.password_kdf = Some(CURRENT_KDF);
+        self.version = MANIFEST_VERSION;
         self.updated_at = now();
         Ok(true)
     }
@@ -311,6 +318,7 @@ impl Manifest {
         self.recovery_encrypted_master_key = recovery_encrypted_master_key;
         self.password_kdf = Some(CURRENT_KDF);
         self.recovery_kdf = Some(CURRENT_KDF);
+        self.version = MANIFEST_VERSION;
         self.ensure_write_key(master_key)?;
         self.updated_at = now();
         Ok(next_recovery_key)

@@ -104,7 +104,12 @@ async fn events(
                         }
                     }
                     // 不带 id：密匣变化不推进公开内容的游标；断线重连后客户端本来就会重取密匣快照。
-                    if commit.lockbox && sender.send(Ok(Event::default().event("lockbox-changed").data("{}"))).await.is_err() {
+                    // data 带这次的 seq：客户端已提交到这个 seq 就是自己写入的回声，不必重取。
+                    let data = match commit.lockbox_seq {
+                        Some(seq) => json!({ "seq": seq }).to_string(),
+                        None => "{}".to_string(),
+                    };
+                    if commit.lockbox && sender.send(Ok(Event::default().event("lockbox-changed").data(data))).await.is_err() {
                         return;
                     }
                 }

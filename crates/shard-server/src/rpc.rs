@@ -133,6 +133,10 @@ pub struct RpcEnv<'a> {
     committed: RefCell<Vec<ChangeRecord>>,
     /// 这次调用改了密匣（条目或 manifest）：提交后推 `lockbox-changed`。
     lockbox_changed: Cell<bool>,
+    /// 这次调用写入的密匣变化里最大的 seq（推送与响应里带上，客户端据此跳过自己写入的回声）。
+    lockbox_seq: Cell<Option<i64>>,
+    /// 调用方是 10 分钟内验证过通行密钥的浏览器会话（登录本身算一次）。
+    pub step_up_fresh: bool,
 }
 
 /// 幂等记录里存的响应：成功的值，或当时返回的错误（重试时原样回放）。
@@ -183,7 +187,15 @@ impl RpcEnv<'_> {
         self.lockbox_changed.set(true);
     }
 
+    /// 本次调用提交的密匣变化的 seq（没有写密匣时为空）。
+    pub fn lockbox_seq(&self) -> Option<i64> {
+        self.lockbox_seq.get()
+    }
+
     fn record(&self, committed: shard_store::Committed) {
+        if committed.lockbox_changed {
+            self.lockbox_seq.set(committed.last_seq.max(self.lockbox_seq.get()));
+        }
         self.lockbox_changed.set(self.lockbox_changed.get() || committed.lockbox_changed);
         self.committed.borrow_mut().extend(committed.changes);
     }
@@ -304,6 +316,7 @@ async fn dispatch(
         caller.require_step_up()?;
     }
     let audit = (command.access == Access::Sensitive).then(|| (caller.actor(), caller.meta.clone()));
+    let step_up_fresh = caller.require_step_up().is_ok();
     let op_id = idempotency_key(&headers);
     if command.access != Access::Read {
         let Some(op_id) = op_id.as_deref() else {
@@ -324,7 +337,7 @@ async fn dispatch(
     let task_name = name.clone();
     let task_op = op_id.clone();
     let task_sha = request_sha.clone();
-    let (result, changes, lockbox_changed) = tokio::task::spawn_blocking(move || {
+    let (result, changes, lockbox_changed, lockbox_seq) = tokio::task::spawn_blocking(move || {
         let env = RpcEnv {
             store: &task_state.store,
             command: &task_name,
@@ -337,15 +350,18 @@ async fn dispatch(
             vault_identity: &task_state.vault_identity,
             committed: RefCell::new(Vec::new()),
             lockbox_changed: Cell::new(false),
+            lockbox_seq: Cell::new(None),
+            step_up_fresh,
         };
         let result = (command.handler)(&env, args);
         let lockbox_changed = env.lockbox_changed.get();
-        (result, env.committed.into_inner(), lockbox_changed)
+        let lockbox_seq = env.lockbox_seq.get();
+        (result, env.committed.into_inner(), lockbox_changed, lockbox_seq)
     })
     .await
     .map_err(ApiError::internal)?;
 
-    state.publish(changes, lockbox_changed);
+    state.publish(changes, lockbox_changed, lockbox_seq);
     if let (Some((actor, meta)), Ok(_)) = (&audit, &result) {
         state.auth.audit(actor, &format!("rpc.{name}"), meta.ip.as_deref(), meta.user_agent.as_deref(), None);
     }

@@ -126,6 +126,7 @@ fn new_manifests_record_current_kdf_and_old_ones_upgrade_on_unlock() {
     let recovery = shard_lockbox::generate_recovery_key();
     let fresh = Manifest::build("password one", &recovery, &master_key).unwrap();
     assert_eq!(fresh.password_kdf, Some(shard_lockbox::CURRENT_KDF));
+    assert_eq!(fresh.version, shard_lockbox::MANIFEST_VERSION);
     assert_eq!(fresh.recovery_kdf, Some(shard_lockbox::CURRENT_KDF));
     assert!(!fresh.password_kdf_outdated());
 
@@ -137,12 +138,14 @@ fn new_manifests_record_current_kdf_and_old_ones_upgrade_on_unlock() {
     let password = fixture["password"].as_str().unwrap();
     let mut legacy = Manifest::parse(fixture["manifest"].as_str().unwrap()).unwrap();
     assert_eq!(legacy.password_kdf, None);
+    assert_eq!(legacy.version, 1, "没升级过的旧 manifest 保持版本 1");
     assert!(legacy.password_kdf_outdated());
     let key = legacy.unwrap_with_password(password).unwrap();
     let recovery_before = (legacy.recovery_salt.clone(), legacy.recovery_encrypted_master_key.clone());
     let write_key_before = legacy.write_public_key.clone();
     assert!(legacy.upgrade_password_kdf(password, &key).unwrap());
     assert_eq!(legacy.password_kdf, Some(shard_lockbox::CURRENT_KDF));
+    assert_eq!(legacy.version, shard_lockbox::MANIFEST_VERSION, "记了参数就升到版本 2，旧客户端明确报不支持");
     assert!(!legacy.upgrade_password_kdf(password, &key).unwrap(), "已是当前标准就不再改");
 
     let reparsed = Manifest::parse(&legacy.to_text().unwrap()).unwrap();

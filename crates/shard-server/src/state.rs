@@ -19,6 +19,8 @@ pub struct CommitEvent {
     pub changes: Vec<ChangeRecord>,
     /// 密匣有变化：SSE 推 `lockbox-changed`，客户端重取密匣快照（服务器不知道内容，只能让它整体重取）。
     pub lockbox: bool,
+    /// 这次密匣变化的 seq；网页解锁开关这类不经内容事务的变化没有。
+    pub lockbox_seq: Option<i64>,
 }
 
 pub struct Inner {
@@ -70,11 +72,11 @@ impl AppState {
     }
 
     /// 写入成功后广播给 SSE 订阅者。没有订阅者时发送失败是正常的。
-    pub fn publish(&self, changes: Vec<ChangeRecord>, lockbox: bool) {
+    pub fn publish(&self, changes: Vec<ChangeRecord>, lockbox: bool, lockbox_seq: Option<i64>) {
         let last_seq = changes.last().map(|change| change.seq);
         if last_seq.is_some() || lockbox {
             let last_seq = last_seq.unwrap_or(0);
-            let _ = self.events.send(Arc::new(CommitEvent { last_seq, changes, lockbox }));
+            let _ = self.events.send(Arc::new(CommitEvent { last_seq, changes, lockbox, lockbox_seq }));
         }
     }
 }

@@ -53,6 +53,17 @@ fn map_item(row: &rusqlite::Row<'_>) -> rusqlite::Result<LockboxItemEntry> {
 }
 
 impl SqliteVfs<'_> {
+    /// 密匣范围（条目与 manifest）最新的 seq：客户端据此判断 `lockbox-changed` 是不是自己刚写的回声。
+    pub fn lockbox_seq(&self) -> io::Result<i64> {
+        self.conn
+            .query_row(
+                "SELECT COALESCE(MAX(seq), 0) FROM changes WHERE scope IN ('lockbox', 'lockbox_manifest')",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(db_error)
+    }
+
     pub fn lockbox_manifest_entry(&self) -> io::Result<Option<LockboxManifestEntry>> {
         self.conn
             .query_row("SELECT body, sha, revision, updated_at FROM lockbox_manifest WHERE id = 1", [], |row| {

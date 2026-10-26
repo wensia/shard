@@ -293,3 +293,64 @@ async fn sealing_a_public_fragment_leaves_no_plaintext_behind() {
         .await;
     assert_eq!(wrong_id.status, StatusCode::BAD_REQUEST);
 }
+
+impl Harness {
+    async fn expire_step_up(&self) {
+        let response =
+            self.app.clone().oneshot(self.browser(Method::POST, "/api/test/step-up?expire=1").body(Body::empty()).unwrap()).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+}
+
+#[tokio::test]
+async fn lockbox_seq_lets_clients_skip_their_own_echo() {
+    let h = Harness::new().await;
+    let response = h.app.clone().oneshot(h.browser(Method::GET, "/api/events").body(Body::empty()).unwrap()).await.unwrap();
+    let mut body = response.into_body();
+    assert_eq!(h.ok("lockbox_snapshot", json!({})).await["lockboxSeq"], 0);
+
+    let (manifest, _) = new_manifest();
+    let setup = h.ok("lockbox_apply", json!({ "manifest": { "body": manifest.to_text().unwrap(), "expectedSha": null } })).await;
+    let seq = setup["lockboxSeq"].as_i64().unwrap();
+    assert!(seq > 0);
+    assert_eq!(h.ok("lockbox_snapshot", json!({})).await["lockboxSeq"], seq);
+    let mut text = String::new();
+    while !text.contains("event: lockbox-changed") {
+        let frame = tokio::time::timeout(Duration::from_secs(5), body.frame()).await.expect("SSE 超时").unwrap().unwrap();
+        if let Some(data) = frame.data_ref() {
+            text.push_str(&String::from_utf8_lossy(data));
+        }
+    }
+    assert!(text.contains(&format!("data: {{\"seq\":{seq}}}")), "{text}");
+
+    // 公开内容的写入不推进密匣 seq。
+    h.ok("create_fragment", json!({ "content": "公开的" })).await;
+    assert_eq!(h.ok("lockbox_snapshot", json!({})).await["lockboxSeq"], seq);
+}
+
+#[tokio::test]
+async fn browser_sessions_need_a_fresh_passkey_to_replace_the_manifest() {
+    let h = Harness::new().await;
+    let (manifest, _) = new_manifest();
+    let setup = h.ok("lockbox_apply", json!({ "manifest": { "body": manifest.to_text().unwrap(), "expectedSha": null } })).await;
+    let manifest_sha = setup["manifest"]["sha"].clone();
+
+    h.expire_step_up().await;
+    let (other, _) = new_manifest();
+    let refused = h.call("lockbox_apply", json!({ "manifest": { "body": other.to_text().unwrap(), "expectedSha": manifest_sha } })).await;
+    assert_eq!(refused.status, StatusCode::FORBIDDEN);
+    assert_eq!(refused.body["code"], "STEP_UP_REQUIRED");
+    // 条目写入（锁着用公钥速记）不受影响。
+    let id = "20261027-090000-aaaaaaaa-000001";
+    h.ok("lockbox_apply", json!({ "items": [{ "op": "put", "id": id, "envelope": sealed(&manifest, id, "速记"), "path": item_path(id), "expectedSha": null }] }))
+        .await;
+
+    // 网页解锁关闭时，即便刚验证过也不能在浏览器里改 manifest。
+    let step_up = h.app.clone().oneshot(h.browser(Method::POST, "/api/test/step-up").body(Body::empty()).unwrap()).await.unwrap();
+    assert_eq!(step_up.status(), StatusCode::OK);
+    h.ok("set_lockbox_web_unlock", json!({ "allowed": false })).await;
+    let disabled = h.call("lockbox_apply", json!({ "manifest": { "body": other.to_text().unwrap(), "expectedSha": manifest_sha } })).await;
+    assert_eq!(disabled.status, StatusCode::FORBIDDEN);
+    assert_eq!(disabled.body["code"], "LOCKBOX_WEB_DISABLED");
+    assert_eq!(h.ok("lockbox_snapshot", json!({})).await["manifest"]["sha"], manifest_sha);
+}
