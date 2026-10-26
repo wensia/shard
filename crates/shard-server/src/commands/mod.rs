@@ -9,6 +9,7 @@
 //! - 密匣：服务器永不解密。桌面会走密匣分支的情况一律返回 409 `LOCKBOX_UNAVAILABLE`。
 
 mod canvas;
+mod cli;
 mod datasets;
 mod fragments;
 mod graph;
@@ -36,6 +37,7 @@ pub fn register(registry: &mut Registry) {
     maps::register(registry);
     canvas::register(registry);
     datasets::register(registry);
+    cli::register(registry);
 }
 
 /// 资料库骨架目录齐全（与桌面 `vault_layout_is_complete` 同一份清单）。
@@ -151,6 +153,8 @@ mod tests {
         let mut registry = Registry::default();
         register(&mut registry);
         let expected = [
+            "append_dataset_records",
+            "append_document",
             "apply_dataset_ops",
             "convert_fragment_to_note",
             "convert_note_to_fragment",
@@ -162,9 +166,11 @@ mod tests {
             "create_library_directory",
             "create_library_note",
             "create_mind_map",
+            "create_note",
             "delete_library_entry",
             "delete_mind_map",
             "empty_trash",
+            "ensure_library_folder",
             "existing_vault_images",
             "image_references",
             "import_graph_file_to_timeline",
@@ -172,10 +178,13 @@ mod tests {
             "link_fragments",
             "list_csv_files",
             "list_diagram_documents",
+            "list_documents",
             "list_fragments",
+            "list_library",
             "list_library_tree",
             "list_markdown_dialect_migration",
             "list_mind_maps",
+            "list_tags",
             "move_fragment_to_lockbox",
             "move_library_entry",
             "normalize_csv_file",
@@ -183,6 +192,7 @@ mod tests {
             "read_canvas",
             "read_csv_file",
             "read_dataset",
+            "read_document",
             "read_fragment_image",
             "read_graph_fragment",
             "read_import_xlsx_blob",
@@ -191,7 +201,9 @@ mod tests {
             "register_property_type",
             "remove_fragment_property",
             "rename_library_entry",
+            "resolve_target",
             "restore_from_trash",
+            "rewrite_document",
             "save_fragment_image",
             "set_fragment_archived",
             "set_fragment_pinned",

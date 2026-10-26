@@ -13,12 +13,27 @@ path = "src/main.rs"
 
 [dependencies]
 chrono = { workspace = true }
+rand = "0.8"
 serde = { workspace = true }
 serde_json = { workspace = true }
 shard-core = { path = "../shard-core" }
+# 追加规则、目标解析、数据集幂等追加等与服务端命令行 RPC 共用的领域逻辑（shard_vault::cli）。
+shard-vault = { path = "../shard-vault" }
 ratatui = "0.30.2"
 unicode-segmentation = "1.13.3"
 unicode-width = "0.2.2"
+# 远程模式的 HTTP 客户端：同步、rustls（webpki 根证书），不引入异步运行时。
+ureq = { version = "3", default-features = false, features = ["rustls", "json"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# 设备令牌存 macOS 钥匙串（通用密码项）。
+security-framework = "3"
 
 [dev-dependencies]
 tempfile = "3"
+# 远程模式集成测试：在测试进程里起一个真的 shard-server。不打开 test-auth（免密会话端点），
+# 避免特性合并把它带进同一次构建里的服务端二进制。
+axum = "0.8"
+shard-server = { path = "../shard-server" }
+shard-store = { path = "../shard-store" }
+tokio = { version = "1", features = ["full"] }

@@ -26,6 +26,7 @@
 mod prelude;
 
 pub mod canvas;
+pub mod cli;
 pub mod datasets;
 pub mod fragments;
 pub mod graph;

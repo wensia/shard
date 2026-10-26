@@ -15,7 +15,7 @@ use shard_vault::{
     PropertyInputValue, PropertyType, PublicFragmentUpdate, VaultCtx, LOCKBOX_TYPE_ERROR,
 };
 
-use super::{lockbox_unavailable, parse, read, read_store, write};
+use super::{cli::source_override, lockbox_unavailable, parse, read, read_store, write};
 use crate::rpc::{Access, Registry, RpcEnv, RpcError};
 
 pub(super) fn register(registry: &mut Registry) {
@@ -93,10 +93,14 @@ struct CreateFragmentArgs {
     content: String,
     #[serde(default)]
     tags: Option<Vec<String>>,
+    /// 覆盖按调用方记的来源（web / desktop / cli），例如命令行的 `--source claude-code`。桌面没有这个参数。
+    #[serde(default)]
+    source: Option<String>,
 }
 
 fn create_fragment(env: &RpcEnv<'_>, args: Value) -> Result<Value, RpcError> {
     let args: CreateFragmentArgs = parse(args)?;
+    let source = source_override(args.source.as_deref())?;
     let (content, tags) = normalize_new_fragment(&args.content, args.tags)?;
     if contains_lockbox_tag(&tags) {
         if is_protected_type(&tags) {
@@ -104,7 +108,13 @@ fn create_fragment(env: &RpcEnv<'_>, args: Value) -> Result<Value, RpcError> {
         }
         return Err(lockbox_unavailable());
     }
-    write(env, |cx| Ok(create_public_fragment(cx, &content, tags)?))
+    write(env, |cx| {
+        let cx = match source.as_deref() {
+            Some(source) => cx.with_clock(cx.offset, source),
+            None => *cx,
+        };
+        Ok(create_public_fragment(&cx, &content, tags)?)
+    })
 }
 
 /// 目标 id 是密匣条目时桌面走密匣实现；服务器直接拒绝。

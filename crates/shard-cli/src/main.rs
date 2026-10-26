@@ -1,6 +1,9 @@
-//! Shard 终端快捷创建。直接往资料库写一条碎片，App 不运行也能用；
-//! 提交交给 App 的检查点，运行中的 App 监听到文件变化后实时刷新。
-//! 给 AI 助手的非交互读写在 `agent`，使用说明与 skill 安装在 `guide`。
+//! Shard 终端快捷创建与读写。两种模式：
+//! - 本地模式：直接读写资料库目录，App 不运行也能用；提交交给 App 的检查点，运行中的 App
+//!   监听到文件变化后实时刷新。显式 `--vault` / `SHARD_VAULT`，或没有登录服务器时使用。
+//! - 远程模式：`shard login <服务器>` 配对之后，所有读写调服务器的 RPC（`remote`），本机不碰 vault 文件。
+//!
+//! 给 AI 助手的非交互读写在 `agent`（本地）与 `remote::ops`（远程），使用说明与 skill 安装在 `guide`。
 
 mod agent;
 mod edit;
@@ -8,18 +11,19 @@ mod find;
 mod graph;
 mod guide;
 mod parse;
+mod remote;
 mod tui;
 
 use serde::Deserialize;
 use shard_core::{
     create_public_fragment_in_vault,
+    default_vault_path,
     frontmatter::parse_fragment,
     graph_model::content_sha256_hex,
-    dataset::{read_dataset, write_dataset_ops, DatasetLimits, DatasetOp},
-    default_vault_path,
     vault_lock::{app_settings_path, cli_lock_dir, VaultProcessLock},
     AppConfig, FsVfs,
 };
+use shard_vault::cli::{append_dataset_records, DatasetAppendError};
 use std::{
     collections::HashMap,
     env, fs,
@@ -36,6 +40,9 @@ shard — 在终端里记一条 Shard 碎片
 AI 助手与脚本：先运行 shard --agent-guide 查看完整说明（格式规则、JSON 输出、退出码）。
 
 用法:
+  shard login <服务器地址> [--name <设备名>]   与 Shard 服务器配对，之后的命令都读写服务器
+  shard logout                       删除本机登录令牌（回到本地模式）
+  shard --whoami [--json]            显示当前是远程还是本地模式
   shard [选项] [#标签…] [/块命令] 内容
   shard -s [关键词…]                搜索碎片；不带关键词时列出最近修改的
   shard -i [关键词…]                打开交互搜索与编辑界面
@@ -91,8 +98,13 @@ AI 助手与脚本：先运行 shard --agent-guide 查看完整说明（格式�
   内置编辑器：Ctrl+S 保存，Esc 返回，Ctrl+Z 撤销，Ctrl+Y 重做，Ctrl+Q 退出。
   鼠标捕获期间，用 Option（iTerm2）或 Fn（Terminal）拖动可原生选择复制。
 
+远程模式:
+  登录服务器后，上面所有命令不变，读写都发往服务器；本机不再需要资料库目录。
+  显式给出 --vault 或 SHARD_VAULT 时临时改用本地资料库。
+  login / logout 只能由你本人在终端里运行；要记一条以 login/logout 开头的碎片，写成 shard -- login …
+
 选项:
-  --vault <路径>   指定资料库（默认读 Shard 设置，或环境变量 SHARD_VAULT）
+  --vault <路径>   使用本地资料库（默认：已登录服务器时用服务器，否则读 Shard 设置，或 SHARD_VAULT）
   --json           输出 JSON；出错时 stderr 输出带 code 的 JSON 错误
   --source <名称>  写入 frontmatter 的来源（默认 cli，或环境变量 SHARD_SOURCE）
   --agent-guide    打印给 AI 助手的使用说明
@@ -169,13 +181,17 @@ impl From<&str> for CliError {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct AppendInput {
-    expected_header: Vec<String>,
-    records: Vec<HashMap<String, String>>,
+pub struct AppendInput {
+    pub expected_header: Vec<String>,
+    pub records: Vec<HashMap<String, String>>,
 }
 
 fn run() -> Result<(), CliError> {
-    let mut args = env::args().skip(1).peekable();
+    let raw = env::args().skip(1).collect::<Vec<_>>();
+    if let Some(result) = account_command(&raw) {
+        return result;
+    }
+    let mut args = raw.into_iter().peekable();
     let mut vault_arg = None;
     let mut append_path = None;
     let mut graph_command = None;
@@ -220,6 +236,20 @@ fn run() -> Result<(), CliError> {
                 print!("{}", guide::AGENT_GUIDE);
                 return Ok(());
             }
+            "--whoami" => {
+                args.next();
+                for arg in args.by_ref() {
+                    match arg.as_str() {
+                        "--json" => {
+                            json = true;
+                            JSON_OUTPUT.store(true, Ordering::Relaxed);
+                        }
+                        other => return Err(format!("--whoami 不接受参数：{other}").into()),
+                    }
+                }
+                let local = explicit_local(vault_arg.as_ref());
+                return remote::login::whoami(local, || resolve_vault(vault_arg), json);
+            }
             "--install-skill" => {
                 args.next();
                 let mut force = false;
@@ -239,14 +269,23 @@ fn run() -> Result<(), CliError> {
                 if append_path.is_some() {
                     return Err(format!("{command} 不能与 --append-dataset 同时使用").into());
                 }
-                let context = agent::Context {
-                    vault: resolve_vault(parsed.vault.or(vault_arg))?,
-                    lock_dir: lock_dir()?,
-                    timeout: lock_timeout()?,
-                    json: json || parsed.json,
-                    source: resolve_source(parsed.source.or(source_arg))?,
+                let json = json || parsed.json;
+                let source = parsed.source.or(source_arg);
+                return match backend(parsed.vault.or(vault_arg))? {
+                    Backend::Local(vault) => {
+                        let context = agent::Context {
+                            vault,
+                            lock_dir: lock_dir()?,
+                            timeout: lock_timeout()?,
+                            json,
+                            source: resolve_source(source)?,
+                        };
+                        agent::run(parsed.command, &context)
+                    }
+                    Backend::Remote(remote) => {
+                        remote::ops::run_agent(parsed.command, &remote, json, explicit_source(source)?)
+                    }
                 };
-                return agent::run(parsed.command, &context);
             }
             "--external" => {
                 external = true;
@@ -297,13 +336,20 @@ fn run() -> Result<(), CliError> {
         if append_path.is_some() || !content.is_empty() {
             return Err("图命令不能与碎片内容或 --append-dataset 同时使用".into());
         }
-        return run_graph(command, vault_arg);
+        return match backend(vault_arg)? {
+            Backend::Local(vault) => run_graph(command, vault),
+            Backend::Remote(remote) => remote::ops::run_graph(command, &remote),
+        };
     }
     if let Some(path) = append_path {
         if !content.is_empty() {
             return Err("--append-dataset 不能与碎片内容同时使用".into());
         }
-        return append_dataset(&path, vault_arg);
+        let request = read_append_input()?;
+        return match backend(vault_arg)? {
+            Backend::Local(vault) => append_dataset(&path, request, &vault),
+            Backend::Remote(remote) => remote::ops::append_dataset(&remote, &path, request),
+        };
     }
 
     let mut capture = parse::parse_capture(&content);
@@ -317,8 +363,12 @@ fn run() -> Result<(), CliError> {
 
     let (body, tags) = parse::compose(&capture)?;
     agent::ensure_plain_markdown(&body)?;
-    let source = resolve_source(source_arg)?;
-    let vault = resolve_vault(vault_arg)?;
+    let source = explicit_source(source_arg)?;
+    let vault = match backend(vault_arg)? {
+        Backend::Local(vault) => vault,
+        Backend::Remote(remote) => return remote::ops::create_fragment(&remote, &body, tags, source, json),
+    };
+    let source = source.unwrap_or_else(|| "cli".to_string());
     let lock_dir = lock_dir()?;
     let timeout = lock_timeout()?;
     let lock = VaultProcessLock::acquire(&lock_dir, &vault, Some(timeout)).map_err(agent::lock_error)?;
@@ -486,17 +536,204 @@ fn command_label(command: &agent::Command) -> &'static str {
 
 /// `--source` → `SHARD_SOURCE` → `cli`。只是 frontmatter 里的来源标记，限制成单行短名称。
 fn resolve_source(explicit: Option<String>) -> Result<String, CliError> {
+    Ok(explicit_source(explicit)?.unwrap_or_else(|| "cli".to_string()))
+}
+
+/// 显式给出的来源（`--source` 或 `SHARD_SOURCE`），校验后返回；没给返回 `None`。
+/// 远程模式下没给就不传，由服务器按设备种类记为 cli。
+fn explicit_source(explicit: Option<String>) -> Result<Option<String>, CliError> {
     let Some(source) = explicit.or_else(|| env::var("SHARD_SOURCE").ok()) else {
-        return Ok("cli".to_string());
+        return Ok(None);
     };
     let source = source.trim();
     if source.is_empty() {
-        return Ok("cli".to_string());
+        return Ok(None);
     }
-    if source.chars().count() > 40 || source.chars().any(char::is_control) {
+    if !shard_vault::cli::valid_source(source) {
         return Err("--source 必须是不超过 40 个字符的单行名称".into());
     }
-    Ok(source.to_string())
+    Ok(Some(source.to_string()))
+}
+
+/// 读写的去处：本地资料库目录，或登录过的服务器。
+enum Backend {
+    Local(PathBuf),
+    Remote(remote::Remote),
+}
+
+impl Backend {
+    /// 「上次搜索」属于哪个资料库：本地是 vault 路径，远程是服务器地址。
+    fn scope(&self) -> String {
+        match self {
+            Self::Local(vault) => find::local_scope(vault),
+            Self::Remote(remote) => remote::ops::scope(remote),
+        }
+    }
+
+    fn entries(&self) -> Result<Vec<find::FragmentEntry>, CliError> {
+        match self {
+            Self::Local(vault) => Ok(find::load_entries(vault)?),
+            Self::Remote(remote) => remote::ops::load_entries(remote),
+        }
+    }
+
+    fn store(&self) -> Result<Box<dyn tui::app::Store>, CliError> {
+        Ok(match self {
+            Self::Local(vault) => Box::new(tui::store::VaultStore::new(vault, &lock_dir()?, lock_timeout()?)),
+            Self::Remote(remote) => Box::new(remote::ops::RemoteStore::new(remote.clone())),
+        })
+    }
+}
+
+/// 显式指定了本地资料库：`--vault` 或非空的 `SHARD_VAULT`（迁移与测试用）。
+fn explicit_local(vault_arg: Option<&String>) -> bool {
+    vault_arg.is_some() || env::var("SHARD_VAULT").is_ok_and(|value| !value.trim().is_empty())
+}
+
+/// 显式指定本地资料库时用本地；否则登录过服务器就用服务器；都没有时退回本地（读 App 设置）。
+fn backend(vault_arg: Option<String>) -> Result<Backend, CliError> {
+    if !explicit_local(vault_arg.as_ref()) {
+        if let Some(remote) = remote::Remote::load()? {
+            return Ok(Backend::Remote(remote));
+        }
+    }
+    Ok(Backend::Local(resolve_vault(vault_arg)?))
+}
+
+/// 账号命令只认这几种确切的形状：`login`、`login <地址>`、`login <地址> --name 名`、`login --name 名 <地址>`、
+/// `login --help`、`logout`、`logout --help`。首词是 login / logout 且带了 `--name` / `--help` / `-h`
+/// 但形状不对，或 `logout` 后面只跟一个词时，报用法错误（不落成碎片）；其余照常是碎片内容
+/// （例如 login 后面跟几个普通词）。要记一条以 login / logout 开头的碎片，写 `shard -- login …`。
+fn account_command(raw: &[String]) -> Option<Result<(), CliError>> {
+    Some(match parse_account(raw)? {
+        Account::Login { server, name } => remote::login::login(server.as_deref(), name),
+        Account::Logout => remote::login::logout(),
+        Account::Help => {
+            println!("{}", remote::login::USAGE);
+            Ok(())
+        }
+        Account::Usage(command) => Err(format!("shard {command} 的参数不对。\n{}", remote::login::USAGE).into()),
+    })
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum Account {
+    Login { server: Option<String>, name: Option<String> },
+    Logout,
+    Help,
+    Usage(&'static str),
+}
+
+/// 只解析形状（不执行）；`None` 表示这是碎片内容。
+fn parse_account(raw: &[String]) -> Option<Account> {
+    let (first, rest) = raw.split_first()?;
+    let command = match first.as_str() {
+        "login" => "login",
+        "logout" => "logout",
+        _ => return None,
+    };
+    let is_help = |arg: &str| arg == "--help" || arg == "-h";
+    let has_flag = rest
+        .iter()
+        .any(|arg| is_help(arg) || arg == "--name" || arg.starts_with("--name="));
+    if let [only] = rest {
+        if is_help(only) {
+            return Some(Account::Help);
+        }
+    }
+    if command == "logout" {
+        return match rest {
+            [] => Some(Account::Logout),
+            [_] => Some(Account::Usage(command)),
+            _ if has_flag => Some(Account::Usage(command)),
+            _ => None,
+        };
+    }
+    if rest.is_empty() {
+        return Some(Account::Login { server: None, name: None });
+    }
+    let mut name = None;
+    let mut positional = Vec::new();
+    let mut args = rest.iter();
+    while let Some(arg) = args.next() {
+        if arg == "--name" {
+            match args.next() {
+                Some(value) if name.is_none() => name = Some(value.clone()),
+                _ => return Some(Account::Usage(command)),
+            }
+        } else if let Some(value) = arg.strip_prefix("--name=") {
+            if name.is_some() {
+                return Some(Account::Usage(command));
+            }
+            name = Some(value.to_string());
+        } else if is_help(arg) {
+            return Some(Account::Usage(command));
+        } else {
+            positional.push(arg.as_str());
+        }
+    }
+    match positional.as_slice() {
+        [server] if looks_like_server(server) => Some(Account::Login { server: Some(server.to_string()), name }),
+        _ if has_flag => Some(Account::Usage(command)),
+        _ => None,
+    }
+}
+
+/// 像不像服务器地址：ASCII、无空白，是 `http(s)://主机[:端口][/…]` 或 `主机[:端口]`，
+/// 主机是 localhost、IP，或含点且每段都是合法域名标签。
+fn looks_like_server(value: &str) -> bool {
+    if !value.is_ascii() || value.is_empty() || value.contains(char::is_whitespace) {
+        return false;
+    }
+    let lower = value.to_ascii_lowercase();
+    let authority = if let Some(rest) = lower.strip_prefix("https://").or_else(|| lower.strip_prefix("http://")) {
+        rest.split(['/', '?', '#']).next().unwrap_or_default().to_string()
+    } else {
+        lower
+    };
+    valid_authority(&authority)
+}
+
+fn valid_authority(authority: &str) -> bool {
+    let (host, port) = if let Some(rest) = authority.strip_prefix('[') {
+        let Some((inside, after)) = rest.split_once(']') else {
+            return false;
+        };
+        if inside.parse::<std::net::Ipv6Addr>().is_err() {
+            return false;
+        }
+        match after {
+            "" => return true,
+            _ => match after.strip_prefix(':') {
+                Some(port) => (None, Some(port)),
+                None => return false,
+            },
+        }
+    } else {
+        match authority.rsplit_once(':') {
+            Some((host, port)) => (Some(host), Some(port)),
+            None => (Some(authority), None),
+        }
+    };
+    if let Some(port) = port {
+        if port.is_empty() || !port.bytes().all(|byte| byte.is_ascii_digit()) || port.parse::<u16>().map_or(true, |port| port == 0) {
+            return false;
+        }
+    }
+    let Some(host) = host else {
+        return true;
+    };
+    if host == "localhost" || host.parse::<std::net::Ipv4Addr>().is_ok() {
+        return true;
+    }
+    host.contains('.')
+        && host.split('.').all(|label| {
+            !label.is_empty()
+                && label.len() <= 63
+                && !label.starts_with('-')
+                && !label.ends_with('-')
+                && label.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+        })
 }
 
 fn parse_graph_command(command: &str, args: Vec<String>) -> Result<graph::GraphCommand, CliError> {
@@ -576,8 +813,7 @@ fn parse_graph_command(command: &str, args: Vec<String>) -> Result<graph::GraphC
     }
 }
 
-fn run_graph(command: graph::GraphCommand, vault_arg: Option<String>) -> Result<(), CliError> {
-    let vault = resolve_vault(vault_arg)?;
+fn run_graph(command: graph::GraphCommand, vault: PathBuf) -> Result<(), CliError> {
     let lock_dir = lock_dir()?;
     let timeout = lock_timeout()?;
     run_graph_in(command, &vault, &lock_dir, timeout).map_err(|message| match message.as_str() {
@@ -745,77 +981,65 @@ fn run_find(
     if external && mode != FindMode::Edit {
         return Err("--external 只能与 -e 一起使用".into());
     }
-    if mode == FindMode::Interactive && !(io::stdin().is_terminal() && io::stdout().is_terminal()) {
+    let terminal = io::stdin().is_terminal() && io::stdout().is_terminal();
+    if mode == FindMode::Interactive && !terminal {
         return Err("交互界面需要在终端中运行".into());
     }
-    let vault = resolve_vault(args.vault.or(vault_arg))?;
+    let backend = backend(args.vault.take().or(vault_arg))?;
     let query = args.terms.join(" ");
-    if mode == FindMode::Interactive {
-        return tui::run(&vault, Some(&query), None, &lock_dir()?, lock_timeout()?)
-            .map_err(Into::into);
-    }
-    let entries = find::load_entries(&vault)?;
-
     if mode == FindMode::Search {
-        let outcome = find::search(&entries, &query, args.limit)?;
-        if args.json {
-            println!("{}", find::hits_json(&outcome.hits, &vault));
-            return Ok(());
-        }
-        if outcome.hits.is_empty() {
-            return Err(if query.trim().is_empty() {
-                "资料库里还没有碎片".into()
-            } else {
-                format!("没有找到包含「{}」的碎片", query.trim()).into()
-            });
-        }
-        find::remember_search(&vault, &query, &outcome.hits);
-        let terminal = io::stdout().is_terminal();
-        println!(
-            "{}",
-            find::format_hits(&outcome.hits, &find::Style::for_stream(terminal))
-        );
-        if terminal {
-            let shown = outcome.hits.len();
-            let summary = if outcome.total > shown {
-                format!("共 {} 条，列出前 {shown} 条（-n 调整）", outcome.total)
-            } else {
-                format!("共 {shown} 条")
-            };
-            eprintln!("{summary} · shard -e <序号> 编辑");
-        }
-        return Ok(());
+        return match &backend {
+            Backend::Local(vault) => search_local(vault, &query, args.limit, args.json),
+            Backend::Remote(remote) => remote::ops::search(remote, &query, args.limit, args.json),
+        };
+    }
+    if mode == FindMode::Interactive {
+        return tui::run(backend.entries()?, backend.store()?, Some(&query), None).map_err(Into::into);
     }
 
-    if !external && !args.external && io::stdin().is_terminal() && io::stdout().is_terminal() {
-        let entry = match find::select(&entries, &vault, &args.terms, false)? {
-            find::Selection::Found(entry) => entry,
+    if !external && !args.external && terminal {
+        let entries = backend.entries()?;
+        let id = match find::select(&entries, &backend.scope(), &args.terms, false)? {
+            find::Selection::Found(entry) => entry.id.clone(),
             find::Selection::Ambiguous(_) => {
-                return tui::run(&vault, Some(&query), None, &lock_dir()?, lock_timeout()?)
-                    .map_err(Into::into);
+                return tui::run(entries, backend.store()?, Some(&query), None).map_err(Into::into);
             }
         };
-        return tui::run(&vault, None, Some(&entry.id), &lock_dir()?, lock_timeout()?)
-            .map_err(Into::into);
+        return tui::run(entries, backend.store()?, None, Some(&id)).map_err(Into::into);
     }
 
     let has_editor = ["VISUAL", "EDITOR"]
         .iter()
         .any(|name| env::var(name).is_ok_and(|value| !value.trim().is_empty()));
-    let interactive = io::stdin().is_terminal() && io::stdout().is_terminal();
-    if !has_editor && !interactive {
+    if !has_editor && !terminal {
         return Err("非交互环境没有可用的编辑器。脚本与 AI 助手请用 shard --read / --update / --append（见 shard --agent-guide）".into());
     }
-    let entry = match find::select(&entries, &vault, &args.terms, true)? {
-        find::Selection::Found(entry) => entry,
-        find::Selection::Ambiguous(total) => {
-            return Err(format!("匹配到 {total} 条，用 shard -e <序号> 选择其中一条").into())
+    // 远程模式下目标确定（id、序号、最近一条）时只取这一篇，不先下载整个资料库。
+    let quick = match &backend {
+        Backend::Remote(remote) => remote::ops::quick_entry(remote, &args.terms)?,
+        Backend::Local(_) => None,
+    };
+    let entries;
+    let entry = match quick {
+        Some(found) => {
+            entries = vec![found];
+            &entries[0]
+        }
+        None => {
+            entries = backend.entries()?;
+            match find::select(&entries, &backend.scope(), &args.terms, true)? {
+                find::Selection::Found(entry) => entry,
+                find::Selection::Ambiguous(total) => {
+                    return Err(format!("匹配到 {total} 条，用 shard -e <序号> 选择其中一条").into())
+                }
+            }
         }
     };
     eprintln!("编辑 {}  {}", find::short_id(&entry.id), entry.title);
-    match edit::edit_fragment(&vault, entry, &lock_dir()?, lock_timeout()?) {
+    let mut store = backend.store()?;
+    match edit::edit_fragment(store.as_mut(), entry) {
         Ok(edit::EditOutcome::Saved) => {
-            println!("已保存：{}", entry.relative_path(&vault));
+            println!("已保存：{}", entry.path);
             Ok(())
         }
         Ok(edit::EditOutcome::Unchanged) => {
@@ -827,6 +1051,17 @@ fn run_find(
             failure.message,
         )),
     }
+}
+
+fn search_local(vault: &Path, query: &str, limit: usize, json: bool) -> Result<(), CliError> {
+    let entries = find::load_entries(vault)?;
+    let outcome = find::search(&entries, query, limit)?;
+    if json {
+        println!("{}", find::hits_json(&outcome.hits));
+        return Ok(());
+    }
+    find::print_hits(&find::local_scope(vault), query, &outcome.hits, outcome.total)?;
+    Ok(())
 }
 
 fn lock_dir() -> Result<PathBuf, CliError> {
@@ -849,104 +1084,48 @@ fn lock_timeout() -> Result<Duration, CliError> {
     Ok(Duration::from_millis(millis))
 }
 
-fn append_dataset(path: &str, vault_arg: Option<String>) -> Result<(), CliError> {
+/// `--append-dataset` 从标准输入读的 JSON：`{expectedHeader, records}`。
+fn read_append_input() -> Result<AppendInput, CliError> {
     let mut input = String::new();
     io::stdin()
         .read_to_string(&mut input)
         .map_err(|error| format!("读取标准输入失败：{error}"))?;
-    let request: AppendInput =
-        serde_json::from_str(&input).map_err(|error| format!("追加记录 JSON 无效：{error}"))?;
-    let vault = resolve_vault(vault_arg)?;
-    let _lock = VaultProcessLock::acquire(&lock_dir()?, &vault, Some(lock_timeout()?))
+    serde_json::from_str(&input).map_err(|error| format!("追加记录 JSON 无效：{error}").into())
+}
+
+/// 按主键幂等追加：同主键同内容跳过，同主键不同内容整批拒绝。规则在 `shard_vault::cli`，
+/// 服务端的 `append_dataset_records` 用同一份。
+fn append_dataset(path: &str, request: AppendInput, vault: &Path) -> Result<(), CliError> {
+    let _lock = VaultProcessLock::acquire(&lock_dir()?, vault, Some(lock_timeout()?))
         .map_err(agent::lock_error)?;
-    let limits = DatasetLimits::default();
-    let current =
-        read_dataset(&FsVfs::new(&vault), path, &limits).map_err(|error| error.to_string())?;
-    if current.table.header != request.expected_header {
-        return Err(CliError::new("HEADER_CHANGED", "表头已变化"));
-    }
-    if !current.editable {
-        return Err(current
-            .read_only_reason
-            .unwrap_or_else(|| "数据集不可编辑".into())
-            .into());
-    }
-    let key = current
-        .schema
-        .as_ref()
-        .and_then(|schema| schema.primary_key.as_ref())
-        .ok_or("数据集必须有主键")?;
-    let key_column = current
-        .table
-        .header
-        .iter()
-        .position(|column| column == key)
-        .ok_or("数据集主键列不存在")?;
-    let mut known: HashMap<String, Vec<String>> = current
-        .table
-        .rows
-        .iter()
-        .map(|row| (row[key_column].clone(), row.clone()))
-        .collect();
-    let mut new_rows = Vec::new();
-    let mut skipped = 0usize;
-    for record in request.records {
-        if record
-            .keys()
-            .any(|column| !current.table.header.contains(column))
-        {
-            return Err("记录含有表头之外的列".into());
-        }
-        let row: Vec<String> = current
-            .table
-            .header
-            .iter()
-            .map(|column| record.get(column).cloned().unwrap_or_default())
-            .collect();
-        let id = &row[key_column];
-        if id.is_empty() {
-            return Err("每条记录必须提供非空主键".into());
-        }
-        if let Some(existing) = known.get(id) {
-            if existing != &row {
-                return Err(CliError::new("KEY_CONFLICT", "主键冲突"));
-            }
-            skipped += 1;
-        } else {
-            known.insert(id.clone(), row.clone());
-            new_rows.push(row);
-        }
-    }
-    let appended = new_rows.len();
-    let sha = if appended == 0 {
-        current.sha
-    } else {
-        write_dataset_ops(
-            &FsVfs::new(&vault),
-            path,
-            &current.sha,
-            current.schema_sha.as_deref(),
-            &[DatasetOp::InsertRows {
-                at: current.table.rows.len(),
-                rows: new_rows,
-            }],
-            &limits,
-        )
-        .map_err(|error| error.to_string())?
-        .sha
-    };
+    let appended = append_dataset_records(
+        &FsVfs::new(vault),
+        path,
+        &request.expected_header,
+        request.records,
+    )
+    .map_err(dataset_append_error)?;
     println!(
         "{}",
-        serde_json::json!({ "appended": appended, "skipped": skipped, "sha": sha })
+        serde_json::json!({ "appended": appended.appended, "skipped": appended.skipped, "sha": appended.sha })
     );
     Ok(())
+}
+
+fn dataset_append_error(error: DatasetAppendError) -> CliError {
+    let message = error.message();
+    match error {
+        DatasetAppendError::HeaderChanged => CliError::new("HEADER_CHANGED", message),
+        DatasetAppendError::KeyConflict => CliError::new("KEY_CONFLICT", message),
+        DatasetAppendError::Invalid(message) => message.into(),
+    }
 }
 
 /// 依次：`--vault` → `SHARD_VAULT` → App 设置里的 `vaultPath` → `~/Documents/ShardVault`。
 /// 与 App 的 `configured_vault_path` 同序，只是多了前两个显式覆盖。
 fn resolve_vault(explicit: Option<String>) -> Result<PathBuf, String> {
     let candidate = match explicit.or_else(|| env::var("SHARD_VAULT").ok()) {
-        Some(path) if !path.trim().is_empty() => PathBuf::from(expand_home(path.trim())),
+        Some(path) if !path.trim().is_empty() => expand_home(path.trim()),
         _ => match configured_vault_path()? {
             Some(path) => path,
             None => {
@@ -1007,5 +1186,89 @@ mod tui_entry_tests {
         assert_eq!(edit.terms, vec!["目标"]);
         assert!(parse_find_args(FindMode::Search, vec!["--external".into()]).is_err());
         assert!(parse_find_args(FindMode::Interactive, vec!["--external".into()]).is_err());
+    }
+
+    fn words(values: &[&str]) -> Vec<String> {
+        values.iter().map(|value| value.to_string()).collect()
+    }
+
+    /// 只解析形状，不执行（单元测试里绝不能真的登录或退出用户的账号）。
+    fn shape(values: &[&str]) -> Option<Account> {
+        parse_account(&words(values))
+    }
+
+    fn login(server: Option<&str>, name: Option<&str>) -> Option<Account> {
+        Some(Account::Login { server: server.map(str::to_string), name: name.map(str::to_string) })
+    }
+
+    #[test]
+    fn only_exact_login_and_logout_shapes_are_account_commands() {
+        assert_eq!(shape(&["login", "https://a.example.com"]), login(Some("https://a.example.com"), None));
+        assert_eq!(
+            shape(&["login", "a.example.com:8443", "--name", "工作电脑"]),
+            login(Some("a.example.com:8443"), Some("工作电脑"))
+        );
+        assert_eq!(
+            shape(&["login", "--name", "工作电脑", "https://a.example.com"]),
+            login(Some("https://a.example.com"), Some("工作电脑"))
+        );
+        assert_eq!(shape(&["login", "--name=工作电脑", "localhost:8787"]), login(Some("localhost:8787"), Some("工作电脑")));
+        assert_eq!(shape(&["login"]), login(None, None));
+        assert_eq!(shape(&["logout"]), Some(Account::Logout));
+        assert_eq!(shape(&["login", "--help"]), Some(Account::Help));
+        assert_eq!(shape(&["logout", "-h"]), Some(Account::Help));
+        // 带了参数标记但形状不对：用法错误，不落碎片。
+        for wrong in [
+            &["login", "--name", "工作电脑"][..],
+            &["login", "https://a.example.com", "--name"],
+            &["login", "https://a.example.com", "--help"],
+            &["login", "--name", "甲", "今天", "登录了"],
+            &["login", "--name", "甲", "--name", "乙", "a.example.com"],
+            &["logout", "--name", "x"],
+            &["logout", "now"],
+        ] {
+            assert!(matches!(shape(wrong), Some(Account::Usage(_))), "{wrong:?}");
+        }
+        // 其余是碎片。
+        for fragment in [
+            &["login", "今天", "登录了"][..],
+            &["login", "github.com", "的二次验证坏了"],
+            &["login", "失败"],
+            &["logout", "了", "两次"],
+            &["--", "login", "https://a.example.com"],
+            &["记一下", "login"],
+        ] {
+            assert_eq!(shape(fragment), None, "{fragment:?}");
+        }
+    }
+
+    #[test]
+    fn server_like_arguments_are_strict() {
+        for good in [
+            "shard.example.com",
+            "https://shard.example.com",
+            "http://localhost:8787/",
+            "localhost:8787",
+            "127.0.0.1:9000",
+            "[::1]:8787",
+            "https://xn--fiq228c.example.com",
+        ] {
+            assert!(looks_like_server(good), "{good}");
+        }
+        for bad in [
+            "一下",
+            "v1.2 发布",
+            "localhost:0",
+            "example.com:99999",
+            "-bad.example.com",
+            "a..b",
+            "noext",
+            "github.com的",
+            "https://",
+            "example.com:",
+            "",
+        ] {
+            assert!(!looks_like_server(bad), "{bad}");
+        }
     }
 }

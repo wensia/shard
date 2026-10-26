@@ -670,3 +670,41 @@ async fn images_go_through_the_blob_store() {
     let data_url = h.ok("read_fragment_image", json!({ "path": "notes/证件/图.png" })).await;
     assert!(data_url.as_str().unwrap().starts_with("data:image/png;base64,"));
 }
+
+#[tokio::test]
+async fn create_commands_accept_an_optional_source() {
+    let h = Harness::new().await;
+    let source_of = |reply: Value| reply["source"].as_str().unwrap_or_default().to_string();
+    // 缺省按调用方记（浏览器会话 web）；空白当作没给。
+    let plain = h.ok("create_fragment", json!({ "content": "默认来源" })).await;
+    assert_eq!(source_of(h.ok("read_document", json!({ "target": plain["id"] })).await), "web");
+    let blank = h.ok("create_fragment", json!({ "content": "空白来源", "source": "  " })).await;
+    assert_eq!(source_of(h.ok("read_document", json!({ "target": blank["id"] })).await), "web");
+    // 给了就照记（命令行的 --source），返回形状不变。
+    let named = h.ok("create_fragment", json!({ "content": "助手写的", "tags": ["读书"], "source": " claude-code " })).await;
+    assert_eq!(keys(&named), FRAGMENT_KEYS);
+    assert_eq!(named["tags"], json!(["inbox", "读书"]));
+    assert_eq!(source_of(h.ok("read_document", json!({ "target": named["id"] })).await), "claude-code");
+    // 不合规：400 INVALID_ARGS，不写。
+    let before = h.ok("list_fragments", json!({})).await["fragments"].as_array().unwrap().len();
+    for source in ["多行\n来源", &"长".repeat(41)] {
+        let reply = h.call("create_fragment", json!({ "content": "不该写", "source": source })).await;
+        assert_eq!(reply.status, StatusCode::BAD_REQUEST, "{}", reply.body);
+        assert_eq!(reply.body["code"], "INVALID_ARGS");
+    }
+    assert_eq!(h.ok("list_fragments", json!({})).await["fragments"].as_array().unwrap().len(), before);
+
+    // 数据集的说明笔记同样可以带来源。
+    let created = h
+        .ok(
+            "create_library_dataset",
+            json!({ "title": "来源表", "header": ["id"], "rows": [], "primaryKey": "id", "source": "codex" }),
+        )
+        .await;
+    let note = created["library"]["fragment"]["path"].clone();
+    assert_eq!(source_of(h.ok("read_document", json!({ "target": note })).await), "codex");
+    let reply = h
+        .call("create_library_dataset", json!({ "title": "坏来源表", "header": ["id"], "rows": [], "source": "a\u{7}" }))
+        .await;
+    assert_eq!(reply.body["code"], "INVALID_ARGS");
+}

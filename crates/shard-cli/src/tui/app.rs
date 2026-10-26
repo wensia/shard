@@ -33,6 +33,11 @@ pub trait Store {
     }
     fn save(&mut self, id: &str, body: &str) -> Result<SaveReport, SaveError>;
     fn reload(&mut self) -> Result<Vec<FragmentEntry>, String>;
+    /// 保存成功后的条目列表。默认整库重读；远程模式只重读刚保存的这一篇。
+    fn after_save(&mut self, entries: &[FragmentEntry], id: &str) -> Result<Vec<FragmentEntry>, String> {
+        let _ = (entries, id);
+        self.reload()
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -441,7 +446,7 @@ impl App {
                 self.entries[index].body = body;
                 self.saved_at = Some(Instant::now());
                 let selected_id = id;
-                match self.store.reload() {
+                match self.store.after_save(&self.entries, &selected_id) {
                     Ok(entries) => {
                         self.entries = entries;
                         self.editing = self
@@ -675,11 +680,12 @@ mod tests {
             id: id.into(),
             title: body.lines().next().unwrap_or("").into(),
             created_at: "2026-09-29T00:00:00+08:00".into(),
+            updated_at: "2026-09-29T00:00:00+08:00".into(),
             kind: None,
             tags: vec!["inbox".into()],
             modified_at: 1,
             body: body.into(),
-            path: std::env::temp_dir().join(format!("{id}.md")),
+            path: format!("fragments/2026/09/{id}.md"),
         }
     }
 

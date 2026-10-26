@@ -56,13 +56,13 @@ pub enum GraphCommand {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum GraphKind {
+pub enum GraphKind {
     Outline,
     Flowchart,
 }
 
 impl GraphKind {
-    fn from_tags(tags: &[String]) -> Result<Self, String> {
+    pub fn from_tags(tags: &[String]) -> Result<Self, String> {
         match derive_type(tags) {
             Some("outline") => Ok(Self::Outline),
             Some("flowchart") => Ok(Self::Flowchart),
@@ -70,7 +70,7 @@ impl GraphKind {
         }
     }
 
-    fn name(self) -> &'static str {
+    pub fn name(self) -> &'static str {
         match self {
             Self::Outline => "outline",
             Self::Flowchart => "flowchart",
@@ -85,7 +85,7 @@ impl GraphKind {
     }
 }
 
-enum GraphFile {
+pub enum GraphFile {
     Outline(ShardMapFile),
     Flowchart(CanvasFile),
 }
@@ -162,23 +162,7 @@ pub fn run_set_text(
 ) -> Result<(), String> {
     let _lock = VaultProcessLock::acquire(lock_dir, vault, Some(timeout))?;
     let mut loaded = load_graph(vault, fragment_id, Some(expected_sha))?;
-    match &mut loaded.graph {
-        GraphFile::Outline(file) => {
-            let node = file
-                .nodes
-                .get_mut(node_id)
-                .ok_or_else(|| format!("找不到节点 {node_id}。"))?;
-            node.text = text;
-        }
-        GraphFile::Flowchart(file) => {
-            let node = file
-                .nodes
-                .iter_mut()
-                .find(|node| node.id == node_id)
-                .ok_or_else(|| format!("找不到节点 {node_id}。"))?;
-            node.text = text;
-        }
-    }
+    set_node_text(&mut loaded.graph, node_id, text)?;
     let file_sha = save_graph(vault, loaded)?;
     println!("{}", json!({ "fileSha": file_sha }));
     Ok(())
@@ -195,7 +179,57 @@ pub fn run_add_child(
 ) -> Result<(), String> {
     let _lock = VaultProcessLock::acquire(lock_dir, vault, Some(timeout))?;
     let mut loaded = load_graph(vault, fragment_id, Some(expected_sha))?;
-    let GraphFile::Outline(file) = &mut loaded.graph else {
+    let node_id = add_outline_child(&mut loaded.graph, parent_id, text)?;
+    let file_sha = save_graph(vault, loaded)?;
+    println!("{}", json!({ "nodeId": node_id, "fileSha": file_sha }));
+    Ok(())
+}
+
+pub fn run_remove(
+    vault: &Path,
+    fragment_id: &str,
+    node_id: &str,
+    expected_sha: &str,
+    lock_dir: &Path,
+    timeout: Duration,
+) -> Result<(), String> {
+    let _lock = VaultProcessLock::acquire(lock_dir, vault, Some(timeout))?;
+    let mut loaded = load_graph(vault, fragment_id, Some(expected_sha))?;
+    remove_outline_node(&mut loaded.graph, node_id)?;
+    let file_sha = save_graph(vault, loaded)?;
+    println!("{}", json!({ "fileSha": file_sha }));
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// 节点编辑：纯函数，本地模式在锁内改文件、远程模式改完带 expected 基线写回服务器，共用这一份。
+// ---------------------------------------------------------------------------
+
+/// 按节点 id 改大纲或流程图节点的文字。
+pub fn set_node_text(graph: &mut GraphFile, node_id: &str, text: String) -> Result<(), String> {
+    match graph {
+        GraphFile::Outline(file) => {
+            let node = file
+                .nodes
+                .get_mut(node_id)
+                .ok_or_else(|| format!("找不到节点 {node_id}。"))?;
+            node.text = text;
+        }
+        GraphFile::Flowchart(file) => {
+            let node = file
+                .nodes
+                .iter_mut()
+                .find(|node| node.id == node_id)
+                .ok_or_else(|| format!("找不到节点 {node_id}。"))?;
+            node.text = text;
+        }
+    }
+    Ok(())
+}
+
+/// 在大纲父节点的子节点末尾新增一个节点，返回新节点 id。排序键规则同前端分数索引。
+pub fn add_outline_child(graph: &mut GraphFile, parent_id: &str, text: String) -> Result<String, String> {
+    let GraphFile::Outline(file) = graph else {
         return Err("只有大纲支持添加子节点。".to_string());
     };
     if !file.nodes.contains_key(parent_id) {
@@ -227,22 +261,12 @@ pub fn run_add_child(
             style: None,
         },
     );
-    let file_sha = save_graph(vault, loaded)?;
-    println!("{}", json!({ "nodeId": node_id, "fileSha": file_sha }));
-    Ok(())
+    Ok(node_id)
 }
 
-pub fn run_remove(
-    vault: &Path,
-    fragment_id: &str,
-    node_id: &str,
-    expected_sha: &str,
-    lock_dir: &Path,
-    timeout: Duration,
-) -> Result<(), String> {
-    let _lock = VaultProcessLock::acquire(lock_dir, vault, Some(timeout))?;
-    let mut loaded = load_graph(vault, fragment_id, Some(expected_sha))?;
-    let GraphFile::Outline(file) = &mut loaded.graph else {
+/// 删除大纲节点及其整棵子树；根节点不能删。
+pub fn remove_outline_node(graph: &mut GraphFile, node_id: &str) -> Result<(), String> {
+    let GraphFile::Outline(file) = graph else {
         return Err("只有大纲支持删除节点。".to_string());
     };
     if node_id == file.root_id {
@@ -270,9 +294,19 @@ pub fn run_remove(
         removed.extend(children);
     }
     file.nodes.retain(|id, _| !removed.contains(id));
-    let file_sha = save_graph(vault, loaded)?;
-    println!("{}", json!({ "fileSha": file_sha }));
     Ok(())
+}
+
+/// 服务器读回的图 JSON（已校验）→ 类型化的图。
+pub fn parse_graph(kind: GraphKind, value: Value) -> Result<GraphFile, String> {
+    match kind {
+        GraphKind::Outline => serde_json::from_value::<ShardMapFile>(value)
+            .map(GraphFile::Outline)
+            .map_err(|error| format!("大纲 JSON 无法解析：{error}")),
+        GraphKind::Flowchart => serde_json::from_value::<CanvasFile>(value)
+            .map(GraphFile::Flowchart)
+            .map_err(|error| format!("流程图 JSON 无法解析：{error}")),
+    }
 }
 
 fn load_graph(
@@ -343,7 +377,7 @@ fn is_live_public_fragment(vault: &Path, path: &Path) -> bool {
         .is_some_and(|component| component.as_os_str() == "fragments")
 }
 
-fn parse_submitted_graph(
+pub fn parse_submitted_graph(
     kind: GraphKind,
     fragment_id: &str,
     value: Value,
@@ -407,7 +441,7 @@ fn ensure_expected_sha(text: &str, expected_sha: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn graph_value(graph: &GraphFile) -> Result<Value, String> {
+pub fn graph_value(graph: &GraphFile) -> Result<Value, String> {
     match graph {
         GraphFile::Outline(file) => serde_json::to_value(file),
         GraphFile::Flowchart(file) => serde_json::to_value(file),
@@ -415,7 +449,7 @@ fn graph_value(graph: &GraphFile) -> Result<Value, String> {
     .map_err(|error| error.to_string())
 }
 
-fn serialize_outline(file: &ShardMapFile) -> String {
+pub fn serialize_outline(file: &ShardMapFile) -> String {
     let Some(root) = file.nodes.get(&file.root_id) else {
         return String::new();
     };

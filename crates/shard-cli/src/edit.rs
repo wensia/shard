@@ -6,21 +6,24 @@
 //! 改过就拒绝覆盖，用户的修改留在临时文件里。
 
 use crate::find::{short_id, FragmentEntry};
-use crate::tui::app::{SaveError, SaveReport};
+use crate::tui::app::{SaveError, SaveReport, Store};
 use shard_core::{
-    contains_lockbox_tag, derive_type, extract_tags,
-    frontmatter::{parse_fragment, write_fragment_update},
+    derive_type,
+    frontmatter::parse_fragment,
     graph_model::{content_sha256_hex, now_rfc3339},
-    normalize_tags, normalize_type_tags, unique_suffix,
+    unique_suffix,
     vault_lock::VaultProcessLock,
-    FsVfs, INBOX_TAG, PROTECTED_TYPE_TAGS, TYPE_TAGS,
+    FsVfs, PROTECTED_TYPE_TAGS,
 };
+use shard_vault::cli::{normalize_body, rewrite_document};
 use std::{
     env, fs,
     path::{Path, PathBuf},
     process::Command,
     time::Duration,
 };
+
+pub use shard_vault::cli::PROTECTED_MESSAGE;
 
 pub enum EditOutcome {
     Saved,
@@ -49,18 +52,19 @@ pub struct Session {
 }
 
 pub fn open_session(vault: &Path, entry: &FragmentEntry) -> Result<Session, String> {
-    let raw = fs::read_to_string(&entry.path)
-        .map_err(|error| format!("读取 {} 失败：{error}", entry.path.display()))?;
+    let path = vault.join(&entry.path);
+    let raw = fs::read_to_string(&path)
+        .map_err(|error| format!("读取 {} 失败：{error}", path.display()))?;
     let parsed = parse_fragment(&raw)?;
     if derive_type(&parsed.frontmatter.tags).is_some_and(|kind| PROTECTED_TYPE_TAGS.contains(&kind))
     {
         return Err(PROTECTED_MESSAGE.to_string());
     }
     Ok(Session {
-        path: entry.path.clone(),
+        path,
         vault: vault.to_path_buf(),
         id: entry.id.clone(),
-        body: parsed.body.trim_start_matches('\n').trim_end().to_string(),
+        body: normalize_body(&parsed.body).to_string(),
         sha: content_sha256_hex(&raw),
         raw,
     })
@@ -72,7 +76,7 @@ pub fn save_session(
     lock_dir: &Path,
     timeout: Duration,
 ) -> Result<SaveReport, SaveError> {
-    let next_body = body.trim_start_matches('\n').trim_end().to_string();
+    let next_body = normalize_body(body).to_string();
     let written = rewrite_body(
         &session.vault,
         &session.path,
@@ -88,18 +92,20 @@ pub fn save_session(
             session.body = next_body;
             Ok(SaveReport)
         }
-        Err(RewriteError::Stale) => {
-            let draft = draft_path(&session.id);
-            fs::write(&draft, format!("{next_body}\n"))
-                .map_err(|error| SaveError::Invalid(format!("创建临时文件失败：{error}")))?;
-            Err(SaveError::Conflict { draft_path: draft })
-        }
+        Err(RewriteError::Stale) => Err(conflict_draft(&session.id, &next_body)),
         Err(RewriteError::Locked) => Err(SaveError::Locked),
         Err(RewriteError::Invalid(message)) => Err(SaveError::Invalid(message)),
     }
 }
 
-pub const PROTECTED_MESSAGE: &str = "大纲与流程图请在 Shard 中编辑，或使用 --graph-* 命令。";
+/// 保存时发现期间被改过：把这次的修改写进临时文件，交给调用方提示用户，绝不覆盖。
+pub fn conflict_draft(id: &str, body: &str) -> SaveError {
+    let draft = draft_path(id);
+    match fs::write(&draft, format!("{body}\n")) {
+        Ok(()) => SaveError::Conflict { draft_path: draft },
+        Err(error) => SaveError::Invalid(format!("创建临时文件失败：{error}")),
+    }
+}
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum RewriteError {
@@ -109,15 +115,11 @@ pub enum RewriteError {
     Invalid(String),
 }
 
-pub struct Rewritten {
-    pub raw: String,
-    pub sha: String,
-    /// 新正文与原正文相同时不落盘，`updated_at` 也不动。
-    pub changed: bool,
-}
+pub use shard_vault::cli::Rewritten;
 
 /// 持资料库进程锁改写一篇碎片或笔记的正文，语义与 App 编辑保存一致：正文里的 `#标签`
 /// 重新收进 frontmatter，type 标签原样保留，`updated_at` 刷新，frontmatter 其余内容逐字节不动。
+/// 规则在 `shard_vault::cli::rewrite_document`，服务端的 `append_document` 用同一份。
 ///
 /// `expected_sha` 是调用方读到的整文件哈希；给了就在锁内核对，不一致返回 `Stale` 且不写。
 /// `next` 拿到当前正文、返回新正文，追加之类的读改写因此也在同一把锁里完成。
@@ -136,66 +138,15 @@ pub fn rewrite_body(
             RewriteError::Invalid(error)
         }
     })?;
-    let raw = fs::read_to_string(path)
-        .map_err(|error| RewriteError::Invalid(format!("读取 {} 失败：{error}", path.display())))?;
-    let sha = content_sha256_hex(&raw);
-    if expected_sha.is_some_and(|expected| expected != sha) {
-        return Err(RewriteError::Stale);
-    }
-    let parsed = parse_fragment(&raw).map_err(RewriteError::Invalid)?;
-    if derive_type(&parsed.frontmatter.tags).is_some_and(|kind| PROTECTED_TYPE_TAGS.contains(&kind))
-    {
-        return Err(RewriteError::Invalid(PROTECTED_MESSAGE.to_string()));
-    }
-    let current_body = parsed.body.trim_start_matches('\n').trim_end();
-    let next_body = next(current_body);
-    let next_body = next_body.trim_start_matches('\n').trim_end();
-    if next_body.trim().is_empty() {
-        return Err(RewriteError::Invalid(
-            "内容为空，未保存。删除请在 Shard 中操作。".into(),
-        ));
-    }
-    if next_body == current_body {
-        return Ok(Rewritten {
-            raw,
-            sha,
-            changed: false,
-        });
-    }
-    let tags = edited_tags(&parsed.frontmatter.tags, next_body);
-    if contains_lockbox_tag(&tags) {
-        return Err(RewriteError::Invalid(
-            "终端不支持写入密匣，请在 Shard 中保存。".into(),
-        ));
-    }
-    let mut frontmatter = parsed.frontmatter;
-    frontmatter.tags = tags;
-    frontmatter.updated_at = now_rfc3339();
-    write_fragment_update(
-        &FsVfs::new(vault),
-        path,
-        &parsed.raw,
-        &frontmatter,
-        next_body,
-    )
-    .map_err(|error| RewriteError::Invalid(format!("保存失败：{error}")))?;
-    let raw = fs::read_to_string(path)
-        .map_err(|error| RewriteError::Invalid(format!("读取保存结果失败：{error}")))?;
-    Ok(Rewritten {
-        sha: content_sha256_hex(&raw),
-        raw,
-        changed: true,
+    rewrite_document(&FsVfs::new(vault), path, expected_sha, next, now_rfc3339()).map_err(|error| match error {
+        shard_vault::cli::RewriteError::Stale => RewriteError::Stale,
+        shard_vault::cli::RewriteError::Invalid(message) => RewriteError::Invalid(message),
     })
 }
 
-pub fn edit_fragment(
-    vault: &Path,
-    entry: &FragmentEntry,
-    lock_dir: &Path,
-    lock_timeout: Duration,
-) -> Result<EditOutcome, EditFailure> {
-    let mut session = open_session(vault, entry).map_err(EditFailure::from)?;
-    let original_body = session.body.clone();
+/// 用外部编辑器编辑一条碎片：经 [`Store`] 读与写，本地模式持锁核对哈希写回，远程模式带 sha 写回服务器。
+pub fn edit_fragment(store: &mut dyn Store, entry: &FragmentEntry) -> Result<EditOutcome, EditFailure> {
+    let original_body = store.open(entry).map_err(EditFailure::from)?;
 
     let draft = draft_path(&entry.id);
     fs::write(&draft, format!("{original_body}\n"))
@@ -207,13 +158,13 @@ pub fn edit_fragment(
     }
     let edited = fs::read_to_string(&draft)
         .map_err(|error| format!("读取编辑结果失败：{error}（临时文件：{}）", draft.display()))?;
-    let next_body = edited.trim_start_matches('\n').trim_end();
+    let next_body = normalize_body(&edited);
 
     if next_body == original_body {
         let _ = fs::remove_file(&draft);
         return Ok(EditOutcome::Unchanged);
     }
-    match save_session(&mut session, next_body, lock_dir, lock_timeout) {
+    match store.save(&entry.id, next_body) {
         Ok(_) => {
             let _ = fs::remove_file(&draft);
             Ok(EditOutcome::Saved)
@@ -237,35 +188,6 @@ pub fn edit_fragment(
                 Err(format!("{message}\n你的修改保存在：{}", draft.display()).into())
             }
         }
-    }
-}
-
-/// 标签规则 = 碎片编辑器提交（`fragment-editor.tsx`：`inbox` + 正文标签，非碎片类型
-/// 换回原 type）再过一遍后端 `normalize_updated_type_tags`（受保护类型不可增删）。
-pub fn edited_tags(current: &[String], body: &str) -> Vec<String> {
-    let mut tags = vec![INBOX_TAG.to_string()];
-    tags.extend(extract_tags(body));
-    let mut tags = normalize_tags(tags, false);
-    let current_kind = derive_type(current);
-    if let Some(kind) = current_kind {
-        tags.retain(|tag| !TYPE_TAGS.contains(&tag.as_str()));
-        tags.push(kind.to_string());
-    }
-
-    let mut next = normalize_type_tags(normalize_tags(tags, false));
-    match current_kind.filter(|kind| PROTECTED_TYPE_TAGS.contains(kind)) {
-        Some(kind) => {
-            next.retain(|tag| !TYPE_TAGS.contains(&tag.as_str()));
-            next.push(kind.to_string());
-            next.sort();
-            next.dedup();
-        }
-        None => next.retain(|tag| !PROTECTED_TYPE_TAGS.contains(&tag.as_str())),
-    }
-    if next.is_empty() {
-        vec![INBOX_TAG.to_string()]
-    } else {
-        next
     }
 }
 
@@ -308,27 +230,28 @@ mod tests {
 
     use tempfile::TempDir;
 
-    fn session_fixture() -> (TempDir, FragmentEntry) {
+    fn session_fixture() -> (TempDir, FragmentEntry, PathBuf) {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("vault/fragments/2026/09/one.md");
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(&path, "---\nid: one\ncreated_at: 2026-09-29T00:00:00Z\nupdated_at: 2026-09-29T00:00:00Z\ntags: [inbox]\ncategory: null\nai_status: none\nsource: test\n---\n\n原文\n").unwrap();
         let entry = FragmentEntry {
             id: "one".into(),
-            path,
+            path: "fragments/2026/09/one.md".into(),
             title: "原文".into(),
             created_at: "2026-09-29T00:00:00Z".into(),
+            updated_at: "2026-09-29T00:00:00Z".into(),
             kind: None,
             tags: vec!["inbox".into()],
             modified_at: 0,
             body: "原文".into(),
         };
-        (directory, entry)
+        (directory, entry, path)
     }
 
     #[test]
     fn session_saves_twice_with_updated_baseline() {
-        let (directory, entry) = session_fixture();
+        let (directory, entry, file) = session_fixture();
         let mut session = open_session(&directory.path().join("vault"), &entry).unwrap();
         let locks = directory.path().join("locks");
         save_session(
@@ -345,16 +268,16 @@ mod tests {
             Duration::from_millis(100),
         )
         .unwrap();
-        let parsed = parse_fragment(&fs::read_to_string(entry.path).unwrap()).unwrap();
+        let parsed = parse_fragment(&fs::read_to_string(&file).unwrap()).unwrap();
         assert_eq!(parsed.body.trim(), "第二次 #标签");
         assert_eq!(parsed.frontmatter.tags, vec!["inbox", "标签"]);
     }
 
     #[test]
     fn session_conflict_writes_draft_without_overwrite() {
-        let (directory, entry) = session_fixture();
+        let (directory, entry, file) = session_fixture();
         let mut session = open_session(&directory.path().join("vault"), &entry).unwrap();
-        fs::write(&entry.path, "其他进程修改").unwrap();
+        fs::write(&file, "其他进程修改").unwrap();
         let error = save_session(
             &mut session,
             "我的修改",
@@ -366,54 +289,22 @@ mod tests {
             panic!("应返回冲突")
         };
         assert_eq!(fs::read_to_string(&draft_path).unwrap(), "我的修改\n");
-        assert_eq!(fs::read_to_string(&entry.path).unwrap(), "其他进程修改");
+        assert_eq!(fs::read_to_string(&file).unwrap(), "其他进程修改");
         fs::remove_file(draft_path).unwrap();
     }
 
     #[test]
     fn session_lock_timeout_keeps_original() {
-        let (directory, entry) = session_fixture();
+        let (directory, entry, file) = session_fixture();
         let mut session = open_session(&directory.path().join("vault"), &entry).unwrap();
-        let before = fs::read(&entry.path).unwrap();
+        let before = fs::read(&file).unwrap();
         let locks = directory.path().join("locks");
         let held = VaultProcessLock::acquire(&locks, &session.vault, None).unwrap();
         assert_eq!(
             save_session(&mut session, "我的修改", &locks, Duration::from_millis(10)),
             Err(SaveError::Locked)
         );
-        assert_eq!(fs::read(entry.path).unwrap(), before);
+        assert_eq!(fs::read(&file).unwrap(), before);
         drop(held);
-    }
-
-    fn tags(values: &[&str]) -> Vec<String> {
-        values.iter().map(|value| value.to_string()).collect()
-    }
-
-    #[test]
-    fn fragment_tags_follow_body() {
-        assert_eq!(
-            edited_tags(&tags(&["inbox", "旧标签"]), "买咖啡 #生活"),
-            tags(&["inbox", "生活"])
-        );
-    }
-
-    #[test]
-    fn document_keeps_its_type() {
-        assert_eq!(
-            edited_tags(&tags(&["document", "inbox"]), "# 标题\n\n正文 #读书"),
-            tags(&["document", "inbox", "读书"])
-        );
-    }
-
-    #[test]
-    fn body_cannot_switch_or_add_protected_type() {
-        assert_eq!(
-            edited_tags(&tags(&["inbox"]), "随手记 #outline"),
-            tags(&["inbox"])
-        );
-        assert_eq!(
-            edited_tags(&tags(&["document", "inbox"]), "改成笔记 #note"),
-            tags(&["document", "inbox"])
-        );
     }
 }

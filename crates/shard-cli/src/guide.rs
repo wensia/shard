@@ -10,9 +10,17 @@ use std::{
 
 pub const AGENT_GUIDE: &str = r#"# Shard CLI 使用说明（给 AI 助手）
 
-Shard 是用户的本地 Markdown 资料库（vault）加桌面应用。读写一律用 `shard` 命令，
-不要直接创建、修改或删除 vault 里的文件：命令会生成 frontmatter、规范标签、持锁防止
-与应用同时写入；写入后 Shard 应用里会显示新内容。
+Shard 是用户的 Markdown 资料库（碎片、笔记、数据集）加桌面应用与网页。读写一律用 `shard`
+命令，不要直接创建、修改或删除资料库里的文件：命令会生成 frontmatter、规范标签、防止与应用
+同时写入；写入后 Shard 应用与网页里会显示新内容。
+
+资料库可能在两个地方，命令完全一样，你不需要区分：
+
+- 远程模式：用户用 `shard login` 登录过自己的 Shard 服务器，资料库在服务器上，本机没有
+  资料库目录。所有命令直接读写服务器。
+- 本地模式：资料库是本机的一个目录（没登录服务器时）。
+
+`shard --whoami --json` 可以查看当前模式（`{"mode":"remote"|"local", ...}`）。
 
 ## 内容放哪里
 
@@ -38,8 +46,8 @@ Shard 是用户的本地 Markdown 资料库（vault）加桌面应用。读写�
 ## 命令
 
 所有命令都可加 `--json`：成功时 stdout 只有一个 JSON 值；失败时 stderr 输出
-`{"error":{"code":"...","message":"..."}}`。用 `--vault <路径>` 或环境变量
-`SHARD_VAULT` 指定资料库，默认用 Shard 应用当前的资料库。
+`{"error":{"code":"...","message":"..."}}`。默认用当前的资料库（登录过服务器就是服务器）。
+`--vault <路径>` 或环境变量 `SHARD_VAULT` 会强制改用本机目录，只在用户明确要求时使用。
 
 新建碎片（内容写参数里，或从标准输入读）：
 
@@ -58,6 +66,7 @@ Shard 是用户的本地 Markdown 资料库（vault）加桌面应用。读写�
 
   返回 [{index, id, path, title, kind, tags, createdAt, updatedAt, preview}]。
   kind 是 fragment、note 或 document。不带关键词时按最近修改列出。
+  远程模式下按关键词搜索时 createdAt 为 null（需要时用 --read 读取）。
 
 读取全文：
 
@@ -75,7 +84,7 @@ Shard 是用户的本地 Markdown 资料库（vault）加桌面应用。读写�
 
   返回 {id, path, sha, changed, tags}。正文里的 #标签 会重新收进 frontmatter。
 
-追加到末尾（不需要 sha，在锁内完成读改写）：
+追加到末尾（不需要 sha，读改写一次完成，不会与其他写入交错）：
 
     shard --append <目标> --json '- [ ] 新的待办'
     shard --append <目标> --json < 片段.md
@@ -129,13 +138,17 @@ Shard 是用户的本地 Markdown 资料库（vault）加桌面应用。读写�
 
 - 0：成功。
 - 1：一般错误。code 为 ERROR、NOT_FOUND（目标不存在）、AMBIGUOUS（片段匹配多条，
-  改用完整 id）或 LOCKED（Shard 正在写入，稍等几秒重试）。
+  改用完整 id）或 LOCKED（Shard 正在写入，稍等几秒重试）。远程模式还可能是：
+  UNAUTHENTICATED（本机的登录已失效）、NETWORK（连不上服务器）。这两种不要自己处理，
+  把错误原文告诉用户，由用户检查网络或重新登录。
 - 2：CONFLICT，内容已被改过（--expect 不符），或数据集表头已变化。
 - 3：KEY_CONFLICT，数据集主键冲突。
 
 ## 不要做
 
-- 不要直接读写 vault 目录里的文件，也不要运行 git 提交（Shard 应用会自动提交）。
+- 不要直接读写资料库目录里的文件，也不要运行 git 提交（Shard 会自动保存版本）。
+- 不要运行 `shard login`、`shard logout`，也不要替用户在浏览器里批准配对：登录服务器
+  需要用户本人的通行密钥，只能由用户完成。遇到 UNAUTHENTICATED 时请用户自己重新登录。
 - CLI 不提供删除；需要删除时请用户在 Shard 里操作。
 - 不要使用交互命令 `shard -i`、`shard -e`，它们需要终端界面。
 "#;

@@ -6,12 +6,10 @@ use chrono::{DateTime, Datelike, Local};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use shard_core::{
-    derive_type,
-    frontmatter::parse_fragment,
     search::{project_document, scan_exact, ParsedQuery, SearchTextPart, SourceDocument},
     vault_lock::app_config_dir,
-    PROTECTED_TYPE_TAGS,
 };
+use shard_vault::cli::{load_local_text_entries, Resolved};
 use std::{
     env, fs,
     io::{self, BufRead, IsTerminal, Write},
@@ -22,29 +20,10 @@ pub const DEFAULT_LIMIT: usize = 20;
 /// 预览列的显示宽度（中日韩字符按 2 列计）。
 const PREVIEW_COLUMNS: usize = 64;
 
-/// 能按文本处理的一条内容：`fragments/` 下的碎片或 `notes/` 下的资料库笔记。
+/// 能按文本处理的一条内容：`fragments/` 下的碎片或 `notes/` 下的资料库笔记（`path` 是 vault 相对路径）。
 /// 大纲与流程图的正文是受管 JSON，App 也不允许按文本保存，这里不收录，改走 `--graph-*` 命令。
-#[derive(Debug, Clone)]
-pub struct FragmentEntry {
-    pub id: String,
-    pub path: PathBuf,
-    pub title: String,
-    pub created_at: String,
-    pub kind: Option<&'static str>,
-    pub tags: Vec<String>,
-    pub modified_at: i64,
-    pub body: String,
-}
-
-impl FragmentEntry {
-    pub fn relative_path(&self, vault: &Path) -> String {
-        self.path
-            .strip_prefix(vault)
-            .unwrap_or(&self.path)
-            .display()
-            .to_string()
-    }
-}
+/// 本地模式从 vault 目录读，远程模式由服务器的 `list_documents` 给出，同一个类型。
+pub use shard_vault::cli::TextEntry as FragmentEntry;
 
 pub struct Hit<'a> {
     pub entry: &'a FragmentEntry,
@@ -59,123 +38,7 @@ pub struct SearchOutcome<'a> {
 /// 读取 `fragments/` 下的公开碎片与 `notes/` 下的资料库笔记（回收站在 `.trash/`，
 /// 密匣另存加密文件，都不在这里）。解析失败的文件跳过：终端搜索不该因为一篇坏文件整体失败。
 pub fn load_entries(vault: &Path) -> Result<Vec<FragmentEntry>, String> {
-    let mut files = Vec::new();
-    collect_markdown(&vault.join("fragments"), &mut files)?;
-    collect_markdown(&vault.join("notes"), &mut files)?;
-    let mut entries = Vec::new();
-    for path in files {
-        let Ok(text) = fs::read_to_string(&path) else {
-            continue;
-        };
-        let Ok(parsed) = parse_fragment(&text) else {
-            continue;
-        };
-        let kind = derive_type(&parsed.frontmatter.tags);
-        if kind.is_some_and(|kind| PROTECTED_TYPE_TAGS.contains(&kind)) {
-            continue;
-        }
-        let body = parsed.body.trim_start_matches('\n').trim_end().to_string();
-        let tags = if parsed.frontmatter.tags.is_empty() {
-            vec!["inbox".to_string()]
-        } else {
-            parsed.frontmatter.tags.clone()
-        };
-        entries.push(FragmentEntry {
-            id: parsed.frontmatter.id,
-            title: fragment_title(kind, &body),
-            created_at: parsed.frontmatter.created_at,
-            kind,
-            tags,
-            modified_at: parse_millis(&parsed.frontmatter.updated_at),
-            body,
-            path,
-        });
-    }
-    Ok(entries)
-}
-
-fn collect_markdown(dir: &Path, files: &mut Vec<PathBuf>) -> Result<(), String> {
-    if !dir.is_dir() {
-        return Ok(());
-    }
-    let entries =
-        fs::read_dir(dir).map_err(|error| format!("读取 {} 失败：{error}", dir.display()))?;
-    for entry in entries.flatten() {
-        let path = entry.path();
-        // 原子写的临时文件与系统文件都以 `.` 开头。
-        if entry.file_name().to_string_lossy().starts_with('.') {
-            continue;
-        }
-        if path.is_dir() {
-            collect_markdown(&path, files)?;
-        } else if path.extension().is_some_and(|extension| extension == "md") {
-            files.push(path);
-        }
-    }
-    Ok(())
-}
-
-/// 与 App 搜索的标题规则一致（`src-tauri/src/search_sources.rs` 的 `markdown_title`）。
-fn fragment_title(kind: Option<&str>, body: &str) -> String {
-    let first_line = || {
-        body.lines()
-            .map(str::trim)
-            .find(|line| !line.is_empty())
-            .map(ToString::to_string)
-    };
-    match kind {
-        Some("document") => body
-            .lines()
-            .find_map(markdown_heading)
-            .or_else(first_line)
-            .map(|title| truncate_chars(title, 40))
-            .unwrap_or_else(|| "未命名文档".to_string()),
-        Some("note") => body
-            .lines()
-            .find_map(|line| {
-                line.trim()
-                    .strip_prefix("# ")
-                    .map(|title| title.trim().trim_end_matches('#').trim_end().to_string())
-                    .filter(|title| !title.is_empty())
-            })
-            .or_else(first_line)
-            .map(|title| truncate_chars(title, 48))
-            .unwrap_or_else(|| "未命名笔记".to_string()),
-        _ => first_line().unwrap_or_else(|| "未命名碎片".to_string()),
-    }
-}
-
-fn markdown_heading(line: &str) -> Option<String> {
-    let line = line.trim_start();
-    let hashes = line
-        .chars()
-        .take_while(|character| *character == '#')
-        .count();
-    if !(1..=6).contains(&hashes) || !line[hashes..].starts_with(' ') {
-        return None;
-    }
-    let heading = line[(hashes + 1)..].trim().trim_end_matches('#').trim_end();
-    (!heading.is_empty()).then(|| heading.to_string())
-}
-
-fn truncate_chars(value: String, maximum: usize) -> String {
-    if value.chars().count() <= maximum {
-        return value;
-    }
-    let mut result = value
-        .chars()
-        .take(maximum)
-        .collect::<String>()
-        .trim_end()
-        .to_string();
-    result.push('…');
-    result
-}
-
-fn parse_millis(value: &str) -> i64 {
-    DateTime::parse_from_rfc3339(value)
-        .map(|value| value.timestamp_millis())
-        .unwrap_or_default()
+    load_local_text_entries(vault)
 }
 
 /// 有关键词时按 App 的排序取前 `limit` 条；没有关键词时按最近修改列出。
@@ -295,7 +158,7 @@ pub fn format_hits(hits: &[Hit<'_>], style: &Style) -> String {
         .join("\n")
 }
 
-pub fn hits_json(hits: &[Hit<'_>], vault: &Path) -> String {
+pub fn hits_json(hits: &[Hit<'_>]) -> String {
     let items = hits
         .iter()
         .enumerate()
@@ -303,7 +166,7 @@ pub fn hits_json(hits: &[Hit<'_>], vault: &Path) -> String {
             json!({
                 "index": index + 1,
                 "id": hit.entry.id,
-                "path": hit.entry.relative_path(vault),
+                "path": hit.entry.path,
                 "title": hit.entry.title,
                 "kind": hit.entry.kind.unwrap_or("fragment"),
                 "tags": hit.entry.tags,
@@ -314,6 +177,31 @@ pub fn hits_json(hits: &[Hit<'_>], vault: &Path) -> String {
         })
         .collect::<Vec<_>>();
     serde_json::to_string_pretty(&items).unwrap_or_else(|_| "[]".to_string())
+}
+
+/// `-s` 的文本输出：没有命中时报错；有命中时记下序号（供 `-e <序号>`、`--read <序号>` 引用）、
+/// 列出结果，在终端里再给出总数提示。本地与远程模式共用。
+pub fn print_hits(scope: &str, query: &str, hits: &[Hit<'_>], total: usize) -> Result<(), String> {
+    if hits.is_empty() {
+        return Err(if query.trim().is_empty() {
+            "资料库里还没有碎片".to_string()
+        } else {
+            format!("没有找到包含「{}」的碎片", query.trim())
+        });
+    }
+    remember_search(scope, query, hits);
+    let terminal = io::stdout().is_terminal();
+    println!("{}", format_hits(hits, &Style::for_stream(terminal)));
+    if terminal {
+        let shown = hits.len();
+        let summary = if total > shown {
+            format!("共 {total} 条，列出前 {shown} 条（-n 调整）")
+        } else {
+            format!("共 {shown} 条")
+        };
+        eprintln!("{summary} · shard -e <序号> 编辑");
+    }
+    Ok(())
 }
 
 pub fn millis_rfc3339(millis: i64) -> String {
@@ -448,25 +336,34 @@ fn last_search_path() -> Option<PathBuf> {
     Some(dir.join("last-search.json"))
 }
 
+/// 上次搜索属于哪个资料库：本地是 vault 路径，远程是服务器地址。换了资料库，旧序号就不认。
+pub fn local_scope(vault: &Path) -> String {
+    vault.display().to_string()
+}
+
 /// 记不下来不影响本次搜索，只是之后不能按序号引用。
-pub fn remember_search(vault: &Path, query: &str, hits: &[Hit<'_>]) {
+pub fn remember_search(scope: &str, query: &str, hits: &[Hit<'_>]) {
+    remember_ids(scope, query, hits.iter().map(|hit| hit.entry.id.clone()).collect());
+}
+
+pub fn remember_ids(scope: &str, query: &str, ids: Vec<String>) {
     let Some(path) = last_search_path() else {
         return;
     };
     let state = LastSearch {
-        vault: vault.display().to_string(),
+        vault: scope.to_string(),
         query: query.to_string(),
-        ids: hits.iter().map(|hit| hit.entry.id.clone()).collect(),
+        ids,
     };
     if let (Some(parent), Ok(text)) = (path.parent(), serde_json::to_string(&state)) {
         let _ = fs::create_dir_all(parent).and_then(|_| fs::write(&path, text));
     }
 }
 
-fn recall_search(vault: &Path) -> Option<Vec<String>> {
+pub fn recall_search(scope: &str) -> Option<Vec<String>> {
     let text = fs::read_to_string(last_search_path()?).ok()?;
     let state = serde_json::from_str::<LastSearch>(&text).ok()?;
-    (state.vault == vault.display().to_string()).then_some(state.ids)
+    (state.vault == scope).then_some(state.ids)
 }
 
 // ---------------------------------------------------------------------------
@@ -486,7 +383,7 @@ pub enum Selection<'a> {
 /// - 其余按关键词搜索：唯一命中直接编辑；多条时按 `prompt_on_ambiguous` 决定是否询问序号
 pub fn select<'a>(
     entries: &'a [FragmentEntry],
-    vault: &Path,
+    scope: &str,
     args: &[String],
     prompt_on_ambiguous: bool,
 ) -> Result<Selection<'a>, String> {
@@ -504,7 +401,7 @@ pub fn select<'a>(
     let query = args.join(" ");
     if let [token] = args {
         if let Ok(index) = token.parse::<usize>() {
-            if let Some(ids) = recall_search(vault).filter(|ids| (1..=ids.len()).contains(&index)) {
+            if let Some(ids) = recall_search(scope).filter(|ids| (1..=ids.len()).contains(&index)) {
                 let id = &ids[index - 1];
                 return entries
                     .iter()
@@ -538,7 +435,7 @@ pub fn select<'a>(
             if !prompt_on_ambiguous {
                 return Ok(Selection::Ambiguous(outcome.total));
             }
-            remember_search(vault, &query, hits);
+            remember_search(scope, &query, hits);
             let style = Style::for_stream(io::stderr().is_terminal());
             eprintln!("{}", format_hits(hits, &style));
             if outcome.total > hits.len() {
@@ -568,63 +465,34 @@ pub fn select<'a>(
     }
 }
 
-pub enum Resolved<'a> {
-    Found(&'a FragmentEntry),
-    NotFound,
-    Ambiguous(Vec<&'a FragmentEntry>),
-}
-
 /// 非交互命令（`--read`、`--update`、`--append`）的目标：完整 id、vault 相对路径
 /// （或 vault 内的绝对路径）、上次搜索的序号，或 id 中至少 4 个字符且只命中一条的片段。
-/// 不做关键词搜索：写入目标必须确定，关键词请先用 `-s` 查出 id。
+/// 不做关键词搜索：写入目标必须确定，关键词请先用 `-s` 查出 id。规则在 `shard_vault::cli`，
+/// 服务端的 `resolve_target` 用同一份；这里只补本地才有的两样：绝对路径与上次搜索的序号。
 pub fn resolve_target<'a>(
     entries: &'a [FragmentEntry],
     vault: &Path,
     target: &str,
 ) -> Resolved<'a> {
-    let target = target.trim();
-    if target.is_empty() {
-        return Resolved::NotFound;
-    }
-    if let Some(entry) = entries.iter().find(|entry| entry.id == target) {
-        return Resolved::Found(entry);
-    }
-    if target.contains('/') || target.ends_with(".md") {
-        let relative = vault_relative(vault, target);
-        return entries
-            .iter()
-            .find(|entry| Some(entry.relative_path(vault)) == relative)
-            .map_or(Resolved::NotFound, Resolved::Found);
-    }
-    if let Ok(index) = target.parse::<usize>() {
-        if let Some(ids) = recall_search(vault).filter(|ids| (1..=ids.len()).contains(&index)) {
-            let id = &ids[index - 1];
-            return entries
-                .iter()
-                .find(|entry| &entry.id == id)
-                .map_or(Resolved::NotFound, Resolved::Found);
+    let trimmed = target.trim();
+    let relative;
+    let target = if Path::new(trimmed).is_absolute() {
+        match vault_relative(vault, trimmed) {
+            Some(path) => {
+                relative = path;
+                relative.as_str()
+            }
+            None => return Resolved::NotFound,
         }
-    }
-    let needle = target.to_lowercase();
-    if needle.chars().count() < 4 {
-        return Resolved::NotFound;
-    }
-    let matched = entries
-        .iter()
-        .filter(|entry| entry.id.to_lowercase().contains(&needle))
-        .collect::<Vec<_>>();
-    match matched.as_slice() {
-        [] => Resolved::NotFound,
-        [entry] => Resolved::Found(entry),
-        _ => Resolved::Ambiguous(matched),
-    }
+    } else {
+        trimmed
+    };
+    let recalled = recall_search(&local_scope(vault));
+    shard_vault::cli::resolve_target(entries, target, recalled.as_deref())
 }
 
 fn vault_relative(vault: &Path, target: &str) -> Option<String> {
     let path = Path::new(target);
-    if !path.is_absolute() {
-        return Some(target.trim_start_matches("./").to_string());
-    }
     let canonical = vault.canonicalize().ok();
     let stripped = path
         .strip_prefix(vault)
@@ -707,8 +575,9 @@ mod tests {
 
     #[test]
     fn document_title_prefers_heading() {
-        assert_eq!(fragment_title(Some("document"), "引言\n\n# 标题 #"), "标题");
-        assert_eq!(fragment_title(None, "\n\n  第一行  \n第二行"), "第一行");
-        assert_eq!(fragment_title(None, ""), "未命名碎片");
+        use shard_vault::cli::text_title;
+        assert_eq!(text_title(Some("document"), "引言\n\n# 标题 #"), "标题");
+        assert_eq!(text_title(None, "\n\n  第一行  \n第二行"), "第一行");
+        assert_eq!(text_title(None, ""), "未命名碎片");
     }
 }

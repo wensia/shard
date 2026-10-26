@@ -10,7 +10,7 @@ use shard_vault::{
     move_library_entry_in_vault, move_to_trash_in_vault, rename_library_entry_in_vault, LibraryDatasetResult,
 };
 
-use super::{parse, read, write};
+use super::{cli::source_override, parse, read, write};
 use crate::rpc::{Access, Registry, RpcEnv, RpcError};
 
 pub(super) fn register(registry: &mut Registry) {
@@ -64,20 +64,28 @@ struct CreateDatasetArgs {
     primary_key: Option<String>,
     #[serde(default)]
     parent_path: Option<String>,
+    /// 覆盖说明笔记按调用方记的来源（命令行的 `--source`）。桌面没有这个参数。
+    #[serde(default)]
+    source: Option<String>,
 }
 
 fn create_library_dataset(env: &RpcEnv<'_>, args: Value) -> Result<Value, RpcError> {
     let args: CreateDatasetArgs = parse(args)?;
+    let source = source_override(args.source.as_deref())?;
     write(env, |cx| {
+        let cx = match source.as_deref() {
+            Some(source) => cx.with_clock(cx.offset, source),
+            None => *cx,
+        };
         let (dataset, fragment) = create_library_dataset_in_vault(
-            cx,
+            &cx,
             &args.title,
             args.header,
             args.rows,
             args.primary_key,
             args.parent_path.as_deref(),
         )?;
-        Ok(LibraryDatasetResult { dataset, library: library_mutation_result(cx, Some(fragment), 0)? })
+        Ok(LibraryDatasetResult { dataset, library: library_mutation_result(&cx, Some(fragment), 0)? })
     })
 }
 
