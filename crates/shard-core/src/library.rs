@@ -8,7 +8,7 @@ use crate::{
     new_fragment_id, normalize_tags, write_fragment_file, FragmentFrontmatter, Vfs,
     LIBRARY_FILENAME_MAX_BYTES, TYPE_TAGS,
 };
-use chrono::Local;
+use chrono::{DateTime, FixedOffset, Local};
 use serde::Serialize;
 use std::path::{Component, Path, PathBuf};
 
@@ -211,6 +211,19 @@ pub fn create_library_note_file(
     tags: Vec<String>,
     source: &str,
 ) -> Result<PathBuf, String> {
+    create_library_note_file_at(vfs, title, directory, body, tags, source, &Local::now().fixed_offset())
+}
+
+/// 同 [`create_library_note_file`]，时间由调用方给（服务端用客户端时区）。
+pub fn create_library_note_file_at(
+    vfs: &dyn Vfs,
+    title: &str,
+    directory: Option<&str>,
+    body: &str,
+    tags: Vec<String>,
+    source: &str,
+    now: &DateTime<FixedOffset>,
+) -> Result<PathBuf, String> {
     let title = title.trim();
     if title.is_empty() {
         return Err("笔记标题不能为空。".to_string());
@@ -218,10 +231,9 @@ pub fn create_library_note_file(
     validate_library_name_length(title, ".md")?;
     let directory = existing_library_directory(vfs, directory)?;
     let path = unique_note_path(vfs, &directory, title);
-    let now = Local::now();
     let created_at = now.to_rfc3339();
     let frontmatter = FragmentFrontmatter {
-        id: new_fragment_id(&now),
+        id: new_fragment_id(now),
         created_at: created_at.clone(),
         updated_at: created_at,
         tags: note_tags(tags),
@@ -255,6 +267,30 @@ pub fn create_library_dataset_files(
     directory: Option<&str>,
     source: &str,
 ) -> Result<(DatasetSnapshot, PathBuf), String> {
+    create_library_dataset_files_at(
+        vfs,
+        title,
+        header,
+        rows,
+        primary_key,
+        directory,
+        source,
+        &Local::now().fixed_offset(),
+    )
+}
+
+/// 同 [`create_library_dataset_files`]，说明笔记的时间由调用方给。
+#[allow(clippy::too_many_arguments)]
+pub fn create_library_dataset_files_at(
+    vfs: &dyn Vfs,
+    title: &str,
+    header: Vec<String>,
+    rows: Vec<Vec<String>>,
+    primary_key: Option<String>,
+    directory: Option<&str>,
+    source: &str,
+    now: &DateTime<FixedOffset>,
+) -> Result<(DatasetSnapshot, PathBuf), String> {
     #[derive(Serialize)]
     struct DatatableSource<'a> {
         title: &'a str,
@@ -282,7 +318,7 @@ pub fn create_library_dataset_files(
         })
         .map_err(|error| error.to_string())?;
         let body = format!("# {title}\n\n```datatable\n{block}\n```\n");
-        create_library_note_file(vfs, title, directory, &body, Vec::new(), source)
+        create_library_note_file_at(vfs, title, directory, &body, Vec::new(), source, now)
     })();
     match created {
         Ok(note) => Ok((dataset, note)),

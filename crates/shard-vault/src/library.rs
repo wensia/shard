@@ -375,7 +375,7 @@ pub fn create_library_note_with_body(
     directory: Option<&str>,
     body: &str,
 ) -> Result<Fragment, String> {
-    let path = create_library_note_file(cx.vfs, title, directory, body, Vec::new(), "desktop")?;
+    let path = create_library_note_file_at(cx.vfs, title, directory, body, Vec::new(), cx.source, &cx.now())?;
     read_fragment(
         cx,
         &path,
@@ -394,14 +394,15 @@ pub fn create_library_dataset_in_vault(
     primary_key: Option<String>,
     directory: Option<&str>,
 ) -> Result<(DatasetSnapshot, Fragment), String> {
-    let (dataset, note) = create_library_dataset_files(
+    let (dataset, note) = create_library_dataset_files_at(
         cx.vfs,
         title,
         header,
         rows,
         primary_key,
         directory,
-        "desktop",
+        cx.source,
+        &cx.now(),
     )?;
     let fragment = read_fragment(cx, &note, &cx.hooks.dirty_paths(), None)?;
     Ok((dataset, fragment))

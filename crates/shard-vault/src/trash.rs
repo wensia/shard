@@ -53,6 +53,7 @@ pub fn timestamped_collision_path(vfs: &dyn Vfs, path: &Path) -> Result<PathBuf,
         Some((stem, _)) if !stem.is_empty() => (stem, &file_name[stem.len()..]),
         _ => (file_name, ""),
     });
+    // 只用作撞名后缀，时区无关紧要。
     let timestamp = Local::now().format("%Y%m%d-%H%M%S-%3f");
     for counter in 0..=u16::MAX {
         let suffix = if counter == 0 {

@@ -62,12 +62,12 @@ impl Harness {
         match &self.backend {
             Backend::Fs => {
                 let vfs = FsVfs::new(&self.root);
-                f(&VaultCtx { vfs: &vfs, hooks: &self.hooks })
+                f(&VaultCtx::local(&vfs, &self.hooks))
             }
             Backend::Sqlite(store) => {
                 store
                     .write(&WriteCtx::new("dual-test", "test"), |vfs| {
-                        Ok::<_, StoreError>(f(&VaultCtx { vfs, hooks: &self.hooks }))
+                        Ok::<_, StoreError>(f(&VaultCtx::local(vfs, &self.hooks)))
                     })
                     .unwrap()
                     .0
@@ -80,10 +80,10 @@ impl Harness {
         match &self.backend {
             Backend::Fs => {
                 let vfs = FsVfs::new(&self.root);
-                f(&VaultCtx { vfs: &vfs, hooks: &self.hooks })
+                f(&VaultCtx::local(&vfs, &self.hooks))
             }
             Backend::Sqlite(store) => {
-                store.read(|vfs| f(&VaultCtx { vfs, hooks: &self.hooks })).unwrap()
+                store.read(|vfs| f(&VaultCtx::local(vfs, &self.hooks))).unwrap()
             }
         }
     }

@@ -346,6 +346,7 @@ pub fn index_bytes(source: &CanvasFile, receipt: &SplitReceipt) -> CanvasResult<
         category: None,
         ai_status: Some("none".into()),
         pinned: false,
+        // 旧混合画布的一次性拆分（桌面迁移），说明笔记的来源固定记为 desktop。
         source: "desktop".into(),
         conflict_of: None,
         related: Vec::new(),

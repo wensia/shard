@@ -213,7 +213,7 @@ pub fn convert_fragment_to_note_in_vault(
         frontmatter.tags.sort();
         frontmatter.tags.dedup();
     }
-    frontmatter.updated_at = Local::now().to_rfc3339();
+    frontmatter.updated_at = cx.now().to_rfc3339();
     let directory = existing_library_directory(cx.vfs, directory)?;
     let inferred_title = note_title(body);
     let title = title
@@ -260,7 +260,7 @@ pub fn convert_note_to_fragment_in_vault(
     if frontmatter.tags.is_empty() {
         frontmatter.tags.push("inbox".to_string());
     }
-    frontmatter.updated_at = Local::now().to_rfc3339();
+    frontmatter.updated_at = cx.now().to_rfc3339();
     // Restoring the original date also keeps the physical fragment stream and
     // its month summaries aligned with the content's record date.
     let recorded_at = DateTime::parse_from_rfc3339(&frontmatter.created_at)
@@ -571,7 +571,7 @@ pub fn mutate_public_fragment_property_in_vault(
         None => remove_custom_property(&parsed.raw, key)?,
     };
     let mut frontmatter = parsed.frontmatter;
-    frontmatter.updated_at = Local::now().to_rfc3339();
+    frontmatter.updated_at = cx.now().to_rfc3339();
     let raw = apply_frontmatter(&raw, &frontmatter)?;
     cx.vfs
         .write_atomic(path, format!("---\n{raw}\n---{}", parsed.body).as_bytes())
@@ -593,7 +593,7 @@ pub fn update_public_fragment_tags_in_vault(
     } else {
         tags
     };
-    frontmatter.updated_at = Local::now().to_rfc3339();
+    frontmatter.updated_at = cx.now().to_rfc3339();
     write_fragment_update(
         cx.vfs,
         path,
@@ -636,7 +636,7 @@ pub fn update_public_fragment_in_vault(
     } else {
         tags
     };
-    frontmatter.updated_at = Local::now().to_rfc3339();
+    frontmatter.updated_at = cx.now().to_rfc3339();
     write_fragment_update(cx.vfs, path, &parsed.raw, &frontmatter, content)?;
     read_fragment(cx, path, &cx.hooks.dirty_paths(), None)
 }
@@ -671,7 +671,7 @@ pub fn link_fragments_in_vault(
         return read_fragment(cx, &path, &dirty, None);
     }
 
-    let now = Local::now().to_rfc3339();
+    let now = cx.now().to_rfc3339();
     frontmatter.related.push(FragmentRelation {
         target_id: target_id.to_string(),
         origin: origin.to_string(),
@@ -717,7 +717,7 @@ pub fn unlink_fragments_in_vault(
         return read_fragment(cx, &path, &dirty, None);
     }
 
-    frontmatter.updated_at = Local::now().to_rfc3339();
+    frontmatter.updated_at = cx.now().to_rfc3339();
     write_fragment_update(
         cx.vfs,
         &path,
@@ -745,7 +745,7 @@ pub fn set_public_fragment_pinned_in_vault(
     let parsed = parse_fragment(&text)?;
     let mut frontmatter = parsed.frontmatter;
     frontmatter.pinned = pinned;
-    frontmatter.updated_at = Local::now().to_rfc3339();
+    frontmatter.updated_at = cx.now().to_rfc3339();
     write_fragment_update(
         cx.vfs,
         path,
@@ -860,7 +860,7 @@ pub fn create_public_fragment(
     content: &str,
     tags: Vec<String>,
 ) -> Result<Fragment, String> {
-    let path = create_public_fragment_in_vault(cx.vfs, content, tags, "desktop")?;
+    let path = create_public_fragment_at(cx.vfs, content, tags, cx.source, &cx.now())?;
 
     let dirty = cx.hooks.dirty_paths();
     // 内容保存只落盘，提交由聚合检查点接管（docs/design/commit-coalescing-plan.md §7 A2）

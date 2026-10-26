@@ -5,7 +5,7 @@ pub(crate) use crate::{
     canvas, datasets::*, fragments::*, graph::*, hooks::*, images::*, library::*, maps::*,
     refs::*, trash::*, types::*, util::*,
 };
-pub(crate) use chrono::{DateTime, Local, NaiveDate, NaiveDateTime};
+pub(crate) use chrono::{DateTime, FixedOffset, Local, NaiveDate, NaiveDateTime, Utc};
 pub(crate) use serde::{Deserialize, Serialize};
 pub(crate) use sha2::{Digest, Sha256};
 pub(crate) use shard_core::dataset::{self, DatasetLimits, DatasetOp, DatasetSnapshot};
@@ -14,7 +14,7 @@ pub(crate) use shard_core::graph_model::{
     SHARD_MAP_SCHEMA_VERSION,
 };
 pub(crate) use shard_core::{
-    contains_lockbox_tag, create_public_fragment_in_vault,
+    contains_lockbox_tag, create_public_fragment_at, create_public_fragment_in_vault,
     create_public_fragment_with_id_in_vault, derive_type, ensure_public_csv_path,
     frontmatter::{
         apply_frontmatter, custom_property_entries, parse_fragment, remove_custom_property,
@@ -24,7 +24,8 @@ pub(crate) use shard_core::{
         find_region, render_region, replace_region, GraphRegionKind, MISSING_REGION_ERROR,
     },
     library::{
-        bounded_library_filename, create_library_dataset_files, create_library_note_file,
+        bounded_library_filename, create_library_dataset_files, create_library_dataset_files_at,
+        create_library_note_file, create_library_note_file_at,
         existing_library_directory, existing_library_path, note_title, unique_mind_map_path,
         unique_note_path, unique_titled_path, validate_library_file_name, validate_library_name,
         validate_library_name_characters, validate_library_name_length,

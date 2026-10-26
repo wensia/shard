@@ -37,7 +37,7 @@ pub fn create_mind_map_at_in_vault(
     }
     validate_library_name_length(title, ".shardmap.json")?;
 
-    let now = Local::now();
+    let now = cx.now();
     let suffix = unique_suffix();
     let id = format!("map-{}-{}", now.format("%Y%m%d-%H%M%S"), suffix);
     let root_id = format!("node-{}-root", suffix);
@@ -147,7 +147,7 @@ pub fn write_mind_map_in_vault(
     file.schema_version = SHARD_MAP_SCHEMA_VERSION;
     file.saved_with_app_version = env!("CARGO_PKG_VERSION").to_string();
     file.revision = expected_revision + 1;
-    file.updated_at = Local::now().to_rfc3339();
+    file.updated_at = cx.now().to_rfc3339();
     validate_mind_map_file(cx.vfs, &file)?;
 
     let text = canonical_mind_map_text(&file)?;
@@ -262,6 +262,7 @@ pub fn mind_map_last_good_rel_path(file: &ShardMapFile) -> String {
 
 pub fn write_mind_map_conflict(vfs: &dyn Vfs, file: &ShardMapFile) -> Result<PathBuf, String> {
     let text = canonical_mind_map_text(file)?;
+    // 只用作冲突副本文件名的后缀，时区无关紧要。
     let timestamp = Local::now().format("%Y%m%d-%H%M%S").to_string();
     let path = vfs
         .root()

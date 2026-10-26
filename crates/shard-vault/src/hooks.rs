@@ -10,11 +10,32 @@ use crate::prelude::*;
 pub struct VaultCtx<'a> {
     pub vfs: &'a dyn Vfs,
     pub hooks: &'a dyn VaultHooks,
+    /// 这次操作的时区：碎片 id、`fragments/YYYY/MM` 与 frontmatter 时间都按它算。
+    /// 桌面是本机时区；服务端是客户端随请求带来的偏移（服务器本身一般跑 UTC）。
+    pub offset: FixedOffset,
+    /// 新建内容写进 frontmatter 的 `source`：desktop / web / cli …
+    pub source: &'a str,
 }
 
-impl VaultCtx<'_> {
+impl<'a> VaultCtx<'a> {
+    /// 本机时区、来源 desktop——与迁移前桌面端的行为一致。
+    pub fn local(vfs: &'a dyn Vfs, hooks: &'a dyn VaultHooks) -> Self {
+        Self { vfs, hooks, offset: *Local::now().offset(), source: "desktop" }
+    }
+
+    pub fn with_clock(mut self, offset: FixedOffset, source: &'a str) -> Self {
+        self.offset = offset;
+        self.source = source;
+        self
+    }
+
     pub fn root(&self) -> &Path {
         self.vfs.root()
+    }
+
+    /// 按本次操作的时区取当前时间。领域代码一律用它，不要直接 `Local::now()`。
+    pub fn now(&self) -> DateTime<FixedOffset> {
+        Utc::now().with_timezone(&self.offset)
     }
 }
 

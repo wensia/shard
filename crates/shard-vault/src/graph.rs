@@ -212,13 +212,13 @@ pub fn create_graph_fragment_in_vault(
     tags.sort();
     tags.dedup();
 
-    let now = Local::now();
+    let now = cx.now();
     let id = new_fragment_id(&now);
     let timestamp = now.to_rfc3339();
     let (graph, json_text) = graph_value_for_create(cx.vfs, kind, &id, graph, &timestamp)?;
     let body = render_region(kind.region_kind(), &json_text);
     let path = create_public_fragment_with_id_in_vault(
-        cx.vfs, &body, tags, "desktop", &now, &id,
+        cx.vfs, &body, tags, cx.source, &now, &id,
     )?;
     remember_graph_create(
         cx.root(),
@@ -335,7 +335,7 @@ pub fn import_graph_file_to_timeline_in_vault(
             timestamp.format("%m").to_string(),
         ),
         Err(_) => {
-            let now = Local::now();
+            let now = cx.now();
             (
                 now.to_rfc3339(),
                 now.format("%Y").to_string(),
@@ -357,7 +357,7 @@ pub fn import_graph_file_to_timeline_in_vault(
         category: None,
         ai_status: Some("none".to_string()),
         pinned: false,
-        source: "desktop".to_string(),
+        source: cx.source.to_string(),
         conflict_of: None,
         related: Vec::new(),
     };
@@ -416,7 +416,7 @@ pub fn write_graph_fragment_in_vault(
                 .revision
                 .checked_add(1)
                 .ok_or_else(|| "导图版本超过上限。".to_string())?;
-            next.updated_at = Local::now().to_rfc3339();
+            next.updated_at = cx.now().to_rfc3339();
             next.saved_with_app_version = env!("CARGO_PKG_VERSION").to_string();
             validate_mind_map_file(vfs, &next)?;
             let text = canonical_mind_map_text(&next)?;
@@ -439,7 +439,7 @@ pub fn write_graph_fragment_in_vault(
                 .revision
                 .checked_add(1)
                 .ok_or_else(|| "画布版本超过上限。".to_string())?;
-            next.updated_at = Local::now().to_rfc3339();
+            next.updated_at = cx.now().to_rfc3339();
             canvas::validate_file(vfs, &next)?;
             let text = canonical_flow_text(&next)?;
             let value = serde_json::to_value(next).map_err(|error| error.to_string())?;
@@ -449,7 +449,7 @@ pub fn write_graph_fragment_in_vault(
 
     let next_body = replace_region(&parsed.body, kind.region_kind(), &json_text)?;
     let mut frontmatter = parsed.frontmatter;
-    frontmatter.updated_at = Local::now().to_rfc3339();
+    frontmatter.updated_at = cx.now().to_rfc3339();
     let raw = apply_frontmatter(&parsed.raw, &frontmatter)?;
     let next_text = format!("---\n{raw}\n---{next_body}");
     vfs.write_atomic(&path, next_text.as_bytes())

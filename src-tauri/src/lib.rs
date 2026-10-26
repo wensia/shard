@@ -209,10 +209,7 @@ impl LocalVault {
     }
 
     fn cx(&self) -> VaultCtx<'_> {
-        VaultCtx {
-            vfs: &self.vfs,
-            hooks: &self.hooks,
-        }
+        VaultCtx::local(&self.vfs, &self.hooks)
     }
 }
 
@@ -7357,10 +7354,7 @@ mod tests {
         let vfs = FsVfs::new(vault);
         ensure_vault_layout(&vfs).unwrap();
         run_git(vault, &["init", "--initial-branch=main"]).unwrap();
-        let cx = VaultCtx {
-            vfs: &vfs,
-            hooks: &NoHooks,
-        };
+        let cx = VaultCtx::local(&vfs, &NoHooks);
 
         let note = create_library_note_in_vault(&cx, "无钩子", None).unwrap();
         assert_eq!(note.git_status, "saved");

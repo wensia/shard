@@ -21,7 +21,7 @@ pub mod vfs;
 pub use fs_vfs::FsVfs;
 pub use vfs::{sha256_hex, EntryKind, Vfs, VfsDirEntry, VfsMetadata};
 
-use chrono::{DateTime, Local};
+use chrono::{DateTime, FixedOffset, Local};
 use rand::{rngs::OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -254,7 +254,11 @@ pub fn ensure_vault_layout(vfs: &dyn Vfs) -> Result<(), String> {
     Ok(())
 }
 
-pub fn new_fragment_id(now: &DateTime<Local>) -> String {
+/// 碎片 id：`<时间>-<8 位随机>-<6 位随机>`，时间按调用方给的时区（服务端用客户端时区）。
+pub fn new_fragment_id<Tz: chrono::TimeZone>(now: &DateTime<Tz>) -> String
+where
+    Tz::Offset: std::fmt::Display,
+{
     let mut bytes = [0u8; 7];
     OsRng.fill_bytes(&mut bytes);
     let random: String = bytes[..4]
@@ -346,9 +350,19 @@ pub fn create_public_fragment_in_vault(
     tags: Vec<String>,
     source: &str,
 ) -> Result<PathBuf, String> {
-    let now = Local::now();
-    let id = new_fragment_id(&now);
-    create_public_fragment_with_id_in_vault(vfs, content, tags, source, &now, &id)
+    create_public_fragment_at(vfs, content, tags, source, &Local::now().fixed_offset())
+}
+
+/// 同 [`create_public_fragment_in_vault`]，时间（决定 id 与 `fragments/YYYY/MM`）由调用方给。
+pub fn create_public_fragment_at(
+    vfs: &dyn Vfs,
+    content: &str,
+    tags: Vec<String>,
+    source: &str,
+    now: &DateTime<FixedOffset>,
+) -> Result<PathBuf, String> {
+    let id = new_fragment_id(now);
+    create_public_fragment_with_id_in_vault(vfs, content, tags, source, now, &id)
 }
 
 pub fn create_public_fragment_with_id_in_vault(
@@ -356,7 +370,7 @@ pub fn create_public_fragment_with_id_in_vault(
     content: &str,
     tags: Vec<String>,
     source: &str,
-    now: &DateTime<Local>,
+    now: &DateTime<FixedOffset>,
     id: &str,
 ) -> Result<PathBuf, String> {
     let content = content.trim();

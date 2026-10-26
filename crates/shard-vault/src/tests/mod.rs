@@ -12,6 +12,7 @@ pub(crate) use shard_core::{
 pub(crate) use std::fs;
 
 mod dto_snapshot;
+mod clock;
 mod dual;
 mod legacy_datasets;
 mod legacy_fragments;
@@ -36,10 +37,7 @@ impl LocalVault {
     }
 
     pub(crate) fn cx(&self) -> VaultCtx<'_> {
-        VaultCtx {
-            vfs: &self.vfs,
-            hooks: &self.hooks,
-        }
+        VaultCtx::local(&self.vfs, &self.hooks)
     }
 }
 
