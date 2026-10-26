@@ -54,6 +54,24 @@ impl BlobStore {
         Ok(Some(read_prefix(&conn, c"blobs", c"data", id, limit)?))
     }
 
+    pub(crate) fn size(&self, sha: &str) -> Result<Option<i64>, StoreError> {
+        let conn = self.conn.lock().expect("blob 连接锁中毒");
+        Ok(conn
+            .query_row("SELECT size FROM blobs WHERE sha = ?1", params![sha], |row| row.get(0))
+            .optional()?)
+    }
+
+    /// 立即删除（抹除历史用；调用方确认已无引用）。返回是否真的删了一行。
+    pub(crate) fn delete(&self, sha: &str) -> Result<bool, StoreError> {
+        let conn = self.conn.lock().expect("blob 连接锁中毒");
+        Ok(conn.execute("DELETE FROM blobs WHERE sha = ?1", params![sha])? > 0)
+    }
+
+    pub(crate) fn truncate_wal(&self) -> Result<bool, StoreError> {
+        let conn = self.conn.lock().expect("blob 连接锁中毒");
+        super::history::truncate_wal(&conn)
+    }
+
     pub(crate) fn vacuum_into(&self, target: &Path) -> Result<(), StoreError> {
         let conn = self.conn.lock().expect("blob 连接锁中毒");
         conn.execute("VACUUM INTO ?1", params![target.to_string_lossy()])?;

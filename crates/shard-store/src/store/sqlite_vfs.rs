@@ -25,6 +25,7 @@ use std::{
 use rusqlite::{params, Connection, OptionalExtension};
 
 use super::blobs::{read_prefix, BlobStore, INLINE_MAX};
+use super::history::{load_revision, RevisionInfo};
 use crate::path_key::{parent_key, path_key};
 use shard_core::{sha256_hex, EntryKind, Vfs, VfsDirEntry, VfsMetadata};
 
@@ -186,6 +187,56 @@ impl<'a> SqliteVfs<'a> {
             .execute(
                 "UPDATE nodes SET created_at = ?1, modified_at = ?2 WHERE node_id = ?3",
                 params![text(created), text(modified), node.node_id],
+            )
+            .map_err(db_error)?;
+        Ok(())
+    }
+
+    /// 版本历史：一条修订与它的字节（删除时刻的记录字节为空）。
+    pub fn revision(&self, rev_id: i64) -> io::Result<Option<(RevisionInfo, Vec<u8>)>> {
+        load_revision(self.conn, self.blobs, rev_id).map_err(|error| io::Error::other(error.to_string()))
+    }
+
+    /// 条目当前的存储路径；已彻底删除返回 `None`。
+    pub fn node_path(&self, node_id: i64) -> io::Result<Option<String>> {
+        Ok(self
+            .conn
+            .query_row("SELECT path FROM nodes WHERE node_id = ?1", params![node_id], |row| row.get(0))
+            .optional()
+            .map_err(db_error)?
+            .flatten())
+    }
+
+    /// 把已彻底删除的文件放回 `path`：沿用原节点，恢复后历史连着以前的修订。
+    /// 目标必须空着、父目录必须存在（与新建文件相同）。
+    pub fn revive(&self, node_id: i64, path: &Path, bytes: &[u8]) -> io::Result<()> {
+        self.ensure_writable()?;
+        let rel = self.rel(path)?;
+        if rel.is_empty() || self.find(&rel)?.is_some() {
+            return Err(io::Error::new(io::ErrorKind::AlreadyExists, format!("已存在：{rel}")));
+        }
+        let tombstone: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT kind FROM nodes WHERE node_id = ?1 AND path_key IS NULL AND purged_at IS NOT NULL",
+                params![node_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(db_error)?;
+        if tombstone.as_deref() != Some("file") {
+            return Err(io::Error::new(io::ErrorKind::NotFound, format!("条目 {node_id} 不是已彻底删除的文件。")));
+        }
+        let stored = Self::joined(&self.require_parent(&rel)?, name_of(&rel));
+        let key = path_key(&stored);
+        let (inline, blob_sha, sha) = self.store_content(bytes)?;
+        self.touched.borrow_mut().entry(node_id).or_insert(Initial { path: None, sha: None });
+        self.conn
+            .execute(
+                "UPDATE nodes SET path = ?1, path_key = ?2, parent_key = ?3, inline = ?4, blob_sha = ?5, size = ?6,
+                                  sha = ?7, purged_at = NULL, modified_at = ?8
+                 WHERE node_id = ?9",
+                params![stored, key, parent_key(&key), inline, blob_sha, bytes.len() as i64, sha, self.now, node_id],
             )
             .map_err(db_error)?;
         Ok(())

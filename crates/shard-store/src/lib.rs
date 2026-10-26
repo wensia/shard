@@ -12,7 +12,7 @@ mod store;
 pub mod transfer;
 
 pub use store::{
-    ChangeRecord, ChangesPage, Committed, ManifestEntry, VerifyReport, SqliteVfs, Store, StoreError, TxnRecord, WriteCtx,
-    DEFAULT_VIRTUAL_ROOT, INLINE_MAX, LockboxItemRaw,
+    ChangeRecord, ChangesPage, Committed, DeletedEntry, EraseReport, ManifestEntry, RevisionInfo, VerifyReport, SqliteVfs,
+    Store, StoreError, TxnRecord, WriteCtx, DEFAULT_VIRTUAL_ROOT, INLINE_MAX, LockboxItemRaw, PURGED_HISTORY_DAYS,
 };
 pub use shard_core::{sha256_hex, EntryKind, FsVfs, Vfs, VfsDirEntry, VfsMetadata};

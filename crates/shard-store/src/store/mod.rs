@@ -10,6 +10,7 @@
 //! 单写者（进程内一把锁 + IMMEDIATE）保证提交顺序就是 seq 顺序，增量拉取不会漏数据。
 
 mod blobs;
+mod history;
 mod schema;
 mod sqlite_vfs;
 
@@ -24,6 +25,7 @@ use rand::RngCore;
 use rusqlite::{params, Connection, OptionalExtension};
 
 pub use blobs::INLINE_MAX;
+pub use history::{DeletedEntry, EraseReport, RevisionInfo, PURGED_HISTORY_DAYS};
 pub use sqlite_vfs::{LockboxItemRaw, SqliteVfs};
 
 use crate::projection::{project, Projection};
@@ -263,6 +265,21 @@ impl Store {
         Ok(epoch)
     }
 
+    /// 从读连接池借一条连接（没有就新开）。
+    fn with_reader<R>(&self, f: impl FnOnce(&Connection) -> Result<R, StoreError>) -> Result<R, StoreError> {
+        let conn = match self.readers.lock().expect("读连接池锁中毒").pop() {
+            Some(conn) => conn,
+            None => {
+                let conn = Connection::open(&self.content_path)?;
+                schema::configure(&conn)?;
+                conn
+            }
+        };
+        let result = f(&conn);
+        self.readers.lock().expect("读连接池锁中毒").push(conn);
+        result
+    }
+
     /// 只读快照：闭包里的写操作一律失败。
     pub fn read<R>(&self, f: impl FnOnce(&SqliteVfs<'_>) -> R) -> Result<R, StoreError> {
         let conn = match self.readers.lock().expect("读连接池锁中毒").pop() {
@@ -482,15 +499,7 @@ impl Store {
             .meta("changes_floor_seq")?
             .and_then(|value| value.parse().ok())
             .unwrap_or(0);
-        let conn = match self.readers.lock().expect("读连接池锁中毒").pop() {
-            Some(conn) => conn,
-            None => {
-                let conn = Connection::open(&self.content_path)?;
-                schema::configure(&conn)?;
-                conn
-            }
-        };
-        let page = (|| -> Result<ChangesPage, StoreError> {
+        self.with_reader(|conn| {
             let head_seq: i64 =
                 conn.query_row("SELECT COALESCE(MAX(seq), 0) FROM changes", [], |row| row.get(0))?;
             let mut statement = conn.prepare_cached(
@@ -511,9 +520,7 @@ impl Store {
             let more = changes.len() > limit;
             changes.truncate(limit);
             Ok(ChangesPage { vault_id, epoch, floor_seq, head_seq, changes, more })
-        })();
-        self.readers.lock().expect("读连接池锁中毒").push(conn);
-        page
+        })
     }
 }
 
