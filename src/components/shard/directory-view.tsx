@@ -30,6 +30,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
 import { formatBytes, formatModifiedAt } from "@/lib/file-metadata"
+import { useMediaQuery } from "@/lib/use-media-query"
 import {
   libraryEntryName,
   libraryEntryTypeLabel,
@@ -44,6 +45,8 @@ import styles from "./directory-view.module.css"
 export type DirectoryViewMode = "grid" | "list"
 
 export const DIRECTORY_VIEW_STORAGE_KEY = "shard.library-directory-view"
+/** 手机宽度：列表视图收成单列卡片（kiln Mobile Cards），只留名称、类型与修改时间和「…」。 */
+const DIRECTORY_CARD_LAYOUT_QUERY = "(width < 40rem)"
 const DIRECTORY_SORT_STORAGE_KEY = "shard.library-directory-sort"
 const SORT_OPTIONS: { key: LibrarySortKey; label: string }[] = [
   { key: "name", label: "名称" },
@@ -349,6 +352,7 @@ export function DirectoryView({
   viewMode,
 }: DirectoryViewProps) {
   const [openMenu, setOpenMenu] = useState<string | null>(null)
+  const cardLayout = useMediaQuery(DIRECTORY_CARD_LAYOUT_QUERY)
   const sortedEntries = useMemo(() => sortLibraryEntries(entries, sort), [entries, sort])
   const selectedCount = sortedEntries.filter((entry) => selection?.paths.has(entry.path)).length
   const handleEntryClick = (entry: LibraryTreeEntry, event: MouseEvent<HTMLElement>) => {
@@ -460,11 +464,14 @@ export function DirectoryView({
     )
   }
 
+  // 卡片布局：不渲染表头（排序走工具栏的排序菜单），多选时才有勾选列。
+  const showSelectionColumn = selection ? !cardLayout || selection.active : false
   return wrapDirectory(
     <div
       aria-busy={busy}
       aria-label={`${path} 目录列表`}
       className={styles.list}
+      data-layout={cardLayout ? "cards" : undefined}
       style={bottomInset === undefined ? undefined : {
         paddingBottom: bottomInset,
         scrollPaddingBottom: bottomInset,
@@ -476,7 +483,7 @@ export function DirectoryView({
       tabIndex={selection ? 0 : undefined}
     >
       <table aria-label="目录文件" className={styles.listTable}>
-        <colgroup>
+        {cardLayout ? null : <colgroup>
           {selection ? <col className={styles.selectionColumn} /> : null}
           <col />
           <col className={styles.typeColumn} />
@@ -484,8 +491,8 @@ export function DirectoryView({
           <col className={styles.dateColumn} />
           <col className={styles.dateColumn} />
           <col className={styles.actionsColumn} />
-        </colgroup>
-        <thead>
+        </colgroup>}
+        {cardLayout ? null : <thead>
           <tr className={styles.listHeader}>
             {selection ? (
               <th className={styles.selectionCell} scope="col">
@@ -533,16 +540,24 @@ export function DirectoryView({
             })}
             <th scope="col"><span className="sr-only">操作</span></th>
           </tr>
-        </thead>
+        </thead>}
         <tbody>
           {sortedEntries.map((entry) => {
             const isRenaming = renaming?.path === entry.path
             const openable = isEntryOpenable(entry)
             const name = libraryEntryName(entry)
+            const modifiedAt = formatModifiedAt(entry.modifiedAt) || "未知"
             const fileName = (
               <span className={styles.nameCell} title={entry.name}>
                 <LibraryFileIcon kind={entry.kind} />
-                <span className={styles.nameText}>{name}</span>
+                {cardLayout ? (
+                  <span className={styles.nameStack}>
+                    <span className={styles.nameText}>{name}</span>
+                    <span className={styles.nameMeta}>
+                      {libraryEntryTypeLabel(entry.kind)} · {modifiedAt}
+                    </span>
+                  </span>
+                ) : <span className={styles.nameText}>{name}</span>}
               </span>
             )
             return wrapEntry(entry,
@@ -553,7 +568,7 @@ export function DirectoryView({
                 key={entry.path}
                 onClick={(event) => handleEntryClick(entry, event)}
               >
-                {selection ? (
+                {selection && showSelectionColumn ? (
                   <td className={styles.selectionCell} onClick={(event) => event.stopPropagation()}>
                     <span className={styles.selectionControl}>
                       <Checkbox
@@ -597,16 +612,16 @@ export function DirectoryView({
                     </button>
                   ) : fileName}
                 </td>
-                <td>{libraryEntryTypeLabel(entry.kind)}</td>
-                <td className={styles.sizeCell}>
-                  {entry.kind === "directory" ? "—" : formatBytes(entry.size)}
-                </td>
-                <td className={styles.numericCell}>
-                  {formatModifiedAt(entry.createdAt ?? "") || "未知"}
-                </td>
-                <td className={styles.numericCell}>
-                  {formatModifiedAt(entry.modifiedAt) || "未知"}
-                </td>
+                {cardLayout ? null : <>
+                  <td>{libraryEntryTypeLabel(entry.kind)}</td>
+                  <td className={styles.sizeCell}>
+                    {entry.kind === "directory" ? "—" : formatBytes(entry.size)}
+                  </td>
+                  <td className={styles.numericCell}>
+                    {formatModifiedAt(entry.createdAt ?? "") || "未知"}
+                  </td>
+                  <td className={styles.numericCell}>{modifiedAt}</td>
+                </>}
                 <td className={styles.actionsCell} onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}>
                   {isRenaming ? null : renderEntryMenu(entry)}
                 </td>

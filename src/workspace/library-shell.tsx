@@ -100,6 +100,7 @@ import { libraryEntryName, libraryNameError, type LibrarySort } from "@/lib/libr
 import { isImageFilePath, useNativeFileDrop } from "@/lib/use-native-file-drop"
 import { notify } from "@/lib/notify"
 import { isWebRuntime } from "@/lib/transport"
+import { isTouchWeb } from "@/lib/touch"
 import { fileBytes, IMAGE_FILE_ACCEPT, pickFiles } from "@/lib/web-files"
 import { readOutlineContent } from "@/lib/mind-map-outline"
 import { useLibraryFileSelection } from "@/lib/use-library-file-selection"
@@ -1078,6 +1079,10 @@ export function LibraryShell({
     return separator > 0 ? path.slice(0, separator) : "notes"
   })()
 
+  const hasContentBack =
+    (!directoryScope && selection?.kind !== "trash" && Boolean(openedFileParentPath)) ||
+    (Boolean(selectedAsset) && (selection?.kind === "image" || (selection?.kind === "assets" && Boolean(selection.path))))
+
   const selectedTitle =
     selection?.kind === "trash"
         ? "回收站"
@@ -1915,7 +1920,8 @@ export function LibraryShell({
             <ShardRichEditor
               ref={richNoteEditor}
               ariaLabel={selectedNote.path.startsWith("fragments/") ? "资料库碎片编辑器" : "资料库文档编辑器"}
-              autoFocus={zen || mobilePane === "editor"}
+              // 网页触屏：打开文档先只读式展示，点正文才进入编辑（否则一打开就弹软键盘）。
+              autoFocus={!isTouchWeb() && (zen || mobilePane === "editor")}
               editorId={`library:${selectedNote.id}`}
               findable
               getKnownTags={() => knownTagsRef.current}
@@ -2203,16 +2209,19 @@ export function LibraryShell({
           onKeyDown={directoryScope ? fileSelection.onKeyDown : undefined}
         >
           <div className={styles.editorHeader} data-tauri-drag-region>
-            <Button
-              aria-label="返回资料库目录"
-              className={styles.mobileBackButton}
-              onClick={() => setMobilePane("list")}
-              size="icon-sm"
-              type="button"
-              variant="ghost"
-            >
-              <ChevronLeftIcon aria-hidden="true" />
-            </Button>
+            {/* 窄屏只留一个返回：打开了文件有「返回所在目录」、图片查看器自带返回时，不再叠一个回目录树的。 */}
+            {hasContentBack ? null : (
+              <Button
+                aria-label="返回资料库目录"
+                className={styles.mobileBackButton}
+                onClick={() => setMobilePane("list")}
+                size="icon-sm"
+                type="button"
+                variant="ghost"
+              >
+                <ChevronLeftIcon aria-hidden="true" />
+              </Button>
+            )}
             {directoryScope ? (
               <DirectoryViewToolbar
                 action={

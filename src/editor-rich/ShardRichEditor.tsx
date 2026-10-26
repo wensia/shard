@@ -1,6 +1,6 @@
 import Placeholder from "@tiptap/extension-placeholder"
 import { EditorContent, useEditor } from "@tiptap/react"
-import type { AnyExtension, Editor, JSONContent } from "@tiptap/core"
+import { isAndroid, isiOS, isSafari, type AnyExtension, type Editor, type FocusPosition, type JSONContent } from "@tiptap/core"
 import { undoDepth } from "@tiptap/pm/history"
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model"
 import {
@@ -553,7 +553,7 @@ export const ShardRichEditor = forwardRef<ShardRichEditorHandle, ShardRichEditor
     useEffect(() => {
       if (!editor) return
       return registerShardRichEditorTest(editorId, {
-        focus: () => editor.commands.focus(),
+        focus: () => focusEditor(editor),
         getMarkdown: () =>
           serializeShardMarkdown(editor.getJSON() as JSONContent, frontmatterRef.current),
         isComposing: () => editor.view.composing,
@@ -622,7 +622,7 @@ export const ShardRichEditor = forwardRef<ShardRichEditorHandle, ShardRichEditor
 
     useEffect(() => {
       if (!editor || !autoFocus) return
-      editor.commands.focus("end", { scrollIntoView: variant !== "inline" })
+      focusEditor(editor, "end", { scrollIntoView: variant !== "inline" })
       if (variant !== "inline") return
       // 行内编辑只在正文容器内显示末尾光标；默认选区定位会连带滚动碎片流
       // 和 overflow:hidden 的外壳，导致点击编辑时整块内容突然上移。
@@ -670,7 +670,7 @@ export const ShardRichEditor = forwardRef<ShardRichEditorHandle, ShardRichEditor
           if (instance) applyRichLineFormat(instance, format)
         },
         focus() {
-          editorRef.current?.commands.focus()
+          if (editorRef.current) focusEditor(editorRef.current)
         },
         getMarkdown() {
           // 宿主读正文即「要用这份内容了」：先把手打的标签与双链收敛成节点，
@@ -800,6 +800,22 @@ function pasteShardMarkdown(editor: Editor, event: ClipboardEvent) {
     .setMeta(SKIP_INLINE_CONVERGE, true)
     .run()
   return true
+}
+
+/**
+ * tiptap 的 focus 命令在 iOS / Android / Safari 上会在命令内部、派发事务之前同步调用 view.dom.focus()。
+ * 聚焦会同步通知宿主，宿主可能借这一拍换掉正文（replaceMarkdown → updateState）；命令手里那笔
+ * 基于旧文档的事务随后派发，ProseMirror 抛 "Applying a mismatched transaction"，整页白屏
+ * （手机网页上先开一篇带数据表的文档、再开另一篇即可复现）。先把 DOM 焦点给到编辑区，命令再基于
+ * 最新状态设置选区。其他平台 tiptap 本来就推迟到下一帧才聚焦，这里不做任何事。
+ */
+function focusEditor(editor: Editor, position: FocusPosition = null, options?: { scrollIntoView?: boolean }) {
+  if (editor.isDestroyed) return
+  if ((isiOS() || isAndroid() || isSafari()) && !editor.view.hasFocus()) {
+    editor.view.dom.focus({ preventScroll: true })
+    if (editor.isDestroyed) return
+  }
+  editor.commands.focus(position, options)
 }
 
 function findEditorScrollViewport(editorElement: HTMLElement | null) {

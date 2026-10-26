@@ -6,6 +6,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import App from "./App";
 import { installFocusNavigation } from "./lib/focus-navigation";
 import { initAccentTheme, initColorMode } from "./lib/theme";
+import { installVisualViewportSync } from "./lib/visual-viewport";
 import "./index.css";
 import "@fontsource/noto-sans-sc/400.css";
 import "@fontsource/noto-sans-sc/500.css";
@@ -16,6 +17,8 @@ initColorMode();
 
 // 桌面与网页的外壳差异（红绿灯避让等）由根元素上的这个标记切换。
 document.documentElement.dataset.runtime = isTauri() ? "desktop" : "web";
+// 网页端：软键盘弹出时外壳收缩到可视区，光标与输入框不被键盘盖住。
+if (!isTauri()) installVisualViewportSync();
 
 // managed-navigation：Tab 只在编辑区边界兜底，外壳控件恢复原生轮转；F6 切换工作区域。
 installFocusNavigation();

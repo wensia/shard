@@ -77,8 +77,9 @@
   display: flex;
   align-items: center;
   gap: var(--space-2);
+  /* 网页端没有红绿灯（避让宽度为 0）：至少留出 kiln Mobile Shell 的 16px 内容边距，标题不贴屏幕边。 */
   padding: var(--space-2) var(--space-4) var(--space-2)
-    var(--shard-traffic-light-clearance);
+    max(var(--shard-traffic-light-clearance), var(--space-4));
 }
 
 .paneHeader {

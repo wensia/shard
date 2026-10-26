@@ -292,6 +292,13 @@
   line-height: var(--leading-tight);
 }
 
+/* 网页触屏的输入字号下限（index.css）会把所有 textarea 压到 16px；标题本来更大，保留原值。 */
+@media (hover: none) and (pointer: coarse) {
+  :global(:root[data-runtime="web"]) .titleInput.titleInput {
+    font-size: max(var(--outline-title-size), var(--shard-touch-input-font-size));
+  }
+}
+
 .noteInput {
   min-height: var(--space-6);
   padding-block: var(--space-1);
@@ -315,6 +322,14 @@
 .row:focus-within .actionsRow,
 .actionsRow:has([aria-expanded="true"]) {
   opacity: 1;
+}
+
+/* 触屏没有悬停：折叠开关与行菜单常显。 */
+@media (hover: none) {
+  .branchToggle,
+  .actionsRow {
+    opacity: 1;
+  }
 }
 
 .actionsRow > button {

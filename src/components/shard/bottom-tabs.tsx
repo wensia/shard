@@ -90,6 +90,76 @@ export function BottomTabs({
   const counts = {
     all: activeFragments.length,
   }
+  const menuContent = (
+    <DropdownMenuContent align="end" side="top" style={{ width: 160 }}>
+      <BottomMenuItem
+        icon={SearchIcon}
+        label="搜索笔记"
+        onSelect={onOpenSearch}
+      />
+      <DropdownMenuSeparator />
+      <BottomMenuItem
+        icon={SettingsIcon}
+        label="设置"
+        onSelect={onOpenSettings}
+      />
+      <BottomMenuItem
+        icon={KeyboardIcon}
+        label="快捷键"
+        onSelect={onShortcuts}
+      />
+      <BottomMenuItem
+        icon={HelpCircleIcon}
+        label="帮助"
+        onSelect={onHelp}
+      />
+    </DropdownMenuContent>
+  )
+  const spaceTabs = SPACE_TABS.map((item) => {
+    const Icon = item.icon
+    const isActive = item.id === route.space
+
+    return (
+      <button
+        aria-current={isActive ? "page" : undefined}
+        className="shard-tab"
+        key={item.id}
+        onClick={() => onRouteChange(item.route)}
+        type="button"
+      >
+        <Icon aria-hidden="true" />
+        <TabLabel>{item.label}</TabLabel>
+      </button>
+    )
+  })
+
+  // 网页手机端（kiln Mobile Shell）：底部只有一行导航。品牌行（版本、资料库路径都没有可看的）
+  // 与只有「全部」一项的二级页签不进底栏；「更多」做成同高的第三个页签，整行都是 44px 触控区。
+  if (isWebRuntime()) {
+    return (
+      <footer className={styles.webBar}>
+        <nav aria-label="工作台" className={`shard-tabs ${styles.webNav}`} data-size="nav">
+          {spaceTabs}
+          <DropdownMenu open={isMenuOpen} onOpenChange={setIsMenuOpen}>
+            <DropdownMenuTrigger
+              render={
+                <button
+                  aria-label="更多操作"
+                  className="shard-tab"
+                  data-shard-utility-menu-trigger
+                  type="button"
+                />
+              }
+            >
+              <MoreHorizontalIcon aria-hidden="true" />
+              <TabLabel>更多</TabLabel>
+            </DropdownMenuTrigger>
+            {menuContent}
+          </DropdownMenu>
+        </nav>
+      </footer>
+    )
+  }
 
   return (
     <footer
@@ -145,44 +215,25 @@ export function BottomTabs({
             className="flex items-center justify-end gap-2"
             style={{ minWidth: 0, color: "var(--muted-foreground)" }}
           >
-            {/* 网页端的 vaultPath 只是服务器身份标识，没有可看的本机路径。 */}
-            {isWebRuntime() ? null : (
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <span className={`${styles.vaultPath} ${styles.truncate}`} />
-                  }
-                >
-                  {vaultPath || "Vault not loaded"}
-                </TooltipTrigger>
-                <TooltipContent side="top">
-                  {vaultPath || "Vault not loaded"}
-                </TooltipContent>
-              </Tooltip>
-            )}
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <span className={`${styles.vaultPath} ${styles.truncate}`} />
+                }
+              >
+                {vaultPath || "Vault not loaded"}
+              </TooltipTrigger>
+              <TooltipContent side="top">
+                {vaultPath || "Vault not loaded"}
+              </TooltipContent>
+            </Tooltip>
           </div>
         </div>
 
         <div className="flex items-end gap-2">
           <div className={styles.navigationStack}>
             <nav aria-label="工作台" className="shard-tabs" data-size="nav">
-              {SPACE_TABS.map((item) => {
-                const Icon = item.icon
-                const isActive = item.id === route.space
-
-                return (
-                  <button
-                    aria-current={isActive ? "page" : undefined}
-                    className="shard-tab"
-                    key={item.id}
-                    onClick={() => onRouteChange(item.route)}
-                    type="button"
-                  >
-                    <Icon aria-hidden="true" />
-                    <TabLabel>{item.label}</TabLabel>
-                  </button>
-                )
-              })}
+              {spaceTabs}
             </nav>
 
             {route.space === "fragments" ? (
@@ -231,29 +282,7 @@ export function BottomTabs({
               <MoreHorizontalIcon aria-hidden="true" />
               <span className="sr-only">更多操作</span>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" side="top" style={{ width: 160 }}>
-              <BottomMenuItem
-                icon={SearchIcon}
-                label="搜索笔记"
-                onSelect={onOpenSearch}
-              />
-              <DropdownMenuSeparator />
-              <BottomMenuItem
-                icon={SettingsIcon}
-                label="设置"
-                onSelect={onOpenSettings}
-              />
-              <BottomMenuItem
-                icon={KeyboardIcon}
-                label="快捷键"
-                onSelect={onShortcuts}
-              />
-              <BottomMenuItem
-                icon={HelpCircleIcon}
-                label="帮助"
-                onSelect={onHelp}
-              />
-            </DropdownMenuContent>
+            {menuContent}
           </DropdownMenu>
         </div>
       </div>

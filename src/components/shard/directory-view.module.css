@@ -302,3 +302,88 @@
   color: var(--muted-foreground);
   font-size: var(--text-body);
 }
+
+/*
+ * 手机宽度的列表视图：单列卡片（kiln Mobile Cards）。每行只答「是什么、什么类型、何时改过、
+ * 还能做什么」，不出现横向滚动；排序走工具栏的排序菜单，勾选列只在多选时出现。
+ * 是否进入卡片布局由 directory-view.tsx 按 (width < 40rem) 决定并写在 data-layout 上。
+ */
+.list[data-layout="cards"] .listTable,
+.list[data-layout="cards"] tbody {
+  display: block;
+  min-width: 0;
+}
+
+.list[data-layout="cards"] .listRow {
+  display: flex;
+  height: auto;
+  min-height: calc(var(--space-12) + var(--space-2));
+  align-items: center;
+}
+
+.list[data-layout="cards"] .listRow td {
+  display: block;
+  padding-block: var(--space-2);
+}
+
+.list[data-layout="cards"] .listRow td:not(.selectionCell, .actionsCell) {
+  min-width: 0;
+  flex: 1;
+}
+
+.list[data-layout="cards"] .listRow td.selectionCell {
+  width: calc(var(--space-8) + var(--space-2));
+  flex: none;
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.list[data-layout="cards"] .actionsCell {
+  flex: none;
+  padding-right: var(--space-2);
+  padding-left: 0;
+}
+
+/* 「…」本身是小号图标按钮，触控热区外扩到 44px（kiln：高频触控 40-44px）。 */
+.list[data-layout="cards"] .actionsCell button {
+  position: relative;
+}
+
+.list[data-layout="cards"] .actionsCell button::after {
+  position: absolute;
+  inset: calc(var(--space-2) * -1);
+  content: "";
+}
+
+.nameStack {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-0\.5);
+}
+
+.nameMeta {
+  overflow: hidden;
+  color: var(--muted-foreground);
+  font-size: var(--text-meta);
+  font-weight: var(--weight-regular);
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 触屏长按开菜单（library-entry-menu.tsx）：按住条目不弹系统的选字放大镜与链接预览。 */
+@media (hover: none) {
+  :global([data-library-context-menu]) {
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  :global([data-library-context-menu]) :is(input, textarea) {
+    -webkit-user-select: text;
+    user-select: text;
+  }
+}

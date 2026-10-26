@@ -55,3 +55,18 @@
 .spin {
   animation: spin 1s linear infinite;
 }
+
+/* 网页手机端（kiln Mobile Shell）：一行导航贴着底边，页签高度就是整条栏的高度；
+   iPhone 底部横条的安全区由 App.module.css 的 .bottomTabsSlot 让出。 */
+.webBar {
+  flex-shrink: 0;
+  border-top: 1px solid var(--border);
+  background: var(--sidebar);
+  padding-inline: var(--shard-space-4);
+}
+
+.webNav {
+  width: 100%;
+  max-width: calc(var(--space-12) * 15);
+  margin-inline: auto;
+}

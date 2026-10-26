@@ -445,7 +445,11 @@ test("窄屏资料库默认显示文件，并支持返回目录与打开文档",
   await editor.getByRole("region", { name: "notes 目录列表", exact: true })
     .getByRole("button", { name: "打开文件 最近更新的笔记.md", exact: true })
     .click()
-  await expect(page.getByRole("button", { name: "返回资料库目录" })).toBeVisible()
+  // 打开文件后标题栏只留一个返回：先回所在目录，再从目录回目录树。
+  await expect(editor.locator('button[aria-label^="返回"]')).toHaveCount(1)
+  await expect(page.getByRole("button", { name: "返回资料库目录" })).toHaveCount(0)
+  await page.getByRole("button", { name: "返回所在目录", exact: true }).click()
+  await expect(editor.getByRole("region", { name: "notes 目录列表", exact: true })).toBeVisible()
 
   await page.getByRole("button", { name: "返回资料库目录" }).click()
   await expect(list).toBeVisible()

@@ -13,6 +13,7 @@ import { getApiErrorMessage, saveFragmentImage, saveImageAttachmentFromPath } fr
 import { isImageFilePath, useNativeFileDrop } from "@/lib/use-native-file-drop"
 import { IMAGE_ROW_HEIGHT, imageCell, imageCellRenderer, isImageCell, isLocalImageRef, isRemoteImageRef, parseCellImageRefs, withAddedImages } from "./image-cell"
 import { notify } from "@/lib/notify"
+import { isTouchWeb } from "@/lib/touch"
 import { applyDatasetOps as saveDatasetOps, existingVaultImages, isStaleBaseError, normalizeCsvFile, readDataset } from "./api"
 import { applyDatasetOps, DatasetOpError, invertDatasetOps, newRowId } from "./ops"
 import type { CsvTable, DatasetOp, DatasetSnapshot } from "./types"
@@ -39,6 +40,8 @@ function explicitCells(ops: DatasetOp[]): number {
 
 /** The parent awaits flush before unmounting or changing path. */
 export const DatasetEditor = forwardRef<DatasetEditorHandle, DatasetEditorProps>(function DatasetEditor({ path, onSnapshot }, ref) {
+  // 网页触屏：点一下选中、再点一下编辑（双击要求两下够快，手指不好控）；桌面保持双击。
+  const [touchWeb] = useState(isTouchWeb)
   const host = useRef<HTMLDivElement>(null)
   const grid = useRef<DataEditorRef>(null)
   // Glide 的单元格编辑浮层必须渲染进 portal；页面没有 #portal，缺了它双击/打字都打不开编辑框。
@@ -462,7 +465,7 @@ export const DatasetEditor = forwardRef<DatasetEditorHandle, DatasetEditorProps>
     <div className="min-h-0 min-w-0 flex-1" aria-busy={loading} data-dataset-grid>
       {loading && !table ? <div className="p-[var(--space-4)]" role="status">正在读取数据集…</div> : !table ? <div className="p-[var(--space-4)]">无法打开数据集</div> : metrics && <DataEditor ref={grid} width="100%" height="100%" columns={columns} rows={table.rows.length} getCellContent={getCellContent} getCellsForSelection={true}
         theme={metrics.theme} rowHeight={rowHeight} headerHeight={metrics.headerHeight} customRenderers={IMAGE_RENDERERS} headerIcons={{ lock: ({ bgColor }) => `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="${bgColor}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>` }}
-        rowMarkers={{ kind: "both", width: metrics.headerHeight }} rowSelect="multi" rowSelectionMode="multi" columnSelect="none" rangeSelect="rect" cellActivationBehavior="double-click"
+        rowMarkers={{ kind: "both", width: metrics.headerHeight }} rowSelect="multi" rowSelectionMode="multi" columnSelect="none" rangeSelect="rect" cellActivationBehavior={touchWeb ? "second-click" : "double-click"}
         onCellActivated={() => {
           // Glide 已决定打开编辑框（它在打开前回调）；只作最后保险的超时，正常由挂载或结束编辑清空。
           typed.current = ""

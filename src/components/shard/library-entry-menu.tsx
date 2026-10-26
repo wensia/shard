@@ -1,6 +1,8 @@
 import { Menu } from "@base-ui/react/menu"
-import { cloneElement, createContext, type HTMLAttributes, type KeyboardEvent, type MouseEvent, type ReactElement, type ReactNode, useContext, useId, useRef, useState } from "react"
+import { cloneElement, createContext, type HTMLAttributes, type KeyboardEvent, type MouseEvent, type PointerEvent, type ReactElement, type ReactNode, useContext, useId, useRef, useState } from "react"
 import { createPortal } from "react-dom"
+
+import { useLongPress } from "@/lib/use-long-press"
 
 import { ArchiveRestoreIcon, FileTextIcon, FolderIcon, ImageIcon, InboxIcon, LockKeyholeIcon, MoreHorizontalIcon, PencilLineIcon, Trash2Icon } from "@/components/icons"
 import { Button } from "@/components/ui/button"
@@ -139,22 +141,47 @@ export function FileContextMenu({ busy, children, content, hasEntryTrigger = fal
     onOpenChange?.(next)
     if (next) onPrepare?.()
   }
-  function openAt(event: MouseEvent<HTMLElement> | KeyboardEvent<HTMLElement>, x: number, y: number) {
-    event.preventDefault()
-    event.stopPropagation()
-    focusTarget.current = event.target instanceof HTMLElement && event.target.closest("button, [tabindex]") || event.currentTarget
+  function openAtPoint(target: EventTarget | null, fallback: HTMLElement, x: number, y: number) {
+    focusTarget.current = target instanceof HTMLElement && target.closest<HTMLElement>("button, [tabindex]") || fallback
     restoreFocus.current = false
     setAnchor({ getBoundingClientRect: () => new DOMRect(x, y, 0, 0) })
     handle.open(triggerId)
   }
+  function openAt(event: MouseEvent<HTMLElement> | KeyboardEvent<HTMLElement>, x: number, y: number) {
+    event.preventDefault()
+    event.stopPropagation()
+    openAtPoint(event.target, event.currentTarget, x, y)
+  }
+  // 触屏长按 = 右键：iOS 不派发 contextmenu，同一个菜单靠长按打开。
+  const longPress = useLongPress(({ x, y, target, currentTarget }) => {
+    if (busy || isEditing(target)) return false
+    openAtPoint(target, currentTarget, x, y)
+  })
   const triggerProps = {
     "data-library-context-menu": "",
     "data-popup-open": isOpen ? "" : undefined,
     tabIndex: trigger.props.tabIndex ?? -1,
+    onPointerDown(event: PointerEvent<HTMLElement>) {
+      trigger.props.onPointerDown?.(event)
+      longPress.onPointerDown(event)
+    },
+    onPointerMove(event: PointerEvent<HTMLElement>) {
+      trigger.props.onPointerMove?.(event)
+      longPress.onPointerMove(event)
+    },
+    onPointerUp(event: PointerEvent<HTMLElement>) {
+      trigger.props.onPointerUp?.(event)
+      longPress.onPointerUp()
+    },
+    onPointerCancel(event: PointerEvent<HTMLElement>) {
+      trigger.props.onPointerCancel?.(event)
+      longPress.onPointerCancel()
+    },
     onContextMenu(event: MouseEvent<HTMLElement>) {
       trigger.props.onContextMenu?.(event)
       if (event.defaultPrevented || busy) return
       if (isEditing(event.target)) { event.stopPropagation(); return }
+      longPress.takeOverByContextMenu()
       openAt(event, event.clientX, event.clientY)
     },
     onKeyDown(event: KeyboardEvent<HTMLElement>) {

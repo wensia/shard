@@ -358,6 +358,15 @@
   opacity: 1;
 }
 
+/* 触屏没有悬停：视图工具、列菜单与行操作常显，否则手指找不到它们。 */
+@media (hover: none) {
+  .block[data-view-active="false"] > .header .controls,
+  .columnMenuButton,
+  .rowAction {
+    opacity: 1;
+  }
+}
+
 .actionCell {
   position: sticky;
   z-index: 1;

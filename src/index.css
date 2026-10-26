@@ -223,6 +223,8 @@
     --shard-icon-stroke-sm: 1.75;
     /* 键盘焦点环外扩距离；overflow 裁切的容器设为负值（内收），见焦点块 */
     --shard-focus-offset: 2px;
+    /* iOS Safari 聚焦字号小于 16px 的输入框 / 可编辑区会把整页放大；网页触屏上的输入字号下限。 */
+    --shard-touch-input-font-size: 16px;
 }
 
 [data-shard-selection-band]::selection,
@@ -353,6 +355,19 @@
 /* 网页端没有 macOS 红绿灯：侧栏折叠或无侧栏时不必给它让出左边的空位。 */
 :root[data-runtime="web"] {
   --shard-traffic-light-clearance: 0px;
+}
+
+/* 网页触屏（手机、平板浏览器）：输入框与编辑器正文不小于 --shard-touch-input-font-size，
+   聚焦时 iOS 不再自动放大页面。卡片正文与编辑器共用 memo 字号，一起放大，点进编辑不跳字号。
+   字号本来就更大的输入（大纲标题）在各自模块里保留原值。桌面与鼠标设备不受影响。 */
+@media (hover: none) and (pointer: coarse) {
+  :root[data-runtime="web"] {
+    --shard-memo-font-size: var(--shard-touch-input-font-size);
+  }
+
+  :root[data-runtime="web"] :is(input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="file"]), textarea, select) {
+    font-size: var(--shard-touch-input-font-size);
+  }
 }
 
 :root:not([data-focus-mode="keyboard"]) {
