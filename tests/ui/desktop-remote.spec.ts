@@ -464,6 +464,16 @@ test.describe("离线（S8b）", () => {
     expect(await serverCommands(page)).toContain("set_fragment_archived")
   })
 
+  test("离线修改没能上传（条目已移入密匣）：提示原话与另存位置", async ({ page }) => {
+    await installDesktopRemoteMock(page, { connected: true, sync: ONLINE })
+    await page.goto("/")
+    await expect(card(page)).toBeVisible()
+    const message = "这条已移入密匣，离线时的修改没有上传，已另存在本机：/Users/me/remote-recovered/unsent-x.md"
+    await emit(page, "sync-failed", { command: "update_fragment", target: `fragment:${RIDE}`, message })
+    await expect(page.getByText("有离线修改没能上传")).toBeVisible()
+    await expect(page.getByText(message)).toBeVisible()
+  })
+
   test("补交时另存了冲突副本：提示两份都在", async ({ page }) => {
     await installDesktopRemoteMock(page, { connected: true, sync: ONLINE })
     await page.goto("/")

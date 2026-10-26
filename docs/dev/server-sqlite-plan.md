@@ -295,10 +295,20 @@ set_fragment_pinned、set/remove_fragment_property、save_fragment_image（内�
 **一轮同步**（单飞）：
 1. 拉：changes 按 key 合并，批量取内容，本地事务写入，提交后才推进游标。410 或 epoch 变化 → manifest 全量对账；
    副本里「服务器没有、且 seq 大于服务器 head」的条目作为冲突安全的新建排进待推（恢复备份后找回 T 之后的数据）。
+   - 找回范围（S8b v1）：只自动推回碎片（`fragments/`，服务器没有的按原 id 与创建时间重建；服务器有较旧版本的另存
+     冲突副本）与图片附件（`assets/`）；笔记、数据集、导图等只把原文另存到本机 `remote-recovered/restore-<epoch>/`，
+     重建的碎片不带置顶、属性、关系（原文同样另存一份）。只有 epoch 变了、vault_id 没变才算恢复备份；
+     同一 epoch 下的 410（移入密匣、立即抹除推进了保留下限）只按清单删改副本，不推回。
+   - 局限：判断依据是「seq 大于恢复后服务器的 head」。恢复后、客户端对账之前服务器上又有了新写入时，head 已经涨过，
+     恢复点之后写下、旧 seq 落在这段区间里的条目会被当成恢复点之前的，可能漏判（原文仍在本机副本里，直到对账删除）。
 2. 推：按 op_seq 重放，同一 op_id。2xx 确认；有 blob 依赖先 PUT。409 STALE_BASE → 用本地内容
    `create_fragment{conflictOf, operationId: op_id + ":conflict"}`（冲突副本 id 由 op_id 确定性派生，重试不重复），
-   原操作标 conflicted；404（服务器已删除）同样走冲突副本，**绝不复活**；其他 4xx 标 failed 并显示；
+   原操作标 conflicted；404（服务器已删除，以状态码为准）同样走冲突副本，**绝不复活**；其他 4xx 标 failed 并显示；
    5xx 或网络错误指数退避（1–60 秒，带抖动），op_id 不变。
+   - 移入了密匣（409 `LOCKBOX_UNAVAILABLE`，或服务器已没有且 id 在刚取的密匣快照里）：**绝不发任何公开写**，
+     标 failed，本地内容另存本机；取不到快照、拿不准时留在队列里下轮再判。
+   - 5xx 只挡住同一目标后面的操作，其他目标照常；同一条连续出错 8 次且距第一次已超过 1 小时就标 failed
+     （内容另存本机），不无限重试。网络不通整轮停下转离线，不计入出错次数。
 3. 再拉一次；某 key 的操作全部确认后丢掉它的 overlay；向前端发同形 `vault-changed` 与 `sync-status`。
 
 **重连**：SSE 用 fetch 流（能读到 401），1–60 秒退避；macOS 唤醒与网络变化主动同步一次。

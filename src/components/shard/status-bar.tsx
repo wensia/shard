@@ -493,7 +493,7 @@ function RemoteSyncCounts({ sync }: { sync: RemoteSyncStatus }) {
           </TooltipTrigger>
           <TooltipContent side="top">
             <span className={styles.errorDetail}>
-              服务器拒绝了这些离线修改，不会再自动重试；内容仍保存在本机。点一下表示已看过。
+              这些离线修改没能上传（服务器拒绝、一直出错，或条目已移入密匣），不会再自动重试；内容已另存在本机。点一下表示已看过。
             </span>
           </TooltipContent>
         </Tooltip>

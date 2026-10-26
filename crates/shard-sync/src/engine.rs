@@ -37,11 +37,22 @@ pub struct EngineOptions {
     /// 新建内容的 `source`；与服务器给配对桌面记的一致（desktop），离线新建与补交后的字节才一样。
     pub source: String,
     pub device_id: String,
+    /// 同一条操作服务器连续出错（5xx）到这么多次、并且距第一次出错已过 [`EngineOptions::server_failure_window`]，
+    /// 就标为失败、不再重试（内容另存本机）。两个条件都要满足：服务器短暂宕机（网关 502/503）不至于把整队操作判死。
+    pub max_server_failures: i64,
+    pub server_failure_window: std::time::Duration,
 }
 
 impl EngineOptions {
     pub fn new(dir: impl Into<PathBuf>) -> Self {
-        Self { dir: dir.into(), recovered_dir: None, source: "desktop".to_string(), device_id: String::new() }
+        Self {
+            dir: dir.into(),
+            recovered_dir: None,
+            source: "desktop".to_string(),
+            device_id: String::new(),
+            max_server_failures: 8,
+            server_failure_window: std::time::Duration::from_secs(60 * 60),
+        }
     }
 }
 
@@ -123,6 +134,11 @@ impl SyncError {
     pub(crate) fn is_network(&self) -> bool {
         matches!(self, SyncError::Remote(error) if error.is_retryable())
     }
+
+    /// 连一个 HTTP 响应都没拿到（网络不通）；网关 502–504 不算。
+    pub(crate) fn is_unreachable(&self) -> bool {
+        matches!(self, SyncError::Remote(error) if error.status.is_none())
+    }
 }
 
 impl std::fmt::Display for SyncError {
@@ -198,7 +214,7 @@ pub struct SyncEngine {
     /// 同步表的写连接（与副本内容同一个文件）。
     pub(crate) db: Mutex<Connection>,
     /// 本地读用的连接：读 overlay 时不挡住补交线程。
-    reader: Mutex<Connection>,
+    pub(crate) reader: Mutex<Connection>,
     /// 本机可见内容（副本 ∪ overlay）的读写锁：本地写、拉取写副本、收敛丢 overlay 取写锁，本地读取读锁。
     pub(crate) local: RwLock<()>,
     /// 单飞：同一时刻只跑一轮同步。
@@ -526,7 +542,7 @@ impl SyncEngine {
     }
 
     /// 在线读到的、离线时还要用的服务器信息。
-    fn observe(&self, command: &str, value: &Value) {
+    pub(crate) fn observe(&self, command: &str, value: &Value) {
         let conn = lock(&self.db);
         match command {
             "list_fragments" => {

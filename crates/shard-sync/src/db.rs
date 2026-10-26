@@ -5,7 +5,7 @@
 //!   恢复备份后的对账要比的是服务器 seq（「seq 大于服务器 head 的是恢复点之后写的」）。
 //! - `overlay` 去掉 `scope`：本版密匣离线只读（缓存的密文快照），overlay 里只有公开内容。按 `path_key`
 //!   （NFC + 小写）做键，与内容库同一套大小写规则；另记显示用的路径、父目录键与时间，读目录、列树用。
-//! - `outbox` 加 `chained`、`target_path`、`utc_offset`、`dismissed`：见各列注释。
+//! - `outbox` 加 `chained`、`target_path`、`utc_offset`、`dismissed`、`fail_count`、`first_failed_at`：见各列注释。
 //! - `pending_blobs` 存字节本身（离线粘贴的图片在补交前只在这里）。
 
 use rusqlite::{params, Connection, OptionalExtension};
@@ -56,7 +56,9 @@ CREATE TABLE IF NOT EXISTS outbox (
   last_error TEXT,
   created_at TEXT NOT NULL,                   -- RFC 3339，带操作时的时区
   result_json TEXT,
-  dismissed INTEGER NOT NULL DEFAULT 0        -- 冲突 / 失败的提示已被用户看过
+  dismissed INTEGER NOT NULL DEFAULT 0,       -- 冲突 / 失败的提示已被用户看过
+  fail_count INTEGER NOT NULL DEFAULT 0,      -- 服务器连续出错（5xx）的次数；网络不通不算
+  first_failed_at TEXT                        -- 这一串服务器出错里第一次的时间
 );
 CREATE INDEX IF NOT EXISTS outbox_target ON outbox(target, op_seq);
 CREATE INDEX IF NOT EXISTS outbox_state ON outbox(state, op_seq);
@@ -93,7 +95,25 @@ pub(crate) fn open(path: &std::path::Path) -> rusqlite::Result<Connection> {
          PRAGMA busy_timeout = 10000;",
     )?;
     conn.execute_batch(SCHEMA)?;
+    migrate(&conn)?;
     Ok(conn)
+}
+
+/// 已有的同步表补上后来加的列（`CREATE TABLE IF NOT EXISTS` 不会给旧表加列）。
+fn migrate(conn: &Connection) -> rusqlite::Result<()> {
+    let columns: Vec<String> = conn
+        .prepare("SELECT name FROM pragma_table_info('outbox')")?
+        .query_map([], |row| row.get(0))?
+        .collect::<Result<_, _>>()?;
+    for (name, ddl) in [
+        ("fail_count", "ALTER TABLE outbox ADD COLUMN fail_count INTEGER NOT NULL DEFAULT 0"),
+        ("first_failed_at", "ALTER TABLE outbox ADD COLUMN first_failed_at TEXT"),
+    ] {
+        if !columns.iter().any(|column| column == name) {
+            conn.execute_batch(ddl)?;
+        }
+    }
+    Ok(())
 }
 
 #[derive(Clone, Debug, Default)]
@@ -161,10 +181,15 @@ pub(crate) struct OutboxRow {
     pub next_try_at: Option<String>,
     pub created_at: String,
     pub result: Option<Value>,
+    pub last_error: Option<String>,
+    /// 服务器连续出错的次数与第一次的时间（超过上限就不再重试）。
+    pub fail_count: i64,
+    pub first_failed_at: Option<String>,
 }
 
 const OUTBOX_COLUMNS: &str = "op_seq, op_id, command, args_json, target, target_path, base_sha, chained, blob_deps, \
-                              utc_offset, state, attempts, next_try_at, created_at, result_json";
+                              utc_offset, state, attempts, next_try_at, created_at, result_json, last_error, \
+                              fail_count, first_failed_at";
 
 fn map_outbox(row: &rusqlite::Row<'_>) -> rusqlite::Result<OutboxRow> {
     let args: String = row.get(3)?;
@@ -185,17 +210,18 @@ fn map_outbox(row: &rusqlite::Row<'_>) -> rusqlite::Result<OutboxRow> {
         next_try_at: row.get(12)?,
         created_at: row.get(13)?,
         result: result.and_then(|text| serde_json::from_str(&text).ok()),
+        last_error: row.get(15)?,
+        fail_count: row.get(16)?,
+        first_failed_at: row.get(17)?,
     })
 }
 
-/// 下一条要补交的操作（按 op_seq）。
-pub(crate) fn next_unsettled(conn: &Connection) -> rusqlite::Result<Option<OutboxRow>> {
-    conn.query_row(
-        &format!("SELECT {OUTBOX_COLUMNS} FROM outbox WHERE state IN {UNSETTLED} ORDER BY op_seq LIMIT 1"),
-        [],
-        map_outbox,
-    )
-    .optional()
+/// 全部还要发的操作，按 op_seq。补交时同一目标被挡住（退避中）就跳过它，其他目标照常发。
+pub(crate) fn unsettled_ops(conn: &Connection) -> rusqlite::Result<Vec<OutboxRow>> {
+    let mut statement =
+        conn.prepare(&format!("SELECT {OUTBOX_COLUMNS} FROM outbox WHERE state IN {UNSETTLED} ORDER BY op_seq"))?;
+    let rows = statement.query_map([], map_outbox)?.collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
 }
 
 /// 同一目标上排在 `op_seq` 前面的最近一条。
@@ -269,6 +295,17 @@ pub(crate) fn mark_acked(conn: &Connection, op_seq: i64, result: &Value) -> rusq
     conn.execute(
         "UPDATE outbox SET state = 'acked', result_json = ?2, last_error = NULL, next_try_at = NULL WHERE op_seq = ?1",
         params![op_seq, result.to_string()],
+    )?;
+    Ok(())
+}
+
+/// 服务器出错（5xx）：记一次连续出错并退避。
+pub(crate) fn server_failure(conn: &Connection, op_seq: i64, next_try_at: &str, error: &str, now: &str) -> rusqlite::Result<()> {
+    conn.execute(
+        "UPDATE outbox SET state = 'pending', next_try_at = ?2, last_error = ?3, fail_count = fail_count + 1,
+                           first_failed_at = COALESCE(first_failed_at, ?4)
+         WHERE op_seq = ?1",
+        params![op_seq, next_try_at, error, now],
     )?;
     Ok(())
 }

@@ -602,3 +602,139 @@ fn lockbox_snapshots_are_cached_for_offline_reading_only() {
     assert_eq!(a.proxy.count("POST", "/api/rpc/lockbox_snapshot"), 1);
     assert_eq!(a.engine.unsettled(), 1, "还没同步，修改仍待补交");
 }
+
+/// 别处把条目移进了密匣、这边离线改过它：绝不以任何形式写回公开区（不覆盖、不另存公开副本），
+/// 操作标失败，本地内容只另存在本机。两条路径都覆盖：
+/// - 骑行：联网前就已移入——拉取时全量对账把它从副本里删掉，补交前查密匣快照认出它。第一轮快照取不到（503），
+///   拿不准就留在队列里下轮再判，期间不发任何公开写。
+/// - 备忘：补交请求送达前的一刻才移入——服务器回 409 `LOCKBOX_UNAVAILABLE`。
+#[test]
+fn sealed_entries_are_never_written_back_in_public() {
+    let (root, server, admin) = setup();
+    let b = Device::new(&server, root.path(), "b");
+    b.sync();
+    let listed = b.local("list_fragments", json!({}));
+    let ride = fragment(&listed, RIDE).unwrap();
+    let memo = fragment(&listed, MEMO).unwrap();
+    b.offline();
+    b.call("update_fragment", update_args(&ride, "B 离线写的私密内容 CANARY-RIDE"));
+    b.call("update_fragment", update_args(&memo, "B 离线写的私密内容 CANARY-MEMO"));
+
+    let manifest = setup_lockbox(&admin);
+    admin.write("seal_fragment_into_lockbox", seal_args(&manifest, RIDE, &ride["fileSha"])).unwrap();
+    let memo_seal = seal_args(&manifest, MEMO, &memo["fileSha"]);
+    let sealer = admin.clone();
+    b.proxy.before_next("/api/rpc/update_fragment", move || {
+        sealer.write("seal_fragment_into_lockbox", memo_seal).unwrap();
+    });
+
+    b.proxy.set_offline(false);
+    b.engine.retry_now();
+    b.proxy.answer(Some(("/api/rpc/lockbox_snapshot", 503)));
+    let first = b.sync();
+    assert!(first.error.is_none() && !first.offline, "{first:?}");
+    assert_eq!(first.failed, 1, "备忘：服务器明确说是密匣条目");
+    assert_eq!(b.engine.unsettled(), 1, "骑行：快照取不到、拿不准，留在队列里");
+    let memo_send = b.proxy.log().into_iter().find(|entry| entry.path == "/api/rpc/update_fragment").unwrap();
+    assert_eq!(memo_send.status, Some(409));
+
+    b.proxy.answer(None);
+    b.engine.retry_now();
+    let second = b.sync();
+    assert_eq!((second.failed, second.conflicts), (1, 0), "{second:?}");
+    assert_eq!(b.engine.unsettled(), 0);
+
+    // 公开区里没有这两段内容的任何形式；B 没有发出任何成功的公开写。
+    let truth = server_list(&admin);
+    assert!(by_content(&truth, "CANARY").is_empty(), "{truth}");
+    assert!(fragment(&truth, RIDE).is_none() && fragment(&truth, MEMO).is_none());
+    assert_eq!(b.proxy.count("POST", "/api/rpc/create_fragment"), 0);
+    assert!(b.proxy.log().iter().filter(|entry| entry.path == "/api/rpc/update_fragment").all(|entry| entry.status != Some(200)));
+    // 本机另存了离线时的内容；状态为失败，提示说清楚。
+    for (id, text) in [(RIDE, "CANARY-RIDE"), (MEMO, "CANARY-MEMO")] {
+        let copies = b.saved_copies(id);
+        assert_eq!(copies.len(), 1, "{id}");
+        assert!(copies[0].contains(text), "{}", copies[0]);
+    }
+    let failures = b.failures();
+    assert_eq!(failures.len(), 2);
+    assert!(failures.iter().all(|message| message.starts_with("这条已移入密匣，离线时的修改没有上传，已另存在本机：")), "{failures:?}");
+    assert_eq!(b.engine.status().failed, 2);
+    let local = b.local("list_fragments", json!({}));
+    assert!(by_content(&local, "CANARY").is_empty(), "本机公开视图里也不再有");
+}
+
+/// 补交送达前的一刻条目被彻底删除：服务器回 404，据状态码认出「已删除」，另存冲突副本，不复活。
+#[test]
+fn deletions_racing_the_push_are_recognized_by_status_404() {
+    let (root, server, admin) = setup();
+    let b = Device::new(&server, root.path(), "b");
+    b.sync();
+    let ride = fragment(&b.local("list_fragments", json!({})), RIDE).unwrap();
+    b.offline();
+    b.call("update_fragment", update_args(&ride, "送达前一刻被删掉的那条的离线修改"));
+    let deleter = admin.clone();
+    b.proxy.before_next("/api/rpc/update_fragment", move || {
+        let trashed = deleter.write("set_fragment_archived", json!({ "id": RIDE, "archived": true })).unwrap();
+        deleter.write("purge_from_trash", json!({ "path": trashed["path"] })).unwrap();
+    });
+    b.online();
+    let report = b.sync();
+    assert_eq!(report.conflicts, 1, "{report:?}");
+    let send = b.proxy.log().into_iter().find(|entry| entry.path == "/api/rpc/update_fragment").unwrap();
+    assert_eq!(send.status, Some(404), "服务器对「找不到片段」回 404");
+    let truth = server_list(&admin);
+    assert!(fragment(&truth, RIDE).is_none(), "没有复活");
+    let copies = by_content(&truth, "送达前一刻被删掉的那条的离线修改");
+    assert_eq!(copies.len(), 1);
+    assert_eq!(copies[0]["conflictOf"], RIDE);
+    assert_eq!(b.conflicts()[0].2, "deleted");
+}
+
+/// 某个目标服务器一直出错（503）：只挡住它自己，其他目标照常补交；连续出错超过上限后标失败、
+/// 内容另存本机，不再无限重试。
+#[test]
+fn a_failing_target_does_not_block_the_others() {
+    let (root, server, admin) = setup();
+    let a = Device::with_options(&server, root.path(), "a", |options| {
+        options.max_server_failures = 3;
+        options.server_failure_window = std::time::Duration::ZERO;
+    });
+    a.sync();
+    let listed = a.local("list_fragments", json!({}));
+    let ride = fragment(&listed, RIDE).unwrap();
+    let memo = fragment(&listed, MEMO).unwrap();
+    a.offline();
+    // 出错的这条排在最前面。
+    a.call("update_fragment", update_args(&ride, "服务器一直不收的修改"));
+    a.call("update_fragment", update_args(&memo, "照常补交的修改"));
+    let created = a.call("create_fragment", json!({ "content": "照常补交的新建" }));
+
+    a.online();
+    a.proxy.answer(Some((RIDE, 503)));
+    let first = a.sync();
+    assert_eq!((first.acked, first.failed), (2, 0), "{first:?}");
+    assert!(!first.offline && first.retry_at.is_some(), "{first:?}");
+    assert_eq!(a.engine.unsettled(), 1, "出错的一条还在退避，没有判死");
+    let truth = server_list(&admin);
+    assert_eq!(text(&fragment(&truth, MEMO).unwrap()), "照常补交的修改");
+    assert!(fragment(&truth, created["id"].as_str().unwrap()).is_some());
+
+    let mut rounds = 1;
+    while a.engine.status().failed == 0 {
+        assert!(rounds < 6, "一直在重试");
+        a.engine.retry_now();
+        a.sync();
+        rounds += 1;
+    }
+    assert_eq!(rounds, 3, "连续出错 3 次后停止");
+    assert_eq!(a.engine.unsettled(), 0);
+    let failures = a.failures();
+    assert_eq!(failures.len(), 1);
+    assert!(failures[0].starts_with("服务器连续出错 3 次"), "{}", failures[0]);
+    assert!(failures[0].contains("内容已另存在本机"), "{}", failures[0]);
+    let copies = a.saved_copies(RIDE);
+    assert_eq!(copies.len(), 1);
+    assert!(copies[0].contains("服务器一直不收的修改"));
+    assert_eq!(text(&fragment(&server_list(&admin), RIDE).unwrap()), text(&ride), "服务器上的没被改");
+}

@@ -25,5 +25,7 @@ tempfile = "3"
 # 集成测试：测试进程里起真的 shard-server（不打开 test-auth），前面挡一个可断网的转发代理。
 axum = "0.8"
 shard-server = { path = "../shard-server" }
+# 「别处把条目移进了密匣」的场景：测试里用同一份加密格式造 manifest 与信封（服务器只存密文）。
+shard-lockbox = { path = "../shard-lockbox" }
 tokio = { version = "1", features = ["full"] }
 ureq = { version = "3", default-features = false, features = ["rustls"] }

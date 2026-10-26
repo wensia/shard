@@ -96,11 +96,18 @@ pub struct Logged {
     pub replayed: bool,
 }
 
+/// 代理在请求送达前执行的一次性动作。
+type Action = Box<dyn FnOnce() + Send>;
+
 struct ProxyState {
     backend: Mutex<String>,
     offline: Mutex<bool>,
     /// 下一个路径含这个片段的请求：照常转给服务器，但不回响应、直接断开，并从此断网。
     drop_next: Mutex<Option<String>>,
+    /// 路径或请求体含这个片段的请求：不转发，直接回这个状态码（服务器一直出错）。
+    answer: Mutex<Option<(String, u16)>>,
+    /// 下一个路径含这个片段的请求：转发之前先做这件事（在请求送达前的一刻改服务器，模拟竞态）。
+    before_next: Mutex<Option<(String, Action)>>,
     log: Mutex<Vec<Logged>>,
 }
 
@@ -118,6 +125,8 @@ impl Proxy {
             backend: Mutex::new(backend.to_string()),
             offline: Mutex::new(false),
             drop_next: Mutex::new(None),
+            answer: Mutex::new(None),
+            before_next: Mutex::new(None),
             log: Mutex::new(Vec::new()),
         });
         let shared = Arc::clone(&state);
@@ -140,6 +149,16 @@ impl Proxy {
 
     pub fn drop_next_response(&self, needle: &str) {
         *self.state.drop_next.lock().unwrap() = Some(needle.to_string());
+    }
+
+    /// 路径或请求体含 `needle` 的请求一律回 `status`（不转发）；`None` 撤掉。
+    pub fn answer(&self, rule: Option<(&str, u16)>) {
+        *self.state.answer.lock().unwrap() = rule.map(|(needle, status)| (needle.to_string(), status));
+    }
+
+    /// 下一个路径含 `needle` 的请求送达服务器之前，先执行 `action`。
+    pub fn before_next(&self, needle: &str, action: impl FnOnce() + Send + 'static) {
+        *self.state.before_next.lock().unwrap() = Some((needle.to_string(), Box::new(action)));
     }
 
     pub fn log(&self) -> Vec<Logged> {
@@ -191,6 +210,36 @@ fn serve_one(mut stream: TcpStream, state: &ProxyState) {
     if reader.read_exact(&mut body).is_err() {
         return;
     }
+    let key = headers.get("idempotency-key").cloned();
+    let text = String::from_utf8_lossy(&body).to_string();
+    let answered = state
+        .answer
+        .lock()
+        .unwrap()
+        .as_ref()
+        .filter(|(needle, _)| path.contains(needle.as_str()) || text.contains(needle.as_str()))
+        .map(|(_, status)| *status);
+    if let Some(status) = answered {
+        state.log.lock().unwrap().push(Logged { method, path, key, status: Some(status), replayed: false });
+        let body = r#"{"code":"HTTP_ERROR","message":"服务器出错了"}"#;
+        let response = format!(
+            "HTTP/1.1 {status} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        let _ = stream.write_all(response.as_bytes());
+        let _ = stream.shutdown(std::net::Shutdown::Both);
+        return;
+    }
+    let action = {
+        let mut before = state.before_next.lock().unwrap();
+        match before.as_ref() {
+            Some((needle, _)) if path.contains(needle.as_str()) => before.take().map(|(_, action)| action),
+            _ => None,
+        }
+    };
+    if let Some(action) = action {
+        action();
+    }
     let drop_this = {
         let mut drop_next = state.drop_next.lock().unwrap();
         match drop_next.as_deref() {
@@ -203,7 +252,6 @@ fn serve_one(mut stream: TcpStream, state: &ProxyState) {
     };
     let backend = state.backend.lock().unwrap().clone();
     let forwarded = forward(&backend, &method, &path, &headers, body);
-    let key = headers.get("idempotency-key").cloned();
     let (status, response_headers, response_body) = match forwarded {
         Ok(response) => response,
         Err(_) => {
@@ -284,6 +332,10 @@ pub struct Device {
 
 impl Device {
     pub fn new(server: &Server, root: &Path, name: &str) -> Self {
+        Self::with_options(server, root, name, |_| {})
+    }
+
+    pub fn with_options(server: &Server, root: &Path, name: &str, adjust: impl FnOnce(&mut EngineOptions)) -> Self {
         let token = issue_token(server, name);
         let proxy = Proxy::start(&server.url);
         let client = Client::new(&proxy.url, token, client_options()).unwrap();
@@ -291,6 +343,7 @@ impl Device {
         let mut options = EngineOptions::new(dir.join("remote"));
         options.recovered_dir = Some(dir.join("recovered"));
         options.device_id = format!("dev-{name}");
+        adjust(&mut options);
         let events = Arc::new(Mutex::new(Vec::new()));
         let sink = Arc::clone(&events);
         let engine = SyncEngine::open(client, options, move |event| sink.lock().unwrap().push(event)).unwrap();
@@ -321,6 +374,31 @@ impl Device {
     /// 本机可见的内容（副本 ∪ overlay），不论在线与否。
     pub fn local(&self, command: &str, args: Value) -> Value {
         self.engine.local_read(command, args).unwrap_or_else(|error| panic!("本地 {command} 失败：{error:?}"))
+    }
+
+    /// 另存到本机的、文件名带这个 id 的文件内容。
+    pub fn saved_copies(&self, id: &str) -> Vec<String> {
+        let dir = self.dir.join("recovered");
+        let Ok(entries) = fs::read_dir(&dir) else {
+            return Vec::new();
+        };
+        entries
+            .flatten()
+            .filter(|entry| entry.file_name().to_string_lossy().starts_with(&format!("unsent-{id}-")))
+            .map(|entry| fs::read_to_string(entry.path()).unwrap())
+            .collect()
+    }
+
+    pub fn failures(&self) -> Vec<String> {
+        self.events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|event| match event {
+                SyncEvent::Failed { message, .. } => Some(message.clone()),
+                _ => None,
+            })
+            .collect()
     }
 
     pub fn conflicts(&self) -> Vec<(String, Option<String>, String)> {
@@ -365,5 +443,36 @@ pub fn update_args(fragment: &Value, content: &str) -> Value {
         "content": content,
         "tags": fragment["tags"],
         "expectedFileSha": fragment["fileSha"],
+    })
+}
+
+// ---- 密匣（测试里在「别处」设置密匣、把公开碎片移进去；服务器只存密文） ----
+
+pub fn new_manifest() -> shard_lockbox::Manifest {
+    let master_key = shard_lockbox::random_bytes(32);
+    shard_lockbox::Manifest::build("lockbox password", &shard_lockbox::generate_recovery_key(), &master_key).unwrap()
+}
+
+/// 设置密匣，返回 manifest。
+pub fn setup_lockbox(admin: &Client) -> shard_lockbox::Manifest {
+    let manifest = new_manifest();
+    admin
+        .write("lockbox_apply", json!({ "manifest": { "body": manifest.to_text().unwrap(), "expectedSha": null } }))
+        .unwrap();
+    manifest
+}
+
+/// 把公开碎片移进密匣的请求参数（客户端加密好的信封；`file_sha` 是服务器上当前的 sha）。
+pub fn seal_args(manifest: &shard_lockbox::Manifest, id: &str, file_sha: &Value) -> Value {
+    let public_key = manifest.write_public_key().unwrap().unwrap();
+    let payload = json!({ "frontmatter": { "id": id }, "body": "移进密匣的正文" }).to_string();
+    let envelope = shard_lockbox::Envelope::seal(&shard_lockbox::WriteKey::Public(public_key), id, payload.as_bytes())
+        .unwrap()
+        .to_text()
+        .unwrap();
+    json!({
+        "fragmentId": id,
+        "expectedFileSha": file_sha,
+        "item": { "id": id, "envelope": envelope, "path": format!("lockbox/fragments/2026/10/{id}.shard") },
     })
 }

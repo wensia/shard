@@ -5287,6 +5287,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "shard-core",
+ "shard-lockbox",
  "shard-remote",
  "shard-server",
  "shard-store",
