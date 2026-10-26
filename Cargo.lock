@@ -5265,6 +5265,7 @@ dependencies = [
  "serde_yaml",
  "sha2",
  "shard-core",
+ "shard-lockbox",
  "shard-store",
  "tempfile",
  "zip",

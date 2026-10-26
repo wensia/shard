@@ -16,6 +16,8 @@ serde_json = { workspace = true, features = ["float_roundtrip"] }
 serde_yaml = "0.9"
 sha2 = { workspace = true }
 shard-core = { path = "../shard-core" }
+# 密匣的加密格式（manifest、信封、读写密钥）；密匣领域逻辑见 src/lockbox.rs。
+shard-lockbox = { path = "../shard-lockbox" }
 quick-xml = "=0.41.0"
 zip = { version = "=8.6.0", default-features = false, features = ["deflate"] }
 

@@ -2,11 +2,12 @@
 //!
 //! 接口照着 `std::fs` 的语义设计，参数是绝对路径（`vault.join(...)` 算出来的那种），
 //! 这样 lib.rs 里的领域逻辑只需把 `fs::read_to_string(&path)` 换成 `vfs.read_to_string(&path)`，
-//! 不用改算法。两种实现：
+//! 不用改算法。三种实现：
 //! - [`crate::FsVfs`]：直接读写本地目录，切换前的桌面模式用。
-//! - [`crate::SqliteVfs`]：服务端内容库里的一个事务，根目录是虚拟的，从不触盘。
+//! - `SqliteVfs`（shard-store）：服务端内容库里的一个事务，根目录是虚拟的，从不触盘。
+//! - [`crate::MemVfs`]：纯内存目录树，浏览器（wasm）里在下发的内容上跑领域函数、测试里当不落盘的资料库。
 //!
-//! 两种实现的行为差异只允许出现在文档写明的地方，`tests/vfs_conformance.rs` 用随机操作序列逐项比对。
+//! 各实现的行为差异只允许出现在文档写明的地方，`tests/vfs_conformance.rs` 用随机操作序列逐项比对。
 
 use std::{
     ffi::OsString,

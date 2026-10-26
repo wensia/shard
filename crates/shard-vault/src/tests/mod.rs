@@ -3,6 +3,7 @@
 //! - `legacy_*`：随领域代码从 src-tauri/src/lib.rs 搬来的测试，跑在本地目录（FsVfs）+ NoHooks 上，
 //!   准备数据照旧直接写文件；需要 Git 或密匣的测试留在 src-tauri。
 //! - `dual`：同一组领域场景在 FsVfs 与 SqliteVfs（服务端内容库）上各跑一遍，比对返回值与最终目录树。
+//! - `lockbox`：密匣领域函数在 FsVfs 与 MemVfs（浏览器里用的内存资料库）上各跑一遍。
 //! - `dto_snapshot`：DTO 的 JSON 形状与搬迁前逐字节一致。
 
 pub(crate) use crate::prelude::*;
@@ -20,6 +21,7 @@ mod legacy_images;
 mod legacy_library;
 mod legacy_maps_graph;
 mod legacy_refs_trash;
+mod lockbox;
 
 /// 测试用的本地资料库：真实目录 + [`NoHooks`]。迁移前这些测试用的是桌面的 `LocalVault`
 /// （FsVfs + GitHooks），测试资料库都没有初始化 Git，GitHooks 的每个钩子与 NoHooks 返回相同。

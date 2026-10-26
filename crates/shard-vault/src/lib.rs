@@ -3,9 +3,10 @@
 //! 全部跑在 [`VaultCtx`]（`shard_core::Vfs` + [`VaultHooks`]）上，不依赖 Tauri、不碰 `std::fs`
 //! 里的资料库路径、不调 git：桌面用 `FsVfs` + 本地 Git 钩子，服务端用 `SqliteVfs` + [`NoHooks`]。
 //!
-//! 只处理公开内容。密匣（加解密、会话、`lockbox/` 下的读写）留在桌面端：命令层先判断目标是不是
-//! 密匣，是就走桌面的密匣实现，不是才调这里。少数公开校验需要知道「哪些 id 属于密匣」，
-//! 经 [`Vfs::lockbox_item_ids`](shard_core::Vfs::lockbox_item_ids) 询问，桌面退回扫描 `lockbox/`。
+//! 公开内容的函数只处理公开内容；密匣（`lockbox/` 下的信封读写、manifest、移入密匣）在 [`lockbox`] 模块，
+//! 同样跑在 [`VaultCtx`] 上，但不持有会话：解锁会话、租约与过期计时留在调用方（桌面在 src-tauri），
+//! 密钥显式传入。命令层先判断目标是不是密匣，是就走 [`lockbox`]，不是才调公开实现。少数公开校验需要知道
+//! 「哪些 id 属于密匣」，经 [`Vfs::lockbox_item_ids`](shard_core::Vfs::lockbox_item_ids) 询问，桌面退回扫描 `lockbox/`。
 //!
 //! 写门（同一资料库的写操作串行化）由调用方在最外层持有，这里的函数一律不取门。
 //!
@@ -22,6 +23,7 @@
 //! - [`canvas`]：独立流程图与旧混合画布（含拆分）。
 //! - [`datasets`]：CSV 数据集。
 //! - [`xlsx`]：XLSX 导入解析（字节 → 第一个工作表的字符串矩阵），纯函数。
+//! - [`lockbox`]：密匣的 manifest、信封载荷、密匣碎片与笔记、移入密匣、密匣方言迁移与搜索文档。
 
 mod prelude;
 
@@ -33,6 +35,7 @@ pub mod graph;
 pub mod hooks;
 pub mod images;
 pub mod library;
+pub mod lockbox;
 pub mod maps;
 pub mod refs;
 pub mod search;

@@ -15,9 +15,9 @@ use shard_core::{
 };
 // 来源枚举、「文件 → 可搜索文档」投影、路径校验与快照组装在 shard-vault（经 Vfs 读，桌面传 FsVfs），
 // 与服务端共用。这里只剩桌面专用的部分：文件戳与增量同步、SQLite 派生索引、运行时快照的构建器、
-// 密匣（解密后复用 shard-vault 的 markdown_document 投影）。
+// 密匣（租约校验在这里，解密与投影在 shard_vault::lockbox::lockbox_search_document）。
 use shard_vault::search::{
-    self as shared, fs_error, io_error, is_markdown_target, markdown_document, parse_modified_at,
+    self as shared, fs_error, io_error, is_markdown_target, parse_modified_at,
     resolve_target_file, safe_scan_root, system_time_nanos, validate_loaded_identity,
     validate_target_identity, PublicSourceKind, SearchSnapshotData,
 };
@@ -674,31 +674,14 @@ fn load_lockbox_markdown(
     let safe_path = resolve_target_file(&FsVfs::new(vault), &relative, &SearchScope::Lockbox)?;
     note_source_read();
     let encrypted_text = fs::read_to_string(&safe_path).map_err(fs_error)?;
-    let file_sha = crate::content_sha256_hex(&encrypted_text);
-    let payload =
-        crate::read_lockbox_payload_from_text(&encrypted_text, lease.read_keys())
-            .map_err(|_| SearchError::Io { retryable: false })?;
-    let revision = serde_json::to_vec(&payload)
-        .map(|bytes| crate::hash_bytes(&bytes))
-        .map_err(|_| SearchError::Internal { retryable: false })?;
-    lease.validate_session()?;
-    let crate::LockboxFragmentPayload {
-        frontmatter,
-        frontmatter_raw,
-        body,
-        ..
-    } = payload;
-    Ok(markdown_document(
+    let document = shard_vault::lockbox::lockbox_search_document(
         &vault_identity(vault),
-        SearchScope::Lockbox,
-        relative.clone(),
-        relative.starts_with("lockbox/archive/"),
-        frontmatter,
-        frontmatter_raw.as_deref(),
-        &body,
-        revision,
-        file_sha,
-    ))
+        relative,
+        &encrypted_text,
+        lease.read_keys(),
+    )?;
+    lease.validate_session()?;
+    Ok(document)
 }
 
 fn make_target(

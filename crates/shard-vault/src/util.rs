@@ -62,3 +62,16 @@ pub fn relative_path(vault: &Path, path: &Path) -> Result<String, String> {
         .map_err(|error| error.to_string())?;
     Ok(rel.to_string_lossy().replace('\\', "/"))
 }
+
+/// Markdown 方言迁移的提交信息：公开内容（src-tauri 的 markdown_dialect.rs）与密匣（[`crate::lockbox`]）共用。
+pub const MARKDOWN_DIALECT_MIGRATION_COMMIT_MESSAGE: &str =
+    "格式迁移：Markdown 方言 v2（源码一行显示一行，空一行显示一行空白）";
+
+/// 方言迁移写回的目标：只收由普通名字组成的相对路径（不含 `.`、`..`、根），公开与密匣迁移共用。
+pub fn dialect_migration_path(vault: &Path, rel_path: &str) -> Result<PathBuf, String> {
+    let path = Path::new(rel_path);
+    if path.components().any(|component| !matches!(component, Component::Normal(_))) {
+        return Err(format!("不允许迁移这个路径：{rel_path}"));
+    }
+    Ok(vault.join(path))
+}

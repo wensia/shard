@@ -18,14 +18,22 @@ use std::{
 };
 
 use crate::{
-    checkpoint_before_structural_locked, collect_lockbox_files, collect_markdown_files,
-    commit_paths_if_git, content_sha256_hex, read_lockbox_payload_from_text, relative_path,
-    write_lockbox_payload, write_text_atomically, LockboxReadKeys, LockboxWriteKey,
+    checkpoint_before_structural_locked, collect_markdown_files, commit_paths_if_git,
+    content_sha256_hex, relative_path, write_text_atomically, LockboxReadKeys, LocalVault,
 };
+// 方言版本、提交信息与路径校验和密匣迁移共用一份：密匣部分在 shard-vault::lockbox。
+use shard_core::MARKDOWN_DIALECT;
+use shard_vault::{
+    dialect_migration_path as safe_relative,
+    MARKDOWN_DIALECT_MIGRATION_COMMIT_MESSAGE as MIGRATION_COMMIT_MESSAGE,
+};
+pub(crate) use shard_vault::lockbox::{
+    LockboxDialectSource as LockboxSource, MigratedLockboxDialectSource as MigratedLockboxSource,
+};
+#[cfg(test)]
+use shard_vault::lockbox::lockbox_dialect_target as lockbox_target;
 
-pub(crate) const MARKDOWN_DIALECT: u32 = 2;
 const FORMAT_FILE: &str = ".shard/format.json";
-const MIGRATION_COMMIT_MESSAGE: &str = "格式迁移：Markdown 方言 v2（源码一行显示一行，空一行显示一行空白）";
 /// 迁移扫描的公开目录；密匣单独处理。
 const PUBLIC_MARKDOWN_ROOTS: &[&str] = &["fragments", "notes", ".trash", "maps", "datasets", "assets"];
 
@@ -60,22 +68,6 @@ pub(crate) struct MigratedPublicSource {
     path: String,
     expected_sha: String,
     content: String,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct LockboxSource {
-    path: String,
-    body: String,
-    sha: String,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct MigratedLockboxSource {
-    path: String,
-    expected_sha: String,
-    body: String,
 }
 
 /// 资料库公开内容的方言版本；没有标记的是 v1。
@@ -174,72 +166,21 @@ pub(crate) fn apply_public_migration(
     Ok(writes.len())
 }
 
+/// 解锁后列出还是方言 v1 的密匣正文（领域逻辑在 shard-vault::lockbox）。
 pub(crate) fn list_lockbox_sources(
     vault: &Path,
     read_keys: &LockboxReadKeys,
 ) -> Result<Vec<LockboxSource>, String> {
-    let mut files = Vec::new();
-    collect_lockbox_files(&FsVfs::new(vault), &vault.join("lockbox"), &mut files)?;
-    files.sort();
-
-    let mut sources = Vec::new();
-    for path in files {
-        let Ok(text) = fs::read_to_string(&path) else {
-            eprintln!("[shard] 方言迁移跳过无法读取的密匣文件：{}", path.display());
-            continue;
-        };
-        let Ok(payload) = read_lockbox_payload_from_text(&text, read_keys) else {
-            eprintln!("[shard] 方言迁移跳过无法解密的密匣文件：{}", path.display());
-            continue;
-        };
-        if payload.markdown_dialect.is_some() {
-            continue;
-        }
-        sources.push(LockboxSource {
-            path: relative_path(vault, &path)?,
-            sha: content_sha256_hex(&text),
-            body: payload.body,
-        });
-    }
-    Ok(sources)
+    shard_vault::lockbox::list_lockbox_dialect_sources(&LocalVault::new(vault).cx(), read_keys)
 }
 
-/// 调用方持有写门。只改 v1 载荷的正文并标上 v2；核对 sha 全部通过才写。
+/// 调用方持有写门。只改 v1 载荷的正文并标上 v2；核对 sha 全部通过才写（领域逻辑在 shard-vault::lockbox）。
 pub(crate) fn apply_lockbox_migration(
     vault: &Path,
     read_keys: &LockboxReadKeys,
     files: Vec<MigratedLockboxSource>,
 ) -> Result<usize, String> {
-    let mut writes = Vec::new();
-    for file in files {
-        let target = lockbox_target(vault, &file.path)?;
-        let text = fs::read_to_string(&target).map_err(|error| error.to_string())?;
-        if content_sha256_hex(&text) != file.expected_sha {
-            return Err(format!("{} 在迁移期间被改动，已中止，请重新解锁再试。", file.path));
-        }
-        let mut payload = read_lockbox_payload_from_text(&text, read_keys)?;
-        if payload.markdown_dialect.is_some() {
-            return Err(format!("{} 已经是新格式，不能重复迁移。", file.path));
-        }
-        payload.body = file.body;
-        payload.markdown_dialect = Some(MARKDOWN_DIALECT);
-        writes.push((target, file.path, payload));
-    }
-    if writes.is_empty() {
-        return Ok(0);
-    }
-
-    checkpoint_before_structural_locked(vault);
-    let write_key = LockboxWriteKey::Master(read_keys.master_key.clone());
-    let vfs = FsVfs::new(vault);
-    for (target, _, payload) in &writes {
-        write_lockbox_payload(&vfs, target, &write_key, payload)?;
-    }
-    let paths: Vec<String> = writes.iter().map(|(_, path, _)| path.clone()).collect();
-    if let Err(error) = commit_paths_if_git(vault, &paths, MIGRATION_COMMIT_MESSAGE) {
-        eprintln!("[shard] 密匣方言迁移提交失败（文件已写入）：{error}");
-    }
-    Ok(writes.len())
+    shard_vault::lockbox::apply_lockbox_dialect_migration(&LocalVault::new(vault).cx(), read_keys, files)
 }
 
 fn public_target(vault: &Path, rel_path: &str) -> Result<PathBuf, String> {
@@ -250,22 +191,6 @@ fn public_target(vault: &Path, rel_path: &str) -> Result<PathBuf, String> {
         return Err(format!("不允许迁移这个路径：{rel_path}"));
     }
     Ok(target)
-}
-
-fn lockbox_target(vault: &Path, rel_path: &str) -> Result<PathBuf, String> {
-    let target = safe_relative(vault, rel_path)?;
-    if !rel_path.starts_with("lockbox/") || !rel_path.ends_with(".shard") {
-        return Err(format!("不允许迁移这个路径：{rel_path}"));
-    }
-    Ok(target)
-}
-
-fn safe_relative(vault: &Path, rel_path: &str) -> Result<PathBuf, String> {
-    let path = Path::new(rel_path);
-    if path.components().any(|component| !matches!(component, Component::Normal(_))) {
-        return Err(format!("不允许迁移这个路径：{rel_path}"));
-    }
-    Ok(vault.join(path))
 }
 
 #[cfg(test)]

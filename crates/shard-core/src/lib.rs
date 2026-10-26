@@ -16,9 +16,11 @@ pub mod search;
 pub mod vault_lock;
 pub mod wikilink;
 mod fs_vfs;
+mod mem_vfs;
 pub mod vfs;
 
 pub use fs_vfs::FsVfs;
+pub use mem_vfs::MemVfs;
 pub use vfs::{sha256_hex, EntryKind, Vfs, VfsDirEntry, VfsMetadata};
 
 use chrono::{DateTime, FixedOffset, Local};
@@ -40,6 +42,9 @@ pub const TYPE_TAGS: [&str; 4] = ["note", "outline", "flowchart", "document"];
 /// 只能由专用编辑器创建和维护的内容类型。
 pub const PROTECTED_TYPE_TAGS: [&str; 2] = ["outline", "flowchart"];
 pub const LIBRARY_FILENAME_MAX_BYTES: usize = 255;
+/// 当前的 Markdown 方言版本（v2：源码一行显示一行，空一行显示一行空白）。公开内容按整个资料库在
+/// `.shard/format.json` 记版本；密匣每条载荷自带 `markdown_dialect`。迁移见 src-tauri 的 `markdown_dialect.rs`。
+pub const MARKDOWN_DIALECT: u32 = 2;
 
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
 #[serde(rename_all = "camelCase")]

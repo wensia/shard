@@ -1,6 +1,6 @@
-//! FsVfs 与 SqliteVfs 的行为一致性：同一串随机操作在两边逐步执行，
+//! FsVfs、SqliteVfs 与 MemVfs 的行为一致性：同一串随机操作在三边逐步执行，
 //! 每一步的成败、读出的内容、目录列表都要相同，最后整棵树（路径、类型、内容哈希）也要相同。
-//! SqliteVfs 侧每个操作是一个独立的写事务，顺带走一遍提交流水线。
+//! SqliteVfs 侧每个操作是一个独立的写事务，顺带走一遍提交流水线；MemVfs（shard-core）是纯内存目录树。
 
 use std::{
     collections::BTreeMap,
@@ -10,6 +10,7 @@ use std::{
 
 use rand::{rngs::StdRng, Rng, SeedableRng};
 use shard_store::{sha256_hex, FsVfs, Store, StoreError, Vfs, WriteCtx};
+use shard_core::MemVfs;
 
 const DIRS: &[&str] = &["a", "a/b", "c", "notes", "notes/读书"];
 const NAMES: &[&str] = &["x.md", "y.txt", "图.png", "b"];
@@ -171,6 +172,7 @@ fn random_operation_sequences_match_the_local_file_system() {
         let db_dir = tempfile::tempdir().unwrap();
         let fs_vfs = FsVfs::new(fs_dir.path().to_path_buf());
         let store = Store::open_with_root(db_dir.path(), Path::new("/vault")).unwrap();
+        let mem_vfs = MemVfs::new("/vault");
         let mut rng = StdRng::seed_from_u64(seed);
         let mut history = Vec::new();
         for _ in 0..160 {
@@ -179,10 +181,13 @@ fn random_operation_sequences_match_the_local_file_system() {
             let local = run(&fs_vfs, &op);
             let remote = run_sqlite(&store, &op);
             assert_eq!(local, remote, "seed {seed}：第 {} 步 {op:?} 结果不同\n历史：{history:#?}", history.len());
+            let memory = run(&mem_vfs, &op);
+            assert_eq!(local, memory, "seed {seed}：第 {} 步 {op:?} MemVfs 结果不同\n历史：{history:#?}", history.len());
         }
         let local_tree = snapshot(&fs_vfs);
         let remote_tree = store.read(|vfs| snapshot(vfs)).unwrap();
         assert_eq!(local_tree, remote_tree, "seed {seed}：最终目录树不同");
+        assert_eq!(local_tree, snapshot(&mem_vfs), "seed {seed}：MemVfs 最终目录树不同");
     }
 }
 
