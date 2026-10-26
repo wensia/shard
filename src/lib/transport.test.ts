@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import { AUTH_REQUIRED_EVENT } from "@/lib/transport"
 import { filesUrl, httpTransport, NETWORK_ERROR_MESSAGE } from "@/lib/transport/http"
-import { SseParser } from "@/lib/transport/sse"
+import { dispatchSseMessage, SseParser, subscribeLockboxEvents } from "@/lib/transport/sse"
 
 function json(status: number, body: unknown) {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } })
@@ -126,3 +126,18 @@ describe("SSE 解析", () => {
     ])
   })
 })
+
+describe("密匣变化推送", () => {
+  it("lockbox-changed 带的 {seq} 原样交给订阅者，游标过旧时没有载荷", () => {
+    const seen: unknown[] = []
+    const stop = subscribeLockboxEvents((payload) => seen.push(payload))
+    dispatchSseMessage({ event: "lockbox-changed", data: '{"seq":42}' })
+    dispatchSseMessage({ event: "lockbox-changed", data: "{}" })
+    dispatchSseMessage({ event: "lockbox-changed", data: "不是 JSON" })
+    dispatchSseMessage({ event: "resync", id: "7", data: "{}" })
+    stop()
+    dispatchSseMessage({ event: "lockbox-changed", data: '{"seq":43}' })
+    expect(seen).toEqual([{ seq: 42 }, {}, undefined, undefined])
+  })
+})
+

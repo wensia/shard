@@ -160,7 +160,8 @@ export const httpTransport: ShardTransport = {
     throw `网页版不支持这个操作（${command}）。`
   },
   listen(event, handler) {
-    if (event === "lockbox-changed") return Promise.resolve(subscribeLockboxEvents(() => handler(undefined as never)))
+    // 载荷是服务器给的 `{seq}`（游标过旧、重连时为空），密匣客户端据此跳过自己写入的回声。
+    if (event === "lockbox-changed") return Promise.resolve(subscribeLockboxEvents((payload) => handler(payload as never)))
     if (event !== "vault-changed") return Promise.resolve(() => {})
     return Promise.resolve(subscribeVaultEvents(handler as (payload: unknown) => void))
   },

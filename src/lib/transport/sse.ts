@@ -76,15 +76,23 @@ let controller: AbortController | null = null
 let lastEventId: string | undefined
 let retryMs = 1000
 
-function dispatch(message: SseMessage) {
+/** 派发一条服务器消息（导出给测试）。 */
+export function dispatchSseMessage(message: SseMessage) {
   if (message.id) lastEventId = message.id
   if (message.event === "resync") {
     window.dispatchEvent(new CustomEvent(VAULT_RESYNC_EVENT))
     return
   }
   if (message.event === "lockbox-changed") {
-    // 服务器不知道密匣内容，只说「变了」：密匣客户端重取快照，算出变化后以 vault-changed 推给界面。
-    window.dispatchEvent(new CustomEvent(LOCKBOX_CHANGED_EVENT))
+    // 服务器不知道密匣内容，只说「变了」并带上这次的 `{seq}`：密匣客户端已提交到这个 seq 就是自己写入的
+    // 回声，否则重取快照，算出变化后以 vault-changed 推给界面。没有 seq（网页解锁开关等）一律重取。
+    let detail: unknown
+    try {
+      detail = JSON.parse(message.data)
+    } catch {
+      detail = undefined
+    }
+    window.dispatchEvent(new CustomEvent(LOCKBOX_CHANGED_EVENT, { detail }))
     return
   }
   if (message.event !== "vault-changed") return
@@ -133,7 +141,7 @@ async function connect(signal: AbortSignal) {
       for (;;) {
         const { done, value } = await reader.read()
         if (done) break
-        for (const message of parser.push(decoder.decode(value, { stream: true }))) dispatch(message)
+        for (const message of parser.push(decoder.decode(value, { stream: true }))) dispatchSseMessage(message)
       }
     } catch {
       if (signal.aborted) return
@@ -165,18 +173,20 @@ export function subscribeVaultEvents(handler: Handler): () => void {
  * 密匣可能变了：SSE 推来 `lockbox-changed`、游标过旧（`resync`）、断线后重连上（期间的 `lockbox-changed`
  * 不会补发）。不单独开连接——碎片列表的 `vault-changed` 订阅一直开着它。
  */
-export function subscribeLockboxEvents(handler: () => void): () => void {
-  const notify = () => handler()
-  window.addEventListener(LOCKBOX_CHANGED_EVENT, notify)
-  window.addEventListener(VAULT_RESYNC_EVENT, notify)
+export function subscribeLockboxEvents(handler: (payload?: unknown) => void): () => void {
+  // 没给 detail 时 CustomEvent 的 detail 是 null：与「没有载荷」同样交 undefined。
+  const changed = (event: Event) => handler((event as CustomEvent).detail ?? undefined)
+  const resync = () => handler(undefined)
+  window.addEventListener(LOCKBOX_CHANGED_EVENT, changed)
+  window.addEventListener(VAULT_RESYNC_EVENT, resync)
   let previous = connectionState
   const stop = subscribeConnection((next) => {
-    if (next === "connected" && previous === "reconnecting") handler()
+    if (next === "connected" && previous === "reconnecting") handler(undefined)
     previous = next
   })
   return () => {
-    window.removeEventListener(LOCKBOX_CHANGED_EVENT, notify)
-    window.removeEventListener(VAULT_RESYNC_EVENT, notify)
+    window.removeEventListener(LOCKBOX_CHANGED_EVENT, changed)
+    window.removeEventListener(VAULT_RESYNC_EVENT, resync)
     stop()
   }
 }

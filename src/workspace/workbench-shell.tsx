@@ -99,6 +99,7 @@ import { readOutlineContent } from "@/lib/mind-map-outline"
 import { readFlowchartContent } from "@/lib/flowchart-content"
 import { toggleTaskLine } from "@/lib/editor-format"
 import { notify } from "@/lib/notify"
+import { LOCKBOX_LOCKED_OUT_EVENT } from "@/lib/lockbox-client/router"
 import {
   buildWikilinkCandidates,
   resolveWikilinkTarget,
@@ -1707,6 +1708,27 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
       setRoute({ space: "library", params: {} })
     }
   }
+
+  /**
+   * 网页 / 桌面远程模式：密匣客户端被迫上锁（Worker 出错、别处关掉网页解锁、租约到期）。立即收起密匣空间与
+   * 打开着的密匣编辑器，撤掉密匣范围的搜索，告诉用户原因；之后的保存只会得到 lockbox_locked，不会外泄。
+   */
+  const lockedOutRef = useRef<(reason: string) => void>(() => {})
+  lockedOutRef.current = (reason: string) => {
+    if (searchSessionRef.current?.scope === "lockbox") revokeSearchSession(reason === "expired" ? "expired" : "locked")
+    hideLockboxLocally(true)
+    if (reason === "withheld") notify.warning("密匣已上锁", { description: "网页解锁已在别处关闭。" })
+    else if (reason === "crashed") notify.warning("密匣已上锁", { description: "密匣运行出错，请重新解锁。" })
+    else notify.info("密匣已自动上锁")
+  }
+  useEffect(() => {
+    const onLockedOut = (event: Event) => {
+      const reason = (event as CustomEvent<{ reason?: string }>).detail?.reason ?? "locked"
+      lockedOutRef.current(reason)
+    }
+    window.addEventListener(LOCKBOX_LOCKED_OUT_EVENT, onLockedOut)
+    return () => window.removeEventListener(LOCKBOX_LOCKED_OUT_EVENT, onLockedOut)
+  }, [])
 
   async function handleLockLockbox() {
     revokeSearchSession("locked")
