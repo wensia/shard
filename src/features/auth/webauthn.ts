@@ -211,3 +211,73 @@ export function defaultPasskeyLabel(userAgent = navigator.userAgent) {
   if (/Windows/u.test(userAgent)) return "Windows 电脑"
   return "这台设备"
 }
+
+// ---------- 账号与安全（设置页） ----------
+
+async function call<T>(method: "GET" | "POST" | "DELETE", path: string, body?: unknown): Promise<T> {
+  const response = await fetch(path, {
+    method,
+    credentials: "same-origin",
+    headers: method === "GET" ? {} : { "content-type": "application/json", "x-shard-request": "1" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  })
+  const data = (await response.json().catch(() => ({}))) as { code?: string; message?: string }
+  if (!response.ok) throw new AuthError(data.code ?? "ERROR", data.message ?? `请求失败（${response.status}）`)
+  return data as T
+}
+
+export interface PasskeyInfo {
+  id: string
+  label: string | null
+  createdAt: string
+  lastUsedAt: string | null
+}
+
+export interface SessionInfo {
+  id: string
+  current: boolean
+  createdAt: string
+  lastSeenAt: string
+  userAgent: string | null
+  ip: string | null
+}
+
+export interface DeviceInfo {
+  id: string
+  name: string
+  kind: "desktop" | "cli"
+  createdAt: string
+  lastSeenAt: string | null
+  lastIp: string | null
+}
+
+export async function listPasskeys() {
+  return (await call<{ passkeys: PasskeyInfo[] }>("GET", "/api/auth/passkeys")).passkeys
+}
+
+export async function listSessions() {
+  return (await call<{ sessions: SessionInfo[] }>("GET", "/api/auth/sessions")).sessions
+}
+
+export async function listDevices() {
+  return (await call<{ devices: DeviceInfo[] }>("GET", "/api/devices")).devices
+}
+
+/** 在当前设备上再注册一把通行密钥（需要二次验证）。 */
+export async function addPasskey(label: string) {
+  const ceremony = await withStepUp(() => call<Ceremony>("POST", "/api/auth/passkeys/start"))
+  const credential = await createCredential(ceremony)
+  await call("POST", "/api/auth/passkeys/finish", { ceremonyId: ceremony.ceremonyId, credential, label })
+}
+
+export function revokePasskey(id: string) {
+  return withStepUp(() => call("DELETE", `/api/auth/passkeys/${encodeURIComponent(id)}`))
+}
+
+export function revokeSession(id: string) {
+  return withStepUp(() => call("DELETE", `/api/auth/sessions/${encodeURIComponent(id)}`))
+}
+
+export function revokeDevice(id: string) {
+  return withStepUp(() => call("DELETE", `/api/devices/${encodeURIComponent(id)}`))
+}

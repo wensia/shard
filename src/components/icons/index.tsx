@@ -57,6 +57,7 @@ import {
   InboxIcon as LInbox,
   InfoIcon as LInfo,
   KeyboardIcon as LKeyboard,
+  KeyRoundIcon as LKeyRound,
   LinkIcon as LLink,
   ListIcon as LList,
   ListOrderedIcon as LListOrdered,
@@ -155,6 +156,7 @@ export const ImageIcon = /*#__PURE__*/ withIconDefaults(LImage)
 export const InboxIcon = /*#__PURE__*/ withIconDefaults(LInbox)
 export const InfoIcon = /*#__PURE__*/ withIconDefaults(LInfo)
 export const KeyboardIcon = /*#__PURE__*/ withIconDefaults(LKeyboard)
+export const KeyRoundIcon = /*#__PURE__*/ withIconDefaults(LKeyRound)
 export const LinkIcon = /*#__PURE__*/ withIconDefaults(LLink)
 export const ListIcon = /*#__PURE__*/ withIconDefaults(LList)
 export const ListOrderedIcon = /*#__PURE__*/ withIconDefaults(LListOrdered)

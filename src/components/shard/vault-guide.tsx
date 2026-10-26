@@ -5,6 +5,7 @@ import {
   FolderPlusIcon,
   GitBranchIcon,
   KeyboardIcon,
+  KeyRoundIcon,
   Loader2Icon,
   MonitorIcon,
   MoonIcon,
@@ -52,6 +53,8 @@ import {
   uninstallCli,
 } from "@/lib/api"
 import { notify } from "@/lib/notify"
+import { isWebRuntime } from "@/lib/transport"
+import { AccountSettings } from "@/features/auth/account-settings"
 import type {
   CliInstallStatus,
   GithubCliInfo,
@@ -107,10 +110,15 @@ const monoPathStyle: CSSProperties = {
   userSelect: "all",
 }
 
-export type SettingsSection = "appearance" | "cli" | "git" | "shortcuts" | "vault"
+export type SettingsSection = "account" | "appearance" | "cli" | "git" | "shortcuts" | "vault"
 
-/** 设置单页里的分区顺序，也是左侧锚点导航的顺序。 */
-const SETTINGS_SECTIONS: SettingsSection[] = ["vault", "git", "appearance", "cli", "shortcuts"]
+/** 设置单页里的分区顺序，也是左侧锚点导航的顺序。网页端没有本机资料库、Git 与终端命令，换成账号与安全。 */
+const DESKTOP_SETTINGS_SECTIONS: SettingsSection[] = ["vault", "git", "appearance", "cli", "shortcuts"]
+const WEB_SETTINGS_SECTIONS: SettingsSection[] = ["account", "appearance", "shortcuts"]
+
+function settingsSections() {
+  return isWebRuntime() ? WEB_SETTINGS_SECTIONS : DESKTOP_SETTINGS_SECTIONS
+}
 
 interface VaultGuideProps {
   autoSyncEnabled: boolean
@@ -191,6 +199,7 @@ interface SettingsCopy {
   manualDividerLabel: string
   manualRemoteLabel: string
   manualRemoteHint: string
+  navAccount: string
   navAppearance: string
   navLabel: string
   navGit: string
@@ -318,6 +327,7 @@ const settingsCopy: Record<SettingsLocale, SettingsCopy> = {
     manualRemoteLabel: "Manual remote",
     manualRemoteHint:
       "The manual URL is saved as origin. You can also run git remote add origin <url> in the current folder.",
+    navAccount: "Account & security",
     navAppearance: "Appearance",
     navLabel: "Settings sections",
     navGit: "Git sync",
@@ -441,6 +451,7 @@ const settingsCopy: Record<SettingsLocale, SettingsCopy> = {
     manualRemoteLabel: "手动连接远端",
     manualRemoteHint:
       "手动 URL 会保存为 origin。也可以在当前目录运行 git remote add origin <url>。",
+    navAccount: "账号与安全",
     navAppearance: "外观",
     navLabel: "设置分区",
     navGit: "Git 同步",
@@ -557,8 +568,10 @@ export function VaultGuide({
   const [isCheckingGithub, setIsCheckingGithub] = useState(false)
   const [remoteUrl, setRemoteUrl] = useState("")
   const [repoName, setRepoName] = useState(defaultRepoName(vaultPath))
+  const startSection: SettingsSection =
+    isWebRuntime() && !WEB_SETTINGS_SECTIONS.includes(initialSection) ? "account" : initialSection
   const [activeSection, setActiveSection] =
-    useState<SettingsSection>(initialSection)
+    useState<SettingsSection>(startSection)
   const [accentTheme, setAccentTheme] =
     useState<AccentTheme>(getStoredAccentTheme)
   const [colorMode, setColorMode] = useState<ColorMode>(getStoredColorMode)
@@ -669,12 +682,12 @@ export function VaultGuide({
     if (!isOpen || !showsFullSettings) return
     // 打开即落在目标分区（如状态栏的 Git 入口），不做平滑滚动。
     const frame = requestAnimationFrame(() =>
-      scrollToSection(initialSection, "auto")
+      scrollToSection(startSection, "auto")
     )
     return () => cancelAnimationFrame(frame)
     // scrollToSection 只读 ref，不进依赖表。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initialSection, isOpen, showsFullSettings])
+  }, [startSection, isOpen, showsFullSettings])
 
   useEffect(
     () => () => {
@@ -1201,6 +1214,7 @@ export function VaultGuide({
   }
 
   const navMeta: Record<SettingsSection, { icon: typeof FolderOpenIcon; label: string }> = {
+    account: { icon: KeyRoundIcon, label: copy.navAccount },
     appearance: { icon: PaletteIcon, label: copy.navAppearance },
     cli: { icon: SquareTerminalIcon, label: copy.cliTitle },
     git: { icon: GitBranchIcon, label: copy.navGit },
@@ -1261,7 +1275,7 @@ export function VaultGuide({
             className={styles.navRail}
             data-focus-region="settings-nav"
           >
-            {SETTINGS_SECTIONS.map((id) => {
+            {settingsSections().map((id) => {
               const { icon: Icon, label } = navMeta[id]
               return (
                 <button
@@ -1286,6 +1300,12 @@ export function VaultGuide({
             onScroll={handleSettingsScroll}
             ref={scrollRef}
           >
+            {isWebRuntime() ? (
+              <SettingsBlock id="account" title={copy.navAccount}>
+                <AccountSettings />
+              </SettingsBlock>
+            ) : (
+              <>
             <SettingsBlock id="vault" title={copy.vaultTitle}>
               <SettingsGroup busy={activeAction === "open" || activeAction === "create"}>
                 <SettingsRow
@@ -1514,6 +1534,8 @@ export function VaultGuide({
                 </SettingsRow>
               </SettingsGroup>
             </SettingsBlock>
+              </>
+            )}
 
             <SettingsBlock id="appearance" title={copy.navAppearance}>
               <SettingsGroup>
@@ -1579,6 +1601,7 @@ export function VaultGuide({
               </SettingsGroup>
             </SettingsBlock>
 
+            {isWebRuntime() ? null : (
             <SettingsBlock id="cli" title={copy.cliTitle}>
               <SettingsGroup busy={cliAction !== null}>
                 <SettingsRow
@@ -1627,6 +1650,7 @@ export function VaultGuide({
                 </SettingsRow>
               </SettingsGroup>
             </SettingsBlock>
+            )}
 
             <SettingsBlock id="shortcuts" title={copy.navShortcuts}>
               <SettingsGroup>
