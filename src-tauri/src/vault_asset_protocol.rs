@@ -7,6 +7,7 @@
 use std::{fs, path::Path, time::UNIX_EPOCH};
 
 use tauri::http::{header, Method, Request, Response, StatusCode};
+use tauri::Manager;
 
 pub const SCHEME: &str = "shard-asset";
 /// 单张图片的上限：再大的文件不往内存里整份读。
@@ -21,10 +22,43 @@ pub fn handle(app: &tauri::AppHandle, request: &Request<Vec<u8>>) -> Response<Ve
         .headers()
         .get(header::IF_NONE_MATCH)
         .and_then(|value| value.to_str().ok());
+    // 连接了服务器：图片在服务器上，带设备令牌代理 `/api/files`（在线客户端，S8a）。
+    if let Some(client) = app.state::<crate::remote_client::RemoteRuntime>().client() {
+        return serve_remote(&client, request.method(), request.uri().path(), origin);
+    }
     match crate::configured_vault_path(app) {
         Ok(vault) => serve(&vault, request.method(), request.uri().path(), origin, if_none_match),
         Err(_) => empty(StatusCode::NOT_FOUND, origin),
     }
+}
+
+/// 代理服务器的 `/api/files/<路径>`：路径原样（已百分号编码）转过去，服务器只供图片、自带 nosniff 与 SVG 沙箱 CSP。
+/// 失败一律 404，与本地一样不在响应里带细节。
+fn serve_remote(client: &shard_remote::Client, method: &Method, uri_path: &str, origin: Option<&str>) -> Response<Vec<u8>> {
+    if method != Method::GET && method != Method::HEAD {
+        return empty(StatusCode::METHOD_NOT_ALLOWED, origin);
+    }
+    let path = uri_path.trim_start_matches('/');
+    if path.is_empty() || path.split('/').any(|part| part == ".." || part == "%2E%2E" || part == "%2e%2e") {
+        return empty(StatusCode::NOT_FOUND, origin);
+    }
+    let fetched = match client.get_bytes(&format!("api/files/{path}")) {
+        Ok(fetched) if fetched.is_ok() => fetched,
+        _ => return empty(StatusCode::NOT_FOUND, origin),
+    };
+    let mut builder = cors(Response::builder(), origin)
+        .status(StatusCode::OK)
+        .header(header::X_CONTENT_TYPE_OPTIONS, "nosniff")
+        .header(header::CONTENT_TYPE, fetched.content_type.as_deref().unwrap_or("application/octet-stream"))
+        .header(header::CACHE_CONTROL, fetched.cache_control.as_deref().unwrap_or("no-cache"));
+    if let Some(etag) = fetched.etag.as_deref() {
+        builder = builder.header(header::ETAG, etag);
+    }
+    if let Some(policy) = fetched.content_security_policy.as_deref() {
+        builder = builder.header(header::CONTENT_SECURITY_POLICY, policy);
+    }
+    let body = if method == Method::HEAD { Vec::new() } else { fetched.bytes };
+    builder.body(body).unwrap_or_else(|_| empty(StatusCode::NOT_FOUND, origin))
 }
 
 pub fn serve(
@@ -196,6 +230,67 @@ mod tests {
 
     fn get(vault: &Path, path: &str, origin: Option<&str>) -> Response<Vec<u8>> {
         serve(vault, &Method::GET, &format!("/{}", encode(path)), origin, None)
+    }
+
+    /// 每个请求的（首行, Authorization 头）。
+    type SeenRequests = std::sync::Arc<std::sync::Mutex<Vec<(String, String)>>>;
+
+    /// 极简 HTTP 服务器：记下每个请求的首行与 Authorization 头，回一张「图片」。
+    fn image_server() -> (String, SeenRequests) {
+        use std::io::{BufRead, BufReader, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port());
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let log = std::sync::Arc::clone(&seen);
+        std::thread::spawn(move || {
+            for mut stream in listener.incoming().flatten() {
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut first = String::new();
+                reader.read_line(&mut first).unwrap();
+                let mut authorization = String::new();
+                loop {
+                    let mut line = String::new();
+                    reader.read_line(&mut line).unwrap();
+                    if line.trim().is_empty() {
+                        break;
+                    }
+                    if let Some(value) = line.strip_prefix("authorization: ").or_else(|| line.strip_prefix("Authorization: ")) {
+                        authorization = value.trim().to_string();
+                    }
+                }
+                log.lock().unwrap().push((first.trim().to_string(), authorization));
+                let body = PNG;
+                let head = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nETag: \"abc\"\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                stream.write_all(head.as_bytes()).unwrap();
+                stream.write_all(body).unwrap();
+            }
+        });
+        (url, seen)
+    }
+
+    #[test]
+    fn remote_mode_proxies_images_with_the_device_token() {
+        let (url, seen) = image_server();
+        let client = shard_remote::Client::new(&url, "shd_dev_t", shard_remote::ClientOptions::new("t/1", "t")).unwrap();
+        let path = format!("/{}", encode("notes/证件/营业执照 1.jpg"));
+        let response = serve_remote(&client, &Method::GET, &path, Some("tauri://localhost"));
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()[header::CONTENT_TYPE], "image/png");
+        assert_eq!(response.headers()[header::ETAG], "\"abc\"");
+        assert_eq!(response.headers()[header::X_CONTENT_TYPE_OPTIONS], "nosniff");
+        assert_eq!(response.headers()[header::ACCESS_CONTROL_ALLOW_ORIGIN], "tauri://localhost");
+        assert_eq!(response.body(), PNG);
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen[0].0, format!("GET /api/files{path} HTTP/1.1"));
+        assert_eq!(seen[0].1, "Bearer shd_dev_t");
+
+        // 跳出与非读方法不转发。
+        assert_eq!(serve_remote(&client, &Method::GET, "/notes/../.shard/lockbox.json", None).status(), StatusCode::NOT_FOUND);
+        assert_eq!(serve_remote(&client, &Method::POST, &path, None).status(), StatusCode::METHOD_NOT_ALLOWED);
+        assert_eq!(seen.len(), 1);
     }
 
     #[test]

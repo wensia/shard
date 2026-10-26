@@ -5133,6 +5133,7 @@ dependencies = [
  "sha2",
  "shard-core",
  "shard-lockbox",
+ "shard-remote",
  "shard-vault",
  "tauri",
  "tauri-build",

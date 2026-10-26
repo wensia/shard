@@ -64,6 +64,7 @@ mod export_commands;
 mod markdown_dialect;
 mod window_frame;
 mod reminder_badge;
+mod remote_client;
 mod search_commands;
 mod search_contract;
 mod search_index;
@@ -4192,6 +4193,7 @@ pub fn run() {
         .manage(search_runtime)
         .manage(index_registry)
         .manage(reminder_badge::ReminderSchedule::default())
+        .manage(remote_client::RemoteRuntime::default())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .register_asynchronous_uri_scheme_protocol(
@@ -4213,10 +4215,19 @@ pub fn run() {
                 window_frame::configure_startup(window)?;
             }
             reminder_badge::spawn_badge_worker(app.handle().clone())?;
+            // 连接过服务器就直接连上（在线客户端，S8a）。
+            remote_client::restore(app.handle());
 
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            remote_client::remote_status,
+            remote_client::remote_pair_start,
+            remote_client::remote_pair_poll,
+            remote_client::remote_pair_cancel,
+            remote_client::remote_disconnect,
+            remote_client::remote_invoke,
+            remote_client::remote_upload_blob,
             search_commands::search_vault,
             search_commands::read_search_target,
             watch_vault,
