@@ -1,8 +1,9 @@
-import { invoke, isTauri } from "@tauri-apps/api/core"
+import { isTauri } from "@tauri-apps/api/core"
 
 import { deriveKind } from "@/lib/content-kind"
 import { migrateLockboxMarkdownDialect, migratePublicMarkdownDialect } from "@/lib/markdown-dialect-migration"
 import type { PropertyRequestValue, PropertyType } from "@/lib/properties"
+import { transport } from "@/lib/transport"
 import type { CanvasFile } from "@/features/canvas/model"
 import type { DatasetSnapshot } from "@/features/datasets/types"
 import type {
@@ -73,14 +74,11 @@ export function getApiErrorMessage(error: unknown) {
   return message
 }
 
+/** 普通命令：桌面走 IPC，网页走 `/api/rpc`；错误归一成字符串。 */
 function desktopInvoke<T>(command: string, args?: Record<string, unknown>) {
-  if (!isTauri()) {
-    return Promise.reject(DESKTOP_RUNTIME_MESSAGE)
-  }
-
-  return invoke<T>(command, args).catch((error) =>
-    Promise.reject(getApiErrorMessage(error))
-  )
+  return transport()
+    .invoke<T>(command, args)
+    .catch((error) => Promise.reject(getApiErrorMessage(error)))
 }
 
 function unavailableCliInstallStatus(): CliInstallStatus {
@@ -98,11 +96,7 @@ export function desktopInvokeRaw<T>(
   command: string,
   args?: Record<string, unknown>
 ) {
-  if (!isTauri()) {
-    return Promise.reject(DESKTOP_RUNTIME_MESSAGE)
-  }
-
-  return invoke<T>(command, args)
+  return transport().invoke<T>(command, args)
 }
 
 export function hydrateFragment(fragment: StoredFragment): Fragment {
@@ -431,10 +425,11 @@ export function convertTableDocumentToMarkdown(path: string) {
 // 返回 assets 目录下的相对路径，可直接写入 Markdown 正文。
 // 原始字节 IPC：大图不在 UI 线程序列化成 number[]；文件名只作日志与将来的命名参考。
 export function saveFragmentImage(fileName: string, bytes: Uint8Array) {
-  if (!isTauri()) return Promise.reject(DESKTOP_RUNTIME_MESSAGE)
-  return invoke<string>("save_fragment_image", bytes, {
-    headers: { "x-shard-file-name": encodeURIComponent(fileName) },
-  }).catch((error) => Promise.reject(getApiErrorMessage(error)))
+  return transport()
+    .invokeBytes<string>("save_fragment_image", bytes, {
+      "x-shard-file-name": encodeURIComponent(fileName),
+    })
+    .catch((error) => Promise.reject(getApiErrorMessage(error)))
 }
 
 // 从访达拖进来的图片：Rust 直接按路径读，字节不经过前端。

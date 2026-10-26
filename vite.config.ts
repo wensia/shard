@@ -5,6 +5,8 @@ import path from "path";
 import { fileURLToPath } from "url";
 
 const host = process.env.TAURI_DEV_HOST;
+// 网页版开发：把 /api 转给本机的 shard-server（同源，Cookie 才能用）。例如 SHARD_SERVER_URL=http://127.0.0.1:8787
+const shardServer = process.env.SHARD_SERVER_URL;
 const rootDir = path.dirname(fileURLToPath(import.meta.url));
 
 // https://vite.dev/config/
@@ -30,6 +32,12 @@ export default defineConfig({
           protocol: "ws",
           host,
           port: 1421,
+        }
+      : undefined,
+    proxy: shardServer
+      ? {
+          "/api": { target: shardServer, changeOrigin: false },
+          "/healthz": { target: shardServer, changeOrigin: false },
         }
       : undefined,
     watch: {

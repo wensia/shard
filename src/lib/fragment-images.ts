@@ -1,28 +1,26 @@
-import { convertFileSrc, isTauri } from "@tauri-apps/api/core"
+import { isTauri } from "@tauri-apps/api/core"
 import { save } from "@tauri-apps/plugin-dialog"
 
 import { readFragmentImage, saveExportedImage } from "@/lib/api"
+import { transport } from "@/lib/transport"
 
 const URL_LIKE_PATTERN = /^(?:[a-z][a-z\d+.-]*:|\/\/)/i
 export const ATTACHMENT_SCHEME = "shard-attachment:"
 const ATTACHMENT_HASH_PATTERN = /^[a-f\d]{64}$/i
-/** Rust 端 `vault_asset_protocol` 注册的协议名。 */
-export const VAULT_IMAGE_SCHEME = "shard-asset"
 
 /**
  * 正文、表格里的图片引用 → `<img>` 能直接用的地址。
  *
- * vault 内的图片（`assets/…`、`notes/证件/营业执照.jpg`、`shard-attachment:<hash>`）走
- * `shard-asset` 协议由 webview 自己取，不经 base64 IPC、不在 JS 堆里常驻整张图；远程
- * 与 data/blob 地址原样返回。`version` 用于同名替换后让 WebKit 丢掉旧的内存缓存。
+ * vault 内的图片（`assets/…`、`notes/证件/营业执照.jpg`、`shard-attachment:<hash>`）由浏览器自己取：
+ * 桌面走 Rust 注册的 `shard-asset` 协议，网页走 `/api/files/…`（Cookie 鉴权），都不经 base64、
+ * 不在 JS 堆里常驻整张图；远程与 data/blob 地址原样返回。`version` 用于同名替换后让 WebKit
+ * 丢掉旧的内存缓存。
  */
 export function vaultImageUrl(reference: string, version?: string | number | null) {
   const trimmed = reference.trim()
   if (!trimmed) return ""
   if (!attachmentHash(trimmed) && URL_LIKE_PATTERN.test(trimmed)) return trimmed
-  if (!isTauri()) return ""
-
-  const url = convertFileSrc(trimmed, VAULT_IMAGE_SCHEME)
+  const url = transport().fileUrl(trimmed)
   return version === undefined || version === null || version === ""
     ? url
     : `${url}?v=${encodeURIComponent(String(version))}`

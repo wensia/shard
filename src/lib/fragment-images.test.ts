@@ -48,9 +48,14 @@ describe("vaultImageUrl", () => {
     expect(vaultImageUrl("notes/a.png", null)).toBe("shard-asset://localhost/notes%2Fa.png")
   })
 
-  it("returns nothing outside the desktop runtime or for empty references", () => {
+  it("returns nothing for empty references", () => {
     expect(vaultImageUrl("   ")).toBe("")
+  })
+
+  it("serves vault images from the server in the web runtime", () => {
     delete globals.isTauri
-    expect(vaultImageUrl("notes/a.png")).toBe("")
+    expect(vaultImageUrl("notes/证件/a 1.png", 7)).toBe(
+      `/api/files/notes/${encodeURIComponent("证件")}/${encodeURIComponent("a 1.png")}?v=7`
+    )
   })
 })

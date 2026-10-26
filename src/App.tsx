@@ -1,5 +1,8 @@
 import { useState } from "react"
 
+import { AuthGate } from "@/features/auth/auth-gate"
+import { isWebRuntime } from "@/lib/transport"
+
 import {
   DEFAULT_WORKSPACE_ROUTE,
   type WorkspaceRoute,
@@ -10,7 +13,9 @@ function App() {
   // 捕捉门禁：冷启动必须落在碎片台 composer，不恢复上次空间。
   const [route, setRoute] = useState<WorkspaceRoute>(DEFAULT_WORKSPACE_ROUTE)
 
-  return <WorkbenchShell route={route} setRoute={setRoute} />
+  const shell = <WorkbenchShell route={route} setRoute={setRoute} />
+  // 网页端先过登录门；桌面应用直接进工作台。
+  return isWebRuntime() ? <AuthGate>{shell}</AuthGate> : shell
 }
 
 export default App

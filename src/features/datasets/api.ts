@@ -1,11 +1,11 @@
-import { invoke, isTauri } from "@tauri-apps/api/core"
-
-import { DESKTOP_RUNTIME_MESSAGE, getApiErrorMessage } from "@/lib/api"
+import { getApiErrorMessage } from "@/lib/api"
+import { transport } from "@/lib/transport"
 import type { DatasetOp, DatasetSnapshot } from "./types"
 
 function desktopInvoke<T>(command: string, args: Record<string, unknown>): Promise<T> {
-  if (!isTauri()) return Promise.reject(DESKTOP_RUNTIME_MESSAGE)
-  return invoke<T>(command, args).catch((error) => Promise.reject(getApiErrorMessage(error)))
+  return transport()
+    .invoke<T>(command, args)
+    .catch((error) => Promise.reject(getApiErrorMessage(error)))
 }
 
 export function readDataset(path: string): Promise<DatasetSnapshot> {

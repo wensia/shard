@@ -1,0 +1,94 @@
+/* 网页端的登录、首次设置、设备配对：kiln 的消费者流程卡片——品牌行、标题、一张白卡、一个主色动作。
+ * 与密匣上锁卡片同一套几何（lockbox-shell.module.css 的 .lid）。 */
+
+.page {
+  display: flex;
+  min-height: 100dvh;
+  flex-direction: column;
+  align-items: center;
+  padding: max(var(--space-6), env(safe-area-inset-top)) max(var(--space-4), env(safe-area-inset-right))
+    max(var(--space-6), env(safe-area-inset-bottom)) max(var(--space-4), env(safe-area-inset-left));
+  background: var(--background);
+}
+
+.card {
+  display: flex;
+  width: 100%;
+  max-width: calc(var(--space-12) * 7.5);
+  flex-direction: column;
+  gap: var(--space-4);
+  margin-block: auto;
+  padding: var(--space-6);
+  border-radius: var(--radius-card);
+  background: var(--card);
+  box-shadow: var(--shadow-card);
+}
+
+.brand {
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: var(--text-meta);
+  font-weight: var(--weight-medium);
+  letter-spacing: 0.02em;
+}
+
+.title {
+  margin: 0;
+  color: var(--foreground);
+  font-size: var(--text-page-title);
+  font-weight: var(--weight-semibold);
+  line-height: var(--leading-tight);
+}
+
+.hint {
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: var(--text-body);
+  line-height: var(--leading-normal);
+}
+
+.hint code {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.95em;
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  color: var(--foreground);
+  font-size: var(--text-meta);
+  font-weight: var(--weight-medium);
+}
+
+/* 主动作：手机上 44px 触控高度（kiln 消费者流程），桌面回到 lg 控件高度。 */
+.action {
+  width: 100%;
+  min-height: 44px;
+}
+
+@media (pointer: fine) {
+  .action {
+    min-height: var(--control-height-lg);
+  }
+}
+
+.error {
+  margin: 0;
+  color: var(--destructive);
+  font-size: var(--text-meta);
+  line-height: var(--leading-normal);
+}
+
+.success {
+  margin: 0;
+  color: var(--foreground);
+  font-size: var(--text-body);
+  line-height: var(--leading-normal);
+}

@@ -1,7 +1,8 @@
 import { useEffect, useState, type RefObject } from "react"
-import { invoke, isTauri } from "@tauri-apps/api/core"
+import { isTauri } from "@tauri-apps/api/core"
 import { getCurrentWebview } from "@tauri-apps/api/webview"
 
+import { readImportCsvFile } from "@/features/datasets/api"
 import { notify } from "@/lib/notify"
 
 const TABLE_DOCUMENT_EXTENSIONS = ["csv", "xls", "xlsb", "xlsm", "xlsx"]
@@ -48,8 +49,8 @@ export function useTableDocumentDrop({ enabled = true, allowCsv = true, frameRef
       if (!path) { notify.info("请先另存为 CSV 再导入"); return }
       if (!allowCsv) { notify.error("私密碎片不支持数据集"); return }
       try {
-        const bytes = await invoke<number[]>("read_import_csv_file", { path })
-        if (!disposed) onCsv({ name: path.split(/[\\/]/u).pop() ?? "数据集.csv", bytes: new Uint8Array(bytes) })
+        const bytes = await readImportCsvFile(path)
+        if (!disposed) onCsv({ name: path.split(/[\\/]/u).pop() ?? "数据集.csv", bytes })
       } catch (error) {
         if (!disposed) notify.failure("读取 CSV 失败", error)
       }

@@ -1,5 +1,6 @@
-import { invoke, isTauri } from "@tauri-apps/api/core"
-import { DESKTOP_RUNTIME_MESSAGE, getApiErrorMessage } from "@/lib/api"
+import { invoke } from "@tauri-apps/api/core"
+import { getApiErrorMessage } from "@/lib/api"
+import { transport } from "@/lib/transport"
 import type { CanvasFile, CanvasReadResult } from "./model"
 import { decodeCanvasResponse, encodeCanvasRequest } from "./codec"
 import type { DiagramDocumentSummary } from "@/types"
@@ -10,9 +11,8 @@ export interface CanvasSplitResult {
 }
 
 export async function splitCanvas(path: string, expectedRevision: number, lastSavedHash: string) {
-  if (!isTauri()) throw new Error(DESKTOP_RUNTIME_MESSAGE)
   try {
-    return await invoke<CanvasSplitResult>("split_canvas", { path, expectedRevision, lastSavedHash })
+    return await transport().invoke<CanvasSplitResult>("split_canvas", { path, expectedRevision, lastSavedHash })
   } catch (error) {
     throw new Error(getApiErrorMessage(error))
   }
@@ -26,8 +26,9 @@ export interface CanvasWriteRequest {
 }
 
 async function canvasInvoke<T>(command: string, args: Record<string, unknown>): Promise<T> {
-  if (!isTauri()) throw new Error(DESKTOP_RUNTIME_MESSAGE)
   try {
+    // 网页：普通 JSON 请求；桌面：Worker 编码成字节走二进制 IPC，大画布不在 UI 线程序列化。
+    if (transport().kind === "http") return await transport().invoke<T>(command, args)
     const request = await encodeCanvasRequest(args)
     return await decodeCanvasResponse<T>(await invoke<ArrayBuffer>(command, request))
   } catch (error) {
