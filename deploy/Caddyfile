@@ -1,0 +1,34 @@
+# Caddy：终止 TLS（证书自动申请与续期）并反代到只监听本机的 shard-server。
+# 把 shard.example.com 换成你的域名，然后：
+#   caddy validate --config /etc/caddy/Caddyfile && systemctl reload caddy
+shard.example.com {
+	encode zstd gzip
+
+	# 单次请求上限：图片上传 50 MiB、RPC 请求体 64 MiB。
+	request_body {
+		max_size 64MB
+	}
+
+	reverse_proxy 127.0.0.1:8787 {
+		# SSE（/api/events）要立刻下发，不能被缓冲。
+		flush_interval -1
+		# 慢速上行传大图时默认超时不够。
+		transport http {
+			read_timeout 300s
+			write_timeout 300s
+		}
+	}
+
+	# JSON 访问日志默认会记录请求头：会话 Cookie 与设备令牌绝不能进日志。
+	log {
+		output file /var/log/caddy/shard.log {
+			roll_size 50MiB
+			roll_keep 10
+		}
+		format filter {
+			request>headers>Cookie delete
+			request>headers>Authorization delete
+			resp_headers>Set-Cookie delete
+		}
+	}
+}

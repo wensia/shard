@@ -1,0 +1,42 @@
+[Unit]
+Description=Shard server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=shard
+Group=shard
+# 站点地址写在 /etc/shard/server.env 的 SHARD_ORIGIN 里（例如 https://shard.example.com）。
+EnvironmentFile=/etc/shard/server.env
+ExecStart=/usr/local/bin/shard-server serve \
+    --data-dir /var/lib/shard \
+    --origin ${SHARD_ORIGIN} \
+    --listen 127.0.0.1:8787 \
+    --static-dir /usr/local/share/shard/web \
+    --trust-proxy
+Restart=always
+RestartSec=2
+
+# 收紧权限：只需要读自己的二进制与网页文件、读写数据目录。
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+ReadWritePaths=/var/lib/shard
+UMask=0077
+
+# 收到 SIGTERM 后停止接新连接、等在途写入结束。
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

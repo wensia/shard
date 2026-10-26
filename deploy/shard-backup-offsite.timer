@@ -1,0 +1,10 @@
+[Unit]
+Description=Shard encrypted offsite backup every day
+
+[Timer]
+OnCalendar=*-*-* 04:20:00
+RandomizedDelaySec=900
+Persistent=true
+
+[Install]
+WantedBy=timers.target

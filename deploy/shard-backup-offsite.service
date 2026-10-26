@@ -1,0 +1,9 @@
+[Unit]
+Description=Shard encrypted offsite backup
+
+[Service]
+Type=oneshot
+User=shard
+Group=shard
+EnvironmentFile=/etc/shard/server.env
+ExecStart=/usr/local/bin/shard-backup.sh --upload

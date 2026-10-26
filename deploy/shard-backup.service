@@ -1,0 +1,9 @@
+[Unit]
+Description=Shard local snapshot
+
+[Service]
+Type=oneshot
+User=shard
+Group=shard
+EnvironmentFile=/etc/shard/server.env
+ExecStart=/usr/local/bin/shard-backup.sh
