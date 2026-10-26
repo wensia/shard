@@ -31,9 +31,14 @@ export function withLockboxClient(base: ShardTransport): LockboxTransport {
       emitVaultChanged: (payload: { vault: string; changes: LockboxFileChange[] }) => {
         for (const handler of vaultHandlers) handler(payload)
       },
+      // 推送的 data 是 `{ seq }`（这次提交的密匣 seq）；重连、游标过旧、开关变化没有 seq。
       onLockboxChanged: (handler) => {
-        void base.listen("lockbox-changed", handler)
+        void base.listen<{ seq?: unknown } | undefined>("lockbox-changed", (payload) => {
+          handler(typeof payload?.seq === "number" ? payload.seq : undefined)
+        })
       },
+      // 浏览器会话写 manifest 要求最近验证过通行密钥（设备令牌不受限，不会走到这里）。
+      stepUp: () => import("@/features/auth/webauthn").then((module) => module.stepUp()),
     })
     router = created
     return created

@@ -3,16 +3,21 @@
 //! 每个命令都在内存资料库上跑 `shard_vault::lockbox` 里与桌面相同的函数（桌面在 src-tauri 只是这些函数外面
 //! 一层会话外壳，这里是同样薄的另一层）。写操作跑完后按信封 id 比较前后的文件，换成对服务器的写入：
 //! - 信封新增 / 改动 / 换路径（归档、恢复是同 id 换路径）→ `lockbox_apply` 里的一条 put；消失 → delete；
-//! - manifest 改动（设置、改口令、重置、旧 manifest 补写入密钥对）→ `lockbox_apply` 的 manifest 写入；
+//! - manifest 改动（设置、改口令、重置、旧 manifest 升级）→ `lockbox_apply` 的 manifest 写入；
 //! - 公开碎片被移入密匣（公开文件消失、同 id 的信封出现）→ `seal_fragment_into_lockbox`。
 //!
-//! 服务器确认后调用方用 [`Session::call`] 的 `commit` 推进基线；失败用 `rollback` 退回基线；409 时调用方重取
-//! 快照走 `replace_snapshot`。主密钥只在这里（wasm 内存）：上锁、快照被撤回、换掉密钥时清零。
+//! **路径不外泄**：内存资料库里条目放在真实路径（例如 `lockbox/notes/项目/周报.shard`，领域函数按它判断归档、
+//! 显示笔记标题）；发给服务器的路径一律是只由 id 推出的形式（[`concealed_path`]），真实路径写进加密载荷的
+//! `location` 字段。解锁后按载荷还原；旧条目（服务器上的路径带标题）解锁后由 `conceal` 迁移。锁着移入带标题的
+//! 内容时没有主密钥，先用临时写入密钥加密、解开补上 `location`，再用 manifest 的公钥重新加密（见 [`Session::write_op`]）。
+//!
+//! 服务器确认后调用方用 `commit` 推进基线；失败用 `rollback` 退回基线；409 时调用方重取快照走 `load`。
+//! 主密钥只在这里（wasm 内存）：`ReadKeys` / `WriteKey` drop 时清零；调用方上锁时直接丢掉整个 Worker。
 //!
 //! 不依赖 wasm-bindgen：wasm 外壳（`lib.rs`）只把 JSON 转进转出，这里用原生 `cargo test` 测。
 
 use std::{
-    collections::{BTreeMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     path::PathBuf,
     sync::Arc,
     time::{Duration, SystemTime},
@@ -22,7 +27,7 @@ use chrono::FixedOffset;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use shard_core::{contains_lockbox_tag, MemVfs, Vfs};
-use shard_lockbox::{Manifest, ReadKeys};
+use shard_lockbox::{Envelope, Manifest, ReadKeys, WriteKey};
 use shard_vault::{
     content_sha256_hex, find_fragment_path, find_lockbox_fragment_path, is_protected_type,
     lockbox::{self as domain, MigratedLockboxDialectSource},
@@ -46,8 +51,10 @@ const MANIFEST_PATH: &str = ".shard/lockbox.json";
 const SOURCE: &str = "web";
 /// 网页端的搜索上下文没有资料库代次（服务器 epoch 变化时整个页面会重新同步），固定为 0。
 const VAULT_EPOCH: &str = "0";
+/// 载荷里记真实路径的字段（桌面本地模式不写它；旧代码按 serde 默认忽略）。
+const LOCATION_FIELD: &str = "location";
 
-/// 「允许在网页解锁密匣」关掉时，网页上所有会解出主密钥的操作都拒绝。
+/// 服务器扣下了信封（浏览器会话且「允许在网页解锁密匣」关掉）：会解出主密钥的操作一律拒绝。
 pub const WEB_UNLOCK_DISABLED: &str = "网页解锁已关闭：可在账号设置里打开「允许在网页解锁密匣」，或到桌面应用里使用密匣。";
 
 static NO_HOOKS: NoHooks = NoHooks;
@@ -149,20 +156,49 @@ fn valid_id(id: &str) -> bool {
         && !id.chars().any(|char| char == '/' || char == '\\' || char.is_control())
 }
 
-/// 信封在内存资料库里的路径：服务器记了就用它；没有就按 id 推出 `lockbox/fragments/YYYY/MM/<id>.shard`
-/// （碎片 id 以 `YYYYMMDD-` 开头；不是这种形状的放在 `lockbox/fragments/` 下）。
+/// 碎片 id 以 `YYYYMMDD-` 开头。
+fn dated(id: &str) -> bool {
+    let bytes = id.as_bytes();
+    bytes.len() > 8 && bytes[..8].iter().all(u8::is_ascii_digit) && bytes[8] == b'-'
+}
+
+/// 服务器上的路径：只由 id 与分区（fragments / archive / notes）推出，不含标题与目录名。
+/// 碎片与回收的碎片沿用 `lockbox/<分区>/YYYY/MM/<id>.shard`（与桌面新建时一致），笔记是 `lockbox/notes/<id>.shard`。
+pub fn concealed_path(id: &str, real_path: &str) -> Option<String> {
+    if !valid_id(id) {
+        return None;
+    }
+    let section = real_path
+        .split('/')
+        .nth(1)
+        .filter(|section| matches!(*section, "fragments" | "archive" | "notes"))
+        .unwrap_or("fragments");
+    if section == "notes" {
+        return Some(format!("lockbox/notes/{id}.shard"));
+    }
+    if dated(id) {
+        return Some(format!("lockbox/{section}/{}/{}/{id}.shard", &id[..4], &id[4..6]));
+    }
+    Some(format!("lockbox/{section}/{id}.shard"))
+}
+
+/// 真实路径能不能直接给服务器看：只有它本来就是 [`concealed_path`] 的样子才行。
+fn needs_location(id: &str, real_path: &str) -> bool {
+    concealed_path(id, real_path).as_deref() != Some(real_path)
+}
+
+/// 信封在服务器路径下的位置：服务器记了就用它；没有就按 id 推出 `lockbox/fragments/YYYY/MM/<id>.shard`。
 pub fn effective_path(id: &str, path: Option<&str>) -> Option<String> {
     if let Some(path) = path.filter(|path| valid_item_path(path)) {
         return Some(path.to_string());
     }
-    if !valid_id(id) {
-        return None;
-    }
-    let bytes = id.as_bytes();
-    if bytes.len() > 8 && bytes[..8].iter().all(u8::is_ascii_digit) && bytes[8] == b'-' {
-        return Some(format!("lockbox/fragments/{}/{}/{id}.shard", &id[..4], &id[4..6]));
-    }
-    Some(format!("lockbox/fragments/{id}.shard"))
+    concealed_path(id, "lockbox/fragments")
+}
+
+/// 载荷里记的真实路径（不合规的忽略）。
+fn valid_location(location: &str) -> bool {
+    valid_item_path(location)
+        && matches!(location.split('/').nth(1), Some("fragments" | "archive" | "notes"))
 }
 
 // ---------------------------------------------------------------------------
@@ -173,7 +209,7 @@ pub fn effective_path(id: &str, path: Option<&str>) -> Option<String> {
 #[derive(Debug, Default)]
 struct Files {
     manifest: Option<String>,
-    /// 信封 id → (相对路径, 原文)。
+    /// 信封 id → (真实路径, 原文)。
     items: BTreeMap<String, (String, String)>,
     /// 公开碎片与笔记（只在「移入密匣」时临时放进来）：相对路径 → 原文。
     public: BTreeMap<String, String>,
@@ -193,7 +229,7 @@ fn is_public_markdown(path: &str) -> bool {
 struct PendingPut {
     id: String,
     envelope: String,
-    /// 发给服务器的路径：新条目或换了路径才带。
+    /// 发给服务器的路径（不含标题）：新条目或服务器路径要变时才带。
     path: Option<String>,
     expected_sha: Option<String>,
 }
@@ -255,6 +291,21 @@ impl Pending {
     }
 }
 
+/// 写操作之后重新加密哪些信封（补上 / 去掉载荷里的真实路径）。
+#[derive(Clone, Copy, PartialEq)]
+enum Conceal {
+    /// 只看这次改动过的信封。
+    Changed,
+    /// 全部信封（解锁后迁移旧条目）。
+    All,
+}
+
+/// 锁着移入带标题的内容时用的临时写入密钥（见 [`Session::write_op`]）。随机生成、只在本会话内用。
+struct Ephemeral {
+    public_key: String,
+    keys: ReadKeys,
+}
+
 // ---------------------------------------------------------------------------
 // 会话
 // ---------------------------------------------------------------------------
@@ -275,6 +326,11 @@ pub struct Session {
     /// 内存资料库每变一次递增：密匣搜索快照的缓存键。
     generation: u64,
     search_cache: Option<(u64, u64, String, Arc<SearchSnapshotData>)>,
+    /// 信封 sha → 载荷里的真实路径（解锁后解密得到；含标题，上锁即清空）。
+    locations: HashMap<String, Option<String>>,
+    /// 内存资料库里每个 id 现在放在哪（真实路径）。
+    paths: BTreeMap<String, String>,
+    ephemeral: Option<Ephemeral>,
 }
 
 impl Default for Session {
@@ -298,6 +354,9 @@ impl Session {
             now: SystemTime::UNIX_EPOCH,
             generation: 0,
             search_cache: None,
+            locations: HashMap::new(),
+            paths: BTreeMap::new(),
+            ephemeral: None,
         }
     }
 
@@ -321,6 +380,7 @@ impl Session {
             }
             "change_password" => self.change_password(&args),
             "reset_password" => self.reset_password(&args),
+            "conceal" => self.conceal_existing(),
             "list" => self.list(),
             "create" => self.create(&args),
             "update" => self.update(&args),
@@ -380,9 +440,10 @@ impl Session {
 
     // ---- 快照与基线 ----
 
-    /// 载入（或替换成）服务器快照。返回状态与相对上一份基线的变化（`vault-changed` 同形，供界面刷新）。
+    /// 载入（或替换成）服务器快照。返回状态与相对上一份基线的变化（`vault-changed` 同形，路径是真实路径）。
     fn load(&mut self, args: &Value) -> CallResult {
         let snapshot: Snapshot = parse(&args["snapshot"])?;
+        let previous_paths = std::mem::take(&mut self.paths);
         let previous = std::mem::take(&mut self.base);
         let mut base = Base {
             manifest: snapshot.manifest.map(|manifest| (manifest.body, manifest.sha)),
@@ -391,14 +452,34 @@ impl Session {
         for item in snapshot.items {
             base.items.insert(item.id, BaseItem { envelope: item.envelope, sha: item.sha, path: item.path });
         }
-        let changes = base_changes(&previous, &base);
         self.base = base;
         self.web_unlock = snapshot.web_unlock;
         self.items_withheld = snapshot.items_withheld;
         self.loaded = true;
         self.pending = None;
-        self.reset_to_base();
         self.revalidate_keys();
+        self.reset_to_base();
+
+        let mut changes = Vec::new();
+        for (id, item) in &self.base.items {
+            let path = self.paths.get(id);
+            let old_path = previous_paths.get(id);
+            let same_sha = previous.items.get(id).is_some_and(|old| old.sha == item.sha);
+            if same_sha && path == old_path {
+                continue;
+            }
+            if let (Some(old_path), true) = (old_path, old_path != path) {
+                changes.push(json!({ "path": old_path, "exists": false, "sha": Value::Null }));
+            }
+            if let Some(path) = path {
+                changes.push(json!({ "path": path, "exists": true, "sha": item.sha }));
+            }
+        }
+        for (id, old_path) in &previous_paths {
+            if !self.base.items.contains_key(id) {
+                changes.push(json!({ "path": old_path, "exists": false, "sha": Value::Null }));
+            }
+        }
         Ok(json!({ "state": self.state(), "changes": changes }))
     }
 
@@ -418,9 +499,26 @@ impl Session {
                 .and_then(|manifest| manifest.read_keys(&keys.master_key).ok())
         };
         match refreshed {
-            Some(keys) => self.set_keys(keys),
+            Some(keys) => self.keys = Some(keys),
             None => self.lock(),
         }
+    }
+
+    /// 一条基线条目在内存资料库里的真实路径：已解锁时按载荷里的 `location`（按信封 sha 缓存），否则用服务器路径。
+    fn real_path(&self, id: &str, item: &BaseItem, decrypted: &mut Vec<(String, Option<String>)>) -> Option<String> {
+        let fallback = effective_path(id, item.path.as_deref());
+        let Some(keys) = &self.keys else {
+            return fallback;
+        };
+        let location = match self.locations.get(&item.sha) {
+            Some(location) => location.clone(),
+            None => {
+                let location = payload_location(&item.envelope, keys);
+                decrypted.push((item.sha.clone(), location.clone()));
+                location
+            }
+        };
+        location.or(fallback)
     }
 
     fn reset_to_base(&mut self) {
@@ -430,23 +528,28 @@ impl Session {
         if let Some((body, _)) = &self.base.manifest {
             let _ = vfs.write_atomic(&root.join(MANIFEST_PATH), body.as_bytes());
         }
+        let mut decrypted = Vec::new();
+        let mut paths = BTreeMap::new();
         for (id, item) in &self.base.items {
-            let Some(path) = effective_path(id, item.path.as_deref()) else {
+            let Some(path) = self.real_path(id, item, &mut decrypted) else {
                 continue;
             };
-            let absolute = root.join(&path);
             // 两条信封落到同一个路径（不该发生）：后一条按 id 另放，免得互相覆盖。
-            let absolute = if vfs.exists(&absolute) {
-                match effective_path(id, None) {
-                    Some(fallback) if !vfs.exists(&root.join(&fallback)) => root.join(fallback),
+            let path = if vfs.exists(&root.join(&path)) {
+                match concealed_path(id, &path) {
+                    Some(fallback) if !vfs.exists(&root.join(&fallback)) => fallback,
                     _ => continue,
                 }
             } else {
-                absolute
+                path
             };
-            let _ = vfs.write_atomic(&absolute, item.envelope.as_bytes());
+            if vfs.write_atomic(&root.join(&path), item.envelope.as_bytes()).is_ok() {
+                paths.insert(id.clone(), path);
+            }
         }
+        self.locations.extend(decrypted);
         self.vfs = vfs;
+        self.paths = paths;
         self.generation += 1;
     }
 
@@ -469,6 +572,11 @@ impl Session {
         files
     }
 
+    /// 服务器上这条现在的路径（基线）。
+    fn base_server_path(&self, id: &str) -> Option<String> {
+        self.base.items.get(id).and_then(|item| effective_path(id, item.path.as_deref()))
+    }
+
     fn diff(&self, before: &Files, after: &Files) -> Result<Pending, String> {
         let mut pending = Pending::default();
         if after.manifest != before.manifest {
@@ -479,12 +587,18 @@ impl Session {
         let mut created = Vec::new();
         for (id, (path, text)) in &after.items {
             let expected_sha = self.base.items.get(id).map(|item| item.sha.clone());
+            let server_path = if needs_location(id, path) {
+                concealed_path(id, path).ok_or_else(|| format!("密匣条目 id 无效：{id}"))?
+            } else {
+                path.clone()
+            };
+            let path_change = (self.base_server_path(id).as_deref() != Some(server_path.as_str())).then(|| server_path.clone());
             match before.items.get(id) {
                 Some((old_path, old_text)) if old_path == path && old_text == text => {}
-                Some((old_path, _)) => pending.puts.push(PendingPut {
+                Some(_) => pending.puts.push(PendingPut {
                     id: id.clone(),
                     envelope: text.clone(),
-                    path: (old_path != path).then(|| path.clone()),
+                    path: path_change,
                     expected_sha,
                 }),
                 None => {
@@ -492,7 +606,7 @@ impl Session {
                     pending.puts.push(PendingPut {
                         id: id.clone(),
                         envelope: text.clone(),
-                        path: Some(path.clone()),
+                        path: Some(server_path),
                         expected_sha,
                     });
                 }
@@ -539,21 +653,106 @@ impl Session {
         Ok(pending)
     }
 
+    /// 写操作之后整理信封：载荷里的 `location` 与真实路径一致（需要时补上，不需要时去掉）；锁着借临时写入
+    /// 密钥加密的信封解开后改用 manifest 的公钥重新加密。返回重新加密过的条目（id → 新原文）。
+    fn conceal(&mut self, before: &Files, mode: Conceal, ephemeral: Option<&ReadKeys>) -> Result<BTreeMap<String, String>, String> {
+        let after = self.files();
+        let mut resealed = BTreeMap::new();
+        let mut cached = Vec::new();
+        let public_key = match after.manifest.as_deref() {
+            Some(text) => Manifest::parse(text)?.write_public_key()?,
+            None => None,
+        };
+        for (id, (path, text)) in &after.items {
+            let changed = before.items.get(id).is_none_or(|(old_path, old_text)| old_path != path || old_text != text);
+            if !changed && mode == Conceal::Changed {
+                continue;
+            }
+            let desired = needs_location(id, path).then(|| path.clone());
+            let envelope = Envelope::parse(text)?;
+            let public_sealed = envelope.key_algorithm.is_some();
+            let borrowed = ephemeral.filter(|_| public_sealed && changed);
+            let Some(keys) = borrowed.or(self.keys.as_ref()) else {
+                if desired.is_some() {
+                    return Err("锁着无法把这条密匣内容的标题加密存放，请先解锁。".to_string());
+                }
+                continue;
+            };
+            let plaintext = match envelope.open(keys) {
+                Ok(plaintext) => plaintext,
+                Err(error) if desired.is_some() || borrowed.is_some() => return Err(error),
+                Err(_) => continue,
+            };
+            let mut payload: Value = serde_json::from_slice(&plaintext).map_err(|error| error.to_string())?;
+            let current = payload.get(LOCATION_FIELD).and_then(Value::as_str).map(str::to_string);
+            if current == desired && borrowed.is_none() {
+                cached.push((content_sha256_hex(text), desired));
+                continue;
+            }
+            let object = payload.as_object_mut().ok_or_else(|| "密匣载荷无效。".to_string())?;
+            match &desired {
+                Some(location) => {
+                    object.insert(LOCATION_FIELD.to_string(), json!(location));
+                }
+                None => {
+                    object.remove(LOCATION_FIELD);
+                }
+            }
+            let bytes = serde_json::to_vec(&payload).map_err(|error| error.to_string())?;
+            let sealed = if public_sealed {
+                let public_key = public_key.clone().ok_or_else(|| "密匣写入密钥缺失。".to_string())?;
+                Envelope::seal(&WriteKey::Public(public_key), id, &bytes)?
+            } else {
+                Envelope::seal_with_master(&keys.master_key, id, &bytes)?
+            };
+            let next = sealed.to_text()?;
+            self.vfs
+                .write_atomic(&PathBuf::from(ROOT).join(path), next.as_bytes())
+                .map_err(|error| error.to_string())?;
+            cached.push((content_sha256_hex(&next), desired));
+            resealed.insert(id.clone(), next);
+        }
+        if self.keys.is_some() {
+            self.locations.extend(cached);
+        }
+        Ok(resealed)
+    }
+
     /// 跑一个写操作并算出待确认的改动。失败时内存资料库退回基线。
-    fn write_op<T>(
+    /// `ephemeral`：锁着、要移入的内容路径带标题时为真——临时把 manifest 的写入公钥换成本会话的临时密钥，
+    /// 好在写完后解开、补上真实路径，再用真正的公钥重新加密（服务器只见到不含标题的路径）。
+    fn write_op<T: serde::Serialize>(
         &mut self,
+        mode: Conceal,
+        ephemeral: bool,
         op: impl FnOnce(&VaultCtx<'_>, Option<&ReadKeys>) -> Result<T, String>,
-    ) -> Result<(T, Value), CallError> {
+    ) -> Result<(Value, Value), CallError> {
         if self.pending.is_some() {
             return Err("上一次密匣写入还没有完成，请稍后再试。".into());
         }
         let before = self.files();
+        let swapped = if ephemeral { Some(self.swap_in_ephemeral()?) } else { None };
         let result = {
             let cx = self.cx();
             op(&cx, self.keys.as_ref())
         };
+        if let Some(original) = &swapped {
+            let _ = self.vfs.write_atomic(&PathBuf::from(ROOT).join(MANIFEST_PATH), original.as_bytes());
+        }
         let value = match result {
             Ok(value) => value,
+            Err(error) => {
+                self.reset_to_base();
+                return Err(error.into());
+            }
+        };
+        let ephemeral_keys = if swapped.is_some() { self.ephemeral.take() } else { None };
+        let concealed = self.conceal(&before, mode, ephemeral_keys.as_ref().map(|ephemeral| &ephemeral.keys));
+        if ephemeral_keys.is_some() {
+            self.ephemeral = ephemeral_keys;
+        }
+        let resealed = match concealed {
+            Ok(resealed) => resealed,
             Err(error) => {
                 self.reset_to_base();
                 return Err(error.into());
@@ -568,6 +767,11 @@ impl Session {
                 return Err(error.into());
             }
         };
+        // 返回的碎片投影里 fileSha 要对上重新加密后的信封。
+        let mut value = serde_json::to_value(value).map_err(|error| error.to_string())?;
+        if let Some(text) = value.get("id").and_then(Value::as_str).and_then(|id| resealed.get(id)) {
+            value["fileSha"] = json!(content_sha256_hex(text));
+        }
         if pending.is_empty() {
             return Ok((value, Value::Null));
         }
@@ -576,7 +780,30 @@ impl Session {
         Ok((value, payload))
     }
 
-    fn op_result(result: impl serde::Serialize, write: Value) -> CallResult {
+    /// 把 manifest 的写入公钥临时换成本会话的临时密钥（需要时生成一次：RSA-2048，wasm 里约 1 秒），返回原文。
+    fn swap_in_ephemeral(&mut self) -> Result<String, String> {
+        let manifest_path = PathBuf::from(ROOT).join(MANIFEST_PATH);
+        let original = self.vfs.read_to_string(&manifest_path).map_err(|_| "密匣尚未设置。".to_string())?;
+        let manifest = Manifest::parse(&original)?;
+        if self.ephemeral.is_none() {
+            let mut master_key = shard_lockbox::random_bytes(shard_lockbox::MASTER_KEY_BYTES);
+            let mut scratch = manifest.clone();
+            scratch.write_public_key = None;
+            scratch.write_private_key_nonce = None;
+            scratch.write_private_key_ciphertext = None;
+            let generated = scratch.ensure_write_key(&master_key).and_then(|_| scratch.read_keys(&master_key));
+            master_key.zeroize();
+            let keys = generated?;
+            let public_key = scratch.write_public_key.clone().ok_or_else(|| "临时密钥生成失败。".to_string())?;
+            self.ephemeral = Some(Ephemeral { public_key, keys });
+        }
+        let mut swapped = manifest;
+        swapped.write_public_key = self.ephemeral.as_ref().map(|ephemeral| ephemeral.public_key.clone());
+        domain::write_lockbox_manifest(&self.vfs, &swapped)?;
+        Ok(original)
+    }
+
+    fn op_result(result: Value, write: Value) -> CallResult {
         Ok(json!({ "result": result, "write": write }))
     }
 
@@ -629,47 +856,50 @@ impl Session {
         Ok(self.state())
     }
 
+    /// 服务器没收下这次写入：退回基线。密钥按基线的 manifest 重新派生（例如解锁时的升级没写成）。
     fn rollback(&mut self) {
         self.pending = None;
+        self.revalidate_keys();
         self.reset_to_base();
     }
 
     // ---- 密钥 ----
 
-    fn set_keys(&mut self, keys: ReadKeys) {
-        if let Some(mut previous) = self.keys.replace(keys) {
-            previous.master_key.zeroize();
-        }
-    }
-
     /// 解锁（含设置、改口令、重置后视为已解锁）：按当前内存里的 manifest 派生读取密钥。
     fn unlock_with(&mut self, mut master_key: Vec<u8>) -> Result<(), CallError> {
         let keys = domain::read_lockbox_manifest(&self.vfs).and_then(|manifest| manifest.read_keys(&master_key));
         master_key.zeroize();
-        self.set_keys(keys?);
+        self.keys = Some(keys?);
         self.privacy_epoch += 1;
         self.search_cache = None;
+        // 没有待写回的改动时立刻按载荷里的真实路径重建；有的话等 commit / rollback 时重建。
+        if self.pending.is_none() {
+            self.reset_to_base();
+        }
         Ok(())
     }
 
     pub fn lock(&mut self) {
-        if let Some(mut keys) = self.keys.take() {
-            keys.master_key.zeroize();
+        if self.keys.take().is_some() {
             self.privacy_epoch += 1;
         }
         self.search_cache = None;
+        // 真实路径含标题：锁着不留。
+        self.locations.clear();
+        self.ephemeral = None;
     }
 
-    /// 桌面 `require_unlocked_lockbox_read_keys` 的同一套报错。
-    fn require_keys(&self) -> Result<ReadKeys, CallError> {
+    /// 桌面 `require_unlocked_lockbox_read_keys` 的同一套报错（只检查，不复制密钥）。
+    fn ensure_unlocked(&self) -> Result<(), CallError> {
         if !self.vfs.exists(&PathBuf::from(ROOT).join(MANIFEST_PATH)) {
             return Err("lockbox_not_configured".into());
         }
-        self.keys.clone().ok_or_else(|| "lockbox_locked".into())
+        if self.keys.is_none() {
+            return Err("lockbox_locked".into());
+        }
+        Ok(())
     }
 
-    /// 服务器扣下了信封（只对浏览器会话、且「允许在网页解锁密匣」关掉时）：会解出主密钥的操作一律拒绝。
-    /// 看 `itemsWithheld` 而不是 `webUnlock`：桌面连服务器时开关关着也照常下发，照常能解锁。
     fn ensure_web_unlock(&self) -> Result<(), CallError> {
         if self.items_withheld {
             Err(WEB_UNLOCK_DISABLED.into())
@@ -683,8 +913,12 @@ impl Session {
     fn setup(&mut self, args: &Value) -> CallResult {
         let password = args["password"].as_str().unwrap_or_default().to_string();
         self.ensure_web_unlock()?;
-        let (setup, write) = self.write_op(|cx, _| domain::setup_lockbox(cx, &password))?;
-        let shard_vault::lockbox::LockboxSetup { recovery_key, master_key } = setup;
+        let mut master_key = Vec::new();
+        let (recovery_key, write) = self.write_op(Conceal::Changed, false, |cx, _| {
+            let setup = domain::setup_lockbox(cx, &password)?;
+            master_key = setup.master_key;
+            Ok(setup.recovery_key)
+        })?;
         self.unlock_with(master_key)?;
         Self::op_result(json!({ "recoveryKey": recovery_key }), write)
     }
@@ -692,7 +926,11 @@ impl Session {
     fn unlock(&mut self, args: &Value) -> CallResult {
         let password = args["password"].as_str().unwrap_or_default().to_string();
         self.ensure_web_unlock()?;
-        let (master_key, write) = self.write_op(|cx, _| domain::unlock_lockbox(cx, &password))?;
+        let mut master_key = Vec::new();
+        let (_, write) = self.write_op(Conceal::Changed, false, |cx, _| {
+            master_key = domain::unlock_lockbox(cx, &password)?;
+            Ok(())
+        })?;
         self.unlock_with(master_key)?;
         Self::op_result(Value::Null, write)
     }
@@ -701,7 +939,11 @@ impl Session {
         let current = args["currentPassword"].as_str().unwrap_or_default().to_string();
         let next = args["newPassword"].as_str().unwrap_or_default().to_string();
         self.ensure_web_unlock()?;
-        let (master_key, write) = self.write_op(|cx, _| domain::change_lockbox_password(cx, &current, &next))?;
+        let mut master_key = Vec::new();
+        let (_, write) = self.write_op(Conceal::Changed, false, |cx, _| {
+            master_key = domain::change_lockbox_password(cx, &current, &next)?;
+            Ok(())
+        })?;
         self.unlock_with(master_key)?;
         Self::op_result(Value::Null, write)
     }
@@ -710,10 +952,22 @@ impl Session {
         let recovery_key = args["recoveryKey"].as_str().unwrap_or_default().to_string();
         let next = args["newPassword"].as_str().unwrap_or_default().to_string();
         self.ensure_web_unlock()?;
-        let (reset, write) = self.write_op(|cx, _| domain::reset_lockbox_password(cx, &recovery_key, &next))?;
-        let shard_vault::lockbox::LockboxSetup { recovery_key, master_key } = reset;
+        let mut master_key = Vec::new();
+        let (recovery, write) = self.write_op(Conceal::Changed, false, |cx, _| {
+            let reset = domain::reset_lockbox_password(cx, &recovery_key, &next)?;
+            master_key = reset.master_key;
+            Ok(reset.recovery_key)
+        })?;
         self.unlock_with(master_key)?;
-        Self::op_result(json!({ "recoveryKey": recovery_key }), write)
+        Self::op_result(json!({ "recoveryKey": recovery }), write)
+    }
+
+    /// 解锁后把旧条目迁到不含标题的服务器路径（真实路径写进载荷）。没有要迁的就不写。
+    fn conceal_existing(&mut self) -> CallResult {
+        self.ensure_unlocked()?;
+        let (_, write) = self.write_op(Conceal::All, false, |_, _| Ok(()))?;
+        let migrated = self.pending.as_ref().map_or(0, |pending| pending.puts.len());
+        Self::op_result(json!(migrated), write)
     }
 
     // ---- 碎片 ----
@@ -743,7 +997,7 @@ impl Session {
             return Err(LOCKBOX_TYPE_ERROR.into());
         }
         let (fragment, write) =
-            self.write_op(|cx, keys| domain::create_lockbox_fragment(cx, keys, &content, tags))?;
+            self.write_op(Conceal::Changed, false, |cx, keys| domain::create_lockbox_fragment(cx, keys, &content, tags))?;
         Self::op_result(fragment, write)
     }
 
@@ -756,14 +1010,14 @@ impl Session {
         let Some(path) = self.lockbox_path(id)? else {
             return Self::forward();
         };
-        let keys = self.require_keys()?;
+        self.ensure_unlocked()?;
         let tags: Option<Vec<String>> = parse(&args["tags"])?;
         let expected = args["expectedFileSha"].as_str().map(str::to_string);
-        let (fragment, write) = self.write_op(|cx, _| {
+        let (fragment, write) = self.write_op(Conceal::Changed, false, |cx, keys| {
             domain::update_lockbox_fragment_in_vault(
                 cx,
                 &path,
-                &keys,
+                keys.expect("已检查解锁"),
                 content.trim(),
                 tags.unwrap_or_default(),
                 expected.as_deref(),
@@ -777,10 +1031,11 @@ impl Session {
         let Some(path) = self.lockbox_path(id)? else {
             return Self::forward();
         };
-        let keys = self.require_keys()?;
+        self.ensure_unlocked()?;
         let tags: Vec<String> = parse(&args["tags"])?;
-        let (fragment, write) =
-            self.write_op(|cx, _| domain::update_lockbox_fragment_tags_in_vault(cx, &path, &keys, tags))?;
+        let (fragment, write) = self.write_op(Conceal::Changed, false, |cx, keys| {
+            domain::update_lockbox_fragment_tags_in_vault(cx, &path, keys.expect("已检查解锁"), tags)
+        })?;
         Self::op_result(fragment, write)
     }
 
@@ -789,10 +1044,11 @@ impl Session {
         let Some(path) = self.lockbox_path(id)? else {
             return Self::forward();
         };
-        let keys = self.require_keys()?;
+        self.ensure_unlocked()?;
         let pinned = args["pinned"].as_bool().unwrap_or_default();
-        let (fragment, write) =
-            self.write_op(|cx, _| domain::set_lockbox_fragment_pinned_in_vault(cx, &path, &keys, pinned))?;
+        let (fragment, write) = self.write_op(Conceal::Changed, false, |cx, keys| {
+            domain::set_lockbox_fragment_pinned_in_vault(cx, &path, keys.expect("已检查解锁"), pinned)
+        })?;
         Self::op_result(fragment, write)
     }
 
@@ -801,10 +1057,11 @@ impl Session {
         let Some(path) = self.lockbox_path(id)? else {
             return Self::forward();
         };
-        let keys = self.require_keys()?;
+        self.ensure_unlocked()?;
         let archived = args["archived"].as_bool().unwrap_or_default();
-        let (fragment, write) =
-            self.write_op(|cx, _| domain::set_lockbox_fragment_archived_in_vault(cx, &path, &keys, archived))?;
+        let (fragment, write) = self.write_op(Conceal::Changed, false, |cx, keys| {
+            domain::set_lockbox_fragment_archived_in_vault(cx, &path, keys.expect("已检查解锁"), archived)
+        })?;
         Self::op_result(fragment, write)
     }
 
@@ -818,9 +1075,9 @@ impl Session {
         let value = property_input_to_yaml(value)?;
         let key = args["key"].as_str().unwrap_or_default().to_string();
         shard_core::frontmatter::validate_property_key(&key)?;
-        let keys = self.require_keys()?;
-        let (fragment, write) = self.write_op(|cx, _| {
-            domain::mutate_lockbox_fragment_property_in_vault(cx, &path, &keys, &key, Some(&value))
+        self.ensure_unlocked()?;
+        let (fragment, write) = self.write_op(Conceal::Changed, false, |cx, keys| {
+            domain::mutate_lockbox_fragment_property_in_vault(cx, &path, keys.expect("已检查解锁"), &key, Some(&value))
         })?;
         Self::op_result(fragment, write)
     }
@@ -832,9 +1089,10 @@ impl Session {
         };
         let key = args["key"].as_str().unwrap_or_default().to_string();
         shard_core::frontmatter::validate_property_key(&key)?;
-        let keys = self.require_keys()?;
-        let (fragment, write) =
-            self.write_op(|cx, _| domain::mutate_lockbox_fragment_property_in_vault(cx, &path, &keys, &key, None))?;
+        self.ensure_unlocked()?;
+        let (fragment, write) = self.write_op(Conceal::Changed, false, |cx, keys| {
+            domain::mutate_lockbox_fragment_property_in_vault(cx, &path, keys.expect("已检查解锁"), &key, None)
+        })?;
         Self::op_result(fragment, write)
     }
 
@@ -853,24 +1111,45 @@ impl Session {
         Ok(absolute)
     }
 
+    /// 找到刚放进来的公开原文（id 必须对得上），找不到、读不出、解析不了一律报错并退回基线。
+    fn placed_public(&mut self, id: &str) -> Result<(PathBuf, shard_core::frontmatter::ParsedFragment), CallError> {
+        let found = find_fragment_path(&self.vfs, id).and_then(|path| {
+            let path = path.ok_or_else(|| format!("找不到片段 {id}"))?;
+            let text = self.vfs.read_to_string(&path).map_err(|error| error.to_string())?;
+            let parsed = shard_core::frontmatter::parse_fragment(&text)?;
+            if parsed.frontmatter.id != id {
+                return Err(format!("找不到片段 {id}"));
+            }
+            Ok((path, parsed))
+        });
+        found.map_err(|error| {
+            self.reset_to_base();
+            CallError::Message(error)
+        })
+    }
+
+    /// 锁着移入时，要移入的路径带标题就需要临时写入密钥（见 [`Session::write_op`]）。
+    fn needs_ephemeral(&self, id: &str, public_path: &std::path::Path) -> bool {
+        if self.keys.is_some() {
+            return false;
+        }
+        let relative = public_path.strip_prefix(ROOT).map(|path| path.to_string_lossy().replace('\\', "/")).unwrap_or_default();
+        let target = relative
+            .strip_prefix("notes/")
+            .map(|rest| format!("lockbox/notes/{rest}"))
+            .or_else(|| relative.strip_prefix("fragments/").map(|rest| format!("lockbox/fragments/{rest}")))
+            .map(|path| path.trim_end_matches(".md").to_string() + ".shard");
+        target.is_some_and(|target| needs_location(id, &target))
+    }
+
     /// `move_fragment_to_lockbox`：调用方给出公开碎片的原文（与服务器上的 sha 一致），这里按桌面同序检查后加密，
     /// 写入载荷是 `seal_fragment_into_lockbox`。
     fn move_public(&mut self, args: &Value) -> CallResult {
         let id = args["id"].as_str().unwrap_or_default().to_string();
         self.place_public(args["path"].as_str().unwrap_or_default(), args["text"].as_str().unwrap_or_default())?;
-        let found = find_fragment_path(&self.vfs, &id);
-        let path = match found {
-            Ok(Some(path)) => path,
-            Ok(None) => {
-                self.reset_to_base();
-                return Err(CallError::Message(format!("找不到片段 {id}")));
-            }
-            Err(error) => {
-                self.reset_to_base();
-                return Err(error.into());
-            }
-        };
-        let (fragment, write) = self.write_op(|cx, keys| {
+        let (path, _) = self.placed_public(&id)?;
+        let ephemeral = self.needs_ephemeral(&id, &path);
+        let (fragment, write) = self.write_op(Conceal::Changed, ephemeral, |cx, keys| {
             let text = cx.vfs.read_to_string(&path).map_err(|error| error.to_string())?;
             let parsed = shard_core::frontmatter::parse_fragment(&text)?;
             if is_protected_type(&parsed.frontmatter.tags) {
@@ -882,7 +1161,7 @@ impl Session {
     }
 
     /// `update_fragment` / `update_fragment_tags` 改公开碎片、新标签带上密匣标签：桌面把它整篇移入密匣。
-    /// 调用方给出公开原文；不是这种情况就交回服务器。
+    /// 调用方给出公开原文。只有**确认**规整后的标签里没有密匣时才交回服务器；找不到、读不出、id 对不上一律报错。
     fn update_public(&mut self, args: &Value) -> CallResult {
         let id = args["id"].as_str().unwrap_or_default().to_string();
         let tags_only = args["tagsOnly"].as_bool().unwrap_or_default();
@@ -892,24 +1171,18 @@ impl Session {
         } else {
             parse::<Option<Vec<String>>>(&args["tags"])?.unwrap_or_default()
         };
+        if !tags_only && content.trim().is_empty() {
+            return Err("片段内容不能为空".into());
+        }
         let expected = args["expectedFileSha"].as_str().map(str::to_string);
         self.place_public(args["path"].as_str().unwrap_or_default(), args["text"].as_str().unwrap_or_default())?;
-
-        // 只判断「会不会移入密匣」，判断规则与 update_public_fragment_*_by_id 相同；其余情况整条交回服务器。
-        let moves = find_fragment_path(&self.vfs, &id)
-            .ok()
-            .flatten()
-            .and_then(|path| self.vfs.read_to_string(&path).ok())
-            .and_then(|text| shard_core::frontmatter::parse_fragment(&text).ok())
-            .is_some_and(|parsed| {
-                contains_lockbox_tag(&normalize_updated_type_tags(&parsed.frontmatter.tags, tags.clone()))
-            });
-        if !moves || (!tags_only && content.trim().is_empty()) {
+        let (path, parsed) = self.placed_public(&id)?;
+        if !contains_lockbox_tag(&normalize_updated_type_tags(&parsed.frontmatter.tags, tags.clone())) {
             self.reset_to_base();
             return Self::forward();
         }
-
-        let (fragment, write) = self.write_op(|cx, keys| {
+        let ephemeral = self.needs_ephemeral(&id, &path);
+        let (fragment, write) = self.write_op(Conceal::Changed, ephemeral, |cx, keys| {
             let update = if tags_only {
                 update_public_fragment_tags_by_id(cx, &id, tags)?
             } else {
@@ -928,15 +1201,18 @@ impl Session {
     // ---- Markdown 方言迁移 ----
 
     fn dialect_list(&mut self) -> CallResult {
-        let keys = self.require_keys()?;
-        let sources = domain::list_lockbox_dialect_sources(&self.cx(), &keys)?;
+        self.ensure_unlocked()?;
+        let keys = self.keys.as_ref().expect("已检查解锁");
+        let sources = domain::list_lockbox_dialect_sources(&self.cx(), keys)?;
         Ok(json!(sources))
     }
 
     fn dialect_apply(&mut self, args: &Value) -> CallResult {
         let files: Vec<MigratedLockboxDialectSource> = parse(&args["files"])?;
-        let keys = self.require_keys()?;
-        let (count, write) = self.write_op(|cx, _| domain::apply_lockbox_dialect_migration(cx, &keys, files))?;
+        self.ensure_unlocked()?;
+        let (count, write) = self.write_op(Conceal::Changed, false, |cx, keys| {
+            domain::apply_lockbox_dialect_migration(cx, keys.expect("已检查解锁"), files)
+        })?;
         Self::op_result(count, write)
     }
 
@@ -972,12 +1248,13 @@ impl Session {
         Ok(current)
     }
 
-    fn search_snapshot(&mut self, vault_path: &str, keys: &ReadKeys) -> Arc<SearchSnapshotData> {
+    fn search_snapshot(&mut self, vault_path: &str) -> Result<Arc<SearchSnapshotData>, SearchError> {
         if let Some((generation, epoch, path, snapshot)) = &self.search_cache {
             if *generation == self.generation && *epoch == self.privacy_epoch && path == vault_path {
-                return Arc::clone(snapshot);
+                return Ok(Arc::clone(snapshot));
             }
         }
+        let keys = self.keys.as_ref().ok_or(SearchError::Locked)?;
         let mut loaded: Vec<LoadedSearchDocument> = Vec::new();
         let mut skipped = 0u32;
         for (path, bytes) in self.vfs.files() {
@@ -997,7 +1274,7 @@ impl Session {
         }
         let snapshot = Arc::new(SearchSnapshotData::assemble(loaded, skipped));
         self.search_cache = Some((self.generation, self.privacy_epoch, vault_path.to_string(), Arc::clone(&snapshot)));
-        snapshot
+        Ok(snapshot)
     }
 
     /// `search_vault` 的密匣范围。`vaultPath` 是当前 `VaultState.vaultPath`；`expiresAt` 由调用方（租约在 JS）填。
@@ -1010,9 +1287,11 @@ impl Session {
         if request.scope != SearchScope::Lockbox {
             return Err(SearchError::Internal { retryable: false }.into());
         }
-        let keys = self.keys.clone().ok_or(SearchError::Locked)?;
+        if self.keys.is_none() {
+            return Err(SearchError::Locked.into());
+        }
         let query = parse_search_query(&request.query)?;
-        let snapshot = self.search_snapshot(&vault_path, &keys);
+        let snapshot = self.search_snapshot(&vault_path)?;
         let scanned = snapshot.search(&query, request.limit as usize, request.include_trash)?;
         let response = SearchVaultResponse {
             client_request_id: request.client_request_id,
@@ -1043,7 +1322,7 @@ impl Session {
         if request.target.scope != SearchScope::Lockbox {
             return Err(SearchError::Internal { retryable: false }.into());
         }
-        let keys = self.keys.clone().ok_or(SearchError::Locked)?;
+        let keys = self.keys.as_ref().ok_or(SearchError::Locked)?;
         validate_target_identity(&context.vault_path, &request.target)?;
         if !is_markdown_target(&request.target) {
             return Err(SearchError::UnsupportedTarget.into());
@@ -1054,7 +1333,7 @@ impl Session {
             .map(|relative| relative.to_string_lossy().replace('\\', "/"))
             .map_err(|_| SearchError::Io { retryable: false })?;
         let text = self.vfs.read_to_string(&path).map_err(|_| SearchError::NotFound)?;
-        let document = domain::lockbox_search_document(&context.vault_path, relative, &text, &keys)?;
+        let document = domain::lockbox_search_document(&context.vault_path, relative, &text, keys)?;
         validate_loaded_identity(&request.target, &document.metadata.target)?;
         let fragment = document.fragment.ok_or(SearchError::UnsupportedTarget)?;
         let response = ReadSearchTargetResponse {
@@ -1076,29 +1355,13 @@ impl Drop for Session {
     }
 }
 
-/// 两份基线之间的变化，`vault-changed` 同形：`{ path, exists, sha }`。
-fn base_changes(previous: &Base, next: &Base) -> Vec<Value> {
-    let mut changes = Vec::new();
-    for (id, item) in &next.items {
-        let path = effective_path(id, item.path.as_deref());
-        let old = previous.items.get(id);
-        let old_path = old.and_then(|old| effective_path(id, old.path.as_deref()));
-        if old.is_some_and(|old| old.sha == item.sha) && old_path == path {
-            continue;
-        }
-        if let (Some(old_path), true) = (&old_path, old_path != path) {
-            changes.push(json!({ "path": old_path, "exists": false, "sha": Value::Null }));
-        }
-        if let Some(path) = path {
-            changes.push(json!({ "path": path, "exists": true, "sha": item.sha }));
-        }
-    }
-    for (id, item) in &previous.items {
-        if !next.items.contains_key(id) {
-            if let Some(path) = effective_path(id, item.path.as_deref()) {
-                changes.push(json!({ "path": path, "exists": false, "sha": Value::Null }));
-            }
-        }
-    }
-    changes
+/// 解密一条信封，取载荷里记的真实路径（不合规或解不开时为 None）。
+fn payload_location(envelope: &str, keys: &ReadKeys) -> Option<String> {
+    let plaintext = shard_lockbox::open_text(envelope, keys).ok()?;
+    let payload: Value = serde_json::from_slice(&plaintext).ok()?;
+    payload
+        .get(LOCATION_FIELD)
+        .and_then(Value::as_str)
+        .filter(|location| valid_location(location))
+        .map(str::to_string)
 }

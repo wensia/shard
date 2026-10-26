@@ -2,20 +2,24 @@ import type { Fragment, VaultState } from "@/types"
 
 import type { ServerChannel } from "@/lib/transport"
 
-import { FORWARD, isServerFailure, LockboxClient, type LockboxFileChange } from "./client"
+import { FORWARD, isServerFailure, LockboxClient, type LockboxFileChange, type LockOutReason } from "./client"
 import type { LockboxEngine } from "./engine"
 
 /**
  * 以服务器为真相时的密匣分流：桌面本地模式在 Rust 命令里按「目标是不是密匣」分流，这里在传输层的同一个位置分流——
- * 密匣分支在浏览器里（wasm）执行，再把密文写回服务器；其余照常发给服务器。返回值形状与桌面一致。
+ * 密匣分支在客户端里（wasm）执行，再把密文写回服务器；其余照常发给服务器。返回值形状与桌面一致。
  *
- * 明文只在浏览器里：带密匣标签的新建 / 保存、密匣条目的任何写入都不会把正文或标签发给服务器。
- * 判断「带不带密匣标签」时先用宽松的字符串检查（标签里出现「密匣」二字）决定要不要问 wasm，
- * 最终以 wasm 里与桌面相同的规整规则为准。
+ * **失败即关闭**：明文只在客户端里。带正文、标签或属性值的写命令只有**确认**目标是公开 id（出现在服务器的
+ * 公开列表里）时才发给服务器；见过的密匣 id（只增不减）的写命令一律在本地执行，本地执行不了就报 `lockbox_locked`，
+ * 绝不退回服务器。带密匣标签的新建 / 保存先用宽松的字符串检查（标签里出现「密匣」二字）决定要不要问 wasm，
+ * 最终以 wasm 里与桌面相同的规整规则为准——wasm 只在确认没有密匣标签时才交回服务器。
  */
 
 /** 密匣标签（shard_core::LOCKBOX_TAG）。 */
 const LOCKBOX_TAG = "密匣"
+
+/** 不是用户主动上锁（Worker 崩溃、服务器扣下密文、租约到期）时在 window 上派发：界面藏起已显示的密匣内容。 */
+export const LOCKBOX_LOCKED_OUT_EVENT = "shard:lockbox-locked-out"
 
 /** 经这里分流的命令；其余命令直接发给服务器。 */
 export const LOCKBOX_ROUTED_COMMANDS = new Set([
@@ -49,19 +53,20 @@ const ITEM_COMMANDS: Record<string, string> = {
   remove_fragment_property: "remove_property",
 }
 
-type Args = Record<string, unknown>
+/** 带正文、标签或属性值的写命令：目标不能确认是公开 id 时绝不发给服务器。 */
+const CONTENT_COMMANDS = new Set(["update_fragment", "update_fragment_tags", "set_fragment_property", "remove_fragment_property"])
 
-interface PublicEntry {
-  path: string
-}
+type Args = Record<string, unknown>
 
 export interface LockboxRouterDeps {
   server: ServerChannel
   engine: () => LockboxEngine
   /** 把快照变化以 `vault-changed` 推给界面（与服务器推来的同形）。 */
   emitVaultChanged: (payload: { vault: string; changes: LockboxFileChange[] }) => void
-  /** 订阅「密匣可能变了」（`lockbox-changed`、重连、游标过旧）。 */
-  onLockboxChanged: (handler: () => void) => void
+  /** 订阅「密匣可能变了」：服务器推来 `lockbox-changed`（带这次的 `seq`），以及重连、游标过旧（没有 seq）。 */
+  onLockboxChanged: (handler: (seq?: number) => void) => void
+  /** 验证一次通行密钥：浏览器会话写 manifest 要求最近验证过。 */
+  stepUp?: () => Promise<void>
 }
 
 function mentionsLockbox(tags: unknown) {
@@ -77,9 +82,15 @@ export function sortFragmentList<T extends Pick<Fragment, "pinned" | "createdAt"
   })
 }
 
+function isFragment(value: unknown): value is Fragment {
+  return typeof value === "object" && value !== null && typeof (value as Fragment).id === "string" && "lockbox" in value
+}
+
 export function createLockboxRouter(deps: LockboxRouterDeps) {
   let vaultPath = ""
-  const publicIndex = new Map<string, PublicEntry>()
+  const publicIds = new Map<string, string>()
+  /** 交给界面显示过的密匣条目（id → 路径）：被迫上锁时据此让界面藏起它们。 */
+  const shown = new Map<string, string>()
   let engine: LockboxEngine | null = null
   const client = new LockboxClient(
     {
@@ -87,23 +98,36 @@ export function createLockboxRouter(deps: LockboxRouterDeps) {
       reset: () => engine?.reset(),
     },
     deps.server,
-    { onChanges: (changes) => deps.emitVaultChanged({ vault: vaultPath, changes }) }
+    {
+      onChanges: (changes) => deps.emitVaultChanged({ vault: vaultPath, changes }),
+      onLockedOut: lockedOut,
+      stepUp: deps.stepUp,
+    }
   )
 
-  const server = <T>(command: string, args: Args) => deps.server.call<T>(command, args)
+  deps.onLockboxChanged((seq) => client.remoteChanged(seq))
 
-  // 别的设备 / 标签页写了密匣（`lockbox-changed`）、断线重连、游标过旧：重取快照。
-  // 自己刚写的也会收到回声，快照与基线相同就没有变化、不打扰界面。
-  let refreshTimer: ReturnType<typeof setTimeout> | null = null
-  function scheduleRefresh() {
-    if (!client.loaded) return
-    if (refreshTimer !== null) clearTimeout(refreshTimer)
-    refreshTimer = setTimeout(() => {
-      refreshTimer = null
-      void client.refresh().catch(() => undefined)
-    }, 200)
+  /** 被迫上锁：让界面把显示过的密匣条目当作已删除（重读列表时它们不再出现），并派发事件给想立即收起编辑器的界面。 */
+  function lockedOut(reason: LockOutReason) {
+    const changes = [...shown.values()].map((path) => ({ path, exists: false, sha: null }))
+    shown.clear()
+    if (changes.length > 0) deps.emitVaultChanged({ vault: vaultPath, changes })
+    if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent(LOCKBOX_LOCKED_OUT_EVENT, { detail: { reason } }))
   }
-  deps.onLockboxChanged(scheduleRefresh)
+
+  /** 交给界面的密匣碎片：记住 id（只增不减）与路径。 */
+  function noteShown<T>(value: T): T {
+    const fragments = Array.isArray(value) ? value : [value]
+    for (const fragment of fragments) {
+      if (isFragment(fragment) && fragment.lockbox) {
+        client.remember(fragment.id)
+        shown.set(fragment.id, fragment.path)
+      }
+    }
+    return value
+  }
+
+  const server = <T>(command: string, args: Args) => deps.server.call<T>(command, args)
 
   /** 服务器的错误按传输层的约定交给界面：字符串或结构化对象。 */
   async function serverOrDetail<T>(command: string, args: Args) {
@@ -116,9 +140,9 @@ export function createLockboxRouter(deps: LockboxRouterDeps) {
 
   function notePublic(state: VaultState) {
     vaultPath = state.vaultPath
-    publicIndex.clear()
+    publicIds.clear()
     for (const fragment of state.fragments) {
-      if (!fragment.lockbox) publicIndex.set(fragment.id, { path: fragment.path })
+      if (!fragment.lockbox) publicIds.set(fragment.id, fragment.path)
     }
   }
 
@@ -131,7 +155,7 @@ export function createLockboxRouter(deps: LockboxRouterDeps) {
     // 别处刚设置好密匣、快照还没跟上：先重取，免得锁着记入时报「尚未设置」。
     if (client.configured !== state.lockbox.configured) await client.refresh()
     let lockbox: Fragment[] = []
-    if (client.unlocked) lockbox = await client.read<Fragment[]>("list")
+    if (client.unlocked) lockbox = noteShown(await client.read<Fragment[]>("list"))
     return {
       ...state,
       fragments: lockbox.length > 0 ? sortFragmentList([...state.fragments, ...lockbox]) : state.fragments,
@@ -139,34 +163,37 @@ export function createLockboxRouter(deps: LockboxRouterDeps) {
     }
   }
 
-  async function publicEntry(id: string) {
-    if (!publicIndex.has(id)) notePublic(await serverOrDetail<VaultState>("list_fragments", {}))
-    return publicIndex.get(id) ?? null
+  /** 这个 id 是不是公开碎片 / 笔记：以服务器的公开列表为准，不在就重读一次。 */
+  async function publicPath(id: string) {
+    if (!publicIds.has(id)) notePublic(await serverOrDetail<VaultState>("list_fragments", {}))
+    return publicIds.get(id) ?? null
   }
 
-  /** 已在密匣里的条目：在 wasm 里执行；wasm 说不是（基线刚变）就交回服务器。 */
-  async function itemCommand(command: string, args: Args) {
+  /** 密匣条目的写命令：只在本地执行；wasm 找不到它（快照被扣下、刚重建）也不退回服务器。 */
+  async function lockboxItem(command: string, args: Args) {
     const result = await client.run<Fragment>(ITEM_COMMANDS[command], args, { renew: true })
-    return result === FORWARD ? serverOrDetail(command, args) : result
+    if (result === FORWARD) throw "lockbox_locked"
+    return noteShown(result)
   }
 
   /** 公开碎片的保存带上了密匣标签：桌面把整篇移入密匣。正文与标签不发给服务器。 */
   async function saveIntoLockbox(command: string, args: Args) {
     const id = String(args.id ?? "")
-    const entry = await publicEntry(id)
-    if (!entry) return serverOrDetail(command, args)
-    const { text } = await deps.server.fetchText(entry.path).catch((failure) => {
+    const path = await publicPath(id)
+    if (!path) throw `找不到片段 ${id}`
+    const { text } = await deps.server.fetchText(path).catch((failure) => {
       throw isServerFailure(failure) ? failure.detail : failure
     })
     const result = await client.run<Fragment>(
       "update_public",
-      { ...args, path: entry.path, text, tagsOnly: command === "update_fragment_tags" },
+      { ...args, path, text, tagsOnly: command === "update_fragment_tags" },
       { renew: true }
     )
-    return result === FORWARD ? serverOrDetail(command, args) : result
+    // wasm 确认规整后的标签里没有密匣：这是一次普通的公开保存。
+    return result === FORWARD ? serverOrDetail(command, args) : noteShown(result)
   }
 
-  /** 不认识的 id：照常发给服务器；服务器说这是密匣条目（快照过期）就重取快照再在本地执行。 */
+  /** 只带 id、不带内容的写命令（置顶、回收）：不认识的 id 照常发给服务器；服务器说是密匣条目就重取快照再在本地执行。 */
   async function publicOrLockbox(command: string, args: Args) {
     try {
       return await server(command, args)
@@ -175,13 +202,30 @@ export function createLockboxRouter(deps: LockboxRouterDeps) {
         throw isServerFailure(failure) ? failure.detail : failure
       }
       await client.refresh()
-      if (client.owns(args.id)) return itemCommand(command, args)
+      if (client.isLockboxId(args.id)) return lockboxItem(command, args)
       throw "lockbox_locked"
     }
   }
 
+  /** 碎片写命令的分流。 */
+  async function itemWrite(command: string, args: Args) {
+    const id = args.id
+    if (client.isLockboxId(id)) return lockboxItem(command, args)
+    if (!CONTENT_COMMANDS.has(command)) return publicOrLockbox(command, args)
+    if ((command === "update_fragment" || command === "update_fragment_tags") && mentionsLockbox(args.tags)) {
+      return saveIntoLockbox(command, args)
+    }
+    if (typeof id === "string" && (await publicPath(id))) return serverOrDetail(command, args)
+    // 既不是已知的密匣条目，也不在公开列表里：重取密匣快照再判断；仍不属于本地就拒绝，内容不发给服务器。
+    await client.refresh()
+    if (client.isLockboxId(id)) return lockboxItem(command, args)
+    throw "lockbox_locked"
+  }
+
   async function vaultWithRecoveryKey(method: string, args: Args) {
-    const result = (await client.run<{ recoveryKey: string }>(method, args, { unlocks: true })) as { recoveryKey: string }
+    const result = (await client.run<{ recoveryKey: string }>(method, args, { unlocks: true, stepUp: true })) as {
+      recoveryKey: string
+    }
     return { recoveryKey: result.recoveryKey, vault: await listFragments() }
   }
 
@@ -194,16 +238,20 @@ export function createLockboxRouter(deps: LockboxRouterDeps) {
       case "reset_lockbox_password":
         return vaultWithRecoveryKey("reset_password", { recoveryKey: args.recoveryKey, newPassword: args.newPassword })
       case "unlock_lockbox":
-        await client.run("unlock", { password: args.password }, { unlocks: true })
+        // 解锁时顺带的 manifest 升级是尽力而为：写不回去就保持已解锁、下次解锁再升级。
+        await client.run("unlock", { password: args.password }, { unlocks: true, bestEffort: true })
+        // 旧条目的服务器路径还带着标题：迁到只由 id 推出的路径（同样尽力而为）。
+        if (client.unlocked) await client.run("conceal", {}, { bestEffort: true }).catch(() => undefined)
         return listFragments()
       case "change_lockbox_password":
         await client.run(
           "change_password",
           { currentPassword: args.currentPassword, newPassword: args.newPassword },
-          { unlocks: true }
+          { unlocks: true, stepUp: true }
         )
         return listFragments()
       case "lock_lockbox":
+        shown.clear()
         await client.lock()
         return listFragments()
       case "list_lockbox_dialect_migration":
@@ -213,26 +261,23 @@ export function createLockboxRouter(deps: LockboxRouterDeps) {
       case "create_fragment": {
         if (!mentionsLockbox(args.tags)) return serverOrDetail(command, args)
         const result = await client.run<Fragment>("create", args, { renew: true })
-        return result === FORWARD ? serverOrDetail(command, args) : result
+        return result === FORWARD ? serverOrDetail(command, args) : noteShown(result)
       }
       case "update_fragment":
       case "update_fragment_tags":
-        if (client.owns(args.id)) return itemCommand(command, args)
-        if (mentionsLockbox(args.tags)) return saveIntoLockbox(command, args)
-        return publicOrLockbox(command, args)
       case "set_fragment_pinned":
       case "set_fragment_archived":
       case "set_fragment_property":
       case "remove_fragment_property":
-        return client.owns(args.id) ? itemCommand(command, args) : publicOrLockbox(command, args)
+        return itemWrite(command, args)
       case "move_fragment_to_lockbox": {
         const id = String(args.id ?? "")
-        const entry = await publicEntry(id)
-        if (!entry) throw `找不到片段 ${id}`
-        const { text } = await deps.server.fetchText(entry.path).catch((failure) => {
+        const path = await publicPath(id)
+        if (!path) throw `找不到片段 ${id}`
+        const { text } = await deps.server.fetchText(path).catch((failure) => {
           throw isServerFailure(failure) ? failure.detail : failure
         })
-        await client.run("move_public", { id, path: entry.path, text }, { renew: true })
+        noteShown(await client.run("move_public", { id, path, text }, { renew: true }))
         return listFragments()
       }
       case "search_vault":
@@ -243,11 +288,12 @@ export function createLockboxRouter(deps: LockboxRouterDeps) {
     }
   }
 
-  /** 公开范围照常问服务器；密匣范围只在浏览器内存里搜（服务器的密匣范围一律 locked）。 */
+  /** 公开范围照常问服务器；密匣范围只在客户端内存里搜（服务器的密匣范围一律 locked），查询词也不发出去。 */
   async function search(command: string, args: Args) {
     const request = (args.request ?? {}) as { scope?: string; target?: { scope?: string } }
     const scope = command === "search_vault" ? request.scope : request.target?.scope
     if (scope !== "lockbox") return serverOrDetail(command, args)
+    if (!client.unlocked) throw { code: "locked" }
     const reading = command === "read_search_target"
     // 桌面：搜索只看租约不续租，打开一条结果续租。
     const response = await client.read<Record<string, unknown>>(
@@ -255,25 +301,26 @@ export function createLockboxRouter(deps: LockboxRouterDeps) {
       { vaultPath, request: args.request },
       { renew: reading }
     )
+    if (reading) noteShown(response.fragment)
     return { ...response, expiresAt: client.expiresAtIso() }
   }
 
   return {
     invoke,
     client,
-    /** 账号设置里改了「允许在网页解锁密匣」之后：重取快照，关掉时立刻上锁。 */
-    refresh: () => client.refresh(),
-    /** 改「允许在网页解锁密匣」（敏感操作，调用方套 withStepUp）。关掉时本页立即上锁。 */
+    /** 账号设置里改了「允许在网页解锁密匣」：写服务器后重取快照，关掉时本页立即上锁。 */
     async setWebUnlock(allowed: boolean) {
       await server("set_lockbox_web_unlock", { allowed })
       await client.refresh()
     },
-    /** 网页解锁开关的当前值（会载入快照）。 */
+    /** 网页解锁开关的当前值（会拉一次快照概要）。 */
     async webUnlock() {
       await client.ensureLoaded()
       return client.webUnlock
     },
+    /** Worker 崩溃。 */
     forget: () => client.forget(),
+    refresh: () => client.refresh(),
   }
 }
 

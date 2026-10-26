@@ -95,22 +95,23 @@ pub fn lockbox_write_key(manifest: &mut Manifest, master_key: Option<&[u8]>) -> 
 /// 读 manifest 取写入密钥；manifest 补了密钥对就回写并提交。返回写入密钥与写入后用来读回的密钥：
 /// 补了密钥对时，传入的读取密钥还没有新的写入私钥，按新 manifest 重新派生（与迁移前「写完再向会话取一次
 /// 读取密钥」的结果相同）。
+/// 没补密钥对时第二项为 `None`（沿用传入的读取密钥，不复制主密钥）；补了时为 `Some(重新派生的结果)`。
 fn prepare_write_key(
     cx: &VaultCtx<'_>,
     read_keys: Option<&ReadKeys>,
-) -> Result<(WriteKey, Option<ReadKeys>), String> {
+) -> Result<(WriteKey, Option<Option<ReadKeys>>), String> {
     let mut manifest = read_lockbox_manifest(cx.vfs)?;
     let (write_key, upgraded) =
         lockbox_write_key(&mut manifest, read_keys.map(|keys| keys.master_key.as_slice()))?;
     if !upgraded {
-        return Ok((write_key, read_keys.cloned()));
+        return Ok((write_key, None));
     }
     write_lockbox_manifest(cx.vfs, &manifest)?;
     cx.hooks
         .commit_path_if_git(".shard/lockbox.json", "upgrade lockbox write key")
         .ok();
     let read_keys = read_keys.and_then(|keys| manifest.read_keys(&keys.master_key).ok());
-    Ok((write_key, read_keys))
+    Ok((write_key, Some(read_keys)))
 }
 
 // ---------------------------------------------------------------------------
@@ -206,7 +207,11 @@ pub fn create_lockbox_fragment(
     if is_protected_type(&tags) {
         return Err(LOCKBOX_TYPE_ERROR.to_string());
     }
-    let (write_key, read_keys) = prepare_write_key(cx, read_keys)?;
+    let (write_key, rederived) = prepare_write_key(cx, read_keys)?;
+    let read_keys = match &rederived {
+        Some(rederived) => rederived.as_ref(),
+        None => read_keys,
+    };
     let now = cx.now();
     let id = new_fragment_id(&now);
     let created_at = now.to_rfc3339();
@@ -239,7 +244,7 @@ pub fn create_lockbox_fragment(
     let override_status = None;
 
     if let Some(read_keys) = read_keys {
-        read_lockbox_fragment(cx, &path, &dirty, &read_keys, override_status)
+        read_lockbox_fragment(cx, &path, &dirty, read_keys, override_status)
     } else {
         let encrypted_text = cx.vfs.read_to_string(&path).map_err(|error| error.to_string())?;
         lockbox_fragment_from_parts(
@@ -280,8 +285,7 @@ pub fn update_lockbox_fragment_in_vault(
     payload.frontmatter_raw = Some(apply_frontmatter(&raw, &payload.frontmatter)?);
     payload.body = content.to_string();
     payload.markdown_dialect = Some(MARKDOWN_DIALECT);
-    let write_key = WriteKey::Master(read_keys.master_key.clone());
-    write_lockbox_payload(cx.vfs, path, &write_key, &payload)?;
+    write_lockbox_payload_with_master(cx.vfs, path, &read_keys.master_key, &payload)?;
 
     let dirty = cx.hooks.dirty_paths();
     // 内容保存只落盘，提交由聚合检查点接管（docs/design/commit-coalescing-plan.md §7 A2）
@@ -308,8 +312,7 @@ pub fn update_lockbox_fragment_tags_in_vault(
     ));
     payload.frontmatter.updated_at = cx.now().to_rfc3339();
     payload.frontmatter_raw = Some(apply_frontmatter(&raw, &payload.frontmatter)?);
-    let write_key = WriteKey::Master(read_keys.master_key.clone());
-    write_lockbox_payload(cx.vfs, path, &write_key, &payload)?;
+    write_lockbox_payload_with_master(cx.vfs, path, &read_keys.master_key, &payload)?;
 
     let dirty = cx.hooks.dirty_paths();
     // 内容保存只落盘，提交由聚合检查点接管（docs/design/commit-coalescing-plan.md §7 A2）
@@ -338,8 +341,7 @@ pub fn set_lockbox_fragment_pinned_in_vault(
     payload.frontmatter.pinned = pinned;
     payload.frontmatter.updated_at = cx.now().to_rfc3339();
     payload.frontmatter_raw = Some(apply_frontmatter(&raw, &payload.frontmatter)?);
-    let write_key = WriteKey::Master(read_keys.master_key.clone());
-    write_lockbox_payload(cx.vfs, path, &write_key, &payload)?;
+    write_lockbox_payload_with_master(cx.vfs, path, &read_keys.master_key, &payload)?;
 
     let dirty = cx.hooks.dirty_paths();
     // 内容保存只落盘，提交由聚合检查点接管（docs/design/commit-coalescing-plan.md §7 A2）
@@ -419,12 +421,7 @@ pub fn mutate_lockbox_fragment_property_in_vault(
     };
     payload.frontmatter.updated_at = cx.now().to_rfc3339();
     payload.frontmatter_raw = Some(apply_frontmatter(&raw, &payload.frontmatter)?);
-    write_lockbox_payload(
-        cx.vfs,
-        path,
-        &WriteKey::Master(read_keys.master_key.clone()),
-        &payload,
-    )?;
+    write_lockbox_payload_with_master(cx.vfs, path, &read_keys.master_key, &payload)?;
     read_lockbox_fragment(cx, path, &cx.hooks.dirty_paths(), read_keys, None)
 }
 
@@ -495,7 +492,11 @@ fn move_public_fragment_payload_to_lockbox(
         return Err(LOCKBOX_TYPE_ERROR.to_string());
     }
     let vault = cx.root();
-    let (write_key, read_keys) = prepare_write_key(cx, read_keys)?;
+    let (write_key, rederived) = prepare_write_key(cx, read_keys)?;
+    let read_keys = match &rederived {
+        Some(rederived) => rederived.as_ref(),
+        None => read_keys,
+    };
     let mut frontmatter = existing_frontmatter.ok_or_else(|| "片段缺少 frontmatter".to_string())?;
     frontmatter.tags = normalize_lockbox_tags(tags);
     frontmatter.updated_at = cx.now().to_rfc3339();
@@ -542,7 +543,7 @@ fn move_public_fragment_payload_to_lockbox(
     let override_status = commit_override_status(commit_result);
 
     if let Some(read_keys) = read_keys {
-        read_lockbox_fragment(cx, &lockbox_path, &dirty, &read_keys, override_status)
+        read_lockbox_fragment(cx, &lockbox_path, &dirty, read_keys, override_status)
     } else {
         let encrypted_text = cx
             .vfs
@@ -703,6 +704,19 @@ pub fn write_lockbox_payload(
 ) -> Result<(), String> {
     let plaintext = serde_json::to_vec(payload).map_err(|error| error.to_string())?;
     let text = Envelope::seal(write_key, &payload.frontmatter.id, &plaintext)?.to_text()?;
+    vfs.write_atomic(path, text.as_bytes())
+        .map_err(|error| error.to_string())
+}
+
+/// 已解锁时写回载荷：借用会话里的主密钥加密，不复制它（与 `write_lockbox_payload(.., &WriteKey::Master(..), ..)` 同形）。
+fn write_lockbox_payload_with_master(
+    vfs: &dyn Vfs,
+    path: &Path,
+    master_key: &[u8],
+    payload: &LockboxFragmentPayload,
+) -> Result<(), String> {
+    let plaintext = serde_json::to_vec(payload).map_err(|error| error.to_string())?;
+    let text = Envelope::seal_with_master(master_key, &payload.frontmatter.id, &plaintext)?.to_text()?;
     vfs.write_atomic(path, text.as_bytes())
         .map_err(|error| error.to_string())
 }
@@ -875,9 +889,8 @@ pub fn apply_lockbox_dialect_migration(
     }
 
     cx.hooks.checkpoint_before_structural();
-    let write_key = WriteKey::Master(read_keys.master_key.clone());
     for (target, _, payload) in &writes {
-        write_lockbox_payload(cx.vfs, target, &write_key, payload)?;
+        write_lockbox_payload_with_master(cx.vfs, target, &read_keys.master_key, payload)?;
     }
     let paths: Vec<String> = writes.iter().map(|(_, path, _)| path.clone()).collect();
     if let Err(error) = cx.hooks.commit_paths_if_git(&paths, MARKDOWN_DIALECT_MIGRATION_COMMIT_MESSAGE) {

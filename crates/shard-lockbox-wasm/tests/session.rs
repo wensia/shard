@@ -11,6 +11,7 @@ use std::{
     path::Path,
 };
 
+
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use shard_core::{FsVfs, Vfs};
@@ -463,6 +464,8 @@ fn saving_a_public_fragment_with_the_lockbox_tag_moves_it_and_other_saves_are_fo
     .unwrap();
     assert_eq!(moved["content"], "只改标签");
     assert_eq!(moved["path"], "lockbox/notes/随笔.shard");
+    // 服务器上只有按 id 推出的路径，标题在加密载荷里。
+    assert_eq!(server.items[other].path.as_deref(), Some(&*format!("lockbox/notes/{other}.shard")));
 }
 
 #[test]
@@ -754,4 +757,189 @@ fn web_session_opens_what_the_desktop_wrote() {
     ok(&mut session, "load", json!({ "snapshot": snapshot_of_directory(dir.path()) }));
     write(&mut session, &mut FakeServer::new(), "unlock", json!({ "password": PASSWORD })).unwrap();
     assert_eq!(essence(&list(&mut session)), essence(&from_desktop));
+}
+
+// ---------------------------------------------------------------------------
+// 服务器上的路径不含标题
+// ---------------------------------------------------------------------------
+
+fn note_text(id: &str, body: &str) -> String {
+    format!("---\nid: {id}\ncreated_at: 2026-10-27T09:00:00+08:00\nupdated_at: 2026-10-27T09:00:00+08:00\ntags:\n- note\nsource: web\n---\n\n{body}\n")
+}
+
+fn decrypted_location(server: &FakeServer, id: &str, password: &str) -> Option<String> {
+    let manifest = shard_lockbox::Manifest::parse(&server.manifest.as_ref().unwrap().0).unwrap();
+    let keys = manifest.read_keys(&manifest.unwrap_with_password(password).unwrap()).unwrap();
+    let plain: Value = serde_json::from_slice(&shard_lockbox::open_text(&server.items[id].envelope, &keys).unwrap()).unwrap();
+    plain["location"].as_str().map(str::to_string)
+}
+
+#[test]
+fn moved_notes_keep_their_title_only_inside_the_payload() {
+    for locked in [false, true] {
+        let (mut session, mut server, _) = setup();
+        if locked {
+            ok(&mut session, "lock", json!({}));
+        }
+        let id = "20261027-090000-cccccccc-000003";
+        let text = note_text(id, "项目周报正文");
+        let path = "notes/项目/周报.md";
+        server.public.insert(path.to_string(), (id.to_string(), sha(&text)));
+        let moved = write(&mut session, &mut server, "move_public", json!({ "id": id, "path": path, "text": text })).unwrap();
+        // 界面拿到的是真实路径；服务器只拿到按 id 推出的路径。
+        assert_eq!(moved["path"], "lockbox/notes/项目/周报.shard", "locked={locked}");
+        assert_eq!(server.items[id].path.as_deref(), Some(&*format!("lockbox/notes/{id}.shard")), "locked={locked}");
+        assert_eq!(moved["fileSha"], server.items[id].sha.as_str(), "locked={locked}");
+        let envelope = Envelope::parse(&server.items[id].envelope).unwrap();
+        // 锁着时借临时密钥加密后又用 manifest 的公钥重新加密：解锁后用真密钥解得开。
+        assert!(envelope.key_algorithm.is_some(), "locked={locked}");
+        assert_eq!(decrypted_location(&server, id, PASSWORD).as_deref(), Some("lockbox/notes/项目/周报.shard"));
+
+        // 新会话：锁着时只知道服务器路径；解锁后按载荷还原到真实路径。
+        let mut fresh = Session::new();
+        load(&mut fresh, &server);
+        write(&mut fresh, &mut server, "unlock", json!({ "password": PASSWORD })).unwrap();
+        let listed = list(&mut fresh);
+        let note = listed.iter().find(|fragment| fragment.id == id).unwrap();
+        assert_eq!(note.path, "lockbox/notes/项目/周报.shard");
+        assert_eq!(note.content, "项目周报正文");
+
+        // 解锁后改正文：领域函数写回的载荷不带 location，会话补上；服务器路径不变。
+        write(&mut fresh, &mut server, "update", json!({ "id": id, "content": "改过的周报", "tags": ["note"] })).unwrap();
+        assert_eq!(server.items[id].path.as_deref(), Some(&*format!("lockbox/notes/{id}.shard")));
+        assert_eq!(decrypted_location(&server, id, PASSWORD).as_deref(), Some("lockbox/notes/项目/周报.shard"));
+        let mut again = Session::new();
+        load(&mut again, &server);
+        write(&mut again, &mut server, "unlock", json!({ "password": PASSWORD })).unwrap();
+        assert_eq!(list(&mut again).iter().find(|fragment| fragment.id == id).unwrap().path, "lockbox/notes/项目/周报.shard");
+    }
+}
+
+#[test]
+fn renamed_fragments_are_concealed_too_and_archiving_moves_the_location() {
+    let (mut session, mut server, _) = setup();
+    let id = "20261020-080000-dddddddd-000004";
+    let text = format!("---\nid: {id}\ncreated_at: 2026-10-20T08:00:00+08:00\nupdated_at: 2026-10-20T08:00:00+08:00\ntags: []\nsource: web\n---\n\n改过名的碎片\n");
+    let path = "fragments/2026/10/我的标题.md";
+    server.public.insert(path.to_string(), (id.to_string(), sha(&text)));
+    let moved = write(&mut session, &mut server, "move_public", json!({ "id": id, "path": path, "text": text })).unwrap();
+    assert_eq!(moved["path"], "lockbox/fragments/2026/10/我的标题.shard");
+    assert_eq!(server.items[id].path.as_deref(), Some(&*format!("lockbox/fragments/2026/10/{id}.shard")));
+    let archived = write(&mut session, &mut server, "set_archived", json!({ "id": id, "archived": true })).unwrap();
+    assert_eq!(archived["path"], "lockbox/archive/2026/10/我的标题.shard");
+    assert_eq!(server.items[id].path.as_deref(), Some(&*format!("lockbox/archive/2026/10/{id}.shard")));
+    assert_eq!(decrypted_location(&server, id, PASSWORD).as_deref(), Some("lockbox/archive/2026/10/我的标题.shard"));
+    for item in server.items.values() {
+        assert!(!item.path.as_deref().unwrap_or_default().contains("标题"));
+    }
+}
+
+#[test]
+fn legacy_titled_paths_are_migrated_after_unlock() {
+    // 桌面（或旧网页）写出的密匣笔记：服务器路径带标题、载荷没有 location。
+    let dir = tempfile::tempdir().unwrap();
+    let vfs = FsVfs::new(dir.path());
+    let cx = VaultCtx::local(&vfs, &NoHooks);
+    let setup = desktop::setup_lockbox(&cx, PASSWORD).unwrap();
+    let keys = desktop::read_lockbox_manifest(&vfs).unwrap().read_keys(&setup.master_key).unwrap();
+    std::fs::create_dir_all(dir.path().join("notes/私人")).unwrap();
+    std::fs::write(dir.path().join("notes/私人/日记.md"), note_text("note-legacy", "旧笔记正文")).unwrap();
+    desktop::move_public_fragment_to_lockbox(&cx, Some(&keys), &dir.path().join("notes/私人/日记.md")).unwrap();
+    desktop::create_lockbox_fragment(&cx, Some(&keys), "普通碎片", vec![]).unwrap();
+
+    let mut server = FakeServer::new();
+    let snapshot = snapshot_of_directory(dir.path());
+    server.manifest = Some((snapshot["manifest"]["body"].as_str().unwrap().to_string(), snapshot["manifest"]["sha"].as_str().unwrap().to_string()));
+    for item in snapshot["items"].as_array().unwrap() {
+        server.items.insert(
+            item["id"].as_str().unwrap().to_string(),
+            ServerItem {
+                envelope: item["envelope"].as_str().unwrap().to_string(),
+                sha: item["sha"].as_str().unwrap().to_string(),
+                path: item["path"].as_str().map(str::to_string),
+            },
+        );
+    }
+    assert_eq!(server.items["note-legacy"].path.as_deref(), Some("lockbox/notes/私人/日记.shard"));
+    let untouched: Vec<_> = server.items.iter().filter(|(id, _)| *id != "note-legacy").map(|(id, item)| (id.clone(), item.sha.clone())).collect();
+
+    let mut session = Session::new();
+    load(&mut session, &server);
+    // 锁着不能迁移。
+    assert_eq!(message(call(&mut session, "conceal", json!({}))), "lockbox_locked");
+    write(&mut session, &mut server, "unlock", json!({ "password": PASSWORD })).unwrap();
+    assert_eq!(list(&mut session).iter().find(|f| f.id == "note-legacy").unwrap().path, "lockbox/notes/私人/日记.shard");
+    let migrated = write(&mut session, &mut server, "conceal", json!({})).unwrap();
+    assert_eq!(migrated, 1);
+    assert_eq!(server.items["note-legacy"].path.as_deref(), Some("lockbox/notes/note-legacy.shard"));
+    for (id, sha) in untouched {
+        assert_eq!(server.items[&id].sha, sha, "不带标题的条目不用动");
+    }
+    // 再迁移一次：没有要写的。
+    assert_eq!(write(&mut session, &mut server, "conceal", json!({})).unwrap(), 0);
+
+    let mut fresh = Session::new();
+    load(&mut fresh, &server);
+    write(&mut fresh, &mut server, "unlock", json!({ "password": PASSWORD })).unwrap();
+    let note = list(&mut fresh).into_iter().find(|f| f.id == "note-legacy").unwrap();
+    assert_eq!(note.path, "lockbox/notes/私人/日记.shard");
+    assert_eq!(note.content, "旧笔记正文");
+}
+
+#[test]
+fn update_public_forwards_only_when_it_is_sure_there_is_no_lockbox_tag() {
+    let (mut session, _server, _) = setup();
+    let id = "20261027-080000-aaaaaaaa-000001";
+    let text = format!("---\nid: {id}\ncreated_at: 2026-10-27T08:00:00+08:00\nupdated_at: 2026-10-27T08:00:00+08:00\ntags: []\nsource: web\n---\n\n旧正文\n");
+    let path = "fragments/2026/10/20261027-080000-aaaaaaaa-000001.md";
+    // 原文里没有这个 id（调用方给错了文件）：报错，不交回服务器。
+    assert_eq!(
+        message(call(&mut session, "update_public", json!({ "id": "other", "path": path, "text": text, "content": "x #密匣", "tags": ["密匣"] }))),
+        "找不到片段 other"
+    );
+    // 原文解析不了：报错。
+    assert!(call(&mut session, "update_public", json!({ "id": id, "path": path, "text": "不是 frontmatter", "content": "x", "tags": ["密匣"] })).is_err());
+    // 路径不是公开文档：报错。
+    assert!(call(&mut session, "update_public", json!({ "id": id, "path": "lockbox/x.md", "text": text, "content": "x", "tags": ["密匣"] })).is_err());
+    // 标签规整后确实没有密匣（「密匣子」不是密匣标签）：交回服务器。
+    assert_eq!(
+        ok(&mut session, "update_public", json!({ "id": id, "path": path, "text": text, "content": "x", "tags": ["密匣子"] })),
+        json!({ "forward": true })
+    );
+    // 内存资料库没有残留公开文件。
+    assert!(list(&mut session).is_empty());
+}
+
+#[test]
+fn unlock_still_unlocks_when_the_manifest_upgrade_is_rejected() {
+    // 旧桌面写出的 manifest（旧派生参数）：解锁时顺带升级口令包裹，要写回 manifest。
+    let fixture: Value = serde_json::from_str(
+        &std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../shard-lockbox/tests/fixtures/lockbox-desktop-v1.json")).unwrap(),
+    )
+    .unwrap();
+    let password = fixture["password"].as_str().unwrap();
+    let manifest = fixture["manifest"].as_str().unwrap();
+    let items: Vec<Value> = fixture["envelopes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|envelope| json!({ "id": envelope["id"], "envelope": envelope["text"], "sha": sha(envelope["text"].as_str().unwrap()) }))
+        .collect();
+    let snapshot = json!({ "configured": true, "manifest": { "body": manifest, "sha": sha(manifest) }, "items": items, "itemsWithheld": false, "webUnlock": true });
+    let mut session = Session::new();
+    ok(&mut session, "load", json!({ "snapshot": snapshot }));
+    let unlocked = ok(&mut session, "unlock", json!({ "password": password }));
+    assert!(unlocked["write"]["apply"]["manifest"]["body"].is_string(), "旧参数应当升级");
+    // 服务器拒绝（例如浏览器会话没验证通行密钥）：回滚，仍然解锁，内容照常读出。
+    let state = ok(&mut session, "rollback", json!({}));
+    assert_eq!(state["unlocked"], true);
+    let listed = list(&mut session);
+    assert_eq!(listed.len(), 2);
+    let bodies: Vec<_> = fixture["envelopes"].as_array().unwrap().iter().map(|envelope| envelope["body"].as_str().unwrap()).collect();
+    for fragment in &listed {
+        assert!(bodies.contains(&fragment.content.as_str()));
+    }
+    // 下次解锁再升级。
+    ok(&mut session, "lock", json!({}));
+    assert!(ok(&mut session, "unlock", json!({ "password": password }))["write"]["apply"]["manifest"].is_object());
 }

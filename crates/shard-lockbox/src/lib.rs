@@ -24,6 +24,7 @@ use rsa::{
 };
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
+use zeroize::{Zeroize, Zeroizing};
 
 /// 信封版本。
 pub const VERSION: u32 = 1;
@@ -96,17 +97,32 @@ pub struct Envelope {
     pub key_ciphertext: Option<String>,
 }
 
-/// 写入用的密钥：解锁时用主密钥，锁着时用 manifest 里的公钥。
+/// 写入用的密钥：解锁时用主密钥，锁着时用 manifest 里的公钥。drop 时主密钥清零。
 pub enum WriteKey {
     Master(Vec<u8>),
     Public(RsaPublicKey),
 }
 
-/// 读取用的密钥：主密钥，以及（有免密写入时）解出来的写入私钥。
+impl Drop for WriteKey {
+    fn drop(&mut self) {
+        if let WriteKey::Master(master_key) = self {
+            master_key.zeroize();
+        }
+    }
+}
+
+/// 读取用的密钥：主密钥，以及（有免密写入时）解出来的写入私钥。drop 时主密钥清零（写入私钥由 rsa 自己清零）；
+/// 每一份 clone 各自清零。
 #[derive(Clone)]
 pub struct ReadKeys {
     pub master_key: Vec<u8>,
     pub write_private_key: Option<RsaPrivateKey>,
+}
+
+impl Drop for ReadKeys {
+    fn drop(&mut self) {
+        self.master_key.zeroize();
+    }
 }
 
 pub fn random_bytes(len: usize) -> Vec<u8> {
@@ -192,7 +208,7 @@ pub fn normalize_recovery_key(value: &str) -> String {
 /// 用口令按当前标准包裹主密钥：返回 (salt, nonce, 密文)，参数是 [`CURRENT_KDF`]。
 pub fn wrap_master_key(secret: &str, master_key: &[u8]) -> Result<(String, String, String), String> {
     let salt = random_bytes(SALT_BYTES);
-    let wrapping_key = derive_key(secret, &salt, &CURRENT_KDF)?;
+    let wrapping_key = Zeroizing::new(derive_key(secret, &salt, &CURRENT_KDF)?);
     let (nonce, encrypted) = encrypt_bytes(&wrapping_key, master_key)?;
     Ok((BASE64.encode(salt), nonce, encrypted))
 }
@@ -204,7 +220,7 @@ fn unwrap_master_key(
     nonce: &str,
     encrypted: &str,
 ) -> Result<Vec<u8>, String> {
-    let wrapping_key = derive_key(secret, &decode(salt)?, kdf.unwrap_or(&LEGACY_KDF))?;
+    let wrapping_key = Zeroizing::new(derive_key(secret, &decode(salt)?, kdf.unwrap_or(&LEGACY_KDF))?);
     decrypt_bytes(&wrapping_key, nonce, encrypted)
 }
 
@@ -372,12 +388,9 @@ impl Envelope {
     /// 加密一条内容。`plaintext` 是调用方序列化好的载荷。
     pub fn seal(write_key: &WriteKey, id: &str, plaintext: &[u8]) -> Result<Self, String> {
         let (nonce, ciphertext, key_algorithm, key_ciphertext) = match write_key {
-            WriteKey::Master(master_key) => {
-                let (nonce, ciphertext) = encrypt_bytes(master_key, plaintext)?;
-                (nonce, ciphertext, None, None)
-            }
+            WriteKey::Master(master_key) => return Self::seal_with_master(master_key, id, plaintext),
             WriteKey::Public(public_key) => {
-                let fragment_key = random_bytes(FRAGMENT_KEY_BYTES);
+                let fragment_key = Zeroizing::new(random_bytes(FRAGMENT_KEY_BYTES));
                 let (nonce, ciphertext) = encrypt_bytes(&fragment_key, plaintext)?;
                 let encrypted_key = public_key
                     .encrypt(&mut OsRng, Oaep::new::<Sha256>(), &fragment_key)
@@ -386,6 +399,12 @@ impl Envelope {
             }
         };
         Ok(Self { version: VERSION, id: id.to_string(), nonce, ciphertext, key_algorithm, key_ciphertext })
+    }
+
+    /// 用主密钥封装（借用主密钥，不必为构造 [`WriteKey::Master`] 复制一份）。与 `seal(&WriteKey::Master(..))` 同形。
+    pub fn seal_with_master(master_key: &[u8], id: &str, plaintext: &[u8]) -> Result<Self, String> {
+        let (nonce, ciphertext) = encrypt_bytes(master_key, plaintext)?;
+        Ok(Self { version: VERSION, id: id.to_string(), nonce, ciphertext, key_algorithm: None, key_ciphertext: None })
     }
 
     pub fn parse(text: &str) -> Result<Self, String> {

@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto"
 import fs from "node:fs"
 import path from "node:path"
 
-import { expect, test, type Browser, type BrowserContext, type Page } from "@playwright/test"
+import { expect, test, type Browser, type BrowserContext, type Page, type Request } from "@playwright/test"
 
 import { fillEditor, readEditor } from "../ui/editor-helpers"
 
@@ -35,15 +35,47 @@ test.describe.configure({ mode: "serial" })
 const leaks: string[] = []
 const secrets = [...NEVER_SENT]
 
+/**
+ * 一段明文可能以哪些样子出现在请求里：原文、URL 编码、base64 / base64url（三种字节对齐各取中间稳定的一段）。
+ */
+function encodings(secret: string): string[] {
+  const bytes = Buffer.from(secret, "utf8")
+  const forms = [secret, encodeURIComponent(secret)]
+  for (const offset of [0, 1, 2]) {
+    const encoded = Buffer.concat([Buffer.alloc(offset), bytes]).toString("base64")
+    // 前面补的字节影响开头 1–3 个字符，结尾的补齐影响最后几个字符：只取中间。
+    const middle = encoded.slice(offset === 0 ? 0 : offset + 1, encoded.length - 4)
+    if (middle.length >= 12) forms.push(middle, middle.replace(/\+/gu, "-").replace(/\//gu, "_"))
+  }
+  return forms
+}
+
+function scanRequest(request: Request) {
+  const body = request.postDataBuffer() ?? Buffer.alloc(0)
+  const haystacks = [
+    request.url(),
+    safeDecode(request.url()),
+    body.toString("utf8"),
+    body.toString("latin1"),
+    ...Object.entries(request.headers()).map(([name, value]) => `${name}: ${value}`),
+  ]
+  for (const secret of secrets) {
+    const hit = encodings(secret).some((form) => haystacks.some((text) => text.includes(form)) || body.includes(Buffer.from(form, "utf8")))
+    if (hit) leaks.push(`${request.method()} ${request.url()}：${secret}`)
+  }
+}
+
+function safeDecode(value: string) {
+  try {
+    return decodeURIComponent(value)
+  } catch {
+    return value
+  }
+}
+
 async function openSession(browser: Browser, baseURL: string): Promise<{ context: BrowserContext; page: Page }> {
   const context = await browser.newContext({ baseURL, locale: "zh-CN", viewport: { height: 800, width: 1280 } })
-  context.on("request", (request) => {
-    const body = request.postData() ?? ""
-    const url = decodeURIComponent(request.url())
-    for (const secret of secrets) {
-      if (body.includes(secret) || url.includes(secret)) leaks.push(`${request.method()} ${request.url()}：${secret}`)
-    }
-  })
+  context.on("request", scanRequest)
   const login = await context.request.post("/api/test/session", { headers: headers(baseURL) })
   expect(login.ok(), await login.text()).toBe(true)
   const page = await context.newPage()
@@ -121,10 +153,20 @@ test("网页端密匣：设置、速记、解锁编辑、移入、改口令、SS
   const { context, page } = await openSession(browser, base)
   const snapshot = () => rpc<Snapshot>(context, base, "lockbox_snapshot")
 
-  await test.step("自检：请求监视能抓到浏览器发出的明文", async () => {
-    secrets.push("LEAK-PROBE-明文")
-    await page.evaluate(() => fetch("/healthz", { method: "POST", body: "LEAK-PROBE-明文" }).catch(() => undefined))
+  await test.step("自检：请求监视能抓到浏览器发出的明文（原文、请求头、base64）", async () => {
+    secrets.push("LEAK-PROBE-明文探针")
+    await page.evaluate(() => fetch("/healthz", { method: "POST", body: "LEAK-PROBE-明文探针" }).catch(() => undefined))
     await expect.poll(() => leaks.length).toBe(1)
+    await page.evaluate(() => fetch("/healthz", { headers: { "x-probe": encodeURIComponent("LEAK-PROBE-明文探针") } }).catch(() => undefined))
+    await expect.poll(() => leaks.length).toBe(2)
+    await page.evaluate(() => {
+      const bytes = new TextEncoder().encode("xyLEAK-PROBE-明文探针")
+      const base64 = btoa(String.fromCharCode(...bytes))
+      return fetch("/healthz", { method: "POST", body: JSON.stringify({ data: base64 }) }).catch(() => undefined)
+    })
+    await expect.poll(() => leaks.length).toBe(3)
+    await page.evaluate(() => fetch("/healthz", { method: "POST", body: new TextEncoder().encode("\u0000LEAK-PROBE-明文探针") }).catch(() => undefined))
+    await expect.poll(() => leaks.length).toBe(4)
     secrets.pop()
     leaks.length = 0
   })
@@ -233,7 +275,9 @@ test("网页端密匣：设置、速记、解锁编辑、移入、改口令、SS
     expect(ids).not.toContain(fragmentId)
     const items = (await snapshot()).items
     expect(items.map((item) => item.id).sort()).toEqual([lockedId, noteId, fragmentId].sort())
-    expect(items.find((item) => item.id === noteId)!.path).toBe(`lockbox/notes/${NOTE_TITLE}.shard`)
+    // 服务器上的路径只由 id 推出：笔记标题只在加密载荷里（解锁后的笔记树照样显示标题，见下一步）。
+    expect(items.find((item) => item.id === noteId)!.path).toBe(`lockbox/notes/${noteId}.shard`)
+    for (const item of items) expect(item.path ?? "").not.toContain(NOTE_TITLE)
     // 明文历史随移入一起抹掉。
     const history = await context.request.post("/api/rpc/list_revisions", {
       data: { id: fragmentId },
@@ -349,6 +393,10 @@ test("网页端密匣：设置、速记、解锁编辑、移入、改口令、SS
       }
     }
     expect(found).toEqual([])
+    // 移入密匣的笔记标题：服务器的密匣路径里没有它（上面已断言）；这里记下库文件里是否还有别处留着它。
+    const titleHits = files.filter((name) => fs.readFileSync(path.join(dataDir, name)).includes(Buffer.from(NOTE_TITLE, "utf8")))
+    test.info().annotations.push({ type: "note-title-in-db", description: titleHits.join(",") || "none" })
+    console.log(`笔记标题出现在：${titleHits.join(",") || "无"}`)
   })
 
   await context.close()
