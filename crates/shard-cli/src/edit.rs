@@ -13,7 +13,7 @@ use shard_core::{
     graph_model::{content_sha256_hex, now_rfc3339},
     normalize_tags, normalize_type_tags, unique_suffix,
     vault_lock::VaultProcessLock,
-    INBOX_TAG, PROTECTED_TYPE_TAGS, TYPE_TAGS,
+    FsVfs, INBOX_TAG, PROTECTED_TYPE_TAGS, TYPE_TAGS,
 };
 use std::{
     env, fs,
@@ -171,8 +171,14 @@ pub fn rewrite_body(
     let mut frontmatter = parsed.frontmatter;
     frontmatter.tags = tags;
     frontmatter.updated_at = now_rfc3339();
-    write_fragment_update(path, &parsed.raw, &frontmatter, next_body)
-        .map_err(|error| RewriteError::Invalid(format!("保存失败：{error}")))?;
+    write_fragment_update(
+        &FsVfs::new(vault),
+        path,
+        &parsed.raw,
+        &frontmatter,
+        next_body,
+    )
+    .map_err(|error| RewriteError::Invalid(format!("保存失败：{error}")))?;
     let raw = fs::read_to_string(path)
         .map_err(|error| RewriteError::Invalid(format!("读取保存结果失败：{error}")))?;
     Ok(Rewritten {

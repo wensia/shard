@@ -18,7 +18,7 @@ use shard_core::{
         project_document, DocumentOnlyReason, ProjectedDocument, SearchProjection,
         SearchProjectionBlock, SourceDocument,
     },
-    FragmentFrontmatter,
+    FragmentFrontmatter, FsVfs,
 };
 
 use crate::{
@@ -609,7 +609,8 @@ fn enumerate_public_sources(vault: &Path) -> Result<(Vec<PublicSource>, u32), Se
             continue;
         };
         let mut files = Vec::new();
-        crate::collect_markdown_files(&root, &mut files).map_err(io_error)?;
+        crate::collect_markdown_files(&FsVfs::new(vault), &root, &mut files)
+            .map_err(io_error)?;
         for path in files {
             push_public_source(
                 vault,
@@ -629,14 +630,26 @@ fn enumerate_public_sources(vault: &Path) -> Result<(Vec<PublicSource>, u32), Se
     }
     let mut mind_maps = Vec::new();
     if let Some(notes_root) = &notes_root {
-        canvas_commands::scan_files(notes_root, ".shardmap.json", &mut mind_maps, &mut visited)
-            .map_err(io_error)?;
+        canvas_commands::scan_files(
+            &FsVfs::new(vault),
+            notes_root,
+            ".shardmap.json",
+            &mut mind_maps,
+            &mut visited,
+        )
+        .map_err(io_error)?;
     }
     // Legacy maps can exist before the existing migration runs. Hidden recovery folders
     // are already excluded by the shared typed scanner.
     if let Some(maps_root) = &maps_root {
-        canvas_commands::scan_files(maps_root, ".shardmap.json", &mut mind_maps, &mut visited)
-            .map_err(io_error)?;
+        canvas_commands::scan_files(
+            &FsVfs::new(vault),
+            maps_root,
+            ".shardmap.json",
+            &mut mind_maps,
+            &mut visited,
+        )
+        .map_err(io_error)?;
     }
     for path in mind_maps {
         push_public_source(
@@ -651,8 +664,14 @@ fn enumerate_public_sources(vault: &Path) -> Result<(Vec<PublicSource>, u32), Se
     for suffix in [".shardcanvas.json", ".shardflow.json"] {
         let mut files = Vec::new();
         if let Some(notes_root) = &notes_root {
-            canvas_commands::scan_files(notes_root, suffix, &mut files, &mut visited)
-                .map_err(io_error)?;
+            canvas_commands::scan_files(
+                &FsVfs::new(vault),
+                notes_root,
+                suffix,
+                &mut files,
+                &mut visited,
+            )
+            .map_err(io_error)?;
         }
         for path in files {
             push_public_source(
@@ -966,8 +985,9 @@ fn markdown_document(
 
 fn load_mind_map(vault: &Path, path: &Path) -> Result<LoadedSearchDocument, SearchError> {
     let relative = crate::relative_path(vault, path).map_err(io_error)?;
-    let (file, text) = crate::read_mind_map_file(path).map_err(io_error)?;
-    crate::validate_mind_map_file(vault, &file).map_err(io_error)?;
+    let vfs = FsVfs::new(vault);
+    let (file, text) = crate::read_mind_map_file(&vfs, path).map_err(io_error)?;
+    crate::validate_mind_map_file(&vfs, &file).map_err(io_error)?;
     let body = shard_core::graph_model::mind_map_search_text(&file);
     Ok(structured_document(
         vault,
@@ -983,7 +1003,8 @@ fn load_mind_map(vault: &Path, path: &Path) -> Result<LoadedSearchDocument, Sear
 }
 
 fn load_canvas(vault: &Path, relative: &str) -> Result<LoadedSearchDocument, SearchError> {
-    let document = canvas_commands::read_search_document(vault, relative).map_err(io_error)?;
+    let document = canvas_commands::read_search_document(&FsVfs::new(vault), relative)
+        .map_err(io_error)?;
     let kind = if document.kind == "shard.flow" {
         SearchKind::Flowchart
     } else {
@@ -1647,7 +1668,8 @@ mod tests {
             conflict_of: None,
             related: Vec::new(),
         };
-        shard_core::write_fragment_file(path, &frontmatter, body).unwrap();
+        shard_core::write_fragment_file(&shard_core::FsVfs::new(path.parent().unwrap()), path, &frontmatter, body)
+            .unwrap();
     }
 
     fn search_document(

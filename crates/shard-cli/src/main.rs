@@ -18,7 +18,7 @@ use shard_core::{
     dataset::{read_dataset, write_dataset_ops, DatasetLimits, DatasetOp},
     default_vault_path,
     vault_lock::{app_settings_path, cli_lock_dir, VaultProcessLock},
-    AppConfig,
+    AppConfig, FsVfs,
 };
 use std::{
     collections::HashMap,
@@ -322,7 +322,7 @@ fn run() -> Result<(), CliError> {
     let lock_dir = lock_dir()?;
     let timeout = lock_timeout()?;
     let lock = VaultProcessLock::acquire(&lock_dir, &vault, Some(timeout)).map_err(agent::lock_error)?;
-    let path = create_public_fragment_in_vault(&vault, &body, tags, &source)?;
+    let path = create_public_fragment_in_vault(&FsVfs::new(&vault), &body, tags, &source)?;
     drop(lock);
 
     let shown = path.strip_prefix(&vault).unwrap_or(&path);
@@ -860,7 +860,8 @@ fn append_dataset(path: &str, vault_arg: Option<String>) -> Result<(), CliError>
     let _lock = VaultProcessLock::acquire(&lock_dir()?, &vault, Some(lock_timeout()?))
         .map_err(agent::lock_error)?;
     let limits = DatasetLimits::default();
-    let current = read_dataset(&vault, path, &limits).map_err(|error| error.to_string())?;
+    let current =
+        read_dataset(&FsVfs::new(&vault), path, &limits).map_err(|error| error.to_string())?;
     if current.table.header != request.expected_header {
         return Err(CliError::new("HEADER_CHANGED", "表头已变化"));
     }
@@ -921,7 +922,7 @@ fn append_dataset(path: &str, vault_arg: Option<String>) -> Result<(), CliError>
         current.sha
     } else {
         write_dataset_ops(
-            &vault,
+            &FsVfs::new(&vault),
             path,
             &current.sha,
             current.schema_sha.as_deref(),

@@ -6,15 +6,13 @@
 //!
 //! 设计见 `docs/dev/server-sqlite-plan.md`。
 
-mod fs_vfs;
 pub mod path_key;
 pub mod projection;
 mod store;
-mod vfs;
+pub mod transfer;
 
-pub use fs_vfs::FsVfs;
 pub use store::{
-    ChangeRecord, ChangesPage, Committed, SqliteVfs, Store, StoreError, TxnRecord, WriteCtx,
-    DEFAULT_VIRTUAL_ROOT, INLINE_MAX,
+    ChangeRecord, ChangesPage, Committed, ManifestEntry, VerifyReport, SqliteVfs, Store, StoreError, TxnRecord, WriteCtx,
+    DEFAULT_VIRTUAL_ROOT, INLINE_MAX, LockboxItemRaw,
 };
-pub use vfs::{sha256_hex, EntryKind, Vfs, VfsDirEntry, VfsMetadata};
+pub use shard_core::{sha256_hex, EntryKind, FsVfs, Vfs, VfsDirEntry, VfsMetadata};

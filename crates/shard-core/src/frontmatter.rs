@@ -1,4 +1,4 @@
-use crate::{write_text_atomically, FragmentFrontmatter};
+use crate::{FragmentFrontmatter, Vfs};
 use serde_yaml::{Mapping, Value};
 use std::path::Path;
 
@@ -223,13 +223,15 @@ pub fn render_fragment(raw: &str, body: &str) -> String {
 }
 
 pub fn write_fragment_update(
+    vfs: &dyn Vfs,
     path: &Path,
     raw: &str,
     next: &FragmentFrontmatter,
     body: &str,
 ) -> Result<(), String> {
     let raw = apply_frontmatter(raw, next)?;
-    write_text_atomically(path, &render_fragment(&raw, body))
+    vfs.write_atomic(path, render_fragment(&raw, body).as_bytes())
+        .map_err(|error| error.to_string())
 }
 
 pub fn raw_from_frontmatter(frontmatter: &FragmentFrontmatter) -> Result<String, String> {
@@ -542,7 +544,7 @@ fn validate_updated_mapping(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{write_fragment_file, FragmentRelation};
+    use crate::{write_fragment_file, FragmentRelation, FsVfs};
     use std::fs;
 
     fn sample_frontmatter() -> FragmentFrontmatter {
@@ -572,7 +574,7 @@ mod tests {
     fn legacy_render(frontmatter: &FragmentFrontmatter, body: &str) -> String {
         let tempdir = tempfile::tempdir().unwrap();
         let path = tempdir.path().join("fragment.md");
-        write_fragment_file(&path, frontmatter, body).unwrap();
+        write_fragment_file(&FsVfs::new(tempdir.path()), &path, frontmatter, body).unwrap();
         fs::read_to_string(path).unwrap()
     }
 

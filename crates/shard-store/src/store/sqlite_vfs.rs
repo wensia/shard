@@ -24,10 +24,8 @@ use std::{
 use rusqlite::{params, Connection, OptionalExtension};
 
 use super::blobs::{BlobStore, INLINE_MAX};
-use crate::{
-    path_key::{parent_key, path_key},
-    vfs::{sha256_hex, EntryKind, Vfs, VfsDirEntry, VfsMetadata},
-};
+use crate::path_key::{parent_key, path_key};
+use shard_core::{sha256_hex, EntryKind, Vfs, VfsDirEntry, VfsMetadata};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum NodeKind {
@@ -80,6 +78,26 @@ pub struct SqliteVfs<'a> {
     writable: bool,
     now: String,
     touched: RefCell<BTreeMap<i64, Initial>>,
+    lockbox_touched: RefCell<Vec<LockboxTouch>>,
+}
+
+/// 本事务里写过的密匣条目或 manifest：提交时各记一条变化（scope = lockbox / lockbox_manifest）。
+#[derive(Clone, Debug)]
+pub(crate) struct LockboxTouch {
+    pub scope: &'static str,
+    pub key: String,
+    pub sha: String,
+}
+
+/// 原样存进库的一条密匣信封（服务器只见密文）。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LockboxItemRaw {
+    pub item_id: String,
+    pub envelope: String,
+    /// 从旧 vault 导入时的路径（lockbox/notes 下的路径含明文标题），导出时原样写回。
+    pub legacy_path: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
 }
 
 const NODE_COLUMNS: &str =
@@ -136,11 +154,133 @@ impl<'a> SqliteVfs<'a> {
         writable: bool,
         now: String,
     ) -> Self {
-        Self { conn, blobs, root, writable, now, touched: RefCell::new(BTreeMap::new()) }
+        Self {
+            conn,
+            blobs,
+            root,
+            writable,
+            now,
+            touched: RefCell::new(BTreeMap::new()),
+            lockbox_touched: RefCell::new(Vec::new()),
+        }
     }
 
     pub(crate) fn take_touched(&self) -> BTreeMap<i64, Initial> {
         std::mem::take(&mut self.touched.borrow_mut())
+    }
+
+    pub(crate) fn take_lockbox_touched(&self) -> Vec<LockboxTouch> {
+        std::mem::take(&mut self.lockbox_touched.borrow_mut())
+    }
+
+    /// 导入用：把条目的创建、修改时间设成源文件的时间（树与碎片按修改时间排序）。不算内容变化。
+    pub fn set_times(&self, path: &Path, created: SystemTime, modified: SystemTime) -> io::Result<()> {
+        self.ensure_writable()?;
+        let rel = self.rel(path)?;
+        let node = self.find(&rel)?.ok_or_else(|| not_found(&rel))?;
+        let text = |time: SystemTime| {
+            chrono::DateTime::<chrono::Utc>::from(time).to_rfc3339_opts(chrono::SecondsFormat::Micros, true)
+        };
+        self.conn
+            .execute(
+                "UPDATE nodes SET created_at = ?1, modified_at = ?2 WHERE node_id = ?3",
+                params![text(created), text(modified), node.node_id],
+            )
+            .map_err(db_error)?;
+        Ok(())
+    }
+
+    /// 原样写入一条密匣信封；同 id 已存在且内容相同时什么也不做。
+    pub fn put_lockbox_item_raw(&self, item: &LockboxItemRaw) -> io::Result<()> {
+        self.ensure_writable()?;
+        let sha = sha256_hex(item.envelope.as_bytes());
+        let existing: Option<String> = self
+            .conn
+            .query_row("SELECT sha FROM lockbox_items WHERE item_id = ?1", params![item.item_id], |row| row.get(0))
+            .optional()
+            .map_err(db_error)?
+            .flatten();
+        if existing.as_deref() == Some(sha.as_str()) {
+            return Ok(());
+        }
+        self.conn
+            .execute(
+                "INSERT INTO lockbox_items (item_id, envelope, envelope_version, legacy_path, sha, size, seq,
+                                            created_at, updated_at)
+                 VALUES (?1, ?2, 1, ?3, ?4, ?5, 0, ?6, ?7)
+                 ON CONFLICT(item_id) DO UPDATE SET envelope = excluded.envelope, legacy_path = excluded.legacy_path,
+                   sha = excluded.sha, size = excluded.size, updated_at = excluded.updated_at,
+                   revision = revision + 1, deleted_at = NULL",
+                params![
+                    item.item_id,
+                    item.envelope,
+                    item.legacy_path,
+                    sha,
+                    item.envelope.len() as i64,
+                    item.created_at,
+                    item.updated_at
+                ],
+            )
+            .map_err(db_error)?;
+        self.lockbox_touched.borrow_mut().push(LockboxTouch { scope: "lockbox", key: item.item_id.clone(), sha });
+        Ok(())
+    }
+
+    /// 原样写入密匣 manifest（现 `.shard/lockbox.json` 的原文）。
+    pub fn put_lockbox_manifest_raw(&self, body: &str) -> io::Result<()> {
+        self.ensure_writable()?;
+        let sha = sha256_hex(body.as_bytes());
+        let existing: Option<String> = self
+            .conn
+            .query_row("SELECT sha FROM lockbox_manifest WHERE id = 1", [], |row| row.get(0))
+            .optional()
+            .map_err(db_error)?;
+        if existing.as_deref() == Some(sha.as_str()) {
+            return Ok(());
+        }
+        self.conn
+            .execute(
+                "INSERT INTO lockbox_manifest (id, body, sha, revision, seq, updated_at) VALUES (1, ?1, ?2, 1, 0, ?3)
+                 ON CONFLICT(id) DO UPDATE SET body = excluded.body, sha = excluded.sha,
+                   revision = revision + 1, updated_at = excluded.updated_at",
+                params![body, sha, self.now],
+            )
+            .map_err(db_error)?;
+        self.lockbox_touched
+            .borrow_mut()
+            .push(LockboxTouch { scope: "lockbox_manifest", key: "manifest".to_string(), sha });
+        Ok(())
+    }
+
+    pub fn lockbox_items_raw(&self) -> io::Result<Vec<LockboxItemRaw>> {
+        let mut statement = self
+            .conn
+            .prepare(
+                "SELECT item_id, envelope, legacy_path, created_at, updated_at FROM lockbox_items
+                 WHERE deleted_at IS NULL ORDER BY item_id",
+            )
+            .map_err(db_error)?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok(LockboxItemRaw {
+                    item_id: row.get(0)?,
+                    envelope: row.get(1)?,
+                    legacy_path: row.get(2)?,
+                    created_at: row.get(3)?,
+                    updated_at: row.get(4)?,
+                })
+            })
+            .map_err(db_error)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(db_error)?;
+        Ok(rows)
+    }
+
+    pub fn lockbox_manifest_raw(&self) -> io::Result<Option<String>> {
+        self.conn
+            .query_row("SELECT body FROM lockbox_manifest WHERE id = 1", [], |row| row.get(0))
+            .optional()
+            .map_err(db_error)
     }
 
     /// 绝对路径 → 存储用的相对路径（`a/b/c`，根是空串）。

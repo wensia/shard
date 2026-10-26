@@ -15,6 +15,11 @@ pub mod outline_import;
 pub mod search;
 pub mod vault_lock;
 pub mod wikilink;
+mod fs_vfs;
+pub mod vfs;
+
+pub use fs_vfs::FsVfs;
+pub use vfs::{sha256_hex, EntryKind, Vfs, VfsDirEntry, VfsMetadata};
 
 use chrono::{DateTime, Local};
 use rand::{rngs::OsRng, RngCore};
@@ -129,7 +134,8 @@ pub fn normalized_vault_key(vault: &Path) -> PathBuf {
     normalized
 }
 
-pub fn ensure_public_csv_path(vault: &Path, rel_path: &str) -> Result<PathBuf, String> {
+pub fn ensure_public_csv_path(vfs: &dyn Vfs, rel_path: &str) -> Result<PathBuf, String> {
+    let vault = vfs.root();
     let trimmed = rel_path.trim();
     if trimmed.is_empty() {
         return Err("CSV 路径不能为空。".to_string());
@@ -163,12 +169,12 @@ pub fn ensure_public_csv_path(vault: &Path, rel_path: &str) -> Result<PathBuf, S
         return Err("只能读取 CSV 文件。".to_string());
     }
     let full_path = vault.join(path);
-    if !full_path.is_file() {
+    if !vfs.is_file(&full_path) {
         return Err(format!("找不到 CSV 文件 {trimmed}"));
     }
-    let canonical_vault = vault.canonicalize().map_err(|error| error.to_string())?;
-    let canonical_path = full_path
-        .canonicalize()
+    let canonical_vault = vfs.canonicalize(vault).map_err(|error| error.to_string())?;
+    let canonical_path = vfs
+        .canonicalize(&full_path)
         .map_err(|error| error.to_string())?;
     if !canonical_path.starts_with(&canonical_vault) {
         return Err("CSV 路径不能越出 vault。".to_string());
@@ -187,7 +193,8 @@ pub fn ensure_public_csv_path(vault: &Path, rel_path: &str) -> Result<PathBuf, S
 /// 只收 `/` 分隔的相对路径；拒绝 `.`/`..`、密匣（大小写不敏感）与隐藏组件（`.git`、
 /// `.shard`……），只有开头的 `.trash` 例外——回收站里的图片仍要能预览。符号链接按
 /// canonicalize 后的落点再查一遍，越出 vault 或绕进密匣都算违规。
-pub fn ensure_public_vault_file_path(vault: &Path, rel_path: &str) -> Result<PathBuf, String> {
+pub fn ensure_public_vault_file_path(vfs: &dyn Vfs, rel_path: &str) -> Result<PathBuf, String> {
+    let vault = vfs.root();
     let trimmed = rel_path.trim();
     if trimmed.is_empty() {
         return Err("路径不能为空。".to_string());
@@ -201,12 +208,12 @@ pub fn ensure_public_vault_file_path(vault: &Path, rel_path: &str) -> Result<Pat
     }
     check_public_components(path)?;
     let full_path = vault.join(path);
-    if !full_path.is_file() {
+    if !vfs.is_file(&full_path) {
         return Err(format!("找不到文件 {trimmed}"));
     }
-    let canonical_vault = vault.canonicalize().map_err(|error| error.to_string())?;
-    let canonical_path = full_path
-        .canonicalize()
+    let canonical_vault = vfs.canonicalize(vault).map_err(|error| error.to_string())?;
+    let canonical_path = vfs
+        .canonicalize(&full_path)
         .map_err(|error| error.to_string())?;
     let relative = canonical_path
         .strip_prefix(&canonical_vault)
@@ -231,18 +238,19 @@ fn check_public_components(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-pub fn ensure_vault_layout(vault: &Path) -> Result<(), String> {
-    fs::create_dir_all(vault.join("fragments")).map_err(|error| error.to_string())?;
-    fs::create_dir_all(vault.join("notes")).map_err(|error| error.to_string())?;
-    fs::create_dir_all(vault.join("assets")).map_err(|error| error.to_string())?;
-    fs::create_dir_all(vault.join("maps")).map_err(|error| error.to_string())?;
+pub fn ensure_vault_layout(vfs: &dyn Vfs) -> Result<(), String> {
+    let vault = vfs.root();
+    vfs.create_dir_all(&vault.join("fragments")).map_err(|error| error.to_string())?;
+    vfs.create_dir_all(&vault.join("notes")).map_err(|error| error.to_string())?;
+    vfs.create_dir_all(&vault.join("assets")).map_err(|error| error.to_string())?;
+    vfs.create_dir_all(&vault.join("maps")).map_err(|error| error.to_string())?;
     let datasets = vault.join("datasets");
-    fs::create_dir_all(&datasets).map_err(|error| error.to_string())?;
+    vfs.create_dir_all(&datasets).map_err(|error| error.to_string())?;
     let attributes = datasets.join(".gitattributes");
-    if !attributes.exists() {
-        fs::write(attributes, "*.csv merge=binary\n").map_err(|error| error.to_string())?;
+    if !vfs.exists(&attributes) {
+        vfs.write(&attributes, b"*.csv merge=binary\n").map_err(|error| error.to_string())?;
     }
-    fs::create_dir_all(vault.join(".shard")).map_err(|error| error.to_string())?;
+    vfs.create_dir_all(&vault.join(".shard")).map_err(|error| error.to_string())?;
     Ok(())
 }
 
@@ -316,6 +324,7 @@ pub fn write_bytes_atomically(path: &Path, bytes: &[u8]) -> Result<(), String> {
 }
 
 pub fn write_fragment_file(
+    vfs: &dyn Vfs,
     path: &Path,
     frontmatter: &FragmentFrontmatter,
     body: &str,
@@ -323,7 +332,8 @@ pub fn write_fragment_file(
     let yaml = serde_yaml::to_string(frontmatter).map_err(|error| error.to_string())?;
     let yaml = yaml.strip_prefix("---\n").unwrap_or(&yaml);
     let text = format!("---\n{}---\n\n{}\n", yaml, body.trim_end());
-    write_text_atomically(path, &text)
+    vfs.write_atomic(path, text.as_bytes())
+        .map_err(|error| error.to_string())
 }
 
 /// 新建一条公开碎片：`fragments/YYYY/MM/{id}.md`。
@@ -331,18 +341,18 @@ pub fn write_fragment_file(
 /// 只落盘不提交（docs/design/commit-coalescing-plan.md §7 A2）。调用方负责
 /// 拦截密匣标签并持有 vault 门；`tags` 会再规范化一次并补上 `inbox`。
 pub fn create_public_fragment_in_vault(
-    vault: &Path,
+    vfs: &dyn Vfs,
     content: &str,
     tags: Vec<String>,
     source: &str,
 ) -> Result<PathBuf, String> {
     let now = Local::now();
     let id = new_fragment_id(&now);
-    create_public_fragment_with_id_in_vault(vault, content, tags, source, &now, &id)
+    create_public_fragment_with_id_in_vault(vfs, content, tags, source, &now, &id)
 }
 
 pub fn create_public_fragment_with_id_in_vault(
-    vault: &Path,
+    vfs: &dyn Vfs,
     content: &str,
     tags: Vec<String>,
     source: &str,
@@ -355,14 +365,15 @@ pub fn create_public_fragment_with_id_in_vault(
     }
 
     let created_at = now.to_rfc3339();
-    let dir = vault
+    let dir = vfs
+        .root()
         .join("fragments")
         .join(now.format("%Y").to_string())
         .join(now.format("%m").to_string());
-    fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+    vfs.create_dir_all(&dir).map_err(|error| error.to_string())?;
 
     let path = dir.join(format!("{id}.md"));
-    if path.exists() {
+    if vfs.exists(&path) {
         return Err(format!("片段 {id} 已存在。"));
     }
     let frontmatter = FragmentFrontmatter {
@@ -378,7 +389,7 @@ pub fn create_public_fragment_with_id_in_vault(
         related: Vec::new(),
     };
 
-    write_fragment_file(&path, &frontmatter, content)?;
+    write_fragment_file(vfs, &path, &frontmatter, content)?;
     Ok(path)
 }
 
@@ -566,11 +577,11 @@ mod tests {
         let vault = tempfile::tempdir().unwrap();
         let attributes = vault.path().join("datasets/.gitattributes");
 
-        ensure_vault_layout(vault.path()).unwrap();
+        ensure_vault_layout(&FsVfs::new(vault.path())).unwrap();
         assert_eq!(fs::read_to_string(&attributes).unwrap(), "*.csv merge=binary\n");
 
         fs::write(&attributes, "*.csv merge=ours\n").unwrap();
-        ensure_vault_layout(vault.path()).unwrap();
+        ensure_vault_layout(&FsVfs::new(vault.path())).unwrap();
         assert_eq!(fs::read_to_string(attributes).unwrap(), "*.csv merge=ours\n");
     }
 
@@ -578,7 +589,7 @@ mod tests {
     fn public_vault_file_paths_reject_internal_and_private_areas() {
         let vault = tempfile::tempdir().unwrap();
         let vault = vault.path();
-        ensure_vault_layout(vault).unwrap();
+        ensure_vault_layout(&FsVfs::new(vault)).unwrap();
         for (path, bytes) in [
             ("notes/证件/营业执照 1.png", "x"),
             ("assets/ab/abc.png", "x"),
@@ -594,7 +605,7 @@ mod tests {
             fs::write(full, bytes).unwrap();
         }
         for ok in ["notes/证件/营业执照 1.png", "assets/ab/abc.png", ".trash/notes/old.png"] {
-            assert!(ensure_public_vault_file_path(vault, ok).is_ok(), "{ok}");
+            assert!(ensure_public_vault_file_path(&FsVfs::new(vault), ok).is_ok(), "{ok}");
         }
         for bad in [
             "",
@@ -610,7 +621,7 @@ mod tests {
             "notes/missing.png",
             "notes",
         ] {
-            assert!(ensure_public_vault_file_path(vault, bad).is_err(), "{bad}");
+            assert!(ensure_public_vault_file_path(&FsVfs::new(vault), bad).is_err(), "{bad}");
         }
     }
 
@@ -621,7 +632,7 @@ mod tests {
 
         let root = tempfile::tempdir().unwrap();
         let vault = root.path().join("vault");
-        ensure_vault_layout(&vault).unwrap();
+        ensure_vault_layout(&FsVfs::new(&vault)).unwrap();
         fs::write(root.path().join("outside.png"), "x").unwrap();
         fs::create_dir_all(vault.join("lockbox")).unwrap();
         fs::write(vault.join("lockbox/secret.png"), "x").unwrap();
@@ -630,9 +641,9 @@ mod tests {
         fs::write(vault.join("notes/real.png"), "x").unwrap();
         symlink(vault.join("notes/real.png"), vault.join("notes/alias.png")).unwrap();
 
-        assert!(ensure_public_vault_file_path(&vault, "notes/out.png").is_err());
-        assert!(ensure_public_vault_file_path(&vault, "notes/secret.png").is_err());
-        assert!(ensure_public_vault_file_path(&vault, "notes/alias.png").is_ok());
+        assert!(ensure_public_vault_file_path(&FsVfs::new(&vault), "notes/out.png").is_err());
+        assert!(ensure_public_vault_file_path(&FsVfs::new(&vault), "notes/secret.png").is_err());
+        assert!(ensure_public_vault_file_path(&FsVfs::new(&vault), "notes/alias.png").is_ok());
     }
 
     #[test]
@@ -672,7 +683,7 @@ mod tests {
     fn creates_public_fragment_file() {
         let vault = tempfile::tempdir().unwrap();
         let path = create_public_fragment_in_vault(
-            vault.path(),
+            &FsVfs::new(vault.path()),
             "  #备忘\n\n- [ ] 买咖啡  ",
             vec!["备忘".into()],
             "cli",
@@ -690,7 +701,9 @@ mod tests {
     #[test]
     fn rejects_empty_fragment() {
         let vault = tempfile::tempdir().unwrap();
-        assert!(create_public_fragment_in_vault(vault.path(), "  \n", vec![], "cli").is_err());
+        assert!(
+            create_public_fragment_in_vault(&FsVfs::new(vault.path()), "  \n", vec![], "cli").is_err()
+        );
     }
 
     #[test]

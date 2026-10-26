@@ -10,7 +10,7 @@ use shard_core::{
     graph_region::{find_region, replace_region, GraphRegionKind},
     unique_suffix,
     vault_lock::VaultProcessLock,
-    write_text_atomically,
+    write_text_atomically, FsVfs,
 };
 use std::{
     collections::HashSet,
@@ -281,7 +281,7 @@ fn load_graph(
     expected_sha: Option<&str>,
 ) -> Result<LoadedGraph, String> {
     let for_write = expected_sha.is_some();
-    let path = find_fragment_path(vault, fragment_id)?
+    let path = find_fragment_path(&FsVfs::new(vault), fragment_id)?
         .ok_or_else(|| format!("找不到公开片段 {fragment_id}"))?;
     if for_write && !is_live_public_fragment(vault, &path) {
         return Err(format!("找不到公开片段 {fragment_id}"));
@@ -297,7 +297,7 @@ fn load_graph(
         GraphKind::Outline => {
             let file = serde_json::from_str::<ShardMapFile>(&region.json_text)
                 .map_err(|error| format!("大纲 JSON 无法解析：{error}"))?;
-            validate_mind_map_file(vault, &file)?;
+            validate_mind_map_file(&FsVfs::new(vault), &file)?;
             GraphFile::Outline(file)
         }
         GraphKind::Flowchart => {
@@ -306,7 +306,7 @@ fn load_graph(
             if file.kind != FLOWCHART_KIND {
                 return Err("流程图片段只能包含 shard.flow 数据。".to_string());
             }
-            validate_canvas_file(vault, &file)?;
+            validate_canvas_file(&FsVfs::new(vault), &file)?;
             GraphFile::Flowchart(file)
         }
     };
@@ -377,7 +377,7 @@ fn save_graph(vault: &Path, mut loaded: LoadedGraph) -> Result<String, String> {
                 .checked_add(1)
                 .ok_or_else(|| "导图版本超过上限。".to_string())?;
             file.updated_at = now.clone();
-            validate_mind_map_file(vault, file)?;
+            validate_mind_map_file(&FsVfs::new(vault), file)?;
             canonical_mind_map_text(file)?
         }
         GraphFile::Flowchart(file) => {
@@ -386,7 +386,7 @@ fn save_graph(vault: &Path, mut loaded: LoadedGraph) -> Result<String, String> {
                 .checked_add(1)
                 .ok_or_else(|| "画布版本超过上限。".to_string())?;
             file.updated_at = now.clone();
-            validate_canvas_file(vault, file)?;
+            validate_canvas_file(&FsVfs::new(vault), file)?;
             canonical_canvas_text(file)?
         }
     };

@@ -24,7 +24,7 @@ use rand::RngCore;
 use rusqlite::{params, Connection, OptionalExtension};
 
 pub use blobs::INLINE_MAX;
-pub use sqlite_vfs::SqliteVfs;
+pub use sqlite_vfs::{LockboxItemRaw, SqliteVfs};
 
 use crate::projection::{project, Projection};
 use sqlite_vfs::{Initial, NodeKind};
@@ -87,6 +87,8 @@ pub struct WriteCtx {
     pub request_sha: Option<String>,
     /// 测试用：固定当前时间。
     pub now: Option<DateTime<Utc>>,
+    /// 覆盖修订原因（导入时记为 import，而不是 create）。
+    pub revision_reason: Option<&'static str>,
 }
 
 impl WriteCtx {
@@ -98,6 +100,7 @@ impl WriteCtx {
             device: None,
             request_sha: None,
             now: None,
+            revision_reason: None,
         }
     }
 
@@ -139,6 +142,33 @@ pub struct TxnRecord {
     pub command: String,
     pub request_sha: Option<String>,
     pub response: Option<Vec<u8>>,
+}
+
+#[derive(Clone, Debug)]
+pub struct VerifyReport {
+    /// `PRAGMA integrity_check` 的结果，正常是 "ok"。
+    pub integrity: String,
+    pub foreign_key_errors: i64,
+    pub files: i64,
+    /// 被引用却取不到的 blob。
+    pub missing_blobs: Vec<String>,
+}
+
+impl VerifyReport {
+    pub fn is_ok(&self) -> bool {
+        self.integrity == "ok" && self.foreign_key_errors == 0 && self.missing_blobs.is_empty()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManifestEntry {
+    pub path: String,
+    /// dir | file
+    pub kind: String,
+    pub sha: Option<String>,
+    pub size: i64,
+    pub seq: i64,
 }
 
 #[derive(Clone, Debug)]
@@ -313,6 +343,48 @@ impl Store {
         }
     }
 
+    /// 一致快照：`VACUUM INTO` 把 shard.db 与 blobs.db 写进一个空目录。运行中的服务照常读写，
+    /// 不能用 cp 复制 WAL 模式的库文件（会拿到不一致的副本）。
+    pub fn snapshot_into(&self, out_dir: &Path) -> Result<(), StoreError> {
+        std::fs::create_dir_all(out_dir)?;
+        for name in ["shard.db", "blobs.db"] {
+            if out_dir.join(name).exists() {
+                return Err(StoreError::Invalid(format!("快照目录里已有 {name}，请换一个空目录。")));
+            }
+        }
+        // 先 blob 后内容：内容库引用的 blob 一定已在 blob 快照里（blob 只追加）。
+        self.blobs.vacuum_into(&out_dir.join("blobs.db"))?;
+        let conn = self.writer.lock().expect("写连接锁中毒");
+        conn.execute("VACUUM INTO ?1", params![out_dir.join("shard.db").to_string_lossy()])?;
+        Ok(())
+    }
+
+    /// 恢复演练与例行检查：完整性检查、外键检查，以及每个文件条目的内容都取得到。
+    pub fn verify(&self) -> Result<VerifyReport, StoreError> {
+        let conn = self.writer.lock().expect("写连接锁中毒");
+        let integrity: String = conn.query_row("PRAGMA integrity_check", [], |row| row.get(0))?;
+        let foreign_key_errors: i64 = conn.query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| row.get(0))?;
+        let files: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM nodes WHERE path_key IS NOT NULL AND kind = 'file'",
+            [],
+            |row| row.get(0),
+        )?;
+        let mut statement = conn.prepare(
+            "SELECT DISTINCT blob_sha FROM nodes WHERE blob_sha IS NOT NULL
+             UNION SELECT DISTINCT blob_sha FROM revisions WHERE blob_sha IS NOT NULL",
+        )?;
+        let shas = statement.query_map([], |row| row.get::<_, String>(0))?.collect::<Result<Vec<_>, _>>()?;
+        drop(statement);
+        drop(conn);
+        let mut missing_blobs = Vec::new();
+        for sha in shas {
+            if !self.blobs.contains(&sha)? {
+                missing_blobs.push(sha);
+            }
+        }
+        Ok(VerifyReport { integrity, foreign_key_errors, files, missing_blobs })
+    }
+
     /// 服务端 `HEAD /api/blobs/<sha>`：客户端上传前探测，已有就跳过。
     pub fn has_blob(&self, sha: &str) -> Result<bool, StoreError> {
         self.blobs.contains(sha)
@@ -347,6 +419,26 @@ impl Store {
                 },
             )
             .optional()?)
+    }
+
+    /// 全部在用条目（不含墓碑），按路径排序。客户端发现 epoch 变化或游标过旧时用它全量对账。
+    pub fn manifest(&self) -> Result<Vec<ManifestEntry>, StoreError> {
+        let conn = self.writer.lock().expect("写连接锁中毒");
+        let mut statement = conn.prepare(
+            "SELECT path, kind, sha, size, seq FROM nodes WHERE path_key IS NOT NULL ORDER BY path",
+        )?;
+        let entries = statement
+            .query_map([], |row| {
+                Ok(ManifestEntry {
+                    path: row.get(0)?,
+                    kind: row.get(1)?,
+                    sha: row.get(2)?,
+                    size: row.get(3)?,
+                    seq: row.get(4)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(entries)
     }
 
     pub fn head_seq(&self) -> Result<i64, StoreError> {
@@ -515,7 +607,9 @@ fn finalize(
         }
 
         if final_row.kind == NodeKind::File {
-            let reason = revision_reason(&initial, final_row.path.as_deref(), content_changed);
+            let reason = ctx
+                .revision_reason
+                .unwrap_or_else(|| revision_reason(&initial, final_row.path.as_deref(), content_changed));
             record_revision(conn, ctx, txn_id, node_id, &initial, final_row.path.as_deref(), reason, now)?;
             match final_row.path.as_deref() {
                 Some(path) => {
@@ -530,8 +624,23 @@ fn finalize(
         }
     }
 
-    let first_seq = changes.first().map(|change| change.seq);
-    let last_seq = changes.last().map(|change| change.seq);
+    for touch in vfs.take_lockbox_touched() {
+        conn.execute(
+            "INSERT INTO changes (txn_id, scope, key, node_id, exists_, sha, kind) VALUES (?1, ?2, ?3, NULL, 1, ?4, 'file')",
+            params![txn_id, touch.scope, touch.key, touch.sha],
+        )?;
+        let seq = conn.last_insert_rowid();
+        match touch.scope {
+            "lockbox" => conn.execute("UPDATE lockbox_items SET seq = ?1 WHERE item_id = ?2", params![seq, touch.key])?,
+            _ => conn.execute("UPDATE lockbox_manifest SET seq = ?1 WHERE id = 1", params![seq])?,
+        };
+    }
+
+    let (first_seq, last_seq): (Option<i64>, Option<i64>) = conn.query_row(
+        "SELECT MIN(seq), MAX(seq) FROM changes WHERE txn_id = ?1",
+        params![txn_id],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
     conn.execute(
         "UPDATE txns SET first_seq = ?1, last_seq = ?2 WHERE txn_id = ?3",
         params![first_seq, last_seq, txn_id],

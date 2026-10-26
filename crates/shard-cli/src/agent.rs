@@ -23,7 +23,7 @@ use shard_core::{
         existing_library_directory,
     },
     vault_lock::VaultProcessLock,
-    INBOX_TAG, TYPE_TAGS,
+    FsVfs, INBOX_TAG, TYPE_TAGS,
 };
 use std::{
     collections::BTreeMap,
@@ -233,10 +233,10 @@ fn note(
     let _lock = context.lock()?;
     let folder = library_folder(folder);
     if let Some(folder) = folder.as_deref() {
-        ensure_library_directory(&context.vault, folder)?;
+        ensure_library_directory(&FsVfs::new(&context.vault), folder)?;
     }
     let path = create_library_note_file(
-        &context.vault,
+        &FsVfs::new(&context.vault),
         title,
         folder.as_deref(),
         &body,
@@ -316,7 +316,7 @@ fn tags(context: &Context) -> Result<(), CliError> {
 
 fn list(context: &Context, folder: Option<&str>) -> Result<(), CliError> {
     let folder = library_folder(folder);
-    let root = existing_library_directory(&context.vault, folder.as_deref())?;
+    let root = existing_library_directory(&FsVfs::new(&context.vault), folder.as_deref())?;
     let mut items = Vec::new();
     collect_library(&root, &context.vault, &mut items)?;
     if folder.is_none() {
@@ -393,7 +393,7 @@ fn collect_library(
 // ---------------------------------------------------------------------------
 
 fn read_dataset_command(context: &Context, path: &str) -> Result<(), CliError> {
-    let snapshot = read_dataset(&context.vault, path, &DatasetLimits::default())
+    let snapshot = read_dataset(&FsVfs::new(&context.vault), path, &DatasetLimits::default())
         .map_err(|error| error.to_string())?;
     if context.json {
         print_json(&json!({
@@ -429,10 +429,10 @@ fn create_dataset(context: &Context, title: &str, folder: Option<&str>) -> Resul
     let _lock = context.lock()?;
     let folder = library_folder(folder);
     if let Some(folder) = folder.as_deref() {
-        ensure_library_directory(&context.vault, folder)?;
+        ensure_library_directory(&FsVfs::new(&context.vault), folder)?;
     }
     let (dataset, note) = create_library_dataset_files(
-        &context.vault,
+        &FsVfs::new(&context.vault),
         title,
         input.header,
         input.rows,

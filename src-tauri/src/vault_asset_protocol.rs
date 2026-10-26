@@ -40,7 +40,8 @@ pub fn serve(
     let Some(reference) = percent_decode(uri_path.trim_start_matches('/')) else {
         return empty(StatusCode::NOT_FOUND, origin);
     };
-    let Ok(path) = crate::resolve_vault_asset_path(vault, &reference) else {
+    let vfs = shard_core::FsVfs::new(vault);
+    let Ok(path) = crate::resolve_vault_asset_path(&vfs, &reference) else {
         return empty(StatusCode::NOT_FOUND, origin);
     };
     let Ok(metadata) = fs::metadata(&path) else {
@@ -50,7 +51,7 @@ pub fn serve(
         return empty(StatusCode::NOT_FOUND, origin);
     }
     // 先只读文件头认类型（改了扩展名的大文件不整份读进内存），确认是图片再读全文。
-    let Some(mime_type) = crate::sniff_library_asset_mime_type(&path) else {
+    let Some(mime_type) = crate::sniff_library_asset_mime_type(&vfs, &path) else {
         return empty(StatusCode::NOT_FOUND, origin);
     };
     let modified = metadata
@@ -172,12 +173,13 @@ fn percent_decode(encoded: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use shard_core::FsVfs;
 
     const PNG: &[u8] = b"\x89PNG\r\n\x1a\nrest";
 
     fn vault() -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
-        shard_core::ensure_vault_layout(dir.path()).unwrap();
+        shard_core::ensure_vault_layout(&FsVfs::new(dir.path())).unwrap();
         dir
     }
 

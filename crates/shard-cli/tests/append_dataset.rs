@@ -1,6 +1,7 @@
 use shard_core::{
     dataset::{create_dataset, read_dataset, DatasetLimits},
     vault_lock::VaultProcessLock,
+    FsVfs,
 };
 use std::{
     fs,
@@ -14,7 +15,7 @@ fn fixture() -> (tempfile::TempDir, String) {
     let vault = directory.path().join("vault");
     fs::create_dir(&vault).unwrap();
     let created = create_dataset(
-        &vault,
+        &FsVfs::new(&vault),
         "阅读记录",
         vec!["id".into(), "名称".into()],
         vec![vec!["r_000000000001".into(), "旧书".into()]],
@@ -59,7 +60,7 @@ fn appends_and_retries_idempotently() {
     let result: serde_json::Value = serde_json::from_slice(&first.stdout).unwrap();
     assert_eq!(result["appended"], 1);
     assert_eq!(result["skipped"], 0);
-    let snapshot = read_dataset(&vault, &path, &DatasetLimits::default()).unwrap();
+    let snapshot = read_dataset(&FsVfs::new(&vault), &path, &DatasetLimits::default()).unwrap();
     assert_eq!(result["sha"], snapshot.sha);
     assert_eq!(snapshot.table.rows[1], ["r_000000000002", "新书"]);
     let bytes = fs::read(vault.join(&path)).unwrap();
@@ -91,7 +92,7 @@ fn fills_missing_columns_and_skips_duplicate_ids_within_batch() {
     let receipt: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
     assert_eq!(receipt["appended"], 1);
     assert_eq!(receipt["skipped"], 1);
-    let snapshot = read_dataset(&vault, &path, &DatasetLimits::default()).unwrap();
+    let snapshot = read_dataset(&FsVfs::new(&vault), &path, &DatasetLimits::default()).unwrap();
     assert_eq!(snapshot.table.rows[1], ["r_000000000002", ""]);
 }
 

@@ -534,7 +534,13 @@ mod tests {
                 conflict_of: None,
                 related: Vec::new(),
             };
-            shard_core::write_fragment_file(&path, &frontmatter, &body).unwrap();
+            shard_core::write_fragment_file(
+                &shard_core::FsVfs::new(&vault),
+                &path,
+                &frontmatter,
+                &body,
+            )
+            .unwrap();
             let bytes = fs::metadata(&path).unwrap().len();
             file_bytes += bytes;
             largest_file = largest_file.max(bytes);

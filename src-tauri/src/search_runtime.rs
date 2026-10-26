@@ -1330,8 +1330,13 @@ mod tests {
             conflict_of: None,
             related: Vec::new(),
         };
-        shard_core::write_fragment_file(&vault.join("notes/one.md"), &frontmatter, "# One")
-            .unwrap();
+        shard_core::write_fragment_file(
+            &shard_core::FsVfs::new(&vault),
+            &vault.join("notes/one.md"),
+            &frontmatter,
+            "# One",
+        )
+        .unwrap();
         let registry = crate::search_index::IndexRegistry::default();
         registry.set_root(directory.path().join("cache"));
         let runtime = SearchRuntime::default();

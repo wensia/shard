@@ -5,15 +5,12 @@
 
 use crate::{
     dataset::{self, DatasetLimits, DatasetSnapshot},
-    new_fragment_id, normalize_tags, write_fragment_file, FragmentFrontmatter,
+    new_fragment_id, normalize_tags, write_fragment_file, FragmentFrontmatter, Vfs,
     LIBRARY_FILENAME_MAX_BYTES, TYPE_TAGS,
 };
 use chrono::Local;
 use serde::Serialize;
-use std::{
-    fs,
-    path::{Component, Path, PathBuf},
-};
+use std::path::{Component, Path, PathBuf};
 
 pub const LIBRARY_NAME_MAX_LENGTH: usize = 64;
 
@@ -73,35 +70,38 @@ pub fn library_relative_path(rel_path: &str) -> Result<&Path, String> {
     Ok(path)
 }
 
-pub fn existing_library_path(vault: &Path, rel_path: &str) -> Result<PathBuf, String> {
+pub fn existing_library_path(vfs: &dyn Vfs, rel_path: &str) -> Result<PathBuf, String> {
+    let vault = vfs.root();
     let path = vault.join(library_relative_path(rel_path)?);
-    if !path.exists() {
+    if !vfs.exists(&path) {
         return Err(format!("找不到资料库条目 {rel_path}"));
     }
-    if fs::symlink_metadata(&path)
+    if vfs
+        .symlink_metadata(&path)
         .map_err(|error| error.to_string())?
-        .file_type()
         .is_symlink()
     {
         return Err("资料库操作不允许符号链接。".to_string());
     }
-    let notes = vault
-        .join("notes")
-        .canonicalize()
+    let notes = vfs
+        .canonicalize(&vault.join("notes"))
         .map_err(|error| error.to_string())?;
-    let canonical = path.canonicalize().map_err(|error| error.to_string())?;
+    let canonical = vfs.canonicalize(&path).map_err(|error| error.to_string())?;
     if !canonical.starts_with(&notes) || canonical == notes {
         return Err("不能操作资料库根目录或 vault 外路径。".to_string());
     }
     Ok(path)
 }
 
-pub fn existing_library_directory(vault: &Path, rel_path: Option<&str>) -> Result<PathBuf, String> {
+pub fn existing_library_directory(
+    vfs: &dyn Vfs,
+    rel_path: Option<&str>,
+) -> Result<PathBuf, String> {
     let path = match rel_path.map(str::trim).filter(|path| !path.is_empty()) {
-        Some("notes") | None => vault.join("notes"),
-        Some(path) => existing_library_path(vault, path)?,
+        Some("notes") | None => vfs.root().join("notes"),
+        Some(path) => existing_library_path(vfs, path)?,
     };
-    if !path.is_dir() {
+    if !vfs.is_dir(&path) {
         return Err("目标必须是资料库目录。".to_string());
     }
     Ok(path)
@@ -152,10 +152,15 @@ pub fn bounded_library_filename(stem: &str, collision_suffix: &str, extension: &
     format!("{stem}{collision_suffix}{extension}")
 }
 
-pub fn unique_titled_path(directory: &Path, title: &str, extension: &str) -> PathBuf {
+pub fn unique_titled_path(
+    vfs: &dyn Vfs,
+    directory: &Path,
+    title: &str,
+    extension: &str,
+) -> PathBuf {
     let stem = sanitized_note_stem(title);
     let first = directory.join(bounded_library_filename(&stem, "", extension));
-    if !first.exists() {
+    if !vfs.exists(&first) {
         return first;
     }
     let mut collision_index = 2;
@@ -165,19 +170,19 @@ pub fn unique_titled_path(directory: &Path, title: &str, extension: &str) -> Pat
             &format!("-{collision_index}"),
             extension,
         ));
-        if !candidate.exists() {
+        if !vfs.exists(&candidate) {
             return candidate;
         }
         collision_index += 1;
     }
 }
 
-pub fn unique_note_path(directory: &Path, title: &str) -> PathBuf {
-    unique_titled_path(directory, title, ".md")
+pub fn unique_note_path(vfs: &dyn Vfs, directory: &Path, title: &str) -> PathBuf {
+    unique_titled_path(vfs, directory, title, ".md")
 }
 
-pub fn unique_mind_map_path(directory: &Path, title: &str) -> PathBuf {
-    unique_titled_path(directory, title, ".shardmap.json")
+pub fn unique_mind_map_path(vfs: &dyn Vfs, directory: &Path, title: &str) -> PathBuf {
+    unique_titled_path(vfs, directory, title, ".shardmap.json")
 }
 
 pub fn note_title(body: &str) -> String {
@@ -199,7 +204,7 @@ pub fn note_title(body: &str) -> String {
 /// 其他 type 标签让位给它。`source` 记录写入方（App 为 `desktop`，CLI 为 `cli` 或调用方
 /// 声明的来源）。
 pub fn create_library_note_file(
-    vault: &Path,
+    vfs: &dyn Vfs,
     title: &str,
     directory: Option<&str>,
     body: &str,
@@ -211,8 +216,8 @@ pub fn create_library_note_file(
         return Err("笔记标题不能为空。".to_string());
     }
     validate_library_name_length(title, ".md")?;
-    let directory = existing_library_directory(vault, directory)?;
-    let path = unique_note_path(&directory, title);
+    let directory = existing_library_directory(vfs, directory)?;
+    let path = unique_note_path(vfs, &directory, title);
     let now = Local::now();
     let created_at = now.to_rfc3339();
     let frontmatter = FragmentFrontmatter {
@@ -227,7 +232,7 @@ pub fn create_library_note_file(
         conflict_of: None,
         related: Vec::new(),
     };
-    write_fragment_file(&path, &frontmatter, body)?;
+    write_fragment_file(vfs, &path, &frontmatter, body)?;
     Ok(path)
 }
 
@@ -242,7 +247,7 @@ fn note_tags(tags: Vec<String>) -> Vec<String> {
 /// 新建 `datasets/<title>.csv` 及资料库里嵌入它的说明笔记，返回数据集快照与笔记路径。
 /// 笔记建不出来时删掉刚写的 CSV 与 schema，不留孤儿数据集。
 pub fn create_library_dataset_files(
-    vault: &Path,
+    vfs: &dyn Vfs,
     title: &str,
     header: Vec<String>,
     rows: Vec<Vec<String>>,
@@ -260,9 +265,9 @@ pub fn create_library_dataset_files(
         return Err("数据集名称不能为空。".to_string());
     }
     validate_library_name_length(title, ".md")?;
-    existing_library_directory(vault, directory)?;
+    existing_library_directory(vfs, directory)?;
     let dataset = dataset::create_dataset(
-        vault,
+        vfs,
         title,
         header,
         rows,
@@ -277,23 +282,24 @@ pub fn create_library_dataset_files(
         })
         .map_err(|error| error.to_string())?;
         let body = format!("# {title}\n\n```datatable\n{block}\n```\n");
-        create_library_note_file(vault, title, directory, &body, Vec::new(), source)
+        create_library_note_file(vfs, title, directory, &body, Vec::new(), source)
     })();
     match created {
         Ok(note) => Ok((dataset, note)),
         Err(error) => {
-            let csv = vault.join(&dataset.path);
+            let csv = vfs.root().join(&dataset.path);
             if let Some(name) = csv.file_name().and_then(|name| name.to_str()) {
-                let _ = fs::remove_file(csv.with_file_name(format!("{name}.schema.json")));
+                let _ = vfs.remove_file(&csv.with_file_name(format!("{name}.schema.json")));
             }
-            let _ = fs::remove_file(&csv);
+            let _ = vfs.remove_file(&csv);
             Err(error)
         }
     }
 }
 
 /// 确保资料库目录存在并返回它；`rel_path` 必须在 `notes/` 下，缺的各级目录按资料库命名规则创建。
-pub fn ensure_library_directory(vault: &Path, rel_path: &str) -> Result<PathBuf, String> {
+pub fn ensure_library_directory(vfs: &dyn Vfs, rel_path: &str) -> Result<PathBuf, String> {
+    let vault = vfs.root();
     let relative = library_relative_path(rel_path)?;
     let mut current = vault.to_path_buf();
     for component in relative.components() {
@@ -305,16 +311,18 @@ pub fn ensure_library_directory(vault: &Path, rel_path: &str) -> Result<PathBuf,
             validate_library_name(&name)?;
         }
         current.push(name.as_ref());
-        match fs::symlink_metadata(&current) {
-            Ok(metadata) if metadata.file_type().is_symlink() => {
+        match vfs.symlink_metadata(&current) {
+            Ok(metadata) if metadata.is_symlink() => {
                 return Err("资料库操作不允许符号链接。".to_string());
             }
             Ok(metadata) if !metadata.is_dir() => {
                 return Err(format!("{} 不是目录。", rel_path.trim()));
             }
             Ok(_) => {}
-            Err(_) => fs::create_dir(&current).map_err(|error| error.to_string())?,
+            Err(_) => vfs
+                .create_dir(&current)
+                .map_err(|error| error.to_string())?,
         }
     }
-    existing_library_directory(vault, Some(rel_path))
+    existing_library_directory(vfs, Some(rel_path))
 }

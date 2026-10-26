@@ -42,6 +42,12 @@ impl BlobStore {
             .optional()?)
     }
 
+    pub(crate) fn vacuum_into(&self, target: &Path) -> Result<(), StoreError> {
+        let conn = self.conn.lock().expect("blob 连接锁中毒");
+        conn.execute("VACUUM INTO ?1", params![target.to_string_lossy()])?;
+        Ok(())
+    }
+
     pub(crate) fn contains(&self, sha: &str) -> Result<bool, StoreError> {
         let conn = self.conn.lock().expect("blob 连接锁中毒");
         Ok(conn

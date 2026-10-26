@@ -11,6 +11,7 @@
 //! v1 → v2 的改写不是幂等的，版本标记保证同一份内容只迁移一次。
 
 use serde::{Deserialize, Serialize};
+use shard_core::FsVfs;
 use std::{
     fs,
     path::{Component, Path, PathBuf},
@@ -118,7 +119,7 @@ pub(crate) fn list_public_sources(vault: &Path) -> Result<PublicMigrationPlan, S
 
     let mut files = Vec::new();
     for root in PUBLIC_MARKDOWN_ROOTS {
-        collect_markdown_files(&vault.join(root), &mut files)?;
+        collect_markdown_files(&FsVfs::new(vault), &vault.join(root), &mut files)?;
     }
     files.sort();
 
@@ -178,7 +179,7 @@ pub(crate) fn list_lockbox_sources(
     read_keys: &LockboxReadKeys,
 ) -> Result<Vec<LockboxSource>, String> {
     let mut files = Vec::new();
-    collect_lockbox_files(&vault.join("lockbox"), &mut files)?;
+    collect_lockbox_files(&FsVfs::new(vault), &vault.join("lockbox"), &mut files)?;
     files.sort();
 
     let mut sources = Vec::new();
@@ -230,8 +231,9 @@ pub(crate) fn apply_lockbox_migration(
 
     checkpoint_before_structural_locked(vault);
     let write_key = LockboxWriteKey::Master(read_keys.master_key.clone());
+    let vfs = FsVfs::new(vault);
     for (target, _, payload) in &writes {
-        write_lockbox_payload(target, &write_key, payload)?;
+        write_lockbox_payload(&vfs, target, &write_key, payload)?;
     }
     let paths: Vec<String> = writes.iter().map(|(_, path, _)| path.clone()).collect();
     if let Err(error) = commit_paths_if_git(vault, &paths, MIGRATION_COMMIT_MESSAGE) {

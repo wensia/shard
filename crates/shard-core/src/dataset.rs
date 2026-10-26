@@ -1,12 +1,12 @@
 //! CSV 数据集的格式、校验与文件操作。调用写入函数前必须持有 vault 写锁。
-use crate::{ensure_public_csv_path, write_bytes_atomically, LIBRARY_FILENAME_MAX_BYTES};
+use crate::{ensure_public_csv_path, Vfs, LIBRARY_FILENAME_MAX_BYTES};
 use csv::{QuoteStyle, ReaderBuilder, Terminator, WriterBuilder};
 use rand::{rngs::OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
     collections::HashSet,
-    fmt, fs,
+    fmt,
     path::{Path, PathBuf},
 };
 
@@ -595,38 +595,38 @@ fn schema_path(path: &Path, rel: &str) -> Option<PathBuf> {
 }
 
 fn read_schema(
-    vault: &Path,
+    vfs: &dyn Vfs,
     path: &Path,
     rel: &str,
 ) -> Result<(Option<Vec<u8>>, Option<DatasetError>), DatasetError> {
-    let canonical_vault = vault.canonicalize().map_err(io_error)?;
+    let canonical_vault = vfs.canonicalize(vfs.root()).map_err(io_error)?;
     if !path.starts_with(canonical_vault.join("datasets")) {
         return Ok((None, None));
     }
     let Some(sidecar) = schema_path(path, rel) else {
         return Ok((None, None));
     };
-    if !sidecar.exists() {
+    if !vfs.exists(&sidecar) {
         return Ok((None, None));
     }
-    let canonical = sidecar.canonicalize().map_err(io_error)?;
+    let canonical = vfs.canonicalize(&sidecar).map_err(io_error)?;
     if !canonical.starts_with(&canonical_vault) {
         return Ok((
             None,
             Some(DatasetError::new("SCHEMA_INVALID", "schema 路径越出 vault")),
         ));
     }
-    Ok((Some(fs::read(canonical).map_err(io_error)?), None))
+    Ok((Some(vfs.read(&canonical).map_err(io_error)?), None))
 }
 
 fn snapshot(
-    vault: &Path,
+    vfs: &dyn Vfs,
     rel: &str,
     limits: &DatasetLimits,
 ) -> Result<DatasetSnapshot, DatasetError> {
     let rel = rel.trim();
-    let path = ensure_public_csv_path(vault, rel).map_err(invalid_path)?;
-    let bytes = fs::read(&path).map_err(io_error)?;
+    let path = ensure_public_csv_path(vfs, rel).map_err(invalid_path)?;
+    let bytes = vfs.read(&path).map_err(io_error)?;
     let (text, dialect) = decode_csv(&bytes)?;
     let (table, ragged) = parse_records(&text, dialect.delimiter)?;
     let conversion = if dialect.encoding != CsvEncoding::Utf8 {
@@ -642,7 +642,7 @@ fn snapshot(
     } else {
         None
     };
-    let (schema_bytes, schema_path_error) = read_schema(vault, &path, rel)?;
+    let (schema_bytes, schema_path_error) = read_schema(vfs, &path, rel)?;
     let schema_sha = schema_bytes.as_deref().map(sha);
     let parsed = schema_bytes.as_deref().map(parse_schema).transpose();
     let (schema, schema_error) = match parsed {
@@ -676,23 +676,23 @@ fn snapshot(
 }
 
 pub fn read_dataset(
-    vault: &Path,
+    vfs: &dyn Vfs,
     rel: &str,
     limits: &DatasetLimits,
 ) -> Result<DatasetSnapshot, DatasetError> {
-    snapshot(vault, rel, limits)
+    snapshot(vfs, rel, limits)
 }
 
 /// 必须在持 vault 写锁时调用；本函数不自行取锁。
 pub fn write_dataset_ops(
-    vault: &Path,
+    vfs: &dyn Vfs,
     rel: &str,
     expected_sha: &str,
     expected_schema_sha: Option<&str>,
     ops: &[DatasetOp],
     limits: &DatasetLimits,
 ) -> Result<DatasetSnapshot, DatasetError> {
-    let current = snapshot(vault, rel, limits)?;
+    let current = snapshot(vfs, rel, limits)?;
     if current.sha != expected_sha || current.schema_sha.as_deref() != expected_schema_sha {
         return Err(stale());
     }
@@ -704,26 +704,26 @@ pub fn write_dataset_ops(
         return Err(DatasetError::new(code, message));
     }
     let next = apply_ops(&current.table, current.schema.as_ref(), ops, limits)?;
-    let path = ensure_public_csv_path(vault, rel).map_err(invalid_path)?;
-    let latest = snapshot(vault, rel, limits)?;
+    let path = ensure_public_csv_path(vfs, rel).map_err(invalid_path)?;
+    let latest = snapshot(vfs, rel, limits)?;
     if latest.sha != expected_sha || latest.schema_sha.as_deref() != expected_schema_sha {
         return Err(stale());
     }
-    write_bytes_atomically(&path, &serialize_csv_with(&next, &write_dialect(rel, &current.dialect)))
+    vfs.write_atomic(&path, &serialize_csv_with(&next, &write_dialect(rel, &current.dialect)))
         .map_err(|error| DatasetError::new("IO_ERROR", format!("文件写入失败：{error}")))?;
-    snapshot(vault, rel, limits)
+    snapshot(vfs, rel, limits)
 }
 
 /// 把非 UTF-8 或列数不齐的 CSV 显式转换成可编辑的 UTF-8 文件（用户确认后调用）。
 /// 受管目录按规范格式；其余位置写成带 BOM 的 UTF-8，保持分隔符与换行，Excel 双击仍能
 /// 正确识别中文。必须在持 vault 写锁时调用。
 pub fn normalize_csv_file(
-    vault: &Path,
+    vfs: &dyn Vfs,
     rel: &str,
     expected_sha: &str,
     limits: &DatasetLimits,
 ) -> Result<DatasetSnapshot, DatasetError> {
-    let current = snapshot(vault, rel, limits)?;
+    let current = snapshot(vfs, rel, limits)?;
     if current.sha != expected_sha {
         return Err(stale());
     }
@@ -747,10 +747,10 @@ pub fn normalize_csv_file(
             ..current.dialect
         }
     };
-    let path = ensure_public_csv_path(vault, rel).map_err(invalid_path)?;
-    write_bytes_atomically(&path, &serialize_csv_with(&current.table, &dialect))
+    let path = ensure_public_csv_path(vfs, rel).map_err(invalid_path)?;
+    vfs.write_atomic(&path, &serialize_csv_with(&current.table, &dialect))
         .map_err(|error| DatasetError::new("IO_ERROR", format!("文件写入失败：{error}")))?;
-    snapshot(vault, rel, limits)
+    snapshot(vfs, rel, limits)
 }
 
 pub fn new_dataset_id() -> String {
@@ -786,7 +786,7 @@ fn filename_stem(title: &str, suffix: &str) -> String {
 
 /// 必须在持 vault 写锁时调用；本函数不自行取锁。
 pub fn create_dataset(
-    vault: &Path,
+    vfs: &dyn Vfs,
     title: &str,
     header: Vec<String>,
     rows: Vec<Vec<String>>,
@@ -809,22 +809,19 @@ pub fn create_dataset(
         ));
     }
     validate_limits(&table, limits)?;
+    let vault = vfs.root();
     let dir = vault.join("datasets");
-    fs::create_dir_all(&dir).map_err(io_error)?;
-    if fs::symlink_metadata(&dir)
-        .map_err(io_error)?
-        .file_type()
-        .is_symlink()
-    {
+    vfs.create_dir_all(&dir).map_err(io_error)?;
+    if vfs.symlink_metadata(&dir).map_err(io_error)?.is_symlink() {
         return Err(DatasetError::new(
             "INVALID_PATH",
             "数据集目录不能是符号链接",
         ));
     }
-    if !dir
-        .canonicalize()
+    if !vfs
+        .canonicalize(&dir)
         .map_err(io_error)?
-        .starts_with(vault.canonicalize().map_err(io_error)?)
+        .starts_with(vfs.canonicalize(vault).map_err(io_error)?)
     {
         return Err(DatasetError::new(
             "INVALID_PATH",
@@ -840,22 +837,24 @@ pub fn create_dataset(
         };
         let name = format!("{}.csv", filename_stem(title, &suffix));
         let path = dir.join(&name);
-        if !path.exists() && !path.with_file_name(format!("{name}.schema.json")).exists() {
+        if !vfs.exists(&path) && !vfs.exists(&path.with_file_name(format!("{name}.schema.json"))) {
             break (path, format!("datasets/{name}"));
         }
         number += 1;
     };
-    write_bytes_atomically(&path, &serialize_csv(&table))
+    vfs.write_atomic(&path, &serialize_csv(&table))
         .map_err(|error| DatasetError::new("IO_ERROR", format!("文件写入失败：{error}")))?;
     let sidecar = schema_path(&path, &rel).expect("新数据集在 datasets 目录中");
-    write_bytes_atomically(&sidecar, &serialize_schema(&schema))
+    vfs.write_atomic(&sidecar, &serialize_schema(&schema))
         .map_err(|error| DatasetError::new("IO_ERROR", format!("文件写入失败：{error}")))?;
-    snapshot(vault, &rel, limits)
+    snapshot(vfs, &rel, limits)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::FsVfs;
+    use std::fs;
 
     #[test]
     fn operations_match_shared_frontend_cases() {
@@ -964,7 +963,7 @@ mod tests {
         );
         let vault = tempfile::tempdir().unwrap();
         fs::write(vault.path().join("bad.csv"), "a,a\n1,2\n").unwrap();
-        let snapshot = read_dataset(vault.path(), "bad.csv", &limits).unwrap();
+        let snapshot = read_dataset(&FsVfs::new(vault.path()), "bad.csv", &limits).unwrap();
         assert!(!snapshot.editable);
         assert!(snapshot
             .read_only_reason
@@ -974,7 +973,7 @@ mod tests {
             max_rows: 0,
             ..limits
         };
-        let snapshot = read_dataset(vault.path(), "bad.csv", &small).unwrap();
+        let snapshot = read_dataset(&FsVfs::new(vault.path()), "bad.csv", &small).unwrap();
         assert_eq!(snapshot.table.rows.len(), 1);
     }
 
@@ -1002,11 +1001,11 @@ mod tests {
             ("tabs.csv", "名称\t数量\n苹果\t3\n".as_bytes().to_vec(), "名称\t数量\n苹果\t4\n"),
         ] {
             fs::write(vault.join(name), &original).unwrap();
-            let snapshot = read_dataset(vault, name, &limits).unwrap();
+            let snapshot = read_dataset(&FsVfs::new(vault), name, &limits).unwrap();
             assert!(snapshot.editable, "{name}: {:?}", snapshot.read_only_reason);
             assert_eq!(snapshot.table.header, vec!["名称", "数量"], "{name}");
             let written = write_dataset_ops(
-                vault,
+                &FsVfs::new(vault),
                 name,
                 &snapshot.sha,
                 None,
@@ -1034,8 +1033,8 @@ mod tests {
         let vault = vault.path();
         fs::create_dir_all(vault.join("datasets")).unwrap();
         fs::write(vault.join("datasets/外来.csv"), "\u{feff}a;b\r\n1;2\r\n").unwrap();
-        let snapshot = read_dataset(vault, "datasets/外来.csv", &limits).unwrap();
-        write_dataset_ops(vault, "datasets/外来.csv", &snapshot.sha, None, &[cell(0, 0, "9")], &limits)
+        let snapshot = read_dataset(&FsVfs::new(vault), "datasets/外来.csv", &limits).unwrap();
+        write_dataset_ops(&FsVfs::new(vault), "datasets/外来.csv", &snapshot.sha, None, &[cell(0, 0, "9")], &limits)
             .unwrap();
         assert_eq!(fs::read_to_string(vault.join("datasets/外来.csv")).unwrap(), "a,b\n9,2\n");
     }
@@ -1047,7 +1046,7 @@ mod tests {
         let vault = vault.path();
         let (gbk, _, _) = encoding_rs::GB18030.encode("姓名,城市\r\n张三,北京\r\n");
         fs::write(vault.join("gbk.csv"), &gbk).unwrap();
-        let snapshot = read_dataset(vault, "gbk.csv", &limits).unwrap();
+        let snapshot = read_dataset(&FsVfs::new(vault), "gbk.csv", &limits).unwrap();
         assert!(!snapshot.editable);
         assert!(snapshot.convertible);
         assert_eq!(snapshot.dialect.encoding, CsvEncoding::Gb18030);
@@ -1055,12 +1054,21 @@ mod tests {
         assert!(snapshot.read_only_reason.as_deref().unwrap().starts_with("CSV_NOT_UTF8:这是 GBK"));
         // 写操作照旧拒绝，文件不动。
         assert_eq!(
-            code(write_dataset_ops(vault, "gbk.csv", &snapshot.sha, None, &[cell(0, 0, "李四")], &limits)),
+            code(write_dataset_ops(&FsVfs::new(vault), "gbk.csv", &snapshot.sha, None, &[cell(0, 0, "李四")], &limits)),
             "CSV_NOT_UTF8"
         );
         assert_eq!(fs::read(vault.join("gbk.csv")).unwrap(), gbk.to_vec());
-        assert_eq!(code(normalize_csv_file(vault, "gbk.csv", "stale", &limits)), "STALE_BASE");
-        let converted = normalize_csv_file(vault, "gbk.csv", &snapshot.sha, &limits).unwrap();
+        assert_eq!(
+            code(normalize_csv_file(
+                &FsVfs::new(vault),
+                "gbk.csv",
+                "stale",
+                &limits
+            )),
+            "STALE_BASE"
+        );
+        let converted =
+            normalize_csv_file(&FsVfs::new(vault), "gbk.csv", &snapshot.sha, &limits).unwrap();
         assert!(converted.editable);
         assert_eq!(
             fs::read_to_string(vault.join("gbk.csv")).unwrap(),
@@ -1070,22 +1078,22 @@ mod tests {
         let mut utf16 = vec![0xff, 0xfe];
         utf16.extend("a,b\n1,2\n".encode_utf16().flat_map(u16::to_le_bytes));
         fs::write(vault.join("utf16.csv"), utf16).unwrap();
-        let snapshot = read_dataset(vault, "utf16.csv", &limits).unwrap();
+        let snapshot = read_dataset(&FsVfs::new(vault), "utf16.csv", &limits).unwrap();
         assert_eq!(snapshot.dialect.encoding, CsvEncoding::Utf16le);
         assert_eq!(snapshot.table.rows, vec![vec!["1", "2"]]);
 
         fs::write(vault.join("ragged.csv"), "a,b\n1\n2,3,4\n").unwrap();
-        let snapshot = read_dataset(vault, "ragged.csv", &limits).unwrap();
+        let snapshot = read_dataset(&FsVfs::new(vault), "ragged.csv", &limits).unwrap();
         assert!(snapshot.convertible);
         assert_eq!(snapshot.table.header, vec!["a", "b", "列3"]);
         assert_eq!(snapshot.table.rows, vec![vec!["1", "", ""], vec!["2", "3", "4"]]);
 
         // 表头重复这种转换解决不了的问题：不可转换。
         fs::write(vault.join("dup.csv"), "a,a\n1\n").unwrap();
-        assert!(!read_dataset(vault, "dup.csv", &limits).unwrap().convertible);
+        assert!(!read_dataset(&FsVfs::new(vault), "dup.csv", &limits).unwrap().convertible);
         // 真正无法解码的字节仍是错误，不用替换字符糊过去。
         fs::write(vault.join("binary.csv"), [0x81, 0x30, 0xff, 0xff]).unwrap();
-        assert_eq!(code(read_dataset(vault, "binary.csv", &limits)), "CSV_NOT_UTF8");
+        assert_eq!(code(read_dataset(&FsVfs::new(vault), "binary.csv", &limits)), "CSV_NOT_UTF8");
     }
 
     #[test]
@@ -1190,7 +1198,7 @@ mod tests {
         let vault = tempfile::tempdir().unwrap();
         let limits = DatasetLimits::default();
         let first = create_dataset(
-            vault.path(),
+            &FsVfs::new(vault.path()),
             "阅读/记录",
             table().header,
             table().rows,
@@ -1202,7 +1210,7 @@ mod tests {
         assert!(first.editable);
         assert_eq!(first.schema.as_ref().unwrap().dataset_id.len(), 35);
         let second = create_dataset(
-            vault.path(),
+            &FsVfs::new(vault.path()),
             "阅读/记录",
             table().header,
             table().rows,
@@ -1215,7 +1223,7 @@ mod tests {
         let original = fs::read(&csv_path).unwrap();
         assert_eq!(
             code(write_dataset_ops(
-                vault.path(),
+                &FsVfs::new(vault.path()),
                 &first.path,
                 "wrong",
                 first.schema_sha.as_deref(),
@@ -1226,7 +1234,7 @@ mod tests {
         );
         assert_eq!(
             code(write_dataset_ops(
-                vault.path(),
+                &FsVfs::new(vault.path()),
                 &first.path,
                 &first.sha,
                 None,
@@ -1237,7 +1245,7 @@ mod tests {
         );
         assert_eq!(
             code(write_dataset_ops(
-                vault.path(),
+                &FsVfs::new(vault.path()),
                 &first.path,
                 &first.sha,
                 first.schema_sha.as_deref(),
@@ -1257,7 +1265,7 @@ mod tests {
         );
         assert_eq!(fs::read(&csv_path).unwrap(), original);
         let updated = write_dataset_ops(
-            vault.path(),
+            &FsVfs::new(vault.path()),
             &first.path,
             &first.sha,
             first.schema_sha.as_deref(),
@@ -1275,13 +1283,13 @@ mod tests {
         assert_ne!(updated.sha, first.sha);
         let plain = vault.path().join("plain.csv");
         fs::write(&plain, "a\n1\n").unwrap();
-        let before = read_dataset(vault.path(), "plain.csv", &limits).unwrap();
+        let before = read_dataset(&FsVfs::new(vault.path()), "plain.csv", &limits).unwrap();
         fs::write(vault.path().join("plain.csv.schema.json"), "invalid").unwrap();
-        let after = read_dataset(vault.path(), "plain.csv", &limits).unwrap();
+        let after = read_dataset(&FsVfs::new(vault.path()), "plain.csv", &limits).unwrap();
         assert_eq!(before.schema_sha, after.schema_sha);
         let managed = vault.path().join("datasets/other.csv");
         fs::write(&managed, "a\n1\n").unwrap();
-        let before = read_dataset(vault.path(), "datasets/other.csv", &limits).unwrap();
+        let before = read_dataset(&FsVfs::new(vault.path()), "datasets/other.csv", &limits).unwrap();
         fs::write(
             vault.path().join("datasets/other.csv.schema.json"),
             serialize_schema(&schema()),
@@ -1289,7 +1297,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             code(write_dataset_ops(
-                vault.path(),
+                &FsVfs::new(vault.path()),
                 "datasets/other.csv",
                 &before.sha,
                 None,
@@ -1306,7 +1314,7 @@ mod tests {
         let limits = DatasetLimits::default();
         let title = "中".repeat(100);
         let data = create_dataset(
-            vault.path(),
+            &FsVfs::new(vault.path()),
             &title,
             vec!["x".into()],
             vec![],
@@ -1325,7 +1333,7 @@ mod tests {
         };
         assert_eq!(
             code(write_dataset_ops(
-                vault.path(),
+                &FsVfs::new(vault.path()),
                 &data.path,
                 &data.sha,
                 data.schema_sha.as_deref(),
@@ -1349,7 +1357,7 @@ mod tests {
         let sidecar = vault.path().join("datasets/sample.csv.schema.json");
         fs::write(&csv, "id,value\n1,a\n1,b\n").unwrap();
         fs::write(&sidecar, b"{invalid}").unwrap();
-        let invalid = read_dataset(vault.path(), "datasets/sample.csv", &limits).unwrap();
+        let invalid = read_dataset(&FsVfs::new(vault.path()), "datasets/sample.csv", &limits).unwrap();
         assert!(!invalid.editable);
         assert_eq!(invalid.table.rows.len(), 2);
         assert!(invalid
@@ -1358,7 +1366,7 @@ mod tests {
             .starts_with("SCHEMA_INVALID:"));
         assert_eq!(
             code(write_dataset_ops(
-                vault.path(),
+                &FsVfs::new(vault.path()),
                 "datasets/sample.csv",
                 &invalid.sha,
                 invalid.schema_sha.as_deref(),
@@ -1368,7 +1376,8 @@ mod tests {
             "SCHEMA_INVALID"
         );
         fs::write(&sidecar, serialize_schema(&schema())).unwrap();
-        let duplicate = read_dataset(vault.path(), "datasets/sample.csv", &limits).unwrap();
+        let duplicate =
+            read_dataset(&FsVfs::new(vault.path()), "datasets/sample.csv", &limits).unwrap();
         assert!(!duplicate.editable);
         assert!(duplicate
             .read_only_reason
@@ -1379,7 +1388,7 @@ mod tests {
             max_rows: 1,
             ..limits
         };
-        let over = read_dataset(vault.path(), "datasets/sample.csv", &small).unwrap();
+        let over = read_dataset(&FsVfs::new(vault.path()), "datasets/sample.csv", &small).unwrap();
         assert_eq!(over.table.rows.len(), 2);
         assert!(over
             .read_only_reason
@@ -1401,7 +1410,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             code(read_dataset(
-                vault.path(),
+                &FsVfs::new(vault.path()),
                 "alias.csv",
                 &DatasetLimits::default()
             )),
@@ -1410,7 +1419,7 @@ mod tests {
         symlink(vault.path().join("lockbox"), vault.path().join("datasets")).unwrap();
         assert_eq!(
             code(create_dataset(
-                vault.path(),
+                &FsVfs::new(vault.path()),
                 "a",
                 vec!["x".into()],
                 vec![],

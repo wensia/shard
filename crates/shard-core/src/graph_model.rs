@@ -2,12 +2,10 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, HashSet},
-    fs::{self, File},
-    io::Read,
     path::{Component, Path, PathBuf},
 };
 
-use crate::frontmatter::parse_fragment;
+use crate::{frontmatter::parse_fragment, Vfs};
 
 pub const SHARD_MAP_KIND: &str = "shard.map";
 pub const SHARD_MAP_SCHEMA_VERSION: u32 = 1;
@@ -162,19 +160,16 @@ fn timestamp(value: &str) -> Result<(), String> {
         .map_err(|_| "画布时间必须是有效的 RFC3339 日期。".into())
 }
 
-fn read_bounded(path: &Path) -> Result<Vec<u8>, String> {
-    let metadata = fs::symlink_metadata(path).map_err(io)?;
-    if !metadata.is_file() || metadata.file_type().is_symlink() {
+fn read_bounded(vfs: &dyn Vfs, path: &Path) -> Result<Vec<u8>, String> {
+    let metadata = vfs.symlink_metadata(path).map_err(io)?;
+    if !metadata.is_file() || metadata.is_symlink() {
         return Err("画布目标必须是普通文件。".into());
     }
     if metadata.len() > MAX_CANVAS_BYTES as u64 {
         return Err("画布文件不能超过 8 MiB。".into());
     }
-    let mut bytes = Vec::new();
-    File::open(path)
-        .map_err(io)?
-        .take(MAX_CANVAS_BYTES as u64 + 1)
-        .read_to_end(&mut bytes)
+    let bytes = vfs
+        .read_head(path, MAX_CANVAS_BYTES as u64 + 1)
         .map_err(io)?;
     if bytes.len() > MAX_CANVAS_BYTES {
         return Err("画布文件不能超过 8 MiB。".into());
@@ -183,21 +178,21 @@ fn read_bounded(path: &Path) -> Result<Vec<u8>, String> {
 }
 
 fn scan_files(
+    vfs: &dyn Vfs,
     root: &Path,
     suffix: &str,
     files: &mut Vec<PathBuf>,
     visited: &mut usize,
 ) -> Result<(), String> {
-    match fs::symlink_metadata(root) {
+    match vfs.symlink_metadata(root) {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
         Err(error) => return Err(io(error)),
-        Ok(metadata) if metadata.file_type().is_symlink() => {
+        Ok(metadata) if metadata.is_symlink() => {
             return Err("画布身份检查不允许符号链接目录。".into())
         }
         Ok(_) => (),
     }
-    for entry in fs::read_dir(root).map_err(io)? {
-        let entry = entry.map_err(io)?;
+    for entry in vfs.read_dir(root).map_err(io)? {
         *visited += 1;
         if *visited > 100_000 {
             return Err("资料库条目超过本次画布身份检查上限。".into());
@@ -207,7 +202,7 @@ fn scan_files(
             continue;
         }
         if kind.is_dir() {
-            scan_files(&entry.path(), suffix, files, visited)?;
+            scan_files(vfs, &entry.path(), suffix, files, visited)?;
         } else if kind.is_file() && entry.file_name().to_string_lossy().ends_with(suffix) {
             files.push(entry.path());
         }
@@ -216,7 +211,7 @@ fn scan_files(
 }
 
 fn safe_relative(
-    vault: &Path,
+    vfs: &dyn Vfs,
     relative: &str,
     roots: &[&str],
     missing: bool,
@@ -233,7 +228,7 @@ fn safe_relative(
     {
         return Err("画布只能使用公开资料库路径。".into());
     }
-    let mut target = vault.to_path_buf();
+    let mut target = vfs.root().to_path_buf();
     for component in path.components() {
         let Component::Normal(part) = component else {
             return Err("画布路径必须是 vault 内的相对路径。".into());
@@ -242,8 +237,8 @@ fn safe_relative(
             return Err("画布不能引用隐藏或内部路径。".into());
         }
         target.push(part);
-        match fs::symlink_metadata(&target) {
-            Ok(metadata) if metadata.file_type().is_symlink() => {
+        match vfs.symlink_metadata(&target) {
+            Ok(metadata) if metadata.is_symlink() => {
                 return Err("画布路径不能包含符号链接。".into())
             }
             Ok(_) => (),
@@ -254,16 +249,22 @@ fn safe_relative(
     Ok(target)
 }
 
-fn protected_fragment_ids(vault: &Path) -> Result<HashSet<String>, String> {
+fn protected_fragment_ids(vfs: &dyn Vfs) -> Result<HashSet<String>, String> {
     let mut files = Vec::new();
-    scan_files(&vault.join("lockbox"), ".shard", &mut files, &mut 0)?;
+    scan_files(
+        vfs,
+        &vfs.root().join("lockbox"),
+        ".shard",
+        &mut files,
+        &mut 0,
+    )?;
     let mut ids = HashSet::new();
     #[derive(Deserialize)]
     struct Identity {
         id: String,
     }
     for file in files {
-        if let Ok(identity) = serde_json::from_slice::<Identity>(&read_bounded(&file)?) {
+        if let Ok(identity) = serde_json::from_slice::<Identity>(&read_bounded(vfs, &file)?) {
             ids.insert(identity.id);
         }
     }
@@ -271,7 +272,7 @@ fn protected_fragment_ids(vault: &Path) -> Result<HashSet<String>, String> {
 }
 
 fn validate_link(
-    vault: &Path,
+    vfs: &dyn Vfs,
     link: &ShardDocumentLink,
     protected: &HashSet<String>,
 ) -> Result<(), String> {
@@ -290,13 +291,13 @@ fn validate_link(
         }
         ShardDocumentLink::MarkdownPath { id, path } => {
             identifier(id)?;
-            let full = safe_relative(vault, path, &["notes", "fragments"], true)?;
+            let full = safe_relative(vfs, path, &["notes", "fragments"], true)?;
             if path.len() > 4096
                 || !full
                     .extension()
                     .and_then(|extension| extension.to_str())
                     .is_some_and(|extension| extension.eq_ignore_ascii_case("md"))
-                || (full.exists() && !full.is_file())
+                || (vfs.exists(&full) && !vfs.is_file(&full))
             {
                 return Err("画布资料卡片只能引用公开 Markdown 文件。".into());
             }
@@ -306,16 +307,16 @@ fn validate_link(
 }
 
 /// Deleted public targets remain valid links. Privacy and path boundaries still apply.
-pub fn validate_public_link(vault: &Path, link: &ShardDocumentLink) -> Result<(), String> {
+pub fn validate_public_link(vfs: &dyn Vfs, link: &ShardDocumentLink) -> Result<(), String> {
     let protected = if matches!(link, ShardDocumentLink::Fragment { .. }) {
-        protected_fragment_ids(vault)?
+        protected_fragment_ids(vfs)?
     } else {
         HashSet::new()
     };
-    validate_link(vault, link, &protected)
+    validate_link(vfs, link, &protected)
 }
 
-pub fn validate_mind_map_file(vault: &Path, file: &ShardMapFile) -> Result<(), String> {
+pub fn validate_mind_map_file(vfs: &dyn Vfs, file: &ShardMapFile) -> Result<(), String> {
     if file.kind != SHARD_MAP_KIND {
         return Err("不支持的导图文件类型。".to_string());
     }
@@ -353,7 +354,7 @@ pub fn validate_mind_map_file(vault: &Path, file: &ShardMapFile) -> Result<(), S
         {
             return Err("导图节点宽度无效。".to_string());
         }
-        validate_mind_map_node(vault, file, node_id, node)?;
+        validate_mind_map_node(vfs, file, node_id, node)?;
     }
     validate_mind_map_tree_shape(file)
 }
@@ -402,7 +403,7 @@ fn visit_mind_map_node(
 }
 
 fn validate_mind_map_node(
-    vault: &Path,
+    vfs: &dyn Vfs,
     file: &ShardMapFile,
     node_id: &str,
     node: &ShardMapNode,
@@ -431,12 +432,12 @@ fn validate_mind_map_node(
         }
     }
     for link in &node.links {
-        validate_public_link(vault, link)?;
+        validate_public_link(vfs, link)?;
     }
     Ok(())
 }
 
-pub fn validate_canvas_file(vault: &Path, file: &CanvasFile) -> Result<(), String> {
+pub fn validate_canvas_file(vfs: &dyn Vfs, file: &CanvasFile) -> Result<(), String> {
     if !matches!(file.kind.as_str(), "shard.canvas" | "shard.flow") || file.schema_version != 1 {
         return Err("不支持的画布格式或版本。".into());
     }
@@ -460,7 +461,7 @@ pub fn validate_canvas_file(vault: &Path, file: &CanvasFile) -> Result<(), Strin
             })
     });
     let protected = if has_fragment_links {
-        protected_fragment_ids(vault)?
+        protected_fragment_ids(vfs)?
     } else {
         HashSet::new()
     };
@@ -502,7 +503,7 @@ pub fn validate_canvas_file(vault: &Path, file: &CanvasFile) -> Result<(), Strin
             );
         }
         if let Some(link) = &node.link {
-            validate_link(vault, link, &protected)?;
+            validate_link(vfs, link, &protected)?;
         }
         if let Some(map) = &node.mind_map {
             total += map.nodes.len();
@@ -527,7 +528,7 @@ pub fn validate_canvas_file(vault: &Path, file: &CanvasFile) -> Result<(), Strin
             for node in tree.nodes.values_mut() {
                 node.links.clear();
             }
-            validate_mind_map_file(vault, &tree)?;
+            validate_mind_map_file(vfs, &tree)?;
             for node in map.nodes.values() {
                 identifier(&node.id)?;
                 timestamp(&node.created_at)?;
@@ -558,7 +559,7 @@ pub fn validate_canvas_file(vault: &Path, file: &CanvasFile) -> Result<(), Strin
                     return Err("内嵌导图尺寸或样式无效。".into());
                 }
                 for link in &node.links {
-                    validate_link(vault, link, &protected)?;
+                    validate_link(vfs, link, &protected)?;
                 }
             }
         }
@@ -642,19 +643,22 @@ fn push_search_line(lines: &mut Vec<String>, value: &str) {
     }
 }
 
-fn collect_markdown_files(dir: &Path, files: &mut Vec<PathBuf>) -> Result<(), String> {
-    if !dir.exists() {
+fn collect_markdown_files(
+    vfs: &dyn Vfs,
+    dir: &Path,
+    files: &mut Vec<PathBuf>,
+) -> Result<(), String> {
+    if !vfs.exists(dir) {
         return Ok(());
     }
-    for entry in fs::read_dir(dir).map_err(io)? {
-        let entry = entry.map_err(io)?;
+    for entry in vfs.read_dir(dir).map_err(io)? {
         let file_type = entry.file_type().map_err(io)?;
         if file_type.is_symlink() {
             continue;
         }
         let path = entry.path();
         if file_type.is_dir() {
-            collect_markdown_files(&path, files)?;
+            collect_markdown_files(vfs, &path, files)?;
         } else if file_type.is_file()
             && path.extension().and_then(|extension| extension.to_str()) == Some("md")
         {
@@ -664,13 +668,14 @@ fn collect_markdown_files(dir: &Path, files: &mut Vec<PathBuf>) -> Result<(), St
     Ok(())
 }
 
-pub fn find_fragment_path(vault: &Path, id: &str) -> Result<Option<PathBuf>, String> {
+pub fn find_fragment_path(vfs: &dyn Vfs, id: &str) -> Result<Option<PathBuf>, String> {
+    let vault = vfs.root();
     let mut files = Vec::new();
-    collect_markdown_files(&vault.join("fragments"), &mut files)?;
-    collect_markdown_files(&vault.join(".trash").join("fragments"), &mut files)?;
-    collect_markdown_files(&vault.join("notes"), &mut files)?;
+    collect_markdown_files(vfs, &vault.join("fragments"), &mut files)?;
+    collect_markdown_files(vfs, &vault.join(".trash").join("fragments"), &mut files)?;
+    collect_markdown_files(vfs, &vault.join("notes"), &mut files)?;
     for path in files {
-        let text = fs::read_to_string(&path).map_err(io)?;
+        let text = vfs.read_to_string(&path).map_err(io)?;
         if parse_fragment(&text).is_ok_and(|parsed| parsed.frontmatter.id == id) {
             return Ok(Some(path));
         }
@@ -690,6 +695,8 @@ pub fn now_rfc3339() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::FsVfs;
+    use std::fs;
 
     fn map_node(id: &str, parent_id: Option<&str>, sort_key: &str) -> ShardMapNode {
         ShardMapNode {
@@ -756,7 +763,7 @@ mod tests {
         let x = 0.1_f64 + 0.2_f64;
         let original = flow_fixture(x);
         let vault = tempfile::tempdir().unwrap();
-        validate_canvas_file(vault.path(), &original).unwrap();
+        validate_canvas_file(&FsVfs::new(vault.path()), &original).unwrap();
         let text = canonical_canvas_text(&original).unwrap();
         let decoded: CanvasFile = serde_json::from_str(&text).unwrap();
         assert_eq!(decoded.nodes[0].x.to_bits(), x.to_bits());
@@ -767,14 +774,14 @@ mod tests {
     fn mind_map_validation_accepts_tree_and_rejects_unreachable_node() {
         let vault = tempfile::tempdir().unwrap();
         let valid = map_fixture();
-        validate_mind_map_file(vault.path(), &valid).unwrap();
+        validate_mind_map_file(&FsVfs::new(vault.path()), &valid).unwrap();
 
         let mut invalid = valid;
         invalid
             .nodes
             .insert("orphan".into(), map_node("orphan", Some("missing"), "a2"));
         assert_eq!(
-            validate_mind_map_file(vault.path(), &invalid).unwrap_err(),
+            validate_mind_map_file(&FsVfs::new(vault.path()), &invalid).unwrap_err(),
             "节点 orphan 指向不存在的父节点。"
         );
     }
@@ -785,7 +792,7 @@ mod tests {
         let mut invalid = flow_fixture(1.0);
         invalid.nodes.push(invalid.nodes[0].clone());
         assert_eq!(
-            validate_canvas_file(vault.path(), &invalid).unwrap_err(),
+            validate_canvas_file(&FsVfs::new(vault.path()), &invalid).unwrap_err(),
             "画布存在重复节点 ID。"
         );
     }
@@ -804,7 +811,7 @@ mod tests {
             target_id: "private-fragment".into(),
         };
         assert_eq!(
-            validate_public_link(vault.path(), &link).unwrap_err(),
+            validate_public_link(&FsVfs::new(vault.path()), &link).unwrap_err(),
             "公开画布不能引用密匣片段。"
         );
     }
@@ -828,7 +835,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            find_fragment_path(temp.path(), "wanted").unwrap(),
+            find_fragment_path(&FsVfs::new(temp.path()), "wanted").unwrap(),
             Some(path)
         );
     }

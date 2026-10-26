@@ -45,10 +45,10 @@ struct SplitReceipt {
     index_published: bool,
 }
 
-fn summary_at(vault: &Path, path: &Path) -> CanvasResult<DiagramDocument> {
-    let relative = crate::relative_path(vault, path)?;
+fn summary_at(vfs: &dyn Vfs, path: &Path) -> CanvasResult<DiagramDocument> {
+    let relative = crate::relative_path(vfs.root(), path)?;
     if is_flow(path) {
-        let read = read_file(vault, path)?;
+        let read = read_file(vfs, path)?;
         Ok(DiagramDocument {
             id: read.file.id,
             title: read.file.title,
@@ -57,8 +57,8 @@ fn summary_at(vault: &Path, path: &Path) -> CanvasResult<DiagramDocument> {
             node_count: read.file.nodes.len(),
         })
     } else if has_suffix(path, ".shardmap.json") {
-        let file: ShardMapFile = serde_json::from_slice(&read_bytes(path)?).map_err(io)?;
-        crate::validate_mind_map_file(vault, &file)?;
+        let file: ShardMapFile = serde_json::from_slice(&read_bytes(vfs, path)?).map_err(io)?;
+        crate::validate_mind_map_file(vfs, &file)?;
         Ok(DiagramDocument {
             id: file.id,
             title: file.title,
@@ -71,9 +71,10 @@ fn summary_at(vault: &Path, path: &Path) -> CanvasResult<DiagramDocument> {
     }
 }
 
-pub(super) fn list_in_vault(vault: &Path) -> CanvasResult<Vec<DiagramDocument>> {
+pub(super) fn list_in_vault(cx: &VaultCtx<'_>) -> CanvasResult<Vec<DiagramDocument>> {
+    let vfs = cx.vfs;
     let mut files = Vec::new();
-    scan_files(&vault.join("notes"), ".json", &mut files, &mut 0)?;
+    scan_files(vfs, &cx.root().join("notes"), ".json", &mut files, &mut 0)?;
     let mut summaries = Vec::new();
     let mut ids = HashSet::new();
     for path in files {
@@ -81,7 +82,7 @@ pub(super) fn list_in_vault(vault: &Path) -> CanvasResult<Vec<DiagramDocument>> 
             continue;
         }
         // Damaged files remain visible in the Library, but are not offered as link targets.
-        if let Ok(summary) = summary_at(vault, &path) {
+        if let Ok(summary) = summary_at(vfs, &path) {
             if !ids.insert(summary.id.clone()) {
                 return Err("发现重复的图形文档 ID，请先处理重复文件。".into());
             }
@@ -109,6 +110,7 @@ fn uuid() -> String {
 }
 
 fn reserve_path(
+    vfs: &dyn Vfs,
     directory: &Path,
     title: &str,
     suffix: &str,
@@ -125,7 +127,7 @@ fn reserve_path(
         if reserved.contains(&path) {
             continue;
         }
-        match fs::symlink_metadata(&path) {
+        match vfs.symlink_metadata(&path) {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 reserved.insert(path.clone());
                 return Ok(path);
@@ -360,8 +362,9 @@ fn index_bytes(source: &CanvasFile, receipt: &SplitReceipt) -> CanvasResult<Vec<
     Ok(document.into_bytes())
 }
 
-fn plan_split(vault: &Path, source: &CanvasReadResult) -> CanvasResult<SplitReceipt> {
-    let source_path = public_path(vault, &source.path, false)?;
+fn plan_split(vfs: &dyn Vfs, source: &CanvasReadResult) -> CanvasResult<SplitReceipt> {
+    let vault = vfs.root();
+    let source_path = public_path(vfs, &source.path, false)?;
     let directory = source_path.parent().ok_or("原画布目录无效。")?;
     let mut reserved = HashSet::new();
     let mut receipt = SplitReceipt {
@@ -383,7 +386,7 @@ fn plan_split(vault: &Path, source: &CanvasReadResult) -> CanvasResult<SplitRece
                 id: format!("map-{}", uuid()),
                 path: crate::relative_path(
                     vault,
-                    &reserve_path(directory, &map.title, ".shardmap.json", &mut reserved)?,
+                    &reserve_path(vfs, directory, &map.title, ".shardmap.json", &mut reserved)?,
                 )?,
                 hash: String::new(),
                 published: false,
@@ -397,6 +400,7 @@ fn plan_split(vault: &Path, source: &CanvasReadResult) -> CanvasResult<SplitRece
             path: crate::relative_path(
                 vault,
                 &reserve_path(
+                    vfs,
                     directory,
                     &format!("{} · 流程图", source.file.title),
                     FLOW_SUFFIX,
@@ -410,6 +414,7 @@ fn plan_split(vault: &Path, source: &CanvasReadResult) -> CanvasResult<SplitRece
     receipt.index_path = crate::relative_path(
         vault,
         &reserve_path(
+            vfs,
             directory,
             &format!("{} · 关联说明", source.file.title),
             ".md",
@@ -427,26 +432,28 @@ fn plan_split(vault: &Path, source: &CanvasReadResult) -> CanvasResult<SplitRece
     Ok(receipt)
 }
 
-fn unchanged_source(vault: &Path, path: &str, hash: &str) -> CanvasResult<()> {
-    if crate::hash_bytes(&read_bytes(&public_path(vault, path, false)?)?) != hash {
+fn unchanged_source(vfs: &dyn Vfs, path: &str, hash: &str) -> CanvasResult<()> {
+    if crate::hash_bytes(&read_bytes(vfs, &public_path(vfs, path, false)?)?) != hash {
         return Err("原画布已被外部修改，请重新打开后拆分；已生成的副本会保留。".into());
     }
     Ok(())
 }
 
-fn find_index_path(vault: &Path, id: &str, in_trash: bool) -> CanvasResult<Option<PathBuf>> {
+fn find_index_path(vfs: &dyn Vfs, id: &str, in_trash: bool) -> CanvasResult<Option<PathBuf>> {
+    let vault = vfs.root();
     let mut files = Vec::new();
     if in_trash
-        && fs::symlink_metadata(vault.join(".trash"))
-            .is_ok_and(|metadata| metadata.file_type().is_symlink())
+        && vfs
+            .symlink_metadata(&vault.join(".trash"))
+            .is_ok_and(|metadata| metadata.is_symlink())
     {
         return Err("拆分恢复不允许符号链接回收站。".into());
     }
     let root = vault.join(if in_trash { ".trash/notes" } else { "notes" });
-    scan_files(&root, ".md", &mut files, &mut 0)?;
+    scan_files(vfs, &root, ".md", &mut files, &mut 0)?;
     let mut found = None;
     for path in files {
-        let Ok(bytes) = read_bytes(&path) else {
+        let Ok(bytes) = read_bytes(vfs, &path) else {
             continue;
         };
         let Ok(text) = std::str::from_utf8(&bytes) else {
@@ -463,13 +470,15 @@ fn find_index_path(vault: &Path, id: &str, in_trash: bool) -> CanvasResult<Optio
 }
 
 pub(super) fn split_in_vault(
-    vault: &Path,
+    cx: &VaultCtx<'_>,
     path: &str,
     expected_revision: u64,
     hash: &str,
 ) -> CanvasResult<SplitResult> {
-    crate::ensure_no_unfinished_git_operation(vault)?;
-    let source = read_in_vault(vault, path)?;
+    let vfs = cx.vfs;
+    let vault = cx.root();
+    cx.hooks.ensure_no_unfinished_operation()?;
+    let source = read_in_vault(cx, path)?;
     if source.file.kind != "shard.canvas" {
         return Err("只有旧混合画布需要拆分。".into());
     }
@@ -477,13 +486,13 @@ pub(super) fn split_in_vault(
         return Err("原画布已被外部修改，请重新打开后拆分。".into());
     }
     let receipt_path = internal_path(
-        vault,
+        vfs,
         "split",
         &format!("{}.json", crate::hash_text(&source.file.id)),
     )?;
-    let mut receipt: SplitReceipt = if receipt_path.exists() {
+    let mut receipt: SplitReceipt = if vfs.exists(&receipt_path) {
         let existing: SplitReceipt =
-            serde_json::from_slice(&read_bytes(&receipt_path)?).map_err(io)?;
+            serde_json::from_slice(&read_bytes(vfs, &receipt_path)?).map_err(io)?;
         if existing.source_id != source.file.id
             || existing.source_hash != hash
             || existing.source_revision != expected_revision
@@ -494,27 +503,27 @@ pub(super) fn split_in_vault(
         }
         existing
     } else {
-        let receipt = plan_split(vault, &source)?;
-        atomic_write(&receipt_path, &canonical(&receipt)?, false)?;
+        let receipt = plan_split(vfs, &source)?;
+        atomic_write(vfs, &receipt_path, &canonical(&receipt)?, false)?;
         receipt
     };
     let mut documents = Vec::new();
-    let existing_documents = list_in_vault(vault)?;
+    let existing_documents = list_in_vault(cx)?;
     for index in 0..receipt.outputs.len() {
-        unchanged_source(vault, path, hash)?;
+        unchanged_source(vfs, path, hash)?;
         let output = &receipt.outputs[index];
-        let target = safe_relative(vault, &output.path, &["notes"], true)?;
+        let target = safe_relative(vfs, &output.path, &["notes"], true)?;
         // A retry may follow an intentional rename or move. Resolve by stable ID.
         let existing = existing_documents
             .iter()
             .find(|summary| summary.id == output.id);
         if let Some(summary) = existing {
             if !output.published
-                && crate::hash_bytes(&read_bytes(&vault.join(&summary.path))?) != output.hash
+                && crate::hash_bytes(&read_bytes(vfs, &vault.join(&summary.path))?) != output.hash
             {
                 return Err(format!("拆分目标已变化，禁止覆盖：{}", summary.path));
             }
-            documents.push(summary_at(vault, &vault.join(&summary.path))?);
+            documents.push(summary_at(vfs, &vault.join(&summary.path))?);
         } else if output.published {
             return Err(format!(
                 "已生成的拆分文档已移除或损坏，不会重复创建：{}",
@@ -524,6 +533,7 @@ pub(super) fn split_in_vault(
             // Never resurrect a trashed copy if publication succeeded before receipt flush.
             let mut trash_files = Vec::new();
             scan_files(
+                vfs,
                 &vault.join(".trash/notes"),
                 ".json",
                 &mut trash_files,
@@ -531,7 +541,7 @@ pub(super) fn split_in_vault(
             )?;
             if trash_files
                 .iter()
-                .any(|path| summary_at(vault, path).is_ok_and(|summary| summary.id == output.id))
+                .any(|path| summary_at(vfs, path).is_ok_and(|summary| summary.id == output.id))
             {
                 return Err("已生成的拆分文档位于回收站，不会重复创建。".into());
             }
@@ -539,20 +549,20 @@ pub(super) fn split_in_vault(
             if crate::hash_bytes(&bytes) != output.hash {
                 return Err("拆分记录校验失败。".into());
             }
-            atomic_write(&target, &bytes, false)?;
-            documents.push(summary_at(vault, &target)?);
+            atomic_write(vfs, &target, &bytes, false)?;
+            documents.push(summary_at(vfs, &target)?);
         }
         if !receipt.outputs[index].published {
             receipt.outputs[index].published = true;
-            atomic_write(&receipt_path, &canonical(&receipt)?, true)?;
+            atomic_write(vfs, &receipt_path, &canonical(&receipt)?, true)?;
         }
     }
-    unchanged_source(vault, path, hash)?;
-    let planned_index_path = safe_relative(vault, &receipt.index_path, &["notes"], true)?;
-    let existing_index_path = find_index_path(vault, &receipt.index_id, false)?;
+    unchanged_source(vfs, path, hash)?;
+    let planned_index_path = safe_relative(vfs, &receipt.index_path, &["notes"], true)?;
+    let existing_index_path = find_index_path(vfs, &receipt.index_id, false)?;
     let index_path = existing_index_path.as_ref().unwrap_or(&planned_index_path);
     if existing_index_path.is_some() {
-        let bytes = read_bytes(index_path)?;
+        let bytes = read_bytes(vfs, index_path)?;
         if !receipt.index_published && crate::hash_bytes(&bytes) != receipt.index_hash {
             return Err(format!(
                 "关联说明的目标已被占用，禁止覆盖：{}",
@@ -562,18 +572,18 @@ pub(super) fn split_in_vault(
     } else if receipt.index_published {
         return Err("已生成的关联说明已移除，不会重复创建。".into());
     } else {
-        if find_index_path(vault, &receipt.index_id, true)?.is_some() {
+        if find_index_path(vfs, &receipt.index_id, true)?.is_some() {
             return Err("已生成的关联说明位于回收站，不会重复创建。".into());
         }
         let bytes = index_bytes(&source.file, &receipt)?;
         if crate::hash_bytes(&bytes) != receipt.index_hash {
             return Err("关联说明记录校验失败。".into());
         }
-        atomic_write(index_path, &bytes, false)?;
+        atomic_write(vfs, index_path, &bytes, false)?;
     }
     if !receipt.index_published {
         receipt.index_published = true;
-        atomic_write(&receipt_path, &canonical(&receipt)?, true)?;
+        atomic_write(vfs, &receipt_path, &canonical(&receipt)?, true)?;
     }
     Ok(SplitResult {
         documents,
@@ -587,7 +597,8 @@ pub(crate) async fn list_diagram_documents(
 ) -> CanvasResult<Vec<DiagramDocument>> {
     tauri::async_runtime::spawn_blocking(move || {
         let vault = crate::configured_vault_path(&app)?;
-        list_in_vault(&vault)
+        let local = LocalVault::new(&vault);
+        list_in_vault(&local.cx())
     })
     .await
     .map_err(io)?
@@ -603,7 +614,8 @@ pub(crate) async fn split_canvas(
     tauri::async_runtime::spawn_blocking(move || {
         let vault = crate::ensure_vault_dirs(&app)?;
         let _gate = crate::lock_vault_gate(&vault);
-        split_in_vault(&vault, &path, expected_revision, &last_saved_hash)
+        let local = LocalVault::new(&vault);
+        split_in_vault(&local.cx(), &path, expected_revision, &last_saved_hash)
     })
     .await
     .map_err(io)?
@@ -613,11 +625,14 @@ pub(crate) async fn split_canvas(
 mod tests {
     use super::super::tests::{fixture, vault};
     use super::*;
+    use shard_core::FsVfs;
+    use std::fs;
 
     fn mixed(vault: &Path) -> CanvasReadResult {
-        let mut map = crate::create_mind_map_in_vault(vault, "项目导图".into(), None)
-            .unwrap()
-            .file;
+        let mut map =
+            crate::create_mind_map_in_vault(&LocalVault::new(vault).cx(), "项目导图".into(), None)
+                .unwrap()
+                .file;
         let root = map.nodes.get_mut(&map.root_id).unwrap();
         root.note = Some("保留完整备注\n第二行".into());
         root.width = Some(242.5);
@@ -666,12 +681,12 @@ mod tests {
         });
         let path = "notes/旧混合画布.shardcanvas.json";
         fs::write(vault.join(path), canonical(&source).unwrap()).unwrap();
-        read_in_vault(vault, path).unwrap()
+        read_in_vault(&LocalVault::new(vault).cx(), path).unwrap()
     }
 
     fn receipt_path(vault: &Path, source: &CanvasReadResult) -> PathBuf {
         internal_path(
-            vault,
+            &FsVfs::new(vault),
             "split",
             &format!("{}.json", crate::hash_text(&source.file.id)),
         )
@@ -685,7 +700,14 @@ mod tests {
         for title in ["字".repeat(80), "😀".repeat(80)] {
             for suffix in [".md", ".shardmap.json", ".shardflow.json"] {
                 for index in 1..=11 {
-                    let path = reserve_path(temp.path(), &title, suffix, &mut reserved).unwrap();
+                    let path = reserve_path(
+                        &FsVfs::new(temp.path()),
+                        temp.path(),
+                        &title,
+                        suffix,
+                        &mut reserved,
+                    )
+                    .unwrap();
                     let name = path.file_name().unwrap().to_str().unwrap();
                     let stem = name.strip_suffix(suffix).unwrap();
                     assert!(name.len() <= 255, "{name}");
@@ -693,7 +715,7 @@ mod tests {
                     if index > 1 {
                         assert!(stem.ends_with(&format!("-{index}")), "{name}");
                     }
-                    atomic_write(&path, b"fixture", false).unwrap();
+                    atomic_write(&FsVfs::new(temp.path()), &path, b"fixture", false).unwrap();
                 }
             }
         }
@@ -704,10 +726,19 @@ mod tests {
         let temp = vault();
         let vault = temp.path();
         let source = mixed(vault);
-        let original = read_bytes(&vault.join(&source.path)).unwrap();
-        let result = split_in_vault(vault, &source.path, 7, &source.last_saved_hash).unwrap();
+        let original = read_bytes(&FsVfs::new(vault), &vault.join(&source.path)).unwrap();
+        let result = split_in_vault(
+            &LocalVault::new(vault).cx(),
+            &source.path,
+            7,
+            &source.last_saved_hash,
+        )
+        .unwrap();
         assert_eq!(result.documents.len(), 3);
-        assert_eq!(read_bytes(&vault.join(&source.path)).unwrap(), original);
+        assert_eq!(
+            read_bytes(&FsVfs::new(vault), &vault.join(&source.path)).unwrap(),
+            original
+        );
         assert_eq!(
             crate::run_git(vault, &["rev-list", "--all", "--count"])
                 .unwrap()
@@ -727,7 +758,8 @@ mod tests {
                 summary.id, old_map.id,
                 "an imported copy must get its own document identity"
             );
-            let read = crate::read_mind_map_in_vault(vault, &summary.id).unwrap();
+            let read =
+                crate::read_mind_map_in_vault(&LocalVault::new(vault).cx(), &summary.id).unwrap();
             assert_eq!(
                 serde_json::to_value(&read.file.nodes).unwrap(),
                 serde_json::to_value(&old_map.nodes).unwrap()
@@ -744,7 +776,7 @@ mod tests {
             .iter()
             .find(|summary| summary.kind == "flowchart")
             .unwrap();
-        let read = read_in_vault(vault, &flow.path).unwrap();
+        let read = read_in_vault(&LocalVault::new(vault).cx(), &flow.path).unwrap();
         assert_eq!(read.file.kind, "shard.flow");
         assert_eq!(read.file.nodes.len(), 2);
         assert_eq!(read.file.edges.len(), 2);
@@ -757,7 +789,7 @@ mod tests {
         assert_eq!(metadata.tags, vec!["note"]);
         assert!(body.trim_start().starts_with("# 中文画布 · 关联说明"));
         let runtime = crate::LockboxRuntime::default();
-        let state = crate::list_fragments_in_vault(vault, &runtime).unwrap();
+        let state = crate::list_fragments_in_vault(&LocalVault::new(vault).cx(), &runtime).unwrap();
         let note = state
             .fragments
             .iter()
@@ -767,17 +799,19 @@ mod tests {
         assert!(note.content.contains("shard://map/"));
         assert!(note.tags.iter().any(|tag| tag == "note"));
         let read = crate::read_fragment(
+            &LocalVault::new(vault).cx(),
             &vault.join(&result.index_path),
-            vault,
             &crate::dirty_paths(vault),
             None,
         )
         .unwrap();
         assert_eq!(read.id, note.id);
-        assert!(crate::collect_library_entries(vault, &vault.join("notes"))
-            .unwrap()
-            .iter()
-            .any(|entry| entry.path == result.index_path && entry.kind == "markdown"));
+        assert!(
+            crate::collect_library_entries(&FsVfs::new(vault), &vault.join("notes"))
+                .unwrap()
+                .iter()
+                .any(|entry| entry.path == result.index_path && entry.kind == "markdown")
+        );
         for summary in &result.documents {
             assert!(index.contains(&format!(
                 "shard://{}/{}",
@@ -806,38 +840,67 @@ mod tests {
                 "lost association data: {expected}"
             );
         }
-        let retry = split_in_vault(vault, &source.path, 7, &source.last_saved_hash).unwrap();
+        let retry = split_in_vault(
+            &LocalVault::new(vault).cx(),
+            &source.path,
+            7,
+            &source.last_saved_hash,
+        )
+        .unwrap();
         assert_eq!(
             serde_json::to_value(&retry).unwrap(),
             serde_json::to_value(&result).unwrap()
         );
-        crate::rename_library_entry_in_vault(vault, &result.index_path, "项目关联文档").unwrap();
-        let moved = split_in_vault(vault, &source.path, 7, &source.last_saved_hash).unwrap();
+        crate::rename_library_entry_in_vault(
+            &LocalVault::new(vault).cx(),
+            &result.index_path,
+            "项目关联文档",
+        )
+        .unwrap();
+        let moved = split_in_vault(
+            &LocalVault::new(vault).cx(),
+            &source.path,
+            7,
+            &source.last_saved_hash,
+        )
+        .unwrap();
         assert_eq!(moved.index_path, "notes/项目关联文档.md");
         assert!(
             !vault.join(&result.index_path).exists(),
             "rename-aware retries must not duplicate the index note"
         );
-        let unrelated =
-            crate::create_library_note_in_vault(vault, "中文画布 · 关联说明", Some("notes"))
-                .unwrap();
+        let unrelated = crate::create_library_note_in_vault(
+            &LocalVault::new(vault).cx(),
+            "中文画布 · 关联说明",
+            Some("notes"),
+        )
+        .unwrap();
         assert_eq!(unrelated.path, result.index_path);
         assert_ne!(unrelated.id, metadata.id);
-        let retry = split_in_vault(vault, &source.path, 7, &source.last_saved_hash).unwrap();
+        let retry = split_in_vault(
+            &LocalVault::new(vault).cx(),
+            &source.path,
+            7,
+            &source.last_saved_hash,
+        )
+        .unwrap();
         assert_eq!(
             retry.index_path, moved.index_path,
             "an unrelated note reusing the old path must not be opened as the index"
         );
-        crate::move_to_trash_in_vault(vault, &moved.index_path).unwrap();
-        assert!(
-            split_in_vault(vault, &source.path, 7, &source.last_saved_hash)
-                .unwrap_err()
-                .contains("关联说明已移除")
-        );
+        crate::move_to_trash_in_vault(&LocalVault::new(vault).cx(), &moved.index_path).unwrap();
+        assert!(split_in_vault(
+            &LocalVault::new(vault).cx(),
+            &source.path,
+            7,
+            &source.last_saved_hash
+        )
+        .unwrap_err()
+        .contains("关联说明已移除"));
         assert!(!vault.join(&moved.index_path).exists());
         let retained = crate::read_fragment(
+            &LocalVault::new(vault).cx(),
             &vault.join(&unrelated.path),
-            vault,
             &crate::dirty_paths(vault),
             None,
         )
@@ -847,7 +910,7 @@ mod tests {
             "retry must leave the unrelated note untouched"
         );
         assert_eq!(
-            list_in_vault(vault).unwrap().len(),
+            list_in_vault(&LocalVault::new(vault).cx()).unwrap().len(),
             4,
             "retry did not duplicate the three outputs"
         );
@@ -858,12 +921,19 @@ mod tests {
         let temp = vault();
         let vault = temp.path();
         let source = mixed(vault);
-        let receipt = plan_split(vault, &source).unwrap();
+        let receipt = plan_split(&FsVfs::new(vault), &source).unwrap();
         let receipt_path = receipt_path(vault, &source);
-        atomic_write(&receipt_path, &canonical(&receipt).unwrap(), false).unwrap();
+        atomic_write(
+            &FsVfs::new(vault),
+            &receipt_path,
+            &canonical(&receipt).unwrap(),
+            false,
+        )
+        .unwrap();
         // Simulate success of the first atomic publication followed by a lost receipt update.
         let first = &receipt.outputs[0];
         atomic_write(
+            &FsVfs::new(vault),
             &vault.join(&first.path),
             &output_bytes(&source.file, &receipt, first).unwrap(),
             false,
@@ -872,16 +942,29 @@ mod tests {
         // The second target is independently occupied after planning: never overwrite it.
         let obstruction = &receipt.outputs[1].path;
         fs::write(vault.join(obstruction), b"do not overwrite this file").unwrap();
-        assert!(split_in_vault(vault, &source.path, 7, &source.last_saved_hash).is_err());
+        assert!(split_in_vault(
+            &LocalVault::new(vault).cx(),
+            &source.path,
+            7,
+            &source.last_saved_hash
+        )
+        .is_err());
         assert_eq!(
             fs::read(vault.join(obstruction)).unwrap(),
             b"do not overwrite this file"
         );
         // A real edit to the already published document survives the retry.
-        let read = crate::read_mind_map_in_vault(vault, &first.id).unwrap();
+        let read = crate::read_mind_map_in_vault(&LocalVault::new(vault).cx(), &first.id).unwrap();
         let mut edited = read.file;
         edited.nodes.get_mut(&edited.root_id).unwrap().text = "拆分后人工编辑".into();
-        crate::write_mind_map_in_vault(vault, &first.id, edited, 1, &read.last_saved_hash).unwrap();
+        crate::write_mind_map_in_vault(
+            &LocalVault::new(vault).cx(),
+            &first.id,
+            edited,
+            1,
+            &read.last_saved_hash,
+        )
+        .unwrap();
         fs::create_dir(vault.join("notes/移动后")).unwrap();
         fs::rename(
             vault.join(&first.path),
@@ -889,7 +972,13 @@ mod tests {
         )
         .unwrap();
         fs::remove_file(vault.join(obstruction)).unwrap();
-        let result = split_in_vault(vault, &source.path, 7, &source.last_saved_hash).unwrap();
+        let result = split_in_vault(
+            &LocalVault::new(vault).cx(),
+            &source.path,
+            7,
+            &source.last_saved_hash,
+        )
+        .unwrap();
         assert_eq!(result.documents.len(), 3);
         assert_eq!(
             result.documents[0].path,
@@ -897,16 +986,21 @@ mod tests {
         );
         assert!(!vault.join(&first.path).exists());
         assert_eq!(
-            crate::read_mind_map_in_vault(vault, &first.id)
+            crate::read_mind_map_in_vault(&LocalVault::new(vault).cx(), &first.id)
                 .unwrap()
                 .file
                 .nodes[&source.file.nodes[2].mind_map.as_ref().unwrap().root_id]
                 .text,
             "拆分后人工编辑"
         );
-        assert_eq!(list_in_vault(vault).unwrap().len(), 4);
         assert_eq!(
-            read_in_vault(vault, &source.path).unwrap().last_saved_hash,
+            list_in_vault(&LocalVault::new(vault).cx()).unwrap().len(),
+            4
+        );
+        assert_eq!(
+            read_in_vault(&LocalVault::new(vault).cx(), &source.path)
+                .unwrap()
+                .last_saved_hash,
             source.last_saved_hash
         );
     }
@@ -916,27 +1010,45 @@ mod tests {
         let temp = vault();
         let vault = temp.path();
         let source = mixed(vault);
-        assert!(split_in_vault(vault, &source.path, 6, &source.last_saved_hash).is_err());
-        assert!(split_in_vault(vault, &source.path, 7, "stale").is_err());
+        assert!(split_in_vault(
+            &LocalVault::new(vault).cx(),
+            &source.path,
+            6,
+            &source.last_saved_hash
+        )
+        .is_err());
+        assert!(split_in_vault(&LocalVault::new(vault).cx(), &source.path, 7, "stale").is_err());
         assert!(!receipt_path(vault, &source).exists());
-        let result = split_in_vault(vault, &source.path, 7, &source.last_saved_hash).unwrap();
+        let result = split_in_vault(
+            &LocalVault::new(vault).cx(),
+            &source.path,
+            7,
+            &source.last_saved_hash,
+        )
+        .unwrap();
         let first = vault.join(&result.documents[0].path);
         fs::remove_file(&first).unwrap();
-        assert!(
-            split_in_vault(vault, &source.path, 7, &source.last_saved_hash)
-                .unwrap_err()
-                .contains("不会重复创建")
-        );
+        assert!(split_in_vault(
+            &LocalVault::new(vault).cx(),
+            &source.path,
+            7,
+            &source.last_saved_hash
+        )
+        .unwrap_err()
+        .contains("不会重复创建"));
         assert!(!first.exists());
         let mut changed = source.file.clone();
         changed.title = "外部新版本".into();
         fs::write(vault.join(&source.path), canonical(&changed).unwrap()).unwrap();
-        let current = read_in_vault(vault, &source.path).unwrap();
-        assert!(
-            split_in_vault(vault, &source.path, 7, &current.last_saved_hash)
-                .unwrap_err()
-                .contains("另一版本")
-        );
+        let current = read_in_vault(&LocalVault::new(vault).cx(), &source.path).unwrap();
+        assert!(split_in_vault(
+            &LocalVault::new(vault).cx(),
+            &source.path,
+            7,
+            &current.last_saved_hash
+        )
+        .unwrap_err()
+        .contains("另一版本"));
     }
 
     #[test]
@@ -944,25 +1056,47 @@ mod tests {
         let temp = vault();
         let vault = temp.path();
         let source = mixed(vault);
-        let result = split_in_vault(vault, &source.path, 7, &source.last_saved_hash).unwrap();
+        let result = split_in_vault(
+            &LocalVault::new(vault).cx(),
+            &source.path,
+            7,
+            &source.last_saved_hash,
+        )
+        .unwrap();
         let path = receipt_path(vault, &source);
         let mut receipt: SplitReceipt =
-            serde_json::from_slice(&read_bytes(&path).unwrap()).unwrap();
+            serde_json::from_slice(&read_bytes(&FsVfs::new(vault), &path).unwrap()).unwrap();
         // Simulate index publication reaching disk but its receipt update being lost.
         receipt.index_published = false;
-        atomic_write(&path, &canonical(&receipt).unwrap(), true).unwrap();
-        let trashed = crate::move_to_trash_in_vault(vault, &result.index_path).unwrap();
+        atomic_write(
+            &FsVfs::new(vault),
+            &path,
+            &canonical(&receipt).unwrap(),
+            true,
+        )
+        .unwrap();
+        let trashed =
+            crate::move_to_trash_in_vault(&LocalVault::new(vault).cx(), &result.index_path)
+                .unwrap();
         let before = fs::read(&trashed).unwrap();
-        assert!(
-            split_in_vault(vault, &source.path, 7, &source.last_saved_hash)
-                .unwrap_err()
-                .contains("关联说明位于回收站")
-        );
+        assert!(split_in_vault(
+            &LocalVault::new(vault).cx(),
+            &source.path,
+            7,
+            &source.last_saved_hash
+        )
+        .unwrap_err()
+        .contains("关联说明位于回收站"));
         assert!(!vault.join(&result.index_path).exists());
         assert_eq!(fs::read(trashed).unwrap(), before);
-        assert_eq!(list_in_vault(vault).unwrap().len(), 4);
         assert_eq!(
-            read_in_vault(vault, &source.path).unwrap().last_saved_hash,
+            list_in_vault(&LocalVault::new(vault).cx()).unwrap().len(),
+            4
+        );
+        assert_eq!(
+            read_in_vault(&LocalVault::new(vault).cx(), &source.path)
+                .unwrap()
+                .last_saved_hash,
             source.last_saved_hash
         );
     }
@@ -973,7 +1107,7 @@ mod tests {
         let vault = temp.path();
         let source = mixed(vault);
         assert!(write_in_vault(
-            vault,
+            &LocalVault::new(vault).cx(),
             &source.path,
             source.file.clone(),
             7,
@@ -983,35 +1117,64 @@ mod tests {
         .contains("只读"));
         let mut mixed_flow = source.file.clone();
         mixed_flow.kind = "shard.flow".into();
-        assert!(validate_file(vault, &mixed_flow)
+        assert!(validate_file(&FsVfs::new(vault), &mixed_flow)
             .unwrap_err()
             .contains("不能包含思维导图"));
-        assert!(create_in_vault(vault, "notes", &source.file.title, source.file.clone()).is_err());
+        assert!(create_in_vault(
+            &LocalVault::new(vault).cx(),
+            "notes",
+            &source.file.title,
+            source.file.clone()
+        )
+        .is_err());
         let mut standalone_flow = fixture();
         standalone_flow.id = "standalone-flow".into();
-        let flow = create_in_vault(vault, "notes", "中文画布", standalone_flow).unwrap();
-        assert!(split_in_vault(vault, &flow.path, 1, &flow.last_saved_hash).is_err());
+        let flow = create_in_vault(
+            &LocalVault::new(vault).cx(),
+            "notes",
+            "中文画布",
+            standalone_flow,
+        )
+        .unwrap();
+        assert!(split_in_vault(
+            &LocalVault::new(vault).cx(),
+            &flow.path,
+            1,
+            &flow.last_saved_hash
+        )
+        .is_err());
         let mut legacy = flow.file.clone();
         legacy.kind = "shard.canvas".into();
-        assert!(write_in_vault(vault, &flow.path, legacy, 1, &flow.last_saved_hash).is_err());
+        assert!(write_in_vault(
+            &LocalVault::new(vault).cx(),
+            &flow.path,
+            legacy,
+            1,
+            &flow.last_saved_hash
+        )
+        .is_err());
         fs::copy(
             vault.join(&flow.path),
             vault.join("notes/伪装.shardcanvas.json"),
         )
         .unwrap();
-        assert!(read_in_vault(vault, "notes/伪装.shardcanvas.json")
-            .unwrap_err()
-            .contains("扩展名"));
+        assert!(
+            read_in_vault(&LocalVault::new(vault).cx(), "notes/伪装.shardcanvas.json")
+                .unwrap_err()
+                .contains("扩展名")
+        );
     }
 
     #[test]
     fn flow_links_resolve_after_rename_move_and_reject_unsafe_identifiers() {
         let temp = vault();
         let vault = temp.path();
-        let flow = create_in_vault(vault, "notes", "中文画布", fixture()).unwrap();
-        let mut map = crate::create_mind_map_in_vault(vault, "引用流程".into(), None)
-            .unwrap()
-            .file;
+        let flow =
+            create_in_vault(&LocalVault::new(vault).cx(), "notes", "中文画布", fixture()).unwrap();
+        let mut map =
+            crate::create_mind_map_in_vault(&LocalVault::new(vault).cx(), "引用流程".into(), None)
+                .unwrap()
+                .file;
         map.nodes
             .get_mut(&map.root_id)
             .unwrap()
@@ -1020,36 +1183,37 @@ mod tests {
                 id: "flow-link".into(),
                 target_id: flow.file.id.clone(),
             });
-        crate::validate_mind_map_file(vault, &map).unwrap();
-        crate::rename_library_entry_in_vault(vault, &flow.path, "新名称").unwrap();
+        crate::validate_mind_map_file(&FsVfs::new(vault), &map).unwrap();
+        crate::rename_library_entry_in_vault(&LocalVault::new(vault).cx(), &flow.path, "新名称")
+            .unwrap();
         fs::create_dir(vault.join("notes/子目录")).unwrap();
         crate::move_library_entry_in_vault(
-            vault,
+            &LocalVault::new(vault).cx(),
             "notes/新名称.shardflow.json",
             Some("notes/子目录"),
         )
         .unwrap();
-        let summary = list_in_vault(vault)
+        let summary = list_in_vault(&LocalVault::new(vault).cx())
             .unwrap()
             .into_iter()
             .find(|entry| entry.id == flow.file.id)
             .unwrap();
         assert_eq!(summary.path, "notes/子目录/新名称.shardflow.json");
         assert_eq!(summary.kind, "flowchart");
-        crate::validate_mind_map_file(vault, &map).unwrap();
+        crate::validate_mind_map_file(&FsVfs::new(vault), &map).unwrap();
         for target_id in ["", "../secret", "notes/private", "notes\\private"] {
             let link = ShardDocumentLink::Flow {
                 id: "safe".into(),
                 target_id: target_id.into(),
             };
-            assert!(validate_public_link(vault, &link).is_err());
+            assert!(validate_public_link(&FsVfs::new(vault), &link).is_err());
         }
-        crate::move_to_trash_in_vault(vault, &summary.path).unwrap();
-        assert!(!list_in_vault(vault)
+        crate::move_to_trash_in_vault(&LocalVault::new(vault).cx(), &summary.path).unwrap();
+        assert!(!list_in_vault(&LocalVault::new(vault).cx())
             .unwrap()
             .iter()
             .any(|entry| entry.id == flow.file.id));
-        crate::validate_mind_map_file(vault, &map).unwrap(); // A broken public link remains editable.
+        crate::validate_mind_map_file(&FsVfs::new(vault), &map).unwrap(); // A broken public link remains editable.
     }
 
     #[test]
@@ -1072,7 +1236,7 @@ mod tests {
             vault.join("notes/别名.shardflow.json"),
         )
         .unwrap();
-        assert!(!list_in_vault(vault)
+        assert!(!list_in_vault(&LocalVault::new(vault).cx())
             .unwrap()
             .iter()
             .any(|entry| entry.id == "outside-flow"));
@@ -1081,10 +1245,17 @@ mod tests {
             "lockbox/旧混合画布.shardcanvas.json",
             "notes/外部目录/旧混合画布.shardcanvas.json",
         ] {
-            assert!(split_in_vault(vault, path, 7, &source.last_saved_hash).is_err());
+            assert!(split_in_vault(
+                &LocalVault::new(vault).cx(),
+                path,
+                7,
+                &source.last_saved_hash
+            )
+            .is_err());
         }
-        let receipt = plan_split(vault, &source).unwrap();
+        let receipt = plan_split(&FsVfs::new(vault), &source).unwrap();
         atomic_write(
+            &FsVfs::new(vault),
             &receipt_path(vault, &source),
             &canonical(&receipt).unwrap(),
             false,
@@ -1093,14 +1264,19 @@ mod tests {
         let output = &receipt.outputs[0];
         std::os::unix::fs::symlink(outside.path().join("untouched"), vault.join(&output.path))
             .unwrap();
-        assert!(
-            split_in_vault(vault, &source.path, 7, &source.last_saved_hash)
-                .unwrap_err()
-                .contains("符号链接")
-        );
+        assert!(split_in_vault(
+            &LocalVault::new(vault).cx(),
+            &source.path,
+            7,
+            &source.last_saved_hash
+        )
+        .unwrap_err()
+        .contains("符号链接"));
         assert!(!outside.path().join("untouched").exists());
         assert_eq!(
-            read_in_vault(vault, &source.path).unwrap().last_saved_hash,
+            read_in_vault(&LocalVault::new(vault).cx(), &source.path)
+                .unwrap()
+                .last_saved_hash,
             source.last_saved_hash
         );
     }
@@ -1122,8 +1298,14 @@ mod tests {
                 ids.contains(edge.source.as_str()) && ids.contains(edge.target.as_str())
             });
             fs::write(vault.join(&source.path), canonical(&file).unwrap()).unwrap();
-            let source = read_in_vault(vault, &source.path).unwrap();
-            let result = split_in_vault(vault, &source.path, 7, &source.last_saved_hash).unwrap();
+            let source = read_in_vault(&LocalVault::new(vault).cx(), &source.path).unwrap();
+            let result = split_in_vault(
+                &LocalVault::new(vault).cx(),
+                &source.path,
+                7,
+                &source.last_saved_hash,
+            )
+            .unwrap();
             assert_eq!(
                 result.documents.len(),
                 match kind {
@@ -1147,16 +1329,23 @@ mod tests {
         let temp = vault();
         let vault = temp.path();
         fs::create_dir(vault.join("notes/项目")).unwrap();
-        let map =
-            crate::create_mind_map_at_in_vault(vault, "当前目录".into(), None, Some("notes/项目"))
-                .unwrap();
+        let map = crate::create_mind_map_at_in_vault(
+            &LocalVault::new(vault).cx(),
+            "当前目录".into(),
+            None,
+            Some("notes/项目"),
+        )
+        .unwrap();
         assert_eq!(map.path, "notes/项目/当前目录.shardmap.json");
         assert!(!vault.join("notes/当前目录.shardmap.json").exists());
         for parent in ["notes/../notes", "lockbox", "notes/不存在"] {
-            assert!(
-                crate::create_mind_map_at_in_vault(vault, "拒绝".into(), None, Some(parent))
-                    .is_err()
-            );
+            assert!(crate::create_mind_map_at_in_vault(
+                &LocalVault::new(vault).cx(),
+                "拒绝".into(),
+                None,
+                Some(parent)
+            )
+            .is_err());
         }
         assert_eq!(
             crate::run_git(vault, &["rev-list", "--all", "--count"])

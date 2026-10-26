@@ -40,17 +40,23 @@ impl EntryKind {
     }
 }
 
+/// 时间字段保留「平台给不出」的情况：FsVfs 下 `modified()` / `created()` 与 `std::fs::Metadata`
+/// 同样可能返回 Err（例如部分文件系统没有创建时间），调用方原有的降级分支照常生效。
 #[derive(Clone, Debug)]
 pub struct VfsMetadata {
     kind: EntryKind,
     len: u64,
-    modified: SystemTime,
-    created: SystemTime,
+    modified: Option<SystemTime>,
+    created: Option<SystemTime>,
+}
+
+fn time_unavailable() -> io::Error {
+    io::Error::new(io::ErrorKind::Unsupported, "该文件系统不提供这个时间")
 }
 
 impl VfsMetadata {
     pub fn new(kind: EntryKind, len: u64, modified: SystemTime, created: SystemTime) -> Self {
-        Self { kind, len, modified, created }
+        Self { kind, len, modified: Some(modified), created: Some(created) }
     }
 
     pub fn file_type(&self) -> EntryKind {
@@ -79,11 +85,11 @@ impl VfsMetadata {
 
     /// 与 `std::fs::Metadata::modified` 同签名，方便机械替换。
     pub fn modified(&self) -> io::Result<SystemTime> {
-        Ok(self.modified)
+        self.modified.ok_or_else(time_unavailable)
     }
 
     pub fn created(&self) -> io::Result<SystemTime> {
-        Ok(self.created)
+        self.created.ok_or_else(time_unavailable)
     }
 
     pub(crate) fn from_std(metadata: &std::fs::Metadata) -> Self {
@@ -97,9 +103,12 @@ impl VfsMetadata {
         } else {
             EntryKind::Other
         };
-        let modified = metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH);
-        let created = metadata.created().unwrap_or(modified);
-        Self { kind, len: metadata.len(), modified, created }
+        Self {
+            kind,
+            len: metadata.len(),
+            modified: metadata.modified().ok(),
+            created: metadata.created().ok(),
+        }
     }
 }
 
@@ -153,6 +162,14 @@ pub trait Vfs {
         String::from_utf8(bytes).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
     }
 
+    /// 只读文件开头至多 `limit` 字节：读文件头、限长读取时不把大文件整个读进内存。
+    /// 默认实现读全文再截断；FsVfs 用 `take` 只读前缀，与迁移前的 `File::open(..).take(..)` 一致。
+    fn read_head(&self, path: &Path, limit: u64) -> io::Result<Vec<u8>> {
+        let mut bytes = self.read(path)?;
+        bytes.truncate(usize::try_from(limit).unwrap_or(usize::MAX));
+        Ok(bytes)
+    }
+
     /// 跟随符号链接（SqliteVfs 没有符号链接，与 `symlink_metadata` 相同）。
     fn metadata(&self, path: &Path) -> io::Result<VfsMetadata>;
 
@@ -179,6 +196,17 @@ pub trait Vfs {
 
     /// `shard_core::write_bytes_atomically` 语义：自动建父目录，原子替换。
     fn write_atomic(&self, path: &Path, bytes: &[u8]) -> io::Result<()>;
+
+    /// 图形文档（画布、流程图及其恢复记录）的发布写：父目录必须已存在。
+    /// `overwrite` 为真时原子替换目标；为假时只发布新文件，目标已存在（含悬空符号链接）即返回
+    /// `AlreadyExists`，绝不覆盖。默认实现在 `write`（SqliteVfs 里天然原子）之上做存在检查；
+    /// FsVfs 沿用迁移前画布的写法（独立临时文件 + fsync，再 rename 或 hard_link）。
+    fn publish(&self, path: &Path, bytes: &[u8], overwrite: bool) -> io::Result<()> {
+        if !overwrite && self.symlink_metadata(path).is_ok() {
+            return Err(io::Error::from(io::ErrorKind::AlreadyExists));
+        }
+        self.write(path, bytes)
+    }
 
     fn create_dir(&self, path: &Path) -> io::Result<()>;
 
