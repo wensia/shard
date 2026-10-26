@@ -11,3 +11,10 @@ chrono = { version = "0.4", features = ["serde"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
+
+# Argon2（密匣口令派生，64 MiB × 4 次）在未优化的调试构建里要好几秒：测试与 dev 构建也按优化编译它。
+[profile.dev.package.argon2]
+opt-level = 3
+
+[profile.dev.package.blake2]
+opt-level = 3

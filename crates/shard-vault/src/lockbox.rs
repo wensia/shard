@@ -139,15 +139,17 @@ pub fn setup_lockbox(cx: &VaultCtx<'_>, password: &str) -> Result<LockboxSetup, 
     Ok(LockboxSetup { recovery_key, master_key })
 }
 
-/// 用口令解出主密钥；旧 manifest 没有免密写入密钥对时顺带补上并提交。
+/// 用口令解出主密钥；旧 manifest 没有免密写入密钥对时顺带补上，口令包裹的派生参数低于当前标准时
+/// 顺带升级（口令不变），有改动就写回并提交。
 pub fn unlock_lockbox(cx: &VaultCtx<'_>, password: &str) -> Result<Vec<u8>, String> {
     let mut manifest = read_lockbox_manifest(cx.vfs)?;
     let master_key = manifest.unwrap_with_password(password)?;
-    if manifest.ensure_write_key(&master_key)? {
+    let added_write_key = manifest.ensure_write_key(&master_key)?;
+    let upgraded_kdf = manifest.upgrade_password_kdf(password, &master_key)?;
+    if added_write_key || upgraded_kdf {
         write_lockbox_manifest(cx.vfs, &manifest)?;
-        cx.hooks
-            .commit_path_if_git(".shard/lockbox.json", "upgrade lockbox write key")
-            .ok();
+        let message = if added_write_key { "upgrade lockbox write key" } else { "upgrade lockbox key derivation" };
+        cx.hooks.commit_path_if_git(".shard/lockbox.json", message).ok();
     }
     Ok(master_key)
 }

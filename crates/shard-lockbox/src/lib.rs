@@ -2,7 +2,9 @@
 //! 实现同一格式，靠 `tests/fixtures/` 里的固定向量互相解密保证一致。
 //!
 //! - 主密钥（32 字节随机）用两份包裹存在 manifest 里：口令派生的密钥一份，恢复密钥派生的一份。
-//!   派生用 Argon2id（m = 19456 KiB、t = 2、p = 1），包裹与内容都用 AES-256-GCM（12 字节随机 nonce）。
+//!   派生用 Argon2id，每份包裹用的参数记在 manifest 里（`password_kdf` / `recovery_kdf`）；没有这两个字段的
+//!   旧 manifest 即 [`LEGACY_KDF`]（m = 19456 KiB、t = 2）。新设置、改口令、重置用 [`CURRENT_KDF`]，
+//!   旧口令包裹在解锁时升级。包裹与内容都用 AES-256-GCM（12 字节随机 nonce）。
 //! - 免密写入：manifest 里存一对 RSA-2048 密钥，公钥明文、私钥用主密钥加密。锁着时新内容用一次性内容密钥加密，
 //!   内容密钥再用 RSA-OAEP-SHA256 包给公钥；解锁后用主密钥解出私钥读取。解锁状态下的写入直接用主密钥。
 //! - 信封（`.shard` 文件的原文）是 pretty JSON；manifest 是 `.shard/lockbox.json` 的原文。字段名与旧版一字不改。
@@ -30,10 +32,25 @@ pub const WRITE_KEY_BITS: usize = 2048;
 pub const SALT_BYTES: usize = 16;
 pub const NONCE_BYTES: usize = 12;
 pub const FRAGMENT_KEY_ALGORITHM: &str = "rsa-oaep-sha256-aes-256-gcm";
-/// Argon2id 参数（KiB、迭代、并行）。
-pub const KDF_MEMORY_KIB: u32 = 19_456;
-pub const KDF_ITERATIONS: u32 = 2;
-pub const KDF_PARALLELISM: u32 = 1;
+/// Argon2id 参数。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KdfParams {
+    pub memory_kib: u32,
+    pub iterations: u32,
+    pub parallelism: u32,
+}
+
+impl KdfParams {
+    /// 粗略的计算量（内存 × 迭代），用来判断一份包裹是否比当前标准弱。
+    fn cost(&self) -> u64 {
+        u64::from(self.memory_kib) * u64::from(self.iterations)
+    }
+}
+
+/// 旧版（2026-10 之前）的参数：manifest 里没记参数时就是它。
+pub const LEGACY_KDF: KdfParams = KdfParams { memory_kib: 19_456, iterations: 2, parallelism: 1 };
+/// 当前标准：64 MiB × 4 次。WebKit / Chromium 的 wasm 里约 0.1 秒，手机上几百毫秒（离线爆破成本约为旧参数的 6.7 倍）。
+pub const CURRENT_KDF: KdfParams = KdfParams { memory_kib: 65_536, iterations: 4, parallelism: 1 };
 
 /// `.shard/lockbox.json`。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -53,6 +70,12 @@ pub struct Manifest {
     pub write_private_key_nonce: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub write_private_key_ciphertext: Option<String>,
+    /// 口令那份包裹的派生参数；没有即 [`LEGACY_KDF`]。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub password_kdf: Option<KdfParams>,
+    /// 恢复密钥那份包裹的派生参数；没有即 [`LEGACY_KDF`]。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recovery_kdf: Option<KdfParams>,
 }
 
 /// 一条密匣内容（`.shard` 文件）。
@@ -95,12 +118,12 @@ fn decode(value: &str) -> Result<Vec<u8>, String> {
     BASE64.decode(value).map_err(|error| error.to_string())
 }
 
-/// 口令（或规整后的恢复密钥）派生 32 字节包裹密钥。
-pub fn derive_key(secret: &str, salt: &[u8]) -> Result<Vec<u8>, String> {
+/// 口令（或规整后的恢复密钥）按给定参数派生 32 字节包裹密钥。
+pub fn derive_key(secret: &str, salt: &[u8], kdf: &KdfParams) -> Result<Vec<u8>, String> {
     if secret.trim().is_empty() {
         return Err("密匣密码不能为空。".to_string());
     }
-    let params = Params::new(KDF_MEMORY_KIB, KDF_ITERATIONS, KDF_PARALLELISM, Some(MASTER_KEY_BYTES))
+    let params = Params::new(kdf.memory_kib, kdf.iterations, kdf.parallelism, Some(MASTER_KEY_BYTES))
         .map_err(|error| error.to_string())?;
     let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
     let mut key = vec![0; MASTER_KEY_BYTES];
@@ -161,16 +184,22 @@ pub fn normalize_recovery_key(value: &str) -> String {
     value.chars().filter(|character| character.is_ascii_alphanumeric()).flat_map(char::to_lowercase).collect()
 }
 
-/// 用口令包裹主密钥：返回 (salt, nonce, 密文)。
+/// 用口令按当前标准包裹主密钥：返回 (salt, nonce, 密文)，参数是 [`CURRENT_KDF`]。
 pub fn wrap_master_key(secret: &str, master_key: &[u8]) -> Result<(String, String, String), String> {
     let salt = random_bytes(SALT_BYTES);
-    let wrapping_key = derive_key(secret, &salt)?;
+    let wrapping_key = derive_key(secret, &salt, &CURRENT_KDF)?;
     let (nonce, encrypted) = encrypt_bytes(&wrapping_key, master_key)?;
     Ok((BASE64.encode(salt), nonce, encrypted))
 }
 
-fn unwrap_master_key(secret: &str, salt: &str, nonce: &str, encrypted: &str) -> Result<Vec<u8>, String> {
-    let wrapping_key = derive_key(secret, &decode(salt)?)?;
+fn unwrap_master_key(
+    secret: &str,
+    kdf: Option<&KdfParams>,
+    salt: &str,
+    nonce: &str,
+    encrypted: &str,
+) -> Result<Vec<u8>, String> {
+    let wrapping_key = derive_key(secret, &decode(salt)?, kdf.unwrap_or(&LEGACY_KDF))?;
     decrypt_bytes(&wrapping_key, nonce, encrypted)
 }
 
@@ -194,6 +223,8 @@ impl Manifest {
             write_public_key: None,
             write_private_key_nonce: None,
             write_private_key_ciphertext: None,
+            password_kdf: Some(CURRENT_KDF),
+            recovery_kdf: Some(CURRENT_KDF),
         };
         manifest.ensure_write_key(master_key)?;
         Ok(manifest)
@@ -213,13 +244,20 @@ impl Manifest {
     }
 
     pub fn unwrap_with_password(&self, password: &str) -> Result<Vec<u8>, String> {
-        unwrap_master_key(password, &self.password_salt, &self.password_nonce, &self.password_encrypted_master_key)
-            .map_err(|_| "密码不正确。".to_string())
+        unwrap_master_key(
+            password,
+            self.password_kdf.as_ref(),
+            &self.password_salt,
+            &self.password_nonce,
+            &self.password_encrypted_master_key,
+        )
+        .map_err(|_| "密码不正确。".to_string())
     }
 
     pub fn unwrap_with_recovery(&self, recovery_key: &str) -> Result<Vec<u8>, String> {
         unwrap_master_key(
             &normalize_recovery_key(recovery_key),
+            self.recovery_kdf.as_ref(),
             &self.recovery_salt,
             &self.recovery_nonce,
             &self.recovery_encrypted_master_key,
@@ -233,9 +271,30 @@ impl Manifest {
         self.password_salt = salt;
         self.password_nonce = nonce;
         self.password_encrypted_master_key = encrypted;
+        self.password_kdf = Some(CURRENT_KDF);
         self.ensure_write_key(master_key)?;
         self.updated_at = now();
         Ok(())
+    }
+
+    /// 口令那份包裹比当前标准弱（旧 manifest）。
+    pub fn password_kdf_outdated(&self) -> bool {
+        self.password_kdf.unwrap_or(LEGACY_KDF).cost() < CURRENT_KDF.cost()
+    }
+
+    /// 解锁时顺带把口令包裹升级到当前标准（口令不变）。返回是否改动了 manifest。
+    /// 恢复密钥那份（192 bit 熵）只在重新生成恢复密钥时升级。
+    pub fn upgrade_password_kdf(&mut self, password: &str, master_key: &[u8]) -> Result<bool, String> {
+        if !self.password_kdf_outdated() {
+            return Ok(false);
+        }
+        let (salt, nonce, encrypted) = wrap_master_key(password, master_key)?;
+        self.password_salt = salt;
+        self.password_nonce = nonce;
+        self.password_encrypted_master_key = encrypted;
+        self.password_kdf = Some(CURRENT_KDF);
+        self.updated_at = now();
+        Ok(true)
     }
 
     /// 用恢复密钥重置：口令与恢复密钥两份都换，返回新的恢复密钥。
@@ -250,6 +309,8 @@ impl Manifest {
         self.recovery_salt = recovery_salt;
         self.recovery_nonce = recovery_nonce;
         self.recovery_encrypted_master_key = recovery_encrypted_master_key;
+        self.password_kdf = Some(CURRENT_KDF);
+        self.recovery_kdf = Some(CURRENT_KDF);
         self.ensure_write_key(master_key)?;
         self.updated_at = now();
         Ok(next_recovery_key)

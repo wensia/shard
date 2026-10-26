@@ -328,8 +328,10 @@ set_fragment_pinned、set/remove_fragment_property、save_fragment_image（内�
   路径、标题、所在分区（fragments / archive / notes）挪进载荷，服务端的 `legacy_path` 清空（修掉 `lockbox/notes`
   明文文件名泄露标题）。信封 id 保持明文（随机，泄露有限；公开图「不能链接密匣碎片」的校验需要它）。
   v1 照常可读，写回时升级。代价：v2 信封旧版 App 读不了，导出 zip 回退旧版 App 时密匣需要新版。
-- **KDF**：现 Argon2id m=19 MiB、t=2。manifest 增加可选的派生参数字段，缺省即现参数；在 iPhone Safari 上实测
-  wasm 耗时后提到约 1 秒，口令那份在解锁时重包，恢复密钥那份（192 bit 熵）只在重新生成时升级。
+- **KDF**（2026-10-27 已实施）：manifest 记录每份包裹的派生参数（`password_kdf` / `recovery_kdf`，缺省即旧的
+  Argon2id 19 MiB × 2）。新设置、改口令、重置用 64 MiB × 4（离线爆破成本约为旧参数的 6.7 倍；wasm 里解锁约 120 ms，
+  手机上几百毫秒，iPhone 实测后可再调）；旧口令包裹在解锁时自动升级（网页端随写回批次 CAS 写回）。恢复密钥那份
+  （192 bit 熵）只在重新生成恢复密钥时升级。
 - 会话与租约全在客户端：每设备、每标签页各自 15 分钟，主密钥只在内存。服务器没有「已解锁」状态；会话过期或
   注销时清掉密钥。改口令只重包 manifest（CAS），其他设备内存里的主密钥不受影响。
 - 密匣搜索只在客户端内存，与服务端公开搜索结果合并显示。

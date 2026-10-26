@@ -119,3 +119,36 @@ fn files_written_by_the_old_desktop_code_still_open() {
         assert_eq!(payload["body"], envelope["body"]);
     }
 }
+
+#[test]
+fn new_manifests_record_current_kdf_and_old_ones_upgrade_on_unlock() {
+    let master_key = random_bytes(32);
+    let recovery = shard_lockbox::generate_recovery_key();
+    let fresh = Manifest::build("password one", &recovery, &master_key).unwrap();
+    assert_eq!(fresh.password_kdf, Some(shard_lockbox::CURRENT_KDF));
+    assert_eq!(fresh.recovery_kdf, Some(shard_lockbox::CURRENT_KDF));
+    assert!(!fresh.password_kdf_outdated());
+
+    // 旧桌面写出的 manifest 没有参数字段：按旧参数解开，升级口令包裹后仍能解开，恢复密钥那份不动。
+    let fixture: Value = serde_json::from_str(
+        &std::fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/lockbox-desktop-v1.json")).unwrap(),
+    )
+    .unwrap();
+    let password = fixture["password"].as_str().unwrap();
+    let mut legacy = Manifest::parse(fixture["manifest"].as_str().unwrap()).unwrap();
+    assert_eq!(legacy.password_kdf, None);
+    assert!(legacy.password_kdf_outdated());
+    let key = legacy.unwrap_with_password(password).unwrap();
+    let recovery_before = (legacy.recovery_salt.clone(), legacy.recovery_encrypted_master_key.clone());
+    let write_key_before = legacy.write_public_key.clone();
+    assert!(legacy.upgrade_password_kdf(password, &key).unwrap());
+    assert_eq!(legacy.password_kdf, Some(shard_lockbox::CURRENT_KDF));
+    assert!(!legacy.upgrade_password_kdf(password, &key).unwrap(), "已是当前标准就不再改");
+
+    let reparsed = Manifest::parse(&legacy.to_text().unwrap()).unwrap();
+    assert_eq!(reparsed.unwrap_with_password(password).unwrap(), key);
+    assert_eq!(reparsed.unwrap_with_recovery(fixture["recoveryKey"].as_str().unwrap()).unwrap(), key);
+    assert_eq!((reparsed.recovery_salt.clone(), reparsed.recovery_encrypted_master_key.clone()), recovery_before);
+    assert_eq!(reparsed.recovery_kdf, None);
+    assert_eq!(reparsed.write_public_key, write_key_before, "写入密钥对不变：锁着写下的内容照样读得出");
+}
