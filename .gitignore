@@ -62,3 +62,7 @@ src/assets/logo-concepts/
 *.sln
 *.sw?
 .gstack/
+
+# tsc 产物：仓库根的 vite.config.js 会盖过 vite.config.ts
+/vite.config.js
+/vite.config.d.ts
