@@ -378,6 +378,31 @@ pub fn create_public_fragment_with_id_in_vault(
     now: &DateTime<FixedOffset>,
     id: &str,
 ) -> Result<PathBuf, String> {
+    create_public_fragment_full(vfs, content, tags, source, now, id, None)
+}
+
+/// 碎片 id 的形状：`YYYYMMDD-HHMMSS-<8 位十六进制>-<6 位十六进制>`（见 [`new_fragment_id`]）。
+/// 客户端自己生成 id（离线新建）时服务器据此校验，顺带排除了路径字符。
+pub fn is_valid_fragment_id(id: &str) -> bool {
+    let parts: Vec<&str> = id.split('-').collect();
+    let [date, time, random, device] = parts.as_slice() else {
+        return false;
+    };
+    let digits = |part: &str, len: usize| part.len() == len && part.bytes().all(|byte| byte.is_ascii_digit());
+    let hex = |part: &str, len: usize| part.len() == len && part.bytes().all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'));
+    digits(date, 8) && digits(time, 6) && hex(random, 8) && hex(device, 6)
+}
+
+/// 新建公开碎片的完整形式：指定 id、创建时间与冲突来源（离线新建补交、冲突副本）。
+pub fn create_public_fragment_full(
+    vfs: &dyn Vfs,
+    content: &str,
+    tags: Vec<String>,
+    source: &str,
+    now: &DateTime<FixedOffset>,
+    id: &str,
+    conflict_of: Option<&str>,
+) -> Result<PathBuf, String> {
     let content = content.trim();
     if content.is_empty() {
         return Err("片段内容不能为空".to_string());
@@ -404,7 +429,7 @@ pub fn create_public_fragment_with_id_in_vault(
         ai_status: Some("none".to_string()),
         pinned: false,
         source: source.to_string(),
-        conflict_of: None,
+        conflict_of: conflict_of.map(str::to_string),
         related: Vec::new(),
     };
 

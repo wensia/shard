@@ -869,6 +869,26 @@ pub fn create_public_fragment(
     read_fragment(cx, &path, &dirty, override_status)
 }
 
+/// 按客户端给的 id 与创建时间新建公开碎片（离线新建补交、冲突副本）。id 已存在（公开或密匣）时报错，
+/// 不覆盖任何东西。
+pub fn create_public_fragment_as(
+    cx: &VaultCtx<'_>,
+    content: &str,
+    tags: Vec<String>,
+    id: &str,
+    created_at: &chrono::DateTime<chrono::FixedOffset>,
+    conflict_of: Option<&str>,
+) -> Result<Fragment, String> {
+    if !shard_core::is_valid_fragment_id(id) {
+        return Err(format!("片段 id 无效：{id}"));
+    }
+    if find_fragment_path(cx.vfs, id)?.is_some() || is_lockbox_fragment_id(cx.vfs, id)? {
+        return Err(format!("片段 {id} 已存在。"));
+    }
+    let path = shard_core::create_public_fragment_full(cx.vfs, content, tags, cx.source, created_at, id, conflict_of)?;
+    read_fragment(cx, &path, &cx.hooks.dirty_paths(), None)
+}
+
 /// 公开碎片保存的结果。新标签里带密匣标签时，公开文件要整体移进密匣：那由桌面的密匣实现完成，
 /// 这里做完前置校验（类型保护、保存基线）后把要移动的内容交回调用方，不改任何文件。
 #[derive(Debug)]

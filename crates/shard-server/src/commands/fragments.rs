@@ -96,6 +96,15 @@ struct CreateFragmentArgs {
     /// 覆盖按调用方记的来源（web / desktop / cli），例如命令行的 `--source claude-code`。桌面没有这个参数。
     #[serde(default)]
     source: Option<String>,
+    /// 客户端生成的 id（桌面离线新建后补交：id 在离线时就已显示、被引用，补交后不能变）。须与 `createdAt` 一起给。
+    #[serde(default)]
+    id: Option<String>,
+    /// 客户端的创建时间（RFC 3339，带时区）：决定 `fragments/YYYY/MM` 与 frontmatter 时间。
+    #[serde(default)]
+    created_at: Option<String>,
+    /// 冲突副本：原条目的 id（离线编辑补交时服务器上已被改过或删除，本地内容另存为副本）。
+    #[serde(default)]
+    conflict_of: Option<String>,
 }
 
 fn create_fragment(env: &RpcEnv<'_>, args: Value) -> Result<Value, RpcError> {
@@ -108,12 +117,45 @@ fn create_fragment(env: &RpcEnv<'_>, args: Value) -> Result<Value, RpcError> {
         }
         return Err(lockbox_unavailable());
     }
+    let explicit = match (&args.id, &args.created_at) {
+        (Some(id), Some(created_at)) => {
+            let created_at = chrono::DateTime::parse_from_rfc3339(created_at)
+                .map_err(|error| RpcError::invalid_args(format!("createdAt 无效：{error}")))?;
+            if !shard_core::is_valid_fragment_id(id) {
+                return Err(RpcError::invalid_args(format!("片段 id 无效：{id}")));
+            }
+            Some((id.clone(), created_at))
+        }
+        (None, None) => None,
+        _ => return Err(RpcError::invalid_args("id 与 createdAt 要一起给。")),
+    };
+    if let Some(conflict_of) = &args.conflict_of {
+        if !shard_core::is_valid_fragment_id(conflict_of) {
+            return Err(RpcError::invalid_args(format!("conflictOf 无效：{conflict_of}")));
+        }
+    }
     write(env, |cx| {
         let cx = match source.as_deref() {
             Some(source) => cx.with_clock(cx.offset, source),
             None => *cx,
         };
-        Ok(create_public_fragment(&cx, &content, tags)?)
+        match &explicit {
+            Some((id, created_at)) => {
+                if shard_vault::find_fragment_path(cx.vfs, id)?.is_some() || is_lockbox_fragment_id(cx.vfs, id)? {
+                    return Err(RpcError::new(
+                        axum::http::StatusCode::CONFLICT,
+                        "FRAGMENT_EXISTS",
+                        format!("片段 {id} 已存在。"),
+                    ));
+                }
+                Ok(shard_vault::create_public_fragment_as(&cx, &content, tags, id, created_at, args.conflict_of.as_deref())?)
+            }
+            None if args.conflict_of.is_some() => {
+                let id = shard_core::new_fragment_id(&cx.now());
+                Ok(shard_vault::create_public_fragment_as(&cx, &content, tags, &id, &cx.now(), args.conflict_of.as_deref())?)
+            }
+            None => Ok(create_public_fragment(&cx, &content, tags)?),
+        }
     })
 }
 

@@ -708,3 +708,34 @@ async fn create_commands_accept_an_optional_source() {
         .await;
     assert_eq!(reply.body["code"], "INVALID_ARGS");
 }
+
+/// 桌面离线新建后补交：id 与创建时间用客户端的；同 id 再建拒绝；冲突副本记下来源。
+#[tokio::test]
+async fn create_fragment_accepts_client_ids_times_and_conflict_sources() {
+    let h = Harness::new().await;
+    let id = "20261031-235900-0a1b2c3d-4e5f60";
+    let created = h
+        .ok("create_fragment", json!({ "content": "离线时记下的", "id": id, "createdAt": "2026-10-31T23:59:00+08:00" }))
+        .await;
+    assert_eq!(created["id"], id);
+    // 按客户端的时间进 10 月目录（服务器此刻可能已是 11 月或 UTC 的另一天）。
+    assert_eq!(created["path"], format!("fragments/2026/10/{id}.md"));
+    assert_eq!(created["createdAt"], "2026-10-31T23:59:00+08:00");
+
+    let again = h.call("create_fragment", json!({ "content": "别的内容", "id": id, "createdAt": "2026-10-31T23:59:00+08:00" })).await;
+    assert_eq!(again.status, StatusCode::CONFLICT);
+    assert_eq!(again.body["code"], "FRAGMENT_EXISTS");
+
+    let copy = h.ok("create_fragment", json!({ "content": "冲突时本地的版本", "conflictOf": id })).await;
+    assert_eq!(copy["conflictOf"], id);
+    assert_ne!(copy["id"], id);
+
+    for bad in [
+        json!({ "content": "x", "id": "../etc", "createdAt": "2026-10-31T23:59:00+08:00" }),
+        json!({ "content": "x", "id": id }),
+        json!({ "content": "x", "id": "20261031-235900-0a1b2c3d-4e5f61", "createdAt": "昨天" }),
+        json!({ "content": "x", "conflictOf": "not-an-id" }),
+    ] {
+        assert_eq!(h.call("create_fragment", bad.clone()).await.status, StatusCode::BAD_REQUEST, "{bad}");
+    }
+}
