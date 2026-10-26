@@ -24,7 +24,7 @@ use std::{
 
 use rusqlite::{params, Connection, OptionalExtension};
 
-use super::blobs::{BlobStore, INLINE_MAX};
+use super::blobs::{read_prefix, BlobStore, INLINE_MAX};
 use crate::path_key::{parent_key, path_key};
 use shard_core::{sha256_hex, EntryKind, Vfs, VfsDirEntry, VfsMetadata};
 
@@ -579,6 +579,41 @@ impl<'a> SqliteVfs<'a> {
             _ => Ok(None),
         }
     }
+
+    /// 条目开头至多 `limit` 字节，内联与 blob 都只读前缀。
+    fn node_head(&self, node_id: i64, limit: usize) -> io::Result<Option<Vec<u8>>> {
+        let row: Option<(bool, Option<String>)> = self
+            .conn
+            .query_row(
+                "SELECT inline IS NOT NULL, blob_sha FROM nodes WHERE node_id = ?1",
+                params![node_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+            .map_err(db_error)?;
+        match row {
+            Some((true, _)) => read_prefix(self.conn, c"nodes", c"inline", node_id, limit).map(Some).map_err(db_error),
+            Some((false, Some(blob_sha))) => self
+                .blobs
+                .get_prefix(&blob_sha, limit)
+                .map_err(|error| io::Error::other(error.to_string())),
+            _ => Ok(None),
+        }
+    }
+
+    /// 按路径找文件条目；目录报 IsADirectory。
+    fn file_node(&self, path: &Path) -> io::Result<(String, NodeRow)> {
+        let rel = self.rel(path)?;
+        let node = self.find(&rel)?.ok_or_else(|| not_found(&rel))?;
+        if node.kind == NodeKind::Dir {
+            return Err(io::Error::new(io::ErrorKind::IsADirectory, format!("是目录：{rel}")));
+        }
+        Ok((rel, node))
+    }
+}
+
+fn content_missing(rel: &str, node: NodeRow) -> io::Error {
+    io::Error::other(format!("内容丢失：{rel}（blob {}）", node.blob_sha.unwrap_or_default()))
 }
 
 impl Vfs for SqliteVfs<'_> {
@@ -587,14 +622,14 @@ impl Vfs for SqliteVfs<'_> {
     }
 
     fn read(&self, path: &Path) -> io::Result<Vec<u8>> {
-        let rel = self.rel(path)?;
-        let node = self.find(&rel)?.ok_or_else(|| not_found(&rel))?;
-        if node.kind == NodeKind::Dir {
-            return Err(io::Error::new(io::ErrorKind::IsADirectory, format!("是目录：{rel}")));
-        }
-        self.node_bytes(node.node_id)?.ok_or_else(|| {
-            io::Error::other(format!("内容丢失：{rel}（blob {}）", node.blob_sha.unwrap_or_default()))
-        })
+        let (rel, node) = self.file_node(path)?;
+        self.node_bytes(node.node_id)?.ok_or_else(|| content_missing(&rel, node))
+    }
+
+    fn read_head(&self, path: &Path, limit: u64) -> io::Result<Vec<u8>> {
+        let (rel, node) = self.file_node(path)?;
+        let limit = usize::try_from(limit).unwrap_or(usize::MAX);
+        self.node_head(node.node_id, limit)?.ok_or_else(|| content_missing(&rel, node))
     }
 
     fn metadata(&self, path: &Path) -> io::Result<VfsMetadata> {

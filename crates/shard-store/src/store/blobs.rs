@@ -3,9 +3,9 @@
 //! 写入用独立连接、立即提交：顺序固定为「先提交 blob，再提交引用它的内容事务」
 //! （WAL 下跨库事务不原子）。内容事务回滚留下的孤儿 blob 由 GC 在宽限期后清理。
 
-use std::{path::Path, sync::Mutex};
+use std::{ffi::CStr, path::Path, sync::Mutex};
 
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, Connection, OptionalExtension, MAIN_DB};
 
 use super::{schema, StoreError};
 
@@ -42,6 +42,18 @@ impl BlobStore {
             .optional()?)
     }
 
+    /// 只读开头至多 `limit` 字节（读图片头、限长读取）。
+    pub(crate) fn get_prefix(&self, sha: &str, limit: usize) -> Result<Option<Vec<u8>>, StoreError> {
+        let conn = self.conn.lock().expect("blob 连接锁中毒");
+        let Some(id) = conn
+            .query_row("SELECT id FROM blobs WHERE sha = ?1", params![sha], |row| row.get(0))
+            .optional()?
+        else {
+            return Ok(None);
+        };
+        Ok(Some(read_prefix(&conn, c"blobs", c"data", id, limit)?))
+    }
+
     pub(crate) fn vacuum_into(&self, target: &Path) -> Result<(), StoreError> {
         let conn = self.conn.lock().expect("blob 连接锁中毒");
         conn.execute("VACUUM INTO ?1", params![target.to_string_lossy()])?;
@@ -55,4 +67,19 @@ impl BlobStore {
             .optional()?
             .is_some())
     }
+}
+
+/// 用增量 blob I/O 读某个值开头至多 `limit` 字节：只读用到的页（`SELECT` 会把整个值读进内存）。
+/// 值为 NULL 时 SQLite 打不开，调用方要先确认非空。
+pub(crate) fn read_prefix(
+    conn: &Connection,
+    table: &CStr,
+    column: &CStr,
+    row_id: i64,
+    limit: usize,
+) -> rusqlite::Result<Vec<u8>> {
+    let blob = conn.blob_open(MAIN_DB, table, column, row_id, true)?;
+    let mut bytes = vec![0; blob.len().min(limit)];
+    blob.read_at_exact(&mut bytes, 0)?;
+    Ok(bytes)
 }

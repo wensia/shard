@@ -231,6 +231,39 @@ fn large_files_go_to_the_blob_store() {
 }
 
 #[test]
+fn read_head_returns_prefixes_of_inline_and_blob_contents() {
+    let (_dir, store) = open();
+    let big: Vec<u8> = (0..INLINE_MAX + 4096).map(|i| (i % 251) as u8).collect();
+    write(&store, &ctx(), |vfs| {
+        vfs.create_dir_all(&p("notes"))?;
+        vfs.write(&p("notes/a.md"), "开头一段正文".as_bytes())?;
+        vfs.write(&p("notes/empty.md"), b"")?;
+        vfs.write(&p("big.png"), &big)?;
+        // 写事务里读得到本事务刚写的内容。
+        assert_eq!(vfs.read_head(&p("notes/a.md"), 6)?, "开头".as_bytes());
+        Ok(())
+    });
+    store
+        .read(|vfs| {
+            let small = "开头一段正文".as_bytes();
+            for limit in [0, 1, 6, small.len() as u64, 1 << 40, u64::MAX] {
+                let expected = &small[..small.len().min(limit as usize)];
+                assert_eq!(vfs.read_head(&p("notes/a.md"), limit).unwrap(), expected, "inline limit={limit}");
+            }
+            for limit in [0, 8, 64 * 1024, big.len() as u64, u64::MAX] {
+                let expected = &big[..big.len().min(limit as usize)];
+                assert_eq!(vfs.read_head(&p("big.png"), limit).unwrap(), expected, "blob limit={limit}");
+            }
+            assert!(vfs.read_head(&p("notes/empty.md"), 16).unwrap().is_empty());
+            let dir = vfs.read_head(&p("notes"), 16).unwrap_err();
+            assert_eq!(dir.kind(), std::io::ErrorKind::IsADirectory);
+            let missing = vfs.read_head(&p("notes/none.md"), 16).unwrap_err();
+            assert_eq!(missing.kind(), std::io::ErrorKind::NotFound);
+        })
+        .unwrap();
+}
+
+#[test]
 fn paths_are_case_and_normalization_insensitive_like_apfs() {
     let (_dir, store) = open();
     write(&store, &ctx(), |vfs| {

@@ -9,7 +9,7 @@ publish = false
 chrono = { workspace = true }
 rand = "0.8"
 # 与 src-tauri 同一版本：libsqlite3-sys 在依赖图里只能出现一次。
-rusqlite = { version = "=0.40.2", features = ["bundled"] }
+rusqlite = { version = "=0.40.2", features = ["blob", "bundled"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
