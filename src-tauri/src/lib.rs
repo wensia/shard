@@ -1,14 +1,10 @@
-use aes_gcm::{
-    aead::{Aead, KeyInit},
-    Aes256Gcm, Nonce,
-};
-use argon2::{Algorithm, Argon2, Params, Version};
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use chrono::Local;
-use rand::{rngs::OsRng, RngCore};
-use rsa::{
-    pkcs8::{DecodePrivateKey, DecodePublicKey, EncodePrivateKey, EncodePublicKey},
-    Oaep, RsaPrivateKey, RsaPublicKey,
+#[cfg(test)]
+use shard_lockbox::normalize_recovery_key;
+use shard_lockbox::{
+    validate_password as validate_lockbox_password, Envelope, Manifest as LockboxManifest,
+    ReadKeys as LockboxReadKeys, WriteKey as LockboxWriteKey,
 };
 use serde::{Deserialize, Serialize};
 use shard_core::dataset::{DatasetOp, DatasetSnapshot};
@@ -33,7 +29,6 @@ pub(crate) use shard_core::graph_model::{
 #[cfg(test)]
 pub(crate) use shard_core::graph_model::{CanvasEdge, CanvasNode, ShardDocumentLink, ShardMapNodeStyle};
 use shard_core::vault_lock::{VaultProcessLock, LOCKS_DIR_NAME};
-use sha2::Sha256;
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
     env, fs,
@@ -74,13 +69,6 @@ mod xlsx;
 
 const DEFAULT_WINDOW_TITLE: &str = "Shard";
 const LOCKBOX_TTL: Duration = Duration::from_secs(15 * 60);
-const LOCKBOX_VERSION: u32 = 1;
-const LOCKBOX_MASTER_KEY_BYTES: usize = 32;
-const LOCKBOX_FRAGMENT_KEY_BYTES: usize = 32;
-const LOCKBOX_WRITE_KEY_BITS: usize = 2048;
-const LOCKBOX_SALT_BYTES: usize = 16;
-const LOCKBOX_NONCE_BYTES: usize = 12;
-const LOCKBOX_FRAGMENT_KEY_ALGORITHM: &str = "rsa-oaep-sha256-aes-256-gcm";
 const CSV_GIT_PATHSPEC: &str = ":(glob,icase)**/*.csv";
 
 /// Vault selection changes the persisted path and the active search context as one unit.
@@ -334,37 +322,6 @@ struct LockboxSetupResult {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-struct LockboxManifest {
-    version: u32,
-    created_at: String,
-    updated_at: String,
-    password_salt: String,
-    password_nonce: String,
-    password_encrypted_master_key: String,
-    recovery_salt: String,
-    recovery_nonce: String,
-    recovery_encrypted_master_key: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    write_public_key: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    write_private_key_nonce: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    write_private_key_ciphertext: Option<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct LockboxEncryptedFragment {
-    version: u32,
-    id: String,
-    nonce: String,
-    ciphertext: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    key_algorithm: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    key_ciphertext: Option<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
 struct LockboxFragmentPayload {
     frontmatter: FragmentFrontmatter,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -421,17 +378,6 @@ impl LockboxRuntime {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .clone()
     }
-}
-
-enum LockboxWriteKey {
-    Master(Vec<u8>),
-    Public(RsaPublicKey),
-}
-
-#[derive(Clone)]
-struct LockboxReadKeys {
-    master_key: Vec<u8>,
-    write_private_key: Option<RsaPrivateKey>,
 }
 
 async fn run_blocking<T, F>(operation: F) -> Result<T, String>
@@ -3838,34 +3784,7 @@ fn write_lockbox_payload(
     payload: &LockboxFragmentPayload,
 ) -> Result<(), String> {
     let plaintext = serde_json::to_vec(payload).map_err(|error| error.to_string())?;
-    let (nonce, ciphertext, key_algorithm, key_ciphertext) = match write_key {
-        LockboxWriteKey::Master(master_key) => {
-            let (nonce, ciphertext) = encrypt_bytes(master_key, &plaintext)?;
-            (nonce, ciphertext, None, None)
-        }
-        LockboxWriteKey::Public(public_key) => {
-            let fragment_key = random_bytes(LOCKBOX_FRAGMENT_KEY_BYTES);
-            let (nonce, ciphertext) = encrypt_bytes(&fragment_key, &plaintext)?;
-            let encrypted_key = public_key
-                .encrypt(&mut OsRng, Oaep::new::<Sha256>(), &fragment_key)
-                .map_err(|_| "密匣加密失败。".to_string())?;
-            (
-                nonce,
-                ciphertext,
-                Some(LOCKBOX_FRAGMENT_KEY_ALGORITHM.to_string()),
-                Some(BASE64_STANDARD.encode(encrypted_key)),
-            )
-        }
-    };
-    let encrypted = LockboxEncryptedFragment {
-        version: LOCKBOX_VERSION,
-        id: payload.frontmatter.id.clone(),
-        nonce,
-        ciphertext,
-        key_algorithm,
-        key_ciphertext,
-    };
-    let text = serde_json::to_string_pretty(&encrypted).map_err(|error| error.to_string())?;
+    let text = Envelope::seal(write_key, &payload.frontmatter.id, &plaintext)?.to_text()?;
     vfs.write_atomic(path, text.as_bytes())
         .map_err(|error| error.to_string())
 }
@@ -3883,37 +3802,7 @@ fn read_lockbox_payload_from_text(
     text: &str,
     read_keys: &LockboxReadKeys,
 ) -> Result<LockboxFragmentPayload, String> {
-    let encrypted = serde_json::from_str::<LockboxEncryptedFragment>(text)
-        .map_err(|error| error.to_string())?;
-    if encrypted.version != LOCKBOX_VERSION {
-        return Err("不支持的密匣片段版本。".to_string());
-    }
-
-    let plaintext = if let Some(key_ciphertext) = encrypted.key_ciphertext.as_deref() {
-        if encrypted.key_algorithm.as_deref() != Some(LOCKBOX_FRAGMENT_KEY_ALGORITHM) {
-            return Err("不支持的密匣片段加密方式。".to_string());
-        }
-        let private_key = read_keys
-            .write_private_key
-            .as_ref()
-            .ok_or_else(|| "密匣读取密钥缺失。请重置密匣密码后重试。".to_string())?;
-        let encrypted_key = BASE64_STANDARD
-            .decode(key_ciphertext)
-            .map_err(|error| error.to_string())?;
-        let fragment_key = private_key
-            .decrypt(Oaep::new::<Sha256>(), &encrypted_key)
-            .map_err(|_| "密匣解密失败。".to_string())?;
-        decrypt_bytes(&fragment_key, &encrypted.nonce, &encrypted.ciphertext)?
-    } else {
-        if encrypted.key_algorithm.is_some() {
-            return Err("不支持的密匣片段加密方式。".to_string());
-        }
-        decrypt_bytes(
-            &read_keys.master_key,
-            &encrypted.nonce,
-            &encrypted.ciphertext,
-        )?
-    };
+    let plaintext = shard_lockbox::open_text(text, read_keys)?;
     let mut payload =
         serde_json::from_slice::<LockboxFragmentPayload>(&plaintext).map_err(|error| error.to_string())?;
     if let Some(raw) = payload.frontmatter_raw.as_deref() {
@@ -3936,9 +3825,9 @@ fn setup_lockbox_in_vault(
         return Err("密匣已经设置。".to_string());
     }
 
-    let master_key = random_bytes(LOCKBOX_MASTER_KEY_BYTES);
-    let recovery_key = generate_recovery_key();
-    let manifest = build_lockbox_manifest(password, &recovery_key, &master_key)?;
+    let master_key = shard_lockbox::random_bytes(shard_lockbox::MASTER_KEY_BYTES);
+    let recovery_key = shard_lockbox::generate_recovery_key();
+    let manifest = LockboxManifest::build(password, &recovery_key, &master_key)?;
     write_lockbox_manifest(cx.vfs, &manifest)?;
     unlock_lockbox_runtime(lockbox_runtime, cx.root(), &master_key);
 
@@ -3955,8 +3844,8 @@ fn unlock_lockbox_in_vault(
     password: &str,
 ) -> Result<(), String> {
     let mut manifest = read_lockbox_manifest(cx.vfs)?;
-    let master_key = unwrap_lockbox_master_key_with_password(&manifest, password)?;
-    if ensure_lockbox_manifest_write_key(&mut manifest, &master_key)? {
+    let master_key = manifest.unwrap_with_password(password)?;
+    if manifest.ensure_write_key(&master_key)? {
         write_lockbox_manifest(cx.vfs, &manifest)?;
         cx.hooks
             .commit_path_if_git(".shard/lockbox.json", "upgrade lockbox write key")
@@ -3974,13 +3863,8 @@ fn change_lockbox_password_in_vault(
 ) -> Result<(), String> {
     validate_lockbox_password(new_password)?;
     let mut manifest = read_lockbox_manifest(cx.vfs)?;
-    let master_key = unwrap_lockbox_master_key_with_password(&manifest, current_password)?;
-    let (salt, nonce, encrypted_master_key) = wrap_master_key(new_password, &master_key)?;
-    manifest.password_salt = salt;
-    manifest.password_nonce = nonce;
-    manifest.password_encrypted_master_key = encrypted_master_key;
-    ensure_lockbox_manifest_write_key(&mut manifest, &master_key)?;
-    manifest.updated_at = Local::now().to_rfc3339();
+    let master_key = manifest.unwrap_with_password(current_password)?;
+    manifest.rewrap_password(new_password, &master_key)?;
     write_lockbox_manifest(cx.vfs, &manifest)?;
     unlock_lockbox_runtime(lockbox_runtime, cx.root(), &master_key);
     cx.hooks
@@ -3997,21 +3881,8 @@ fn reset_lockbox_password_in_vault(
 ) -> Result<String, String> {
     validate_lockbox_password(new_password)?;
     let mut manifest = read_lockbox_manifest(cx.vfs)?;
-    let master_key = unwrap_lockbox_master_key_with_recovery(&manifest, recovery_key)?;
-    let next_recovery_key = generate_recovery_key();
-    let (password_salt, password_nonce, password_encrypted_master_key) =
-        wrap_master_key(new_password, &master_key)?;
-    let (recovery_salt, recovery_nonce, recovery_encrypted_master_key) =
-        wrap_master_key(&normalize_recovery_key(&next_recovery_key), &master_key)?;
-
-    manifest.password_salt = password_salt;
-    manifest.password_nonce = password_nonce;
-    manifest.password_encrypted_master_key = password_encrypted_master_key;
-    manifest.recovery_salt = recovery_salt;
-    manifest.recovery_nonce = recovery_nonce;
-    manifest.recovery_encrypted_master_key = recovery_encrypted_master_key;
-    ensure_lockbox_manifest_write_key(&mut manifest, &master_key)?;
-    manifest.updated_at = Local::now().to_rfc3339();
+    let master_key = manifest.unwrap_with_recovery(recovery_key)?;
+    let next_recovery_key = manifest.reset(new_password, &master_key)?;
     write_lockbox_manifest(cx.vfs, &manifest)?;
     unlock_lockbox_runtime(lockbox_runtime, cx.root(), &master_key);
     cx.hooks
@@ -4019,226 +3890,6 @@ fn reset_lockbox_password_in_vault(
         .ok();
 
     Ok(next_recovery_key)
-}
-
-fn build_lockbox_manifest(
-    password: &str,
-    recovery_key: &str,
-    master_key: &[u8],
-) -> Result<LockboxManifest, String> {
-    let (password_salt, password_nonce, password_encrypted_master_key) =
-        wrap_master_key(password, master_key)?;
-    let (recovery_salt, recovery_nonce, recovery_encrypted_master_key) =
-        wrap_master_key(&normalize_recovery_key(recovery_key), master_key)?;
-    let now = Local::now().to_rfc3339();
-
-    let mut manifest = LockboxManifest {
-        version: LOCKBOX_VERSION,
-        created_at: now.clone(),
-        updated_at: now,
-        password_salt,
-        password_nonce,
-        password_encrypted_master_key,
-        recovery_salt,
-        recovery_nonce,
-        recovery_encrypted_master_key,
-        write_public_key: None,
-        write_private_key_nonce: None,
-        write_private_key_ciphertext: None,
-    };
-    ensure_lockbox_manifest_write_key(&mut manifest, master_key)?;
-    Ok(manifest)
-}
-
-fn wrap_master_key(secret: &str, master_key: &[u8]) -> Result<(String, String, String), String> {
-    let salt = random_bytes(LOCKBOX_SALT_BYTES);
-    let wrapping_key = derive_lockbox_key(secret, &salt)?;
-    let (nonce, encrypted_master_key) = encrypt_bytes(&wrapping_key, master_key)?;
-    Ok((BASE64_STANDARD.encode(salt), nonce, encrypted_master_key))
-}
-
-fn unwrap_lockbox_master_key_with_password(
-    manifest: &LockboxManifest,
-    password: &str,
-) -> Result<Vec<u8>, String> {
-    unwrap_lockbox_master_key(
-        password,
-        &manifest.password_salt,
-        &manifest.password_nonce,
-        &manifest.password_encrypted_master_key,
-    )
-    .map_err(|_| "密码不正确。".to_string())
-}
-
-fn unwrap_lockbox_master_key_with_recovery(
-    manifest: &LockboxManifest,
-    recovery_key: &str,
-) -> Result<Vec<u8>, String> {
-    unwrap_lockbox_master_key(
-        &normalize_recovery_key(recovery_key),
-        &manifest.recovery_salt,
-        &manifest.recovery_nonce,
-        &manifest.recovery_encrypted_master_key,
-    )
-    .map_err(|_| "恢复密钥不正确。".to_string())
-}
-
-fn unwrap_lockbox_master_key(
-    secret: &str,
-    salt: &str,
-    nonce: &str,
-    encrypted_master_key: &str,
-) -> Result<Vec<u8>, String> {
-    let salt = BASE64_STANDARD
-        .decode(salt)
-        .map_err(|error| error.to_string())?;
-    let wrapping_key = derive_lockbox_key(secret, &salt)?;
-    decrypt_bytes(&wrapping_key, nonce, encrypted_master_key)
-}
-
-fn ensure_lockbox_manifest_write_key(
-    manifest: &mut LockboxManifest,
-    master_key: &[u8],
-) -> Result<bool, String> {
-    if lockbox_manifest_has_write_key(manifest) {
-        return Ok(false);
-    }
-
-    let private_key = RsaPrivateKey::new(&mut OsRng, LOCKBOX_WRITE_KEY_BITS)
-        .map_err(|error| error.to_string())?;
-    let public_key = RsaPublicKey::from(&private_key);
-    let private_der = private_key
-        .to_pkcs8_der()
-        .map_err(|error| error.to_string())?;
-    let public_der = public_key
-        .to_public_key_der()
-        .map_err(|error| error.to_string())?;
-    let (private_nonce, private_ciphertext) = encrypt_bytes(master_key, private_der.as_bytes())?;
-
-    manifest.write_public_key = Some(BASE64_STANDARD.encode(public_der.as_bytes()));
-    manifest.write_private_key_nonce = Some(private_nonce);
-    manifest.write_private_key_ciphertext = Some(private_ciphertext);
-    manifest.updated_at = Local::now().to_rfc3339();
-    Ok(true)
-}
-
-fn lockbox_manifest_has_write_key(manifest: &LockboxManifest) -> bool {
-    manifest.write_public_key.is_some()
-        && manifest.write_private_key_nonce.is_some()
-        && manifest.write_private_key_ciphertext.is_some()
-}
-
-fn decode_lockbox_write_public_key(
-    manifest: &LockboxManifest,
-) -> Result<Option<RsaPublicKey>, String> {
-    let Some(encoded) = manifest.write_public_key.as_deref() else {
-        return Ok(None);
-    };
-    let bytes = BASE64_STANDARD
-        .decode(encoded)
-        .map_err(|error| error.to_string())?;
-    RsaPublicKey::from_public_key_der(&bytes)
-        .map(Some)
-        .map_err(|error| error.to_string())
-}
-
-fn decrypt_lockbox_write_private_key(
-    manifest: &LockboxManifest,
-    master_key: &[u8],
-) -> Result<Option<RsaPrivateKey>, String> {
-    let (Some(nonce), Some(ciphertext)) = (
-        manifest.write_private_key_nonce.as_deref(),
-        manifest.write_private_key_ciphertext.as_deref(),
-    ) else {
-        return Ok(None);
-    };
-    let der = decrypt_bytes(master_key, nonce, ciphertext)?;
-    RsaPrivateKey::from_pkcs8_der(&der)
-        .map(Some)
-        .map_err(|error| error.to_string())
-}
-
-fn derive_lockbox_key(secret: &str, salt: &[u8]) -> Result<Vec<u8>, String> {
-    if secret.trim().is_empty() {
-        return Err("密匣密码不能为空。".to_string());
-    }
-
-    let params = Params::new(19_456, 2, 1, Some(LOCKBOX_MASTER_KEY_BYTES))
-        .map_err(|error| error.to_string())?;
-    let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
-    let mut key = vec![0; LOCKBOX_MASTER_KEY_BYTES];
-    argon2
-        .hash_password_into(secret.as_bytes(), salt, &mut key)
-        .map_err(|error| error.to_string())?;
-    Ok(key)
-}
-
-fn encrypt_bytes(key: &[u8], plaintext: &[u8]) -> Result<(String, String), String> {
-    let cipher = Aes256Gcm::new_from_slice(key).map_err(|error| error.to_string())?;
-    let nonce_bytes = random_bytes(LOCKBOX_NONCE_BYTES);
-    let ciphertext = cipher
-        .encrypt(Nonce::from_slice(&nonce_bytes), plaintext)
-        .map_err(|_| "密匣加密失败。".to_string())?;
-
-    Ok((
-        BASE64_STANDARD.encode(nonce_bytes),
-        BASE64_STANDARD.encode(ciphertext),
-    ))
-}
-
-fn decrypt_bytes(key: &[u8], nonce: &str, ciphertext: &str) -> Result<Vec<u8>, String> {
-    let nonce_bytes = BASE64_STANDARD
-        .decode(nonce)
-        .map_err(|error| error.to_string())?;
-    let ciphertext = BASE64_STANDARD
-        .decode(ciphertext)
-        .map_err(|error| error.to_string())?;
-    let cipher = Aes256Gcm::new_from_slice(key).map_err(|error| error.to_string())?;
-    cipher
-        .decrypt(Nonce::from_slice(&nonce_bytes), ciphertext.as_ref())
-        .map_err(|_| "密匣解密失败。".to_string())
-}
-
-fn random_bytes(len: usize) -> Vec<u8> {
-    let mut bytes = vec![0; len];
-    OsRng.fill_bytes(&mut bytes);
-    bytes
-}
-
-fn validate_lockbox_password(password: &str) -> Result<(), String> {
-    if password.chars().count() < 8 {
-        return Err("密匣密码至少需要 8 个字符。".to_string());
-    }
-    Ok(())
-}
-
-fn generate_recovery_key() -> String {
-    let bytes = random_bytes(24);
-    let hex = to_hex(&bytes);
-    let groups = hex
-        .as_bytes()
-        .chunks(6)
-        .map(|chunk| String::from_utf8_lossy(chunk).to_string())
-        .collect::<Vec<_>>();
-    format!("shard-{}", groups.join("-"))
-}
-
-fn normalize_recovery_key(value: &str) -> String {
-    value
-        .chars()
-        .filter(|character| character.is_ascii_alphanumeric())
-        .flat_map(char::to_lowercase)
-        .collect::<String>()
-}
-
-fn to_hex(bytes: &[u8]) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut output = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        output.push(HEX[(byte >> 4) as usize] as char);
-        output.push(HEX[(byte & 0x0f) as usize] as char);
-    }
-    output
 }
 
 fn lockbox_manifest_path(vault: &Path) -> PathBuf {
@@ -4251,12 +3902,7 @@ fn read_lockbox_manifest(vfs: &dyn Vfs) -> Result<LockboxManifest, String> {
         return Err("密匣尚未设置。".to_string());
     }
     let text = vfs.read_to_string(&path).map_err(|error| error.to_string())?;
-    let manifest =
-        serde_json::from_str::<LockboxManifest>(&text).map_err(|error| error.to_string())?;
-    if manifest.version != LOCKBOX_VERSION {
-        return Err("不支持的密匣版本。".to_string());
-    }
-    Ok(manifest)
+    LockboxManifest::parse(&text)
 }
 
 fn write_lockbox_manifest(vfs: &dyn Vfs, manifest: &LockboxManifest) -> Result<(), String> {
@@ -4264,7 +3910,7 @@ fn write_lockbox_manifest(vfs: &dyn Vfs, manifest: &LockboxManifest) -> Result<(
     if let Some(parent) = path.parent() {
         vfs.create_dir_all(parent).map_err(|error| error.to_string())?;
     }
-    let text = serde_json::to_string_pretty(manifest).map_err(|error| error.to_string())?;
+    let text = manifest.to_text()?;
     vfs.write_atomic(&path, text.as_bytes())
         .map_err(|error| error.to_string())
 }
@@ -4329,8 +3975,9 @@ fn lockbox_write_key(
     lockbox_runtime: &LockboxRuntime,
 ) -> Result<LockboxWriteKey, String> {
     let mut manifest = read_lockbox_manifest(cx.vfs)?;
-    if lockbox_manifest_has_write_key(&manifest) {
-        let public_key = decode_lockbox_write_public_key(&manifest)?
+    if manifest.has_write_key() {
+        let public_key = manifest
+            .write_public_key()?
             .ok_or_else(|| "密匣写入密钥缺失。".to_string())?;
         return Ok(LockboxWriteKey::Public(public_key));
     }
@@ -4343,12 +3990,13 @@ fn lockbox_write_key(
                 error
             }
         })?;
-    ensure_lockbox_manifest_write_key(&mut manifest, &master_key)?;
+    manifest.ensure_write_key(&master_key)?;
     write_lockbox_manifest(cx.vfs, &manifest)?;
     cx.hooks
         .commit_path_if_git(".shard/lockbox.json", "upgrade lockbox write key")
         .ok();
-    decode_lockbox_write_public_key(&manifest)?
+    manifest
+        .write_public_key()?
         .map(LockboxWriteKey::Public)
         .ok_or_else(|| "密匣写入密钥生成失败。".to_string())
 }

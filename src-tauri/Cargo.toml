@@ -18,11 +18,9 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-aes-gcm = "0.10"
 # 表格文档导入：Excel / CSV 等转 Markdown。按文件内容识别格式，
 # 扩展名只在无签名格式（CSV）时兜底。
 anydoc = "0.1.8"
-argon2 = "0.5"
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"
@@ -33,10 +31,11 @@ serde_yaml = "0.9"
 chrono = { workspace = true }
 base64 = "0.22"
 rand = "0.8"
-rsa = { version = "0.9", features = ["sha2"] }
 sha2 = { workspace = true }
 rusqlite = { version = "=0.40.2", features = ["bundled"] }
 shard-core = { path = "../crates/shard-core" }
+# 密匣的加密格式（口令派生、主密钥包裹、信封），与将来的客户端模式、网页端同一格式。
+shard-lockbox = { path = "../crates/shard-lockbox" }
 # 公开内容的领域逻辑（碎片、资料库树、回收站、图片、导图、画布、数据集、XLSX 导入解析），与服务端共用。
 shard-vault = { path = "../crates/shard-vault" }
 # 监听 vault 的外部写入（终端 shard、AI 助手、其他编辑器），macOS 上走 FSEvents。

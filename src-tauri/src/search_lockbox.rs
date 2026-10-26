@@ -161,7 +161,7 @@ fn lease(
 
     let manifest = crate::read_lockbox_manifest(&shard_core::FsVfs::new(vault))
         .map_err(|_| SearchError::Io { retryable: true })?;
-    let write_private_key = crate::decrypt_lockbox_write_private_key(&manifest, &master_key)
+    let write_private_key = manifest.write_private_key(&master_key)
         .map_err(|_| SearchError::Internal { retryable: false })?;
     Ok(LockboxReadLease {
         authorization: LockboxLeaseAuthorization {

@@ -1,0 +1,17 @@
+[package]
+name = "shard-lockbox"
+version = "0.1.3"
+description = "Shard 密匣的加密格式：口令派生、主密钥包裹、免密写入密钥对、信封加解密。不碰文件系统。"
+edition.workspace = true
+publish = false
+
+[dependencies]
+aes-gcm = "0.10"
+argon2 = "0.5"
+base64 = "0.22"
+chrono = { workspace = true }
+rand = "0.8"
+rsa = { version = "0.9", features = ["sha2"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
