@@ -1357,8 +1357,14 @@ impl Drop for Session {
 
 /// 解密一条信封，取载荷里记的真实路径（不合规或解不开时为 None）。
 fn payload_location(envelope: &str, keys: &ReadKeys) -> Option<String> {
-    let plaintext = shard_lockbox::open_text(envelope, keys).ok()?;
+    let parsed = shard_lockbox::Envelope::parse(envelope).ok()?;
+    let plaintext = parsed.open(keys).ok()?;
     let payload: Value = serde_json::from_slice(&plaintext).ok()?;
+    // 密文被换到别的条目上（内容 id 与信封 id 不符）：不采用它记的路径，读取时领域层会拒绝。
+    let content_id = payload.pointer("/frontmatter/id").and_then(Value::as_str);
+    if content_id.is_some_and(|id| id != parsed.id) {
+        return None;
+    }
     payload
         .get(LOCATION_FIELD)
         .and_then(Value::as_str)

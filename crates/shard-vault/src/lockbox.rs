@@ -735,15 +735,24 @@ pub fn read_lockbox_payload_from_text(
     text: &str,
     read_keys: &ReadKeys,
 ) -> Result<LockboxFragmentPayload, String> {
-    let plaintext = shard_lockbox::open_text(text, read_keys)?;
+    let envelope = shard_lockbox::Envelope::parse(text)?;
+    let plaintext = envelope.open(read_keys)?;
     let mut payload =
         serde_json::from_slice::<LockboxFragmentPayload>(&plaintext).map_err(|error| error.to_string())?;
     if let Some(raw) = payload.frontmatter_raw.as_deref() {
         payload.frontmatter =
             serde_yaml::from_str(raw).map_err(|error| format!("密匣 frontmatter 无效：{error}"))?;
     }
+    // 信封 id 是明文、内容里的 id 在密文里：两者不一致说明密文被换到了别的条目上（例如被篡改的服务器
+    // 对调两条信封的密文）。拒绝读取，不把 A 的内容当成 B 显示或写回。
+    if payload.frontmatter.id != envelope.id {
+        return Err(MISMATCHED_ENVELOPE_ERROR.to_string());
+    }
     Ok(payload)
 }
+
+/// 信封 id 与内容里的 id 不一致。
+pub const MISMATCHED_ENVELOPE_ERROR: &str = "密匣条目的内容与编号不符，可能被篡改，已拒绝读取。";
 
 /// 密匣碎片的标签：规范化后去掉密匣标签与 `inbox`，排序去重。
 pub fn normalize_lockbox_tags(tags: Vec<String>) -> Vec<String> {

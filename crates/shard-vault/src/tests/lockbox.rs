@@ -679,3 +679,29 @@ fn tag_and_image_rules_are_pure() {
     assert!(reject_lockbox_images("第一行\n![x](y)\n").is_err());
     assert!(reject_lockbox_images("没有图片").is_ok());
 }
+
+/// 被篡改的服务器把两条信封的密文对调：信封 id 是明文、内容 id 在密文里，读取时发现不符就拒绝，
+/// 不把 A 的内容当成 B 显示或写回。
+#[test]
+fn swapped_ciphertexts_are_rejected() {
+    on_both_with_lockbox(|bench| {
+        let cx = bench.cx();
+        let keys = fixture_keys();
+        let first = create_lockbox_fragment(&cx, Some(&keys), "第一条私密", vec![]).unwrap();
+        let second = create_lockbox_fragment(&cx, Some(&keys), "第二条私密", vec![]).unwrap();
+        let (first_path, second_path) = (bench.path(&first.path), bench.path(&second.path));
+        let mut a = Envelope::parse(&bench.read(&first.path)).unwrap();
+        let mut b = Envelope::parse(&bench.read(&second.path)).unwrap();
+        std::mem::swap(&mut a.nonce, &mut b.nonce);
+        std::mem::swap(&mut a.ciphertext, &mut b.ciphertext);
+        std::mem::swap(&mut a.key_algorithm, &mut b.key_algorithm);
+        std::mem::swap(&mut a.key_ciphertext, &mut b.key_ciphertext);
+        bench.vfs().write_atomic(&first_path, a.to_text().unwrap().as_bytes()).unwrap();
+        bench.vfs().write_atomic(&second_path, b.to_text().unwrap().as_bytes()).unwrap();
+
+        let refused = read_lockbox_payload(bench.vfs(), &first_path, &keys).unwrap_err();
+        assert_eq!(refused, MISMATCHED_ENVELOPE_ERROR);
+        assert_eq!(read_lockbox_payload(bench.vfs(), &second_path, &keys).unwrap_err(), MISMATCHED_ENVELOPE_ERROR);
+        vec![refused]
+    });
+}
