@@ -91,6 +91,10 @@ impl From<String> for RpcError {
     fn from(message: String) -> Self {
         if message.starts_with("STALE_BASE") {
             Self::new(StatusCode::CONFLICT, "STALE_BASE", message)
+        } else if message.starts_with("找不到") {
+            // 领域函数的「找不到片段 / 碎片 / 文件 / 资料库条目 …」：状态码 404，离线补交据此判断「服务器已删除」，
+            // 不靠文字。错误码仍是 COMMAND_FAILED：命令行按错误码映射，本地与远程同一种结果。
+            Self::new(StatusCode::NOT_FOUND, "COMMAND_FAILED", message)
         } else {
             Self::new(StatusCode::BAD_REQUEST, "COMMAND_FAILED", message)
         }

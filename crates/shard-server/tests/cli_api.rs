@@ -417,7 +417,8 @@ async fn tags_documents_and_library_listing() {
     );
     let sub = h.ok("list_library", json!({ "folder": "读书" })).await;
     assert_eq!(kinds_and_paths(&sub), ["note:notes/读书/书单.md", "note:notes/读书/置身事内.md"]);
-    h.error("list_library", json!({ "folder": "没有这个" }), StatusCode::BAD_REQUEST, "COMMAND_FAILED").await;
+    // 找不到：状态码 404（离线补交据此判断已删除），错误码照旧（命令行本地与远程一致）。
+    h.error("list_library", json!({ "folder": "没有这个" }), StatusCode::NOT_FOUND, "COMMAND_FAILED").await;
 
     // 与 CLI 本地同一份实现：示例资料库目录上直接列，结果相同（服务端多一篇刚建的笔记）。
     let local = shared::list_library_items(&FsVfs::new(golden()), None).unwrap();
