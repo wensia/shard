@@ -265,7 +265,8 @@ async fn sealing_a_public_fragment_leaves_no_plaintext_behind() {
     assert_eq!(stale.status, StatusCode::CONFLICT);
 
     let sealed_reply = h.ok("seal_fragment_into_lockbox", json!({ "fragmentId": id, "expectedFileSha": updated["fileSha"], "item": item })).await;
-    assert!(sealed_reply["removedPath"].as_str().unwrap().starts_with("fragments/"));
+    assert!(sealed_reply.get("removedPath").is_none(), "响应存进幂等记录，不能带公开路径");
+    assert_eq!(sealed_reply["item"]["id"], id.as_str());
     let fragments = h.ok("list_fragments", json!({})).await;
     assert!(!fragments["fragments"].as_array().unwrap().iter().any(|fragment| fragment["id"] == id.as_str()));
     // 明文历史不可找回。
@@ -353,4 +354,35 @@ async fn browser_sessions_need_a_fresh_passkey_to_replace_the_manifest() {
     assert_eq!(disabled.status, StatusCode::FORBIDDEN);
     assert_eq!(disabled.body["code"], "LOCKBOX_WEB_DISABLED");
     assert_eq!(h.ok("lockbox_snapshot", json!({})).await["manifest"]["sha"], manifest_sha);
+}
+
+/// 移入密匣的笔记：标题既不留在密匣路径里，也不留在变化日志里；游标更早的客户端改走全量对账。
+#[tokio::test]
+async fn sealed_note_titles_leave_no_trace_in_the_change_log() {
+    let h = Harness::new().await;
+    let (manifest, _) = new_manifest();
+    h.ok("lockbox_apply", json!({ "manifest": { "body": manifest.to_text().unwrap(), "expectedSha": null } })).await;
+
+    const TITLE: &str = "CANARY标题-离婚协议";
+    let created = h.ok("create_library_note", json!({ "title": TITLE })).await;
+    let note = created["fragment"].clone();
+    let id = note["id"].as_str().unwrap().to_string();
+    assert!(note["path"].as_str().unwrap().contains(TITLE));
+    let before = h.ok("server_status", json!({})).await["headSeq"].as_i64().unwrap();
+
+    let item = json!({ "id": id, "envelope": sealed(&manifest, &id, "正文"), "path": format!("lockbox/notes/{id}.shard") });
+    h.ok("seal_fragment_into_lockbox", json!({ "fragmentId": id, "expectedFileSha": note["fileSha"], "item": item })).await;
+
+    for name in ["shard.db", "shard.db-wal"] {
+        let bytes = std::fs::read(h.db_file(name)).unwrap_or_default();
+        assert!(!contains(&bytes, TITLE.as_bytes()), "{name} 里还有标题");
+    }
+    // 移入前的游标：服务器要求全量对账（410），而不是交出抹掉的路径。
+    let stale = h
+        .app
+        .clone()
+        .oneshot(h.browser(Method::GET, &format!("/api/sync/changes?since={before}")).body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(stale.status(), StatusCode::GONE);
 }

@@ -710,7 +710,8 @@ fn finalize(
     }
 
     // 移入密匣的公开内容：连同全部明文修订、幂等记录里带正文的响应一起抹掉（本事务自己的响应不含正文）。
-    for node_id in vfs.take_erase_on_commit() {
+    let erased = vfs.take_erase_on_commit();
+    for &node_id in &erased {
         conn.execute(
             "UPDATE txns SET response = NULL
              WHERE txn_id <> ?2 AND txn_id IN (SELECT txn_id FROM revisions WHERE node_id = ?1
@@ -729,6 +730,10 @@ fn finalize(
         "UPDATE txns SET first_seq = ?1, last_seq = ?2 WHERE txn_id = ?3",
         params![first_seq, last_seq, txn_id],
     )?;
+    // 变化日志里的旧路径（常含标题）也抹掉；保留下限推进到本事务。
+    if !erased.is_empty() {
+        history::scrub_change_paths(conn, &erased, last_seq.unwrap_or(0))?;
+    }
     Ok(Committed { txn_id, changes, lockbox_changed, last_seq })
 }
 

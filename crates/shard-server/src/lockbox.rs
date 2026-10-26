@@ -230,7 +230,8 @@ fn seal_fragment_into_lockbox(env: &RpcEnv<'_>, args: Value) -> Result<Value, Rp
         vfs.remove_file(&public).map_err(io_error)?;
         vfs.put_lockbox_item(&args.item.id, &args.item.envelope, version, Some(&args.item.path)).map_err(io_error)?;
         let written = vfs.lockbox_item_entry(&args.item.id).map_err(io_error)?.expect("刚写入");
-        Ok(json!({ "removedPath": rel, "item": { "id": written.id, "sha": written.sha, "revision": written.revision, "path": written.path } }))
+        // 响应会存进幂等记录：不带公开路径（常含标题），客户端本来就知道移的是哪一条。
+        Ok(json!({ "item": { "id": written.id, "sha": written.sha, "revision": written.revision, "path": written.path } }))
     })?;
     // 明文刚被删掉：把 WAL 里的旧页也清掉（有读者占着时留到下次检查点）。
     if let Err(error) = env.store.truncate_wal() {

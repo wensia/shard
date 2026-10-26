@@ -185,6 +185,7 @@ impl Store {
         let conn = self.writer.lock().expect("写连接锁中毒");
         let tx = rusqlite::Transaction::new_unchecked(&conn, TransactionBehavior::Immediate)?;
         let mut blob_shas = Vec::new();
+        let mut erased = Vec::new();
         for &node_id in node_ids {
             let purged: Option<bool> = tx
                 .query_row(
@@ -210,7 +211,12 @@ impl Store {
                 params![node_id],
             )?;
             report.revisions += tx.execute("DELETE FROM revisions WHERE node_id = ?1", params![node_id])?;
+            erased.push(node_id);
             report.nodes += 1;
+        }
+        if !erased.is_empty() {
+            let head: i64 = tx.query_row("SELECT COALESCE(MAX(seq), 0) FROM changes", [], |row| row.get(0))?;
+            scrub_change_paths(&tx, &erased, head)?;
         }
         blob_shas.sort();
         blob_shas.dedup();
@@ -254,6 +260,23 @@ impl Store {
         }
         self.erase_purged(&node_ids)
     }
+}
+
+/// 抹掉这些条目在变化日志里的路径（路径常含标题）：换成不含信息的占位，并把保留下限推进到 `up_to_seq`——
+/// 游标更早的客户端会收到 resync、改走全量对账（对账结果本来就没有这个路径），同步依然正确。
+/// 在线的客户端已经实时收到过这次变化，不受影响。
+pub(crate) fn scrub_change_paths(conn: &Connection, node_ids: &[i64], up_to_seq: i64) -> rusqlite::Result<()> {
+    for node_id in node_ids {
+        conn.execute(
+            "UPDATE changes SET key = '[erased]/' || node_id WHERE node_id = ?1 AND scope = 'public'",
+            params![node_id],
+        )?;
+    }
+    conn.execute(
+        "UPDATE meta SET value = CAST(?1 AS TEXT) WHERE key = 'changes_floor_seq' AND CAST(value AS INTEGER) < ?1",
+        params![up_to_seq],
+    )?;
+    Ok(())
 }
 
 /// 检查点并把 WAL 截成 0 字节；有读者占着旧快照时返回 false（下次再截）。

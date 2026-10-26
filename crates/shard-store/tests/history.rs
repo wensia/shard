@@ -172,6 +172,12 @@ fn erasing_purged_history_leaves_no_plaintext_in_the_databases() {
         let bytes = file_bytes(&dir.path().join(name));
         assert!(!contains(&bytes, CANARY.as_bytes()), "{name} 里还有原文");
     }
+    // 变化日志里的路径（常含标题）也抹掉，保留下限推进：游标更早的客户端改走全量对账。
+    for name in ["shard.db", "shard.db-wal"] {
+        assert!(!contains(&file_bytes(&dir.path().join(name)), b"notes/secret"), "{name} 里还有路径");
+    }
+    let page = store.changes_since(0, 10).unwrap();
+    assert!(page.floor_seq >= page.head_seq && page.head_seq > 0);
     // 不相干的条目不受影响。
     assert_eq!(store.read(|vfs| vfs.read(&p("notes/keep.md")).unwrap()).unwrap(), b"unrelated");
 }
