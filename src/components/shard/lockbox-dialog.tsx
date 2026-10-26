@@ -9,6 +9,8 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react"
 import { save } from "@tauri-apps/plugin-dialog"
+import { isWebRuntime } from "@/lib/transport"
+import { downloadBlob } from "@/lib/web-files"
 import { ArrowBigUpIcon, EyeIcon, EyeOffIcon, XIcon } from "@/components/icons"
 
 import { Button } from "@/components/ui/button"
@@ -597,6 +599,11 @@ function RecoveryKeyStep({
   async function downloadRecoveryKey() {
     setIsDownloading(true)
     try {
+      if (isWebRuntime()) {
+        downloadBlob(new Blob([`${recoveryKey}\n`], { type: "text/plain" }), getRecoveryKeyFileName(code))
+        notify.success("恢复密钥已下载")
+        return
+      }
       const path = await save({
         defaultPath: getRecoveryKeyFileName(code),
         filters: [{ name: "Text", extensions: ["txt"] }],

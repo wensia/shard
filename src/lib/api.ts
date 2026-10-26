@@ -4,6 +4,8 @@ import { deriveKind } from "@/lib/content-kind"
 import { migrateLockboxMarkdownDialect, migratePublicMarkdownDialect } from "@/lib/markdown-dialect-migration"
 import type { PropertyRequestValue, PropertyType } from "@/lib/properties"
 import { transport } from "@/lib/transport"
+import { uploadBlob } from "@/lib/transport/http"
+import { downloadBlob, fileBytes } from "@/lib/web-files"
 import type { CanvasFile } from "@/features/canvas/model"
 import type { DatasetSnapshot } from "@/features/datasets/types"
 import type {
@@ -255,6 +257,12 @@ export function openCsvFile(path: string) {
   return desktopInvoke<void>("open_csv_file", { path })
 }
 
+/** 网页端替代「用默认程序打开」：把资料库里的 CSV 原字节下载成文件。 */
+export async function downloadVaultCsv(path: string) {
+  const bytes = new Uint8Array(await readCsvFile(path))
+  downloadBlob(new Blob([bytes], { type: "text/csv" }), path.split("/").pop() || "数据集.csv")
+}
+
 export function createMindMap(title: string, sourceFragmentId?: string, parentPath?: string) {
   return desktopInvoke<MindMapReadResult>("create_mind_map", {
     title,
@@ -440,6 +448,15 @@ export function saveImageAttachmentFromPath(path: string) {
 /** 把访达里的图片按原文件名复制进资料库目录（缺省 notes/ 根），重名加 -2。 */
 export function importLibraryFiles(paths: string[], directory?: string | null) {
   return desktopInvoke<LibraryImportResult>("import_library_files", { paths, directory: directory ?? null })
+}
+
+/** 网页端导入图片：浏览器选的文件先按内容哈希上传，再按原文件名放进资料库目录。 */
+export async function importLibraryUploads(files: File[], directory?: string | null) {
+  const uploads = []
+  for (const file of files) {
+    uploads.push({ name: file.name, blobSha: await uploadBlob(await fileBytes(file)) })
+  }
+  return desktopInvoke<LibraryImportResult>("import_library_blobs", { files: uploads, directory: directory ?? null })
 }
 
 /** 用到这张图片的公开文档与表格（vault 相对路径，不含回收站）。 */

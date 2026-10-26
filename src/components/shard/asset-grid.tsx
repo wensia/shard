@@ -14,6 +14,7 @@ import { formatBytes, formatModifiedAt } from "@/lib/file-metadata"
 import { libraryEntryName, libraryEntryTypeLabel } from "@/lib/library-entry"
 import { vaultImageUrl } from "@/lib/fragment-images"
 import { notify } from "@/lib/notify"
+import { isWebRuntime } from "@/lib/transport"
 import {
   loadLibraryPreview,
   type LibraryPreview,
@@ -523,6 +524,11 @@ export function AssetViewer({
 
   async function openWithDefaultApp() {
     try {
+      // 网页打不开本机程序：在新标签页里看原图。
+      if (isWebRuntime()) {
+        window.open(vaultImageUrl(asset.path), "_blank", "noopener,noreferrer")
+        return
+      }
       await openVaultImage(asset.path)
     } catch (error) {
       notify.failure("图片打开失败", error)
@@ -550,22 +556,24 @@ export function AssetViewer({
           <ArrowLeftIcon aria-hidden="true" />
           {backLabel}
         </Button>
+        {isWebRuntime() ? null : (
+          <Button
+            aria-label="在访达中显示"
+            onClick={() => void revealInDir()}
+            size="sm"
+            variant="ghost"
+          >
+            <FolderOpenIcon aria-hidden="true" />
+            在访达中显示
+          </Button>
+        )}
         <Button
-          aria-label="在访达中显示"
-          onClick={() => void revealInDir()}
-          size="sm"
-          variant="ghost"
-        >
-          <FolderOpenIcon aria-hidden="true" />
-          在访达中显示
-        </Button>
-        <Button
-          aria-label="用默认应用打开"
+          aria-label={isWebRuntime() ? "在新标签页打开" : "用默认应用打开"}
           onClick={() => void openWithDefaultApp()}
           size="sm"
           variant="ghost"
         >
-          用默认应用打开
+          {isWebRuntime() ? "在新标签页打开" : "用默认应用打开"}
         </Button>
         <Button
           aria-label="复制图片引用"

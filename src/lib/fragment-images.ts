@@ -3,6 +3,7 @@ import { save } from "@tauri-apps/plugin-dialog"
 
 import { readFragmentImage, saveExportedImage } from "@/lib/api"
 import { transport } from "@/lib/transport"
+import { downloadBlob } from "@/lib/web-files"
 
 const URL_LIKE_PATTERN = /^(?:[a-z][a-z\d+.-]*:|\/\/)/i
 export const ATTACHMENT_SCHEME = "shard-attachment:"
@@ -110,14 +111,6 @@ async function blobToBytes(blob: Blob) {
   return Array.from(new Uint8Array(buffer))
 }
 
-function downloadBlob(blob: Blob, fileName: string) {
-  const url = URL.createObjectURL(blob)
-  const anchor = document.createElement("a")
-  anchor.href = url
-  anchor.download = fileName
-  anchor.click()
-  URL.revokeObjectURL(url)
-}
 
 function fragmentImageDownloadFileName(path: string, alt: string, mimeType: string) {
   const extension = imageExtensionForMimeType(mimeType) ?? imageExtensionFromPath(path)

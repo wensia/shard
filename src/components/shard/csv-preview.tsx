@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react"
 
-import { getApiErrorMessage, openCsvFile, readCsvFile } from "@/lib/api"
+import { downloadVaultCsv, getApiErrorMessage, openCsvFile, readCsvFile } from "@/lib/api"
+import { isWebRuntime } from "@/lib/transport"
 import { isNonUtf8CsvEncoding, type CsvDocument } from "@/lib/csv"
 import { parseCsvBytesInWorker } from "@/lib/csv-worker"
 import { notify } from "@/lib/notify"
@@ -75,7 +76,8 @@ export function CsvPreview({ maxRows, path }: CsvPreviewProps) {
     if (isOpening) return
     setIsOpening(true)
     try {
-      await openCsvFile(path)
+      if (isWebRuntime()) await downloadVaultCsv(path)
+      else await openCsvFile(path)
     } catch (error) {
       notify.failure("CSV 文件打开失败", error)
     } finally {
@@ -154,7 +156,7 @@ export function CsvPreview({ maxRows, path }: CsvPreviewProps) {
           onClick={() => void openWithDefaultProgram()}
           type="button"
         >
-          {isOpening ? "正在打开…" : "用默认程序打开"}
+          {isOpening ? "正在打开…" : isWebRuntime() ? "下载 CSV" : "用默认程序打开"}
         </button>
         {isNonUtf8CsvEncoding(document.encoding) ? (
           <span className={styles.encoding}>

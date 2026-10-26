@@ -31,6 +31,8 @@ import { openDatasetEditor } from "@/features/datasets/open-dataset"
 import { createDataset } from "@/features/datasets/api"
 import { parseCsvBytesInWorker } from "@/lib/csv-worker"
 import { notify } from "@/lib/notify"
+import { isWebRuntime } from "@/lib/transport"
+import { downloadBlob } from "@/lib/web-files"
 import { extractDatatableInWorker } from "@/lib/datatable-extraction-worker"
 import {
   addDatatableColumn,
@@ -256,9 +258,15 @@ function DatatableSurface({ spec, readOnly, onChange, allowDatasetActions }: Dat
     if (isExporting) return
     setIsExporting(true)
     try {
+      const name = (spec.title || DEFAULT_TITLE).replace(/[\\/:*?"<>|]/gu, "_")
+      if (isWebRuntime()) {
+        const text = datatableToCsv(columns, groups ? groups.flatMap((item) => item.entries) : entries)
+        downloadBlob(new Blob([text], { type: "text/csv" }), `${name}.csv`)
+        notify.success("数据表已导出为 CSV")
+        return
+      }
       const { save } = await import("@tauri-apps/plugin-dialog")
       const { writeExportFile } = await import("@/lib/export-file")
-      const name = (spec.title || DEFAULT_TITLE).replace(/[\\/:*?"<>|]/gu, "_")
       const chosen = await save({
         defaultPath: `${name}.csv`,
         filters: [{ extensions: ["csv"], name: "CSV" }],

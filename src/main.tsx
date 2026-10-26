@@ -1,5 +1,6 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
+import { isTauri } from "@tauri-apps/api/core";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import App from "./App";
@@ -12,6 +13,9 @@ import "@fontsource/noto-sans-sc/600.css";
 
 initAccentTheme();
 initColorMode();
+
+// 桌面与网页的外壳差异（红绿灯避让等）由根元素上的这个标记切换。
+document.documentElement.dataset.runtime = isTauri() ? "desktop" : "web";
 
 // managed-navigation：Tab 只在编辑区边界兜底，外壳控件恢复原生轮转；F6 切换工作区域。
 installFocusNavigation();

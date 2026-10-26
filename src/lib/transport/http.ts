@@ -77,8 +77,8 @@ async function sha256Hex(bytes: Uint8Array) {
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("")
 }
 
-/** 先按内容哈希上传字节（已有就跳过），再调命令登记。 */
-async function uploadBlob(bytes: Uint8Array) {
+/** 先按内容哈希上传字节（已有就跳过），返回 sha，再由调用方调命令登记。 */
+export async function uploadBlob(bytes: Uint8Array) {
   const sha = await sha256Hex(bytes)
   const url = `/api/blobs/${sha}`
   const head = await request(url, { method: "HEAD" })

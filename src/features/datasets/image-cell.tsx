@@ -3,10 +3,12 @@ import { GridCellKind, type CustomCell, type CustomRenderer, type ProvideEditorC
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog"
 
 import { Button } from "@/components/ui/button"
-import { saveImageAttachmentFromPath } from "@/lib/api"
+import { saveFragmentImage, saveImageAttachmentFromPath } from "@/lib/api"
 import { vaultImageUrl } from "@/lib/fragment-images"
 import { notify } from "@/lib/notify"
 import { parseCellImageRefs } from "@/lib/cell-image-refs"
+import { isWebRuntime } from "@/lib/transport"
+import { fileBytes, IMAGE_FILE_ACCEPT, pickFiles } from "@/lib/web-files"
 
 import "./image-cell.css"
 
@@ -118,7 +120,12 @@ const ImageCellEditor: ProvideEditorComponent<ImageCell> = ({ value, onChange, o
     onChange(cell)
   }
 
-  async function pickImages() {
+  /** 网页：浏览器选图片，按字节存进附件；桌面：系统对话框给本机路径。返回每张图的保存动作。 */
+  async function chooseImageSaves(): Promise<Array<() => Promise<string>>> {
+    if (isWebRuntime()) {
+      const files = await pickFiles({ accept: IMAGE_FILE_ACCEPT, multiple: true })
+      return files.map((file) => async () => saveFragmentImage(file.name, await fileBytes(file)))
+    }
     const chosen = await openFileDialog({
       title: "选择图片",
       multiple: true,
@@ -126,11 +133,16 @@ const ImageCellEditor: ProvideEditorComponent<ImageCell> = ({ value, onChange, o
       filters: [{ name: "图片", extensions: ["png", "jpg", "jpeg", "gif", "webp", "svg", "heic", "heif", "avif"] }],
     })
     const paths = Array.isArray(chosen) ? chosen : typeof chosen === "string" ? [chosen] : []
-    if (paths.length === 0) return
+    return paths.map((path) => () => saveImageAttachmentFromPath(path))
+  }
+
+  async function pickImages() {
+    const saves = await chooseImageSaves()
+    if (saves.length === 0) return
     setBusy(true)
     try {
       const saved: string[] = []
-      for (const path of paths) saved.push(await saveImageAttachmentFromPath(path))
+      for (const save of saves) saved.push(await save())
       // 保存期间用户可能改了文本框：接在最新内容后面。
       update(withAddedImages(rawRef.current, saved))
     } catch (error) {

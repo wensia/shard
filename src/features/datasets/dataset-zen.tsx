@@ -4,7 +4,8 @@ import { notify } from "@/lib/notify"
 import { ZenSurface } from "@/components/shard/zen-surface"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
-import { openCsvFile } from "@/lib/api"
+import { downloadVaultCsv, openCsvFile } from "@/lib/api"
+import { isWebRuntime } from "@/lib/transport"
 import { DatasetEditor, type DatasetEditorHandle } from "./dataset-editor"
 import type { DatasetSnapshot } from "./types"
 
@@ -39,6 +40,11 @@ export const DatasetZen = forwardRef<DatasetZenHandle, { path: string; onClose()
     setBusy(true)
     try {
       if (!await flush()) { notify.error("数据集尚未保存，请先处理保存问题"); return }
+      if (isWebRuntime()) {
+        // 网页打不开本机程序：下载一份副本，改动不会同步回来。
+        await downloadVaultCsv(path)
+        return
+      }
       await openCsvFile(path)
       notify.info("返回 Shard 时会重新载入")
     } catch (error) {
@@ -56,7 +62,7 @@ export const DatasetZen = forwardRef<DatasetZenHandle, { path: string; onClose()
           <div className="truncate text-[length:var(--text-body)] font-semibold">{title}</div>
           <div className="truncate text-[length:var(--text-meta)] text-muted-foreground" title={path}>{path}</div>
         </div>
-        <Button size="sm" variant="outline" disabled={busy} onClick={() => { void openExternal() }}>用默认程序打开</Button>
+        <Button size="sm" variant="outline" disabled={busy} onClick={() => { void openExternal() }}>{isWebRuntime() ? "下载 CSV" : "用默认程序打开"}</Button>
         <Button size="sm" variant="outline" disabled={busy} onClick={() => { void requestClose() }}>关闭</Button>
       </header>
       <div className="min-h-0 min-w-0 flex-1"><DatasetEditor ref={editor} path={path} onSnapshot={onSnapshot} /></div>

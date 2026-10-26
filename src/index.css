@@ -350,6 +350,11 @@
    pointer（默认）：只抑制焦点环，保留控件表面、选中与校验态；零长度阴影在前置
    `inset` 的消费方中同样合法。keyboard（F6 或外壳 Tab 导航后）：恢复 kiln 焦点环，
    非编辑器控件加 outline。正文编辑器始终只靠光标和选区表达焦点，不画整块焦点框。 */
+/* 网页端没有 macOS 红绿灯：侧栏折叠或无侧栏时不必给它让出左边的空位。 */
+:root[data-runtime="web"] {
+  --shard-traffic-light-clearance: 0px;
+}
+
 :root:not([data-focus-mode="keyboard"]) {
   --ring: transparent;
   --sidebar-ring: transparent;

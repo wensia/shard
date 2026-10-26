@@ -64,7 +64,7 @@ import { createCanvas } from "@/features/canvas/api"
 import { createCanvasFile, type CanvasFile, type CanvasReadResult } from "@/features/canvas/model"
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog"
 import { CsvImportDialog, type DatasetImportFile } from "@/features/datasets/csv-import-dialog"
-import { readImportCsvFile, readImportXlsxFile } from "@/features/datasets/api"
+import { readImportCsvFile, readImportXlsxFile, readImportXlsxUpload } from "@/features/datasets/api"
 import type { DatasetSnapshot } from "@/features/datasets/types"
 import {
   ShardRichEditor,
@@ -78,6 +78,7 @@ import {
   importGraphFileToTimeline,
   imageReferences,
   importLibraryFiles,
+  importLibraryUploads,
   listDiagramDocuments,
   listLibraryTree,
   listFragments,
@@ -87,6 +88,7 @@ import {
   getApiErrorMessage,
   moveLibraryEntry,
   purgeFromTrash,
+  readCsvFile,
   renameLibraryEntry,
   restoreFromTrash,
 } from "@/lib/api"
@@ -97,6 +99,8 @@ import { extractTags, normalizeTagList } from "@/lib/editor-format"
 import { libraryEntryName, libraryNameError, type LibrarySort } from "@/lib/library-entry"
 import { isImageFilePath, useNativeFileDrop } from "@/lib/use-native-file-drop"
 import { notify } from "@/lib/notify"
+import { isWebRuntime } from "@/lib/transport"
+import { fileBytes, IMAGE_FILE_ACCEPT, pickFiles } from "@/lib/web-files"
 import { readOutlineContent } from "@/lib/mind-map-outline"
 import { useLibraryFileSelection } from "@/lib/use-library-file-selection"
 import { useImageUpload } from "@/hooks/use-image-upload"
@@ -899,6 +903,11 @@ export function LibraryShell({
 
   async function startImageImport(directory: string) {
     if (busyAction || !(await saveCurrentNote())) return
+    if (isWebRuntime()) {
+      const files = await pickFiles({ accept: IMAGE_FILE_ACCEPT, multiple: true })
+      if (files.length > 0) await importImagesInto(files, directory)
+      return
+    }
     const chosen = await openFileDialog({
       title: "导入图片",
       multiple: true,
@@ -909,11 +918,14 @@ export function LibraryShell({
     if (paths.length > 0) await importImagesInto(paths, directory)
   }
 
-  async function importImagesInto(paths: string[], directory: string) {
+  /** 桌面给本机路径（访达拖入、系统对话框），网页给浏览器选的文件。 */
+  async function importImagesInto(sources: string[] | File[], directory: string) {
     if (busyAction) return
     setBusyAction("导入图片")
     try {
-      const result = await importLibraryFiles(paths, directory)
+      const result = isFileList(sources)
+        ? await importLibraryUploads(sources, directory)
+        : await importLibraryFiles(sources, directory)
       onLibraryMutation({ tree: result.tree, updatedLinks: 0 })
       if (result.imported.length > 0) {
         notify.success(`已导入 ${result.imported.length} 张图片`, {
@@ -1436,9 +1448,25 @@ export function LibraryShell({
     } catch (error) { notify.failure("数据集创建失败", error) }
   }
 
-  /** `source` 为空时弹系统文件选择框；资料库里的 CSV 条目直接传入绝对路径。 */
+  /** 网页：浏览器选 CSV / Excel；CSV 在本地读字节，Excel 交给服务器读第一个工作表。 */
+  async function startWebDatasetImport(parent: string) {
+    const [picked] = await pickFiles({ accept: ".csv,.xlsx,text/csv" })
+    if (!picked) return
+    try {
+      const file: DatasetImportFile = /\.xlsx$/iu.test(picked.name)
+        ? { name: picked.name, workbook: await readImportXlsxUpload(picked) }
+        : { name: picked.name, bytes: await fileBytes(picked) }
+      setDatasetImport({ parent, file })
+    } catch (error) { notify.failure("读取导入文件失败", error) }
+  }
+
+  /** `source` 为空时弹系统文件选择框；资料库里已有的 CSV 走 `importDatasetEntry`。 */
   async function startDatasetImport(parent: string, source?: string) {
     if (busyAction || !(await saveCurrentNote())) return
+    if (!source && isWebRuntime()) {
+      await startWebDatasetImport(parent)
+      return
+    }
     let path = source
     if (!path) {
       const chosen = await openFileDialog({ title: "导入为数据集", multiple: false, directory: false, filters: [{ name: "CSV / Excel", extensions: ["csv", "xlsx"] }] })
@@ -1454,8 +1482,14 @@ export function LibraryShell({
     } catch (error) { notify.failure("读取导入文件失败", error) }
   }
 
-  function importDatasetEntry(entry: LibraryTreeEntry) {
-    void startDatasetImport(entry.path.slice(0, entry.path.lastIndexOf("/")), `${vaultPath.replace(/\/$/u, "")}/${entry.path}`)
+  /** 资料库里已有的 CSV：按资料库相对路径读字节（桌面与网页一致，不依赖本机绝对路径）。 */
+  async function importDatasetEntry(entry: LibraryTreeEntry) {
+    if (busyAction || !(await saveCurrentNote())) return
+    const name = entry.path.split("/").pop() ?? "数据集.csv"
+    try {
+      const bytes = new Uint8Array(await readCsvFile(entry.path))
+      setDatasetImport({ parent: entry.path.slice(0, entry.path.lastIndexOf("/")), file: { name, bytes } })
+    } catch (error) { notify.failure("读取导入文件失败", error) }
   }
 
   async function createNativeMindMap() {
@@ -2699,4 +2733,8 @@ function LibraryEmptyState({ message }: { message: string }) {
       <p>{message}</p>
     </div>
   )
+}
+
+function isFileList(sources: string[] | File[]): sources is File[] {
+  return sources.length > 0 && typeof sources[0] !== "string"
 }

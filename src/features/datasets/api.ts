@@ -1,5 +1,7 @@
 import { getApiErrorMessage } from "@/lib/api"
 import { transport } from "@/lib/transport"
+import { uploadBlob } from "@/lib/transport/http"
+import { fileBytes } from "@/lib/web-files"
 import type { DatasetOp, DatasetSnapshot } from "./types"
 
 function desktopInvoke<T>(command: string, args: Record<string, unknown>): Promise<T> {
@@ -54,6 +56,12 @@ export type XlsxRecords = {
 
 export function readImportXlsxFile(path: string): Promise<XlsxRecords> {
   return desktopInvoke("read_import_xlsx_file", { path })
+}
+
+/** 网页端：浏览器选的 Excel 先上传，再由服务器读第一个工作表（不落进资料库）。 */
+export async function readImportXlsxUpload(file: File): Promise<XlsxRecords> {
+  const blobSha = await uploadBlob(await fileBytes(file))
+  return desktopInvoke("read_import_xlsx_blob", { blobSha })
 }
 
 export async function readImportCsvFile(path: string): Promise<Uint8Array> {

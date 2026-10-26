@@ -35,6 +35,7 @@ import { notify } from "@/lib/notify"
 import { cn } from "@/lib/utils"
 import type { Fragment } from "@/types"
 import styles from "@/components/shard/fragment-image-exporter.module.css"
+import { downloadBlob } from "@/lib/web-files"
 
 interface FragmentImageExporterProps {
   fragment: Fragment | null
@@ -612,14 +613,3 @@ function fitCanvasToContainer(
   canvas.style.height = `${Math.round(canvasHeight * scale)}px`
 }
 
-function downloadBlob(blob: Blob, fileName: string) {
-  const url = URL.createObjectURL(blob)
-  const anchor = document.createElement("a")
-  anchor.href = url
-  anchor.download = fileName
-  anchor.rel = "noreferrer"
-  document.body.append(anchor)
-  anchor.click()
-  anchor.remove()
-  window.setTimeout(() => URL.revokeObjectURL(url), 1000)
-}
