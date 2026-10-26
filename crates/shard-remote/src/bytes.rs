@@ -1,10 +1,12 @@
 //! 带令牌读写字节：桌面在线客户端代理图片（`GET /api/files/…`）、读修订原文（`/api/history/…`）、
-//! 上传附件（`HEAD/PUT /api/blobs/<sha>`）。RPC 之外的这几条路径都是幂等的，网络失败照样按客户端的
-//! 重试间隔重试。
+//! 上传附件（`HEAD/PUT /api/blobs/<sha>`）；桌面副本的同步端点（`/api/sync/*`，JSON）。RPC 之外的这几条
+//! 路径都是幂等的，网络失败照样按客户端的重试间隔重试。
 
 use std::thread;
 
-use crate::client::{describe_transport, Client, RemoteError};
+use serde_json::Value;
+
+use crate::client::{describe_transport, error_body, post_json, Client, RemoteError, MAX_RESPONSE_BYTES};
 
 /// 单个文件的读取上限（与服务器 `/api/files` 的上限一致）。
 pub const MAX_FETCH_BYTES: u64 = 64 * 1024 * 1024;
@@ -102,6 +104,64 @@ impl Client {
     }
 }
 
+impl Client {
+    /// `GET <服务器>/<path>` 读 JSON（`api/sync/changes?since=…`、`api/sync/manifest`）。
+    /// 网络失败与 502/503/504 按重试间隔重试；其他非 2xx 返回服务器给的错误码（例如 410 `RESYNC_REQUIRED`）。
+    pub fn get_json(&self, path: &str) -> Result<Value, RemoteError> {
+        self.json_request(path, None)
+    }
+
+    /// `POST <服务器>/<path>` 发 JSON、读 JSON（`api/sync/fetch`）。只用于幂等的读取类端点。
+    pub fn post_json(&self, path: &str, body: &Value) -> Result<Value, RemoteError> {
+        self.json_request(path, Some(body))
+    }
+
+    fn json_request(&self, path: &str, body: Option<&Value>) -> Result<Value, RemoteError> {
+        let url = self.url(path);
+        let headers = [("Authorization", format!("Bearer {}", self.token()))];
+        let mut delays = self.options().retry_delays.iter();
+        loop {
+            let attempt = match body {
+                Some(body) => post_json(self.agent(), &url, &headers, body),
+                None => self.get_text(&url, &headers[0].1),
+            };
+            let error = match attempt {
+                Ok((status, text)) if (200..300).contains(&status) => {
+                    return serde_json::from_str(&text).map_err(|error| {
+                        self.error(path, Some(status), "BAD_RESPONSE", format!("服务器响应无法解析：{error}"), None)
+                    });
+                }
+                Ok((status, text)) => {
+                    let (code, message, detail) = error_body(status, &text);
+                    self.error(path, Some(status), &code, message, detail)
+                }
+                Err(message) => self.error(path, None, "NETWORK", format!("连不上 Shard 服务器：{message}"), None),
+            };
+            match delays.next() {
+                Some(delay) if error.is_retryable() => thread::sleep(*delay),
+                _ => return Err(error),
+            }
+        }
+    }
+
+    fn get_text(&self, url: &str, authorization: &str) -> Result<(u16, String), String> {
+        let mut response = self
+            .agent()
+            .get(url)
+            .header("Authorization", authorization)
+            .call()
+            .map_err(|error| describe_transport(&error))?;
+        let status = response.status().as_u16();
+        let text = response
+            .body_mut()
+            .with_config()
+            .limit(MAX_RESPONSE_BYTES)
+            .read_to_string()
+            .map_err(|error| describe_transport(&error))?;
+        Ok((status, text))
+    }
+}
+
 fn sha256_hex(bytes: &[u8]) -> String {
     use sha2::{Digest, Sha256};
     Sha256::digest(bytes).iter().map(|byte| format!("{byte:02x}")).collect()
@@ -163,6 +223,37 @@ mod tests {
         let methods: Vec<&str> = seen.iter().map(|(method, _, _)| method.as_str()).collect();
         assert_eq!(methods, ["HEAD", "HEAD", "PUT"]);
         assert_eq!(seen[2].2, "new");
+    }
+
+    #[test]
+    fn sync_endpoints_send_the_token_retry_gateways_and_keep_error_codes() {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let log = Arc::clone(&seen);
+        let server = fake_server(move |request| {
+            let mut log = log.lock().unwrap();
+            log.push((request.method.clone(), request.path.clone(), request.body.clone()));
+            assert_eq!(request.header("authorization"), Some("Bearer shd_dev_t"));
+            match (request.method.as_str(), request.path.as_str(), log.len()) {
+                ("GET", "/api/sync/changes?since=7&limit=500", 1) => Reply::status(503, ""),
+                ("GET", "/api/sync/changes?since=7&limit=500", _) => Reply::json(200, &serde_json::json!({ "headSeq": 9 })),
+                ("GET", "/api/sync/changes?since=1&limit=500", _) => Reply::json(
+                    410,
+                    &serde_json::json!({ "code": "RESYNC_REQUIRED", "message": "游标已过保留期，请全量对账。" }),
+                ),
+                ("POST", "/api/sync/fetch", _) => Reply::json(200, &serde_json::json!({ "items": [] })),
+                _ => Reply::status(404, ""),
+            }
+        });
+        let client = Client::new(&server, "shd_dev_t", options()).unwrap();
+        assert_eq!(client.get_json("api/sync/changes?since=7&limit=500").unwrap()["headSeq"], 9);
+        let gone = client.get_json("api/sync/changes?since=1&limit=500").unwrap_err();
+        assert_eq!((gone.status, gone.code.as_str()), (Some(410), "RESYNC_REQUIRED"));
+        assert!(!gone.is_retryable());
+        let fetched = client.post_json("api/sync/fetch", &serde_json::json!({ "paths": ["a.md"] })).unwrap();
+        assert_eq!(fetched["items"], serde_json::json!([]));
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 4, "503 重试一次，410 不重试：{seen:?}");
+        assert_eq!(seen[3].2, r#"{"paths":["a.md"]}"#);
     }
 
     #[test]

@@ -4230,6 +4230,8 @@ pub fn run() {
             remote_client::remote_upload_blob,
             remote_client::remote_save_image_from_path,
             remote_client::remote_import_library_files,
+            remote_client::remote_sync_now,
+            remote_client::remote_sync_dismiss,
             search_commands::search_vault,
             search_commands::read_search_target,
             watch_vault,

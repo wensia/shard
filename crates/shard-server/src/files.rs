@@ -198,12 +198,16 @@ async fn sync_changes(
 
 async fn sync_manifest(State(state): State<AppState>, _caller: Caller) -> Result<Json<Value>, ApiError> {
     let store = state.store.clone();
-    let (entries, epoch, head) = tokio::task::spawn_blocking(move || {
-        Ok::<_, shard_store::StoreError>((store.manifest()?, store.meta("epoch")?.unwrap_or_default(), store.head_seq()?))
+    // 条目与 head 在同一把锁下读出：分开读的话中间插进的提交会被客户端的新游标跳过。
+    let (entries, vault_id, epoch, head) = tokio::task::spawn_blocking(move || {
+        let vault_id = store.meta("vault_id")?.unwrap_or_default();
+        let epoch = store.meta("epoch")?.unwrap_or_default();
+        let (entries, head) = store.manifest_at_head()?;
+        Ok::<_, shard_store::StoreError>((entries, vault_id, epoch, head))
     })
     .await
     .map_err(ApiError::internal)??;
-    Ok(Json(json!({ "epoch": epoch, "headSeq": head, "entries": entries })))
+    Ok(Json(json!({ "vaultId": vault_id, "epoch": epoch, "headSeq": head, "entries": entries })))
 }
 
 #[derive(Deserialize)]
@@ -211,7 +215,16 @@ struct FetchBody {
     paths: Vec<String>,
 }
 
-/// 批量取内容（内联文件）；大文件只给 sha，客户端再走 `/api/blobs`。
+/// 条目的创建、修改时间（RFC 3339，微秒，UTC）：桌面副本据此写回，资料库树的排序与时间显示与服务器一致。
+fn entry_times(metadata: &shard_core::VfsMetadata) -> (Option<String>, Option<String>) {
+    let text = |time: std::time::SystemTime| {
+        chrono::DateTime::<chrono::Utc>::from(time).to_rfc3339_opts(chrono::SecondsFormat::Micros, true)
+    };
+    (metadata.created().ok().map(text), metadata.modified().ok().map(text))
+}
+
+/// 批量取内容（内联文件）；大文件只给 sha，客户端再走 `/api/blobs`。都带创建、修改时间；
+/// 目录只给 `kind: "dir"` 与时间（没有 sha，网页端按「不是文件」处理）。
 async fn sync_fetch(
     State(state): State<AppState>,
     _caller: Caller,
@@ -227,13 +240,21 @@ async fn sync_fetch(
                 .iter()
                 .map(|path| {
                     let abs = vfs.root().join(path.trim_start_matches('/'));
-                    match (vfs.metadata(&abs), vfs.content_sha(&abs)) {
-                        (Ok(metadata), Ok(sha)) if metadata.is_file() => {
+                    match vfs.metadata(&abs) {
+                        Ok(metadata) if metadata.is_dir() => {
+                            let (created, modified) = entry_times(&metadata);
+                            json!({ "path": path, "kind": "dir", "createdAt": created, "modifiedAt": modified })
+                        }
+                        Ok(metadata) if metadata.is_file() => {
+                            let Ok(sha) = vfs.content_sha(&abs) else {
+                                return json!({ "path": path, "missing": true });
+                            };
+                            let (created, modified) = entry_times(&metadata);
                             if metadata.len() as usize > shard_store::INLINE_MAX {
-                                json!({ "path": path, "sha": sha, "blob": true })
+                                json!({ "path": path, "sha": sha, "blob": true, "createdAt": created, "modifiedAt": modified })
                             } else {
                                 let data = vfs.read(&abs).map(|bytes| STANDARD.encode(bytes)).ok();
-                                json!({ "path": path, "sha": sha, "data": data })
+                                json!({ "path": path, "sha": sha, "data": data, "createdAt": created, "modifiedAt": modified })
                             }
                         }
                         _ => json!({ "path": path, "missing": true }),

@@ -1,0 +1,29 @@
+[package]
+name = "shard-sync"
+version = "0.1.3"
+description = "桌面连接服务器后的同步引擎：副本（已确认层）+ overlay + outbox，离线读、离线写允许的子集，联网后收敛。不依赖 Tauri。"
+edition.workspace = true
+publish = false
+
+[dependencies]
+base64 = "0.22"
+chrono = { workspace = true }
+rand = "0.8"
+# 与 shard-store 同一版本：libsqlite3-sys 在依赖图里只能出现一次。
+rusqlite = { version = "=0.40.2", features = ["bundled"] }
+serde = { workspace = true }
+# 与服务端一致：画布坐标经 JSON 往返保持 IEEE-754 精确值。
+serde_json = { workspace = true, features = ["float_roundtrip"] }
+sha2 = { workspace = true }
+shard-core = { path = "../shard-core" }
+shard-remote = { path = "../shard-remote" }
+shard-store = { path = "../shard-store" }
+shard-vault = { path = "../shard-vault" }
+
+[dev-dependencies]
+tempfile = "3"
+# 集成测试：测试进程里起真的 shard-server（不打开 test-auth），前面挡一个可断网的转发代理。
+axum = "0.8"
+shard-server = { path = "../shard-server" }
+tokio = { version = "1", features = ["full"] }
+ureq = { version = "3", default-features = false, features = ["rustls"] }

@@ -11,7 +11,7 @@ use serde_json::Value;
 use std::{fmt, sync::Arc, thread, time::Duration};
 
 /// 响应体上限：`list_documents` 带正文时是整个资料库的文本。
-const MAX_RESPONSE_BYTES: u64 = 512 * 1024 * 1024;
+pub(crate) const MAX_RESPONSE_BYTES: u64 = 512 * 1024 * 1024;
 
 /// 默认的重试基准间隔：第一次重试等 400 毫秒，第二次等 1.2 秒，之后放弃。
 const DEFAULT_RETRY_BASE: Duration = Duration::from_millis(400);
@@ -236,6 +236,12 @@ impl Client {
         self.call(command, &args, Some(key))
     }
 
+    /// 同 [`Client::write_with_key`]，时区偏移也由调用方给：离线时记下的操作按当时的时区补交
+    /// （碎片 id、月份目录与时间都按它算），不随补交时本机时区变化。
+    pub fn write_with_key_at(&self, command: &str, args: &Value, key: &str, utc_offset: i32) -> Result<Value, RemoteError> {
+        self.call_at(command, args, Some(key), utc_offset)
+    }
+
     /// 读命令并反序列化成 `T`；缺字段报 `BAD_RESPONSE`。
     pub fn read_as<T: serde::de::DeserializeOwned>(&self, command: &str, args: Value, what: &str) -> Result<T, RemoteError> {
         let value = self.read(command, args)?;
@@ -251,10 +257,14 @@ impl Client {
     /// 发一次 RPC：`key` 为 `None` 时不带幂等键（读命令）。网络失败与 502/503/504 按
     /// [`ClientOptions::retry_delays`] 重试，每次都用同一个键。
     pub fn call(&self, command: &str, args: &Value, key: Option<&str>) -> Result<Value, RemoteError> {
+        self.call_at(command, args, key, utc_offset_minutes())
+    }
+
+    fn call_at(&self, command: &str, args: &Value, key: Option<&str>, utc_offset: i32) -> Result<Value, RemoteError> {
         let url = format!("{}/api/rpc/{command}", self.inner.server);
         let mut headers = vec![
             ("Authorization", format!("Bearer {}", self.inner.token)),
-            ("X-Shard-UTC-Offset", utc_offset_minutes().to_string()),
+            ("X-Shard-UTC-Offset", utc_offset.to_string()),
         ];
         if let Some(key) = key {
             headers.push(("Idempotency-Key", key.to_string()));

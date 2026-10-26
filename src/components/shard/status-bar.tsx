@@ -22,7 +22,15 @@ import {
 } from "@/components/ui/tooltip"
 import { formatSyncedAgo } from "@/lib/relative-time"
 import { isServerBacked, transport } from "@/lib/transport"
-import { remoteConnectionState, subscribeRemoteConnection } from "@/lib/transport/desktop-remote"
+import {
+  dismissRemoteSyncNotices,
+  remoteConnectionState,
+  remoteSyncStatus,
+  requestRemoteSync,
+  subscribeRemoteConnection,
+  subscribeRemoteSync,
+  type RemoteSyncStatus,
+} from "@/lib/transport/desktop-remote"
 import { getConnectionState, subscribeConnection, type ConnectionState } from "@/lib/transport/sse"
 import { formatSaveState, type SaveState } from "@/lib/save-state"
 import type { GitInfo } from "@/types"
@@ -370,18 +378,126 @@ const DESKTOP_SIGNED_OUT_LABEL = "连接已失效"
 /**
  * 以服务器为真相时没有本地 Git：左侧显示与服务器实时通道的状态，点开是设置（网页落在账号，桌面落在服务器）。
  * 网页的状态来自自己的 SSE 连接；桌面来自 Rust 转发的 `remote-connection` 事件。
+ * 桌面另有本机副本（S8b）：离线、同步中优先显示，后面跟待上传 / 冲突 / 上传失败的条数。
  */
 function ServerConnectionStatus({ onOpenSettings }: { onOpenSettings: () => void }) {
   const desktop = transport().kind === "tauri-remote"
   const [state, setState] = useState<ConnectionState>(desktop ? remoteConnectionState : getConnectionState)
+  const [sync, setSync] = useState<RemoteSyncStatus | null>(desktop ? remoteSyncStatus : null)
   useEffect(() => {
     setState(desktop ? remoteConnectionState() : getConnectionState())
     return desktop ? subscribeRemoteConnection(setState) : subscribeConnection(setState)
   }, [desktop])
-  const label = desktop && state === "signedOut" ? DESKTOP_SIGNED_OUT_LABEL : CONNECTION_LABEL[state]
+  useEffect(() => {
+    if (!desktop) return
+    setSync(remoteSyncStatus())
+    return subscribeRemoteSync(setSync)
+  }, [desktop])
+  const signedOut = desktop && state === "signedOut"
+  const label = signedOut
+    ? DESKTOP_SIGNED_OUT_LABEL
+    : sync?.state === "offline"
+      ? SYNC_OFFLINE_LABEL
+      : sync?.state === "syncing" && state === "connected"
+        ? SYNC_SYNCING_LABEL
+        : CONNECTION_LABEL[state]
+  const offline = !signedOut && sync?.state === "offline"
   return (
-    <StatusBarAction onClick={onOpenSettings}>
-      <span aria-live="polite">{label}</span>
-    </StatusBarAction>
+    <>
+      {offline ? (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                className={styles.action}
+                onClick={() => void requestRemoteSync()}
+                size="sm"
+                type="button"
+                variant="ghost"
+              />
+            }
+          >
+            <span aria-live="polite" className={styles.badge} data-tone="warning">
+              {label}
+            </span>
+          </TooltipTrigger>
+          <TooltipContent side="top">
+            <span className={styles.errorDetail}>{SYNC_OFFLINE_HINT}</span>
+          </TooltipContent>
+        </Tooltip>
+      ) : (
+        <StatusBarAction onClick={onOpenSettings}>
+          <span aria-live="polite">{label}</span>
+        </StatusBarAction>
+      )}
+      {sync ? <RemoteSyncCounts sync={sync} /> : null}
+    </>
+  )
+}
+
+const SYNC_OFFLINE_LABEL = "离线"
+const SYNC_SYNCING_LABEL = "同步中…"
+const SYNC_OFFLINE_HINT = "连不上服务器：碎片照常记、照常改，联网后自动上传；改名、移动、删除等需要联网。点一下立即重试。"
+
+/** 待上传、冲突、上传失败的条数（只在有的时候出现）。冲突与失败点一下表示已看过，计数清零。 */
+function RemoteSyncCounts({ sync }: { sync: RemoteSyncStatus }) {
+  if (sync.pending === 0 && sync.conflicts === 0 && sync.failed === 0) return null
+  return (
+    <>
+      <StatusBarSeparator />
+      {sync.pending > 0 ? (
+        <span className={styles.syncCount} data-shard-sync-pending="true">
+          待上传 {sync.pending} 条
+        </span>
+      ) : null}
+      {sync.conflicts > 0 ? (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                className={styles.action}
+                onClick={() => void dismissRemoteSyncNotices()}
+                size="sm"
+                type="button"
+                variant="ghost"
+              />
+            }
+          >
+            <span className={styles.badge} data-tone="warning">
+              冲突 {sync.conflicts} 条
+            </span>
+          </TooltipTrigger>
+          <TooltipContent side="top">
+            <span className={styles.errorDetail}>
+              这些碎片在别处也改过（或已删除），你的版本另存为标着「冲突副本」的新碎片。点一下表示已看过。
+            </span>
+          </TooltipContent>
+        </Tooltip>
+      ) : null}
+      {sync.failed > 0 ? (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                className={styles.action}
+                onClick={() => void dismissRemoteSyncNotices()}
+                size="sm"
+                type="button"
+                variant="ghost"
+              />
+            }
+          >
+            <span className={styles.badge} data-tone="danger">
+              上传失败 {sync.failed} 条
+            </span>
+          </TooltipTrigger>
+          <TooltipContent side="top">
+            <span className={styles.errorDetail}>
+              服务器拒绝了这些离线修改，不会再自动重试；内容仍保存在本机。点一下表示已看过。
+            </span>
+          </TooltipContent>
+        </Tooltip>
+      ) : null}
+    </>
   )
 }

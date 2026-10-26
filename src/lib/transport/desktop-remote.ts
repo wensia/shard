@@ -19,6 +19,10 @@ import { tauriTransport } from "./tauri"
  *    （{@link SUBSTITUTED_COMMANDS}、{@link UNAVAILABLE_COMMANDS}）；界面上相应入口隐藏。
  * 4. 读本机文件再写进资料库：换成 Rust 的远程版本，读文件 → 按内容哈希上传 → 网页同款的 blob 命令
  *    （{@link REMOTE_WRITE_COMMANDS}）；只读本机文件的转换照常本地。
+ *
+ * 离线（S8b）全在 Rust 的同步引擎里：断网时读命令走本机副本、碎片的新建与修改进 outbox 联网后补交，
+ * 其余命令 reject 成以「需要联网：」开头的说明文字（{@link isOfflineRefusal}）。这里只跟踪引擎的状态
+ *（`sync-status`，状态栏显示）与需要提示用户的事（冲突副本、补交失败、恢复备份后找回、需要联网）。
  */
 
 /** Rust `remote_status`。 */
@@ -29,7 +33,34 @@ export interface RemoteStatus {
   name: string | null
   /** 实时通道当前的状态；webview 订阅事件之前发生的变化靠它补上。 */
   connection?: string | null
+  /** 同步引擎的状态（离线、同步中、待上传、冲突）；没有本机副本时为空。 */
+  sync?: RemoteSyncStatus | null
 }
+
+/** Rust 同步引擎的状态（`sync-status` 事件）。 */
+export interface RemoteSyncStatus {
+  state: "online" | "offline" | "syncing"
+  /** 还没补交到服务器的修改条数。 */
+  pending: number
+  /** 生成了冲突副本、还没看过的条目数。 */
+  conflicts: number
+  /** 服务器拒绝、不会再试的修改条数。 */
+  failed: number
+}
+
+/** 离线时 Rust 拒绝执行的命令：说明文字以它开头（与 `shard_sync::offline_message` 一致）。 */
+export const OFFLINE_REFUSAL_PREFIX = "需要联网："
+
+export function isOfflineRefusal(error: unknown): error is string {
+  return typeof error === "string" && error.startsWith(OFFLINE_REFUSAL_PREFIX)
+}
+
+/** 需要提示用户的同步事件。 */
+export type RemoteSyncNotice =
+  | { kind: "conflict"; id: string; copyId: string | null; reason: string }
+  | { kind: "failed"; command: string; message: string }
+  | { kind: "recovered"; pushed: number; saved: number; dir: string | null }
+  | { kind: "offline"; message: string }
 
 /** Rust 在本机直接读、不转发 RPC 的「命令」：一条修订的原始字节（与 `remote_client::REVISION_BYTES_COMMAND` 同名）。 */
 export const REVISION_BYTES_COMMAND = "remote:revision_bytes"
@@ -117,14 +148,27 @@ export function routeCommand(command: string): CommandRoute {
   return { kind: "server" }
 }
 
+/**
+ * 离线时被 Rust 拒绝的调用：错误照常交给调用方显示，另外让界面给一句「需要联网」的提示。
+ * 密匣客户端经 {@link serverCall} 直达服务器、不经 `invoke`，所以在这一层看。
+ */
+async function watchRefusal<T>(call: Promise<T>): Promise<T> {
+  try {
+    return await call
+  } catch (error) {
+    if (isOfflineRefusal(error)) announce({ kind: "offline", message: error })
+    throw error
+  }
+}
+
 /** 转发给服务器；失败 reject 成与网页 `invoke` 相同的内容（字符串或结构化错误）。 */
 function serverInvoke<T>(command: string, args: Record<string, unknown>) {
-  return invoke<T>("remote_invoke", { command, args })
+  return watchRefusal(invoke<T>("remote_invoke", { command, args }))
 }
 
 /** 同 {@link serverInvoke}，失败时 reject 成带状态码与错误码的 {@link ServerFailure}（网络失败仍是说明文字）。 */
 function serverCall<T>(command: string, args: Record<string, unknown>) {
-  return invoke<T>("remote_invoke", { command, args, detailed: true })
+  return watchRefusal(invoke<T>("remote_invoke", { command, args, detailed: true }))
 }
 
 function decodeBase64(data: string) {
@@ -178,6 +222,85 @@ let connection: ConnectionState = "connecting"
 let authRequired = false
 const connectionListeners = new Set<(state: ConnectionState) => void>()
 const authListeners = new Set<() => void>()
+let syncStatus: RemoteSyncStatus | null = null
+const syncListeners = new Set<(status: RemoteSyncStatus | null) => void>()
+const noticeListeners = new Set<(notice: RemoteSyncNotice) => void>()
+
+const SYNC_STATES: ReadonlySet<string> = new Set(["online", "offline", "syncing"])
+
+function count(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.floor(value) : 0
+}
+
+function parseSyncStatus(value: unknown): RemoteSyncStatus | null {
+  if (!value || typeof value !== "object") return null
+  const raw = value as Record<string, unknown>
+  if (typeof raw.state !== "string" || !SYNC_STATES.has(raw.state)) return null
+  return {
+    state: raw.state as RemoteSyncStatus["state"],
+    pending: count(raw.pending),
+    conflicts: count(raw.conflicts),
+    failed: count(raw.failed),
+  }
+}
+
+function setSyncStatus(next: RemoteSyncStatus | null) {
+  if (
+    next === syncStatus ||
+    (next &&
+      syncStatus &&
+      next.state === syncStatus.state &&
+      next.pending === syncStatus.pending &&
+      next.conflicts === syncStatus.conflicts &&
+      next.failed === syncStatus.failed)
+  ) {
+    return
+  }
+  syncStatus = next
+  for (const listener of syncListeners) listener(next)
+}
+
+function announce(notice: RemoteSyncNotice) {
+  for (const listener of noticeListeners) listener(notice)
+}
+
+/** 同步引擎当前的状态；没有本机副本（或不是桌面连接服务器）时为 null。 */
+export function remoteSyncStatus() {
+  return syncStatus
+}
+
+export function subscribeRemoteSync(listener: (status: RemoteSyncStatus | null) => void) {
+  syncListeners.add(listener)
+  return () => {
+    syncListeners.delete(listener)
+  }
+}
+
+/** 冲突副本、补交失败、恢复备份后找回、离线时被拒绝的操作：界面据此提示。 */
+export function subscribeRemoteSyncNotices(listener: (notice: RemoteSyncNotice) => void) {
+  noticeListeners.add(listener)
+  return () => {
+    noticeListeners.delete(listener)
+  }
+}
+
+/** 用户看过冲突与失败的提示：状态栏的计数清零。 */
+export async function dismissRemoteSyncNotices() {
+  try {
+    await invoke("remote_sync_dismiss")
+  } catch {
+    // 旧版本 Rust 没有这个命令：计数留着，不影响使用。
+  }
+}
+
+/** 手动同步一轮（状态栏点「离线」时立即重试）。 */
+export async function requestRemoteSync() {
+  try {
+    await invoke("remote_sync_now")
+  } catch {
+    // 同上。
+  }
+}
 
 function setConnection(next: ConnectionState) {
   if (next === connection) return
@@ -223,19 +346,47 @@ export function subscribeRemoteAuthRequired(listener: () => void) {
  * 开始跟踪 Rust 的 `remote-connection` 与 `remote-auth-required`。Rust 在 webview 订阅之前就连上了服务器，
  * 那之前发出的事件收不到：先用 `remote_status` 给的状态，订阅好后再问一次补上中间的变化。
  */
-export async function startRemoteConnectionTracking(initial: unknown) {
+export async function startRemoteConnectionTracking(initial: unknown, initialSync?: unknown) {
   const applyStatus = (state: unknown) => {
     if (!isConnectionState(state)) return
     if (state === "signedOut") markAuthRequired()
     else setConnection(state)
   }
   applyStatus(initial)
+  setSyncStatus(parseSyncStatus(initialSync))
   try {
     await tauriListen<{ state?: unknown }>("remote-connection", (event) => {
       if (isConnectionState(event.payload?.state)) setConnection(event.payload.state)
     })
     await tauriListen("remote-auth-required", () => markAuthRequired())
-    applyStatus((await invoke<RemoteStatus>("remote_status"))?.connection)
+    await tauriListen("sync-status", (event) => {
+      const next = parseSyncStatus(event.payload)
+      if (next) setSyncStatus(next)
+    })
+    await tauriListen<{ id?: unknown; copyId?: unknown; reason?: unknown }>("sync-conflict", (event) => {
+      const payload = event.payload ?? {}
+      announce({
+        kind: "conflict",
+        id: String(payload.id ?? ""),
+        copyId: typeof payload.copyId === "string" ? payload.copyId : null,
+        reason: String(payload.reason ?? ""),
+      })
+    })
+    await tauriListen<{ command?: unknown; message?: unknown }>("sync-failed", (event) => {
+      announce({ kind: "failed", command: String(event.payload?.command ?? ""), message: String(event.payload?.message ?? "") })
+    })
+    await tauriListen<{ pushed?: unknown; saved?: unknown; dir?: unknown }>("sync-recovered", (event) => {
+      announce({
+        kind: "recovered",
+        pushed: count(event.payload?.pushed),
+        saved: count(event.payload?.saved),
+        dir: typeof event.payload?.dir === "string" ? event.payload.dir : null,
+      })
+    })
+    const status = await invoke<RemoteStatus>("remote_status")
+    applyStatus(status?.connection)
+    const sync = parseSyncStatus(status?.sync)
+    if (sync) setSyncStatus(sync)
   } catch {
     // 没有事件能力的宿主：停在启动时的状态。
   }
@@ -247,6 +398,9 @@ export function resetRemoteConnectionForTests() {
   authRequired = false
   connectionListeners.clear()
   authListeners.clear()
+  syncStatus = null
+  syncListeners.clear()
+  noticeListeners.clear()
 }
 
 /**
@@ -283,7 +437,7 @@ export function createDesktopRemoteTransport(): ShardTransport {
         case "local":
           return invoke<T>(command, args)
         case "remote-write":
-          return invoke<T>(route.command, args)
+          return watchRefusal(invoke<T>(route.command, args))
         case "substitute":
           return (await SUBSTITUTED_COMMANDS[command](serverInvoke)) as T
         case "unavailable":

@@ -95,6 +95,9 @@ pub struct WriteCtx {
     pub now: Option<DateTime<Utc>>,
     /// 覆盖修订原因（导入时记为 import，而不是 create）。
     pub revision_reason: Option<&'static str>,
+    /// 桌面副本（已确认层）里应用从服务器拉来的内容：版本历史在服务器上，副本不再记一份修订
+    /// （否则副本会把它见过的每个版本都存下来）。服务端从不设置。
+    pub replica: bool,
 }
 
 impl WriteCtx {
@@ -107,7 +110,14 @@ impl WriteCtx {
             request_sha: None,
             now: None,
             revision_reason: None,
+            replica: false,
         }
+    }
+
+    /// 见 [`WriteCtx::replica`]。
+    pub fn for_replica(mut self) -> Self {
+        self.replica = true;
+        self
     }
 
     pub fn with_op_id(mut self, op_id: impl Into<String>) -> Self {
@@ -223,11 +233,20 @@ impl Store {
             return Err(StoreError::Invalid("虚拟根必须是绝对路径。".to_string()));
         }
         std::fs::create_dir_all(data_dir)?;
-        let content_path = data_dir.join("shard.db");
+        Self::open_files(&data_dir.join("shard.db"), &data_dir.join("blobs.db"), virtual_root)
+    }
+
+    /// 按给定的文件名打开内容库与 blob 库（桌面副本放在 `remote/replica.db` 与 `remote/replica-blobs.db`）。
+    /// 父目录必须已存在。
+    pub fn open_files(content_path: &Path, blobs_path: &Path, virtual_root: &Path) -> Result<Self, StoreError> {
+        if !virtual_root.is_absolute() {
+            return Err(StoreError::Invalid("虚拟根必须是绝对路径。".to_string()));
+        }
+        let content_path = content_path.to_path_buf();
         let writer = Connection::open(&content_path)?;
         schema::configure(&writer)?;
         schema::migrate_content(&writer)?;
-        let blobs = blobs::BlobStore::open(&data_dir.join("blobs.db"))?;
+        let blobs = blobs::BlobStore::open(blobs_path)?;
         let store = Self {
             root: virtual_root.to_path_buf(),
             content_path,
@@ -492,6 +511,12 @@ impl Store {
 
     /// 全部在用条目（不含墓碑），按路径排序。客户端发现 epoch 变化或游标过旧时用它全量对账。
     pub fn manifest(&self) -> Result<Vec<ManifestEntry>, StoreError> {
+        Ok(self.manifest_at_head()?.0)
+    }
+
+    /// 同 [`Store::manifest`]，并给出与条目同一时刻的 head seq：两者在同一把写锁下读出，中间不会插进提交。
+    /// 客户端对账后把游标设成这个 head，之后的增量拉取不漏不重。
+    pub fn manifest_at_head(&self) -> Result<(Vec<ManifestEntry>, i64), StoreError> {
         let conn = self.writer.lock().expect("写连接锁中毒");
         let mut statement = conn.prepare(
             "SELECT path, kind, sha, size, seq FROM nodes WHERE path_key IS NOT NULL ORDER BY path",
@@ -507,7 +532,25 @@ impl Store {
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
-        Ok(entries)
+        drop(statement);
+        let head: i64 = conn.query_row("SELECT COALESCE(MAX(seq), 0) FROM changes", [], |row| row.get(0))?;
+        Ok((entries, head))
+    }
+
+    /// 按文档 id 找它当前的路径（`doc_index` 投影，与 `find_fragment_path` 的扫描范围一致）。
+    /// 桌面副本补交前用它判断「服务器上这条还在不在、是不是进了回收站」，不必逐个读文件。
+    pub fn find_doc_path(&self, ns: &str, doc_id: &str) -> Result<Option<String>, StoreError> {
+        self.with_reader(|conn| {
+            Ok(conn
+                .query_row(
+                    "SELECT n.path FROM doc_index d JOIN nodes n ON n.node_id = d.node_id
+                     WHERE d.doc_ns = ?1 AND d.doc_id = ?2 AND d.lookup_scope = 1 AND n.path IS NOT NULL
+                     ORDER BY n.path LIMIT 1",
+                    params![ns, doc_id],
+                    |row| row.get(0),
+                )
+                .optional()?)
+        })
     }
 
     pub fn head_seq(&self) -> Result<i64, StoreError> {
@@ -666,10 +709,12 @@ fn finalize(
         }
 
         if final_row.kind == NodeKind::File {
-            let reason = ctx
-                .revision_reason
-                .unwrap_or_else(|| revision_reason(&initial, final_row.path.as_deref(), content_changed));
-            record_revision(conn, ctx, txn_id, node_id, &initial, final_row.path.as_deref(), reason, now)?;
+            if !ctx.replica {
+                let reason = ctx
+                    .revision_reason
+                    .unwrap_or_else(|| revision_reason(&initial, final_row.path.as_deref(), content_changed));
+                record_revision(conn, ctx, txn_id, node_id, &initial, final_row.path.as_deref(), reason, now)?;
+            }
             match final_row.path.as_deref() {
                 Some(path) => {
                     let projection = match vfs.node_bytes(node_id)? {

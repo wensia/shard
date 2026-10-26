@@ -5134,6 +5134,7 @@ dependencies = [
  "shard-core",
  "shard-lockbox",
  "shard-remote",
+ "shard-sync",
  "shard-vault",
  "tauri",
  "tauri-build",
@@ -5271,6 +5272,28 @@ dependencies = [
  "tempfile",
  "unicode-normalization",
  "zip",
+]
+
+[[package]]
+name = "shard-sync"
+version = "0.1.3"
+dependencies = [
+ "axum",
+ "base64 0.22.1",
+ "chrono",
+ "rand 0.8.6",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2",
+ "shard-core",
+ "shard-remote",
+ "shard-server",
+ "shard-store",
+ "shard-vault",
+ "tempfile",
+ "tokio",
+ "ureq",
 ]
 
 [[package]]

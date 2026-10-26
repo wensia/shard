@@ -40,7 +40,11 @@ import {
   LOCAL_COMMANDS,
   remoteConnectionState,
   REMOTE_WRITE_COMMANDS,
+  remoteSyncStatus,
   resetRemoteConnectionForTests,
+  type RemoteSyncNotice,
+  subscribeRemoteSync,
+  subscribeRemoteSyncNotices,
   REVISION_BYTES_COMMAND,
   routeCommand,
   startRemoteConnectionTracking,
@@ -286,6 +290,57 @@ describe("事件", () => {
     await startRemoteConnectionTracking("signedOut")
     expect(remoteConnectionState()).toBe("signedOut")
     expect(isRemoteAuthRequired()).toBe(true)
+  })
+})
+
+describe("离线（S8b）", () => {
+  it("同步状态：启动时取 remote_status 里的，之后跟随 sync-status；坏载荷忽略", async () => {
+    replay({
+      remote_status: () => ({ connected: true, connection: "connected", sync: { state: "offline", pending: 2, conflicts: 0, failed: 0 } }),
+    })
+    await startRemoteConnectionTracking("connected", { state: "syncing", pending: 0, conflicts: 0, failed: 0 })
+    expect(remoteSyncStatus()).toEqual({ state: "offline", pending: 2, conflicts: 0, failed: 0 })
+    const seen: unknown[] = []
+    subscribeRemoteSync((status) => seen.push(status))
+    tauri.emit("sync-status", { state: "syncing", pending: 2, conflicts: 1, failed: 0 })
+    tauri.emit("sync-status", { state: "syncing", pending: 2, conflicts: 1, failed: 0 })
+    tauri.emit("sync-status", { state: "奇怪的状态", pending: 9 })
+    tauri.emit("sync-status", { state: "online", pending: -1, conflicts: 1.5, failed: "x" })
+    expect(seen).toEqual([
+      { state: "syncing", pending: 2, conflicts: 1, failed: 0 },
+      { state: "online", pending: 0, conflicts: 1, failed: 0 },
+    ])
+  })
+
+  it("离线时被拒绝：错误原样交给调用方，另外通知界面一次「需要联网」", async () => {
+    const refusal = "需要联网：改名。现在连不上服务器，联网后再试。"
+    replay({}, { rename_library_entry: () => Promise.reject(refusal), list_fragments: () => Promise.reject("别的错误") })
+    const notices: RemoteSyncNotice[] = []
+    subscribeRemoteSyncNotices((notice) => notices.push(notice))
+    const remote = createDesktopRemoteTransport()
+    await expect(remote.invoke("rename_library_entry", { path: "notes/a.md", newName: "b" })).rejects.toBe(refusal)
+    await expect(remote.invoke("list_fragments")).rejects.toBe("别的错误")
+    // 密匣客户端经服务器通道直达：同样提示。
+    await expect(remote.server!.call("rename_library_entry", {})).rejects.toBe(refusal)
+    expect(notices).toEqual([
+      { kind: "offline", message: refusal },
+      { kind: "offline", message: refusal },
+    ])
+  })
+
+  it("冲突副本、补交失败、恢复后找回：转成界面提示", async () => {
+    replay({ remote_status: () => ({ connected: true, connection: "connected" }) })
+    await startRemoteConnectionTracking("connected")
+    const notices: RemoteSyncNotice[] = []
+    subscribeRemoteSyncNotices((notice) => notices.push(notice))
+    tauri.emit("sync-conflict", { id: "f1", copyId: "f2", reason: "stale" })
+    tauri.emit("sync-failed", { command: "update_fragment", target: "fragment:f1", message: "参数无效" })
+    tauri.emit("sync-recovered", { pushed: 2, saved: 1, dir: "/tmp/r" })
+    expect(notices).toEqual([
+      { kind: "conflict", id: "f1", copyId: "f2", reason: "stale" },
+      { kind: "failed", command: "update_fragment", message: "参数无效" },
+      { kind: "recovered", pushed: 2, saved: 1, dir: "/tmp/r" },
+    ])
   })
 })
 

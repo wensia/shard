@@ -11,11 +11,15 @@ const SERVER = "https://shard.example.com"
 
 interface MockOptions {
   connected: boolean
+  /** Rust 同步引擎启动时的状态（S8b）；不给就是旧版本 Rust（没有 sync 字段）。 */
+  sync?: { state: string; pending: number; conflicts: number; failed: number }
+  /** 离线时 Rust 拒绝的服务器命令 → 说明文字。 */
+  refuse?: Record<string, string>
 }
 
 async function installDesktopRemoteMock(page: Page, options: MockOptions) {
   await page.addInitScript(
-    ({ initiallyConnected, ride, table, server }) => {
+    ({ initiallyConnected, ride, table, server, initialSync, refuse }) => {
       const CONNECTED_KEY = "__desktop_remote_connected__"
       const stored = localStorage.getItem(CONNECTED_KEY)
       const connected = stored === null ? initiallyConnected : stored === "1"
@@ -104,8 +108,10 @@ async function installDesktopRemoteMock(page: Page, options: MockOptions) {
       const remoteHandlers: Record<string, (args: Record<string, unknown>) => unknown> = {
         remote_status: () =>
           connected
-            ? { connected: true, server, deviceId: "dev-1", name: "工作室 Mac", connection: "connected" }
+            ? { connected: true, server, deviceId: "dev-1", name: "工作室 Mac", connection: "connected", sync: initialSync }
             : { connected: false, server: null, deviceId: null, name: null, connection: null },
+        remote_sync_now: () => null,
+        remote_sync_dismiss: () => null,
         remote_pair_start: (args) => ({
           server: String(args.server),
           userCode: "WXYZ-2345",
@@ -163,6 +169,7 @@ async function installDesktopRemoteMock(page: Page, options: MockOptions) {
             if (command === "remote_invoke") {
               if (!connected) throw "还没有连接服务器。"
               const inner = String(args.command)
+              if (refuse && inner in refuse) throw refuse[inner]
               const handler = serverHandlers[inner]
               if (!handler) {
                 unknown.push(`server:${inner}`)
@@ -185,7 +192,14 @@ async function installDesktopRemoteMock(page: Page, options: MockOptions) {
         },
       })
     },
-    { initiallyConnected: options.connected, ride: RIDE, table: TABLE, server: SERVER }
+    {
+      initiallyConnected: options.connected,
+      ride: RIDE,
+      table: TABLE,
+      server: SERVER,
+      initialSync: options.sync ?? null,
+      refuse: options.refuse ?? null,
+    }
   )
 }
 
@@ -392,5 +406,70 @@ test.describe("本机资料库", () => {
     await server.getByRole("button", { name: "取消" }).click()
     await expect(server.getByRole("button", { name: "连接", exact: true })).toBeVisible()
     expect((await calls(page)).map((call) => call.command)).toContain("remote_pair_cancel")
+  })
+})
+
+test.describe("离线（S8b）", () => {
+  const ONLINE = { state: "online", pending: 0, conflicts: 0, failed: 0 }
+
+  test("状态栏跟随同步状态：离线、同步中、待上传、冲突；看过冲突后清零", async ({ page }) => {
+    await installDesktopRemoteMock(page, { connected: true, sync: ONLINE })
+    await page.goto("/")
+    await expect(card(page)).toBeVisible()
+    const bar = statusBar(page)
+    await expect(bar.getByText("已连接服务器")).toBeVisible()
+    await expect(bar.getByText(/待上传/u)).toHaveCount(0)
+
+    await emit(page, "sync-status", { state: "offline", pending: 2, conflicts: 0, failed: 0 })
+    await expect(bar.getByText("离线", { exact: true })).toBeVisible()
+    await expect(bar.getByText("待上传 2 条")).toBeVisible()
+
+    await emit(page, "sync-status", { state: "syncing", pending: 1, conflicts: 1, failed: 1 })
+    await expect(bar.getByText("同步中…")).toBeVisible()
+    await expect(bar.getByText("待上传 1 条")).toBeVisible()
+    await expect(bar.getByText("冲突 1 条")).toBeVisible()
+    await expect(bar.getByText("上传失败 1 条")).toBeVisible()
+    await bar.getByRole("button", { name: "冲突 1 条" }).click()
+    await expect.poll(async () => (await localCommands(page)).includes("remote_sync_dismiss")).toBe(true)
+
+    await emit(page, "sync-status", ONLINE)
+    await expect(bar.getByText("已连接服务器")).toBeVisible()
+    await expect(bar.getByText(/待上传|冲突|上传失败/u)).toHaveCount(0)
+  })
+
+  test("启动时就离线：先用本机副本显示，状态栏直接是离线；点一下立即重试", async ({ page }) => {
+    await installDesktopRemoteMock(page, { connected: true, sync: { state: "offline", pending: 3, conflicts: 0, failed: 0 } })
+    await page.goto("/")
+    await expect(card(page)).toBeVisible()
+    const bar = statusBar(page)
+    await expect(bar.getByText("离线", { exact: true })).toBeVisible()
+    await expect(bar.getByText("待上传 3 条")).toBeVisible()
+    await bar.getByRole("button", { name: "离线" }).click()
+    await expect.poll(async () => (await localCommands(page)).includes("remote_sync_now")).toBe(true)
+  })
+
+  test("离线时删除碎片：给出「需要联网」的提示，碎片还在", async ({ page }) => {
+    await installDesktopRemoteMock(page, {
+      connected: true,
+      sync: { state: "offline", pending: 0, conflicts: 0, failed: 0 },
+      refuse: { set_fragment_archived: "需要联网：删除（移入回收站）。现在连不上服务器，联网后再试。" },
+    })
+    await page.goto("/")
+    await expect(card(page)).toBeVisible()
+    await card(page).getByRole("button", { name: "片段操作" }).click()
+    await page.getByRole("menuitem", { name: "删除" }).click()
+    await expect(page.getByText("需要联网", { exact: true })).toBeVisible()
+    await expect(page.getByText("删除（移入回收站）。现在连不上服务器，联网后再试。")).toBeVisible()
+    await expect(card(page)).toBeVisible()
+    expect(await serverCommands(page)).toContain("set_fragment_archived")
+  })
+
+  test("补交时另存了冲突副本：提示两份都在", async ({ page }) => {
+    await installDesktopRemoteMock(page, { connected: true, sync: ONLINE })
+    await page.goto("/")
+    await expect(card(page)).toBeVisible()
+    await emit(page, "sync-conflict", { id: RIDE, copyId: "20261027-090000-0a0b0c0d-1a2b3c", reason: "stale" })
+    await expect(page.getByText("已另存冲突副本")).toBeVisible()
+    await expect(page.getByText("这条碎片在别处也改过，你离线时的版本另存为一条新碎片，两份都在。")).toBeVisible()
   })
 })

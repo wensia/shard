@@ -69,7 +69,7 @@ export async function initTransport() {
   remoteStatus = status
   // 与网页一样套上密匣客户端：密匣命令在本机（wasm）执行，再把密文经服务器通道写回。
   desktopRemote = withLockboxClient(createDesktopRemoteTransport())
-  await startRemoteConnectionTracking(status.connection)
+  await startRemoteConnectionTracking(status.connection, status.sync)
 }
 
 export function transport(): ShardTransport {

@@ -22,9 +22,12 @@ pub fn handle(app: &tauri::AppHandle, request: &Request<Vec<u8>>) -> Response<Ve
         .headers()
         .get(header::IF_NONE_MATCH)
         .and_then(|value| value.to_str().ok());
-    // 连接了服务器：图片在服务器上，带设备令牌代理 `/api/files`（在线客户端，S8a）。
-    if let Some(client) = app.state::<crate::remote_client::RemoteRuntime>().client() {
-        return serve_remote(&client, request.method(), request.uri().path(), origin);
+    // 连接了服务器：图片在服务器上，带设备令牌代理 `/api/files`（在线客户端，S8a）；
+    // 离线、或本机还有没补交的写（例如离线粘贴的图）时读本机副本（S8b）。
+    let runtime = app.state::<crate::remote_client::RemoteRuntime>();
+    if let Some(client) = runtime.client() {
+        let engine = runtime.engine();
+        return serve_remote(&client, engine.as_deref(), request.method(), request.uri().path(), origin);
     }
     match crate::configured_vault_path(app) {
         Ok(vault) => serve(&vault, request.method(), request.uri().path(), origin, if_none_match),
@@ -33,8 +36,15 @@ pub fn handle(app: &tauri::AppHandle, request: &Request<Vec<u8>>) -> Response<Ve
 }
 
 /// 代理服务器的 `/api/files/<路径>`：路径原样（已百分号编码）转过去，服务器只供图片、自带 nosniff 与 SVG 沙箱 CSP。
+/// 有本机副本时：同步引擎说读走本机（离线、有待补交的写）就先读副本，连不上服务器时也退回副本。
 /// 失败一律 404，与本地一样不在响应里带细节。
-fn serve_remote(client: &shard_remote::Client, method: &Method, uri_path: &str, origin: Option<&str>) -> Response<Vec<u8>> {
+fn serve_remote(
+    client: &shard_remote::Client,
+    engine: Option<&shard_sync::SyncEngine>,
+    method: &Method,
+    uri_path: &str,
+    origin: Option<&str>,
+) -> Response<Vec<u8>> {
     if method != Method::GET && method != Method::HEAD {
         return empty(StatusCode::METHOD_NOT_ALLOWED, origin);
     }
@@ -42,9 +52,19 @@ fn serve_remote(client: &shard_remote::Client, method: &Method, uri_path: &str, 
     if path.is_empty() || path.split('/').any(|part| part == ".." || part == "%2E%2E" || part == "%2e%2e") {
         return empty(StatusCode::NOT_FOUND, origin);
     }
+    if let Some(engine) = engine.filter(|engine| engine.reads_local()) {
+        if let Some(response) = serve_replica(engine, method, path, origin) {
+            return response;
+        }
+    }
     let fetched = match client.get_bytes(&format!("api/files/{path}")) {
         Ok(fetched) if fetched.is_ok() => fetched,
-        _ => return empty(StatusCode::NOT_FOUND, origin),
+        Ok(_) => return empty(StatusCode::NOT_FOUND, origin),
+        Err(_) => {
+            return engine
+                .and_then(|engine| serve_replica(engine, method, path, origin))
+                .unwrap_or_else(|| empty(StatusCode::NOT_FOUND, origin))
+        }
     };
     let mut builder = cors(Response::builder(), origin)
         .status(StatusCode::OK)
@@ -59,6 +79,26 @@ fn serve_remote(client: &shard_remote::Client, method: &Method, uri_path: &str, 
     }
     let body = if method == Method::HEAD { Vec::new() } else { fetched.bytes };
     builder.body(body).unwrap_or_else(|_| empty(StatusCode::NOT_FOUND, origin))
+}
+
+/// 从本机副本（已确认层 ∪ 离线写下的）读图片：与服务器 `/api/files` 同样只供文件头确认是图片的内容。
+fn serve_replica(engine: &shard_sync::SyncEngine, method: &Method, path: &str, origin: Option<&str>) -> Option<Response<Vec<u8>>> {
+    let reference = percent_decode(path)?;
+    let bytes = engine.local_file(&reference)?;
+    if bytes.len() as u64 > MAX_SERVED_BYTES {
+        return None;
+    }
+    let mime_type = shard_core::image::image_mime_type(Path::new(&reference), &bytes)?;
+    let mut builder = cors(Response::builder(), origin)
+        .status(StatusCode::OK)
+        .header(header::X_CONTENT_TYPE_OPTIONS, "nosniff")
+        .header(header::CONTENT_TYPE, mime_type)
+        .header(header::CACHE_CONTROL, "no-cache");
+    if mime_type == "image/svg+xml" {
+        builder = builder.header(header::CONTENT_SECURITY_POLICY, "default-src 'none'; style-src 'unsafe-inline'; sandbox");
+    }
+    let body = if method == Method::HEAD { Vec::new() } else { bytes };
+    builder.body(body).ok()
 }
 
 pub fn serve(
@@ -276,7 +316,7 @@ mod tests {
         let (url, seen) = image_server();
         let client = shard_remote::Client::new(&url, "shd_dev_t", shard_remote::ClientOptions::new("t/1", "t")).unwrap();
         let path = format!("/{}", encode("notes/证件/营业执照 1.jpg"));
-        let response = serve_remote(&client, &Method::GET, &path, Some("tauri://localhost"));
+        let response = serve_remote(&client, None, &Method::GET, &path, Some("tauri://localhost"));
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(response.headers()[header::CONTENT_TYPE], "image/png");
         assert_eq!(response.headers()[header::ETAG], "\"abc\"");
@@ -288,8 +328,8 @@ mod tests {
         assert_eq!(seen[0].1, "Bearer shd_dev_t");
 
         // 跳出与非读方法不转发。
-        assert_eq!(serve_remote(&client, &Method::GET, "/notes/../.shard/lockbox.json", None).status(), StatusCode::NOT_FOUND);
-        assert_eq!(serve_remote(&client, &Method::POST, &path, None).status(), StatusCode::METHOD_NOT_ALLOWED);
+        assert_eq!(serve_remote(&client, None, &Method::GET, "/notes/../.shard/lockbox.json", None).status(), StatusCode::NOT_FOUND);
+        assert_eq!(serve_remote(&client, None, &Method::POST, &path, None).status(), StatusCode::METHOD_NOT_ALLOWED);
         assert_eq!(seen.len(), 1);
     }
 

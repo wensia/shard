@@ -38,6 +38,8 @@ shard-core = { path = "../crates/shard-core" }
 shard-lockbox = { path = "../crates/shard-lockbox" }
 # 连接服务器（在线客户端）：配对、设备令牌、RPC 转发、SSE，与命令行同一份实现。
 shard-remote = { path = "../crates/shard-remote" }
+# 连接服务器后的离线能力（S8b）：副本 + overlay + outbox，离线读、离线写允许的子集，联网后收敛。
+shard-sync = { path = "../crates/shard-sync" }
 # 公开内容的领域逻辑（碎片、资料库树、回收站、图片、导图、画布、数据集、XLSX 导入解析），与服务端共用。
 shard-vault = { path = "../crates/shard-vault" }
 # 监听 vault 的外部写入（终端 shard、AI 助手、其他编辑器），macOS 上走 FSEvents。

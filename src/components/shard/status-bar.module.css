@@ -68,6 +68,12 @@
   padding-inline: var(--space-1);
 }
 
+/* 待上传条数：静息文字，数字等宽，不抢眼（冲突、失败才用徽标） */
+.syncCount {
+  padding-inline: var(--space-1);
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
 .saveState[data-state="dirty"],
 .saveState[data-state="saving"] {
   color: var(--warning);

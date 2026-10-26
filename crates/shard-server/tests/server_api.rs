@@ -203,11 +203,15 @@ async fn sync_endpoints_page_changes_and_list_the_manifest() {
     let manifest = body_json(h.send(h.browser(Method::GET, "/api/sync/manifest").body(Body::empty()).unwrap()).await).await;
     let paths: Vec<&str> = manifest["entries"].as_array().unwrap().iter().map(|entry| entry["path"].as_str().unwrap()).collect();
     assert_eq!(paths, vec!["fragments", "fragments/a.md", "fragments/b.md", "notes", "notes/c.md"]);
+    // 清单带资料库 id，head 与条目同一时刻读出（不小于任何条目的 seq）。
+    assert!(manifest["vaultId"].as_str().is_some_and(|id| !id.is_empty()));
+    let max_seq = manifest["entries"].as_array().unwrap().iter().map(|entry| entry["seq"].as_i64().unwrap()).max().unwrap();
+    assert!(manifest["headSeq"].as_i64().unwrap() >= max_seq);
     let fetched = body_json(
         h.send(
             h.browser(Method::POST, "/api/sync/fetch")
                 .header(header::CONTENT_TYPE, "application/json")
-                .body(Body::from(json!({ "paths": ["notes/c.md", "notes/none.md"] }).to_string()))
+                .body(Body::from(json!({ "paths": ["notes/c.md", "notes/none.md", "notes"] }).to_string()))
                 .unwrap(),
         )
         .await,
@@ -215,6 +219,14 @@ async fn sync_endpoints_page_changes_and_list_the_manifest() {
     .await;
     assert_eq!(fetched["items"][0]["data"], STANDARD.encode("notes/c.md"));
     assert_eq!(fetched["items"][1]["missing"], true);
+    // 桌面副本按这两个时间写回，资料库树的排序与时间显示与服务器一致；目录只给时间、没有 sha。
+    for item in [&fetched["items"][0], &fetched["items"][2]] {
+        for key in ["createdAt", "modifiedAt"] {
+            assert!(item[key].as_str().is_some_and(|time| time.ends_with('Z')), "{item}");
+        }
+    }
+    assert_eq!(fetched["items"][2]["kind"], "dir");
+    assert!(fetched["items"][2].get("sha").is_none());
 }
 
 /// 读 SSE 流直到出现 `needle`。

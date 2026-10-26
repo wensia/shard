@@ -1,9 +1,12 @@
-//! 桌面在线客户端（S8a）：连接服务器后，前端命令由这里带设备令牌转发到 `/api/rpc`，
-//! 图片经 `shard-asset` 协议代理 `/api/files`（见 `vault_asset_protocol`），服务器的 SSE 转成 Tauri 事件。
+//! 桌面连接服务器（S8a 在线客户端 + S8b 离线）：前端命令由这里经同步引擎（`shard-sync`）处理——
+//! 在线时带设备令牌直发 `/api/rpc`；网络失败或已知离线时，读命令在本机副本上执行，离线允许的写在
+//! overlay 上执行并记进 outbox，其余报「需要联网：…」。图片经 `shard-asset` 协议代理 `/api/files`
+//! （离线时读副本，见 `vault_asset_protocol`），服务器的 SSE 转成 Tauri 事件并触发后台同步。
 //!
 //! 配对、令牌存取、RPC 与 SSE 都用共享的 `shard-remote`（与命令行同一份）。令牌存钥匙串
 //! `dev.shard.desktop`，与命令行（`dev.shard.cli`）分开，网页「设置 → 设备」里可以单独吊销。
-//! 离线（副本 + outbox）是 S8b，在这层转发底下接入。
+//! 副本放 `<App 数据目录>/remote/replica.db`（与令牌配置分开），断开连接时删除；还没补交的操作先另存到
+//! `<App 数据目录>/remote-recovered/`。
 
 use std::{
     sync::{
@@ -20,6 +23,7 @@ use shard_remote::{
     start_pairing, Client, ClientOptions, CredentialStore, Pairing, PairingRequest, PollStatus, RemoteConfig,
     RemoteError, TokenBackend,
 };
+use shard_sync::{EngineOptions, SyncEngine, SyncEvent, SyncRunner, SyncStatus};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 pub const KEYCHAIN_SERVICE: &str = "dev.shard.desktop";
@@ -28,6 +32,14 @@ pub const REMOTE_AUTH_REQUIRED_EVENT: &str = "remote-auth-required";
 /// 与服务器实时通道的状态：connecting / connected / reconnecting / signedOut，状态栏显示。
 pub const REMOTE_CONNECTION_EVENT: &str = "remote-connection";
 pub const LOCKBOX_CHANGED_EVENT: &str = "lockbox-changed";
+/// 同步状态：`{state: online|offline|syncing, pending, conflicts, failed}`，状态栏显示。
+pub const SYNC_STATUS_EVENT: &str = "sync-status";
+/// 补交时生成了冲突副本：`{id, copyId, reason}`，前端另行提示。
+pub const SYNC_CONFLICT_EVENT: &str = "sync-conflict";
+/// 服务器拒绝了一条离线操作：`{command, target, message}`。
+pub const SYNC_FAILED_EVENT: &str = "sync-failed";
+/// 服务器从备份恢复后找回了数据：`{pushed, saved, dir}`。
+pub const SYNC_RECOVERED_EVENT: &str = "sync-recovered";
 pub const VAULT_RESYNC_EVENT: &str = "vault-resync";
 
 fn user_agent() -> String {
@@ -55,6 +67,8 @@ fn credential_store(app: &AppHandle) -> CredentialStore {
 struct Connected {
     client: Client,
     config: RemoteConfig,
+    /// 同步引擎（副本打不开时为空，退回 S8a：全部直发服务器）。
+    sync: Option<SyncHandle>,
     stop: Arc<AtomicBool>,
     /// 实时通道最近一次的状态（同 [`REMOTE_CONNECTION_EVENT`]）。webview 订阅事件之前发出的状态会丢，
     /// 前端启动时从 [`remote_status`] 补读。
@@ -79,6 +93,13 @@ impl LinkState {
     }
 }
 
+/// 同步引擎与它的后台线程。
+#[derive(Clone)]
+struct SyncHandle {
+    engine: Arc<SyncEngine>,
+    runner: Arc<SyncRunner>,
+}
+
 #[derive(Default)]
 struct RemoteState {
     connected: Option<Connected>,
@@ -100,19 +121,83 @@ impl RemoteRuntime {
         self.lock().connected.as_ref().map(|connected| connected.client.clone())
     }
 
+    /// 已连接时的同步引擎。
+    pub fn engine(&self) -> Option<Arc<SyncEngine>> {
+        self.lock().connected.as_ref().and_then(|connected| connected.sync.as_ref()).map(|sync| Arc::clone(&sync.engine))
+    }
+
     fn connect(&self, app: &AppHandle, client: Client, config: RemoteConfig) {
+        // 先停掉旧连接的引擎（同一个副本文件不能有两个引擎）。
+        drop(self.disconnect());
         let stop = Arc::new(AtomicBool::new(false));
         let link = LinkState::new();
-        spawn_event_bridge(app.clone(), client.clone(), Arc::clone(&stop), link.clone());
-        let previous = self.lock().connected.replace(Connected { client, config, stop, link });
+        let sync = open_sync(app, client.clone(), &config);
+        spawn_event_bridge(app.clone(), client.clone(), Arc::clone(&stop), link.clone(), sync.clone());
+        let previous = self.lock().connected.replace(Connected { client, config, sync, stop, link });
         if let Some(previous) = previous {
             previous.stop.store(true, Ordering::SeqCst);
         }
     }
 
-    fn disconnect(&self) {
-        if let Some(previous) = self.lock().connected.take() {
+    fn disconnect(&self) -> Option<Connected> {
+        let previous = self.lock().connected.take();
+        if let Some(previous) = &previous {
             previous.stop.store(true, Ordering::SeqCst);
+            if let Some(sync) = &previous.sync {
+                sync.runner.stop();
+            }
+        }
+        previous
+    }
+}
+
+/// `<App 数据目录>/remote`：副本所在；`<App 数据目录>/remote-recovered`：另存的原文（不随副本删除）。
+fn sync_dirs(app: &AppHandle) -> Option<(std::path::PathBuf, std::path::PathBuf)> {
+    let base = app.path().app_data_dir().ok()?;
+    Some((base.join("remote"), base.join("remote-recovered")))
+}
+
+/// 打开（必要时新建）副本并起后台同步。打不开时返回空：退回 S8a 的全部直发，并在终端说明。
+fn open_sync(app: &AppHandle, client: Client, config: &RemoteConfig) -> Option<SyncHandle> {
+    let (dir, recovered) = sync_dirs(app)?;
+    let mut options = EngineOptions::new(dir);
+    options.recovered_dir = Some(recovered);
+    options.device_id = config.device_id.clone();
+    let handle = app.clone();
+    let vault = Arc::new(Mutex::new(String::new()));
+    let vault_for_events = Arc::clone(&vault);
+    let engine = match SyncEngine::open(client, options, move |event| emit_sync_event(&handle, &vault_for_events, event)) {
+        Ok(engine) => Arc::new(engine),
+        Err(error) => {
+            eprintln!("打不开本机副本，离线功能不可用：{error}");
+            return None;
+        }
+    };
+    *vault.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = engine.vault_identity();
+    let runner = Arc::new(SyncRunner::start(Arc::clone(&engine)));
+    Some(SyncHandle { engine, runner })
+}
+
+fn emit_sync_event(app: &AppHandle, vault: &Mutex<String>, event: SyncEvent) {
+    match event {
+        SyncEvent::Status(status) => {
+            let _ = app.emit(SYNC_STATUS_EVENT, status);
+        }
+        SyncEvent::VaultChanged(changes) => {
+            let vault = vault.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).clone();
+            let _ = app.emit(crate::vault_watch::VAULT_CHANGED_EVENT, json!({ "vault": vault, "changes": changes }));
+        }
+        SyncEvent::Conflict { id, copy_id, reason } => {
+            let _ = app.emit(SYNC_CONFLICT_EVENT, json!({ "id": id, "copyId": copy_id, "reason": reason }));
+        }
+        SyncEvent::Failed { command, target, message } => {
+            let _ = app.emit(SYNC_FAILED_EVENT, json!({ "command": command, "target": target, "message": message }));
+        }
+        SyncEvent::Recovered { pushed, saved, dir } => {
+            let _ = app.emit(SYNC_RECOVERED_EVENT, json!({ "pushed": pushed, "saved": saved, "dir": dir }));
+        }
+        SyncEvent::AuthRequired => {
+            let _ = app.emit(REMOTE_AUTH_REQUIRED_EVENT, json!({}));
         }
     }
 }
@@ -142,6 +227,8 @@ pub struct RemoteStatus {
     name: Option<String>,
     /// 实时通道当前的状态（connecting / connected / reconnecting / signedOut）；未连接时为空。
     connection: Option<&'static str>,
+    /// 同步状态（离线、同步中、待上传、冲突）；没有副本时为空。
+    sync: Option<SyncStatus>,
 }
 
 #[tauri::command]
@@ -154,8 +241,9 @@ pub fn remote_status(runtime: State<'_, RemoteRuntime>) -> RemoteStatus {
             device_id: Some(connected.config.device_id.clone()),
             name: Some(connected.config.name.clone()),
             connection: Some(connected.link.get()),
+            sync: connected.sync.as_ref().map(|sync| sync.engine.status()),
         },
-        None => RemoteStatus { connected: false, server: None, device_id: None, name: None, connection: None },
+        None => RemoteStatus { connected: false, server: None, device_id: None, name: None, connection: None, sync: None },
     }
 }
 
@@ -259,9 +347,33 @@ pub fn remote_disconnect(app: AppHandle, runtime: State<'_, RemoteRuntime>) -> R
         let _ = store.delete_token(&config.server);
     }
     store.remove_config_file().map_err(|error| error.to_string())?;
-    runtime.disconnect();
+    let previous = runtime.disconnect();
+    // 先放掉引擎（关掉副本的连接），再删副本；还没补交的操作另存到 remote-recovered。
+    drop(previous);
+    if let Some((dir, recovered)) = sync_dirs(&app) {
+        if let Err(error) = SyncEngine::discard(&dir, Some(&recovered)) {
+            eprintln!("删除本机副本失败：{error}");
+        }
+    }
     let _ = app.emit(REMOTE_CONNECTION_EVENT, json!({ "state": "signedOut" }));
     Ok(())
+}
+
+/// 立即同步一轮（状态栏「同步中」以外的手动触发、联网恢复）。
+#[tauri::command]
+pub fn remote_sync_now(runtime: State<'_, RemoteRuntime>) {
+    if let Some(engine) = runtime.engine() {
+        engine.retry_now();
+        engine.request_sync();
+    }
+}
+
+/// 用户看过冲突 / 失败提示：状态栏计数清零。
+#[tauri::command]
+pub fn remote_sync_dismiss(runtime: State<'_, RemoteRuntime>) {
+    if let Some(engine) = runtime.engine() {
+        engine.dismiss_notices();
+    }
 }
 
 /// 给前端的错误：与网页端 `readError` 同形——有结构化错误就给它，否则给说明文字。
@@ -293,6 +405,18 @@ fn failure_payload(error: RemoteError, detailed: bool) -> Value {
 
 fn not_connected() -> Value {
     Value::String("还没有连接服务器。".to_string())
+}
+
+/// 离线时不能做的操作：与同步引擎同一句「需要联网：…」，没有状态码（前端只拿到说明文字）。
+fn offline_error(client: &Client, command: &str) -> RemoteError {
+    RemoteError {
+        server: client.server().to_string(),
+        command: command.to_string(),
+        status: None,
+        code: "OFFLINE".to_string(),
+        message: shard_sync::offline_message(command),
+        detail: None,
+    }
 }
 
 /// 不转发 RPC、由这里直接读的「命令」：一条修订的原始字节（`GET /api/history/{revId}`）。
@@ -351,10 +475,17 @@ pub async fn remote_invoke(
     detailed: Option<bool>,
 ) -> Result<Value, Value> {
     let client = runtime.client().ok_or_else(not_connected)?;
+    let engine = runtime.engine();
     let args = args.unwrap_or_else(|| json!({}));
     let result = tauri::async_runtime::spawn_blocking(move || {
         if command == REVISION_BYTES_COMMAND {
+            if engine.as_ref().is_some_and(|engine| engine.is_offline()) {
+                return Err(offline_error(&client, &command));
+            }
             read_revision_bytes(&client, &args)
+        } else if let Some(engine) = engine {
+            // 在线直发；离线时读命令走副本、允许的写进 outbox，其余报「需要联网」。
+            engine.invoke(&command, args)
         } else {
             client.write(&command, args)
         }
@@ -372,11 +503,16 @@ pub async fn remote_upload_blob(
     request: tauri::ipc::Request<'_>,
 ) -> Result<String, Value> {
     let client = runtime.client().ok_or_else(not_connected)?;
+    let engine = runtime.engine();
     let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
         return Err(Value::String("上传需要原始字节。".to_string()));
     };
     let bytes = bytes.clone();
-    let result = tauri::async_runtime::spawn_blocking(move || client.upload_blob(&bytes))
+    // 有副本时经引擎：离线也返回 sha（字节先存本机，补交登记命令前再上传）。
+    let result = tauri::async_runtime::spawn_blocking(move || match engine {
+        Some(engine) => engine.upload_blob(&bytes),
+        None => client.upload_blob(&bytes),
+    })
         .await
         .map_err(|error| Value::String(error.to_string()))?;
     result.map_err(|error| frontend_error(&app, error))
@@ -408,10 +544,20 @@ pub async fn remote_save_image_from_path(
     path: String,
 ) -> Result<Value, Value> {
     let client = runtime.client().ok_or_else(not_connected)?;
+    let engine = runtime.engine();
     let result = tauri::async_runtime::spawn_blocking(move || -> Result<Value, Result<RemoteError, String>> {
         let (_, bytes) = read_local_file(&path).map_err(Err)?;
-        let sha = client.upload_blob(&bytes).map_err(Ok)?;
-        client.write("save_fragment_image", json!({ "blobSha": sha })).map_err(Ok)
+        match engine {
+            // 与粘贴图片同一条路：离线时登记进 outbox，联网后先传字节再补交。
+            Some(engine) => {
+                let sha = engine.upload_blob(&bytes).map_err(Ok)?;
+                engine.invoke("save_fragment_image", json!({ "blobSha": sha })).map_err(Ok)
+            }
+            None => {
+                let sha = client.upload_blob(&bytes).map_err(Ok)?;
+                client.write("save_fragment_image", json!({ "blobSha": sha })).map_err(Ok)
+            }
+        }
     })
     .await
     .map_err(|error| Value::String(error.to_string()))?;
@@ -431,7 +577,12 @@ pub async fn remote_import_library_files(
     directory: Option<String>,
 ) -> Result<Value, Value> {
     let client = runtime.client().ok_or_else(not_connected)?;
+    let engine = runtime.engine();
     let result = tauri::async_runtime::spawn_blocking(move || -> Result<Value, RemoteError> {
+        // 导入离线不可用：先说清楚，不去读文件、传字节。
+        if engine.as_ref().is_some_and(|engine| engine.is_offline()) {
+            return Err(offline_error(&client, "import_library_blobs"));
+        }
         let mut files = Vec::new();
         let mut skipped = Vec::new();
         for path in &paths {
@@ -447,7 +598,11 @@ pub async fn remote_import_library_files(
             // 形状与正常导入一致：前端用 tree 刷新目录。
             json!({ "tree": client.read("list_library_tree", json!({}))?, "imported": [], "skipped": [] })
         } else {
-            client.write("import_library_blobs", json!({ "files": files, "directory": directory }))?
+            let args = json!({ "files": files, "directory": directory });
+            match &engine {
+                Some(engine) => engine.invoke("import_library_blobs", args)?,
+                None => client.write("import_library_blobs", args)?,
+            }
         };
         if let Some(list) = result.get_mut("skipped").and_then(Value::as_array_mut) {
             list.extend(skipped);
@@ -461,7 +616,9 @@ pub async fn remote_import_library_files(
 
 /// 服务器的 SSE → Tauri 事件：`vault-changed`（与本地文件监听同形）、`lockbox-changed`、`vault-resync`。
 /// 断线按 1–60 秒退避加抖动重连，带上最后事件 id 续传；令牌失效时通知前端并停止。
-fn spawn_event_bridge(app: AppHandle, client: Client, stop: Arc<AtomicBool>, link: LinkState) {
+/// 它也是同步引擎的连通传感器：连上 → 在线并同步一轮；网络断开 → 离线（读写立即走本机）；
+/// 服务器推来变化或要求全量对账 → 后台同步一轮（单飞，多次合并）。
+fn spawn_event_bridge(app: AppHandle, client: Client, stop: Arc<AtomicBool>, link: LinkState, sync: Option<SyncHandle>) {
     thread::spawn(move || {
         let mut last_event_id: Option<String> = None;
         let mut retry = Duration::from_secs(1);
@@ -474,17 +631,30 @@ fn spawn_event_bridge(app: AppHandle, client: Client, stop: Arc<AtomicBool>, lin
             match client.events(last_event_id.as_deref()) {
                 Ok(stream) => {
                     emit_state("connected");
+                    if let Some(sync) = &sync {
+                        sync.engine.note_link(true);
+                    }
                     retry = Duration::from_secs(1);
                     let mut stream = stream.with_stop_flag(Arc::clone(&stop));
                     for item in stream.by_ref() {
                         match item {
-                            Ok(event) => dispatch(&app, &event.event, &event.data),
+                            Ok(event) => {
+                                dispatch(&app, &event.event, &event.data);
+                                if let Some(sync) = sync.as_ref().filter(|_| matches!(event.event.as_str(), "vault-changed" | "resync")) {
+                                    sync.runner.trigger();
+                                }
+                            }
                             Err(error) if error.is_unauthenticated() => {
                                 emit_state("signedOut");
                                 let _ = app.emit(REMOTE_AUTH_REQUIRED_EVENT, json!({ "server": client.server() }));
                                 return;
                             }
-                            Err(_) => break,
+                            Err(error) => {
+                                if let Some(sync) = sync.as_ref().filter(|_| error.is_network()) {
+                                    sync.engine.note_link(false);
+                                }
+                                break;
+                            }
                         }
                     }
                     last_event_id = stream.last_event_id().map(str::to_string);
@@ -494,7 +664,11 @@ fn spawn_event_bridge(app: AppHandle, client: Client, stop: Arc<AtomicBool>, lin
                     let _ = app.emit(REMOTE_AUTH_REQUIRED_EVENT, json!({ "server": client.server() }));
                     return;
                 }
-                Err(_) => {}
+                Err(error) => {
+                    if let Some(sync) = sync.as_ref().filter(|_| error.is_retryable()) {
+                        sync.engine.note_link(false);
+                    }
+                }
             }
             if stop.load(Ordering::SeqCst) {
                 return;
@@ -622,6 +796,25 @@ mod tests {
             json!({ "status": "pending", "intervalMs": 2000 })
         );
         assert_eq!(serde_json::to_value(PairPollResult::Expired).unwrap(), json!({ "status": "expired" }));
+    }
+
+    #[test]
+    fn offline_refusals_reach_the_frontend_as_plain_text() {
+        let client = Client::new("https://shard.test", "shd_dev_x", ClientOptions::new("t/1", "t")).unwrap();
+        let error = offline_error(&client, "rename_library_entry");
+        // 没有状态码：与网络失败一样，两种通道都只给说明文字，前端按「需要联网」前缀提示。
+        let detailed = failure_payload(error.clone(), true);
+        assert!(detailed.as_str().unwrap().starts_with("需要联网：改名"), "{detailed}");
+        assert_eq!(failure_payload(error, false), detailed);
+    }
+
+    #[test]
+    fn sync_status_events_use_camel_case_counts() {
+        let status = SyncStatus { state: "offline", pending: 3, conflicts: 1, failed: 0 };
+        assert_eq!(
+            serde_json::to_value(status).unwrap(),
+            json!({ "state": "offline", "pending": 3, "conflicts": 1, "failed": 0 })
+        );
     }
 
     #[test]

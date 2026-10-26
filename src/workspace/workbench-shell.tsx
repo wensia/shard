@@ -178,6 +178,7 @@ import { useReminderBadge } from "@/workspace/use-reminder-badge"
 import { useSearchController } from "@/workspace/use-search-controller"
 import { useVaultWatch } from "@/workspace/use-vault-watch"
 import { useRemoteAuthPrompt } from "@/workspace/use-remote-auth-prompt"
+import { useRemoteSyncNotices } from "@/workspace/use-remote-sync-notices"
 import { planVaultChanges, VAULT_FILES_CHANGED_DOM_EVENT, type VaultFileChange } from "@/lib/vault-changes"
 import { DatasetZen, type DatasetZenHandle } from "@/features/datasets/dataset-zen"
 import { OPEN_DATASET_EVENT } from "@/features/datasets/open-dataset"
@@ -1622,6 +1623,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
 
   // 连接服务器的桌面：设备令牌失效时提示重新连接，带去设置的「服务器」分区。
   useRemoteAuthPrompt(() => openSettings("server"))
+  useRemoteSyncNotices()
 
   function showShortcuts() {
     openSettings("shortcuts")
