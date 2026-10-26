@@ -48,6 +48,29 @@ export class SseParser {
   }
 }
 
+/** 与服务器实时通道的状态：状态栏据此显示「已连接 / 正在重连 / 需要重新登录」。 */
+export type ConnectionState = "connecting" | "connected" | "reconnecting" | "signedOut"
+
+const connectionListeners = new Set<(state: ConnectionState) => void>()
+let connectionState: ConnectionState = "connecting"
+
+function setConnection(next: ConnectionState) {
+  if (next === connectionState) return
+  connectionState = next
+  for (const listener of connectionListeners) listener(next)
+}
+
+export function getConnectionState() {
+  return connectionState
+}
+
+export function subscribeConnection(listener: (state: ConnectionState) => void) {
+  connectionListeners.add(listener)
+  return () => {
+    connectionListeners.delete(listener)
+  }
+}
+
 const handlers = new Set<Handler>()
 let controller: AbortController | null = null
 let lastEventId: string | undefined
@@ -91,11 +114,13 @@ async function connect(signal: AbortSignal) {
         signal,
       })
       if (response.status === 401) {
+        setConnection("signedOut")
         window.dispatchEvent(new CustomEvent(AUTH_REQUIRED_EVENT))
         await waitForLogin(signal)
         continue
       }
       if (!response.ok || !response.body) throw new Error(`SSE ${response.status}`)
+      setConnection("connected")
       retryMs = 1000
       const reader = response.body.getReader()
       const decoder = new TextDecoder()
@@ -108,6 +133,7 @@ async function connect(signal: AbortSignal) {
     } catch {
       if (signal.aborted) return
     }
+    setConnection("reconnecting")
     // 断线重连：1 秒起翻倍，最多 60 秒，带抖动避免同时重连。
     const wait = retryMs * (0.5 + Math.random() / 2)
     retryMs = Math.min(retryMs * 2, 60_000)

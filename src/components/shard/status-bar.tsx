@@ -21,6 +21,8 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip"
 import { formatSyncedAgo } from "@/lib/relative-time"
+import { isWebRuntime } from "@/lib/transport"
+import { getConnectionState, subscribeConnection, type ConnectionState } from "@/lib/transport/sse"
 import { formatSaveState, type SaveState } from "@/lib/save-state"
 import type { GitInfo } from "@/types"
 
@@ -89,7 +91,9 @@ export function StatusBar({
       role="contentinfo"
     >
       <div className={styles.group}>
-        {git === null ? (
+        {isWebRuntime() ? (
+          <ServerConnectionStatus onOpenSettings={onOpenSettings} />
+        ) : git === null ? (
           <StatusBarAction onClick={onOpenSettings}>
             未选择资料库
           </StatusBarAction>
@@ -103,7 +107,7 @@ export function StatusBar({
           </StatusBarAction>
         )}
 
-        {hasGit ? (
+        {hasGit && !isWebRuntime() ? (
           <>
             <StatusBarSeparator />
             {!git.hasRemote ? (
@@ -350,4 +354,22 @@ function getGitStateLabel(git: GitInfo) {
     return "待同步"
   }
   return "已同步"
+}
+
+const CONNECTION_LABEL: Record<ConnectionState, string> = {
+  connecting: "正在连接服务器…",
+  connected: "已连接服务器",
+  reconnecting: "与服务器断开，正在重连…",
+  signedOut: "登录已过期",
+}
+
+/** 网页端没有本地 Git：左侧显示与服务器实时通道的状态，点开是账号设置。 */
+function ServerConnectionStatus({ onOpenSettings }: { onOpenSettings: () => void }) {
+  const [state, setState] = useState<ConnectionState>(getConnectionState)
+  useEffect(() => subscribeConnection(setState), [])
+  return (
+    <StatusBarAction onClick={onOpenSettings}>
+      <span aria-live="polite">{CONNECTION_LABEL[state]}</span>
+    </StatusBarAction>
+  )
 }
