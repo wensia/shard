@@ -12,6 +12,7 @@
 mod blobs;
 mod history;
 mod lockbox;
+mod maintenance;
 mod schema;
 mod sqlite_vfs;
 
@@ -28,6 +29,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 pub use blobs::INLINE_MAX;
 pub use history::{DeletedEntry, EraseReport, RevisionInfo, PURGED_HISTORY_DAYS};
 pub use lockbox::{LockboxItemEntry, LockboxManifestEntry};
+pub use maintenance::{MaintenanceReport, BLOB_GRACE_DAYS, REVISION_FULL_DAYS};
 pub use sqlite_vfs::{LockboxItemRaw, SqliteVfs};
 
 use crate::projection::{project, Projection};

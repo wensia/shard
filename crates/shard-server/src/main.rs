@@ -184,19 +184,39 @@ async fn serve(
         .map_err(|error| error.to_string())
 }
 
-/// 例行维护：彻底删除满 30 天的历史到期抹除。启动后先跑一次，之后每 6 小时一次。
+/// 例行维护，启动后先跑一次，之后每 6 小时一次：彻底删除满 30 天的历史到期抹除；
+/// 90 天前的修订每天留一条；未引用满 35 天的 blob 回收。
 fn spawn_maintenance(store: std::sync::Arc<shard_store::Store>) {
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(6 * 3600));
         loop {
             interval.tick().await;
             let store = store.clone();
-            match tokio::task::spawn_blocking(move || store.expire_purged_history(chrono::Utc::now())).await {
-                Ok(Ok(report)) if report.nodes > 0 => {
-                    tracing::info!(nodes = report.nodes, revisions = report.revisions, "已清理到期的删除历史");
+            let outcome = tokio::task::spawn_blocking(move || {
+                let now = chrono::Utc::now();
+                let expired = store.expire_purged_history(now)?;
+                let compacted = store.compact_revisions(now)?;
+                let collected = store.collect_blobs(now)?;
+                Ok::<_, shard_store::StoreError>((expired, compacted, collected))
+            })
+            .await;
+            match outcome {
+                Ok(Ok((expired, compacted, collected))) => {
+                    if expired.nodes > 0
+                        || compacted.revisions_dropped + compacted.lockbox_revisions_dropped > 0
+                        || collected.blobs_marked + collected.blobs_deleted > 0
+                    {
+                        tracing::info!(
+                            purged_nodes = expired.nodes,
+                            revisions_dropped = compacted.revisions_dropped,
+                            lockbox_revisions_dropped = compacted.lockbox_revisions_dropped,
+                            blobs_marked = collected.blobs_marked,
+                            blobs_deleted = collected.blobs_deleted,
+                            "例行维护完成"
+                        );
+                    }
                 }
-                Ok(Ok(_)) => {}
-                Ok(Err(error)) => tracing::error!(%error, "清理到期的删除历史失败"),
+                Ok(Err(error)) => tracing::error!(%error, "例行维护失败"),
                 Err(error) => tracing::error!(%error, "维护任务异常"),
             }
         }
