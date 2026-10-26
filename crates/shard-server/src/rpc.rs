@@ -62,11 +62,18 @@ pub struct RpcError {
     pub status: StatusCode,
     pub code: String,
     pub message: String,
+    /// 结构化错误体（搜索契约的 SearchError），见 [`ApiError::detail`]。
+    pub detail: Option<Value>,
 }
 
 impl RpcError {
     pub fn new(status: StatusCode, code: &str, message: impl Into<String>) -> Self {
-        Self { status, code: code.to_string(), message: message.into() }
+        Self { status, code: code.to_string(), message: message.into(), detail: None }
+    }
+
+    /// 带结构化错误体：前端拿到的是这个对象本身（与 Tauri 命令 reject 结构化错误一致）。
+    pub fn structured(status: StatusCode, code: &str, detail: Value) -> Self {
+        Self { status, code: code.to_string(), message: code.to_string(), detail: Some(detail) }
     }
 
     pub fn invalid_args(error: impl std::fmt::Display) -> Self {
@@ -101,7 +108,7 @@ impl From<StoreError> for RpcError {
 
 impl From<RpcError> for ApiError {
     fn from(error: RpcError) -> Self {
-        ApiError { status: error.status, code: error.code, message: error.message }
+        ApiError { status: error.status, code: error.code, message: error.message, detail: error.detail }
     }
 }
 
@@ -210,6 +217,7 @@ fn replayed_response(bytes: Vec<u8>) -> Result<Response, ApiError> {
             status: StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_REQUEST),
             code,
             message,
+            detail: None,
         }),
     }
 }

@@ -167,6 +167,7 @@ async fn serve(
     let config = Config::new(data_dir, origin, static_dir, trust_proxy)?;
     let mut registry = rpc::base_registry();
     commands::register(&mut registry);
+    shard_server::search::register(&mut registry);
     let state = AppState::open(config, registry)?;
     commands::ensure_layout(&state.store)?;
     let router = app::build(state);

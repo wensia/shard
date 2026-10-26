@@ -12,11 +12,13 @@ pub struct ApiError {
     pub status: StatusCode,
     pub code: String,
     pub message: String,
+    /// 结构化错误（搜索命令的 `{code, …}` 契约），原样放进响应的 `error` 字段，前端按对象处理。
+    pub detail: Option<serde_json::Value>,
 }
 
 impl ApiError {
     pub fn new(status: StatusCode, code: &str, message: impl Into<String>) -> Self {
-        Self { status, code: code.to_string(), message: message.into() }
+        Self { status, code: code.to_string(), message: message.into(), detail: None }
     }
 
     pub fn unauthorized() -> Self {
@@ -64,7 +66,11 @@ impl From<shard_store::StoreError> for ApiError {
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        let mut response = (self.status, Json(json!({ "code": self.code, "message": self.message }))).into_response();
+        let body = match self.detail {
+            Some(detail) => json!({ "code": self.code, "message": self.message, "error": detail }),
+            None => json!({ "code": self.code, "message": self.message }),
+        };
+        let mut response = (self.status, Json(body)).into_response();
         response
             .headers_mut()
             .insert(axum::http::header::CACHE_CONTROL, axum::http::HeaderValue::from_static("no-store"));
