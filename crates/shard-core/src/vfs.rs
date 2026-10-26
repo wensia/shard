@@ -232,6 +232,16 @@ pub trait Vfs {
     fn content_sha(&self, path: &Path) -> io::Result<String> {
         Ok(sha256_hex(&self.read(path)?))
     }
+
+    /// 资料库里全部密匣条目的 id（未删除的，含密匣回收站）。公开内容的校验用它拒绝指向密匣的链接，
+    /// 只看信封里的 id，不解密。
+    ///
+    /// `None` 表示「这个实现不单独登记密匣，按旧办法扫描 `lockbox/` 目录里的 `.shard` 信封」：
+    /// FsVfs 走这条路，行为与迁移前一致。SqliteVfs 拒绝一切 `lockbox/` 路径，密匣信封只存在
+    /// `lockbox_items` 表里，必须由它直接给出 id 集合。
+    fn lockbox_item_ids(&self) -> io::Result<Option<Vec<String>>> {
+        Ok(None)
+    }
 }
 
 pub fn sha256_hex(bytes: &[u8]) -> String {

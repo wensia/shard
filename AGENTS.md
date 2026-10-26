@@ -14,7 +14,7 @@
 - Git / GitHub CLI / 文件系统扫描或读写 / 网络请求 / 外部进程 / 大量 Markdown 解析必须异步执行，并在 Tauri 侧使用 `async` command、`tauri::async_runtime::spawn_blocking` 或等价后台任务。
 - 前端只能等待异步 Promise，并给受影响的局部组件展示 loading / disabled / `aria-busy` 状态；不得用同步循环、阻塞等待或成功后强制关闭配置界面来掩盖耗时。
 - 新增或修改这类能力时，必须全局检查同类阻塞点，并用 `pnpm build`、`cargo check`、`git diff --check` 或等价验证确认不会引入 UI 线程阻塞。
-- 服务端 SQLite 架构（分支 `feat/server-sqlite`，设计见 `docs/dev/server-sqlite-plan.md`）：库里存原文字节，id / 标签 / 链接是同事务派生投影；每个写命令是一个 `BEGIN IMMEDIATE` 事务（改 nodes → 重算投影 → 写 revisions → 分配 changes.seq → 写 txns），seq 只能在写事务内分配；所有写请求带 Idempotency-Key；`sha` = sha256(原始字节)，与现在的 fileSha 同口径；密匣明文、口令与主密钥永远不到服务器；新增领域逻辑写在 `crates/shard-store`（同时跑 FsVfs 与 SqliteVfs），不要写进 Tauri 命令或 axum 路由。
+- 服务端 SQLite 架构（分支 `feat/server-sqlite`，设计见 `docs/dev/server-sqlite-plan.md`）：库里存原文字节，id / 标签 / 链接是同事务派生投影；每个写命令是一个 `BEGIN IMMEDIATE` 事务（改 nodes → 重算投影 → 写 revisions → 分配 changes.seq → 写 txns），seq 只能在写事务内分配；所有写请求带 Idempotency-Key；`sha` = sha256(原始字节)，与现在的 fileSha 同口径；密匣明文、口令与主密钥永远不到服务器；新增领域逻辑写在 `crates/shard-vault`（跑在 `VaultCtx`= Vfs + VaultHooks 上，`tests/dual.rs` 同时跑 FsVfs 与 SqliteVfs），不要写进 Tauri 命令或 axum 路由；存储与事务在 `crates/shard-store`。
 - 以下「提交策略」只适用于正式切换前的本地文件 + Git 模式（FsVfs）。
 - 提交策略（合并保存）：内容型写入（片段/资料库/密匣正文、标签、置顶、关系、思维导图、附件）只落盘**不得内嵌 git 提交**，提交由 `checkpoint_vault` 聚合；结构型操作（rename/move/delete/restore/purge/convert/移入密匣）保留路径级语义提交并先调 `checkpoint_before_structural_locked`；仅 `.shard/lockbox.json` 密钥元数据即时提交。所有写 vault 的命令必须在拿到 vault 后立刻 `lock_vault_gate`（纯读命令与网络阶段不持门），托管目录清单只能来自 `MANAGED_VAULT_ROOTS`/`managed_pathspecs()`。
 

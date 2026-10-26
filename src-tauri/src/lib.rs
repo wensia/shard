@@ -4,53 +4,41 @@ use aes_gcm::{
 };
 use argon2::{Algorithm, Argon2, Params, Version};
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
-use chrono::{DateTime, Local, NaiveDate, NaiveDateTime};
+use chrono::Local;
 use rand::{rngs::OsRng, RngCore};
 use rsa::{
     pkcs8::{DecodePrivateKey, DecodePublicKey, EncodePrivateKey, EncodePublicKey},
     Oaep, RsaPrivateKey, RsaPublicKey,
 };
 use serde::{Deserialize, Serialize};
-use shard_core::dataset::{self, DatasetLimits, DatasetOp, DatasetSnapshot};
+use shard_core::dataset::{DatasetOp, DatasetSnapshot};
 use shard_core::{
-    contains_lockbox_tag, create_public_fragment_in_vault,
-    create_public_fragment_with_id_in_vault, default_vault_path, derive_type,
-    ensure_public_csv_path, ensure_vault_layout, new_fragment_id, normalize_tag,
-    normalize_tags, normalize_type_tags,
+    contains_lockbox_tag, default_vault_path, derive_type, ensure_public_csv_path,
+    ensure_vault_layout, new_fragment_id, normalize_tag, normalize_type_tags,
     frontmatter::{
-        apply_frontmatter, custom_property_entries, parse_fragment, raw_from_frontmatter,
-        remove_custom_property, set_custom_property, validate_property_key,
-        write_fragment_update,
+        apply_frontmatter, parse_fragment, raw_from_frontmatter, remove_custom_property,
+        set_custom_property, validate_property_key, write_fragment_update,
     },
-    graph_region::{
-        find_region, render_region, replace_region, GraphRegionKind, MISSING_REGION_ERROR,
-    },
-    library::{
-        bounded_library_filename, create_library_dataset_files, create_library_note_file,
-        existing_library_directory, existing_library_path, note_title,
-        sanitized_note_stem, unique_mind_map_path, unique_note_path, unique_titled_path,
-        validate_library_file_name, validate_library_name, validate_library_name_characters,
-        validate_library_name_length,
-    },
+    graph_region::{find_region, render_region, GraphRegionKind, MISSING_REGION_ERROR},
+    library::{note_title, unique_mind_map_path, unique_note_path},
     outline_import::{
         import_outline, OutlineImport, OutlineImportError, OutlineImportNode, OutlineLossIssue,
     },
     unique_suffix, write_fragment_file, write_text_atomically, AppConfig, FragmentFrontmatter,
-    FragmentRelation, FsVfs, Vfs, LOCKBOX_TAG, PROTECTED_TYPE_TAGS, TYPE_TAGS,
+    FragmentRelation, FsVfs, Vfs, LOCKBOX_TAG,
 };
 pub(crate) use shard_core::graph_model::{
-    CanvasFile, CanvasNode, ShardDocumentLink, ShardMapFile, ShardMapNode, SHARD_MAP_KIND,
-    SHARD_MAP_SCHEMA_VERSION,
+    CanvasFile, ShardMapFile, ShardMapNode, SHARD_MAP_KIND, SHARD_MAP_SCHEMA_VERSION,
 };
 #[cfg(test)]
-pub(crate) use shard_core::graph_model::{CanvasEdge, ShardMapNodeStyle};
+pub(crate) use shard_core::graph_model::{CanvasEdge, CanvasNode, ShardDocumentLink, ShardMapNodeStyle};
 use shard_core::vault_lock::{VaultProcessLock, LOCKS_DIR_NAME};
-use sha2::{Digest, Sha256};
+use sha2::Sha256;
 use std::{
-    collections::{BTreeMap, HashMap, HashSet, VecDeque},
+    collections::{BTreeMap, HashMap, HashSet},
     env, fs,
     fs::File,
-    io::{BufRead, BufReader, Read, Write},
+    io::{Read, Write},
     path::{Component, Path, PathBuf},
     process::{Command, Stdio},
     ops::Deref,
@@ -61,6 +49,9 @@ use std::{
     time::{Duration, SystemTime},
 };
 use tauri::Manager;
+// 公开内容的领域逻辑（碎片、资料库树、回收站、图片、导图、画布、数据集）与 DTO 都在 shard-vault，
+// 桌面与服务端共用；这里留 Tauri 命令外壳、密匣、搜索、Git、设置与桌面专用的迁移和导入。
+use shard_vault::*;
 
 mod cli_install;
 mod canvas_commands;
@@ -97,52 +88,12 @@ const CSV_GIT_PATHSPEC: &str = ":(glob,icase)**/*.csv";
 static VAULT_SELECTION_GATE: Mutex<()> = Mutex::new(());
 static VAULT_LOCK_DIR: OnceLock<PathBuf> = OnceLock::new();
 static LIBRARY_INDEX_REGISTRY: OnceLock<Arc<search_index::IndexRegistry>> = OnceLock::new();
-static GRAPH_CREATE_RECEIPTS: OnceLock<Mutex<GraphCreateReceiptCache>> = OnceLock::new();
 
 /// Shard 托管的 vault 根目录。提交、脏检测、检查点、计数必须共用这一份清单——
 /// 目录在多处手写曾造成 notes 完全不入 git 状态的盲区。
 const MANAGED_VAULT_ROOTS: &[&str] = &[
     "fragments", "notes", ".trash", "assets", "maps", "datasets", "lockbox", ".shard",
 ];
-
-/// 保存基线过期（磁盘内容已被同步或外部编辑改写）的错误标记；
-/// 前端识别该前缀进入冲突流程（覆盖 / 载入磁盘版）。
-const STALE_BASE_ERROR: &str =
-    "STALE_BASE:磁盘上的笔记内容已变化（可能来自同步或外部编辑），保存已中止";
-const LOCKBOX_TYPE_ERROR: &str = "大纲与流程图不能放入密匣。";
-
-fn content_sha256_hex(content: &str) -> String {
-    let digest = Sha256::digest(content.as_bytes());
-    digest.iter().map(|byte| format!("{byte:02x}")).collect()
-}
-
-/// expected_file_sha 为调用方上次读到/存下的完整文件哈希；不带则跳过校验。
-fn ensure_expected_file_sha(current_file: &str, expected_file_sha: Option<&str>) -> Result<(), String> {
-    let Some(expected) = expected_file_sha else {
-        return Ok(());
-    };
-    if content_sha256_hex(current_file) != expected {
-        return Err(STALE_BASE_ERROR.to_string());
-    }
-    Ok(())
-}
-
-fn is_protected_type(tags: &[String]) -> bool {
-    derive_type(tags).is_some_and(|kind| PROTECTED_TYPE_TAGS.contains(&kind))
-}
-
-fn normalize_updated_type_tags(current_tags: &[String], tags: Vec<String>) -> Vec<String> {
-    let mut next = normalize_type_tags(normalize_tags(tags, false));
-    if let Some(current) = derive_type(current_tags).filter(|kind| PROTECTED_TYPE_TAGS.contains(kind)) {
-        next.retain(|tag| !TYPE_TAGS.contains(&tag.as_str()));
-        next.push(current.to_string());
-        next.sort();
-        next.dedup();
-    } else {
-        next.retain(|tag| !PROTECTED_TYPE_TAGS.contains(&tag.as_str()));
-    }
-    next
-}
 
 fn managed_pathspecs() -> Vec<String> {
     let mut specs: Vec<String> = MANAGED_VAULT_ROOTS
@@ -188,46 +139,7 @@ fn managed_exclusion_pathspecs() -> Vec<String> {
         .collect()
 }
 
-/// 资料库操作的上下文：文件系统 + 本地版本控制钩子。
-///
-/// 领域函数只经 `vfs` 读写资料库内部路径、只经 `hooks` 触发版本控制副作用，
-/// 不直接碰 `std::fs` 与 git，下一步整体挪进独立 crate 后在服务端换成 SqliteVfs + NoHooks。
-#[derive(Clone, Copy)]
-pub struct VaultCtx<'a> {
-    pub vfs: &'a dyn Vfs,
-    pub hooks: &'a dyn VaultHooks,
-}
-
-impl VaultCtx<'_> {
-    pub fn root(&self) -> &Path {
-        self.vfs.root()
-    }
-}
-
-/// 本地 Git 模式的副作用；服务端模式用 [`NoHooks`]（全部空操作，`has_vcs` 为假）。
-/// 每个方法对应迁移前领域代码里直接调用的一个 git 函数，语义保持不变。
-pub trait VaultHooks {
-    /// 原来的 `vault.join(".git").exists()`。
-    fn has_vcs(&self) -> bool;
-    /// 原来的 `dirty_paths(vault)`。
-    fn dirty_paths(&self) -> HashSet<String>;
-    /// 原来的 `checkpoint_before_structural_locked(vault)`；必须已持写门。
-    fn checkpoint_before_structural(&self);
-    /// 原来的 `checkpoint_vault_locked(vault, trigger)`；必须已持写门。
-    fn checkpoint(&self, trigger: Option<&str>) -> Result<CheckpointResult, String>;
-    /// 原来的 `commit_paths_best_effort(vault, paths, message)`。
-    fn commit_paths_best_effort(&self, paths: &[String], message: &str);
-    /// 原来的 `commit_paths_if_git(vault, paths, message)`：没有版本控制时 `Ok(None)`。
-    fn commit_paths_if_git(&self, paths: &[String], message: &str) -> Result<Option<()>, String>;
-    /// 原来的 `commit_path_if_git(vault, path, message)`：没有版本控制时 `Ok(None)`。
-    fn commit_path_if_git(&self, path: &str, message: &str) -> Result<Option<()>, String>;
-    /// 原来的 `ensure_no_unfinished_git_operation(vault)`：外部 Git 操作进行中时拒绝写图形文档。
-    fn ensure_no_unfinished_operation(&self) -> Result<(), String>;
-    /// 原来的 `git_info(vault)`。
-    fn git_info(&self) -> GitInfo;
-}
-
-/// 本地 Git 模式：每个钩子直接调用对应的现有 git 函数。
+/// 本地 Git 模式：每个钩子直接调用对应的现有 git 函数；图片宫格的引用集合走桌面搜索索引。
 pub struct GitHooks {
     vault: PathBuf,
 }
@@ -276,48 +188,9 @@ impl VaultHooks for GitHooks {
     fn git_info(&self) -> GitInfo {
         git_info(&self.vault)
     }
-}
 
-/// 没有版本控制：与本地资料库未初始化 Git 时各 git 函数的返回值一致。
-pub struct NoHooks;
-
-impl VaultHooks for NoHooks {
-    fn has_vcs(&self) -> bool {
-        false
-    }
-
-    fn dirty_paths(&self) -> HashSet<String> {
-        HashSet::new()
-    }
-
-    fn checkpoint_before_structural(&self) {}
-
-    fn checkpoint(&self, _trigger: Option<&str>) -> Result<CheckpointResult, String> {
-        Ok(CheckpointResult {
-            status: "not_git".to_string(),
-            changes: 0,
-            reason: None,
-            skipped_large: Vec::new(),
-            git: no_git_info(),
-        })
-    }
-
-    fn commit_paths_best_effort(&self, _paths: &[String], _message: &str) {}
-
-    fn commit_paths_if_git(&self, _paths: &[String], _message: &str) -> Result<Option<()>, String> {
-        Ok(None)
-    }
-
-    fn commit_path_if_git(&self, _path: &str, _message: &str) -> Result<Option<()>, String> {
-        Ok(None)
-    }
-
-    fn ensure_no_unfinished_operation(&self) -> Result<(), String> {
-        Ok(())
-    }
-
-    fn git_info(&self) -> GitInfo {
-        no_git_info()
+    fn library_asset_references(&self, vfs: &dyn Vfs) -> HashSet<String> {
+        library_asset_references_with_index(vfs, LIBRARY_INDEX_REGISTRY.get().map(Arc::as_ref))
     }
 }
 
@@ -341,107 +214,6 @@ impl LocalVault {
             hooks: &self.hooks,
         }
     }
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
-struct Fragment {
-    id: String,
-    content: String,
-    file_sha: String,
-    created_at: String,
-    updated_at: String,
-    tags: Vec<String>,
-    category: Option<String>,
-    path: String,
-    git_status: String,
-    error: Option<String>,
-    ai_status: String,
-    archived: bool,
-    lockbox: bool,
-    pinned: bool,
-    related: Vec<FragmentRelation>,
-    properties: Vec<FragmentProperty>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    conflict_of: Option<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-#[serde(rename_all = "camelCase")]
-struct FragmentProperty {
-    key: String,
-    value: PropertyValue,
-    editable: bool,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-#[serde(tag = "kind", rename_all = "lowercase")]
-enum PropertyValue {
-    Text { text: String },
-    Number { text: String },
-    Bool { value: bool },
-    Null,
-    List { items: Vec<String> },
-    Other { raw: String },
-}
-
-#[derive(Debug, Deserialize, Clone)]
-#[serde(tag = "type", content = "value", rename_all = "lowercase")]
-enum PropertyInputValue {
-    Text(Option<String>),
-    Number(Option<String>),
-    Date(Option<String>),
-    Datetime(Option<String>),
-    Checkbox(Option<bool>),
-    List(Option<Vec<String>>),
-    Link(Option<String>),
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-enum PropertyType {
-    Text,
-    Number,
-    Date,
-    Datetime,
-    Checkbox,
-    List,
-    Link,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
-struct PropertyRegistry {
-    version: u32,
-    properties: BTreeMap<String, PropertyRegistryEntry>,
-}
-
-impl Default for PropertyRegistry {
-    fn default() -> Self {
-        Self {
-            version: 1,
-            properties: BTreeMap::new(),
-        }
-    }
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
-struct PropertyRegistryEntry {
-    #[serde(rename = "type")]
-    property_type: PropertyType,
-}
-
-#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-struct PropertyRegistryReadResult {
-    registry: PropertyRegistry,
-    sha: String,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct GraphFragmentResult {
-    fragment: Fragment,
-    graph: serde_json::Value,
 }
 
 #[derive(Debug, Serialize)]
@@ -496,48 +268,6 @@ struct LegacyOutlineCandidate {
     reason: Option<String>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum GraphFragmentKind {
-    Outline,
-    Flowchart,
-}
-
-impl GraphFragmentKind {
-    fn parse(value: &str) -> Result<Self, String> {
-        match value {
-            "outline" => Ok(Self::Outline),
-            "flowchart" => Ok(Self::Flowchart),
-            _ => Err("图形内容类型只能是 outline 或 flowchart。".to_string()),
-        }
-    }
-
-    fn type_tag(self) -> &'static str {
-        match self {
-            Self::Outline => "outline",
-            Self::Flowchart => "flowchart",
-        }
-    }
-
-    fn region_kind(self) -> GraphRegionKind {
-        match self {
-            Self::Outline => GraphRegionKind::Outline,
-            Self::Flowchart => GraphRegionKind::Flowchart,
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
-struct GraphCreateReceipt {
-    kind: GraphFragmentKind,
-    fragment_id: String,
-}
-
-#[derive(Default)]
-struct GraphCreateReceiptCache {
-    entries: HashMap<String, GraphCreateReceipt>,
-    order: VecDeque<String>,
-}
-
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct VaultState {
@@ -547,107 +277,11 @@ struct VaultState {
     lockbox: LockboxState,
 }
 
-#[derive(Debug, Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
-struct CsvFileSummary {
-    name: String,
-    path: String,
-}
-
-#[derive(Debug, Serialize, Clone, PartialEq)]
-#[serde(rename_all = "camelCase")]
-struct LibraryTreeEntry {
-    name: String,
-    path: String,
-    kind: String,
-    size: u64,
-    modified_at: String,
-    created_at: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    mind_map_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    children: Option<Vec<LibraryTreeEntry>>,
-}
-
-#[derive(Debug, Serialize, Clone, PartialEq)]
-#[serde(rename_all = "camelCase")]
-struct FragmentMonthSummary {
-    month: String,
-    count: usize,
-}
-
-#[derive(Debug, Serialize, Clone, PartialEq)]
-#[serde(rename_all = "camelCase")]
-struct FragmentYearSummary {
-    year: String,
-    total_count: usize,
-    months: Vec<FragmentMonthSummary>,
-}
-
-#[derive(Debug, Serialize, Clone, PartialEq)]
-#[serde(rename_all = "camelCase")]
-struct FragmentStreamSummary {
-    total_count: usize,
-    years: Vec<FragmentYearSummary>,
-}
-
-#[derive(Debug, Serialize, Clone, PartialEq)]
-#[serde(rename_all = "camelCase")]
-struct LibraryAssetEntry {
-    path: String,
-    size: u64,
-    modified_at: String,
-    mime_type: String,
-}
-
-#[derive(Debug, Serialize, Clone, PartialEq)]
-#[serde(rename_all = "camelCase")]
-struct LibraryTreeSnapshot {
-    entries: Vec<LibraryTreeEntry>,
-    fragment_entries: Vec<LibraryTreeEntry>,
-    trash_entries: Vec<LibraryTreeEntry>,
-    fragment_trash_entries: Vec<LibraryTreeEntry>,
-    fragment_stream: FragmentStreamSummary,
-    assets: Vec<LibraryAssetEntry>,
-}
-
-#[derive(Debug, Deserialize, Default, Clone, Copy, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-enum ContentScope {
-    #[default]
-    Library,
-    Fragments,
-    All,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct LibraryMutationResult {
-    tree: LibraryTreeSnapshot,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    fragment: Option<Fragment>,
-    updated_links: usize,
-    /// 改名、移动图片或目录时，正文里随之改写的图片引用处数。
-    updated_image_refs: usize,
-}
-
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct LegacyNoteMigrationResult {
     tree: LibraryTreeSnapshot,
     migrated_count: usize,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct GitInfo {
-    branch: String,
-    short_commit: String,
-    has_remote: bool,
-    status: String,
-    error: Option<String>,
-    ahead: u64,
-    behind: u64,
 }
 
 #[derive(Debug, Serialize)]
@@ -700,25 +334,6 @@ struct LockboxState {
 struct LockboxSetupResult {
     recovery_key: String,
     vault: VaultState,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
-struct MindMapSummary {
-    id: String,
-    title: String,
-    created_at: String,
-    updated_at: String,
-    node_count: usize,
-    path: String,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
-struct MindMapReadResult {
-    file: ShardMapFile,
-    path: String,
-    last_saved_hash: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -919,167 +534,6 @@ fn lock_vault_gate(vault: &Path) -> VaultGate {
             .unwrap_or_else(|error| panic!("无法获取跨进程 vault 写锁：{error}"))
     });
     VaultGate { process, inner }
-}
-
-fn fragment_properties(raw: &str) -> Vec<FragmentProperty> {
-    custom_property_entries(raw)
-        .into_iter()
-        .map(|entry| {
-            let (value, value_editable) = match entry.value {
-                Some(serde_yaml::Value::String(text)) => (PropertyValue::Text { text }, true),
-                Some(serde_yaml::Value::Number(number)) => (
-                    PropertyValue::Number {
-                        text: number.to_string(),
-                    },
-                    true,
-                ),
-                Some(serde_yaml::Value::Bool(value)) => (PropertyValue::Bool { value }, true),
-                Some(serde_yaml::Value::Null) => (PropertyValue::Null, true),
-                Some(serde_yaml::Value::Sequence(values)) => {
-                    let items = values
-                        .iter()
-                        .map(|value| match value {
-                            serde_yaml::Value::String(value) => Some(value.clone()),
-                            serde_yaml::Value::Number(value) => Some(value.to_string()),
-                            serde_yaml::Value::Bool(value) => Some(value.to_string()),
-                            _ => None,
-                        })
-                        .collect::<Option<Vec<_>>>();
-                    match items {
-                        Some(items) => (PropertyValue::List { items }, true),
-                        None => (PropertyValue::Other { raw: entry.raw.clone() }, false),
-                    }
-                }
-                _ => (PropertyValue::Other { raw: entry.raw.clone() }, false),
-            };
-            FragmentProperty {
-                key: entry.key,
-                value,
-                editable: entry.editable && value_editable,
-            }
-        })
-        .collect()
-}
-
-fn property_input_to_yaml(value: PropertyInputValue) -> Result<serde_yaml::Value, String> {
-    use serde_yaml::Value;
-    match value {
-        PropertyInputValue::Text(None)
-        | PropertyInputValue::Number(None)
-        | PropertyInputValue::Date(None)
-        | PropertyInputValue::Datetime(None)
-        | PropertyInputValue::Checkbox(None)
-        | PropertyInputValue::List(None)
-        | PropertyInputValue::Link(None) => Ok(Value::Null),
-        PropertyInputValue::Text(Some(value)) if value.is_empty() => Ok(Value::Null),
-        PropertyInputValue::Text(Some(value)) => Ok(Value::String(value)),
-        PropertyInputValue::Number(Some(value)) => parse_property_number(&value),
-        PropertyInputValue::Date(Some(value)) => {
-            if value.is_empty() {
-                return Ok(Value::Null);
-            }
-            NaiveDate::parse_from_str(&value, "%Y-%m-%d")
-                .map_err(|_| "日期格式无效，应为 YYYY-MM-DD。".to_string())?;
-            Ok(Value::String(value))
-        }
-        PropertyInputValue::Datetime(Some(value)) => {
-            if value.is_empty() {
-                return Ok(Value::Null);
-            }
-            NaiveDateTime::parse_from_str(&value, "%Y-%m-%dT%H:%M")
-                .map_err(|_| "日期时间格式无效，应为 YYYY-MM-DDTHH:mm。".to_string())?;
-            Ok(Value::String(value))
-        }
-        PropertyInputValue::Checkbox(Some(value)) => Ok(Value::Bool(value)),
-        PropertyInputValue::List(Some(items)) if items.is_empty() => Ok(Value::Null),
-        PropertyInputValue::List(Some(items)) => {
-            Ok(Value::Sequence(items.into_iter().map(Value::String).collect()))
-        }
-        PropertyInputValue::Link(Some(value)) => {
-            let value = value.trim();
-            if value.is_empty() {
-                return Ok(Value::Null);
-            }
-            Ok(Value::String(if value.starts_with("[[") && value.ends_with("]]") {
-                value.to_string()
-            } else {
-                format!("[[{value}]]")
-            }))
-        }
-    }
-}
-
-fn parse_property_number(raw: &str) -> Result<serde_yaml::Value, String> {
-    let value = raw.trim();
-    if value.is_empty() {
-        return Ok(serde_yaml::Value::Null);
-    }
-    if let Ok(integer) = value.parse::<i64>() {
-        return Ok(serde_yaml::Value::Number(integer.into()));
-    }
-    let unsigned = value.strip_prefix(['-', '+']).unwrap_or(value);
-    let Some((integer, fraction)) = unsigned.split_once('.') else {
-        return Err("数字格式无效，可改用文本类型。".to_string());
-    };
-    if fraction.is_empty()
-        || !integer.chars().all(|character| character.is_ascii_digit())
-        || !fraction.chars().all(|character| character.is_ascii_digit())
-    {
-        return Err("数字格式无效，可改用文本类型。".to_string());
-    }
-    let number = value.parse::<f64>()
-        .map_err(|_| "数字格式无效，可改用文本类型。".to_string())?;
-    if !number.is_finite() {
-        return Err("数字格式无效，可改用文本类型。".to_string());
-    }
-    serde_yaml::to_value(number).map_err(|_| "数字格式无效，可改用文本类型。".to_string())
-}
-
-fn property_registry_path(vault: &Path) -> PathBuf {
-    vault.join(".shard").join("properties.json")
-}
-
-fn read_property_registry_in_vault(
-    cx: &VaultCtx<'_>,
-) -> Result<PropertyRegistryReadResult, String> {
-    let path = property_registry_path(cx.root());
-    let text = match cx.vfs.read_to_string(&path) {
-        Ok(text) => text,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(PropertyRegistryReadResult {
-                registry: PropertyRegistry::default(),
-                sha: content_sha256_hex(""),
-            });
-        }
-        Err(error) => return Err(error.to_string()),
-    };
-    let registry = serde_json::from_str::<PropertyRegistry>(&text)
-        .map_err(|error| format!("属性类型登记表损坏：{error}"))?;
-    if registry.version != 1 {
-        return Err(format!("不支持的属性类型登记表版本：{}", registry.version));
-    }
-    Ok(PropertyRegistryReadResult { registry, sha: content_sha256_hex(&text) })
-}
-
-fn register_property_type_in_vault(
-    cx: &VaultCtx<'_>,
-    key: &str,
-    property_type: PropertyType,
-    expected_sha: &str,
-) -> Result<PropertyRegistryReadResult, String> {
-    validate_property_key(key)?;
-    let current = read_property_registry_in_vault(cx)?;
-    if current.sha != expected_sha {
-        return Err("属性类型登记表已被外部修改，请刷新后重试。".to_string());
-    }
-    let mut registry = current.registry;
-    registry.properties.insert(key.to_string(), PropertyRegistryEntry { property_type });
-    let mut text = serde_json::to_string_pretty(&registry).map_err(|error| error.to_string())?;
-    text.push('\n');
-    cx.vfs
-        .write_atomic(&property_registry_path(cx.root()), text.as_bytes())
-        .map_err(|error| error.to_string())?;
-    Ok(PropertyRegistryReadResult { registry, sha: content_sha256_hex(&text) })
 }
 
 #[tauri::command]
@@ -1315,13 +769,6 @@ async fn create_library_note(
     .await
 }
 
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct LibraryDatasetResult {
-    dataset: DatasetSnapshot,
-    library: LibraryMutationResult,
-}
-
 #[tauri::command]
 async fn create_library_dataset(
     app: tauri::AppHandle,
@@ -1539,14 +986,9 @@ async fn convert_note_to_fragment(
 async fn read_csv_file(app: tauri::AppHandle, path: String) -> Result<Vec<u8>, String> {
     run_blocking(move || {
         let vault = ensure_vault_dirs(&app)?;
-        let vfs = FsVfs::new(&vault);
-        let csv_path = ensure_public_csv_path(&vfs, &path)?;
+        let local = LocalVault::new(&vault);
         // 嵌入预览整份读进前端解析；超过数据集上限的文件只给出提示，不拖垮界面。
-        let limit = DatasetLimits::default().max_file_bytes as u64;
-        if vfs.metadata(&csv_path).map_err(|error| error.to_string())?.len() > limit {
-            return Err(format!("CSV 超过 {} MiB，请用「编辑」或默认程序打开", limit / 1024 / 1024));
-        }
-        vfs.read(&csv_path).map_err(|error| error.to_string())
+        read_csv_file_in_vault(&local.cx(), &path)
     })
     .await
 }
@@ -1593,49 +1035,6 @@ async fn read_import_xlsx_file(path: String) -> Result<xlsx::XlsxRecords, String
     }).await
 }
 
-fn read_dataset_in_vault(cx: &VaultCtx<'_>, path: &str) -> Result<DatasetSnapshot, String> {
-    dataset::read_dataset(cx.vfs, path, &DatasetLimits::default())
-        .map_err(|error| error.to_string())
-}
-
-fn apply_dataset_ops_in_vault(
-    cx: &VaultCtx<'_>,
-    path: &str,
-    expected_sha: &str,
-    expected_schema_sha: Option<&str>,
-    ops: &[DatasetOp],
-) -> Result<DatasetSnapshot, String> {
-    let _gate = lock_vault_gate(cx.root());
-    dataset::write_dataset_ops(
-        cx.vfs,
-        path,
-        expected_sha,
-        expected_schema_sha,
-        ops,
-        &DatasetLimits::default(),
-    )
-    .map_err(|error| error.to_string())
-}
-
-fn create_dataset_in_vault(
-    cx: &VaultCtx<'_>,
-    title: &str,
-    header: Vec<String>,
-    rows: Vec<Vec<String>>,
-    primary_key: Option<String>,
-) -> Result<DatasetSnapshot, String> {
-    let _gate = lock_vault_gate(cx.root());
-    dataset::create_dataset(
-        cx.vfs,
-        title,
-        header,
-        rows,
-        primary_key,
-        &DatasetLimits::default(),
-    )
-    .map_err(|error| error.to_string())
-}
-
 #[tauri::command]
 async fn read_dataset(app: tauri::AppHandle, path: String) -> Result<DatasetSnapshot, String> {
     run_blocking(move || {
@@ -1656,6 +1055,7 @@ async fn apply_dataset_ops(
 ) -> Result<DatasetSnapshot, String> {
     run_blocking(move || {
         let vault = ensure_vault_dirs(&app)?;
+        let _gate = lock_vault_gate(&vault);
         let local = LocalVault::new(&vault);
         apply_dataset_ops_in_vault(
             &local.cx(),
@@ -1679,13 +1079,7 @@ async fn normalize_csv_file(
         let vault = ensure_vault_dirs(&app)?;
         let _gate = lock_vault_gate(&vault);
         let local = LocalVault::new(&vault);
-        let cx = local.cx();
-        let snapshot =
-            dataset::normalize_csv_file(cx.vfs, &path, &expected_sha, &DatasetLimits::default())
-                .map_err(|error| error.to_string())?;
-        cx.hooks
-            .commit_paths_best_effort(&[path.trim().to_string()], "convert csv to utf-8");
-        Ok(snapshot)
+        normalize_csv_file_in_vault(&local.cx(), &path, &expected_sha)
     })
     .await
 }
@@ -1700,6 +1094,7 @@ async fn create_dataset(
 ) -> Result<DatasetSnapshot, String> {
     run_blocking(move || {
         let vault = ensure_vault_dirs(&app)?;
+        let _gate = lock_vault_gate(&vault);
         let local = LocalVault::new(&vault);
         create_dataset_in_vault(&local.cx(), &title, header, rows, primary_key)
     })
@@ -1925,7 +1320,11 @@ async fn organize_fragments(
     run_blocking(move || {
         let vault = ensure_vault_dirs(&app)?;
         let local = LocalVault::new(&vault);
-        organize_fragments_in_vault(&local.cx(), request)
+        let cx = local.cx();
+        // codex 生成可能要几十秒，只在落盘时持写门（与原来一致）。
+        let (sources, generated) = generate_organized_note(&cx, request)?;
+        let _gate = lock_vault_gate(&vault);
+        write_organized_note(&cx, &sources, &generated)
     })
     .await
 }
@@ -1981,10 +1380,11 @@ fn read_github_cli_status() -> GithubCliInfo {
     }
 }
 
-fn organize_fragments_in_vault(
+/// 读来源碎片并调 codex 生成整理稿；不持写门。落盘（[`write_organized_note`]）由命令层持门完成。
+fn generate_organized_note(
     cx: &VaultCtx<'_>,
     request: OrganizeFragmentsRequest,
-) -> Result<Fragment, String> {
+) -> Result<(Vec<OrganizeSource>, String), String> {
     let target = request.target.trim();
     if target.is_empty() {
         return Err("请填写整理目标。".to_string());
@@ -1993,8 +1393,7 @@ fn organize_fragments_in_vault(
     let sources = read_organize_sources(cx.vfs, &request.fragment_paths)?;
     let prompt = organize_fragments_prompt(&sources, target, request.template);
     let generated = run_codex_exec(cx.root(), &prompt)?;
-    let _gate = lock_vault_gate(cx.root());
-    write_organized_note(cx, &sources, &generated)
+    Ok((sources, generated))
 }
 
 fn read_organize_sources(
@@ -2267,16 +1666,8 @@ fn list_fragments_in_vault(
     lockbox_runtime: &LockboxRuntime,
 ) -> Result<VaultState, String> {
     let vault = cx.root();
-    let mut files = Vec::new();
-    collect_markdown_files(cx.vfs, &vault.join("fragments"), &mut files)?;
-    collect_markdown_files(cx.vfs, &vault.join(".trash").join("fragments"), &mut files)?;
-    collect_markdown_files(cx.vfs, &vault.join("notes"), &mut files)?;
-
     let dirty_paths = cx.hooks.dirty_paths();
-    let mut fragments = files
-        .iter()
-        .filter_map(|path| read_fragment(cx, path, &dirty_paths, None).ok())
-        .collect::<Vec<_>>();
+    let mut fragments = list_public_fragments(cx, &dirty_paths)?;
 
     if let Ok(lease) = search_lockbox::peek_lockbox_read_lease(vault, lockbox_runtime) {
         let public_count = fragments.len();
@@ -2297,11 +1688,7 @@ fn list_fragments_in_vault(
         }
     }
 
-    fragments.sort_by(|a, b| {
-        b.pinned
-            .cmp(&a.pinned)
-            .then_with(|| b.created_at.cmp(&a.created_at))
-    });
+    sort_fragment_list(&mut fragments);
 
     Ok(VaultState {
         vault_path: vault.display().to_string(),
@@ -2646,180 +2033,6 @@ fn run_outline_upgrade_in_vault(
     })
 }
 
-fn list_mind_maps_in_vault(cx: &VaultCtx<'_>) -> Result<Vec<MindMapSummary>, String> {
-    let mut files = Vec::new();
-    collect_mind_map_files(cx.vfs, &cx.root().join("notes"), &mut files)?;
-
-    let mut summaries = files
-        .iter()
-        .filter_map(|path| read_mind_map_summary(cx.vfs, path).ok())
-        .collect::<Vec<_>>();
-
-    summaries.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
-    Ok(summaries)
-}
-
-#[cfg(test)]
-fn create_mind_map_in_vault(
-    cx: &VaultCtx<'_>,
-    title: String,
-    source_fragment_id: Option<String>,
-) -> Result<MindMapReadResult, String> {
-    create_mind_map_at_in_vault(cx, title, source_fragment_id, None)
-}
-
-fn create_mind_map_at_in_vault(
-    cx: &VaultCtx<'_>,
-    title: String,
-    source_fragment_id: Option<String>,
-    parent_path: Option<&str>,
-) -> Result<MindMapReadResult, String> {
-    let dir = canvas_commands::public_directory(cx.vfs, parent_path.unwrap_or("notes"))?;
-    let title = title.trim();
-    if title.is_empty() {
-        return Err("思维导图标题不能为空。".to_string());
-    }
-    validate_library_name_length(title, ".shardmap.json")?;
-
-    let now = Local::now();
-    let suffix = unique_suffix();
-    let id = format!("map-{}-{}", now.format("%Y%m%d-%H%M%S"), suffix);
-    let root_id = format!("node-{}-root", suffix);
-    let first_branch_id = format!("node-{}-branch", suffix);
-    let created_at = now.to_rfc3339();
-    let mut links = Vec::new();
-
-    if let Some(fragment_id) = source_fragment_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|id| !id.is_empty())
-    {
-        ensure_public_fragment_id(cx.vfs, fragment_id)?;
-        links.push(ShardDocumentLink::Fragment {
-            id: format!("link-{}", unique_suffix()),
-            target_id: fragment_id.to_string(),
-        });
-    }
-
-    let root_node = ShardMapNode {
-        id: root_id.clone(),
-        parent_id: None,
-        sort_key: "m".to_string(),
-        text: title.to_string(),
-        note: None,
-        collapsed: false,
-        width: None,
-        created_at: created_at.clone(),
-        updated_at: created_at.clone(),
-        links,
-        style: None,
-    };
-    let first_branch = ShardMapNode {
-        id: first_branch_id.clone(),
-        parent_id: Some(root_id.clone()),
-        sort_key: "m".to_string(),
-        text: String::new(),
-        note: None,
-        collapsed: false,
-        width: None,
-        created_at: created_at.clone(),
-        updated_at: created_at.clone(),
-        links: Vec::new(),
-        style: None,
-    };
-    let mut nodes = BTreeMap::new();
-    nodes.insert(root_id.clone(), root_node);
-    nodes.insert(first_branch_id, first_branch);
-
-    let file = ShardMapFile {
-        kind: SHARD_MAP_KIND.to_string(),
-        schema_version: SHARD_MAP_SCHEMA_VERSION,
-        id,
-        title: title.to_string(),
-        created_at: created_at.clone(),
-        updated_at: created_at,
-        saved_with_app_version: env!("CARGO_PKG_VERSION").to_string(),
-        revision: 1,
-        root_id,
-        has_protected_links: false,
-        nodes,
-        viewport: None,
-    };
-
-    let path = unique_mind_map_path(cx.vfs, &dir, title);
-
-    validate_mind_map_file(cx.vfs, &file)?;
-    let text = canonical_mind_map_text(&file)?;
-    cx.vfs
-        .write_atomic(&path, text.as_bytes())
-        .map_err(|error| error.to_string())?;
-    write_mind_map_last_good(cx.vfs, &file)?;
-    mind_map_read_result(cx.root(), &path, file, text)
-}
-
-fn read_mind_map_in_vault(cx: &VaultCtx<'_>, id: &str) -> Result<MindMapReadResult, String> {
-    let path = find_mind_map_path(cx.vfs, id)?.ok_or_else(|| format!("找不到思维导图 {id}"))?;
-    let (file, text) = read_mind_map_file(cx.vfs, &path)?;
-    validate_mind_map_file(cx.vfs, &file)?;
-    mind_map_read_result(cx.root(), &path, file, text)
-}
-
-fn write_mind_map_in_vault(
-    cx: &VaultCtx<'_>,
-    id: &str,
-    mut file: ShardMapFile,
-    expected_revision: u64,
-    last_saved_hash: &str,
-) -> Result<MindMapReadResult, String> {
-    if file.id != id {
-        return Err("导图 id 与写入目标不一致。".to_string());
-    }
-
-    let path = find_mind_map_path(cx.vfs, id)?.ok_or_else(|| format!("找不到思维导图 {id}"))?;
-    let (current_file, current_text) = read_mind_map_file(cx.vfs, &path)?;
-    let current_hash = hash_text(&current_text);
-
-    if current_file.revision != expected_revision || current_hash != last_saved_hash {
-        let conflict_path = write_mind_map_conflict(cx.vfs, &file)?;
-        return Err(format!(
-            "导图已被外部修改，已另存冲突副本：{}",
-            relative_path(cx.root(), &conflict_path)?
-        ));
-    }
-
-    file.kind = SHARD_MAP_KIND.to_string();
-    file.schema_version = SHARD_MAP_SCHEMA_VERSION;
-    file.saved_with_app_version = env!("CARGO_PKG_VERSION").to_string();
-    file.revision = expected_revision + 1;
-    file.updated_at = Local::now().to_rfc3339();
-    validate_mind_map_file(cx.vfs, &file)?;
-
-    let text = canonical_mind_map_text(&file)?;
-    cx.vfs
-        .write_atomic(&path, text.as_bytes())
-        .map_err(|error| error.to_string())?;
-    write_mind_map_last_good(cx.vfs, &file)?;
-    mind_map_read_result(cx.root(), &path, file, text)
-}
-
-fn delete_mind_map_in_vault(
-    cx: &VaultCtx<'_>,
-    id: &str,
-    expected_revision: u64,
-) -> Result<(), String> {
-    let path = find_mind_map_path(cx.vfs, id)?.ok_or_else(|| format!("找不到思维导图 {id}"))?;
-    let (file, _) = read_mind_map_file(cx.vfs, &path)?;
-    if file.revision != expected_revision {
-        return Err("导图已被外部修改，请重新打开后再删除。".to_string());
-    }
-    cx.vfs.remove_file(&path).map_err(|error| error.to_string())?;
-    let last_good = cx.root().join(mind_map_last_good_rel_path(&file));
-    if cx.vfs.exists(&last_good) {
-        cx.vfs.remove_file(&last_good).map_err(|error| error.to_string())?;
-    }
-    Ok(())
-}
-
 #[tauri::command]
 async fn create_graph_fragment(
     app: tauri::AppHandle,
@@ -2889,16 +2102,12 @@ async fn create_fragment(
 ) -> Result<Fragment, String> {
     let lockbox_runtime = lockbox_runtime.inner().clone();
     run_blocking(move || {
-        let content = content.trim().to_string();
-        if content.is_empty() {
-            return Err("片段内容不能为空".to_string());
-        }
+        let (content, normalized_tags) = normalize_new_fragment(&content, tags)?;
 
         let vault = ensure_vault_dirs(&app)?;
         let _gate = lock_vault_gate(&vault);
         let local = LocalVault::new(&vault);
         let cx = local.cx();
-        let normalized_tags = normalize_type_tags(normalize_tags(tags.unwrap_or_default(), true));
         if contains_lockbox_tag(&normalized_tags) {
             if is_protected_type(&normalized_tags) {
                 return Err(LOCKBOX_TYPE_ERROR.to_string());
@@ -2911,13 +2120,7 @@ async fn create_fragment(
             );
         }
 
-        let path = create_public_fragment_in_vault(cx.vfs, &content, normalized_tags, "desktop")?;
-
-        let dirty = cx.hooks.dirty_paths();
-        // 内容保存只落盘，提交由聚合检查点接管（docs/design/commit-coalescing-plan.md §7 A2）
-        let override_status = None;
-
-        read_fragment(&cx, &path, &dirty, override_status)
+        create_public_fragment(&cx, &content, normalized_tags)
     })
     .await
 }
@@ -2949,28 +2152,22 @@ async fn update_fragment_tags(
             );
         }
 
-        let path = find_fragment_path(cx.vfs, &id)?.ok_or_else(|| format!("找不到片段 {}", id))?;
-        let text = cx.vfs.read_to_string(&path).map_err(|error| error.to_string())?;
-        let parsed = parse_fragment(&text)?;
-        let normalized_tags = normalize_updated_type_tags(&parsed.frontmatter.tags, tags);
-        if contains_lockbox_tag(&normalized_tags) {
-            if is_protected_type(&parsed.frontmatter.tags) {
-                return Err(LOCKBOX_TYPE_ERROR.to_string());
+        match update_public_fragment_tags_by_id(&cx, &id, tags)? {
+            PublicFragmentUpdate::Saved(fragment) => Ok(*fragment),
+            PublicFragmentUpdate::MoveToLockbox { path, content, tags } => {
+                let result = move_public_fragment_content_to_lockbox_in_vault(
+                    &cx,
+                    &lockbox_runtime,
+                    &gate,
+                    &path,
+                    &content,
+                    tags,
+                );
+                drop(gate);
+                forget_moved_public_index(&index_registry, cx.vfs, &path);
+                result
             }
-            let result = move_public_fragment_content_to_lockbox_in_vault(
-                &cx,
-                &lockbox_runtime,
-                &gate,
-                &path,
-                parsed.body.trim_start_matches('\n'),
-                normalized_tags,
-            );
-            drop(gate);
-            forget_moved_public_index(&index_registry, cx.vfs, &path);
-            return result;
         }
-
-        update_public_fragment_tags_in_vault(&cx, &path, normalized_tags)
     })
     .await
 }
@@ -3010,36 +2207,28 @@ async fn update_fragment(
             );
         }
 
-        let path = find_fragment_path(cx.vfs, &id)?.ok_or_else(|| format!("找不到片段 {}", id))?;
-        let text = cx.vfs.read_to_string(&path).map_err(|error| error.to_string())?;
-        let parsed = parse_fragment(&text)?;
-        let normalized_tags =
-            normalize_updated_type_tags(&parsed.frontmatter.tags, tags.unwrap_or_default());
-        if contains_lockbox_tag(&normalized_tags) {
-            if is_protected_type(&parsed.frontmatter.tags) {
-                return Err(LOCKBOX_TYPE_ERROR.to_string());
-            }
-            ensure_expected_file_sha(&text, expected_file_sha.as_deref())?;
-            let result = move_public_fragment_content_to_lockbox_in_vault(
-                &cx,
-                &lockbox_runtime,
-                &gate,
-                &path,
-                content.trim(),
-                normalized_tags,
-            );
-            drop(gate);
-            forget_moved_public_index(&index_registry, cx.vfs, &path);
-            return result;
-        }
-
-        update_public_fragment_in_vault(
+        match update_public_fragment_by_id(
             &cx,
-            &path,
+            &id,
             &content,
-            normalized_tags,
+            tags.unwrap_or_default(),
             expected_file_sha.as_deref(),
-        )
+        )? {
+            PublicFragmentUpdate::Saved(fragment) => Ok(*fragment),
+            PublicFragmentUpdate::MoveToLockbox { path, content, tags } => {
+                let result = move_public_fragment_content_to_lockbox_in_vault(
+                    &cx,
+                    &lockbox_runtime,
+                    &gate,
+                    &path,
+                    &content,
+                    tags,
+                );
+                drop(gate);
+                forget_moved_public_index(&index_registry, cx.vfs, &path);
+                result
+            }
+        }
     })
     .await
 }
@@ -3067,26 +2256,7 @@ async fn set_fragment_archived(
             );
         }
 
-        let path = find_fragment_path(cx.vfs, &id)?.ok_or_else(|| format!("找不到片段 {}", id))?;
-        let rel_path = relative_path(&vault, &path)?;
-        let is_archived = rel_path.starts_with(".trash/fragments/");
-        if is_archived == archived {
-            let dirty = cx.hooks.dirty_paths();
-            return read_fragment(&cx, &path, &dirty, None);
-        }
-
-        cx.hooks.checkpoint_before_structural();
-        let target_path = if archived {
-            move_to_trash_in_vault(&cx, &rel_path)?
-        } else {
-            restore_from_trash_in_vault(&cx, &rel_path)?
-        };
-
-        let dirty = cx.hooks.dirty_paths();
-        // 内容保存只落盘，提交由聚合检查点接管（docs/design/commit-coalescing-plan.md §7 A2）
-        let override_status = None;
-
-        read_fragment(&cx, &target_path, &dirty, override_status)
+        set_public_fragment_archived_by_id(&cx, &id, archived)
     })
     .await
 }
@@ -3109,8 +2279,7 @@ async fn set_fragment_pinned(
             return set_lockbox_fragment_pinned_in_vault(&cx, &lockbox_path, &read_keys, pinned);
         }
 
-        let path = find_fragment_path(cx.vfs, &id)?.ok_or_else(|| format!("找不到片段 {}", id))?;
-        set_public_fragment_pinned_in_vault(&cx, &path, pinned)
+        set_public_fragment_pinned_by_id(&cx, &id, pinned)
     })
     .await
 }
@@ -3263,39 +2432,6 @@ fn measure_markdown_tables(markdown: &str) -> (usize, usize) {
     (rows, cells)
 }
 
-/// 单张图片上限：GitHub 单文件 100 MB 硬上限之下留足余量，超限的图会让同步永久失败。
-const MAX_IMAGE_BYTES: u64 = 50 * 1024 * 1024;
-
-fn image_too_large_message() -> String {
-    format!("图片超过 {} MiB，无法保存", MAX_IMAGE_BYTES / 1024 / 1024)
-}
-
-/// 笔记配图按内容寻址存进 `assets/<hh>/<sha256>.<ext>`：同一张图只存一份，名字与内容绑定。
-fn store_image_attachment(cx: &VaultCtx<'_>, bytes: &[u8]) -> Result<String, String> {
-    if bytes.is_empty() {
-        return Err("图片内容为空".to_string());
-    }
-    if bytes.len() as u64 > MAX_IMAGE_BYTES {
-        return Err(image_too_large_message());
-    }
-    let vault = cx.root();
-    let _gate = lock_vault_gate(vault);
-    let mime_type = sniff_image_mime_type(bytes)?;
-    let extension = shard_core::image::image_extension_for_mime_type(mime_type)
-        .ok_or_else(|| "不支持的图片格式".to_string())?;
-    let hash = hash_bytes(bytes);
-    let dir = vault.join("assets").join(&hash[..2]);
-    cx.vfs.create_dir_all(&dir).map_err(|error| error.to_string())?;
-    let path = dir.join(format!("{hash}.{extension}"));
-
-    if !cx.vfs.exists(&path) {
-        cx.vfs
-            .write_atomic(&path, bytes)
-            .map_err(|error| error.to_string())?;
-    }
-    relative_path(vault, &path)
-}
-
 /// 粘贴、选取的图片：原始字节 IPC，不再在 UI 线程把整张图序列化成 number[]。
 #[tauri::command]
 async fn save_fragment_image(
@@ -3308,6 +2444,7 @@ async fn save_fragment_image(
     };
     run_blocking(move || {
         let vault = ensure_vault_dirs(&app)?;
+        let _gate = lock_vault_gate(&vault);
         let local = LocalVault::new(&vault);
         store_image_attachment(&local.cx(), &bytes)
     })
@@ -3324,25 +2461,12 @@ async fn save_image_attachment_from_path(
         let vault = ensure_vault_dirs(&app)?;
         let local = LocalVault::new(&vault);
         let cx = local.cx();
+        // 读外部文件（最大 50 MiB）在门外，与原来一致；只有写入资料库时持门。
         let bytes = read_external_image(cx.vfs, Path::new(&path))?;
+        let _gate = lock_vault_gate(&vault);
         store_image_attachment(&cx, &bytes)
     })
     .await
-}
-
-#[derive(Debug, Serialize, Clone, PartialEq)]
-#[serde(rename_all = "camelCase")]
-struct LibraryImportSkip {
-    path: String,
-    reason: String,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct LibraryImportResult {
-    tree: LibraryTreeSnapshot,
-    imported: Vec<String>,
-    skipped: Vec<LibraryImportSkip>,
 }
 
 /// 把访达里的图片按原文件名复制进资料库目录（缺省为 `notes/` 根）。
@@ -3369,59 +2493,6 @@ async fn import_library_files(
     .await
 }
 
-/// 逐个导入，单个失败（不是图片、超限、来自密匣）只记入 skipped，不影响其余文件。
-/// 重名加 `-2` 后缀，绝不覆盖已有文件。调用方持有 vault 写门。
-fn import_library_images_in_vault(
-    cx: &VaultCtx<'_>,
-    paths: &[String],
-    directory: Option<&str>,
-) -> Result<(Vec<String>, Vec<LibraryImportSkip>), String> {
-    let vault = cx.root();
-    let target = existing_library_directory(cx.vfs, directory)?;
-    let mut imported = Vec::new();
-    let mut skipped = Vec::new();
-    for raw in paths {
-        let source = Path::new(raw);
-        let result = (|| {
-            let bytes = read_external_image(cx.vfs, source)?;
-            let stem = source
-                .file_stem()
-                .and_then(|stem| stem.to_str())
-                .unwrap_or_default();
-            let extension = source
-                .extension()
-                .and_then(|extension| extension.to_str())
-                .filter(|extension| shard_core::image::is_image_extension(extension))
-                .map(str::to_string)
-                .or_else(|| {
-                    shard_core::image::sniff_image_mime_type(&bytes)
-                        .and_then(shard_core::image::image_extension_for_mime_type)
-                        .map(str::to_string)
-                })
-                .ok_or_else(|| "不支持的图片格式".to_string())?;
-            let stem = if stem.trim().is_empty() { "图片" } else { stem };
-            let destination =
-                unique_titled_path(cx.vfs, &target, stem, &format!(".{extension}"));
-            cx.vfs
-                .write_atomic(&destination, &bytes)
-                .map_err(|error| error.to_string())?;
-            relative_path(vault, &destination)
-        })();
-        match result {
-            Ok(rel_path) => imported.push(rel_path),
-            Err(reason) => skipped.push(LibraryImportSkip {
-                path: raw.clone(),
-                reason,
-            }),
-        }
-    }
-    if !imported.is_empty() {
-        cx.hooks
-            .commit_paths_best_effort(&imported, "import library images");
-    }
-    Ok((imported, skipped))
-}
-
 /// 哪些公开文档、表格用到了这张图（不含回收站）；供图片查看器显示「引用处」与删除前提示。
 #[tauri::command]
 async fn image_references(app: tauri::AppHandle, path: String) -> Result<Vec<String>, String> {
@@ -3433,41 +2504,15 @@ async fn image_references(app: tauri::AppHandle, path: String) -> Result<Vec<Str
     .await
 }
 
-fn image_references_in_vault(cx: &VaultCtx<'_>, target: &str) -> Result<Vec<String>, String> {
-    let vault = cx.root();
-    let target = shard_core::image_refs::normalize_reference(target);
-    // 内容寻址附件也可能被写成 shard-attachment:<hash>。
-    let attachment = Path::new(&target)
-        .file_stem()
-        .and_then(|stem| stem.to_str())
-        .filter(|stem| target.starts_with("assets/") && stem.len() == 64)
-        .map(|hash| format!("shard-attachment:{hash}"));
-    let mut sources = Vec::new();
-    collect_public_vault_markdown(cx.vfs, vault, &mut sources)?;
-    collect_csv_files(cx.vfs, vault, &mut sources)?;
-    let mut referencing = Vec::new();
-    for source in sources {
-        let Ok(relative) = relative_path(vault, &source) else {
-            continue;
-        };
-        if relative.starts_with(".trash/") {
-            continue;
-        }
-        let Ok(bytes) = cx.vfs.read(&source) else {
-            continue;
-        };
-        let references =
-            extract_library_image_references(Path::new(&relative), &String::from_utf8_lossy(&bytes));
-        if references
-            .iter()
-            .any(|reference| *reference == target || Some(reference) == attachment.as_ref())
-        {
-            referencing.push(relative);
-        }
-    }
-    referencing.sort();
-    referencing.dedup();
-    Ok(referencing)
+/// 从访达导入资料库命名图片：来源字节按外部文件读（[`read_external_image`]）。调用方持有 vault 写门。
+fn import_library_images_in_vault(
+    cx: &VaultCtx<'_>,
+    paths: &[String],
+    directory: Option<&str>,
+) -> Result<(Vec<String>, Vec<LibraryImportSkip>), String> {
+    import_library_images_in_vault_with(cx, paths, directory, &|source| {
+        read_external_image(cx.vfs, source)
+    })
 }
 
 /// 读 vault 外（或 vault 内公开位置）的一张图片；密匣里的文件与超限文件一律拒绝。
@@ -3536,17 +2581,6 @@ async fn existing_vault_images(
         Ok(existing_vault_images_in(&FsVfs::new(&vault), paths))
     })
     .await
-}
-
-fn existing_vault_images_in(vfs: &dyn Vfs, paths: Vec<String>) -> Vec<String> {
-    paths
-        .into_iter()
-        .take(20_000)
-        .filter(|path| {
-            shard_core::image_refs::is_local_image_reference(path)
-                && resolve_vault_asset_path(vfs, path).is_ok()
-        })
-        .collect()
 }
 
 /// 用系统默认应用打开 vault 里的一张图片（HEIC 等 webview 显示不了时的出路）。
@@ -4092,185 +3126,6 @@ fn write_app_config(app: &tauri::AppHandle, config: &AppConfig) -> Result<(), St
     fs::write(path, text).map_err(|error| error.to_string())
 }
 
-fn collect_markdown_files(
-    vfs: &dyn Vfs,
-    dir: &Path,
-    files: &mut Vec<PathBuf>,
-) -> Result<(), String> {
-    if !vfs.exists(dir) {
-        return Ok(());
-    }
-
-    for entry in vfs.read_dir(dir).map_err(|error| error.to_string())? {
-        let file_type = entry.file_type().map_err(|error| error.to_string())?;
-        if file_type.is_symlink() {
-            continue;
-        }
-        let path = entry.path();
-        if file_type.is_dir() {
-            collect_markdown_files(vfs, &path, files)?;
-        } else if file_type.is_file()
-            && path.extension().and_then(|ext| ext.to_str()) == Some("md")
-        {
-            files.push(path);
-        }
-    }
-
-    Ok(())
-}
-
-
-fn build_library_tree(cx: &VaultCtx<'_>) -> Result<LibraryTreeSnapshot, String> {
-    let vfs = cx.vfs;
-    let vault = cx.root();
-    fn flatten_markdown(entry: LibraryTreeEntry, entries: &mut Vec<LibraryTreeEntry>) {
-        if let Some(children) = entry.children {
-            for child in children {
-                flatten_markdown(child, entries);
-            }
-        } else if entry.kind == "markdown" {
-            entries.push(entry);
-        }
-    }
-    let mut fragment_entries = Vec::new();
-    let fragments_root = vault.join("fragments");
-    if vfs.exists(&fragments_root) {
-        for entry in collect_library_entries(vfs, &fragments_root)? {
-            flatten_markdown(entry, &mut fragment_entries);
-        }
-    }
-    fragment_entries.sort_by(|left, right| {
-        right
-            .modified_at
-            .cmp(&left.modified_at)
-            .then_with(|| left.path.cmp(&right.path))
-    });
-    let trash_root = vault.join(".trash");
-    let mut trash_entries = if vfs.exists(&trash_root) {
-        collect_library_entries(vfs, &trash_root)?
-    } else {
-        Vec::new()
-    };
-    let mut fragment_trash_entries = Vec::new();
-    if let Some(index) = trash_entries
-        .iter()
-        .position(|entry| entry.path == ".trash/fragments")
-    {
-        fn flatten(entry: LibraryTreeEntry, entries: &mut Vec<LibraryTreeEntry>) {
-            if let Some(children) = entry.children {
-                for child in children {
-                    flatten(child, entries);
-                }
-            } else {
-                entries.push(entry);
-            }
-        }
-        flatten(trash_entries.remove(index), &mut fragment_trash_entries);
-    }
-    fragment_trash_entries.sort_by(|left, right| {
-        right
-            .modified_at
-            .cmp(&left.modified_at)
-            .then_with(|| left.path.cmp(&right.path))
-    });
-    Ok(LibraryTreeSnapshot {
-        entries: collect_library_entries(vfs, &vault.join("notes"))?,
-        fragment_entries,
-        trash_entries,
-        fragment_trash_entries,
-        fragment_stream: summarize_fragment_stream(vfs)?,
-        assets: collect_library_assets(vfs),
-    })
-}
-
-fn library_asset_references(vfs: &dyn Vfs) -> HashSet<String> {
-    library_asset_references_with_index(vfs, LIBRARY_INDEX_REGISTRY.get().map(Arc::as_ref))
-}
-
-/// 资料库「图片」只收资料库内容用到的附件：`notes/` 下的文档、导图、画布与 CSV，
-/// 以及 `datasets/` 下的数据集（由资料库「新建数据集」创建）。碎片、回收站、密匣不算。
-fn is_library_reference_source(path: &Path) -> bool {
-    let mut parts = path.components();
-    let root = match parts.next() {
-        Some(Component::Normal(root)) if root == "notes" => "notes",
-        Some(Component::Normal(root)) if root == "datasets" => "datasets",
-        _ => return false,
-    };
-    let mut has_child = false;
-    for part in parts {
-        let Component::Normal(name) = part else { return false };
-        if name.to_string_lossy().starts_with('.') {
-            return false;
-        }
-        has_child = true;
-    }
-    let is_csv = path
-        .extension()
-        .and_then(|extension| extension.to_str())
-        .is_some_and(|extension| extension.eq_ignore_ascii_case("csv"));
-    if root == "datasets" {
-        return has_child && is_csv;
-    }
-    has_child && (is_csv
-        || matches!(path.extension().and_then(|extension| extension.to_str()), Some("md"))
-        || is_mind_map_file(path)
-        || canvas_commands::is_canvas(path)
-        || canvas_commands::is_flow(path))
-}
-
-/// 一份资料库来源里的图片引用：旧的 `assets/`、`shard-attachment:` 子串扫描兜底（导图、
-/// 画布 JSON 也靠它），Markdown 再按链接目标解析（带空格、括号的命名图片），CSV 按单元格。
-fn extract_library_image_references(relative: &Path, text: &str) -> Vec<String> {
-    let mut references: Vec<String> = extract_asset_references(text);
-    let extension = relative
-        .extension()
-        .and_then(|extension| extension.to_str())
-        .map(str::to_ascii_lowercase);
-    let structured = match extension.as_deref() {
-        Some("md") => shard_core::image_refs::markdown_image_references(text),
-        Some("csv") => shard_core::image_refs::csv_image_references(text),
-        _ => Vec::new(),
-    };
-    for reference in structured {
-        if !references.contains(&reference) {
-            references.push(reference);
-        }
-    }
-    references
-}
-
-fn extract_asset_references(text: &str) -> Vec<String> {
-    let mut references = HashSet::new();
-    for line in text.lines() {
-        let line = line.replace("\\/", "/");
-        for marker in ["assets/", "shard-attachment:"] {
-            let mut remaining = line.as_str();
-            while let Some(start) = remaining.find(marker) {
-                let is_local_reference = remaining[..start]
-                    .chars()
-                    .next_back()
-                    .map(|character| {
-                        character.is_whitespace()
-                            || matches!(character, '(' | '[' | '<' | '"' | '\'' | '=')
-                    })
-                    .unwrap_or(true);
-                let candidate = &remaining[start..];
-                let end = candidate
-                    .find(|character: char| {
-                        character.is_whitespace()
-                            || matches!(character, '"' | '\'' | ')' | ']' | '>' | '<' | '`' | '\\' | ',')
-                    })
-                    .unwrap_or(candidate.len());
-                if is_local_reference && end > marker.len() {
-                    references.insert(candidate[..end].to_string());
-                }
-                remaining = &candidate[marker.len()..];
-            }
-        }
-    }
-    references.into_iter().collect()
-}
-
 fn library_asset_references_with_index(
     vfs: &dyn Vfs,
     registry: Option<&search_index::IndexRegistry>,
@@ -4286,1373 +3141,6 @@ fn library_asset_references_with_index(
         }
     }
     library_asset_references_full_scan(vfs)
-}
-
-fn library_asset_references_full_scan(vfs: &dyn Vfs) -> HashSet<String> {
-    // Shared attachments remain on disk. Public library references establish
-    // visibility; fragments, trash, lockbox and unknown provenance never do.
-    fn collect(vfs: &dyn Vfs, directory: &Path, references: &mut HashSet<String>) {
-        let vault = vfs.root();
-        let Ok(entries) = vfs.read_dir(directory) else {
-            return;
-        };
-        for entry in entries {
-            let Ok(file_type) = entry.file_type() else {
-                continue;
-            };
-            if file_type.is_symlink() || entry.file_name().to_string_lossy().starts_with('.') {
-                continue;
-            }
-            let path = entry.path();
-            if file_type.is_dir() {
-                collect(vfs, &path, references);
-            } else if file_type.is_file() {
-                let Ok(relative) = path.strip_prefix(vault) else { continue };
-                if !is_library_reference_source(relative) {
-                    continue;
-                }
-                let Ok(bytes) = vfs.read(&path) else { continue };
-                let text = String::from_utf8_lossy(&bytes);
-                references.extend(extract_library_image_references(relative, &text));
-            }
-        }
-    }
-    let vault = vfs.root();
-    let mut references = HashSet::new();
-    collect(vfs, &vault.join("notes"), &mut references);
-    collect(vfs, &vault.join("datasets"), &mut references);
-    references
-}
-
-fn collect_library_assets(vfs: &dyn Vfs) -> Vec<LibraryAssetEntry> {
-    fn collect(
-        vfs: &dyn Vfs,
-        directory: &Path,
-        references: &HashSet<String>,
-        assets: &mut Vec<LibraryAssetEntry>,
-    ) {
-        let vault = vfs.root();
-        let Ok(entries) = vfs.read_dir(directory) else {
-            return;
-        };
-
-        for entry in entries {
-            let Ok(file_type) = entry.file_type() else {
-                continue;
-            };
-            if file_type.is_symlink() {
-                continue;
-            }
-
-            let path = entry.path();
-            if file_type.is_dir() {
-                if entry
-                    .file_name()
-                    .to_str()
-                    .map(|name| name.starts_with('.'))
-                    .unwrap_or(false)
-                {
-                    continue;
-                }
-                collect(vfs, &path, references, assets);
-                continue;
-            }
-            if !file_type.is_file() {
-                continue;
-            }
-
-            let Ok(relative) = relative_path(vault, &path) else {
-                continue;
-            };
-            let is_referenced = references.contains(&relative)
-                || path
-                    .file_stem()
-                    .and_then(|stem| stem.to_str())
-                    .map(|hash| references.contains(&format!("shard-attachment:{hash}")))
-                    .unwrap_or(false);
-            if !is_referenced {
-                continue;
-            }
-            let Some(asset) = (|| {
-                let mime_type = sniff_library_asset_mime_type(vfs, &path)?;
-                let metadata = entry.metadata().ok()?;
-                let modified_at = metadata.modified().ok()?;
-                Some(LibraryAssetEntry {
-                    path: relative_path(vault, &path).ok()?,
-                    size: metadata.len(),
-                    modified_at: system_time_to_rfc3339(modified_at),
-                    mime_type: mime_type.to_string(),
-                })
-            })() else {
-                continue;
-            };
-            assets.push(asset);
-        }
-    }
-
-    let vault = vfs.root();
-    let mut assets = Vec::new();
-    let references = library_asset_references(vfs);
-    if !references.is_empty() {
-        collect(vfs, &vault.join("assets"), &references, &mut assets);
-    }
-    collect_named_library_images(vfs, &vault.join("notes"), &mut assets);
-    assets.sort_by(|left, right| {
-        right
-            .modified_at
-            .cmp(&left.modified_at)
-            .then_with(|| left.path.cmp(&right.path))
-    });
-    assets
-}
-
-/// 资料库目录里显式导入的命名图片：位置本身就说明它属于资料库，不需要被引用。
-/// 类型按扩展名定，建宫格时不逐个打开文件。
-fn collect_named_library_images(
-    vfs: &dyn Vfs,
-    directory: &Path,
-    assets: &mut Vec<LibraryAssetEntry>,
-) {
-    let vault = vfs.root();
-    let Ok(entries) = vfs.read_dir(directory) else {
-        return;
-    };
-    for entry in entries {
-        let Ok(file_type) = entry.file_type() else {
-            continue;
-        };
-        if file_type.is_symlink() || entry.file_name().to_string_lossy().starts_with('.') {
-            continue;
-        }
-        let path = entry.path();
-        if file_type.is_dir() {
-            collect_named_library_images(vfs, &path, assets);
-            continue;
-        }
-        let Some(mime_type) = path
-            .extension()
-            .and_then(|extension| extension.to_str())
-            .and_then(shard_core::image::image_mime_type_from_extension)
-        else {
-            continue;
-        };
-        let Some(asset) = (|| {
-            let metadata = entry.metadata().ok()?;
-            Some(LibraryAssetEntry {
-                path: relative_path(vault, &path).ok()?,
-                size: metadata.len(),
-                modified_at: system_time_to_rfc3339(metadata.modified().ok()?),
-                mime_type: mime_type.to_string(),
-            })
-        })() else {
-            continue;
-        };
-        assets.push(asset);
-    }
-}
-
-fn sniff_library_asset_mime_type(vfs: &dyn Vfs, path: &Path) -> Option<&'static str> {
-    // 先看前 4 KiB 的魔数；只有扩展名是 svg 时才在前 64 KiB 里找 `<svg`，不整张读图片。
-    let header = vfs.read_head(path, 4 * 1024).ok()?;
-    if let Ok(mime_type) = sniff_image_mime_type(&header) {
-        return Some(mime_type);
-    }
-    if !path
-        .extension()
-        .and_then(|extension| extension.to_str())
-        .is_some_and(|extension| extension.eq_ignore_ascii_case("svg"))
-    {
-        return None;
-    }
-    if header.windows(4).any(|window| window == b"<svg") {
-        return Some("image/svg+xml");
-    }
-    if header.len() < 4 * 1024 {
-        return None;
-    }
-    let header = vfs.read_head(path, 64 * 1024).ok()?;
-    if header.windows(4).any(|window| window == b"<svg") {
-        return Some("image/svg+xml");
-    }
-    None
-}
-
-fn collect_library_entries(
-    vfs: &dyn Vfs,
-    directory: &Path,
-) -> Result<Vec<LibraryTreeEntry>, String> {
-    collect_library_entries_with_metadata(vfs, directory, &|path| vfs.metadata(path))
-}
-
-fn library_entry_metadata<F>(
-    path: &Path,
-    is_directory: bool,
-    read_metadata: &F,
-) -> (u64, String, Option<String>)
-where
-    F: Fn(&Path) -> std::io::Result<shard_core::VfsMetadata>,
-{
-    let Ok(metadata) = read_metadata(path) else {
-        return (0, String::new(), None);
-    };
-    let modified_at = metadata
-        .modified()
-        .map(system_time_to_rfc3339)
-        .unwrap_or_default();
-    let size = if is_directory { 0 } else { metadata.len() };
-    let created_at = metadata.created().ok().map(system_time_to_rfc3339);
-    (size, modified_at, created_at)
-}
-
-fn valid_library_creation_time(value: String) -> Option<String> {
-    DateTime::parse_from_rfc3339(&value).ok().map(|_| value)
-}
-
-fn library_document_created_at(vfs: &dyn Vfs, path: &Path, kind: &str) -> Option<String> {
-    // Native documents store creation metadata before their body. Keep library scans
-    // bounded even for large documents; externally reordered headers can use FS birthtime.
-    const HEADER_BYTES: u64 = 64 * 1024;
-    let header = vfs.read_head(path, HEADER_BYTES).ok()?;
-    let reader = BufReader::new(header.as_slice());
-    if kind == "markdown" {
-        #[derive(Deserialize)]
-        struct CreationHeader {
-            created_at: Option<String>,
-        }
-
-        let mut lines = reader.lines();
-        if lines.next()?.ok()?.trim_end() != "---" {
-            return None;
-        }
-        let mut yaml = String::new();
-        for line in lines {
-            let line = line.ok()?;
-            if line.trim_end() == "---" {
-                return serde_yaml::from_str::<CreationHeader>(&yaml)
-                    .ok()?
-                    .created_at
-                    .and_then(valid_library_creation_time);
-            }
-            yaml.push_str(&line);
-            yaml.push('\n');
-        }
-        return None;
-    }
-
-    struct CreationHeaderVisitor<'a>(&'a mut Option<String>);
-    impl<'de> serde::de::Visitor<'de> for CreationHeaderVisitor<'_> {
-        type Value = ();
-
-        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-            formatter.write_str("a document object with top-level creation metadata")
-        }
-
-        fn visit_map<A>(self, mut map: A) -> Result<(), A::Error>
-        where
-            A: serde::de::MapAccess<'de>,
-        {
-            while let Some(key) = map.next_key::<String>()? {
-                if key == "createdAt" {
-                    *self.0 = map
-                        .next_value::<Option<String>>()?
-                        .and_then(valid_library_creation_time);
-                    return Ok(());
-                }
-                map.next_value::<serde::de::IgnoredAny>()?;
-            }
-            Ok(())
-        }
-    }
-
-    let mut created_at = None;
-    let mut deserializer = serde_json::Deserializer::from_reader(reader);
-    // Stop after the top-level field. Any trailing end-of-map error is irrelevant to
-    // this header lookup; opening the document still performs full validation.
-    let _ = serde::Deserializer::deserialize_map(
-        &mut deserializer,
-        CreationHeaderVisitor(&mut created_at),
-    );
-    created_at
-}
-
-fn collect_library_entries_with_metadata<F>(
-    vfs: &dyn Vfs,
-    directory: &Path,
-    read_metadata: &F,
-) -> Result<Vec<LibraryTreeEntry>, String>
-where
-    F: Fn(&Path) -> std::io::Result<shard_core::VfsMetadata>,
-{
-    let vault = vfs.root();
-    let mut entries = Vec::new();
-    for entry in vfs.read_dir(directory).map_err(|error| error.to_string())? {
-        let file_type = entry.file_type().map_err(|error| error.to_string())?;
-        if file_type.is_symlink() {
-            continue;
-        }
-        let path = entry.path();
-        let name = entry.file_name().to_string_lossy().to_string();
-        if file_type.is_dir() {
-            let (size, modified_at, created_at) =
-                library_entry_metadata(&path, true, read_metadata);
-            entries.push(LibraryTreeEntry {
-                name,
-                path: relative_path(vault, &path)?,
-                kind: "directory".to_string(),
-                size,
-                modified_at,
-                created_at,
-                mind_map_id: None,
-                children: Some(collect_library_entries_with_metadata(
-                    vfs,
-                    &path,
-                    read_metadata,
-                )?),
-            });
-        } else if file_type.is_file() {
-            let is_mind_map = is_mind_map_file(&path);
-            let kind = if canvas_commands::is_flow(&path) {
-                "flowchart"
-            } else if canvas_commands::is_canvas(&path) {
-                "canvas"
-            } else if is_mind_map {
-                "mindmap"
-            } else {
-                match path
-                    .extension()
-                    .and_then(|extension| extension.to_str())
-                    .map(|extension| extension.to_ascii_lowercase())
-                    .as_deref()
-                {
-                    Some("md") => "markdown",
-                    Some("csv") => "csv",
-                    // 资料库里的命名图片（营业执照.jpg、IMG_1234.heic）与文档平级上树。
-                    Some(extension)
-                        if shard_core::image::is_image_extension(extension)
-                            && !name.starts_with('.') =>
-                    {
-                        "image"
-                    }
-                    _ if directory.starts_with(vault.join(".trash")) => "file",
-                    _ => continue,
-                }
-            };
-            let (size, modified_at, filesystem_created_at) =
-                library_entry_metadata(&path, false, read_metadata);
-            let mind_map = is_mind_map
-                .then(|| read_mind_map_summary(vfs, &path).ok())
-                .flatten();
-            let created_at = if is_mind_map {
-                mind_map
-                    .as_ref()
-                    .and_then(|summary| valid_library_creation_time(summary.created_at.clone()))
-            } else if matches!(kind, "markdown" | "flowchart" | "canvas") {
-                library_document_created_at(vfs, &path, kind)
-            } else {
-                None
-            }
-            .or(filesystem_created_at);
-            entries.push(LibraryTreeEntry {
-                name,
-                path: relative_path(vault, &path)?,
-                kind: kind.to_string(),
-                size,
-                modified_at,
-                created_at,
-                mind_map_id: mind_map.map(|summary| summary.id),
-                children: None,
-            });
-        }
-    }
-    entries.sort_by(|left, right| {
-        let left_rank = if left.kind == "directory" { 0 } else { 1 };
-        let right_rank = if right.kind == "directory" { 0 } else { 1 };
-        left_rank
-            .cmp(&right_rank)
-            .then_with(|| left.name.to_lowercase().cmp(&right.name.to_lowercase()))
-    });
-    Ok(entries)
-}
-
-fn summarize_fragment_stream(vfs: &dyn Vfs) -> Result<FragmentStreamSummary, String> {
-    let fragments_root = vfs.root().join("fragments");
-    let mut by_year = BTreeMap::<String, BTreeMap<String, usize>>::new();
-    if vfs.exists(&fragments_root) {
-        for year_entry in vfs.read_dir(&fragments_root).map_err(|error| error.to_string())? {
-            if year_entry
-                .file_type()
-                .map_err(|error| error.to_string())?
-                .is_symlink()
-                || !vfs.is_dir(&year_entry.path())
-            {
-                continue;
-            }
-            let year = year_entry.file_name().to_string_lossy().to_string();
-            if year.len() != 4 || !year.bytes().all(|byte| byte.is_ascii_digit()) {
-                continue;
-            }
-            for month_entry in vfs
-                .read_dir(&year_entry.path())
-                .map_err(|error| error.to_string())?
-            {
-                if month_entry
-                    .file_type()
-                    .map_err(|error| error.to_string())?
-                    .is_symlink()
-                    || !vfs.is_dir(&month_entry.path())
-                {
-                    continue;
-                }
-                let month = month_entry.file_name().to_string_lossy().to_string();
-                if month.len() != 2
-                    || !month.bytes().all(|byte| byte.is_ascii_digit())
-                    || !("01"..="12").contains(&month.as_str())
-                {
-                    continue;
-                }
-                let count = vfs
-                    .read_dir(&month_entry.path())
-                    .map_err(|error| error.to_string())?
-                    .into_iter()
-                    .filter(|entry| {
-                        entry
-                            .file_type()
-                            .map(|kind| kind.is_file())
-                            .unwrap_or(false)
-                            && entry
-                                .path()
-                                .extension()
-                                .and_then(|extension| extension.to_str())
-                                == Some("md")
-                    })
-                    .count();
-                if count > 0 {
-                    by_year
-                        .entry(year.clone())
-                        .or_default()
-                        .insert(month, count);
-                }
-            }
-        }
-    }
-    let mut years = by_year
-        .into_iter()
-        .map(|(year, months)| {
-            let months = months
-                .into_iter()
-                .map(|(month, count)| FragmentMonthSummary { month, count })
-                .collect::<Vec<_>>();
-            FragmentYearSummary {
-                year,
-                total_count: months.iter().map(|month| month.count).sum(),
-                months,
-            }
-        })
-        .collect::<Vec<_>>();
-    years.sort_by(|left, right| right.year.cmp(&left.year));
-    for year in &mut years {
-        year.months
-            .sort_by(|left, right| right.month.cmp(&left.month));
-    }
-    Ok(FragmentStreamSummary {
-        total_count: years.iter().map(|year| year.total_count).sum(),
-        years,
-    })
-}
-
-fn library_mutation_result(
-    cx: &VaultCtx<'_>,
-    fragment: Option<Fragment>,
-    updated_links: usize,
-) -> Result<LibraryMutationResult, String> {
-    Ok(LibraryMutationResult {
-        tree: build_library_tree(cx)?,
-        fragment,
-        updated_links,
-        updated_image_refs: 0,
-    })
-}
-
-fn create_library_note_in_vault(
-    cx: &VaultCtx<'_>,
-    title: &str,
-    directory: Option<&str>,
-) -> Result<Fragment, String> {
-    create_library_note_with_body(cx, title, directory, &format!("# {}", title.trim()))
-}
-
-fn create_library_note_with_body(
-    cx: &VaultCtx<'_>,
-    title: &str,
-    directory: Option<&str>,
-    body: &str,
-) -> Result<Fragment, String> {
-    let path = create_library_note_file(cx.vfs, title, directory, body, Vec::new(), "desktop")?;
-    read_fragment(
-        cx,
-        &path,
-        &cx.hooks.dirty_paths(),
-        None,
-    )
-}
-
-/// Creates `datasets/<title>.csv` plus a note in the library that embeds it. Caller holds the
-/// vault gate. A failed note removes the new CSV and schema so no orphan dataset remains.
-fn create_library_dataset_in_vault(
-    cx: &VaultCtx<'_>,
-    title: &str,
-    header: Vec<String>,
-    rows: Vec<Vec<String>>,
-    primary_key: Option<String>,
-    directory: Option<&str>,
-) -> Result<(DatasetSnapshot, Fragment), String> {
-    let (dataset, note) = create_library_dataset_files(
-        cx.vfs,
-        title,
-        header,
-        rows,
-        primary_key,
-        directory,
-        "desktop",
-    )?;
-    let fragment = read_fragment(cx, &note, &cx.hooks.dirty_paths(), None)?;
-    Ok((dataset, fragment))
-}
-
-fn create_library_directory_in_vault(
-    cx: &VaultCtx<'_>,
-    name: &str,
-    parent: Option<&str>,
-) -> Result<(), String> {
-    let name = validate_library_name(name)?;
-    let parent = existing_library_directory(cx.vfs, parent)?;
-    let path = parent.join(name);
-    if cx.vfs.exists(&path) {
-        return Err(format!("资料库条目已存在：{name}"));
-    }
-    cx.vfs.create_dir(&path).map_err(|error| error.to_string())
-}
-
-/// 返回（重命名后的碎片、改写的双链处数、改写的图片引用处数）。
-fn rename_library_entry_in_vault(
-    cx: &VaultCtx<'_>,
-    rel_path: &str,
-    new_name: &str,
-) -> Result<(Option<Fragment>, usize, usize), String> {
-    let vfs = cx.vfs;
-    let vault = cx.root();
-    let relative = safe_vault_relative_path(rel_path)?;
-    let is_fragment = relative.starts_with("fragments");
-    let source = if is_fragment {
-        let source = vault.join(relative);
-        let metadata = vfs.symlink_metadata(&source).map_err(|error| error.to_string())?;
-        if !metadata.is_file()
-            || !source
-                .extension()
-                .and_then(|extension| extension.to_str())
-                .is_some_and(|extension| extension.eq_ignore_ascii_case("md"))
-        {
-            return Err("碎片分类只允许重命名单个 Markdown 文件。".to_string());
-        }
-        let root = vfs
-            .canonicalize(&vault.join("fragments"))
-            .map_err(|error| error.to_string())?;
-        let canonical = vfs.canonicalize(&source).map_err(|error| error.to_string())?;
-        let canonical_vault = vfs.canonicalize(vault).map_err(|error| error.to_string())?;
-        if !root.starts_with(&canonical_vault) || !canonical.starts_with(&root) {
-            return Err("不能操作碎片目录外路径。".to_string());
-        }
-        source
-    } else {
-        existing_library_path(vfs, rel_path)?
-    };
-    let fragment = if is_fragment {
-        Some(read_fragment(cx, &source, &HashSet::new(), None)?)
-    } else {
-        None
-    };
-    let new_name = validate_library_name_characters(new_name)?;
-    let file_type = vfs.metadata(&source).map_err(|error| error.to_string())?;
-    let old_stem = source
-        .file_stem()
-        .and_then(|name| name.to_str())
-        .unwrap_or_default()
-        .to_string();
-    let final_name = if file_type.is_file() {
-        if canvas_commands::is_canvas(&source) {
-            let suffix = if canvas_commands::is_flow(&source) { ".shardflow.json" } else { ".shardcanvas.json" };
-            if new_name.ends_with(suffix) {
-                new_name.to_string()
-            } else if Path::new(new_name).extension().is_some() {
-                return Err("重命名不能改变文件类型。".to_string());
-            } else {
-                format!("{new_name}{suffix}")
-            }
-        } else if is_mind_map_file(&source) {
-            if new_name.ends_with(".shardmap.json") {
-                new_name.to_string()
-            } else if Path::new(new_name).extension().is_some() {
-                return Err("重命名不能改变文件类型。".to_string());
-            } else {
-                format!("{new_name}.shardmap.json")
-            }
-        } else {
-            let extension = source
-                .extension()
-                .and_then(|extension| extension.to_str())
-                .ok_or_else(|| "只允许重命名 Markdown、CSV、图片或思维导图文件。".to_string())?;
-            if !matches!(extension.to_ascii_lowercase().as_str(), "md" | "csv")
-                && !shard_core::image::is_image_extension(extension)
-            {
-                return Err("只允许重命名 Markdown、CSV、图片或思维导图文件。".to_string());
-            }
-            let requested = Path::new(new_name);
-            match requested.extension().and_then(|value| value.to_str()) {
-                Some(requested_extension) if requested_extension.eq_ignore_ascii_case(extension) => {
-                    new_name.to_string()
-                }
-                Some(_) => return Err("重命名不能改变文件类型。".to_string()),
-                None => format!("{new_name}.{extension}"),
-            }
-        }
-    } else {
-        new_name.to_string()
-    };
-    let extension = if !file_type.is_file() {
-        String::new()
-    } else if canvas_commands::is_canvas(&source) {
-        if canvas_commands::is_flow(&source) {
-            ".shardflow.json"
-        } else {
-            ".shardcanvas.json"
-        }
-        .to_string()
-    } else if is_mind_map_file(&source) {
-        ".shardmap.json".to_string()
-    } else {
-        format!(
-            ".{}",
-            Path::new(&final_name)
-                .extension()
-                .and_then(|value| value.to_str())
-                .unwrap_or_default()
-        )
-    };
-    validate_library_file_name(&final_name, &extension)?;
-    let destination = source
-        .parent()
-        .ok_or_else(|| "资料库条目缺少父目录。".to_string())?
-        .join(final_name);
-    if vfs.exists(&destination) {
-        return Err("目标名称已存在。".to_string());
-    }
-    let new_stem = destination
-        .file_stem()
-        .and_then(|name| name.to_str())
-        .unwrap_or_default();
-    let link_updates = if file_type.is_file()
-        && destination
-            .extension()
-            .and_then(|extension| extension.to_str())
-            == Some("md")
-        && !fragment.as_ref().is_some_and(|fragment| fragment.id == old_stem)
-    {
-        plan_vault_wikilink_updates(vfs, &old_stem, new_stem)?
-    } else {
-        Vec::new()
-    };
-    let old_rel = rel_path.to_string();
-    let new_rel = relative_path(vault, &destination)?;
-    let image_updates = if !file_type.is_file() || shard_core::image::is_image_path(&source) {
-        plan_image_reference_updates(vfs, &[(old_rel.clone(), new_rel.clone())])?
-    } else {
-        Vec::new()
-    };
-    let link_count = link_updates.len();
-    let updates: Vec<_> = link_updates.into_iter().chain(image_updates).collect();
-    let written = apply_reference_updates(
-        vfs,
-        &source,
-        &destination,
-        updates
-            .iter()
-            .map(|(path, text, next, _)| (path, text, next)),
-    )?;
-    let updated_links: usize = updates[..link_count].iter().map(|update| update.3).sum();
-    let mut updated_image_refs: usize = updates[link_count..].iter().map(|update| update.3).sum();
-    let csv_changes = if !file_type.is_file() || shard_core::image::is_image_path(&destination) {
-        rewrite_csv_image_references(vfs, &[(old_rel.clone(), new_rel.clone())])
-    } else {
-        (0, Vec::new())
-    };
-    updated_image_refs += csv_changes.0;
-    let mut changed_paths = vec![old_rel, new_rel];
-    append_unique_paths(&mut changed_paths, csv_changes.1);
-    for (path, _) in &written {
-        let rel_path = relative_path(vault, path)?;
-        if !changed_paths.contains(&rel_path) {
-            changed_paths.push(rel_path);
-        }
-    }
-    cx.hooks.commit_paths_best_effort(
-        &changed_paths,
-        &format!("rename library entry {old_stem}"),
-    );
-    let fragment = if is_fragment {
-        Some(read_fragment(cx, &destination, &cx.hooks.dirty_paths(), None)?)
-    } else {
-        None
-    };
-    Ok((fragment, updated_links, updated_image_refs))
-}
-
-/// 改名/移动前算好要改写的公开 Markdown：命中 `moves` 的图片引用换成新路径。
-fn plan_image_reference_updates(
-    vfs: &dyn Vfs,
-    moves: &[(String, String)],
-) -> Result<Vec<(PathBuf, String, String, usize)>, String> {
-    let mut files = Vec::new();
-    collect_public_vault_markdown(vfs, vfs.root(), &mut files)?;
-    let mut updates = Vec::new();
-    for path in files {
-        let Ok(text) = vfs.read_to_string(&path) else {
-            continue;
-        };
-        if !text.contains("](") {
-            continue;
-        }
-        let (next, count) = shard_core::image_refs::rewrite_markdown_image_references(&text, moves);
-        if count > 0 {
-            updates.push((path, text, next, count));
-        }
-    }
-    Ok(updates)
-}
-
-/// `source` 已改名/移动到 `destination` 后写回正文改动；位于被移动目录里的文档按新位置写。
-/// 任何一处失败就把已写的恢复原文并把条目挪回原处。返回实际写过的（新路径、原文）。
-fn apply_reference_updates<'a>(
-    vfs: &dyn Vfs,
-    source: &Path,
-    destination: &Path,
-    updates: impl Iterator<Item = (&'a PathBuf, &'a String, &'a String)>,
-) -> Result<Vec<(PathBuf, String)>, String> {
-    let updates: Vec<_> = updates.collect();
-    vfs.rename(source, destination).map_err(|error| error.to_string())?;
-    let mut written = Vec::<(PathBuf, String)>::new();
-    for (original_path, original_text, next_text) in updates {
-        let path = if original_path == source {
-            destination.to_path_buf()
-        } else if let Ok(rest) = original_path.strip_prefix(source) {
-            destination.join(rest)
-        } else {
-            original_path.clone()
-        };
-        if let Err(error) = vfs.write_atomic(&path, next_text.as_bytes()) {
-            for (written_path, previous_text) in written.into_iter().rev() {
-                let _ = vfs.write_atomic(&written_path, previous_text.as_bytes());
-            }
-            let _ = vfs.rename(destination, source);
-            return Err(format!("移动后的引用更新失败，已回滚：{error}"));
-        }
-        written.push((path, original_text.clone()));
-    }
-    Ok(written)
-}
-
-/// 返回改写的图片引用处数。
-fn move_library_entry_in_vault(
-    cx: &VaultCtx<'_>,
-    rel_path: &str,
-    target_directory: Option<&str>,
-) -> Result<usize, String> {
-    let vfs = cx.vfs;
-    let vault = cx.root();
-    let source = existing_library_path(vfs, rel_path)?;
-    let target_directory = existing_library_directory(vfs, target_directory)?;
-    if vfs.is_dir(&source) && target_directory.starts_with(&source) {
-        return Err("目录不能移动到自身内部。".to_string());
-    }
-    let destination = target_directory.join(
-        source
-            .file_name()
-            .ok_or_else(|| "资料库条目名称无效。".to_string())?,
-    );
-    if destination == source {
-        return Ok(0);
-    }
-    if vfs.exists(&destination) {
-        return Err("目标目录中已有同名条目。".to_string());
-    }
-    let new_rel = relative_path(vault, &destination)?;
-    // 目录里可能有图片，图片本身被移动也要改；文档移动不影响图片引用（引用是 vault 相对路径）。
-    let updates = if vfs.is_dir(&source) || shard_core::image::is_image_path(&source) {
-        plan_image_reference_updates(vfs, &[(rel_path.trim().to_string(), new_rel.clone())])?
-    } else {
-        Vec::new()
-    };
-    let written = apply_reference_updates(
-        vfs,
-        &source,
-        &destination,
-        updates.iter().map(|(path, text, next, _)| (path, text, next)),
-    )?;
-    let csv_changes = if vfs.is_dir(&destination) || shard_core::image::is_image_path(&destination) {
-        rewrite_csv_image_references(vfs, &[(rel_path.trim().to_string(), new_rel.clone())])
-    } else {
-        (0, Vec::new())
-    };
-    let mut changed_paths = vec![rel_path.to_string(), new_rel];
-    for (path, _) in &written {
-        let rel_path = relative_path(vault, path)?;
-        if !changed_paths.contains(&rel_path) {
-            changed_paths.push(rel_path);
-        }
-    }
-    append_unique_paths(&mut changed_paths, csv_changes.1);
-    cx.hooks
-        .commit_paths_best_effort(&changed_paths, "move library entry");
-    Ok(updates.iter().map(|update| update.3).sum::<usize>() + csv_changes.0)
-}
-
-/// 图片或目录改名、移动之后，改写公开 CSV 单元格里指向它们的路径。经数据集核心写回
-/// （校验 sha、保留文件原写法）。尽力而为：只读或写入失败的表格跳过并记日志，不回滚
-/// 已完成的移动——那一格只是退回显示路径文字。返回（改写的格数、改过的表格）。
-fn rewrite_csv_image_references(vfs: &dyn Vfs, moves: &[(String, String)]) -> (usize, Vec<String>) {
-    let vault = vfs.root();
-    let mut files = Vec::new();
-    if collect_csv_files(vfs, vault, &mut files).is_err() {
-        return (0, Vec::new());
-    }
-    let limits = DatasetLimits::default();
-    let mut count = 0;
-    let mut changed = Vec::new();
-    for path in files {
-        let Ok(rel) = relative_path(vault, &path) else {
-            continue;
-        };
-        if rel.starts_with(".trash/") {
-            continue;
-        }
-        let Ok(bytes) = vfs.read(&path) else {
-            continue;
-        };
-        let text = String::from_utf8_lossy(&bytes);
-        if !moves.iter().any(|(old, _)| text.contains(old.as_str())) {
-            continue;
-        }
-        let snapshot = match dataset::read_dataset(vfs, &rel, &limits) {
-            Ok(snapshot) if snapshot.editable => snapshot,
-            Ok(_) | Err(_) => {
-                eprintln!("[shard] {rel} 不可编辑，未改写其中的图片引用");
-                continue;
-            }
-        };
-        let mut cells = Vec::new();
-        for (row, values) in snapshot.table.rows.iter().enumerate() {
-            for (column, value) in values.iter().enumerate() {
-                if shard_core::image_refs::csv_cell_image_references(value).is_none() {
-                    continue;
-                }
-                let mut hit = false;
-                let next = value
-                    .lines()
-                    .map(|line| {
-                        let reference = line.trim();
-                        match shard_core::image_refs::remap_reference(reference, moves) {
-                            Some(next) if shard_core::image_refs::is_local_image_reference(reference) => {
-                                hit = true;
-                                next
-                            }
-                            _ => line.to_string(),
-                        }
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                if hit {
-                    cells.push(dataset::CellEdit { row, column, value: next });
-                }
-            }
-        }
-        if cells.is_empty() {
-            continue;
-        }
-        let edited = cells.len();
-        match dataset::write_dataset_ops(
-            vfs,
-            &rel,
-            &snapshot.sha,
-            snapshot.schema_sha.as_deref(),
-            &[DatasetOp::SetCells { cells }],
-            &limits,
-        ) {
-            Ok(_) => {
-                count += edited;
-                changed.push(rel);
-            }
-            Err(error) => eprintln!("[shard] 改写 {rel} 里的图片引用失败：{error}"),
-        }
-    }
-    (count, changed)
-}
-
-fn safe_vault_relative_path(rel_path: &str) -> Result<&Path, String> {
-    let rel_path = rel_path.trim();
-    let path = Path::new(rel_path);
-    if rel_path.is_empty() || rel_path.contains('\\') || path.is_absolute() {
-        return Err("Vault 路径必须是相对路径。".to_string());
-    }
-    if path
-        .components()
-        .any(|component| !matches!(component, Component::Normal(_)))
-    {
-        return Err("Vault 路径不能包含 . 或 ..。".to_string());
-    }
-    Ok(path)
-}
-
-fn trashable_vault_path(vfs: &dyn Vfs, rel_path: &str) -> Result<PathBuf, String> {
-    let vault = vfs.root();
-    let rel_path = safe_vault_relative_path(rel_path)?;
-    let first = rel_path.components().next();
-    if !matches!(first, Some(Component::Normal(root)) if matches!(root.to_str(), Some("fragments" | "notes" | "assets" | "maps" | "datasets")))
-    {
-        return Err("只能把公开内容移入回收站。".to_string());
-    }
-    let candidate = vault.join(rel_path);
-    let canonical_vault = vfs.canonicalize(vault).map_err(|error| error.to_string())?;
-    let canonical_candidate = vfs.canonicalize(&candidate).map_err(|error| error.to_string())?;
-    if !canonical_candidate.starts_with(&canonical_vault) || canonical_candidate == canonical_vault {
-        return Err("目标不在 Vault 内。".to_string());
-    }
-    Ok(candidate)
-}
-
-fn timestamped_collision_path(vfs: &dyn Vfs, path: &Path) -> Result<PathBuf, String> {
-    if !vfs.exists(path) {
-        return Ok(path.to_path_buf());
-    }
-    let file_name = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .ok_or_else(|| "条目名称无效。".to_string())?;
-    // `.shardtable.json` is a retired multidimensional-table (旧多维表格) suffix; keep it so
-    // restoring a legacy file from trash still preserves its double extension.
-    let (stem, extension) = [
-        ".shardflow.json", ".shardcanvas.json", ".shardtable.json", ".shardmap.json",
-    ]
-    .into_iter()
-    .find_map(|extension| file_name.strip_suffix(extension).map(|stem| (stem, extension)))
-    .unwrap_or_else(|| match file_name.rsplit_once('.') {
-        Some((stem, _)) if !stem.is_empty() => (stem, &file_name[stem.len()..]),
-        _ => (file_name, ""),
-    });
-    let timestamp = Local::now().format("%Y%m%d-%H%M%S-%3f");
-    for counter in 0..=u16::MAX {
-        let suffix = if counter == 0 {
-            timestamp.to_string()
-        } else {
-            format!("{timestamp}-{counter}")
-        };
-        let suffixed = bounded_library_filename(stem, &format!("-{suffix}"), extension);
-        let candidate = path.with_file_name(suffixed);
-        if !vfs.exists(&candidate) {
-            return Ok(candidate);
-        }
-    }
-    Err("无法生成不冲突的条目名称。".to_string())
-}
-
-fn ensure_canonical_trash_root(vfs: &dyn Vfs) -> Result<PathBuf, String> {
-    let vault = vfs.root();
-    let trash = vault.join(".trash");
-    if !vfs.exists(&trash) {
-        vfs.create_dir_all(&trash).map_err(|error| error.to_string())?;
-    }
-    if vfs
-        .symlink_metadata(&trash)
-        .map_err(|error| error.to_string())?
-        .is_symlink()
-    {
-        return Err("回收站目录不能是符号链接。".to_string());
-    }
-    let canonical_vault = vfs.canonicalize(vault).map_err(|error| error.to_string())?;
-    let canonical_trash = vfs.canonicalize(&trash).map_err(|error| error.to_string())?;
-    if canonical_trash.parent() != Some(canonical_vault.as_path()) {
-        return Err("回收站目录不在 Vault 内。".to_string());
-    }
-    Ok(canonical_trash)
-}
-
-fn move_to_trash_without_commit_in_vault(
-    cx: &VaultCtx<'_>,
-    rel_path: &str,
-) -> Result<PathBuf, String> {
-    let vfs = cx.vfs;
-    let source = trashable_vault_path(vfs, rel_path)?;
-    let trash_root = ensure_canonical_trash_root(vfs)?;
-    let destination = timestamped_collision_path(vfs, &cx.root().join(".trash").join(rel_path))?;
-    if let Some(parent) = destination.parent() {
-        vfs.create_dir_all(parent).map_err(|error| error.to_string())?;
-        let canonical_parent = vfs.canonicalize(parent).map_err(|error| error.to_string())?;
-        if !canonical_parent.starts_with(&trash_root) {
-            return Err("回收站目标不在 .trash 内。".to_string());
-        }
-    }
-    vfs.rename(&source, &destination).map_err(|error| error.to_string())?;
-    Ok(destination)
-}
-
-fn move_to_trash_in_vault(cx: &VaultCtx<'_>, rel_path: &str) -> Result<PathBuf, String> {
-    let destination = move_to_trash_without_commit_in_vault(cx, rel_path)?;
-    let destination_rel = relative_path(cx.root(), &destination)?;
-    cx.hooks.commit_paths_best_effort(
-        &[rel_path.to_string(), destination_rel],
-        "move entry to trash",
-    );
-    Ok(destination)
-}
-
-fn canonical_trash_path(vfs: &dyn Vfs, trash_rel_path: &str) -> Result<PathBuf, String> {
-    let rel_path = safe_vault_relative_path(trash_rel_path)?;
-    if !matches!(rel_path.components().next(), Some(Component::Normal(root)) if root == ".trash") {
-        return Err("只能操作回收站内的条目。".to_string());
-    }
-    let trash_root = ensure_canonical_trash_root(vfs)?;
-    let candidate = vfs.root().join(rel_path);
-    if vfs
-        .symlink_metadata(&candidate)
-        .map_err(|error| error.to_string())?
-        .is_symlink()
-    {
-        return Err("回收站条目不能是符号链接。".to_string());
-    }
-    let target = vfs
-        .canonicalize(&candidate)
-        .map_err(|error| error.to_string())?;
-    if target == trash_root || !target.starts_with(&trash_root) {
-        return Err("只能操作回收站内的条目。".to_string());
-    }
-    Ok(candidate)
-}
-
-fn restore_from_trash_in_vault(cx: &VaultCtx<'_>, trash_rel_path: &str) -> Result<PathBuf, String> {
-    let vfs = cx.vfs;
-    let vault = cx.root();
-    let source = canonical_trash_path(vfs, trash_rel_path)?;
-    let source_rel = relative_path(vault, &source)?;
-    let original_rel = source_rel
-        .strip_prefix(".trash/")
-        .ok_or_else(|| "只能恢复回收站内的条目。".to_string())?;
-    let original_path = safe_vault_relative_path(original_rel)?;
-    if !matches!(original_path.components().next(), Some(Component::Normal(root)) if matches!(root.to_str(), Some("fragments" | "notes" | "assets" | "maps" | "datasets")))
-    {
-        return Err("回收站条目没有可恢复的公开原位置。".to_string());
-    }
-    let destination = timestamped_collision_path(vfs, &vault.join(original_rel))?;
-    if let Some(parent) = destination.parent() {
-        vfs.create_dir_all(parent).map_err(|error| error.to_string())?;
-        let canonical_vault = vfs.canonicalize(vault).map_err(|error| error.to_string())?;
-        let canonical_parent = vfs.canonicalize(parent).map_err(|error| error.to_string())?;
-        if !canonical_parent.starts_with(&canonical_vault) {
-            return Err("恢复目标不在 Vault 内。".to_string());
-        }
-    }
-    vfs.rename(&source, &destination).map_err(|error| error.to_string())?;
-    let destination_rel = relative_path(vault, &destination)?;
-    cx.hooks.commit_paths_best_effort(
-        &[source_rel, destination_rel],
-        "restore entry from trash",
-    );
-    Ok(destination)
-}
-
-fn purge_from_trash_in_vault(cx: &VaultCtx<'_>, trash_rel_path: &str) -> Result<(), String> {
-    let target = canonical_trash_path(cx.vfs, trash_rel_path)?;
-    let target_rel = relative_path(cx.root(), &target)?;
-    if cx.vfs.is_dir(&target) {
-        cx.vfs.remove_dir_all(&target).map_err(|error| error.to_string())?;
-    } else {
-        cx.vfs.remove_file(&target).map_err(|error| error.to_string())?;
-    }
-    cx.hooks
-        .commit_paths_best_effort(&[target_rel], "purge entry from trash");
-    Ok(())
-}
-
-fn empty_trash_in_vault(cx: &VaultCtx<'_>, scope: ContentScope) -> Result<(), String> {
-    let vfs = cx.vfs;
-    let vault = cx.root();
-    let trash = vault.join(".trash");
-    if !vfs.exists(&trash) {
-        return Ok(());
-    }
-    let trash_root = ensure_canonical_trash_root(vfs)?;
-    let mut targets = Vec::new();
-    for entry in vfs.read_dir(&trash).map_err(|error| error.to_string())? {
-        let candidate = entry.path();
-        let is_fragment_trash = entry.file_name() == "fragments";
-        if scope != ContentScope::All && is_fragment_trash != (scope == ContentScope::Fragments) {
-            continue;
-        }
-        if entry
-            .file_type()
-            .map_err(|error| error.to_string())?
-            .is_symlink()
-        {
-            return Err("回收站包含符号链接，已拒绝清空。".to_string());
-        }
-        let canonical_target = vfs
-            .canonicalize(&candidate)
-            .map_err(|error| error.to_string())?;
-        if canonical_target == trash_root || !canonical_target.starts_with(&trash_root) {
-            return Err("回收站包含越界路径，已拒绝清空。".to_string());
-        }
-        targets.push(candidate);
-    }
-    let mut removed_paths = Vec::new();
-    for target in targets {
-        removed_paths.push(relative_path(vault, &target)?);
-        if vfs.is_dir(&target) {
-            vfs.remove_dir_all(&target).map_err(|error| error.to_string())?;
-        } else {
-            vfs.remove_file(&target).map_err(|error| error.to_string())?;
-        }
-    }
-    if !removed_paths.is_empty() {
-        cx.hooks.commit_paths_best_effort(&removed_paths, "empty trash");
-    }
-    Ok(())
-}
-
-
-fn convert_fragment_to_note_in_vault(
-    cx: &VaultCtx<'_>,
-    id: &str,
-    directory: Option<&str>,
-    title: Option<&str>,
-) -> Result<(Fragment, usize), String> {
-    let source = find_fragment_path(cx.vfs, id)?.ok_or_else(|| format!("找不到碎片 {id}"))?;
-    let source_rel = relative_path(cx.root(), &source)?;
-    if source_rel.starts_with("notes/") {
-        return Err("该内容已经是文档。".to_string());
-    }
-    if !source_rel.starts_with("fragments/") {
-        return Err("只有碎片流中的公开碎片可以转为文档。".to_string());
-    }
-    let text = cx.vfs.read_to_string(&source).map_err(|error| error.to_string())?;
-    let (mut frontmatter, body) = parse_fragment_text(&text)?;
-    if !frontmatter.tags.iter().any(|tag| tag == "note") {
-        frontmatter.tags.push("note".to_string());
-        frontmatter.tags.sort();
-        frontmatter.tags.dedup();
-    }
-    frontmatter.updated_at = Local::now().to_rfc3339();
-    let directory = existing_library_directory(cx.vfs, directory)?;
-    let inferred_title = note_title(body);
-    let title = title
-        .map(str::trim)
-        .filter(|title| !title.is_empty())
-        .unwrap_or(&inferred_title);
-    let destination = unique_note_path(cx.vfs, &directory, title);
-    let old_target = source
-        .file_stem()
-        .and_then(|name| name.to_str())
-        .unwrap_or_default();
-    let new_target = destination
-        .file_stem()
-        .and_then(|name| name.to_str())
-        .unwrap_or_default();
-    convert_public_fragment_file(
-        cx,
-        &source,
-        &destination,
-        &frontmatter,
-        body,
-        &[(old_target, new_target)],
-        &format!("convert fragment to note {id}"),
-    )
-}
-
-fn convert_note_to_fragment_in_vault(
-    cx: &VaultCtx<'_>,
-    id: &str,
-) -> Result<(Fragment, usize), String> {
-    let source = find_fragment_path(cx.vfs, id)?.ok_or_else(|| format!("找不到文档 {id}"))?;
-    let source_rel = relative_path(cx.root(), &source)?;
-    if !source_rel.starts_with("notes/") {
-        return Err("只有资料库中的文档可以转回碎片。".to_string());
-    }
-    let text = cx.vfs.read_to_string(&source).map_err(|error| error.to_string())?;
-    let (mut frontmatter, body) = parse_fragment_text(&text)?;
-    let old_stem = source
-        .file_stem()
-        .and_then(|name| name.to_str())
-        .unwrap_or_default();
-    let old_title = note_title(body);
-    frontmatter.tags.retain(|tag| tag != "note");
-    if frontmatter.tags.is_empty() {
-        frontmatter.tags.push("inbox".to_string());
-    }
-    frontmatter.updated_at = Local::now().to_rfc3339();
-    // Restoring the original date also keeps the physical fragment stream and
-    // its month summaries aligned with the content's record date.
-    let recorded_at = DateTime::parse_from_rfc3339(&frontmatter.created_at)
-        .map_err(|error| format!("文档的原记录时间无效，已保留文档：{error}"))?;
-    let directory = cx
-        .root()
-        .join("fragments")
-        .join(recorded_at.format("%Y").to_string())
-        .join(recorded_at.format("%m").to_string());
-    cx.vfs.create_dir_all(&directory).map_err(|error| error.to_string())?;
-    let destination = directory.join(format!("{}.md", frontmatter.id));
-    if cx.vfs.exists(&destination) {
-        return Err("原记录月份中已存在同 ID 碎片。".to_string());
-    }
-    let mut replacements = vec![(old_stem, frontmatter.id.as_str())];
-    if old_title != old_stem {
-        replacements.push((old_title.as_str(), frontmatter.id.as_str()));
-    }
-    convert_public_fragment_file(
-        cx,
-        &source,
-        &destination,
-        &frontmatter,
-        body,
-        &replacements,
-        &format!("convert note to fragment {id}"),
-    )
-}
-
-fn convert_public_fragment_file(
-    cx: &VaultCtx<'_>,
-    source: &Path,
-    destination: &Path,
-    frontmatter: &FragmentFrontmatter,
-    body: &str,
-    replacements: &[(&str, &str)],
-    commit_message: &str,
-) -> Result<(Fragment, usize), String> {
-    convert_public_fragment_file_with_writer(
-        cx,
-        source,
-        destination,
-        frontmatter,
-        body,
-        replacements,
-        commit_message,
-        &|path: &Path, text: &str| {
-            cx.vfs
-                .write_atomic(path, text.as_bytes())
-                .map_err(|error| error.to_string())
-        },
-    )
-}
-
-fn convert_public_fragment_file_with_writer<F>(
-    cx: &VaultCtx<'_>,
-    source: &Path,
-    destination: &Path,
-    frontmatter: &FragmentFrontmatter,
-    body: &str,
-    replacements: &[(&str, &str)],
-    commit_message: &str,
-    write: &F,
-) -> Result<(Fragment, usize), String>
-where
-    F: Fn(&Path, &str) -> Result<(), String>,
-{
-    let vault = cx.root();
-    let source_rel = relative_path(vault, source)?;
-    let destination_rel = relative_path(vault, destination)?;
-    let source_text = cx.vfs.read_to_string(source).map_err(|error| error.to_string())?;
-    let source_fragment = parse_fragment(&source_text)?;
-    let rewrite = |text: &str| {
-        let mut next = text.to_string();
-        let mut count = 0;
-        for (old, new) in replacements {
-            if old == new {
-                continue;
-            }
-            let (replaced, updated) = replace_wikilink_targets(&next, old, new);
-            next = replaced;
-            count += updated;
-        }
-        (next, count)
-    };
-    // Plan every read before changing the object. A damaged reference file must
-    // not report conversion failure after the source has already disappeared.
-    let mut files = Vec::new();
-    collect_public_vault_markdown(cx.vfs, vault, &mut files)?;
-    let mut updates = Vec::new();
-    let mut changed_paths = vec![source_rel, destination_rel];
-    for path in files {
-        if path == source {
-            continue;
-        }
-        let original = cx.vfs.read_to_string(&path).map_err(|error| error.to_string())?;
-        let (next, count) = rewrite(&original);
-        if count > 0 {
-            append_unique_paths(&mut changed_paths, vec![relative_path(vault, &path)?]);
-            updates.push((path, original, next, count));
-        }
-    }
-    // Keep the exact body boundary, whitespace and content. The chosen document
-    // title names its file and never inserts or replaces a Markdown heading.
-    let raw = apply_frontmatter(&source_fragment.raw, frontmatter)?;
-    let (destination_text, self_link_count) = rewrite(&format!("---\n{raw}\n---{body}"));
-    let mut written = Vec::new();
-    let mut destination_written = false;
-    let result: Result<(Fragment, usize), String> = (|| {
-        write(destination, &destination_text)?;
-        destination_written = true;
-        let mut updated_links = self_link_count;
-        for (path, original, next, count) in &updates {
-            write(path, next)?;
-            written.push((path, original));
-            updated_links += count;
-        }
-        let fragment = read_fragment(cx, destination, &cx.hooks.dirty_paths(), None)?;
-        // The source is the last fallible mutation. Until now rollback only
-        // restores references and removes the new destination.
-        cx.vfs.remove_file(source).map_err(|error| error.to_string())?;
-        Ok((fragment, updated_links))
-    })();
-    match result {
-        Ok((mut fragment, updated_links)) => {
-            cx.hooks.commit_paths_best_effort(&changed_paths, commit_message);
-            fragment.git_status = if !cx.hooks.has_vcs() {
-                "saved"
-            } else if cx.hooks.dirty_paths().contains(&fragment.path) {
-                "sync_pending"
-            } else {
-                "committed"
-            }
-            .to_string();
-            Ok((fragment, updated_links))
-        }
-        Err(error) => {
-            let mut rollback_errors = Vec::new();
-            for (path, original) in written.into_iter().rev() {
-                if let Err(rollback_error) = cx.vfs.write_atomic(path, original.as_bytes()) {
-                    rollback_errors.push(rollback_error.to_string());
-                }
-            }
-            if destination_written {
-                if let Err(rollback_error) = cx.vfs.remove_file(destination) {
-                    rollback_errors.push(rollback_error.to_string());
-                }
-            }
-            if rollback_errors.is_empty() {
-                Err(format!("转换失败，原内容已保留：{error}"))
-            } else {
-                Err(format!(
-                    "转换失败：{error}；部分恢复失败，请核对内容后重试：{}",
-                    rollback_errors.join("；")
-                ))
-            }
-        }
-    }
 }
 
 fn migrate_legacy_notes_in_vault(cx: &VaultCtx<'_>) -> Result<usize, String> {
@@ -5859,800 +3347,7 @@ fn cleanup_empty_legacy_mind_map_directories(vfs: &dyn Vfs, maps_root: &Path) {
     }
 }
 
-fn plan_vault_wikilink_updates(
-    vfs: &dyn Vfs,
-    old_target: &str,
-    new_target: &str,
-) -> Result<Vec<(PathBuf, String, String, usize)>, String> {
-    if old_target == new_target {
-        return Ok(Vec::new());
-    }
-    let mut files = Vec::new();
-    collect_public_vault_markdown(vfs, vfs.root(), &mut files)?;
-    let mut updates = Vec::new();
-    for path in files {
-        let text = vfs.read_to_string(&path).map_err(|error| error.to_string())?;
-        let (next, count) = replace_wikilink_targets(&text, old_target, new_target);
-        if count > 0 {
-            updates.push((path, text, next, count));
-        }
-    }
-    Ok(updates)
-}
-
-
-fn append_unique_paths(paths: &mut Vec<String>, additions: Vec<String>) {
-    for path in additions {
-        if !paths.contains(&path) {
-            paths.push(path);
-        }
-    }
-}
-
-fn collect_public_vault_markdown(
-    vfs: &dyn Vfs,
-    directory: &Path,
-    files: &mut Vec<PathBuf>,
-) -> Result<(), String> {
-    let vault = vfs.root();
-    for entry in vfs.read_dir(directory).map_err(|error| error.to_string())? {
-        let file_type = entry.file_type().map_err(|error| error.to_string())?;
-        if file_type.is_symlink() {
-            continue;
-        }
-        let path = entry.path();
-        if file_type.is_dir() {
-            let name = entry.file_name();
-            let name = name.to_string_lossy();
-            if name == ".git" || name == ".shard" || name.eq_ignore_ascii_case("lockbox") {
-                continue;
-            }
-            collect_public_vault_markdown(vfs, &path, files)?;
-        } else if file_type.is_file()
-            && path.extension().and_then(|extension| extension.to_str()) == Some("md")
-            && path.starts_with(vault)
-        {
-            files.push(path);
-        }
-    }
-    Ok(())
-}
-
-fn replace_wikilink_targets(text: &str, old_target: &str, new_target: &str) -> (String, usize) {
-    let mut output = String::with_capacity(text.len());
-    let mut remaining = text;
-    let mut count = 0;
-    while let Some(open_index) = remaining.find("[[") {
-        output.push_str(&remaining[..open_index + 2]);
-        remaining = &remaining[(open_index + 2)..];
-        let Some(close_index) = remaining.find("]]") else {
-            output.push_str(remaining);
-            return (output, count);
-        };
-        let inner = &remaining[..close_index];
-        let (target, suffix) = inner
-            .find('|')
-            .map(|index| (&inner[..index], &inner[index..]))
-            .unwrap_or((inner, ""));
-        if target == old_target {
-            output.push_str(new_target);
-            output.push_str(suffix);
-            count += 1;
-        } else {
-            output.push_str(inner);
-        }
-        output.push_str("]]");
-        remaining = &remaining[(close_index + 2)..];
-    }
-    output.push_str(remaining);
-    (output, count)
-}
-
-fn collect_lockbox_files(
-    vfs: &dyn Vfs,
-    dir: &Path,
-    files: &mut Vec<PathBuf>,
-) -> Result<(), String> {
-    if !vfs.exists(dir) {
-        return Ok(());
-    }
-
-    for entry in vfs.read_dir(dir).map_err(|error| error.to_string())? {
-        let path = entry.path();
-        if vfs.is_dir(&path) {
-            collect_lockbox_files(vfs, &path, files)?;
-        } else if path.extension().and_then(|ext| ext.to_str()) == Some("shard") {
-            files.push(path);
-        }
-    }
-
-    Ok(())
-}
-
-fn collect_mind_map_files(
-    vfs: &dyn Vfs,
-    dir: &Path,
-    files: &mut Vec<PathBuf>,
-) -> Result<(), String> {
-    canvas_commands::scan_files(vfs, dir, ".shardmap.json", files, &mut 0)
-}
-
-fn is_mind_map_file(path: &Path) -> bool {
-    path.file_name()
-        .and_then(|name| name.to_str())
-        .map(|name| name.ends_with(".shardmap.json"))
-        .unwrap_or(false)
-}
-
-fn read_mind_map_summary(vfs: &dyn Vfs, path: &Path) -> Result<MindMapSummary, String> {
-    let (file, _) = read_mind_map_file(vfs, path)?;
-    validate_mind_map_file(vfs, &file)?;
-    Ok(MindMapSummary {
-        id: file.id,
-        title: file.title,
-        created_at: file.created_at,
-        updated_at: file.updated_at,
-        node_count: file.nodes.len(),
-        path: relative_path(vfs.root(), path)?,
-    })
-}
-
-fn read_mind_map_file(vfs: &dyn Vfs, path: &Path) -> Result<(ShardMapFile, String), String> {
-    let text = vfs.read_to_string(path).map_err(|error| error.to_string())?;
-    let file = serde_json::from_str::<ShardMapFile>(&text).map_err(|error| error.to_string())?;
-    Ok((file, text))
-}
-
-fn mind_map_read_result(
-    vault: &Path,
-    path: &Path,
-    file: ShardMapFile,
-    text: String,
-) -> Result<MindMapReadResult, String> {
-    Ok(MindMapReadResult {
-        file,
-        path: relative_path(vault, path)?,
-        last_saved_hash: hash_text(&text),
-    })
-}
-
-fn validate_mind_map_file(vfs: &dyn Vfs, file: &ShardMapFile) -> Result<(), String> {
-    shard_core::graph_model::validate_mind_map_file(vfs, file)
-}
-
-
-fn ensure_public_fragment_id(vfs: &dyn Vfs, fragment_id: &str) -> Result<(), String> {
-    if fragment_id.trim().is_empty() {
-        return Err("片段链接目标不能为空。".to_string());
-    }
-    if find_lockbox_fragment_path(vfs, fragment_id)?.is_some() {
-        return Err("当前版本不允许明文导图链接密匣片段。".to_string());
-    }
-    if find_fragment_path(vfs, fragment_id)?.is_none() {
-        return Err(format!("找不到公开片段 {}", fragment_id));
-    }
-    Ok(())
-}
-
-fn ensure_public_markdown_path(vfs: &dyn Vfs, rel_path: &str) -> Result<PathBuf, String> {
-    let trimmed = rel_path.trim();
-    if trimmed.is_empty() {
-        return Err("Markdown 路径不能为空。".to_string());
-    }
-    if trimmed.contains('\\') {
-        return Err("Markdown 路径必须使用 / 分隔。".to_string());
-    }
-    let path = Path::new(trimmed);
-    if path.is_absolute() {
-        return Err("Markdown 路径必须是 vault 内相对路径。".to_string());
-    }
-
-    for component in path.components() {
-        match component {
-            Component::Normal(value) => {
-                if value.to_str() == Some("lockbox") {
-                    return Err("当前版本不允许导图链接密匣路径。".to_string());
-                }
-            }
-            _ => {
-                return Err("Markdown 路径不能包含 . 或 ..。".to_string());
-            }
-        }
-    }
-
-    if path.extension().and_then(|ext| ext.to_str()) != Some("md") {
-        return Err("导图只能链接 Markdown 文件。".to_string());
-    }
-
-    let full_path = vfs.root().join(path);
-    if !vfs.is_file(&full_path) {
-        return Err(format!("找不到 Markdown 文件 {}", trimmed));
-    }
-    Ok(full_path)
-}
-
-fn list_csv_files_in_vault(cx: &VaultCtx<'_>) -> Result<Vec<CsvFileSummary>, String> {
-    let vault = cx.root();
-    let mut paths = Vec::new();
-    collect_csv_files(cx.vfs, vault, &mut paths)?;
-    let mut files = paths
-        .into_iter()
-        .filter_map(|path| {
-            let relative = relative_path(vault, &path).ok()?;
-            let name = path.file_name()?.to_str()?.to_string();
-            Some(CsvFileSummary { name, path: relative })
-        })
-        .collect::<Vec<_>>();
-    files.sort_by(|left, right| left.path.cmp(&right.path));
-    Ok(files)
-}
-
-fn collect_csv_files(vfs: &dyn Vfs, directory: &Path, files: &mut Vec<PathBuf>) -> Result<(), String> {
-    if !vfs.exists(directory) {
-        return Ok(());
-    }
-    for entry in vfs.read_dir(directory).map_err(|error| error.to_string())? {
-        let file_type = entry.file_type().map_err(|error| error.to_string())?;
-        if file_type.is_symlink() {
-            continue;
-        }
-        let path = entry.path();
-        if file_type.is_dir() {
-            let name = entry.file_name();
-            let name = name.to_string_lossy();
-            if name == ".git"
-                || name == ".shard"
-                || name.eq_ignore_ascii_case("lockbox")
-            {
-                continue;
-            }
-            collect_csv_files(vfs, &path, files)?;
-        } else if file_type.is_file()
-            && path
-                .extension()
-                .and_then(|extension| extension.to_str())
-                .map(|extension| extension.eq_ignore_ascii_case("csv"))
-                .unwrap_or(false)
-        {
-            files.push(path);
-        }
-    }
-    Ok(())
-}
-
-fn find_mind_map_path(vfs: &dyn Vfs, id: &str) -> Result<Option<PathBuf>, String> {
-    let vault = vfs.root();
-    let mut files = Vec::new();
-    collect_mind_map_files(vfs, &vault.join("notes"), &mut files)?;
-    // 迁移期间兼容仍位于 maps/ 的旧文件；新建与正常枚举只走 notes/。
-    collect_mind_map_files(vfs, &vault.join("maps"), &mut files)?;
-
-    for path in files {
-        if let Ok((file, _)) = read_mind_map_file(vfs, &path) {
-            if file.id == id {
-                return Ok(Some(path));
-            }
-        }
-    }
-
-    Ok(None)
-}
-
-fn canonical_mind_map_text(file: &ShardMapFile) -> Result<String, String> {
-    shard_core::graph_model::canonical_mind_map_text(file)
-}
-
-fn hash_text(text: &str) -> String {
-    hash_bytes(text.as_bytes())
-}
-
-fn hash_bytes(bytes: &[u8]) -> String {
-    let digest = Sha256::digest(bytes);
-    digest.iter().map(|byte| format!("{byte:02x}")).collect()
-}
-
-fn write_mind_map_last_good(vfs: &dyn Vfs, file: &ShardMapFile) -> Result<(), String> {
-    let text = canonical_mind_map_text(file)?;
-    let path = vfs.root().join(mind_map_last_good_rel_path(file));
-    vfs.write_atomic(&path, text.as_bytes())
-        .map_err(|error| error.to_string())
-}
-
-fn mind_map_last_good_rel_path(file: &ShardMapFile) -> String {
-    format!("maps/.last-good/{}.shardmap.json", file.id)
-}
-
-fn write_mind_map_conflict(vfs: &dyn Vfs, file: &ShardMapFile) -> Result<PathBuf, String> {
-    let text = canonical_mind_map_text(file)?;
-    let timestamp = Local::now().format("%Y%m%d-%H%M%S").to_string();
-    let path = vfs
-        .root()
-        .join("maps")
-        .join(".conflicts")
-        .join(format!("{}.conflict-{}.shardmap.json", file.id, timestamp));
-    vfs.write_atomic(&path, text.as_bytes())
-        .map_err(|error| error.to_string())?;
-    Ok(path)
-}
-
-fn graph_create_receipt_key(vault: &Path, operation_id: &str) -> String {
-    format!("{}\0{operation_id}", vault.display())
-}
-
-fn graph_create_receipt(
-    vault: &Path,
-    operation_id: &str,
-) -> Option<GraphCreateReceipt> {
-    let key = graph_create_receipt_key(vault, operation_id);
-    let cache = GRAPH_CREATE_RECEIPTS.get_or_init(|| Mutex::new(GraphCreateReceiptCache::default()));
-    cache
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .entries
-        .get(&key)
-        .cloned()
-}
-
-fn remember_graph_create(
-    vault: &Path,
-    operation_id: &str,
-    receipt: GraphCreateReceipt,
-) {
-    const MAX_RECEIPTS: usize = 256;
-
-    let key = graph_create_receipt_key(vault, operation_id);
-    let cache = GRAPH_CREATE_RECEIPTS.get_or_init(|| Mutex::new(GraphCreateReceiptCache::default()));
-    let mut cache = cache
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    if cache.entries.contains_key(&key) {
-        return;
-    }
-    while cache.order.len() >= MAX_RECEIPTS {
-        if let Some(expired) = cache.order.pop_front() {
-            cache.entries.remove(&expired);
-        }
-    }
-    cache.order.push_back(key.clone());
-    cache.entries.insert(key, receipt);
-}
-
-fn graph_kind_from_frontmatter(
-    frontmatter: &FragmentFrontmatter,
-) -> Result<GraphFragmentKind, String> {
-    match derive_type(&frontmatter.tags) {
-        Some("outline") => Ok(GraphFragmentKind::Outline),
-        Some("flowchart") => Ok(GraphFragmentKind::Flowchart),
-        _ => Err("目标不是大纲或流程图。".to_string()),
-    }
-}
-
-fn canonical_flow_text(file: &canvas_commands::CanvasFile) -> Result<String, String> {
-    let bytes = canvas_commands::canonical(file)?;
-    String::from_utf8(bytes).map_err(|error| error.to_string())
-}
-
-fn validate_graph_value(
-    vfs: &dyn Vfs,
-    kind: GraphFragmentKind,
-    graph: serde_json::Value,
-) -> Result<(serde_json::Value, String), String> {
-    match kind {
-        GraphFragmentKind::Outline => {
-            let file = serde_json::from_value::<ShardMapFile>(graph)
-                .map_err(|error| format!("大纲 JSON 无法解析：{error}"))?;
-            validate_mind_map_file(vfs, &file)?;
-            let text = canonical_mind_map_text(&file)?;
-            let value = serde_json::to_value(file).map_err(|error| error.to_string())?;
-            Ok((value, text))
-        }
-        GraphFragmentKind::Flowchart => {
-            let file = serde_json::from_value::<canvas_commands::CanvasFile>(graph)
-                .map_err(|error| format!("流程图 JSON 无法解析：{error}"))?;
-            if file.kind != "shard.flow" {
-                return Err("流程图片段只能包含 shard.flow 数据。".to_string());
-            }
-            canvas_commands::validate_file(vfs, &file)?;
-            let text = canonical_flow_text(&file)?;
-            let value = serde_json::to_value(file).map_err(|error| error.to_string())?;
-            Ok((value, text))
-        }
-    }
-}
-
-fn graph_value_for_create(
-    vfs: &dyn Vfs,
-    kind: GraphFragmentKind,
-    id: &str,
-    graph: Option<serde_json::Value>,
-    timestamp: &str,
-) -> Result<(serde_json::Value, String), String> {
-    match kind {
-        GraphFragmentKind::Outline => {
-            let mut file = serde_json::from_value::<ShardMapFile>(
-                graph.ok_or_else(|| "创建大纲时必须提供 graph。".to_string())?,
-            )
-            .map_err(|error| format!("大纲 JSON 无法解析：{error}"))?;
-            file.kind = SHARD_MAP_KIND.to_string();
-            file.schema_version = SHARD_MAP_SCHEMA_VERSION;
-            file.id = id.to_string();
-            file.created_at = timestamp.to_string();
-            file.updated_at = timestamp.to_string();
-            file.saved_with_app_version = env!("CARGO_PKG_VERSION").to_string();
-            file.revision = 1;
-            validate_mind_map_file(vfs, &file)?;
-            let text = canonical_mind_map_text(&file)?;
-            let value = serde_json::to_value(file).map_err(|error| error.to_string())?;
-            Ok((value, text))
-        }
-        GraphFragmentKind::Flowchart => {
-            let mut file = match graph {
-                Some(graph) => serde_json::from_value::<canvas_commands::CanvasFile>(graph)
-                    .map_err(|error| format!("流程图 JSON 无法解析：{error}"))?,
-                None => canvas_commands::CanvasFile {
-                    kind: "shard.flow".to_string(),
-                    schema_version: 1,
-                    id: id.to_string(),
-                    title: "未命名流程图".to_string(),
-                    created_at: timestamp.to_string(),
-                    updated_at: timestamp.to_string(),
-                    revision: 0,
-                    nodes: Vec::new(),
-                    edges: Vec::new(),
-                },
-            };
-            file.id = id.to_string();
-            if file.kind != "shard.flow" {
-                return Err("流程图片段只能包含 shard.flow 数据。".to_string());
-            }
-            canvas_commands::validate_file(vfs, &file)?;
-            let text = canonical_flow_text(&file)?;
-            let value = serde_json::to_value(file).map_err(|error| error.to_string())?;
-            Ok((value, text))
-        }
-    }
-}
-
-fn create_graph_fragment_in_vault(
-    cx: &VaultCtx<'_>,
-    kind: &str,
-    operation_id: &str,
-    graph: Option<serde_json::Value>,
-    tags: Vec<String>,
-) -> Result<GraphFragmentResult, String> {
-    let kind = GraphFragmentKind::parse(kind)?;
-    let operation_id = operation_id.trim();
-    if operation_id.is_empty() {
-        return Err("operation_id 不能为空。".to_string());
-    }
-    if let Some(receipt) = graph_create_receipt(cx.root(), operation_id) {
-        if receipt.kind != kind {
-            return Err("同一 operation_id 不能用于不同的图形内容类型。".to_string());
-        }
-        return read_graph_fragment_in_vault(cx, &receipt.fragment_id);
-    }
-
-    let mut tags = normalize_tags(tags, true);
-    if contains_lockbox_tag(&tags) {
-        return Err(LOCKBOX_TYPE_ERROR.to_string());
-    }
-    tags.retain(|tag| !TYPE_TAGS.contains(&tag.as_str()));
-    tags.push(kind.type_tag().to_string());
-    tags.sort();
-    tags.dedup();
-
-    let now = Local::now();
-    let id = new_fragment_id(&now);
-    let timestamp = now.to_rfc3339();
-    let (graph, json_text) = graph_value_for_create(cx.vfs, kind, &id, graph, &timestamp)?;
-    let body = render_region(kind.region_kind(), &json_text);
-    let path = create_public_fragment_with_id_in_vault(
-        cx.vfs, &body, tags, "desktop", &now, &id,
-    )?;
-    remember_graph_create(
-        cx.root(),
-        operation_id,
-        GraphCreateReceipt {
-            kind,
-            fragment_id: id,
-        },
-    );
-    Ok(GraphFragmentResult {
-        fragment: read_fragment(cx, &path, &cx.hooks.dirty_paths(), None)?,
-        graph,
-    })
-}
-
-fn read_graph_fragment_in_vault(
-    cx: &VaultCtx<'_>,
-    id: &str,
-) -> Result<GraphFragmentResult, String> {
-    let path = find_fragment_path(cx.vfs, id)?
-        .ok_or_else(|| format!("找不到公开片段 {id}"))?;
-    let text = cx.vfs.read_to_string(&path).map_err(|error| error.to_string())?;
-    let parsed = parse_fragment(&text)?;
-    let kind = graph_kind_from_frontmatter(&parsed.frontmatter)?;
-    let region = find_region(&parsed.body, kind.region_kind())?;
-    let (graph, _) = validate_graph_value(
-        cx.vfs,
-        kind,
-        serde_json::from_str(&region.json_text)
-            .map_err(|error| format!("受管区域 JSON 无法解析：{error}"))?,
-    )?;
-    Ok(GraphFragmentResult {
-        fragment: read_fragment(cx, &path, &cx.hooks.dirty_paths(), None)?,
-        graph,
-    })
-}
-
-fn import_graph_file_to_timeline_in_vault(
-    cx: &VaultCtx<'_>,
-    rel_path: &str,
-) -> Result<Fragment, String> {
-    let vfs = cx.vfs;
-    let vault = cx.root();
-    let source = existing_library_path(vfs, rel_path)?;
-    if !vfs.is_file(&source) {
-        return Err("只能导入资料库中的图文件。".to_string());
-    }
-
-    let raw_json = vfs.read_to_string(&source).map_err(|error| error.to_string())?;
-    let (kind, id, created_at) = if is_mind_map_file(&source) {
-        let file = serde_json::from_str::<ShardMapFile>(&raw_json)
-            .map_err(|error| format!("大纲 JSON 无法解析：{error}"))?;
-        validate_mind_map_file(vfs, &file)?;
-        (GraphFragmentKind::Outline, file.id, file.created_at)
-    } else if canvas_commands::is_flow(&source) {
-        let file = serde_json::from_str::<canvas_commands::CanvasFile>(&raw_json)
-            .map_err(|error| format!("流程图 JSON 无法解析：{error}"))?;
-        if file.kind != "shard.flow" {
-            return Err("只能把 shard.flow 流程图加入时间线。".to_string());
-        }
-        canvas_commands::validate_file(vfs, &file)?;
-        (GraphFragmentKind::Flowchart, file.id, file.created_at)
-    } else {
-        return Err("只能导入 .shardmap.json 或 .shardflow.json 图文件。".to_string());
-    };
-
-    if id.is_empty()
-        || !id.chars().all(|character| {
-            character.is_ascii_alphanumeric() || matches!(character, '.' | '_' | '-')
-        })
-    {
-        return Err("图文件 id 只能包含字母、数字、点、下划线和连字符。".to_string());
-    }
-    if find_lockbox_fragment_path(vfs, &id)?.is_some() {
-        return Err(format!("片段 id {id} 已存在。"));
-    }
-
-    let existing = find_fragment_path(vfs, &id)?;
-    if let Some(existing_path) = existing.as_ref() {
-        let existing_rel = relative_path(vault, existing_path)?;
-        let text = vfs.read_to_string(existing_path).map_err(|error| error.to_string())?;
-        let parsed = parse_fragment(&text)?;
-        let existing_kind = graph_kind_from_frontmatter(&parsed.frontmatter)?;
-        let region = find_region(&parsed.body, kind.region_kind())?;
-        let graph_id = serde_json::from_str::<serde_json::Value>(&region.json_text)
-            .map_err(|error| format!("受管区域 JSON 无法解析：{error}"))?
-            .get("id")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or_default()
-            .to_string();
-        if existing_kind != kind || graph_id != id || !existing_rel.starts_with("fragments/") {
-            return Err(format!("片段 id {id} 已存在。"));
-        }
-        validate_graph_value(
-            vfs,
-            kind,
-            serde_json::from_str(&region.json_text)
-                .map_err(|error| format!("受管区域 JSON 无法解析：{error}"))?,
-        )?;
-
-        cx.hooks.checkpoint_before_structural();
-        let trashed = move_to_trash_without_commit_in_vault(cx, rel_path)?;
-        cx.hooks.commit_paths_best_effort(
-            &[rel_path.to_string(), relative_path(vault, &trashed)?],
-            "import graph file to timeline",
-        );
-        return read_fragment(cx, existing_path, &cx.hooks.dirty_paths(), None);
-    }
-
-    let (fragment_created_at, year, month) = match DateTime::parse_from_rfc3339(&created_at) {
-        Ok(timestamp) => (
-            created_at,
-            timestamp.format("%Y").to_string(),
-            timestamp.format("%m").to_string(),
-        ),
-        Err(_) => {
-            let now = Local::now();
-            (
-                now.to_rfc3339(),
-                now.format("%Y").to_string(),
-                now.format("%m").to_string(),
-            )
-        }
-    };
-    let directory = vault.join("fragments").join(year).join(month);
-    vfs.create_dir_all(&directory).map_err(|error| error.to_string())?;
-    let fragment_path = directory.join(format!("{id}.md"));
-    if vfs.exists(&fragment_path) {
-        return Err(format!("片段 {id} 已存在。"));
-    }
-    let frontmatter = FragmentFrontmatter {
-        id: id.clone(),
-        created_at: fragment_created_at.clone(),
-        updated_at: fragment_created_at,
-        tags: vec!["inbox".to_string(), kind.type_tag().to_string()],
-        category: None,
-        ai_status: Some("none".to_string()),
-        pinned: false,
-        source: "desktop".to_string(),
-        conflict_of: None,
-        related: Vec::new(),
-    };
-    let body = render_region(kind.region_kind(), &raw_json);
-
-    cx.hooks.checkpoint_before_structural();
-    write_fragment_file(vfs, &fragment_path, &frontmatter, &body)?;
-    let trashed = match move_to_trash_without_commit_in_vault(cx, rel_path) {
-        Ok(path) => path,
-        Err(error) => {
-            if let Err(rollback_error) = vfs.remove_file(&fragment_path) {
-                return Err(format!("{error}；回滚新碎片失败：{rollback_error}"));
-            }
-            return Err(error);
-        }
-    };
-    cx.hooks.commit_paths_best_effort(
-        &[
-            relative_path(vault, &fragment_path)?,
-            rel_path.to_string(),
-            relative_path(vault, &trashed)?,
-        ],
-        "import graph file to timeline",
-    );
-    read_fragment(cx, &fragment_path, &cx.hooks.dirty_paths(), None)
-}
-
-fn write_graph_fragment_in_vault(
-    cx: &VaultCtx<'_>,
-    id: &str,
-    graph: serde_json::Value,
-    expected_file_sha: Option<&str>,
-) -> Result<GraphFragmentResult, String> {
-    let vfs = cx.vfs;
-    let path = find_fragment_path(vfs, id)?
-        .ok_or_else(|| format!("找不到公开片段 {id}"))?;
-    let current_text = vfs.read_to_string(&path).map_err(|error| error.to_string())?;
-    ensure_expected_file_sha(&current_text, expected_file_sha)?;
-    let parsed = parse_fragment(&current_text)?;
-    let kind = graph_kind_from_frontmatter(&parsed.frontmatter)?;
-    let current_region = find_region(&parsed.body, kind.region_kind())?;
-    let current_graph = serde_json::from_str::<serde_json::Value>(&current_region.json_text)
-        .map_err(|error| format!("受管区域 JSON 无法解析：{error}"))?;
-
-    let (graph, json_text) = match kind {
-        GraphFragmentKind::Outline => {
-            let current = serde_json::from_value::<ShardMapFile>(current_graph)
-                .map_err(|error| format!("大纲 JSON 无法解析：{error}"))?;
-            validate_mind_map_file(vfs, &current)?;
-            let mut next = serde_json::from_value::<ShardMapFile>(graph)
-                .map_err(|error| format!("大纲 JSON 无法解析：{error}"))?;
-            if next.id != id || next.kind != SHARD_MAP_KIND {
-                return Err("大纲 graph 的 id 或类型与碎片不一致。".to_string());
-            }
-            next.revision = current
-                .revision
-                .checked_add(1)
-                .ok_or_else(|| "导图版本超过上限。".to_string())?;
-            next.updated_at = Local::now().to_rfc3339();
-            next.saved_with_app_version = env!("CARGO_PKG_VERSION").to_string();
-            validate_mind_map_file(vfs, &next)?;
-            let text = canonical_mind_map_text(&next)?;
-            let value = serde_json::to_value(next).map_err(|error| error.to_string())?;
-            (value, text)
-        }
-        GraphFragmentKind::Flowchart => {
-            let current = serde_json::from_value::<canvas_commands::CanvasFile>(current_graph)
-                .map_err(|error| format!("流程图 JSON 无法解析：{error}"))?;
-            if current.kind != "shard.flow" {
-                return Err("流程图片段只能包含 shard.flow 数据。".to_string());
-            }
-            canvas_commands::validate_file(vfs, &current)?;
-            let mut next = serde_json::from_value::<canvas_commands::CanvasFile>(graph)
-                .map_err(|error| format!("流程图 JSON 无法解析：{error}"))?;
-            if next.id != id || next.kind != "shard.flow" {
-                return Err("流程图 graph 的 id 或类型与碎片不一致。".to_string());
-            }
-            next.revision = current
-                .revision
-                .checked_add(1)
-                .ok_or_else(|| "画布版本超过上限。".to_string())?;
-            next.updated_at = Local::now().to_rfc3339();
-            canvas_commands::validate_file(vfs, &next)?;
-            let text = canonical_flow_text(&next)?;
-            let value = serde_json::to_value(next).map_err(|error| error.to_string())?;
-            (value, text)
-        }
-    };
-
-    let next_body = replace_region(&parsed.body, kind.region_kind(), &json_text)?;
-    let mut frontmatter = parsed.frontmatter;
-    frontmatter.updated_at = Local::now().to_rfc3339();
-    let raw = apply_frontmatter(&parsed.raw, &frontmatter)?;
-    let next_text = format!("---\n{raw}\n---{next_body}");
-    vfs.write_atomic(&path, next_text.as_bytes())
-        .map_err(|error| error.to_string())?;
-
-    Ok(GraphFragmentResult {
-        fragment: read_fragment(cx, &path, &cx.hooks.dirty_paths(), None)?,
-        graph,
-    })
-}
-
-fn read_fragment(
-    cx: &VaultCtx<'_>,
-    path: &Path,
-    dirty_paths: &HashSet<String>,
-    override_status: Option<(String, Option<String>)>,
-) -> Result<Fragment, String> {
-    let text = cx.vfs.read_to_string(path).map_err(|error| error.to_string())?;
-    let file_sha = content_sha256_hex(&text);
-    let parsed = parse_fragment(&text)?;
-    let properties = fragment_properties(&parsed.raw);
-    let frontmatter = parsed.frontmatter;
-    let body = parsed.body;
-    let rel_path = relative_path(cx.root(), path)?;
-    let (git_status, error) = override_status.unwrap_or_else(|| {
-        if !cx.hooks.has_vcs() {
-            ("saved".to_string(), None)
-        } else if dirty_paths.contains(&rel_path) {
-            ("sync_pending".to_string(), None)
-        } else {
-            ("committed".to_string(), None)
-        }
-    });
-    let archived = rel_path.starts_with(".trash/fragments/");
-
-    Ok(Fragment {
-        id: frontmatter.id,
-        content: body.trim_start_matches('\n').to_string(),
-        file_sha,
-        created_at: frontmatter.created_at,
-        updated_at: frontmatter.updated_at,
-        tags: if frontmatter.tags.is_empty() {
-            vec!["inbox".to_string()]
-        } else {
-            frontmatter.tags
-        },
-        category: frontmatter.category,
-        path: rel_path,
-        git_status,
-        error,
-        ai_status: frontmatter.ai_status.unwrap_or_else(|| "none".to_string()),
-        archived,
-        lockbox: false,
-        pinned: frontmatter.pinned,
-        related: frontmatter.related,
-        properties,
-        conflict_of: frontmatter.conflict_of,
-    })
-}
-
-fn parse_fragment_text(text: &str) -> Result<(FragmentFrontmatter, &str), String> {
-    let rest = text
-        .strip_prefix("---\n")
-        .ok_or_else(|| "片段缺少 frontmatter".to_string())?;
-    let boundary = rest
-        .find("\n---")
-        .ok_or_else(|| "片段 frontmatter 未闭合".to_string())?;
-    let yaml = &rest[..boundary];
-    let body = &rest[(boundary + 4)..];
-    let frontmatter =
-        serde_yaml::from_str::<FragmentFrontmatter>(yaml).map_err(|error| error.to_string())?;
-    Ok((frontmatter, body))
-}
-
+/// 命令层分流：密匣条目走解锁后的密匣实现，其余交给 shard-vault 的公开实现。
 fn set_fragment_property_in_vault(
     cx: &VaultCtx<'_>,
     lockbox_runtime: &LockboxRuntime,
@@ -6667,8 +3362,7 @@ fn set_fragment_property_in_vault(
             cx, &path, &read_keys, key, Some(value),
         );
     }
-    let path = find_fragment_path(cx.vfs, id)?.ok_or_else(|| format!("找不到片段 {id}"))?;
-    mutate_public_fragment_property_in_vault(cx, &path, key, Some(value))
+    set_public_fragment_property_in_vault(cx, id, key, value)
 }
 
 fn remove_fragment_property_in_vault(
@@ -6682,32 +3376,7 @@ fn remove_fragment_property_in_vault(
         let read_keys = require_unlocked_lockbox_read_keys(cx.vfs, lockbox_runtime)?;
         return mutate_lockbox_fragment_property_in_vault(cx, &path, &read_keys, key, None);
     }
-    let path = find_fragment_path(cx.vfs, id)?.ok_or_else(|| format!("找不到片段 {id}"))?;
-    mutate_public_fragment_property_in_vault(cx, &path, key, None)
-}
-
-fn mutate_public_fragment_property_in_vault(
-    cx: &VaultCtx<'_>,
-    path: &Path,
-    key: &str,
-    value: Option<&serde_yaml::Value>,
-) -> Result<Fragment, String> {
-    if relative_path(cx.root(), path)?.starts_with(".trash/") {
-        return Err("回收站中的片段不能修改属性。".to_string());
-    }
-    let text = cx.vfs.read_to_string(path).map_err(|error| error.to_string())?;
-    let parsed = parse_fragment(&text)?;
-    let raw = match value {
-        Some(value) => set_custom_property(&parsed.raw, key, value)?,
-        None => remove_custom_property(&parsed.raw, key)?,
-    };
-    let mut frontmatter = parsed.frontmatter;
-    frontmatter.updated_at = Local::now().to_rfc3339();
-    let raw = apply_frontmatter(&raw, &frontmatter)?;
-    cx.vfs
-        .write_atomic(path, format!("---\n{raw}\n---{}", parsed.body).as_bytes())
-        .map_err(|error| error.to_string())?;
-    read_fragment(cx, path, &cx.hooks.dirty_paths(), None)
+    remove_public_fragment_property_in_vault(cx, id, key)
 }
 
 fn mutate_lockbox_fragment_property_in_vault(
@@ -6736,188 +3405,6 @@ fn mutate_lockbox_fragment_property_in_vault(
         &payload,
     )?;
     read_lockbox_fragment(cx, path, &cx.hooks.dirty_paths(), read_keys, None)
-}
-
-fn update_public_fragment_tags_in_vault(
-    cx: &VaultCtx<'_>,
-    path: &Path,
-    tags: Vec<String>,
-) -> Result<Fragment, String> {
-    let text = cx.vfs.read_to_string(path).map_err(|error| error.to_string())?;
-    let parsed = parse_fragment(&text)?;
-    let mut frontmatter = parsed.frontmatter;
-    let tags = normalize_updated_type_tags(&frontmatter.tags, tags);
-    frontmatter.tags = if tags.is_empty() {
-        vec!["inbox".to_string()]
-    } else {
-        tags
-    };
-    frontmatter.updated_at = Local::now().to_rfc3339();
-    write_fragment_update(
-        cx.vfs,
-        path,
-        &parsed.raw,
-        &frontmatter,
-        parsed.body.trim_start_matches('\n'),
-    )?;
-    read_fragment(cx, path, &cx.hooks.dirty_paths(), None)
-}
-
-fn update_public_fragment_in_vault(
-    cx: &VaultCtx<'_>,
-    path: &Path,
-    content: &str,
-    tags: Vec<String>,
-    expected_file_sha: Option<&str>,
-) -> Result<Fragment, String> {
-    let text = cx.vfs.read_to_string(path).map_err(|error| error.to_string())?;
-    let parsed = parse_fragment(&text)?;
-    if let Some(kind) = match derive_type(&parsed.frontmatter.tags) {
-        Some("outline") => Some(GraphRegionKind::Outline),
-        Some("flowchart") => Some(GraphRegionKind::Flowchart),
-        _ => None,
-    } {
-        match find_region(&parsed.body, kind) {
-            Ok(_) => {
-                return Err("大纲与流程图请在专用编辑器中保存。".to_string());
-            }
-            Err(error) if error == MISSING_REGION_ERROR => {}
-            Err(_) => {
-                return Err("大纲与流程图请在专用编辑器中保存。".to_string());
-            }
-        }
-    }
-    ensure_expected_file_sha(&text, expected_file_sha)?;
-    let mut frontmatter = parsed.frontmatter;
-    let tags = normalize_updated_type_tags(&frontmatter.tags, tags);
-    frontmatter.tags = if tags.is_empty() {
-        vec!["inbox".to_string()]
-    } else {
-        tags
-    };
-    frontmatter.updated_at = Local::now().to_rfc3339();
-    write_fragment_update(cx.vfs, path, &parsed.raw, &frontmatter, content)?;
-    read_fragment(cx, path, &cx.hooks.dirty_paths(), None)
-}
-
-fn link_fragments_in_vault(
-    cx: &VaultCtx<'_>,
-    source_id: &str,
-    target_id: &str,
-    origin: &str,
-    note: Option<String>,
-) -> Result<Fragment, String> {
-    ensure_public_fragment_id(cx.vfs, source_id)?;
-    ensure_public_fragment_id(cx.vfs, target_id)?;
-    if source_id == target_id {
-        return Err("片段不能关联自身。".to_string());
-    }
-    if !matches!(origin, "manual" | "walk" | "insight" | "tag" | "wikilink") {
-        return Err(format!("不支持的片段关系来源：{origin}"));
-    }
-
-    let path = find_fragment_path(cx.vfs, source_id)?
-        .ok_or_else(|| format!("找不到公开片段 {source_id}"))?;
-    let text = cx.vfs.read_to_string(&path).map_err(|error| error.to_string())?;
-    let parsed = parse_fragment(&text)?;
-    let mut frontmatter = parsed.frontmatter;
-    if frontmatter
-        .related
-        .iter()
-        .any(|relation| relation.target_id == target_id)
-    {
-        let dirty = cx.hooks.dirty_paths();
-        return read_fragment(cx, &path, &dirty, None);
-    }
-
-    let now = Local::now().to_rfc3339();
-    frontmatter.related.push(FragmentRelation {
-        target_id: target_id.to_string(),
-        origin: origin.to_string(),
-        created_at: now.clone(),
-        note,
-    });
-    frontmatter.updated_at = now;
-    write_fragment_update(
-        cx.vfs,
-        &path,
-        &parsed.raw,
-        &frontmatter,
-        parsed.body.trim_start_matches('\n'),
-    )?;
-
-    let dirty = cx.hooks.dirty_paths();
-
-    read_fragment(cx, &path, &dirty, None)
-}
-
-fn unlink_fragments_in_vault(
-    cx: &VaultCtx<'_>,
-    source_id: &str,
-    target_id: &str,
-) -> Result<Fragment, String> {
-    ensure_public_fragment_id(cx.vfs, source_id)?;
-    ensure_public_fragment_id(cx.vfs, target_id)?;
-    if source_id == target_id {
-        return Err("片段不能取消关联自身。".to_string());
-    }
-
-    let path = find_fragment_path(cx.vfs, source_id)?
-        .ok_or_else(|| format!("找不到公开片段 {source_id}"))?;
-    let text = cx.vfs.read_to_string(&path).map_err(|error| error.to_string())?;
-    let parsed = parse_fragment(&text)?;
-    let mut frontmatter = parsed.frontmatter;
-    let previous_len = frontmatter.related.len();
-    frontmatter
-        .related
-        .retain(|relation| relation.target_id != target_id);
-    if frontmatter.related.len() == previous_len {
-        let dirty = cx.hooks.dirty_paths();
-        return read_fragment(cx, &path, &dirty, None);
-    }
-
-    frontmatter.updated_at = Local::now().to_rfc3339();
-    write_fragment_update(
-        cx.vfs,
-        &path,
-        &parsed.raw,
-        &frontmatter,
-        parsed.body.trim_start_matches('\n'),
-    )?;
-
-    let dirty = cx.hooks.dirty_paths();
-
-    read_fragment(cx, &path, &dirty, None)
-}
-
-fn set_public_fragment_pinned_in_vault(
-    cx: &VaultCtx<'_>,
-    path: &Path,
-    pinned: bool,
-) -> Result<Fragment, String> {
-    let rel_path = relative_path(cx.root(), path)?;
-    if rel_path.starts_with(".trash/fragments/") && pinned {
-        return Err("回收站中的片段不能置顶。".to_string());
-    }
-
-    let text = cx.vfs.read_to_string(path).map_err(|error| error.to_string())?;
-    let parsed = parse_fragment(&text)?;
-    let mut frontmatter = parsed.frontmatter;
-    frontmatter.pinned = pinned;
-    frontmatter.updated_at = Local::now().to_rfc3339();
-    write_fragment_update(
-        cx.vfs,
-        path,
-        &parsed.raw,
-        &frontmatter,
-        parsed.body.trim_start_matches('\n'),
-    )?;
-
-    let dirty = cx.hooks.dirty_paths();
-    // 内容保存只落盘，提交由聚合检查点接管（docs/design/commit-coalescing-plan.md §7 A2）
-    let override_status = None;
-
-    read_fragment(cx, path, &dirty, override_status)
 }
 
 fn create_lockbox_fragment_in_vault(
@@ -7439,29 +3926,6 @@ fn read_lockbox_payload_from_text(
     Ok(payload)
 }
 
-fn find_lockbox_fragment_path(vfs: &dyn Vfs, id: &str) -> Result<Option<PathBuf>, String> {
-    let vault = vfs.root();
-    let mut files = Vec::new();
-    collect_lockbox_files(vfs, &vault.join("lockbox").join("fragments"), &mut files)?;
-    collect_lockbox_files(vfs, &vault.join("lockbox").join("archive"), &mut files)?;
-    collect_lockbox_files(vfs, &vault.join("lockbox").join("notes"), &mut files)?;
-
-    for path in files {
-        let text = vfs.read_to_string(&path).map_err(|error| error.to_string())?;
-        if let Ok(encrypted) = serde_json::from_str::<LockboxEncryptedFragment>(&text) {
-            if encrypted.id == id {
-                return Ok(Some(path));
-            }
-        }
-    }
-
-    Ok(None)
-}
-
-fn find_fragment_path(vfs: &dyn Vfs, id: &str) -> Result<Option<PathBuf>, String> {
-    shard_core::graph_model::find_fragment_path(vfs, id)
-}
-
 fn setup_lockbox_in_vault(
     cx: &VaultCtx<'_>,
     lockbox_runtime: &LockboxRuntime,
@@ -7904,11 +4368,6 @@ fn lock_lockbox_runtime(lockbox_runtime: &LockboxRuntime) {
     search_lockbox::lock_runtime(lockbox_runtime);
 }
 
-fn system_time_to_rfc3339(value: SystemTime) -> String {
-    let datetime: chrono::DateTime<chrono::Utc> = value.into();
-    datetime.to_rfc3339()
-}
-
 fn normalize_lockbox_tags(tags: Vec<String>) -> Vec<String> {
     let mut next_tags = tags
         .into_iter()
@@ -7940,56 +4399,6 @@ fn commit_override_status(
         Ok(None) => Some(("saved".to_string(), None)),
         Err(error) => Some(("commit_failed".to_string(), Some(error))),
     }
-}
-
-/// 正文/表格里的图片引用 → vault 内的规范路径。
-///
-/// 引用是 vault 相对路径（`assets/…`、`notes/证件/营业执照.jpg`）或旧格式
-/// `shard-attachment:<sha256>`；旧调用方传的绝对路径只要落在 vault 内也折算回来。
-/// 能读到哪里由 `ensure_public_vault_file_path` 一处决定：密匣与内部目录一律拒绝。
-fn resolve_vault_asset_path(vfs: &dyn Vfs, raw_path: &str) -> Result<PathBuf, String> {
-    let vault = vfs.root();
-    let trimmed = raw_path.trim();
-    if trimmed.is_empty() {
-        return Err("图片路径为空".to_string());
-    }
-    if trimmed.contains("://") || trimmed.starts_with("//") {
-        return Err("不支持读取外部图片地址".to_string());
-    }
-
-    let relative = if let Some(hash) = trimmed.strip_prefix("shard-attachment:") {
-        if hash.len() != 64 || !hash.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-            return Err("附件引用无效".to_string());
-        }
-        shard_core::image::IMAGE_EXTENSIONS
-            .iter()
-            .map(|extension| format!("assets/{}/{hash}.{extension}", &hash[..2]))
-            .find(|candidate| vfs.is_file(&vault.join(candidate)))
-            .ok_or_else(|| "图片文件不存在".to_string())?
-    } else if Path::new(trimmed).is_absolute() {
-        let canonical_vault = vfs.canonicalize(vault).map_err(|error| error.to_string())?;
-        let canonical = vfs
-            .canonicalize(Path::new(trimmed))
-            .map_err(|_| "图片文件不存在".to_string())?;
-        canonical
-            .strip_prefix(&canonical_vault)
-            .map_err(|_| "只能读取 vault 内的图片".to_string())?
-            .to_string_lossy()
-            .replace('\\', "/")
-    } else {
-        // `./notes/a.png` 与 `notes/a.png` 是同一个引用。
-        trimmed.strip_prefix("./").unwrap_or(trimmed).to_string()
-    };
-
-    shard_core::ensure_public_vault_file_path(vfs, &relative)
-}
-
-fn image_mime_type(path: &Path, bytes: &[u8]) -> Result<&'static str, String> {
-    shard_core::image::image_mime_type(path, bytes).ok_or_else(|| "不支持的图片格式".to_string())
-}
-
-fn sniff_image_mime_type(bytes: &[u8]) -> Result<&'static str, String> {
-    shard_core::image::sniff_image_mime_type(bytes).ok_or_else(|| "不支持的图片格式".to_string())
 }
 
 fn ensure_git_repo(vault: &Path) -> Result<(), String> {
@@ -8120,20 +4529,6 @@ fn commit_paths_best_effort(vault: &Path, rel_paths: &[String], message: &str) {
 
 fn commit_all_if_dirty(vault: &Path, message: &str) -> Result<(), String> {
     commit_paths(vault, &managed_pathspecs(), message)
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CheckpointResult {
-    /// "not_git" | "blocked" | "no_changes" | "committed"
-    status: String,
-    /// committed 时提交中的变更路径数（rename 计 1）
-    changes: usize,
-    /// blocked 时的原因说明
-    reason: Option<String>,
-    /// 超过单文件上限、没有提交的路径
-    skipped_large: Vec<String>,
-    git: GitInfo,
 }
 
 struct StagedChange {
@@ -8366,19 +4761,6 @@ fn dirty_paths_for(vault: &Path, pathspecs: &[String]) -> Result<HashSet<String>
     }
 
     Ok(paths)
-}
-
-/// 资料库没有版本控制时的 Git 状态（本地未初始化 Git，或服务端模式）。
-fn no_git_info() -> GitInfo {
-    GitInfo {
-        branch: "main".to_string(),
-        short_commit: "no git".to_string(),
-        has_remote: false,
-        status: "no_git".to_string(),
-        error: None,
-        ahead: 0,
-        behind: 0,
-    }
 }
 
 fn git_info(vault: &Path) -> GitInfo {
@@ -8760,13 +5142,6 @@ fn run_command(command: &mut Command) -> Result<String, String> {
     }
 }
 
-fn relative_path(vault: &Path, path: &Path) -> Result<String, String> {
-    let rel = path
-        .strip_prefix(vault)
-        .map_err(|error| error.to_string())?;
-    Ok(rel.to_string_lossy().replace('\\', "/"))
-}
-
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let search_runtime = search_runtime::managed_runtime();
@@ -8910,64 +5285,124 @@ pub fn run() {
 mod tests {
     use super::*;
 
-    #[test]
-    fn dataset_commands_create_read_apply_and_reject_stale_base() {
-        let directory = tempfile::tempdir().unwrap();
-        let vault = directory.path();
-        ensure_vault_layout(&FsVfs::new(vault)).unwrap();
+    // 下列辅助函数与 shard-vault 测试里的同名函数相同：留在这里的密匣与 Git 用例也要用。
+    const TEST_PNG: &[u8] = b"\x89PNG\r\n\x1a\npng";
 
-        let created = create_dataset_in_vault(
-            &LocalVault::new(vault).cx(),
-            "阅读记录",
-            vec!["id".into(), "书名".into()],
-            vec![vec!["r_000000000001".into(), "第一本".into()]],
-            Some("id".into()),
+    fn fidelity_raw(id: &str, related_target: Option<&str>) -> String {
+        let related = related_target
+            .map(|target| {
+                format!(
+                    "\nrelated:\n- targetId: {target}\n  origin: manual\n  createdAt: 2026-09-28T08:30:00+08:00"
+                )
+            })
+            .unwrap_or_default();
+        format!(
+            concat!(
+                "# 自定义顶部注释\n",
+                "author: 张三\n",
+                "id: {id}\n",
+                "created_at: 2026-09-28T08:00:00+08:00\n",
+                "rating: 5 # 自定义行尾注释\n",
+                "updated_at: 2026-09-28T08:00:00+08:00\n",
+                "tags: [inbox, 自定义]\n",
+                "category: null\n",
+                "custom_list:\n",
+                "  - first\n",
+                "  - second\n",
+                "\n",
+                "ai_status: none\n",
+                "source: test # 系统键未变化时也保留\n",
+                "isbn: '00123'\n",
+                "description: |\n",
+                "  第一行\n",
+                "  第二行\n",
+                "# 自定义尾部注释{related}"
+            ),
+            id = id,
+            related = related
+        )
+    }
+
+    fn write_fidelity_fragment(vault: &Path, id: &str, related_target: Option<&str>) -> PathBuf {
+        let path = vault.join("fragments/tests").join(format!("{id}.md"));
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(
+            &path,
+            format!(
+                "---\n{}\n---\n\n原正文\n",
+                fidelity_raw(id, related_target)
+            ),
         )
         .unwrap();
-        assert_eq!(created.path, "datasets/阅读记录.csv");
-        assert_eq!(
-            read_dataset_in_vault(&LocalVault::new(vault).cx(), &created.path).unwrap(),
-            created
-        );
-        let json = serde_json::to_value(&created).unwrap();
-        assert!(json.get("schemaSha").is_some());
-        assert!(json.get("readOnlyReason").is_some());
+        path
+    }
 
-        let ops = vec![DatasetOp::SetCells {
-            cells: vec![dataset::CellEdit {
-                row: 0,
-                column: 1,
-                value: "第二本".into(),
-            }],
-        }];
-        let updated = apply_dataset_ops_in_vault(
-            &LocalVault::new(vault).cx(),
-            &created.path,
-            &created.sha,
-            created.schema_sha.as_deref(),
-            &ops,
-        )
-        .unwrap();
-        assert_eq!(updated.table.rows[0][1], "第二本");
-        assert_ne!(updated.sha, created.sha);
-        assert_eq!(
-            read_dataset_in_vault(&LocalVault::new(vault).cx(), &created.path).unwrap(),
-            updated
+    fn outline_graph_fixture(node_count: usize) -> serde_json::Value {
+        assert!(node_count > 0);
+        let timestamp = "2026-09-28T08:00:00+08:00".to_string();
+        let root_id = "root".to_string();
+        let mut nodes = BTreeMap::new();
+        nodes.insert(
+            root_id.clone(),
+            ShardMapNode {
+                id: root_id.clone(),
+                parent_id: None,
+                sort_key: "m".to_string(),
+                text: "中心主题".to_string(),
+                note: None,
+                collapsed: false,
+                width: None,
+                created_at: timestamp.clone(),
+                updated_at: timestamp.clone(),
+                links: Vec::new(),
+                style: None,
+            },
         );
+        for index in 1..node_count {
+            let id = format!("node-{index}");
+            nodes.insert(
+                id.clone(),
+                ShardMapNode {
+                    id,
+                    parent_id: Some(root_id.clone()),
+                    sort_key: format!("{index:04}"),
+                    text: format!("节点 {index}"),
+                    note: None,
+                    collapsed: false,
+                    width: None,
+                    created_at: timestamp.clone(),
+                    updated_at: timestamp.clone(),
+                    links: Vec::new(),
+                    style: None,
+                },
+            );
+        }
+        serde_json::to_value(ShardMapFile {
+            kind: SHARD_MAP_KIND.to_string(),
+            schema_version: SHARD_MAP_SCHEMA_VERSION,
+            id: "incoming-outline".to_string(),
+            title: "测试大纲".to_string(),
+            created_at: timestamp.clone(),
+            updated_at: timestamp,
+            saved_with_app_version: "test".to_string(),
+            revision: 0,
+            root_id,
+            has_protected_links: false,
+            nodes,
+            viewport: None,
+        })
+        .unwrap()
+    }
 
-        let error = apply_dataset_ops_in_vault(
-            &LocalVault::new(vault).cx(),
-            &created.path,
-            &created.sha,
-            created.schema_sha.as_deref(),
-            &ops,
-        )
-        .unwrap_err();
-        assert_eq!(error, "STALE_BASE:数据文件已在别处被修改");
-        assert_eq!(
-            read_dataset_in_vault(&LocalVault::new(vault).cx(), &created.path).unwrap(),
-            updated
-        );
+    fn unique_graph_operation_id() -> String {
+        format!("test-{}", new_fragment_id(&Local::now()))
+    }
+
+    fn without_updated_at(raw: &str) -> String {
+        raw.split('\n')
+            .filter(|line| !line.starts_with("updated_at:"))
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 
     #[test]
@@ -9053,103 +5488,6 @@ mod tests {
         let output = r#"{"type":"turn.completed"}"#;
 
         assert!(extract_codex_agent_message(output).is_err());
-    }
-
-    #[test]
-    fn detects_extensionless_png_images() {
-        let bytes = b"\x89PNG\r\n\x1a\nrest";
-        let path = Path::new("assets/2026/06/clipboard-png");
-
-        assert_eq!(image_mime_type(path, bytes).unwrap(), "image/png");
-    }
-
-    #[test]
-    fn resolves_content_addressed_attachment_references() {
-        let tempdir = tempfile::tempdir().unwrap();
-        let vault = tempdir.path();
-        let hash = "a".repeat(64);
-        let asset_dir = vault.join("assets").join("aa");
-        fs::create_dir_all(&asset_dir).unwrap();
-        let expected = asset_dir.join(format!("{hash}.png"));
-        fs::write(&expected, b"\x89PNG\r\n\x1a\nrest").unwrap();
-
-        let resolved =
-            resolve_vault_asset_path(&FsVfs::new(vault), &format!("shard-attachment:{hash}")).unwrap();
-
-        assert_eq!(resolved, expected.canonicalize().unwrap());
-    }
-
-    #[test]
-    fn rejects_malformed_content_addressed_attachment_references() {
-        let tempdir = tempfile::tempdir().unwrap();
-        let vault = tempdir.path();
-        fs::create_dir_all(vault.join("assets")).unwrap();
-
-        assert!(
-            resolve_vault_asset_path(&FsVfs::new(vault), "shard-attachment:../../etc/passwd").is_err()
-        );
-        assert!(resolve_vault_asset_path(&FsVfs::new(vault), "shard-attachment:abc").is_err());
-    }
-
-    #[test]
-    fn lists_only_public_csv_files() {
-        let tempdir = tempfile::tempdir().unwrap();
-        let vault = tempdir.path();
-        ensure_vault_layout(&FsVfs::new(vault)).unwrap();
-        fs::create_dir_all(vault.join("data")).unwrap();
-        fs::create_dir_all(vault.join("lockbox").join("data")).unwrap();
-        fs::write(vault.join("root.CSV"), "a,b\n1,2\n").unwrap();
-        fs::write(vault.join("data").join("nested.csv"), "a\n1\n").unwrap();
-        fs::write(vault.join("data").join("ignored.txt"), "not csv\n").unwrap();
-        fs::write(vault.join("lockbox").join("data").join("secret.csv"), "secret\n").unwrap();
-        fs::write(vault.join(".shard").join("internal.csv"), "internal\n").unwrap();
-
-        let files = list_csv_files_in_vault(&LocalVault::new(vault).cx()).unwrap();
-        assert_eq!(
-            files.iter().map(|file| file.path.as_str()).collect::<Vec<_>>(),
-            vec!["data/nested.csv", "root.CSV"]
-        );
-    }
-
-    #[test]
-    fn validates_public_csv_paths() {
-        let tempdir = tempfile::tempdir().unwrap();
-        let vault = tempdir.path();
-        ensure_vault_layout(&FsVfs::new(vault)).unwrap();
-        fs::create_dir_all(vault.join("data")).unwrap();
-        fs::write(vault.join("data").join("ok.csv"), "a\n1\n").unwrap();
-
-        assert!(ensure_public_csv_path(&FsVfs::new(vault), "data/ok.csv").is_ok());
-        for invalid in [
-            "",
-            "/tmp/outside.csv",
-            "../outside.csv",
-            "./data/ok.csv",
-            "data\\ok.csv",
-            "data/ok.txt",
-            "lockbox/secret.csv",
-            ".shard/internal.csv",
-            "data/missing.csv",
-        ] {
-            assert!(ensure_public_csv_path(&FsVfs::new(vault), invalid).is_err(), "{invalid}");
-        }
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn rejects_csv_symlink_that_leaves_vault() {
-        use std::os::unix::fs::symlink;
-
-        let tempdir = tempfile::tempdir().unwrap();
-        let vault = tempdir.path().join("vault");
-        fs::create_dir_all(&vault).unwrap();
-        ensure_vault_layout(&FsVfs::new(&vault)).unwrap();
-        let outside = tempdir.path().join("outside.csv");
-        fs::write(&outside, "secret\n").unwrap();
-        symlink(&outside, vault.join("outside.csv")).unwrap();
-
-        assert!(ensure_public_csv_path(&FsVfs::new(&vault), "outside.csv").is_err());
-        assert!(list_csv_files_in_vault(&LocalVault::new(&vault).cx()).unwrap().is_empty());
     }
 
     #[test]
@@ -9242,112 +5580,6 @@ mod tests {
     }
 
     #[test]
-    fn expected_file_sha_guard_detects_stale_base() {
-        let file = "---\nid: one\n---\n\n第一版正文\n";
-        let sha = content_sha256_hex(file);
-
-        assert!(ensure_expected_file_sha(file, None).is_ok());
-        assert!(ensure_expected_file_sha(file, Some(&sha)).is_ok());
-
-        let error = ensure_expected_file_sha(
-            "---\nid: one\nauthor: 外部修改\n---\n\n第一版正文\n",
-            Some(&sha),
-        )
-        .unwrap_err();
-        assert!(error.starts_with("STALE_BASE:"), "实际：{error}");
-    }
-
-    #[test]
-    fn custom_property_dto_is_ordered_json_safe_and_tolerates_large_integer() {
-        let tempdir = tempfile::tempdir().unwrap();
-        let vault = tempdir.path();
-        ensure_vault_layout(&FsVfs::new(vault)).unwrap();
-        let id = write_public_test_fragment(vault, "属性正文");
-        let path = find_fragment_path(&FsVfs::new(vault), &id).unwrap().unwrap();
-        let parsed = parse_fragment(&fs::read_to_string(&path).unwrap()).unwrap();
-        let raw = format!(
-            "{}\n文本: '00123'\n数字: 1.50\n勾选: true\n空值: null\n列表: [甲, 2, false]\n嵌套:\n  child: value\n标签值: !custom value\n超大整数: 184467440737095516160",
-            parsed.raw
-        );
-        fs::write(&path, format!("---\n{raw}\n---{}", parsed.body)).unwrap();
-
-        let fragment = read_fragment(
-            &LocalVault::new(vault).cx(),
-            &path,
-            &dirty_paths(vault),
-            None,
-        )
-        .unwrap();
-        assert_eq!(fragment.properties.iter().map(|item| item.key.as_str()).collect::<Vec<_>>(),
-            vec!["文本", "数字", "勾选", "空值", "列表", "嵌套", "标签值", "超大整数"]);
-        assert_eq!(fragment.properties[0].value, PropertyValue::Text { text: "00123".into() });
-        assert_eq!(fragment.properties[1].value, PropertyValue::Number { text: "1.5".into() });
-        assert_eq!(fragment.properties[2].value, PropertyValue::Bool { value: true });
-        assert_eq!(fragment.properties[3].value, PropertyValue::Null);
-        assert_eq!(fragment.properties[4].value, PropertyValue::List {
-            items: vec!["甲".into(), "2".into(), "false".into()],
-        });
-        assert!(fragment.properties[5..].iter().all(|item|
-            matches!(item.value, PropertyValue::Other { .. }) && !item.editable));
-    }
-
-    #[test]
-    fn property_input_and_registry_contracts_are_validated() {
-        assert!(matches!(
-            property_input_to_yaml(PropertyInputValue::Number(Some("1.50".into()))).unwrap(),
-            serde_yaml::Value::Number(_)
-        ));
-        assert!(matches!(
-            property_input_to_yaml(PropertyInputValue::Number(Some(".5".into()))).unwrap(),
-            serde_yaml::Value::Number(_)
-        ));
-        assert!(property_input_to_yaml(PropertyInputValue::Number(Some("1e3".into()))).is_err());
-        assert!(property_input_to_yaml(PropertyInputValue::Number(Some("9223372036854775808".into()))).is_err());
-        assert!(property_input_to_yaml(PropertyInputValue::Date(Some("2026-02-29".into()))).is_err());
-        assert!(property_input_to_yaml(PropertyInputValue::Datetime(Some("2026-09-28T25:00".into()))).is_err());
-        for input in ["目标", "[[目标]]"] {
-            assert_eq!(
-                property_input_to_yaml(PropertyInputValue::Link(Some(input.into()))).unwrap(),
-                serde_yaml::Value::String("[[目标]]".into())
-            );
-        }
-        assert_eq!(property_input_to_yaml(PropertyInputValue::Text(None)).unwrap(), serde_yaml::Value::Null);
-
-        let tempdir = tempfile::tempdir().unwrap();
-        let vault = tempdir.path();
-        ensure_vault_layout(&FsVfs::new(vault)).unwrap();
-        let empty = read_property_registry_in_vault(&LocalVault::new(vault).cx()).unwrap();
-        assert_eq!(empty.sha, content_sha256_hex(""));
-        let written = register_property_type_in_vault(
-            &LocalVault::new(vault).cx(),
-            "截止日期",
-            PropertyType::Date,
-            &empty.sha,
-        )
-        .unwrap();
-        assert_eq!(written.registry.properties["截止日期"].property_type, PropertyType::Date);
-        assert_eq!(read_property_registry_in_vault(&LocalVault::new(vault).cx()).unwrap(), written);
-        assert!(register_property_type_in_vault(
-            &LocalVault::new(vault).cx(),
-            "截止日期",
-            PropertyType::Datetime,
-            &empty.sha
-        )
-        .is_err());
-        let id = write_public_test_fragment(vault, "登记表损坏不影响读取");
-        fs::write(property_registry_path(vault), "{bad json").unwrap();
-        assert!(read_property_registry_in_vault(&LocalVault::new(vault).cx()).is_err());
-        let path = find_fragment_path(&FsVfs::new(vault), &id).unwrap().unwrap();
-        assert!(read_fragment(
-            &LocalVault::new(vault).cx(),
-            &path,
-            &dirty_paths(vault),
-            None
-        )
-        .is_ok());
-    }
-
-    #[test]
     fn public_property_mutation_preserves_body_and_rejects_trash() {
         let tempdir = tempfile::tempdir().unwrap();
         let vault = tempdir.path();
@@ -9427,53 +5659,6 @@ mod tests {
         assert!(set_fragment_property_in_vault(
             &LocalVault::new(vault).cx(), &runtime, &fragment.id, "私密属性", &serde_yaml::Value::String("拒绝".into()),
         ).unwrap_err().contains("已删除"));
-    }
-
-    #[test]
-    fn public_fragment_updates_use_the_complete_file_as_the_save_baseline() {
-        let tempdir = tempfile::tempdir().unwrap();
-        let vault = tempdir.path();
-        ensure_vault_layout(&FsVfs::new(vault)).unwrap();
-        let id = write_public_test_fragment(vault, "第一版正文");
-        let path = find_fragment_path(&FsVfs::new(vault), &id).unwrap().unwrap();
-        let original = fs::read_to_string(&path).unwrap();
-        let stale_sha = content_sha256_hex(&original);
-        let externally_edited = original.replacen("source: test", "source: test\nauthor: 外部修改", 1);
-        fs::write(&path, &externally_edited).unwrap();
-        let before_failed_save = fs::read(&path).unwrap();
-
-        let error = update_public_fragment_in_vault(
-            &LocalVault::new(vault).cx(),
-            &path,
-            "第二版正文",
-            vec!["inbox".into()],
-            Some(&stale_sha),
-        )
-        .unwrap_err();
-        assert_eq!(error, STALE_BASE_ERROR);
-        assert_eq!(fs::read(&path).unwrap(), before_failed_save);
-
-        let fresh_sha = content_sha256_hex(&fs::read_to_string(&path).unwrap());
-        let updated = update_public_fragment_in_vault(
-            &LocalVault::new(vault).cx(),
-            &path,
-            "第二版正文",
-            vec!["inbox".into()],
-            Some(&fresh_sha),
-        )
-        .unwrap();
-        assert_eq!(updated.content, "第二版正文\n");
-        assert!(fs::read_to_string(&path).unwrap().contains("author: 外部修改"));
-
-        let updated = update_public_fragment_in_vault(
-            &LocalVault::new(vault).cx(),
-            &path,
-            "无基线保存",
-            vec!["inbox".into()],
-            None,
-        )
-        .unwrap();
-        assert_eq!(updated.content, "无基线保存\n");
     }
 
     #[test]
@@ -9583,39 +5768,6 @@ mod tests {
         assert_eq!(projected.content, "同一快照正文");
         assert_eq!(projected.file_sha, content_sha256_hex(&encrypted_snapshot));
         assert_ne!(projected.file_sha, content_sha256_hex(&replacement_text));
-    }
-
-    #[test]
-    fn fragment_updates_enforce_protected_type_rules() {
-        let tempdir = tempfile::tempdir().unwrap();
-        let vault = tempdir.path();
-        ensure_vault_layout(&FsVfs::new(vault)).unwrap();
-
-        let ordinary = vault.join("fragments/tests/ordinary.md");
-        fs::create_dir_all(ordinary.parent().unwrap()).unwrap();
-        write_t6_fragment(&ordinary, "ordinary", vec!["inbox"], "普通正文");
-        let updated = update_public_fragment_in_vault(
-            &LocalVault::new(vault).cx(),
-            &ordinary,
-            "正文带 #outline",
-            vec!["inbox".into(), "outline".into()],
-            None,
-        )
-        .unwrap();
-        assert_eq!(derive_type(&updated.tags), None);
-
-        let outline = vault.join("fragments/tests/outline.md");
-        write_t6_fragment(&outline, "outline", vec!["inbox", "outline"], "- 根节点");
-        let updated = update_public_fragment_in_vault(
-            &LocalVault::new(vault).cx(),
-            &outline,
-            "- 修改后的根节点",
-            vec!["inbox".into(), "document".into()],
-            None,
-        )
-        .unwrap();
-        assert_eq!(derive_type(&updated.tags), Some("outline"));
-        assert!(!updated.tags.iter().any(|tag| tag == "document"));
     }
 
     #[test]
@@ -9886,76 +6038,6 @@ mod tests {
     }
 
     #[test]
-    fn creates_and_lists_mind_map_with_public_fragment_link() {
-        let tempdir = tempfile::tempdir().unwrap();
-        let vault = tempdir.path();
-        ensure_vault_layout(&FsVfs::new(vault)).unwrap();
-        let fragment_id = write_public_test_fragment(vault, "linked public note");
-
-        let created =
-            create_mind_map_in_vault(&LocalVault::new(vault).cx(), "Launch Plan".to_string(), Some(fragment_id.clone()))
-                .unwrap();
-
-        assert_eq!(created.file.kind, SHARD_MAP_KIND);
-        assert_eq!(created.file.schema_version, SHARD_MAP_SCHEMA_VERSION);
-        assert_eq!(created.file.revision, 1);
-        assert_eq!(created.path, "notes/Launch Plan.shardmap.json");
-        assert!(!created.last_saved_hash.is_empty());
-
-        let root = created.file.nodes.get(&created.file.root_id).unwrap();
-        assert_eq!(root.links.len(), 1);
-        let root_children = created
-            .file
-            .nodes
-            .values()
-            .filter(|node| node.parent_id.as_deref() == Some(created.file.root_id.as_str()))
-            .collect::<Vec<_>>();
-        assert_eq!(root_children.len(), 1);
-        assert_eq!(root_children[0].text, "");
-        match &root.links[0] {
-            ShardDocumentLink::Fragment { target_id, .. } => {
-                assert_eq!(target_id, &fragment_id);
-            }
-            _ => panic!("expected fragment link"),
-        }
-
-        let summaries = list_mind_maps_in_vault(&LocalVault::new(vault).cx()).unwrap();
-        assert_eq!(summaries.len(), 1);
-        assert_eq!(summaries[0].id, created.file.id);
-        assert_eq!(summaries[0].node_count, 2);
-
-        let duplicate =
-            create_mind_map_in_vault(
-                &LocalVault::new(vault).cx(),
-                "Launch Plan".to_string(),
-                None,
-            )
-            .unwrap();
-        assert_eq!(duplicate.path, "notes/Launch Plan-2.shardmap.json");
-    }
-
-    #[test]
-    fn rejects_invalid_mind_map_tree_shape() {
-        let tempdir = tempfile::tempdir().unwrap();
-        let vault = tempdir.path();
-        ensure_vault_layout(&FsVfs::new(vault)).unwrap();
-        let created =
-            create_mind_map_in_vault(&LocalVault::new(vault).cx(), "Draft".to_string(), None).unwrap();
-        let mut edited = created.file.clone();
-        let child_id = edited
-            .nodes
-            .values()
-            .find(|node| node.parent_id.as_deref() == Some(edited.root_id.as_str()))
-            .unwrap()
-            .id
-            .clone();
-        edited.nodes.get_mut(&edited.root_id).unwrap().parent_id = Some(child_id);
-
-        let error = validate_mind_map_file(&FsVfs::new(vault), &edited).unwrap_err();
-        assert!(error.contains("root 节点"));
-    }
-
-    #[test]
     fn rejects_lockbox_fragment_links_in_plain_mind_maps() {
         let tempdir = tempfile::tempdir().unwrap();
         let vault = tempdir.path();
@@ -9974,36 +6056,6 @@ mod tests {
         let error = create_mind_map_in_vault(&LocalVault::new(vault).cx(), "Private Map".to_string(), Some(private.id))
             .unwrap_err();
         assert!(error.contains("密匣片段"));
-    }
-
-    #[test]
-    fn conflicting_mind_map_write_creates_conflict_copy() {
-        let tempdir = tempfile::tempdir().unwrap();
-        let vault = tempdir.path();
-        ensure_vault_layout(&FsVfs::new(vault)).unwrap();
-        let created =
-            create_mind_map_in_vault(&LocalVault::new(vault).cx(), "Draft".to_string(), None).unwrap();
-        let mut edited = created.file.clone();
-        edited.title = "Edited Draft".to_string();
-
-        let error = write_mind_map_in_vault(
-            &LocalVault::new(vault).cx(),
-            &created.file.id,
-            edited,
-            created.file.revision,
-            "stale-hash",
-        )
-        .unwrap_err();
-
-        assert!(error.contains("冲突副本"));
-        let mut conflicts = Vec::new();
-        collect_mind_map_files(
-            &FsVfs::new(vault),
-            &vault.join("maps").join(".conflicts"),
-            &mut conflicts,
-        )
-        .unwrap();
-        assert_eq!(conflicts.len(), 1);
     }
 
     #[test]
@@ -10209,18 +6261,6 @@ mod tests {
     }
 
     #[test]
-    fn test_link_fragments_rejects_self() {
-        let tempdir = tempfile::tempdir().unwrap();
-        let vault = tempdir.path();
-        ensure_vault_layout(&FsVfs::new(vault)).unwrap();
-        let fragment_id = write_public_test_fragment(vault, "standalone note");
-
-        assert!(
-            link_fragments_in_vault(&LocalVault::new(vault).cx(), &fragment_id, &fragment_id, "manual", None).is_err()
-        );
-    }
-
-    #[test]
     fn test_link_fragments_rejects_lockbox() {
         let tempdir = tempfile::tempdir().unwrap();
         let vault = tempdir.path();
@@ -10249,24 +6289,6 @@ mod tests {
             &public_id,
             &private.id,
             "manual",
-            None
-        )
-        .is_err());
-    }
-
-    #[test]
-    fn test_link_fragments_rejects_bad_origin() {
-        let tempdir = tempfile::tempdir().unwrap();
-        let vault = tempdir.path();
-        ensure_vault_layout(&FsVfs::new(vault)).unwrap();
-        let source_id = write_public_test_fragment(vault, "source note");
-        let target_id = write_public_test_fragment(vault, "target note");
-
-        assert!(link_fragments_in_vault(
-            &LocalVault::new(vault).cx(),
-            &source_id,
-            &target_id,
-            "automatic",
             None
         )
         .is_err());
@@ -10431,170 +6453,6 @@ mod tests {
     }
 
     #[test]
-    fn test_legacy_fragment_roundtrip() {
-        #[derive(Serialize)]
-        struct LegacyFragmentFrontmatter {
-            id: String,
-            created_at: String,
-            updated_at: String,
-            tags: Vec<String>,
-            category: Option<String>,
-            ai_status: Option<String>,
-            source: String,
-        }
-
-        let tempdir = tempfile::tempdir().unwrap();
-        let vault = tempdir.path();
-        ensure_vault_layout(&FsVfs::new(vault)).unwrap();
-        let path = vault.join("fragments").join("legacy.md");
-        let legacy = LegacyFragmentFrontmatter {
-            id: "legacy-fragment".to_string(),
-            created_at: "2026-08-18T08:00:00+08:00".to_string(),
-            updated_at: "2026-08-18T08:00:00+08:00".to_string(),
-            tags: vec!["inbox".to_string()],
-            category: None,
-            ai_status: Some("none".to_string()),
-            source: "test".to_string(),
-        };
-        let yaml = serde_yaml::to_string(&legacy).unwrap();
-        let yaml = yaml.strip_prefix("---\n").unwrap_or(&yaml);
-        let original = format!("---\n{}---\n\nlegacy body\n", yaml);
-        fs::write(&path, original.as_bytes()).unwrap();
-
-        let before = fs::read(&path).unwrap();
-        let text = fs::read_to_string(&path).unwrap();
-        assert!(!text.contains("related:"));
-        let (frontmatter, body) = parse_fragment_text(&text).unwrap();
-        assert!(frontmatter.related.is_empty());
-        write_fragment_file(
-            &FsVfs::new(vault),
-            &path,
-            &frontmatter,
-            body.trim_start_matches('\n'),
-        )
-        .unwrap();
-
-        assert_eq!(fs::read(path).unwrap(), before);
-    }
-
-    fn fidelity_raw(id: &str, related_target: Option<&str>) -> String {
-        let related = related_target
-            .map(|target| {
-                format!(
-                    "\nrelated:\n- targetId: {target}\n  origin: manual\n  createdAt: 2026-09-28T08:30:00+08:00"
-                )
-            })
-            .unwrap_or_default();
-        format!(
-            concat!(
-                "# 自定义顶部注释\n",
-                "author: 张三\n",
-                "id: {id}\n",
-                "created_at: 2026-09-28T08:00:00+08:00\n",
-                "rating: 5 # 自定义行尾注释\n",
-                "updated_at: 2026-09-28T08:00:00+08:00\n",
-                "tags: [inbox, 自定义]\n",
-                "category: null\n",
-                "custom_list:\n",
-                "  - first\n",
-                "  - second\n",
-                "\n",
-                "ai_status: none\n",
-                "source: test # 系统键未变化时也保留\n",
-                "isbn: '00123'\n",
-                "description: |\n",
-                "  第一行\n",
-                "  第二行\n",
-                "# 自定义尾部注释{related}"
-            ),
-            id = id,
-            related = related
-        )
-    }
-
-    fn write_fidelity_fragment(vault: &Path, id: &str, related_target: Option<&str>) -> PathBuf {
-        let path = vault.join("fragments/tests").join(format!("{id}.md"));
-        fs::create_dir_all(path.parent().unwrap()).unwrap();
-        fs::write(
-            &path,
-            format!(
-                "---\n{}\n---\n\n原正文\n",
-                fidelity_raw(id, related_target)
-            ),
-        )
-        .unwrap();
-        path
-    }
-
-    fn assert_fidelity_markers(path: &Path) {
-        let text = fs::read_to_string(path).unwrap();
-        for marker in [
-            "# 自定义顶部注释\nauthor: 张三\n",
-            "rating: 5 # 自定义行尾注释",
-            "custom_list:\n  - first\n  - second\n\n",
-            "isbn: '00123'",
-            "description: |\n  第一行\n  第二行\n# 自定义尾部注释",
-        ] {
-            assert!(text.contains(marker), "missing preserved marker: {marker}");
-        }
-    }
-
-    #[test]
-    fn public_write_paths_preserve_unknown_frontmatter() {
-        let tempdir = tempfile::tempdir().unwrap();
-        let vault = tempdir.path();
-        ensure_vault_layout(&FsVfs::new(vault)).unwrap();
-        let target_id = write_public_test_fragment(vault, "关联目标");
-        let id = "fidelity-public";
-        let mut path = write_fidelity_fragment(vault, id, None);
-
-        let updated = update_public_fragment_in_vault(
-            &LocalVault::new(vault).cx(),
-            &path,
-            "更新正文",
-            vec!["alpha".to_string()],
-            Some(&content_sha256_hex(&fs::read_to_string(&path).unwrap())),
-        )
-        .unwrap();
-        assert_eq!(updated.content, "更新正文\n");
-        assert_fidelity_markers(&path);
-
-        let updated =
-            update_public_fragment_tags_in_vault(&LocalVault::new(vault).cx(), &path, vec!["beta".to_string()])
-                .unwrap();
-        assert_eq!(updated.tags, vec!["beta"]);
-        assert_fidelity_markers(&path);
-
-        let linked =
-            link_fragments_in_vault(&LocalVault::new(vault).cx(), id, &target_id, "manual", Some("保真".into()))
-                .unwrap();
-        assert_eq!(linked.related.len(), 1);
-        assert_fidelity_markers(&path);
-
-        let unlinked = unlink_fragments_in_vault(&LocalVault::new(vault).cx(), id, &target_id).unwrap();
-        assert!(unlinked.related.is_empty());
-        assert_fidelity_markers(&path);
-
-        let pinned =
-            set_public_fragment_pinned_in_vault(&LocalVault::new(vault).cx(), &path, true).unwrap();
-        assert!(pinned.pinned);
-        assert_fidelity_markers(&path);
-
-        let (note, _) =
-            convert_fragment_to_note_in_vault(&LocalVault::new(vault).cx(), id, None, Some("保真笔记"))
-                .unwrap();
-        path = vault.join(&note.path);
-        assert!(note.tags.iter().any(|tag| tag == "note"));
-        assert_fidelity_markers(&path);
-
-        let (fragment, _) =
-            convert_note_to_fragment_in_vault(&LocalVault::new(vault).cx(), id).unwrap();
-        path = vault.join(&fragment.path);
-        assert!(!fragment.tags.iter().any(|tag| tag == "note"));
-        assert_fidelity_markers(&path);
-    }
-
-    #[test]
     fn lockbox_roundtrip_preserves_unknown_frontmatter() {
         let tempdir = tempfile::tempdir().unwrap();
         let vault = tempdir.path();
@@ -10698,42 +6556,6 @@ mod tests {
             .tags,
             vec!["upgraded"]
         );
-    }
-
-    #[test]
-    fn failed_frontmatter_update_leaves_file_unchanged() {
-        let tempdir = tempfile::tempdir().unwrap();
-        let vault = tempdir.path();
-        ensure_vault_layout(&FsVfs::new(vault)).unwrap();
-        let path = vault.join("fragments/tests/unsafe.md");
-        fs::create_dir_all(path.parent().unwrap()).unwrap();
-        let raw = raw_from_frontmatter(&FragmentFrontmatter {
-            id: "unsafe".into(),
-            created_at: "2026-09-28T08:00:00+08:00".into(),
-            updated_at: "2026-09-28T08:00:00+08:00".into(),
-            tags: vec!["inbox".into()],
-            category: None,
-            ai_status: Some("none".into()),
-            pinned: false,
-            source: "test".into(),
-            conflict_of: None,
-            related: Vec::new(),
-        })
-        .unwrap()
-        .replacen("tags:\n- inbox", "tags: &shared\n- inbox\nmirror: *shared", 1);
-        fs::write(&path, format!("---\n{raw}\n---\n\n原正文\n")).unwrap();
-        let before = fs::read(&path).unwrap();
-
-        let error = update_public_fragment_in_vault(
-            &LocalVault::new(vault).cx(),
-            &path,
-            "新正文",
-            vec!["changed".into()],
-            None,
-        )
-        .unwrap_err();
-        assert!(error.contains("YAML 别名引用"));
-        assert_eq!(fs::read(path).unwrap(), before);
     }
 
     fn write_public_test_fragment(vault: &Path, body: &str) -> String {
@@ -11018,205 +6840,6 @@ mod tests {
             .is_empty());
     }
 
-    fn outline_graph_fixture(node_count: usize) -> serde_json::Value {
-        assert!(node_count > 0);
-        let timestamp = "2026-09-28T08:00:00+08:00".to_string();
-        let root_id = "root".to_string();
-        let mut nodes = BTreeMap::new();
-        nodes.insert(
-            root_id.clone(),
-            ShardMapNode {
-                id: root_id.clone(),
-                parent_id: None,
-                sort_key: "m".to_string(),
-                text: "中心主题".to_string(),
-                note: None,
-                collapsed: false,
-                width: None,
-                created_at: timestamp.clone(),
-                updated_at: timestamp.clone(),
-                links: Vec::new(),
-                style: None,
-            },
-        );
-        for index in 1..node_count {
-            let id = format!("node-{index}");
-            nodes.insert(
-                id.clone(),
-                ShardMapNode {
-                    id,
-                    parent_id: Some(root_id.clone()),
-                    sort_key: format!("{index:04}"),
-                    text: format!("节点 {index}"),
-                    note: None,
-                    collapsed: false,
-                    width: None,
-                    created_at: timestamp.clone(),
-                    updated_at: timestamp.clone(),
-                    links: Vec::new(),
-                    style: None,
-                },
-            );
-        }
-        serde_json::to_value(ShardMapFile {
-            kind: SHARD_MAP_KIND.to_string(),
-            schema_version: SHARD_MAP_SCHEMA_VERSION,
-            id: "incoming-outline".to_string(),
-            title: "测试大纲".to_string(),
-            created_at: timestamp.clone(),
-            updated_at: timestamp,
-            saved_with_app_version: "test".to_string(),
-            revision: 0,
-            root_id,
-            has_protected_links: false,
-            nodes,
-            viewport: None,
-        })
-        .unwrap()
-    }
-
-    fn unique_graph_operation_id() -> String {
-        format!("test-{}", new_fragment_id(&Local::now()))
-    }
-
-    fn markdown_file_count(vault: &Path) -> usize {
-        let mut files = Vec::new();
-        collect_markdown_files(&FsVfs::new(vault), &vault.join("fragments"), &mut files).unwrap();
-        files.len()
-    }
-
-    fn without_updated_at(raw: &str) -> String {
-        raw.split('\n')
-            .filter(|line| !line.starts_with("updated_at:"))
-            .collect::<Vec<_>>()
-            .join("\n")
-    }
-
-    #[test]
-    fn creates_and_reads_outline_graph_fragments() {
-        let directory = tempfile::tempdir().unwrap();
-        let vault = directory.path();
-        ensure_vault_layout(&FsVfs::new(vault)).unwrap();
-
-        let created = create_graph_fragment_in_vault(
-            &LocalVault::new(vault).cx(),
-            "outline",
-            &unique_graph_operation_id(),
-            Some(outline_graph_fixture(3)),
-            vec!["项目".into()],
-        )
-        .unwrap();
-        assert!(created.fragment.path.starts_with("fragments/"));
-        assert!(created.fragment.tags.iter().any(|tag| tag == "outline"));
-        assert!(created.fragment.tags.iter().any(|tag| tag == "inbox"));
-        assert_eq!(created.graph["id"], created.fragment.id);
-
-        let path = vault.join(&created.fragment.path);
-        let text = fs::read_to_string(path).unwrap();
-        let parsed = parse_fragment(&text).unwrap();
-        let region = find_region(&parsed.body, GraphRegionKind::Outline).unwrap();
-        assert_eq!(parsed.body.matches("```shardmap").count(), 1);
-        assert_eq!(
-            serde_json::from_str::<serde_json::Value>(&region.json_text).unwrap(),
-            created.graph
-        );
-
-        let read =
-            read_graph_fragment_in_vault(&LocalVault::new(vault).cx(), &created.fragment.id).unwrap();
-        assert_eq!(read.fragment.id, created.fragment.id);
-        assert_eq!(read.graph, created.graph);
-    }
-
-    #[test]
-    fn reads_core_canonical_outline_written_by_external_graph_writer() {
-        let directory = tempfile::tempdir().unwrap();
-        let vault = directory.path();
-        ensure_vault_layout(&FsVfs::new(vault)).unwrap();
-        let id = "cli-compatible-outline";
-        let mut graph = outline_graph_fixture(2);
-        graph["id"] = serde_json::json!(id);
-        let file = serde_json::from_value::<ShardMapFile>(graph.clone()).unwrap();
-        let json_text = shard_core::graph_model::canonical_mind_map_text(&file).unwrap();
-        let path = vault.join("fragments/tests/cli-compatible-outline.md");
-        fs::create_dir_all(path.parent().unwrap()).unwrap();
-        write_t6_fragment(
-            &path,
-            id,
-            vec!["inbox", "outline"],
-            &render_region(GraphRegionKind::Outline, &json_text),
-        );
-
-        let read = read_graph_fragment_in_vault(&LocalVault::new(vault).cx(), id).unwrap();
-
-        assert_eq!(read.fragment.id, id);
-        assert_eq!(read.graph, graph);
-    }
-
-    #[test]
-    fn creates_and_reads_empty_flowchart_graph_fragments() {
-        let directory = tempfile::tempdir().unwrap();
-        let vault = directory.path();
-        ensure_vault_layout(&FsVfs::new(vault)).unwrap();
-
-        let created = create_graph_fragment_in_vault(
-            &LocalVault::new(vault).cx(),
-            "flowchart",
-            &unique_graph_operation_id(),
-            None,
-            Vec::new(),
-        )
-        .unwrap();
-        let file = serde_json::from_value::<canvas_commands::CanvasFile>(created.graph.clone())
-            .unwrap();
-        canvas_commands::validate_file(&FsVfs::new(vault), &file).unwrap();
-        assert_eq!(file.kind, "shard.flow");
-        assert_eq!(file.title, "未命名流程图");
-        assert!(file.nodes.is_empty());
-        assert!(file.edges.is_empty());
-
-        let read =
-            read_graph_fragment_in_vault(&LocalVault::new(vault).cx(), &created.fragment.id).unwrap();
-        assert_eq!(read.graph, created.graph);
-    }
-
-    #[test]
-    fn imports_outline_graph_file_to_timeline_without_git() {
-        let directory = tempfile::tempdir().unwrap();
-        let vault = directory.path();
-        ensure_vault_layout(&FsVfs::new(vault)).unwrap();
-        let mut graph = outline_graph_fixture(3);
-        graph["id"] = serde_json::json!("map-20260405-123456-abcd");
-        graph["createdAt"] = serde_json::json!("2024-05-06T23:30:00-07:00");
-        graph["updatedAt"] = serde_json::json!("2026-09-28T08:00:00+08:00");
-        let raw = serde_json::to_string_pretty(&graph).unwrap();
-        let source = vault.join("notes/项目导图.shardmap.json");
-        fs::write(&source, format!("{raw}\n")).unwrap();
-
-        let imported =
-            import_graph_file_to_timeline_in_vault(
-                &LocalVault::new(vault).cx(),
-                "notes/项目导图.shardmap.json",
-            )
-            .unwrap();
-
-        assert_eq!(imported.id, "map-20260405-123456-abcd");
-        assert_eq!(imported.created_at, "2024-05-06T23:30:00-07:00");
-        assert_eq!(
-            imported.path,
-            "fragments/2024/05/map-20260405-123456-abcd.md"
-        );
-        assert_eq!(imported.tags, vec!["inbox", "outline"]);
-        assert!(!source.exists());
-        assert!(vault.join(".trash/notes/项目导图.shardmap.json").is_file());
-        let text = fs::read_to_string(vault.join(&imported.path)).unwrap();
-        let parsed = parse_fragment(&text).unwrap();
-        let region = find_region(&parsed.body, GraphRegionKind::Outline).unwrap();
-        assert_eq!(parsed.body.matches("```shardmap").count(), 1);
-        assert_eq!(region.json_text, raw);
-        let read = read_graph_fragment_in_vault(&LocalVault::new(vault).cx(), &imported.id).unwrap();
-        assert_eq!(read.graph, graph);
-    }
-
     #[test]
     fn imports_flowchart_with_one_semantic_git_commit() {
         let directory = tempfile::tempdir().unwrap();
@@ -11278,366 +6901,6 @@ mod tests {
         assert_eq!(region.json_text, raw);
         let read = read_graph_fragment_in_vault(&LocalVault::new(vault).cx(), &imported.id).unwrap();
         assert_eq!(read.graph["kind"], "shard.flow");
-    }
-
-    #[test]
-    fn graph_file_import_rejects_conflicts_invalid_graphs_and_legacy_canvas_without_changes() {
-        let conflict_directory = tempfile::tempdir().unwrap();
-        let conflict_vault = conflict_directory.path();
-        ensure_vault_layout(&FsVfs::new(conflict_vault)).unwrap();
-        let mut conflict_graph = outline_graph_fixture(2);
-        conflict_graph["id"] = serde_json::json!("duplicate-id");
-        let conflict_source = conflict_vault.join("notes/冲突.shardmap.json");
-        fs::write(
-            &conflict_source,
-            serde_json::to_string_pretty(&conflict_graph).unwrap(),
-        )
-        .unwrap();
-        let existing = conflict_vault.join("notes/已有.md");
-        write_t6_fragment(&existing, "duplicate-id", vec!["note"], "已有文档");
-        let conflict_before = fs::read(&conflict_source).unwrap();
-        let existing_before = fs::read(&existing).unwrap();
-        let error =
-            import_graph_file_to_timeline_in_vault(&LocalVault::new(conflict_vault).cx(), "notes/冲突.shardmap.json")
-                .unwrap_err();
-        assert!(error.contains("duplicate-id") || error.contains("大纲或流程图"));
-        assert_eq!(fs::read(&conflict_source).unwrap(), conflict_before);
-        assert_eq!(fs::read(&existing).unwrap(), existing_before);
-        assert_eq!(markdown_file_count(conflict_vault), 0);
-        assert!(!conflict_vault
-            .join(".trash/notes/冲突.shardmap.json")
-            .exists());
-
-        for (name, suffix, value) in [
-            (
-                "无效",
-                ".shardmap.json",
-                serde_json::json!({
-                    "kind": "shard.map", "schemaVersion": 1, "id": "invalid-map",
-                    "title": "无效", "createdAt": "2026-09-28T08:00:00+08:00",
-                    "updatedAt": "2026-09-28T08:00:00+08:00", "savedWithAppVersion": "test",
-                    "revision": 0, "rootId": "missing", "hasProtectedLinks": false, "nodes": {}
-                }),
-            ),
-            (
-                "旧画布",
-                ".shardflow.json",
-                serde_json::json!({
-                    "kind": "shard.canvas", "schemaVersion": 1, "id": "legacy-canvas",
-                    "title": "旧画布", "createdAt": "2026-09-28T08:00:00+08:00",
-                    "updatedAt": "2026-09-28T08:00:00+08:00", "revision": 0,
-                    "nodes": [], "edges": []
-                }),
-            ),
-        ] {
-            let directory = tempfile::tempdir().unwrap();
-            let vault = directory.path();
-            ensure_vault_layout(&FsVfs::new(vault)).unwrap();
-            let rel_path = format!("notes/{name}{suffix}");
-            let bytes = serde_json::to_vec_pretty(&value).unwrap();
-            fs::write(vault.join(&rel_path), &bytes).unwrap();
-            assert!(
-                import_graph_file_to_timeline_in_vault(&LocalVault::new(vault).cx(), &rel_path).is_err()
-            );
-            assert_eq!(fs::read(vault.join(&rel_path)).unwrap(), bytes);
-            assert_eq!(markdown_file_count(vault), 0);
-            assert!(!vault.join(".trash").exists());
-        }
-    }
-
-    #[test]
-    fn graph_file_import_resumes_after_fragment_creation() {
-        let directory = tempfile::tempdir().unwrap();
-        let vault = directory.path();
-        ensure_vault_layout(&FsVfs::new(vault)).unwrap();
-        let mut graph = outline_graph_fixture(2);
-        graph["id"] = serde_json::json!("map-resume-1");
-        let raw = serde_json::to_string_pretty(&graph).unwrap();
-        fs::write(vault.join("notes/待恢复.shardmap.json"), &raw).unwrap();
-        let fragment_path = vault.join("fragments/2026/09/map-resume-1.md");
-        fs::create_dir_all(fragment_path.parent().unwrap()).unwrap();
-        write_t6_fragment(
-            &fragment_path,
-            "map-resume-1",
-            vec!["inbox", "outline"],
-            &render_region(GraphRegionKind::Outline, &raw),
-        );
-
-        let imported =
-            import_graph_file_to_timeline_in_vault(
-                &LocalVault::new(vault).cx(),
-                "notes/待恢复.shardmap.json",
-            )
-            .unwrap();
-
-        assert_eq!(imported.id, "map-resume-1");
-        assert_eq!(markdown_file_count(vault), 1);
-        assert!(!vault.join("notes/待恢复.shardmap.json").exists());
-        assert!(vault.join(".trash/notes/待恢复.shardmap.json").is_file());
-    }
-
-    #[test]
-    fn graph_fragment_creation_is_idempotent_by_operation_id() {
-        let directory = tempfile::tempdir().unwrap();
-        let vault = directory.path();
-        ensure_vault_layout(&FsVfs::new(vault)).unwrap();
-        let operation_id = unique_graph_operation_id();
-        let graph = outline_graph_fixture(2);
-
-        let first = create_graph_fragment_in_vault(
-            &LocalVault::new(vault).cx(),
-            "outline",
-            &operation_id,
-            Some(graph.clone()),
-            Vec::new(),
-        )
-        .unwrap();
-        let second = create_graph_fragment_in_vault(
-            &LocalVault::new(vault).cx(),
-            "outline",
-            &operation_id,
-            Some(graph),
-            vec!["ignored-on-retry".into()],
-        )
-        .unwrap();
-        assert_eq!(first.fragment.id, second.fragment.id);
-        assert_eq!(markdown_file_count(vault), 1);
-
-        let error = create_graph_fragment_in_vault(
-            &LocalVault::new(vault).cx(),
-            "flowchart",
-            &operation_id,
-            None,
-            Vec::new(),
-        )
-        .unwrap_err();
-        assert!(error.contains("不同的图形内容类型"));
-        assert_eq!(markdown_file_count(vault), 1);
-    }
-
-    #[test]
-    fn graph_writes_preserve_frontmatter_and_body_outside_the_region() {
-        let directory = tempfile::tempdir().unwrap();
-        let vault = directory.path();
-        ensure_vault_layout(&FsVfs::new(vault)).unwrap();
-        let created = create_graph_fragment_in_vault(
-            &LocalVault::new(vault).cx(),
-            "outline",
-            &unique_graph_operation_id(),
-            Some(outline_graph_fixture(2)),
-            Vec::new(),
-        )
-        .unwrap();
-        let path = vault.join(&created.fragment.path);
-        let original = fs::read_to_string(&path).unwrap();
-        let parsed = parse_fragment(&original).unwrap();
-        let region = find_region(&parsed.body, GraphRegionKind::Outline).unwrap();
-        let graph_region = &parsed.body[region.range.clone()];
-        let raw = format!("# 自定义注释\nauthor: 张三\n{}", parsed.raw);
-        let body = format!("\n\n区域前  \r\n{graph_region}\r\n区域后\t\n");
-        fs::write(&path, format!("---\n{raw}\n---{body}")).unwrap();
-        let before = fs::read_to_string(&path).unwrap();
-        let before_parsed = parse_fragment(&before).unwrap();
-        let before_region = find_region(&before_parsed.body, GraphRegionKind::Outline).unwrap();
-        let before_sha = content_sha256_hex(&before);
-        let mut next_graph = created.graph;
-        next_graph["title"] = serde_json::Value::String("修改后的大纲".into());
-
-        let written = write_graph_fragment_in_vault(
-            &LocalVault::new(vault).cx(),
-            &created.fragment.id,
-            next_graph,
-            Some(&before_sha),
-        )
-        .unwrap();
-        let after = fs::read_to_string(&path).unwrap();
-        let after_parsed = parse_fragment(&after).unwrap();
-        let after_region = find_region(&after_parsed.body, GraphRegionKind::Outline).unwrap();
-
-        assert_eq!(without_updated_at(&before_parsed.raw), without_updated_at(&after_parsed.raw));
-        assert_eq!(
-            &before_parsed.body[..before_region.range.start],
-            &after_parsed.body[..after_region.range.start]
-        );
-        assert_eq!(
-            &before_parsed.body[before_region.range.end..],
-            &after_parsed.body[after_region.range.end..]
-        );
-        assert!(after.contains("# 自定义注释\nauthor: 张三"));
-        assert_ne!(written.fragment.file_sha, before_sha);
-        assert_eq!(written.graph["title"], "修改后的大纲");
-    }
-
-    #[test]
-    fn graph_writes_reject_stale_file_baselines_without_changes() {
-        let directory = tempfile::tempdir().unwrap();
-        let vault = directory.path();
-        ensure_vault_layout(&FsVfs::new(vault)).unwrap();
-        let created = create_graph_fragment_in_vault(
-            &LocalVault::new(vault).cx(),
-            "outline",
-            &unique_graph_operation_id(),
-            Some(outline_graph_fixture(2)),
-            Vec::new(),
-        )
-        .unwrap();
-        let path = vault.join(&created.fragment.path);
-        let before = fs::read(&path).unwrap();
-
-        let error = write_graph_fragment_in_vault(
-            &LocalVault::new(vault).cx(),
-            &created.fragment.id,
-            created.graph,
-            Some(&"0".repeat(64)),
-        )
-        .unwrap_err();
-        assert_eq!(error, STALE_BASE_ERROR);
-        assert_eq!(fs::read(path).unwrap(), before);
-    }
-
-    #[test]
-    fn oversized_outlines_are_rejected_before_create_or_write() {
-        let directory = tempfile::tempdir().unwrap();
-        let vault = directory.path();
-        ensure_vault_layout(&FsVfs::new(vault)).unwrap();
-
-        let error = create_graph_fragment_in_vault(
-            &LocalVault::new(vault).cx(),
-            "outline",
-            &unique_graph_operation_id(),
-            Some(outline_graph_fixture(401)),
-            Vec::new(),
-        )
-        .unwrap_err();
-        assert!(error.contains("400"));
-        assert_eq!(markdown_file_count(vault), 0);
-
-        let created = create_graph_fragment_in_vault(
-            &LocalVault::new(vault).cx(),
-            "outline",
-            &unique_graph_operation_id(),
-            Some(outline_graph_fixture(2)),
-            Vec::new(),
-        )
-        .unwrap();
-        let path = vault.join(&created.fragment.path);
-        let before = fs::read(&path).unwrap();
-        let mut oversized = outline_graph_fixture(401);
-        oversized["id"] = serde_json::Value::String(created.fragment.id.clone());
-        let error = write_graph_fragment_in_vault(
-            &LocalVault::new(vault).cx(),
-            &created.fragment.id,
-            oversized,
-            Some(&created.fragment.file_sha),
-        )
-        .unwrap_err();
-        assert!(error.contains("400"));
-        assert_eq!(fs::read(path).unwrap(), before);
-    }
-
-    #[test]
-    fn text_saves_reject_managed_regions_but_allow_legacy_outlines() {
-        let directory = tempfile::tempdir().unwrap();
-        let vault = directory.path();
-        ensure_vault_layout(&FsVfs::new(vault)).unwrap();
-        let created = create_graph_fragment_in_vault(
-            &LocalVault::new(vault).cx(),
-            "outline",
-            &unique_graph_operation_id(),
-            Some(outline_graph_fixture(2)),
-            Vec::new(),
-        )
-        .unwrap();
-        let graph_path = vault.join(&created.fragment.path);
-        let before = fs::read(&graph_path).unwrap();
-        let error = update_public_fragment_in_vault(
-            &LocalVault::new(vault).cx(),
-            &graph_path,
-            "错误的文本覆盖",
-            created.fragment.tags,
-            None,
-        )
-        .unwrap_err();
-        assert_eq!(error, "大纲与流程图请在专用编辑器中保存。");
-        assert_eq!(fs::read(graph_path).unwrap(), before);
-
-        for (id, body) in [
-            (
-                "multiple-regions",
-                "```shardmap\n{}\n```\n```shardmap\n{}\n```",
-            ),
-            ("unclosed-region", "```shardmap\n{}"),
-        ] {
-            let path = vault.join(format!("fragments/tests/{id}.md"));
-            fs::create_dir_all(path.parent().unwrap()).unwrap();
-            write_t6_fragment(&path, id, vec!["inbox", "outline"], body);
-            let before = fs::read(&path).unwrap();
-            let error = update_public_fragment_in_vault(
-                &LocalVault::new(vault).cx(),
-                &path,
-                "错误的文本覆盖",
-                vec!["inbox".into(), "outline".into()],
-                None,
-            )
-            .unwrap_err();
-            assert_eq!(error, "大纲与流程图请在专用编辑器中保存。");
-            assert_eq!(fs::read(path).unwrap(), before);
-        }
-
-        let legacy_path = vault.join("fragments/tests/legacy-outline.md");
-        fs::create_dir_all(legacy_path.parent().unwrap()).unwrap();
-        write_t6_fragment(
-            &legacy_path,
-            "legacy-outline",
-            vec!["inbox", "outline"],
-            "- 根节点\n  - 子节点",
-        );
-        let updated = update_public_fragment_in_vault(
-            &LocalVault::new(vault).cx(),
-            &legacy_path,
-            "- 新根节点\n  - 新子节点",
-            vec!["inbox".into()],
-            None,
-        )
-        .unwrap();
-        assert!(updated.content.contains("新根节点"));
-        assert!(updated.tags.iter().any(|tag| tag == "outline"));
-
-        let fragment_path = vault.join("fragments/tests/ordinary-fragment.md");
-        write_t6_fragment(
-            &fragment_path,
-            "ordinary-fragment",
-            vec!["inbox"],
-            "```shardmap\n{\"pasted\":true}\n```",
-        );
-        let updated = update_public_fragment_in_vault(
-            &LocalVault::new(vault).cx(),
-            &fragment_path,
-            "普通碎片更新后的正文",
-            vec!["inbox".into()],
-            None,
-        )
-        .unwrap();
-        assert_eq!(updated.content.trim_end(), "普通碎片更新后的正文");
-        assert_eq!(derive_type(&updated.tags), None);
-    }
-
-    #[test]
-    fn graph_creation_rejects_lockbox_tags_without_files() {
-        let directory = tempfile::tempdir().unwrap();
-        let vault = directory.path();
-        ensure_vault_layout(&FsVfs::new(vault)).unwrap();
-
-        let error = create_graph_fragment_in_vault(
-            &LocalVault::new(vault).cx(),
-            "outline",
-            &unique_graph_operation_id(),
-            Some(outline_graph_fixture(2)),
-            vec![LOCKBOX_TAG.into()],
-        )
-        .unwrap_err();
-        assert_eq!(error, LOCKBOX_TYPE_ERROR);
-        assert_eq!(markdown_file_count(vault), 0);
     }
 
     #[test]
@@ -11826,417 +7089,6 @@ mod tests {
     }
 
     #[test]
-    fn library_tree_only_lists_notes_markdown_csv_and_aggregates_fragments() {
-        let tempdir = tempfile::tempdir().unwrap();
-        let vault = tempdir.path();
-        ensure_vault_layout(&FsVfs::new(vault)).unwrap();
-        fs::create_dir_all(vault.join("notes/项目")).unwrap();
-        fs::create_dir_all(vault.join("fragments/2026/08")).unwrap();
-        fs::create_dir_all(vault.join("assets")).unwrap();
-        fs::write(vault.join("notes/项目/说明.md"), "note").unwrap();
-        fs::write(vault.join("notes/项目/数据.csv"), "a,b").unwrap();
-        fs::write(vault.join("notes/项目/忽略.txt"), "ignored").unwrap();
-        fs::write(vault.join("assets/隐藏.md"), "hidden").unwrap();
-        fs::write(vault.join("fragments/2026/08/a.md"), "a").unwrap();
-        fs::write(vault.join("fragments/2026/08/b.md"), "b").unwrap();
-
-        let tree = build_library_tree(&LocalVault::new(vault).cx()).unwrap();
-
-        assert_eq!(tree.entries.len(), 1);
-        assert_eq!(tree.entries[0].kind, "directory");
-        let children = tree.entries[0].children.as_ref().unwrap();
-        assert_eq!(children.len(), 2);
-        assert!(children.iter().any(|entry| entry.kind == "markdown"));
-        assert!(children.iter().any(|entry| entry.kind == "csv"));
-        assert_eq!(tree.fragment_stream.total_count, 2);
-        assert_eq!(tree.fragment_stream.years[0].year, "2026");
-        assert_eq!(tree.fragment_stream.years[0].months[0].month, "08");
-        assert_eq!(tree.fragment_stream.years[0].months[0].count, 2);
-        assert!(tree.assets.is_empty());
-    }
-
-    #[test]
-    fn library_tree_fragment_entries_are_flat_public_markdown_metadata() {
-        let tempdir = tempfile::tempdir().unwrap();
-        let vault = tempdir.path();
-        ensure_vault_layout(&FsVfs::new(vault)).unwrap();
-        fs::create_dir_all(vault.join("fragments/2026/08")).unwrap();
-        fs::create_dir_all(vault.join(".trash/fragments/2026/08")).unwrap();
-        fs::create_dir_all(vault.join("lockbox/fragments")).unwrap();
-        write_t6_fragment(&vault.join("fragments/2026/08/a.md"), "a", vec!["inbox"], "body");
-        fs::write(vault.join("fragments/b.MD"), "root fragment").unwrap();
-        fs::write(vault.join("fragments/2026/08/ignored.csv"), "a,b").unwrap();
-        fs::write(vault.join("notes/note.md"), "library").unwrap();
-        fs::write(vault.join(".trash/fragments/2026/08/deleted.md"), "deleted").unwrap();
-        fs::write(vault.join("lockbox/fragments/secret.md"), "secret").unwrap();
-        #[cfg(unix)]
-        std::os::unix::fs::symlink(vault.join("lockbox/fragments"), vault.join("fragments/private"))
-            .unwrap();
-
-        let tree = build_library_tree(&LocalVault::new(vault).cx()).unwrap();
-
-        assert_eq!(tree.fragment_entries.len(), 2);
-        for entry in &tree.fragment_entries {
-            assert_eq!(entry.kind, "markdown");
-            assert!(entry.children.is_none());
-            assert!(matches!(entry.path.as_str(), "fragments/2026/08/a.md" | "fragments/b.MD"));
-            assert_eq!(entry.size, fs::metadata(vault.join(&entry.path)).unwrap().len());
-            assert!(DateTime::parse_from_rfc3339(&entry.modified_at).is_ok());
-        }
-        let serialized = serde_json::to_value(&tree).unwrap();
-        assert_eq!(serialized["fragmentEntries"].as_array().unwrap().len(), 2);
-        assert_eq!(tree.entries.len(), 1);
-        assert_eq!(tree.fragment_trash_entries.len(), 1);
-    }
-
-    #[test]
-    fn library_tree_entries_include_size_and_modified_at() {
-        let tempdir = tempfile::tempdir().unwrap();
-        let vault = tempdir.path();
-        ensure_vault_layout(&FsVfs::new(vault)).unwrap();
-        let contents = "note metadata";
-        fs::write(vault.join("notes/说明.md"), contents).unwrap();
-
-        let tree = build_library_tree(&LocalVault::new(vault).cx()).unwrap();
-
-        assert_eq!(tree.entries.len(), 1);
-        let entry = &tree.entries[0];
-        assert_eq!(entry.size, contents.len() as u64);
-        assert!(DateTime::parse_from_rfc3339(&entry.modified_at).is_ok());
-        let serialized = serde_json::to_value(entry).unwrap();
-        assert_eq!(serialized["size"], contents.len() as u64);
-        assert_eq!(serialized["modifiedAt"], entry.modified_at);
-        assert_eq!(
-            entry.created_at,
-            fs::metadata(vault.join("notes/说明.md"))
-                .unwrap()
-                .created()
-                .ok()
-                .map(system_time_to_rfc3339)
-        );
-        assert_eq!(serialized["createdAt"], serde_json::json!(entry.created_at));
-    }
-
-    #[test]
-    fn library_tree_directory_size_is_zero() {
-        let tempdir = tempfile::tempdir().unwrap();
-        let vault = tempdir.path();
-        ensure_vault_layout(&FsVfs::new(vault)).unwrap();
-        fs::create_dir_all(vault.join("notes/项目")).unwrap();
-        fs::write(vault.join("notes/项目/说明.md"), "nested note").unwrap();
-
-        let tree = build_library_tree(&LocalVault::new(vault).cx()).unwrap();
-
-        assert_eq!(tree.entries.len(), 1);
-        let directory = &tree.entries[0];
-        assert_eq!(directory.kind, "directory");
-        assert_eq!(directory.size, 0);
-        assert!(DateTime::parse_from_rfc3339(&directory.modified_at).is_ok());
-        assert_eq!(
-            directory.created_at,
-            fs::metadata(vault.join("notes/项目"))
-                .unwrap()
-                .created()
-                .ok()
-                .map(system_time_to_rfc3339)
-        );
-    }
-
-    #[test]
-    fn library_tree_keeps_file_when_metadata_read_fails() {
-        let tempdir = tempfile::tempdir().unwrap();
-        let vault = tempdir.path();
-        ensure_vault_layout(&FsVfs::new(vault)).unwrap();
-        let failed_path = vault.join("notes/metadata-error.md");
-        fs::write(&failed_path, "still visible").unwrap();
-        fs::write(vault.join("notes/healthy.md"), "healthy").unwrap();
-
-        let entries = collect_library_entries_with_metadata(&FsVfs::new(vault), &vault.join("notes"), &|path| {
-            if path == failed_path {
-                Err(std::io::Error::new(
-                    std::io::ErrorKind::PermissionDenied,
-                    "simulated metadata failure",
-                ))
-            } else {
-                FsVfs::new(vault).metadata(path)
-            }
-        })
-        .unwrap();
-
-        assert_eq!(entries.len(), 2);
-        let failed = entries
-            .iter()
-            .find(|entry| entry.name == "metadata-error.md")
-            .unwrap();
-        assert_eq!(failed.size, 0);
-        assert!(failed.modified_at.is_empty());
-        assert!(failed.created_at.is_none());
-        assert!(serde_json::to_value(failed).unwrap()["createdAt"].is_null());
-        let healthy = entries
-            .iter()
-            .find(|entry| entry.name == "healthy.md")
-            .unwrap();
-        assert_eq!(healthy.size, "healthy".len() as u64);
-        assert!(DateTime::parse_from_rfc3339(&healthy.modified_at).is_ok());
-    }
-
-    #[test]
-    fn library_tree_hides_retired_tables_but_keeps_them_restorable_from_trash() {
-        fn flatten(entries: &[LibraryTreeEntry]) -> Vec<(String, String)> {
-            entries
-                .iter()
-                .flat_map(|entry| {
-                    let mut items = vec![(entry.path.clone(), entry.kind.clone())];
-                    items.extend(flatten(entry.children.as_deref().unwrap_or_default()));
-                    items
-                })
-                .collect()
-        }
-        let tempdir = tempfile::tempdir().unwrap();
-        let vault = tempdir.path();
-        ensure_vault_layout(&FsVfs::new(vault)).unwrap();
-        fs::write(vault.join("notes/旧表.shardtable.json"), "{}").unwrap();
-        fs::write(vault.join("notes/说明.md"), "# 说明").unwrap();
-        fs::create_dir_all(vault.join(".trash/notes")).unwrap();
-        fs::write(vault.join(".trash/notes/已删表.shardtable.json"), "{}").unwrap();
-
-        let tree = build_library_tree(&LocalVault::new(vault).cx()).unwrap();
-        let entries = flatten(&tree.entries);
-        assert_eq!(entries, vec![("notes/说明.md".to_string(), "markdown".to_string())]);
-        let trash = flatten(&tree.trash_entries);
-        assert!(trash.contains(&(
-            ".trash/notes/已删表.shardtable.json".to_string(),
-            "file".to_string()
-        )));
-        assert!(!trash.iter().any(|(_, kind)| kind == "table"));
-    }
-
-    #[test]
-    fn library_dataset_creates_csv_schema_and_embedding_note() {
-        let tempdir = tempfile::tempdir().unwrap();
-        let vault = tempdir.path();
-        ensure_vault_layout(&FsVfs::new(vault)).unwrap();
-        fs::create_dir(vault.join("notes/项目")).unwrap();
-        let (dataset, note) = create_library_dataset_in_vault(
-            &LocalVault::new(vault).cx(),
-            " 读书清单 ",
-            vec!["id".into(), "名称".into()],
-            vec![vec!["r1".into(), "第一本".into()]],
-            Some("id".into()),
-            Some("notes/项目"),
-        )
-        .unwrap();
-        assert_eq!(dataset.path, "datasets/读书清单.csv");
-        assert!(vault.join("datasets/读书清单.csv").is_file());
-        assert!(vault.join("datasets/读书清单.csv.schema.json").is_file());
-        assert_eq!(note.path, "notes/项目/读书清单.md");
-        assert!(note.tags.iter().any(|tag| tag == "note"));
-        assert_eq!(
-            note.content.trim(),
-            "# 读书清单\n\n```datatable\n{\n  \"title\": \"读书清单\",\n  \"src\": \"datasets/读书清单.csv\"\n}\n```"
-        );
-    }
-
-    #[test]
-    fn library_dataset_leaves_no_csv_when_the_note_cannot_be_created() {
-        let tempdir = tempfile::tempdir().unwrap();
-        let vault = tempdir.path();
-        ensure_vault_layout(&FsVfs::new(vault)).unwrap();
-        for directory in [Some("notes/不存在"), Some("../outside")] {
-            assert!(create_library_dataset_in_vault(
-                &LocalVault::new(vault).cx(),
-                "孤儿",
-                vec!["名称".into()],
-                Vec::new(),
-                None,
-                directory,
-            )
-            .is_err());
-        }
-        assert!(create_library_dataset_in_vault(&LocalVault::new(vault).cx(), "  ", vec!["名称".into()], Vec::new(), None, None)
-            .is_err());
-        let leftovers = fs::read_dir(vault.join("datasets"))
-            .map(|entries| {
-                entries
-                    .filter(|entry| {
-                        entry.as_ref().is_ok_and(|entry| {
-                            entry.file_name().to_string_lossy().contains(".csv")
-                        })
-                    })
-                    .count()
-            })
-            .unwrap_or(0);
-        assert_eq!(leftovers, 0);
-
-        // A note write failure after the CSV exists rolls the dataset back.
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let notes = vault.join("notes");
-            fs::set_permissions(&notes, fs::Permissions::from_mode(0o555)).unwrap();
-            let result = create_library_dataset_in_vault(
-                &LocalVault::new(vault).cx(),
-                "只读目录",
-                vec!["名称".into()],
-                Vec::new(),
-                None,
-                None,
-            );
-            fs::set_permissions(&notes, fs::Permissions::from_mode(0o755)).unwrap();
-            assert!(result.is_err());
-            assert!(!vault.join("datasets/只读目录.csv").exists());
-            assert!(!vault.join("datasets/只读目录.csv.schema.json").exists());
-        }
-    }
-
-    #[test]
-    fn library_tree_preserves_document_creation_time_across_atomic_rewrites() {
-        let tempdir = tempfile::tempdir().unwrap();
-        let vault = tempdir.path();
-        ensure_vault_layout(&FsVfs::new(vault)).unwrap();
-        let created_at = "2025-03-04T05:06:07+08:00";
-        let note_path = vault.join("notes/说明.md");
-        let flow_path = vault.join("notes/数据.shardflow.json");
-
-        for body in ["first version", "second version"] {
-            write_text_atomically(
-                &note_path,
-                &format!("---\ncreated_at: '{created_at}'\n---\n{body}"),
-            )
-            .unwrap();
-            write_text_atomically(
-                &flow_path,
-                &format!(r#"{{"createdAt":"{created_at}","body":"{body}"}}"#),
-            )
-            .unwrap();
-
-            let tree = build_library_tree(&LocalVault::new(vault).cx()).unwrap();
-            assert_eq!(tree.entries.len(), 2);
-            for entry in &tree.entries {
-                assert_eq!(entry.created_at.as_deref(), Some(created_at));
-                assert_eq!(serde_json::to_value(entry).unwrap()["createdAt"], created_at);
-            }
-        }
-    }
-
-    #[test]
-    fn library_creation_header_only_uses_valid_top_level_time_with_bounded_reads() {
-        let tempdir = tempfile::tempdir().unwrap();
-        let path = tempdir.path().join("test.shardflow.json");
-        let created_at = "2025-03-04T05:06:07Z";
-        let nested = r#"{"createdAt":"2020-01-01T00:00:00Z"}"#;
-        // A nested node timestamp must not be confused with the document timestamp.
-        fs::write(
-            &path,
-            format!(
-                r#"{{"node":{nested},"createdAt":"{created_at}","body":"{}"}}"#,
-                "x".repeat(128 * 1024)
-            ),
-        )
-        .unwrap();
-        assert_eq!(
-            library_document_created_at(&FsVfs::new(tempdir.path()), &path, "flowchart").as_deref(),
-            Some(created_at)
-        );
-
-        for contents in [
-            format!(r#"{{"node":{nested}}}"#),
-            r#"{"createdAt":"not a timestamp"}"#.to_string(),
-            r#"{"createdAt":123}"#.to_string(),
-            format!(
-                r#"{{"body":"{}","createdAt":"{created_at}"}}"#,
-                "x".repeat(128 * 1024)
-            ),
-            "not json".to_string(),
-        ] {
-            fs::write(&path, contents).unwrap();
-            assert!(library_document_created_at(&FsVfs::new(tempdir.path()), &path, "flowchart").is_none());
-        }
-        fs::remove_file(&path).unwrap();
-        assert!(library_document_created_at(&FsVfs::new(tempdir.path()), &path, "flowchart").is_none());
-    }
-
-    #[test]
-    fn library_tree_creation_time_survives_metadata_failure_and_bad_headers_fall_back() {
-        let tempdir = tempfile::tempdir().unwrap();
-        let vault = tempdir.path();
-        ensure_vault_layout(&FsVfs::new(vault)).unwrap();
-        let created_at = "2025-03-04T05:06:07Z";
-        fs::write(
-            vault.join("notes/valid.md"),
-            format!("---\ncreated_at: '{created_at}'\n---\nbody"),
-        )
-        .unwrap();
-        let damaged = vault.join("notes/damaged.shardcanvas.json");
-        fs::write(&damaged, "not json").unwrap();
-
-        let entries = collect_library_entries_with_metadata(&FsVfs::new(vault), &vault.join("notes"), &|_| {
-            Err(std::io::Error::new(
-                std::io::ErrorKind::PermissionDenied,
-                "metadata unavailable",
-            ))
-        })
-        .unwrap();
-        assert_eq!(entries.len(), 2);
-        let note = entries
-            .iter()
-            .find(|entry| entry.kind == "markdown")
-            .unwrap();
-        assert_eq!(note.created_at.as_deref(), Some(created_at));
-        let canvas = entries.iter().find(|entry| entry.kind == "canvas").unwrap();
-        assert!(canvas.created_at.is_none());
-        assert!(serde_json::to_value(canvas).unwrap()["createdAt"].is_null());
-
-        let tree = build_library_tree(&LocalVault::new(vault).cx()).unwrap();
-        let canvas = tree
-            .entries
-            .iter()
-            .find(|entry| entry.kind == "canvas")
-            .unwrap();
-        assert_eq!(
-            canvas.created_at,
-            fs::metadata(&damaged)
-                .unwrap()
-                .created()
-                .ok()
-                .map(system_time_to_rfc3339)
-        );
-    }
-
-    #[test]
-    fn library_tree_lists_image_assets_with_metadata_and_preserves_other_sections() {
-        let tempdir = tempfile::tempdir().unwrap();
-        let vault = tempdir.path();
-        ensure_vault_layout(&FsVfs::new(vault)).unwrap();
-        fs::write(vault.join("notes/说明.md"), "note").unwrap();
-        create_mind_map_in_vault(&LocalVault::new(vault).cx(), "项目导图".to_string(), None).unwrap();
-        let asset_dir = vault.join("assets/a3");
-        fs::create_dir_all(&asset_dir).unwrap();
-        let bytes = b"\x89PNG\r\n\x1a\nimage-data";
-        fs::write(asset_dir.join("a3f5e8c9.png"), bytes).unwrap();
-        fs::write(vault.join("notes/说明.md"), "![说明](assets/a3/a3f5e8c9.png)").unwrap();
-
-        let tree = build_library_tree(&LocalVault::new(vault).cx()).unwrap();
-
-        assert_eq!(tree.assets.len(), 1);
-        let asset = &tree.assets[0];
-        assert_eq!(asset.path, "assets/a3/a3f5e8c9.png");
-        assert_eq!(asset.size, bytes.len() as u64);
-        assert_eq!(asset.mime_type, "image/png");
-        assert!(DateTime::parse_from_rfc3339(&asset.modified_at).is_ok());
-        assert_eq!(tree.entries.len(), 2);
-        assert!(tree.entries.iter().any(|entry| entry.name == "说明.md"));
-        assert!(tree
-            .entries
-            .iter()
-            .any(|entry| entry.name == "项目导图.shardmap.json"));
-
-        let serialized = serde_json::to_value(&tree).unwrap();
-        assert_eq!(serialized["assets"][0]["modifiedAt"], asset.modified_at);
-        assert_eq!(serialized["assets"][0]["mimeType"], "image/png");
-    }
-
-    #[test]
     fn library_mutation_builds_tree_after_gate_release() {
         let tempdir = tempfile::tempdir().unwrap();
         let vault = tempdir.path();
@@ -12254,152 +7106,6 @@ mod tests {
         assert_eq!(tree.entries.len(), 1);
         let result = library_mutation_result(&LocalVault::new(vault).cx(), Some(fragment), 0).unwrap();
         assert_eq!(result.tree.entries.len(), 1);
-    }
-
-    #[test]
-    fn library_asset_svg_with_long_prolog_is_listed() {
-        let tempdir = tempfile::tempdir().unwrap();
-        let vault = tempdir.path();
-        ensure_vault_layout(&FsVfs::new(vault)).unwrap();
-        fs::write(
-            vault.join("notes/svg.md"),
-            "![图](assets/long-prolog.svg)",
-        )
-        .unwrap();
-        let mut svg = b"<?xml version=\"1.0\"?>\n<!--".to_vec();
-        svg.extend(vec![b' '; 8 * 1024]);
-        svg.extend(b"-->\n<svg xmlns=\"http://www.w3.org/2000/svg\"></svg>");
-        fs::write(vault.join("assets/long-prolog.svg"), svg).unwrap();
-
-        let assets = collect_library_assets(&FsVfs::new(vault));
-        assert_eq!(assets.len(), 1);
-        assert_eq!(assets[0].mime_type, "image/svg+xml");
-    }
-
-    #[test]
-    fn library_tree_skips_non_images_damaged_assets_and_hidden_directories() {
-        let tempdir = tempfile::tempdir().unwrap();
-        let vault = tempdir.path();
-        ensure_vault_layout(&FsVfs::new(vault)).unwrap();
-        fs::write(vault.join("notes/说明.md"), "note").unwrap();
-        let asset_dir = vault.join("assets/ff");
-        fs::create_dir_all(&asset_dir).unwrap();
-        fs::write(asset_dir.join("valid.jpg"), b"\xff\xd8\xffimage-data").unwrap();
-        fs::write(vault.join("notes/说明.md"), "![说明](assets/ff/valid.jpg)").unwrap();
-        fs::write(asset_dir.join("not-image.txt"), b"plain text").unwrap();
-        fs::write(asset_dir.join("damaged.png"), b"not really a png").unwrap();
-        let hidden_dir = vault.join("assets/.conflicts");
-        fs::create_dir_all(&hidden_dir).unwrap();
-        fs::write(hidden_dir.join("hidden.png"), b"\x89PNG\r\n\x1a\nhidden").unwrap();
-
-        let tree = build_library_tree(&LocalVault::new(vault).cx()).unwrap();
-
-        assert_eq!(tree.assets.len(), 1);
-        assert_eq!(tree.assets[0].path, "assets/ff/valid.jpg");
-        assert_eq!(tree.assets[0].mime_type, "image/jpeg");
-        assert_eq!(tree.entries.len(), 1);
-        assert_eq!(tree.entries[0].name, "说明.md");
-    }
-
-
-    #[test]
-    fn library_assets_only_include_public_document_references() {
-        let tempdir = tempfile::tempdir().unwrap();
-        let vault = tempdir.path();
-        ensure_vault_layout(&FsVfs::new(vault)).unwrap();
-        for name in [
-            "fragment", "document", "shared", "canvas", "table", "unknown", "private", "deleted",
-        ] {
-            fs::write(
-                vault.join(format!("assets/{name}.png")),
-                b"\x89PNG\r\n\x1a\npng",
-            )
-            .unwrap();
-        }
-        let hash = "a".repeat(64);
-        fs::create_dir_all(vault.join("assets/aa")).unwrap();
-        fs::write(
-            vault.join(format!("assets/aa/{hash}.png")),
-            b"\x89PNG\r\n\x1a\npng",
-        )
-        .unwrap();
-        write_public_test_fragment(
-            vault,
-            "![碎片](assets/fragment.png) ![共有](assets/shared.png)",
-        );
-        fs::write(vault.join("notes/document.md"), format!(
-            "![文档](assets/document.png) ![共有](assets/shared.png) ![哈希](shard-attachment:{hash}) ![外部](https://example.com/assets/unknown.png)"
-        )).unwrap();
-        fs::write(
-            vault.join("notes/canvas.shardcanvas.json"),
-            r#"{"image":"assets/canvas.png"}"#,
-        )
-        .unwrap();
-        // Retired multidimensional tables are no longer reference sources.
-        fs::write(
-            vault.join("notes/table.shardtable.json"),
-            r#"{"cell":"assets/table.png"}"#,
-        )
-        .unwrap();
-        fs::create_dir_all(vault.join("lockbox/notes")).unwrap();
-        fs::write(
-            vault.join("lockbox/notes/private.md"),
-            "![私密](assets/private.png)",
-        )
-        .unwrap();
-        fs::create_dir_all(vault.join(".trash/notes")).unwrap();
-        fs::write(
-            vault.join(".trash/notes/deleted.md"),
-            "![删除](assets/deleted.png)",
-        )
-        .unwrap();
-
-        let paths: HashSet<_> = collect_library_assets(&FsVfs::new(vault))
-            .into_iter()
-            .map(|asset| asset.path)
-            .collect();
-        assert_eq!(
-            paths,
-            HashSet::from([
-                "assets/document.png".into(),
-                "assets/shared.png".into(),
-                "assets/canvas.png".into(),
-                format!("assets/aa/{hash}.png"),
-            ])
-        );
-        for name in ["fragment", "table", "unknown", "private", "deleted"] {
-            assert!(vault.join(format!("assets/{name}.png")).is_file());
-        }
-    }
-
-    const TEST_PNG: &[u8] = b"\x89PNG\r\n\x1a\npng";
-
-    #[test]
-    fn named_library_images_are_tree_entries_and_gallery_items() {
-        let tempdir = tempfile::tempdir().unwrap();
-        let vault = tempdir.path();
-        ensure_vault_layout(&FsVfs::new(vault)).unwrap();
-        fs::create_dir_all(vault.join("notes/证件")).unwrap();
-        fs::write(vault.join("notes/证件/营业执照.JPG"), TEST_PNG).unwrap();
-        fs::write(vault.join("notes/证件/说明.txt"), "不是图片").unwrap();
-        fs::write(vault.join("notes/证件/.隐藏.png"), TEST_PNG).unwrap();
-        // 数据集单元格引用的附件也属于资料库；只被碎片用到的仍不收。
-        fs::write(vault.join("assets/表格.png"), TEST_PNG).unwrap();
-        fs::write(vault.join("assets/碎片.png"), TEST_PNG).unwrap();
-        fs::write(vault.join("datasets/证件.csv"), "名称,照片\n执照,assets/表格.png\n").unwrap();
-        write_public_test_fragment(vault, "![碎片](assets/碎片.png)");
-
-        let tree = build_library_tree(&LocalVault::new(vault).cx()).unwrap();
-        let folder = tree.entries.iter().find(|entry| entry.name == "证件").unwrap();
-        let children = folder.children.as_ref().unwrap();
-        assert_eq!(children.len(), 1);
-        assert_eq!(children[0].name, "营业执照.JPG");
-        assert_eq!(children[0].kind, "image");
-
-        let gallery: HashSet<_> = tree.assets.iter().map(|asset| asset.path.as_str()).collect();
-        assert_eq!(gallery, HashSet::from(["notes/证件/营业执照.JPG", "assets/表格.png"]));
-        let named = tree.assets.iter().find(|asset| asset.path.ends_with(".JPG")).unwrap();
-        assert_eq!(named.mime_type, "image/jpeg");
     }
 
     #[test]
@@ -12468,282 +7174,6 @@ mod tests {
     }
 
     #[test]
-    fn existing_vault_images_filters_missing_private_and_non_image_refs() {
-        let tempdir = tempfile::tempdir().unwrap();
-        let vault = tempdir.path();
-        ensure_vault_layout(&FsVfs::new(vault)).unwrap();
-        fs::create_dir_all(vault.join("notes/相册")).unwrap();
-        fs::create_dir_all(vault.join("lockbox")).unwrap();
-        fs::write(vault.join("notes/相册/a.png"), TEST_PNG).unwrap();
-        fs::write(vault.join("lockbox/b.png"), TEST_PNG).unwrap();
-        fs::write(vault.join("notes/说明.md"), "x").unwrap();
-        assert_eq!(
-            existing_vault_images_in(
-                &FsVfs::new(vault),
-                vec![
-                    "notes/相册/a.png".into(),
-                    "./notes/相册/a.png".into(),
-                    "notes/相册/missing.png".into(),
-                    "lockbox/b.png".into(),
-                    "notes/说明.md".into(),
-                    "https://e.com/a.png".into(),
-                ]
-            ),
-            vec!["notes/相册/a.png".to_string(), "./notes/相册/a.png".to_string()]
-        );
-    }
-
-    #[test]
-    fn renaming_or_moving_images_rewrites_document_references() {
-        let tempdir = tempfile::tempdir().unwrap();
-        let vault = tempdir.path();
-        ensure_vault_layout(&FsVfs::new(vault)).unwrap();
-        fs::create_dir_all(vault.join("notes/旅行")).unwrap();
-        fs::create_dir_all(vault.join("notes/归档")).unwrap();
-        fs::write(vault.join("notes/旅行/a.jpg"), TEST_PNG).unwrap();
-        fs::write(vault.join("notes/旅行/a.jpg.bak"), "x").unwrap();
-        fs::write(
-            vault.join("notes/旅行/游记.md"),
-            "![海边](notes/旅行/a.jpg) ![备份](notes/旅行/a.jpg.bak)\n",
-        )
-        .unwrap();
-        let fragment = write_public_test_fragment(vault, "碎片里也引用 ![海边](notes/旅行/a.jpg)");
-        // 资料库外的表格：带 BOM、CRLF，改写后照旧。
-        fs::write(
-            vault.join("notes/旅行/行程.csv"),
-            "\u{feff}地点,照片\r\n海边,notes/旅行/a.jpg\r\n山上,notes/旅行/a.jpg.bak\r\n",
-        )
-        .unwrap();
-
-        let (_, links, images) =
-            rename_library_entry_in_vault(
-                &LocalVault::new(vault).cx(),
-                "notes/旅行/a.jpg",
-                "海边 日落",
-            )
-            .unwrap();
-        assert_eq!((links, images), (0, 3));
-        assert_eq!(
-            fs::read_to_string(vault.join("notes/旅行/行程.csv")).unwrap(),
-            "\u{feff}地点,照片\r\n海边,notes/旅行/海边 日落.jpg\r\n山上,notes/旅行/a.jpg.bak\r\n"
-        );
-        assert!(vault.join("notes/旅行/海边 日落.jpg").is_file());
-        assert_eq!(
-            fs::read_to_string(vault.join("notes/旅行/游记.md")).unwrap(),
-            "![海边](<notes/旅行/海边 日落.jpg>) ![备份](notes/旅行/a.jpg.bak)\n"
-        );
-        let mut fragment_files = Vec::new();
-        collect_markdown_files(
-            &FsVfs::new(vault),
-            &vault.join("fragments"),
-            &mut fragment_files,
-        )
-        .unwrap();
-        let fragment_text = fragment_files
-            .iter()
-            .map(|path| fs::read_to_string(path).unwrap())
-            .find(|text| text.contains("碎片里也引用"))
-            .unwrap();
-        assert!(fragment_text.contains("<notes/旅行/海边 日落.jpg>"), "{fragment_text}");
-        let _ = fragment;
-
-        // 整个目录移走：目录里的文档跟着走，也要按新位置写回。
-        let images = move_library_entry_in_vault(
-            &LocalVault::new(vault).cx(),
-            "notes/旅行",
-            Some("notes/归档"),
-        )
-        .unwrap();
-        assert_eq!(images, 3);
-        assert!(fs::read_to_string(vault.join("notes/归档/旅行/行程.csv"))
-            .unwrap()
-            .contains("海边,notes/归档/旅行/海边 日落.jpg\r\n"));
-        assert_eq!(
-            fs::read_to_string(vault.join("notes/归档/旅行/游记.md")).unwrap(),
-            "![海边](<notes/归档/旅行/海边 日落.jpg>) ![备份](notes/旅行/a.jpg.bak)\n"
-        );
-        assert_eq!(
-            image_references_in_vault(&LocalVault::new(vault).cx(), "notes/归档/旅行/海边 日落.jpg").unwrap().len(),
-            3
-        );
-        assert!(
-            image_references_in_vault(&LocalVault::new(vault).cx(), "notes/旅行/a.jpg")
-                .unwrap()
-                .is_empty()
-        );
-    }
-
-    #[test]
-    fn converting_content_changes_asset_visibility_without_moving_shared_images() {
-        let tempdir = tempfile::tempdir().unwrap();
-        let vault = tempdir.path();
-        ensure_vault_layout(&FsVfs::new(vault)).unwrap();
-        fs::write(vault.join("assets/shared.png"), b"\x89PNG\r\n\x1a\npng").unwrap();
-        let id = write_public_test_fragment(vault, "![图片](assets/shared.png)");
-        assert!(collect_library_assets(&FsVfs::new(vault)).is_empty());
-        convert_fragment_to_note_in_vault(&LocalVault::new(vault).cx(), &id, None, Some("图片文档"))
-            .unwrap();
-        assert_eq!(collect_library_assets(&FsVfs::new(vault)).len(), 1);
-        convert_note_to_fragment_in_vault(&LocalVault::new(vault).cx(), &id).unwrap();
-        assert!(collect_library_assets(&FsVfs::new(vault)).is_empty());
-        assert!(vault.join("assets/shared.png").is_file());
-    }
-
-    #[test]
-    fn library_and_fragment_trash_are_separate_and_empty_only_the_requested_scope() {
-        let tempdir = tempfile::tempdir().unwrap();
-        let vault = tempdir.path();
-        ensure_vault_layout(&FsVfs::new(vault)).unwrap();
-        fs::create_dir_all(vault.join(".trash/fragments/2025/03")).unwrap();
-        fs::create_dir_all(vault.join(".trash/notes/project")).unwrap();
-        fs::write(vault.join(".trash/fragments/2025/03/first.md"), "fragment").unwrap();
-        fs::write(vault.join(".trash/notes/project/doc.md"), "document").unwrap();
-        let tree = build_library_tree(&LocalVault::new(vault).cx()).unwrap();
-        assert_eq!(tree.trash_entries.len(), 1);
-        assert_eq!(tree.trash_entries[0].path, ".trash/notes");
-        assert_eq!(tree.fragment_trash_entries.len(), 1);
-        assert_eq!(
-            tree.fragment_trash_entries[0].path,
-            ".trash/fragments/2025/03/first.md"
-        );
-        assert!(tree.fragment_trash_entries[0].children.is_none());
-        assert!(serde_json::to_value(&tree).unwrap()["fragmentTrashEntries"].is_array());
-
-        empty_trash_in_vault(&LocalVault::new(vault).cx(), ContentScope::default()).unwrap();
-        assert!(!vault.join(".trash/notes").exists());
-        assert!(vault.join(".trash/fragments/2025/03/first.md").is_file());
-        fs::create_dir_all(vault.join(".trash/notes")).unwrap();
-        fs::write(vault.join(".trash/notes/keep.md"), "keep").unwrap();
-        empty_trash_in_vault(&LocalVault::new(vault).cx(), ContentScope::Fragments).unwrap();
-        assert!(!vault.join(".trash/fragments").exists());
-        assert!(vault.join(".trash/notes/keep.md").is_file());
-        assert_eq!(
-            serde_json::from_str::<ContentScope>("\"all\"").unwrap(),
-            ContentScope::All
-        );
-        fs::create_dir_all(vault.join(".trash/fragments/2025/03")).unwrap();
-        fs::write(vault.join(".trash/fragments/2025/03/second.md"), "fragment").unwrap();
-        empty_trash_in_vault(&LocalVault::new(vault).cx(), ContentScope::All).unwrap();
-        assert!(fs::read_dir(vault.join(".trash")).unwrap().next().is_none());
-    }
-    #[test]
-    fn library_tree_lists_mind_maps_in_notes_with_metadata() {
-        let tempdir = tempfile::tempdir().unwrap();
-        let vault = tempdir.path();
-        ensure_vault_layout(&FsVfs::new(vault)).unwrap();
-        fs::write(vault.join("notes/说明.md"), "note").unwrap();
-
-        let valid =
-            create_mind_map_in_vault(&LocalVault::new(vault).cx(), "项目导图".to_string(), None)
-                .unwrap();
-
-        let tree = build_library_tree(&LocalVault::new(vault).cx()).unwrap();
-
-        assert_eq!(tree.entries.len(), 2);
-        let map = tree
-            .entries
-            .iter()
-            .find(|entry| entry.kind == "mindmap")
-            .unwrap();
-        assert_eq!(map.name, "项目导图.shardmap.json");
-        assert_eq!(map.path, valid.path);
-        assert_eq!(map.mind_map_id.as_deref(), Some(valid.file.id.as_str()));
-        assert_eq!(map.created_at.as_deref(), Some(valid.file.created_at.as_str()));
-        assert!(map.size > 0);
-        assert!(DateTime::parse_from_rfc3339(&map.modified_at).is_ok());
-        assert!(tree
-            .entries
-            .iter()
-            .any(|entry| entry.name == "说明.md" && entry.kind == "markdown"));
-    }
-
-    #[test]
-    fn library_filename_explicit_creation_enforces_unicode_and_byte_limits() {
-        let tempdir = tempfile::tempdir().unwrap();
-        let vault = tempdir.path();
-        ensure_vault_layout(&FsVfs::new(vault)).unwrap();
-        let maximum = "字".repeat(64);
-        let too_long = "字".repeat(65);
-        let length_error = "名称最多 64 个字符（不含扩展名）。";
-        create_library_directory_in_vault(&LocalVault::new(vault).cx(), &maximum, None).unwrap();
-        let note = create_library_note_in_vault(&LocalVault::new(vault).cx(), &maximum, None).unwrap();
-        assert_eq!(note.path, format!("notes/{maximum}.md"));
-        let map =
-            create_mind_map_in_vault(&LocalVault::new(vault).cx(), maximum.clone(), None).unwrap();
-        assert_eq!(map.file.title, maximum);
-        assert_eq!(
-            create_library_directory_in_vault(&LocalVault::new(vault).cx(), &too_long, None).unwrap_err(),
-            length_error
-        );
-        assert_eq!(
-            create_library_note_in_vault(&LocalVault::new(vault).cx(), &too_long, None).unwrap_err(),
-            length_error
-        );
-        assert_eq!(
-            create_mind_map_in_vault(&LocalVault::new(vault).cx(), too_long, None).unwrap_err(),
-            length_error
-        );
-        let maximum_bytes = "😀".repeat(63);
-        create_library_note_in_vault(&LocalVault::new(vault).cx(), &maximum_bytes, None).unwrap();
-        assert_eq!(
-            create_mind_map_in_vault(&LocalVault::new(vault).cx(), maximum_bytes, None).unwrap_err(),
-            "名称占用空间过长，请减少部分字符。"
-        );
-        let title = "中文/标题:示例";
-        let sanitized =
-            create_library_note_in_vault(&LocalVault::new(vault).cx(), title, None).unwrap();
-        assert_eq!(sanitized.path, "notes/中文 标题 示例.md");
-        assert_eq!(sanitized.content.trim(), format!("# {title}"));
-    }
-
-    #[test]
-    fn library_filename_rename_counts_visible_stem_for_every_supported_extension() {
-        let tempdir = tempfile::tempdir().unwrap();
-        let vault = tempdir.path();
-        ensure_vault_layout(&FsVfs::new(vault)).unwrap();
-        for extension in [".md", ".CSV", ".shardmap.json", ".shardflow.json", ".shardcanvas.json"] {
-            let source = format!("notes/source{extension}");
-            fs::write(vault.join(&source), "fixture").unwrap();
-            assert_eq!(
-                rename_library_entry_in_vault(&LocalVault::new(vault).cx(), &source, &"字".repeat(65)).unwrap_err(),
-                "名称最多 64 个字符（不含扩展名）。"
-            );
-            assert_eq!(
-                rename_library_entry_in_vault(&LocalVault::new(vault).cx(), &source, &"😀".repeat(64)).unwrap_err(),
-                "名称占用空间过长，请减少部分字符。"
-            );
-            let name = format!("{}{extension}", "字".repeat(64));
-            rename_library_entry_in_vault(&LocalVault::new(vault).cx(), &source, &name).unwrap();
-            assert!(vault.join("notes").join(name).is_file());
-        }
-    }
-
-    #[test]
-    fn library_filename_generated_collision_suffixes_fit_characters_and_bytes() {
-        let tempdir = tempfile::tempdir().unwrap();
-        for title in ["字".repeat(80), "😀".repeat(80)] {
-            for extension in [".md", ".shardmap.json", ".shardflow.json"] {
-                for index in 1..=11 {
-                    let path = unique_titled_path(
-                        &FsVfs::new(tempdir.path()),
-                        tempdir.path(),
-                        &title,
-                        extension,
-                    );
-                    let name = path.file_name().unwrap().to_str().unwrap();
-                    let stem = name.strip_suffix(extension).unwrap();
-                    assert!(stem.chars().count() <= 64, "{name}");
-                    assert!(name.len() <= 255, "{name}");
-                    if index > 1 {
-                        assert!(stem.ends_with(&format!("-{index}")), "{name}");
-                    }
-                    write_text_atomically(&path, "fixture").unwrap();
-                }
-            }
-        }
-    }
-
-    #[test]
     fn library_filename_derived_conversion_and_migrations_preserve_full_content() {
         let tempdir = tempfile::tempdir().unwrap();
         let vault = tempdir.path();
@@ -12781,88 +7211,6 @@ mod tests {
         let migrated = find_mind_map_path(&FsVfs::new(vault), &file.id).unwrap().unwrap();
         assert!(migrated.file_name().unwrap().to_str().unwrap().len() <= 255);
         assert_eq!(fs::read_to_string(migrated).unwrap(), original);
-    }
-
-    #[test]
-    fn library_filename_trash_and_restore_collisions_preserve_boundary_files() {
-        let tempdir = tempfile::tempdir().unwrap();
-        let vault = tempdir.path();
-        ensure_vault_layout(&FsVfs::new(vault)).unwrap();
-        for extension in [
-            ".md", ".CSV", ".shardmap.json", ".shardtable.json",
-            ".shardflow.json", ".shardcanvas.json",
-        ] {
-            let byte_budget = 255 - extension.len();
-            let emoji_stem = format!(
-                "{}{}",
-                "😀".repeat(byte_budget / 4),
-                "a".repeat((byte_budget % 4).min(64 - byte_budget / 4)),
-            );
-            for stem in ["字".repeat(64), emoji_stem] {
-                let original = format!("notes/{stem}{extension}");
-                let assert_name = |path: &Path| {
-                    let name = path.file_name().unwrap().to_str().unwrap();
-                    assert!(name.len() <= 255, "{name}");
-                    assert!(name.strip_suffix(extension).unwrap().chars().count() <= 64, "{name}");
-                };
-                fs::write(vault.join(&original), "older content").unwrap();
-                let first = move_to_trash_in_vault(&LocalVault::new(vault).cx(), &original).unwrap();
-                fs::write(vault.join(&original), "newer content").unwrap();
-                let second = move_to_trash_in_vault(&LocalVault::new(vault).cx(), &original).unwrap();
-                assert_ne!(first, second);
-                assert_name(&first);
-                assert_name(&second);
-                assert_eq!(fs::read_to_string(&first).unwrap(), "older content");
-                fs::write(vault.join(&original), "live content").unwrap();
-                let restored_first = restore_from_trash_in_vault(
-                    &LocalVault::new(vault).cx(), &relative_path(vault, &first).unwrap(),
-                ).unwrap();
-                let restored_second = restore_from_trash_in_vault(
-                    &LocalVault::new(vault).cx(), &relative_path(vault, &second).unwrap(),
-                ).unwrap();
-                assert_name(&restored_first);
-                assert_name(&restored_second);
-                assert_eq!(fs::read_to_string(restored_first).unwrap(), "older content");
-                assert_eq!(fs::read_to_string(restored_second).unwrap(), "newer content");
-                assert_eq!(fs::read_to_string(vault.join(original)).unwrap(), "live content");
-                assert!(!first.exists());
-                assert!(!second.exists());
-            }
-        }
-    }
-
-    #[test]
-    fn library_filename_existing_long_note_and_map_remain_readable_and_writable() {
-        let tempdir = tempfile::tempdir().unwrap();
-        let vault = tempdir.path();
-        ensure_vault_layout(&FsVfs::new(vault)).unwrap();
-        let note_path = vault.join(format!("notes/{}.md", "a".repeat(252)));
-        write_t6_fragment(&note_path, "existing-long-note", vec!["note"], "original");
-        let text = fs::read_to_string(&note_path).unwrap();
-        let (header, _) = parse_fragment_text(&text).unwrap();
-        write_fragment_file(&FsVfs::new(vault), &note_path, &header, "updated body").unwrap();
-        let note = read_fragment(
-            &LocalVault::new(vault).cx(),
-            &note_path,
-            &dirty_paths(vault),
-            None,
-        )
-        .unwrap();
-        assert_eq!(note.content.trim(), "updated body");
-        assert_eq!(note.path, format!("notes/{}.md", "a".repeat(252)));
-
-        let created =
-            create_mind_map_in_vault(&LocalVault::new(vault).cx(), "旧导图".into(), None).unwrap();
-        let long_path = vault.join(format!("notes/{}.shardmap.json", "a".repeat(241)));
-        fs::rename(vault.join(&created.path), &long_path).unwrap();
-        let mut file = created.file;
-        file.title = "长标题".repeat(30);
-        let saved = write_mind_map_in_vault(
-            &LocalVault::new(vault).cx(), &file.id.clone(), file.clone(), file.revision, &created.last_saved_hash,
-        ).unwrap();
-        assert_eq!(saved.file.title, file.title);
-        assert_eq!(vault.join(saved.path), long_path);
-        assert_eq!(read_mind_map_file(&FsVfs::new(vault), &long_path).unwrap().0.title, file.title);
     }
 
     #[test]
@@ -12929,324 +7277,6 @@ mod tests {
     }
 
     #[test]
-    fn converts_fragment_to_note_and_back_with_physical_filename_rules() {
-        let tempdir = tempfile::tempdir().unwrap();
-        let vault = tempdir.path();
-        ensure_vault_layout(&FsVfs::new(vault)).unwrap();
-        fs::create_dir_all(vault.join("fragments/2026/08")).unwrap();
-        let id = "20260830-120000-aabbcc-dd0011";
-        write_t6_fragment(
-            &vault.join(format!("fragments/2026/08/{id}.md")),
-            id,
-            vec!["inbox"],
-            "# 中文/标题:示例\n\n正文",
-        );
-
-        let (note, upgraded_links) =
-            convert_fragment_to_note_in_vault(&LocalVault::new(vault).cx(), id, None, None).unwrap();
-        assert_eq!(upgraded_links, 0);
-        assert_eq!(note.path, "notes/中文 标题 示例.md");
-        assert!(note.tags.iter().any(|tag| tag == "note"));
-        assert!(!vault.join(format!("fragments/2026/08/{id}.md")).exists());
-
-        let (fragment, downgraded_links) =
-            convert_note_to_fragment_in_vault(&LocalVault::new(vault).cx(), id).unwrap();
-        assert_eq!(downgraded_links, 0);
-        let now = Local::now();
-        assert_eq!(
-            fragment.path,
-            format!(
-                "fragments/{}/{}/{}.md",
-                now.format("%Y"),
-                now.format("%m"),
-                id
-            )
-        );
-        assert!(!fragment.tags.iter().any(|tag| tag == "note"));
-    }
-
-
-    #[test]
-    fn conversion_title_keeps_exact_body_identity_metadata_and_original_month() {
-        let tempdir = tempfile::tempdir().unwrap();
-        let vault = tempdir.path();
-        ensure_vault_layout(&FsVfs::new(vault)).unwrap();
-        let id = write_public_test_fragment(vault, "# 原标题\n\n正文  ");
-        let source = find_fragment_path(&FsVfs::new(vault), &id).unwrap().unwrap();
-        let original = fs::read_to_string(&source).unwrap();
-        let (mut metadata, _) = parse_fragment_text(&original).unwrap();
-        metadata.created_at = "2024-02-03T10:11:12+08:00".to_string();
-        metadata.tags = vec!["想法".into(), "inbox".into()];
-        metadata.pinned = true;
-        metadata.related = vec![FragmentRelation {
-            target_id: "source-id".into(),
-            origin: "manual".into(),
-            created_at: "2024-02-03T11:12:13+08:00".into(),
-            note: None,
-        }];
-        let exact_body = "\n\n# 原标题\n\n正文  \n\n";
-        let yaml = serde_yaml::to_string(&metadata).unwrap();
-        fs::write(&source, format!("---\n{yaml}---{exact_body}")).unwrap();
-        fs::write(vault.join("notes/自定标题.md"), "existing").unwrap();
-
-        let (note, _) =
-            convert_fragment_to_note_in_vault(&LocalVault::new(vault).cx(), &id, None, Some("自定标题"))
-                .unwrap();
-        assert_eq!(note.path, "notes/自定标题-2.md");
-        assert_eq!(note.id, id);
-        assert_eq!(note.created_at, metadata.created_at);
-        assert_eq!(note.related, metadata.related);
-        assert!(note.pinned);
-        assert!(metadata.tags.iter().all(|tag| note.tags.contains(tag)));
-        let text = fs::read_to_string(vault.join(&note.path)).unwrap();
-        assert_eq!(parse_fragment_text(&text).unwrap().1, exact_body);
-        assert_eq!(
-            fs::read_to_string(vault.join("notes/自定标题.md")).unwrap(),
-            "existing"
-        );
-        let (fragment, _) =
-            convert_note_to_fragment_in_vault(&LocalVault::new(vault).cx(), &id).unwrap();
-        assert_eq!(fragment.path, format!("fragments/2024/02/{id}.md"));
-        assert_eq!(fragment.created_at, metadata.created_at);
-        assert_eq!(fragment.related, metadata.related);
-        let text = fs::read_to_string(vault.join(&fragment.path)).unwrap();
-        assert_eq!(parse_fragment_text(&text).unwrap().1, exact_body);
-    }
-
-    #[test]
-    fn conversion_plans_reference_reads_before_moving_content() {
-        let tempdir = tempfile::tempdir().unwrap();
-        let vault = tempdir.path();
-        ensure_vault_layout(&FsVfs::new(vault)).unwrap();
-        let id = write_public_test_fragment(vault, "# 标题\n\n正文");
-        let source = find_fragment_path(&FsVfs::new(vault), &id).unwrap().unwrap();
-        let original = fs::read(&source).unwrap();
-        fs::write(vault.join("notes/damaged.md"), [0xff, 0xfe]).unwrap();
-        assert!(convert_fragment_to_note_in_vault(
-            &LocalVault::new(vault).cx(),
-            &id,
-            None,
-            Some("目标")
-        )
-        .is_err());
-        assert_eq!(fs::read(&source).unwrap(), original);
-        assert!(!vault.join("notes/目标.md").exists());
-    }
-
-    #[test]
-    fn conversion_rolls_back_content_and_written_references_on_mid_write_failure() {
-        use std::cell::Cell;
-        let tempdir = tempfile::tempdir().unwrap();
-        let vault = tempdir.path();
-        ensure_vault_layout(&FsVfs::new(vault)).unwrap();
-        let id = write_public_test_fragment(vault, "# 标题\n\n正文");
-        let source = find_fragment_path(&FsVfs::new(vault), &id).unwrap().unwrap();
-        let original = fs::read_to_string(&source).unwrap();
-        let (metadata, body) = parse_fragment_text(&original).unwrap();
-        let reference = format!("[[{id}]]");
-        for name in ["first", "second"] {
-            fs::write(vault.join(format!("notes/{name}.md")), &reference).unwrap();
-        }
-        let writes = Cell::new(0);
-        let failing_writer = |path: &Path, text: &str| {
-            writes.set(writes.get() + 1);
-            if writes.get() == 3 {
-                return Err("injected reference write failure".into());
-            }
-            write_text_atomically(path, text)
-        };
-        let destination = vault.join("notes/目标.md");
-        let error = convert_public_fragment_file_with_writer(
-            &LocalVault::new(vault).cx(),
-            &source,
-            &destination,
-            &metadata,
-            body,
-            &[(&id, "目标")],
-            "test conversion",
-            &failing_writer,
-        )
-        .unwrap_err();
-        assert!(error.contains("injected reference write failure"));
-        assert_eq!(fs::read_to_string(&source).unwrap(), original);
-        assert!(!destination.exists());
-        for name in ["first", "second"] {
-            assert_eq!(
-                fs::read_to_string(vault.join(format!("notes/{name}.md"))).unwrap(),
-                reference
-            );
-        }
-    }
-    #[test]
-    fn rejects_library_path_escape_and_moves_non_empty_directory_to_trash() {
-        let tempdir = tempfile::tempdir().unwrap();
-        let vault = tempdir.path();
-        ensure_vault_layout(&FsVfs::new(vault)).unwrap();
-        fs::create_dir_all(vault.join("notes/目录")).unwrap();
-        fs::write(vault.join("notes/目录/note.md"), "note").unwrap();
-
-        for invalid in [
-            "",
-            "notes",
-            "../outside",
-            "notes/../outside",
-            "/tmp/outside",
-        ] {
-            assert!(existing_library_path(&FsVfs::new(vault), invalid).is_err(), "{invalid}");
-        }
-        move_to_trash_in_vault(&LocalVault::new(vault).cx(), "notes/目录").unwrap();
-        assert!(!vault.join("notes/目录").exists());
-        assert!(vault.join(".trash/notes/目录/note.md").is_file());
-    }
-
-    #[test]
-    fn supports_library_create_move_and_empty_directory_soft_delete() {
-        let tempdir = tempfile::tempdir().unwrap();
-        let vault = tempdir.path();
-        ensure_vault_layout(&FsVfs::new(vault)).unwrap();
-        create_library_directory_in_vault(&LocalVault::new(vault).cx(), "来源", None).unwrap();
-        create_library_directory_in_vault(&LocalVault::new(vault).cx(), "目标", None).unwrap();
-        let note =
-            create_library_note_in_vault(&LocalVault::new(vault).cx(), "移动测试", Some("notes/来源"))
-                .unwrap();
-        assert_eq!(note.path, "notes/来源/移动测试.md");
-
-        move_library_entry_in_vault(
-            &LocalVault::new(vault).cx(),
-            "notes/来源/移动测试.md",
-            Some("notes/目标"),
-        )
-        .unwrap();
-        assert!(vault.join("notes/目标/移动测试.md").is_file());
-        move_to_trash_in_vault(&LocalVault::new(vault).cx(), "notes/来源").unwrap();
-        assert!(!vault.join("notes/来源").exists());
-        assert!(vault.join(".trash/notes/来源").is_dir());
-    }
-
-    #[test]
-    fn moves_all_supported_content_types_and_directories_to_trash() {
-        let tempdir = tempfile::tempdir().unwrap();
-        let vault = tempdir.path();
-        ensure_vault_layout(&FsVfs::new(vault)).unwrap();
-        let files = [
-            ("notes/note.md", b"md".as_slice()),
-            ("notes/table.csv", b"csv".as_slice()),
-            ("maps/map.shardmap.json", b"map".as_slice()),
-            ("assets/image.png", b"png".as_slice()),
-        ];
-        for (rel_path, content) in files {
-            let path = vault.join(rel_path);
-            fs::create_dir_all(path.parent().unwrap()).unwrap();
-            fs::write(&path, content).unwrap();
-            move_to_trash_in_vault(&LocalVault::new(vault).cx(), rel_path).unwrap();
-            assert!(!path.exists(), "{rel_path}");
-            assert!(vault.join(".trash").join(rel_path).is_file(), "{rel_path}");
-        }
-        fs::create_dir_all(vault.join("notes/folder/nested")).unwrap();
-        fs::write(vault.join("notes/folder/nested/unknown.bin"), b"dir").unwrap();
-
-        move_to_trash_in_vault(&LocalVault::new(vault).cx(), "notes/folder").unwrap();
-
-        assert!(!vault.join("notes/folder").exists());
-        assert!(vault
-            .join(".trash/notes/folder/nested/unknown.bin")
-            .is_file());
-    }
-
-    #[test]
-    fn restores_from_trash_without_overwriting_existing_target() {
-        let tempdir = tempfile::tempdir().unwrap();
-        let vault = tempdir.path();
-        ensure_vault_layout(&FsVfs::new(vault)).unwrap();
-        fs::write(vault.join("notes/collision.md"), "deleted version").unwrap();
-        move_to_trash_in_vault(&LocalVault::new(vault).cx(), "notes/collision.md").unwrap();
-        fs::write(vault.join("notes/collision.md"), "new version").unwrap();
-
-        let restored =
-            restore_from_trash_in_vault(&LocalVault::new(vault).cx(), ".trash/notes/collision.md").unwrap();
-
-        assert_eq!(
-            fs::read_to_string(vault.join("notes/collision.md")).unwrap(),
-            "new version"
-        );
-        assert_ne!(restored, vault.join("notes/collision.md"));
-        assert_eq!(fs::read_to_string(restored).unwrap(), "deleted version");
-    }
-
-    #[test]
-    fn moves_and_restores_dataset_through_trash() {
-        let tempdir = tempfile::tempdir().unwrap();
-        let vault = tempdir.path();
-        ensure_vault_layout(&FsVfs::new(vault)).unwrap();
-        fs::write(vault.join("datasets/a.csv"), "name\nvalue\n").unwrap();
-
-        let trashed = move_to_trash_in_vault(&LocalVault::new(vault).cx(), "datasets/a.csv").unwrap();
-        assert_eq!(relative_path(vault, &trashed).unwrap(), ".trash/datasets/a.csv");
-        let restored =
-            restore_from_trash_in_vault(&LocalVault::new(vault).cx(), ".trash/datasets/a.csv").unwrap();
-        assert_eq!(restored, vault.join("datasets/a.csv"));
-        assert_eq!(fs::read_to_string(restored).unwrap(), "name\nvalue\n");
-    }
-
-    #[test]
-    fn purge_and_empty_trash_reject_paths_outside_canonical_trash_root() {
-        let tempdir = tempfile::tempdir().unwrap();
-        let vault = tempdir.path();
-        ensure_vault_layout(&FsVfs::new(vault)).unwrap();
-        fs::create_dir_all(vault.join(".trash/notes/directory")).unwrap();
-        fs::write(vault.join(".trash/notes/deleted.md"), "deleted").unwrap();
-        fs::write(vault.join(".trash/notes/directory/nested.md"), "nested").unwrap();
-        fs::write(vault.join("notes/outside.md"), "outside").unwrap();
-
-        for invalid in [
-            "notes/outside.md",
-            ".trash/../notes/outside.md",
-            "../outside.md",
-            "/tmp/outside.md",
-        ] {
-            assert!(
-                purge_from_trash_in_vault(&LocalVault::new(vault).cx(), invalid).is_err(),
-                "{invalid}"
-            );
-        }
-        assert!(vault.join("notes/outside.md").is_file());
-
-        purge_from_trash_in_vault(&LocalVault::new(vault).cx(), ".trash/notes/directory").unwrap();
-        assert!(!vault.join(".trash/notes/directory").exists());
-        empty_trash_in_vault(&LocalVault::new(vault).cx(), ContentScope::Library).unwrap();
-        assert!(vault.join(".trash").is_dir());
-        assert!(fs::read_dir(vault.join(".trash")).unwrap().next().is_none());
-        assert!(vault.join("notes/outside.md").is_file());
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn empty_trash_rejects_external_symlink_without_deleting_any_entry() {
-        use std::os::unix::fs::symlink;
-
-        let tempdir = tempfile::tempdir().unwrap();
-        let vault = tempdir.path();
-        ensure_vault_layout(&FsVfs::new(vault)).unwrap();
-        fs::create_dir_all(vault.join(".trash/notes")).unwrap();
-        fs::write(vault.join(".trash/notes/keep.md"), "keep").unwrap();
-        fs::create_dir_all(vault.join(".trash/fragments")).unwrap();
-        fs::write(vault.join(".trash/fragments/keep.md"), "fragment").unwrap();
-        fs::write(vault.join("notes/outside.md"), "outside").unwrap();
-        symlink(
-            vault.join("notes/outside.md"),
-            vault.join(".trash/external-link"),
-        )
-        .unwrap();
-
-        for scope in [ContentScope::Library, ContentScope::All] {
-            assert!(empty_trash_in_vault(&LocalVault::new(vault).cx(), scope).is_err());
-            assert!(vault.join(".trash/notes/keep.md").is_file());
-            assert!(vault.join(".trash/fragments/keep.md").is_file());
-            assert!(vault.join("notes/outside.md").is_file());
-        }
-    }
-
-    #[test]
     fn migrates_archive_to_trash_idempotently_and_keeps_relative_structure() {
         let tempdir = tempfile::tempdir().unwrap();
         let vault = tempdir.path();
@@ -13261,190 +7291,6 @@ mod tests {
             "unchanged"
         );
         assert!(!vault.join("archive").exists());
-    }
-
-    #[test]
-    fn converting_between_fragment_and_note_updates_wikilink_targets() {
-        let tempdir = tempfile::tempdir().unwrap();
-        let vault = tempdir.path();
-        ensure_vault_layout(&FsVfs::new(vault)).unwrap();
-        fs::create_dir_all(vault.join("fragments/2026/08")).unwrap();
-        let id = "20260830-130000-aabbcc-dd0011";
-        write_t6_fragment(
-            &vault.join(format!("fragments/2026/08/{id}.md")),
-            id,
-            vec!["inbox"],
-            "# 升级标题\n\n正文",
-        );
-        write_t6_fragment(
-            &vault.join("fragments/2026/08/ref.md"),
-            "ref",
-            vec!["inbox"],
-            &format!("[[{id}]] [[{id}|旧别名]]"),
-        );
-
-        let (_, upgraded_links) =
-            convert_fragment_to_note_in_vault(&LocalVault::new(vault).cx(), id, None, None).unwrap();
-        assert_eq!(upgraded_links, 2);
-        let upgraded_ref = fs::read_to_string(vault.join("fragments/2026/08/ref.md")).unwrap();
-        assert!(upgraded_ref.contains("[[升级标题]] [[升级标题|旧别名]]"));
-
-        fs::write(
-            vault.join("notes/title-ref.md"),
-            "[[升级标题]] [[升级标题|标题别名]]",
-        )
-        .unwrap();
-        let (_, downgraded_links) =
-            convert_note_to_fragment_in_vault(&LocalVault::new(vault).cx(), id).unwrap();
-        assert_eq!(downgraded_links, 4);
-        let downgraded_ref = fs::read_to_string(vault.join("fragments/2026/08/ref.md")).unwrap();
-        assert!(downgraded_ref.contains(&format!("[[{id}]] [[{id}|旧别名]]")));
-        let title_ref = fs::read_to_string(vault.join("notes/title-ref.md")).unwrap();
-        assert_eq!(title_ref, format!("[[{id}]] [[{id}|标题别名]]"));
-    }
-
-    #[test]
-    fn renaming_fragment_returns_new_path_and_preserves_id_wikilinks() {
-        let tempdir = tempfile::tempdir().unwrap();
-        let vault = tempdir.path();
-        ensure_vault_layout(&FsVfs::new(vault)).unwrap();
-        fs::create_dir_all(vault.join("fragments/2026/08")).unwrap();
-        let old_path = "fragments/2026/08/fragment-id.md";
-        write_t6_fragment(&vault.join(old_path), "fragment-id", vec!["inbox", "test"], "# 标题\n[[fragment-id]]");
-        fs::write(vault.join("notes/ref.md"), "[[fragment-id]] [[fragment-id|别名]]").unwrap();
-        let before = fs::read_to_string(vault.join(old_path)).unwrap();
-
-        let (fragment, updated_links, _) =
-            rename_library_entry_in_vault(&LocalVault::new(vault).cx(), old_path, "新文件名").unwrap();
-        let result =
-            library_mutation_result(&LocalVault::new(vault).cx(), fragment, updated_links).unwrap();
-
-        assert_eq!(result.updated_links, 0);
-        let fragment = result.fragment.unwrap();
-        assert_eq!(fragment.id, "fragment-id");
-        assert_eq!(fragment.path, "fragments/2026/08/新文件名.md");
-        assert_eq!(fragment.tags, vec!["inbox", "test"]);
-        assert!(!vault.join(old_path).exists());
-        assert_eq!(fs::read_to_string(vault.join(&fragment.path)).unwrap(), before);
-        assert_eq!(fs::read_to_string(vault.join("notes/ref.md")).unwrap(), "[[fragment-id]] [[fragment-id|别名]]");
-        assert_eq!(
-            find_fragment_path(&FsVfs::new(vault), "fragment-id").unwrap(),
-            Some(vault.join(&fragment.path))
-        );
-        assert_eq!(result.tree.fragment_entries[0].path, fragment.path);
-    }
-
-    #[test]
-    fn renaming_named_fragment_updates_filename_links_but_keeps_id_links() {
-        let tempdir = tempfile::tempdir().unwrap();
-        let vault = tempdir.path();
-        ensure_vault_layout(&FsVfs::new(vault)).unwrap();
-        write_t6_fragment(&vault.join("fragments/旧文件名.md"), "stable-id", vec!["inbox"], "body");
-        fs::write(vault.join("notes/ref.md"), "[[旧文件名]] [[旧文件名|别名]] [[stable-id]]").unwrap();
-
-        let (fragment, count, _) = rename_library_entry_in_vault(
-            &LocalVault::new(vault).cx(),
-            "fragments/旧文件名.md",
-            "新文件名.md",
-        )
-        .unwrap();
-
-        assert_eq!(count, 2);
-        assert_eq!(fragment.unwrap().id, "stable-id");
-        assert_eq!(fs::read_to_string(vault.join("notes/ref.md")).unwrap(), "[[新文件名]] [[新文件名|别名]] [[stable-id]]");
-    }
-
-    #[test]
-    fn fragment_file_rename_rejects_directories_other_spaces_and_type_changes() {
-        let tempdir = tempfile::tempdir().unwrap();
-        let vault = tempdir.path();
-        ensure_vault_layout(&FsVfs::new(vault)).unwrap();
-        fs::create_dir_all(vault.join("fragments/2026/08")).unwrap();
-        fs::create_dir_all(vault.join("lockbox/fragments")).unwrap();
-        fs::create_dir_all(vault.join(".trash/fragments")).unwrap();
-        let source = "fragments/2026/08/fragment.md";
-        write_t6_fragment(&vault.join(source), "fragment-id", vec!["inbox"], "body");
-        fs::write(vault.join("fragments/data.csv"), "a,b").unwrap();
-        fs::write(vault.join("lockbox/fragments/secret.md"), "private").unwrap();
-        fs::write(vault.join(".trash/fragments/deleted.md"), "deleted").unwrap();
-        for path in ["fragments", "fragments/2026/08", "fragments/data.csv", "lockbox/fragments/secret.md", ".trash/fragments/deleted.md", "fragments/../../notes/escape.md"] {
-            assert!(
-                rename_library_entry_in_vault(&LocalVault::new(vault).cx(), path, "新名称").is_err(),
-                "{path}"
-            );
-        }
-        for name in ["changed.csv", "notes/changed", "../changed"] {
-            assert!(
-                rename_library_entry_in_vault(&LocalVault::new(vault).cx(), source, name).is_err(),
-                "{name}"
-            );
-        }
-        assert!(move_library_entry_in_vault(&LocalVault::new(vault).cx(), source, None).is_err());
-        fs::write(vault.join("notes/note.md"), "note").unwrap();
-        assert!(move_library_entry_in_vault(
-            &LocalVault::new(vault).cx(),
-            "notes/note.md",
-            Some("fragments/2026/08")
-        )
-        .is_err());
-        assert!(vault.join(source).exists());
-        assert!(vault.join("notes/note.md").exists());
-        #[cfg(unix)]
-        {
-            std::os::unix::fs::symlink(vault.join("notes"), vault.join("fragments/escape")).unwrap();
-            assert!(rename_library_entry_in_vault(
-                &LocalVault::new(vault).cx(),
-                "fragments/escape/note.md",
-                "escaped"
-            )
-            .is_err());
-            std::os::unix::fs::symlink(vault.join(source), vault.join("fragments/link.md")).unwrap();
-            assert!(rename_library_entry_in_vault(
-                &LocalVault::new(vault).cx(),
-                "fragments/link.md",
-                "linked"
-            )
-            .is_err());
-        }
-    }
-
-    #[test]
-    fn renaming_markdown_updates_plain_and_aliased_wikilinks_across_public_vault() {
-        let tempdir = tempfile::tempdir().unwrap();
-        let vault = tempdir.path();
-        ensure_vault_layout(&FsVfs::new(vault)).unwrap();
-        fs::create_dir_all(vault.join("fragments/2026/08")).unwrap();
-        fs::create_dir_all(vault.join("lockbox/fragments")).unwrap();
-        write_t6_fragment(
-            &vault.join("notes/旧名.md"),
-            "note-id",
-            vec!["note"],
-            "# 标题",
-        );
-        write_t6_fragment(
-            &vault.join("fragments/2026/08/source.md"),
-            "source-id",
-            vec!["inbox"],
-            "[[旧名]] [[旧名|别名]] [[旧名字]]",
-        );
-        fs::write(vault.join("lockbox/fragments/secret.md"), "[[旧名]]").unwrap();
-
-        let (fragment, updated, _) =
-            rename_library_entry_in_vault(&LocalVault::new(vault).cx(), "notes/旧名.md", "新名")
-                .unwrap();
-
-        assert!(fragment.is_none());
-        assert_eq!(updated, 2);
-        assert!(vault.join("notes/新名.md").is_file());
-        let source = fs::read_to_string(vault.join("fragments/2026/08/source.md")).unwrap();
-        assert!(
-            source.contains("[[新名]] [[新名|别名]] [[旧名字]]"),
-            "{source}"
-        );
-        assert_eq!(
-            fs::read_to_string(vault.join("lockbox/fragments/secret.md")).unwrap(),
-            "[[旧名]]"
-        );
     }
 
     #[test]
@@ -13477,7 +7323,6 @@ mod tests {
 
         assert!(error.contains("读取文件失败"), "{error}");
     }
-
 
     #[test]
     fn rejects_oversized_tables() {

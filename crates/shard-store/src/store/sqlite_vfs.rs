@@ -10,7 +10,8 @@
 //! - 错误的 `ErrorKind` 只保证「成功 / 失败」与 NotFound、AlreadyExists 一致。
 //! - 写入与原内容相同的字节时不更新 `modified_at`（本地文件会更新 mtime）。
 //! - 没有符号链接；`canonicalize` 只做词法规整。
-//! - `lockbox/` 下的路径永远拒绝：密匣只以密文存在 `lockbox_items` 里。
+//! - `lockbox/` 下的路径永远拒绝：密匣只以密文存在 `lockbox_items` 里；公开校验要的密匣 id 集合
+//!   经 `lockbox_item_ids` 直接从表里取。
 //! - `copy(a, a)`：本地 macOS 会把文件截断清空，这里内容不变。
 
 use std::{
@@ -772,5 +773,19 @@ impl Vfs for SqliteVfs<'_> {
         let rel = self.rel(path)?;
         let node = self.find(&rel)?.ok_or_else(|| not_found(&rel))?;
         node.sha.ok_or_else(|| io::Error::new(io::ErrorKind::IsADirectory, format!("是目录：{rel}")))
+    }
+
+    /// 密匣信封只存在 `lockbox_items` 里（`lockbox/` 路径一律拒绝），id 直接从表里取，不读信封。
+    fn lockbox_item_ids(&self) -> io::Result<Option<Vec<String>>> {
+        let mut statement = self
+            .conn
+            .prepare("SELECT item_id FROM lockbox_items WHERE deleted_at IS NULL ORDER BY item_id")
+            .map_err(db_error)?;
+        let ids = statement
+            .query_map([], |row| row.get::<_, String>(0))
+            .map_err(db_error)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(db_error)?;
+        Ok(Some(ids))
     }
 }

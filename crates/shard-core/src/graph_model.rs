@@ -250,6 +250,10 @@ fn safe_relative(
 }
 
 fn protected_fragment_ids(vfs: &dyn Vfs) -> Result<HashSet<String>, String> {
+    // 单独登记密匣条目的存储（服务端内容库）直接给出 id；本地目录照旧扫描 `lockbox/`。
+    if let Some(ids) = vfs.lockbox_item_ids().map_err(io)? {
+        return Ok(ids.into_iter().collect());
+    }
     let mut files = Vec::new();
     scan_files(
         vfs,

@@ -41,6 +41,8 @@ rsa = { version = "0.9", features = ["sha2"] }
 sha2 = { workspace = true }
 rusqlite = { version = "=0.40.2", features = ["bundled"] }
 shard-core = { path = "../crates/shard-core" }
+# 公开内容的领域逻辑（碎片、资料库树、回收站、图片、导图、画布、数据集），与服务端共用。
+shard-vault = { path = "../crates/shard-vault" }
 # 监听 vault 的外部写入（终端 shard、AI 助手、其他编辑器），macOS 上走 FSEvents。
 notify = "8.2"
 

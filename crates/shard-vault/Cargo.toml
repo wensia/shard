@@ -1,0 +1,21 @@
+[package]
+name = "shard-vault"
+version = "0.1.3"
+description = "资料库领域逻辑：碎片、资料库树、回收站、图片、导图、流程图/画布、数据集、属性、引用改写；跑在 Vfs + VaultHooks 上，不依赖 Tauri。桌面与服务端共用。"
+edition.workspace = true
+publish = false
+
+[dependencies]
+chrono = { workspace = true }
+rand = "0.8"
+serde = { workspace = true }
+# 与 src-tauri 一致：画布坐标经 JSON 往返必须保持 IEEE-754 精确值。
+serde_json = { workspace = true, features = ["float_roundtrip"] }
+serde_yaml = "0.9"
+sha2 = { workspace = true }
+shard-core = { path = "../shard-core" }
+
+[dev-dependencies]
+# 双实现测试：同一组领域测试在 FsVfs 与 SqliteVfs（服务端内容库）上各跑一遍。
+shard-store = { path = "../shard-store" }
+tempfile = "3"
