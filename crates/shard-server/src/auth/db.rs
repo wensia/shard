@@ -345,6 +345,13 @@ impl AuthDb {
         Ok(())
     }
 
+    /// 仅端到端测试：让会话的验证过期（登录本身算一次验证）。
+    #[cfg(feature = "test-auth")]
+    pub fn expire_step_up(&self, id_hash: &[u8]) -> rusqlite::Result<()> {
+        self.conn().execute("UPDATE sessions SET step_up_at = NULL WHERE id_hash = ?1", params![id_hash])?;
+        Ok(())
+    }
+
     pub fn revoke_session(&self, id_hash: &[u8]) -> rusqlite::Result<bool> {
         let changed = self.conn().execute(
             "UPDATE sessions SET revoked_at = ?1 WHERE id_hash = ?2 AND revoked_at IS NULL",

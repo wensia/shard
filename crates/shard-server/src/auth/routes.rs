@@ -42,7 +42,7 @@ pub fn router() -> Router<AppState> {
         .route("/devices", get(list_devices))
         .route("/devices/{id}", delete(revoke_device));
     #[cfg(feature = "test-auth")]
-    let router = router.route("/test/session", post(test_session));
+    let router = router.route("/test/session", post(test_session)).route("/test/step-up", post(test_step_up));
     router
 }
 
@@ -573,4 +573,25 @@ async fn revoke_device(State(state): State<AppState>, caller: Caller, Path(id): 
 #[cfg(feature = "test-auth")]
 async fn test_session(State(state): State<AppState>, Meta(meta): Meta) -> Result<Response, ApiError> {
     blocking(&state, move |state| start_session(state, &meta, json!({ "ok": true }))).await
+}
+
+/// 仅端到端测试：把当前会话标记为刚验证过通行密钥；`?expire=1` 则让验证过期
+/// （登录本身算一次验证，测「需要重新验证」时先让它过期）。
+#[cfg(feature = "test-auth")]
+async fn test_step_up(
+    State(state): State<AppState>,
+    caller: Caller,
+    axum::extract::Query(query): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Result<Json<Value>, ApiError> {
+    let id_hash = caller.require_session()?.to_vec();
+    let expire = query.contains_key("expire");
+    blocking(&state, move |state| {
+        if expire {
+            state.auth.expire_step_up(&id_hash)?;
+        } else {
+            state.auth.mark_step_up(&id_hash)?;
+        }
+        Ok(Json(json!({ "ok": true })))
+    })
+    .await
 }

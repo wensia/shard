@@ -10,7 +10,7 @@ use axum::{
 };
 use tower_http::services::{ServeDir, ServeFile};
 
-use crate::{auth, error::ApiError, events, files, rpc, state::AppState};
+use crate::{auth, error::ApiError, events, files, history, rpc, state::AppState};
 
 /// RPC 请求体上限：CSV 原文、画布 JSON 都走 RPC。
 const MAX_RPC_BODY: usize = 64 * 1024 * 1024;
@@ -26,6 +26,7 @@ pub fn build(state: AppState) -> Router {
         .merge(rpc::router())
         .merge(events::router())
         .merge(files::router())
+        .merge(history::router())
         .fallback(|| async { ApiError::not_found() })
         .layer(DefaultBodyLimit::max(MAX_RPC_BODY));
     let mut app = Router::new().route("/healthz", get(|| async { "ok" })).nest("/api", api);

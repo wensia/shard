@@ -35,3 +35,4 @@ webauthn-rs = "0.5"
 [dev-dependencies]
 http-body-util = "0.1"
 tempfile = "3"
+zip = { version = "=8.6.0", default-features = false, features = ["deflate"] }

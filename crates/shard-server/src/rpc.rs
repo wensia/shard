@@ -25,6 +25,8 @@ use crate::{auth::principal::Caller, error::ApiError, state::AppState};
 pub enum Access {
     Read,
     Write,
+    /// 不可逆的写（立即抹除）：要求浏览器会话 10 分钟内验证过通行密钥，成功后记审计。
+    Sensitive,
 }
 
 pub type Handler = fn(&RpcEnv<'_>, Value) -> Result<Value, RpcError>;
@@ -158,6 +160,19 @@ impl RpcEnv<'_> {
         self.store.read(f).map_err(RpcError::from)
     }
 
+    /// 写命令，并指定修订原因（恢复旧版本记为 revert）。
+    pub fn write_as(
+        &self,
+        reason: &'static str,
+        f: impl FnOnce(&SqliteVfs<'_>) -> Result<Value, RpcError>,
+    ) -> Result<Value, RpcError> {
+        let mut ctx = self.write_ctx();
+        ctx.revision_reason = Some(reason);
+        let (value, committed) = self.store.write_recorded(&ctx, f, |value| encode_recorded(&Ok(value.clone())))?;
+        self.committed.borrow_mut().extend(committed.changes);
+        Ok(value)
+    }
+
     fn write_ctx(&self) -> WriteCtx {
         let mut ctx = WriteCtx::new(self.command, self.actor.clone()).with_device(self.device.clone());
         ctx.op_id = self.op_id.clone();
@@ -270,8 +285,12 @@ async fn dispatch(
     hasher_input.extend_from_slice(&body);
     let request_sha = shard_store::sha256_hex(&hasher_input);
 
+    if command.access == Access::Sensitive {
+        caller.require_step_up()?;
+    }
+    let audit = (command.access == Access::Sensitive).then(|| (caller.actor(), caller.meta.clone()));
     let op_id = idempotency_key(&headers);
-    if command.access == Access::Write {
+    if command.access != Access::Read {
         let Some(op_id) = op_id.as_deref() else {
             return Err(ApiError::bad_request("写操作必须带 Idempotency-Key。"));
         };
@@ -310,6 +329,9 @@ async fn dispatch(
     .map_err(ApiError::internal)?;
 
     state.publish(changes);
+    if let (Some((actor, meta)), Ok(_)) = (&audit, &result) {
+        state.auth.audit(actor, &format!("rpc.{name}"), meta.ip.as_deref(), meta.user_agent.as_deref(), None);
+    }
     match result {
         Ok(value) => Ok(json_response(serde_json::to_vec(&value).map_err(ApiError::internal)?, false)),
         // 并发的同键请求抢先提交了：按重放处理。

@@ -80,6 +80,7 @@ fn purged_files_can_be_revived_with_their_history() {
     assert_eq!(entry.path, ".trash/notes/a.md");
     assert_eq!(entry.sha.as_deref(), Some(sha256_hex(b"second").as_str()));
     assert_eq!(entry.revisions, 4);
+    assert_eq!(store.read_revision(entry.rev_id).unwrap().unwrap().1, b"second");
     assert_eq!(entry.purged_at, "2026-10-26T09:03:00.000000Z");
     assert_eq!(entry.expires_at, "2026-11-25T09:03:00.000000Z");
     let history = store.list_node_revisions(entry.node_id).unwrap();

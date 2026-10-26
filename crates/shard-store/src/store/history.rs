@@ -34,6 +34,8 @@ pub struct RevisionInfo {
 #[serde(rename_all = "camelCase")]
 pub struct DeletedEntry {
     pub node_id: i64,
+    /// 删除前最后一条有内容的修订：「找回」默认恢复它。
+    pub rev_id: i64,
     /// 删除前最后的路径（多半在 `.trash/` 下）。
     pub path: String,
     pub sha: Option<String>,
@@ -151,7 +153,7 @@ impl Store {
         self.with_reader(|conn| {
             let mut statement = conn.prepare_cached(
                 "SELECT n.node_id, n.purged_at, last.path_at, last.sha,
-                        (SELECT COUNT(*) FROM revisions WHERE node_id = n.node_id)
+                        (SELECT COUNT(*) FROM revisions WHERE node_id = n.node_id), last.rev_id
                  FROM nodes n
                  JOIN revisions last ON last.rev_id = (
                    SELECT rev_id FROM revisions WHERE node_id = n.node_id AND sha IS NOT NULL
@@ -169,6 +171,7 @@ impl Store {
                         path: row.get(2)?,
                         sha: row.get(3)?,
                         revisions: row.get(4)?,
+                        rev_id: row.get(5)?,
                     })
                 })?
                 .collect::<Result<Vec<_>, _>>()?;

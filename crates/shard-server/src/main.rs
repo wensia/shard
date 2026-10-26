@@ -168,8 +168,10 @@ async fn serve(
     let mut registry = rpc::base_registry();
     commands::register(&mut registry);
     shard_server::search::register(&mut registry);
+    shard_server::history::register(&mut registry);
     let state = AppState::open(config, registry)?;
     commands::ensure_layout(&state.store)?;
+    spawn_maintenance(state.store.clone());
     let router = app::build(state);
     let listener = tokio::net::TcpListener::bind(listen).await.map_err(|error| error.to_string())?;
     tracing::info!(%listen, "shard-server 已启动");
@@ -179,6 +181,25 @@ async fn serve(
         })
         .await
         .map_err(|error| error.to_string())
+}
+
+/// 例行维护：彻底删除满 30 天的历史到期抹除。启动后先跑一次，之后每 6 小时一次。
+fn spawn_maintenance(store: std::sync::Arc<shard_store::Store>) {
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(6 * 3600));
+        loop {
+            interval.tick().await;
+            let store = store.clone();
+            match tokio::task::spawn_blocking(move || store.expire_purged_history(chrono::Utc::now())).await {
+                Ok(Ok(report)) if report.nodes > 0 => {
+                    tracing::info!(nodes = report.nodes, revisions = report.revisions, "已清理到期的删除历史");
+                }
+                Ok(Ok(_)) => {}
+                Ok(Err(error)) => tracing::error!(%error, "清理到期的删除历史失败"),
+                Err(error) => tracing::error!(%error, "维护任务异常"),
+            }
+        }
+    });
 }
 
 fn snapshot(data_dir: &std::path::Path, out_dir: &std::path::Path) -> Result<(), String> {

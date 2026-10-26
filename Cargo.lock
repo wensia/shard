@@ -5100,6 +5100,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "webauthn-rs",
+ "zip",
 ]
 
 [[package]]
