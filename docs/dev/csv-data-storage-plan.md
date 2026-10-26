@@ -1,5 +1,7 @@
 # CSV 数据存储层方案
 
+> 2026-10-26：分支 `feat/server-sqlite` 把真相源改为服务端 SQLite（[server-sqlite-plan.md](server-sqlite-plan.md)）。CSV 原始字节照样入库，写回保留原格式、`expected_sha` 冲突检测不变；切换后「CSV 文件进 Git」与跨进程文件锁不再适用。
+
 日期：2026-09-27。状态：方案已确认（第 9 节），实施中。
 
 来源：与 ChatGPT Pro（Pro 档）两轮讨论（[会话](https://chatgpt.com/c/6ab82e3f-27f0-83ea-a14b-91354a0ea8f1)），Claude 对照源码逐项核实并裁决。凡标「已核实」的均读过源码；标「待验证」的是需要原型或测试确认的假设。

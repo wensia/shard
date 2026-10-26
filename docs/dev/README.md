@@ -2,10 +2,13 @@
 
 ## 当前产品方向
 
-2026-09-15 起，Shard 的目标收敛为本地优先的碎片系统，支持可组合的 Git / 飞书 / 夸克存储目标，以及 Hermes / OpenClaw 聊天入口。私密碎片能力保留，取消独立密匣工作台。
+2026-10-26 起（分支 `feat/server-sqlite`）：VPS 上一份 SQLite 是唯一真相源，桌面与网页都是客户端，网页走公网域名 + 通行密钥，彻底不用 Markdown 文件与 Git 存储，见 [服务端 SQLite + 网页版](server-sqlite-plan.md)。正式切换前主线仍是本地文件 + Git。
+
+（更早）2026-09-15 起，Shard 的目标收敛为本地优先的碎片系统，支持可组合的 Git / 飞书 / 夸克存储目标，以及 Hermes / OpenClaw 聊天入口。私密碎片能力保留，取消独立密匣工作台。
 
 | 文档 | 内容 | 状态 |
 | --- | --- | --- |
+| [服务端 SQLite + 网页版](server-sqlite-plan.md) | 存原文字节的虚拟文件系统、三库 DDL、RPC 与 SSE、桌面同步引擎、密匣端到端、通行密钥与安全、备份恢复、迁移切换、威胁模型 | 已拍板，实施中（S0–S11） |
 | [产品框架](product-framework.md) | 定位与对标、四种内容类型、受管 JSON 区域、自定义属性、资源文件、主界面、无语法编辑、组件与插件、捕捉入口、类型转换、路线图 | 定稿，2026-09-28 修订（大纲存 JSON、流程图、单文件容器、属性） |
 | [内容模型实施方案](content-model-implementation-plan.md) | 批次 P0/P1/H1–H4/G1–G3 总览与各批施工令 | P0–H4b 已完成，后续执行中（Codex gpt-5.6-sol） |
 | [内容模型架构评审](content-model-architecture-review.md) | ChatGPT Pro 评审 e4600ea 修订：容器方案 A/B/C 对比、已核实的现状缺口、属性保真合同、路线顺序 | 评审完成，已裁决方案 B（单篇 md 内含受管 JSON） |
