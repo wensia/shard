@@ -254,72 +254,157 @@ fn set_file_times(path: &Path, created: SystemTime, modified: SystemTime) -> std
     fs::File::open(path)?.set_times(times)
 }
 
-/// 把内容库导出成 vault 目录。`target` 必须不存在或为空。
-pub fn export_vault(store: &Store, target: &Path) -> Result<ExportReport, StoreError> {
-    if target.exists() && fs::read_dir(target).map_err(io)?.next().is_some() {
-        return Err(StoreError::Invalid(format!("导出目录不是空的：{}", target.display())));
-    }
-    fs::create_dir_all(target).map_err(io)?;
+/// 导出时的一个条目：目录（字节为空）或文件（原始字节），带创建与修改时间。
+pub struct ExportEntry {
+    /// 资料库相对路径，`/` 分隔。
+    pub rel: String,
+    pub is_dir: bool,
+    pub bytes: Vec<u8>,
+    pub created: SystemTime,
+    pub modified: SystemTime,
+}
+
+fn rfc3339_time(text: &str) -> SystemTime {
+    chrono::DateTime::parse_from_rfc3339(text).map(SystemTime::from).unwrap_or(SystemTime::UNIX_EPOCH)
+}
+
+/// 在一个只读快照里按「目录树 → 密匣信封 → 密匣 manifest」的顺序列出要导出的全部条目。
+/// 目录导出与 zip 导出共用，保证两者内容一致。
+pub fn visit_export(
+    store: &Store,
+    mut visit: impl FnMut(ExportEntry) -> Result<(), StoreError>,
+) -> Result<ExportReport, StoreError> {
     let mut report = ExportReport::default();
-    // 目录时间最后设：往目录里写文件会改它的修改时间。
-    let mut dir_times: Vec<(PathBuf, SystemTime, SystemTime)> = Vec::new();
     store.read(|vfs| -> Result<(), StoreError> {
         let root = vfs.root().to_path_buf();
         let mut stack = vec![root.clone()];
         while let Some(dir) = stack.pop() {
             for entry in vfs.read_dir(&dir).map_err(io)? {
                 let path = entry.path();
-                let rel = relative(&root, &path);
-                let out = target.join(&rel);
                 let metadata = entry.metadata().map_err(io)?;
-                let created = metadata.created().unwrap_or(SystemTime::UNIX_EPOCH);
-                let modified = metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH);
-                if metadata.is_dir() {
-                    fs::create_dir_all(&out).map_err(io)?;
-                    dir_times.push((out, created, modified));
-                    stack.push(path);
+                let is_dir = metadata.is_dir();
+                let bytes = if is_dir { Vec::new() } else { vfs.read(&path).map_err(io)? };
+                if is_dir {
+                    stack.push(path.clone());
                     report.dirs += 1;
                 } else {
-                    if let Some(parent) = out.parent() {
-                        fs::create_dir_all(parent).map_err(io)?;
-                    }
-                    fs::write(&out, vfs.read(&path).map_err(io)?).map_err(io)?;
-                    set_file_times(&out, created, modified).map_err(io)?;
                     report.files += 1;
                 }
+                visit(ExportEntry {
+                    rel: relative(&root, &path),
+                    is_dir,
+                    bytes,
+                    created: metadata.created().unwrap_or(SystemTime::UNIX_EPOCH),
+                    modified: metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH),
+                })?;
             }
         }
         for item in vfs.lockbox_items_raw().map_err(io)? {
-            let rel = item
-                .legacy_path
-                .clone()
-                .unwrap_or_else(|| format!("lockbox/exported/{}.shard", item.item_id));
-            let out = target.join(&rel);
-            if let Some(parent) = out.parent() {
-                fs::create_dir_all(parent).map_err(io)?;
-            }
-            fs::write(&out, item.envelope.as_bytes()).map_err(io)?;
-            let parse = |text: &str| {
-                chrono::DateTime::parse_from_rfc3339(text).map(SystemTime::from).unwrap_or(SystemTime::UNIX_EPOCH)
-            };
-            set_file_times(&out, parse(&item.created_at), parse(&item.updated_at)).map_err(io)?;
+            let rel = item.legacy_path.clone().unwrap_or_else(|| format!("lockbox/exported/{}.shard", item.item_id));
             report.lockbox_items += 1;
+            visit(ExportEntry {
+                rel,
+                is_dir: false,
+                bytes: item.envelope.into_bytes(),
+                created: rfc3339_time(&item.created_at),
+                modified: rfc3339_time(&item.updated_at),
+            })?;
         }
         if let Some((body, updated_at)) = vfs.lockbox_manifest_raw().map_err(io)? {
-            let out = target.join(".shard/lockbox.json");
-            fs::create_dir_all(out.parent().expect("有父目录")).map_err(io)?;
-            fs::write(&out, body.as_bytes()).map_err(io)?;
-            let modified = chrono::DateTime::parse_from_rfc3339(&updated_at)
-                .map(SystemTime::from)
-                .unwrap_or(SystemTime::UNIX_EPOCH);
-            set_file_times(&out, modified, modified).map_err(io)?;
             report.files += 1;
+            let modified = rfc3339_time(&updated_at);
+            visit(ExportEntry {
+                rel: ".shard/lockbox.json".to_string(),
+                is_dir: false,
+                bytes: body.into_bytes(),
+                created: modified,
+                modified,
+            })?;
         }
         Ok(())
     })??;
+    Ok(report)
+}
+
+/// 把内容库导出成 vault 目录。`target` 必须不存在或为空。
+pub fn export_vault(store: &Store, target: &Path) -> Result<ExportReport, StoreError> {
+    if target.exists() && fs::read_dir(target).map_err(io)?.next().is_some() {
+        return Err(StoreError::Invalid(format!("导出目录不是空的：{}", target.display())));
+    }
+    fs::create_dir_all(target).map_err(io)?;
+    // 目录时间最后设：往目录里写文件会改它的修改时间。
+    let mut dir_times: Vec<(PathBuf, SystemTime, SystemTime)> = Vec::new();
+    let report = visit_export(store, |entry| {
+        let out = target.join(&entry.rel);
+        if entry.is_dir {
+            fs::create_dir_all(&out).map_err(io)?;
+            dir_times.push((out, entry.created, entry.modified));
+        } else {
+            if let Some(parent) = out.parent() {
+                fs::create_dir_all(parent).map_err(io)?;
+            }
+            fs::write(&out, &entry.bytes).map_err(io)?;
+            set_file_times(&out, entry.created, entry.modified).map_err(io)?;
+        }
+        Ok(())
+    })?;
     dir_times.sort_by(|a, b| b.0.components().count().cmp(&a.0.components().count()));
     for (dir, created, modified) in dir_times {
         set_file_times(&dir, created, modified).map_err(io)?;
     }
     Ok(report)
+}
+
+/// 已经压缩过的格式直接存，省得白耗 CPU。
+fn already_compressed(rel: &str) -> bool {
+    let extension = rel.rsplit_once('.').map(|(_, ext)| ext.to_ascii_lowercase()).unwrap_or_default();
+    matches!(
+        extension.as_str(),
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "heic" | "heif" | "avif" | "zip" | "xlsx" | "docx" | "pdf" | "mp4" | "mov"
+    )
+}
+
+/// zip 里的时间是不带时区的本地时间：按 `offset`（通常是导出者的时区）换算。早于 1980 的记为 1980-01-01。
+fn zip_time(time: SystemTime, offset: chrono::FixedOffset) -> zip::DateTime {
+    use chrono::{Datelike, Timelike};
+    let local = chrono::DateTime::<chrono::Utc>::from(time).with_timezone(&offset);
+    zip::DateTime::from_date_and_time(
+        u16::try_from(local.year()).unwrap_or(1980),
+        local.month() as u8,
+        local.day() as u8,
+        local.hour() as u8,
+        local.minute() as u8,
+        local.second() as u8,
+    )
+    .unwrap_or_default()
+}
+
+/// 把内容库按 vault 目录结构写成 zip，边读边写（`out` 不需要能 seek，适合直接流给浏览器下载）。
+/// 解压后与 [`export_vault`] 的结果逐字节一致，旧版桌面 App 能直接打开。
+pub fn export_zip<W: std::io::Write>(
+    store: &Store,
+    out: W,
+    offset: chrono::FixedOffset,
+) -> Result<(ExportReport, W), StoreError> {
+    use zip::write::SimpleFileOptions;
+    let zip_error = |error: zip::result::ZipError| StoreError::Io(std::io::Error::other(error.to_string()));
+    let mut zip = zip::ZipWriter::new_stream(out);
+    let report = visit_export(store, |entry| {
+        let options = SimpleFileOptions::default().last_modified_time(zip_time(entry.modified, offset));
+        if entry.is_dir {
+            zip.add_directory(format!("{}/", entry.rel), options.unix_permissions(0o755)).map_err(zip_error)?;
+        } else {
+            let method = if already_compressed(&entry.rel) {
+                zip::CompressionMethod::Stored
+            } else {
+                zip::CompressionMethod::Deflated
+            };
+            zip.start_file(entry.rel.as_str(), options.compression_method(method).unix_permissions(0o644))
+                .map_err(zip_error)?;
+            std::io::Write::write_all(&mut zip, &entry.bytes).map_err(io)?;
+        }
+        Ok(())
+    })?;
+    let out = zip.finish().map_err(zip_error)?.into_inner();
+    Ok((report, out))
 }

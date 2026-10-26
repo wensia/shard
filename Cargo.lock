@@ -5115,6 +5115,7 @@ dependencies = [
  "shard-core",
  "tempfile",
  "unicode-normalization",
+ "zip",
 ]
 
 [[package]]

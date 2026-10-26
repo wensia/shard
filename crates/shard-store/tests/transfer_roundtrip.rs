@@ -172,3 +172,50 @@ fn unknown_files_in_the_lockbox_and_symlinks_are_errors_not_silent_drops() {
         assert!(error.contains("符号链接"), "{error}");
     }
 }
+
+#[test]
+fn zip_export_matches_the_directory_export() {
+    let source = tempfile::tempdir().unwrap();
+    sample_vault(source.path());
+    let data = tempfile::tempdir().unwrap();
+    let store = Store::open(data.path()).unwrap();
+    import_vault(&store, source.path()).unwrap();
+
+    let out = tempfile::tempdir().unwrap();
+    let target = out.path().join("vault");
+    let dir_report = export_vault(&store, &target).unwrap();
+    let beijing = chrono::FixedOffset::east_opt(8 * 3600).unwrap();
+    let (zip_report, bytes) = shard_store::transfer::export_zip(&store, Vec::new(), beijing).unwrap();
+    assert_eq!((zip_report.files, zip_report.dirs, zip_report.lockbox_items), (dir_report.files, dir_report.dirs, dir_report.lockbox_items));
+
+    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+    let mut unzipped = BTreeMap::new();
+    let mut jpg_time = None;
+    for index in 0..archive.len() {
+        let mut file = archive.by_index(index).unwrap();
+        let name = file.name().trim_end_matches('/').to_string();
+        let mut content = Vec::new();
+        std::io::Read::read_to_end(&mut file, &mut content).unwrap();
+        // zip 里是北京时间的本地时间。1_750_000_000 = 2025-06-15T15:06:40Z = 23:06:40 +08:00。
+        if file.name() == "notes/证件/营业执照 1.jpg" {
+            let time = file.last_modified().expect("有修改时间");
+            jpg_time = Some((time.year(), time.month(), time.day(), time.hour(), time.minute(), time.second()));
+        }
+        unzipped.insert(name, (file.is_dir(), content));
+    }
+    assert_eq!(jpg_time, Some((2025, 6, 15, 23, 6, 40)));
+    // 密匣信封的父目录在 zip 里没有单独的目录条目，解压时自动建出来。
+    let files: Vec<String> = unzipped.keys().cloned().collect();
+    for path in files {
+        let mut parent = path.as_str();
+        while let Some((dir, _)) = parent.rsplit_once('/') {
+            unzipped.entry(dir.to_string()).or_insert((true, Vec::new()));
+            parent = dir;
+        }
+    }
+    let exported = tree(&target)
+        .into_iter()
+        .map(|(path, (is_dir, bytes, _))| (path, (is_dir, bytes)))
+        .collect::<BTreeMap<_, _>>();
+    assert_eq!(unzipped, exported, "zip 解开后与目录导出逐字节一致");
+}
