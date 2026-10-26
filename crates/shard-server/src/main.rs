@@ -169,6 +169,7 @@ async fn serve(
     commands::register(&mut registry);
     shard_server::search::register(&mut registry);
     shard_server::history::register(&mut registry);
+    shard_server::lockbox::register(&mut registry);
     let state = AppState::open(config, registry)?;
     commands::ensure_layout(&state.store)?;
     spawn_maintenance(state.store.clone());

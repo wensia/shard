@@ -74,13 +74,15 @@ pub(crate) struct Initial {
 }
 
 pub struct SqliteVfs<'a> {
-    conn: &'a Connection,
+    pub(super) conn: &'a Connection,
     blobs: &'a BlobStore,
     root: &'a Path,
     writable: bool,
-    now: String,
+    pub(super) now: String,
     touched: RefCell<BTreeMap<i64, Initial>>,
-    lockbox_touched: RefCell<Vec<LockboxTouch>>,
+    pub(super) lockbox_touched: RefCell<Vec<LockboxTouch>>,
+    /// 提交时连同全部修订一起抹掉历史的条目（公开内容移入密匣：明文不能留在修订里）。
+    pub(super) erase_on_commit: RefCell<Vec<i64>>,
 }
 
 /// 本事务里写过的密匣条目或 manifest：提交时各记一条变化（scope = lockbox / lockbox_manifest）。
@@ -88,7 +90,8 @@ pub struct SqliteVfs<'a> {
 pub(crate) struct LockboxTouch {
     pub scope: &'static str,
     pub key: String,
-    pub sha: String,
+    /// 删除时为空。
+    pub sha: Option<String>,
 }
 
 /// 原样存进库的一条密匣信封（服务器只见密文）。
@@ -164,6 +167,7 @@ impl<'a> SqliteVfs<'a> {
             now,
             touched: RefCell::new(BTreeMap::new()),
             lockbox_touched: RefCell::new(Vec::new()),
+            erase_on_commit: RefCell::new(Vec::new()),
         }
     }
 
@@ -173,6 +177,10 @@ impl<'a> SqliteVfs<'a> {
 
     pub(crate) fn take_lockbox_touched(&self) -> Vec<LockboxTouch> {
         std::mem::take(&mut self.lockbox_touched.borrow_mut())
+    }
+
+    pub(crate) fn take_erase_on_commit(&self) -> Vec<i64> {
+        std::mem::take(&mut self.erase_on_commit.borrow_mut())
     }
 
     /// 导入用：把条目的创建、修改时间设成源文件的时间（树与碎片按修改时间排序）。不算内容变化。
@@ -274,7 +282,7 @@ impl<'a> SqliteVfs<'a> {
                 ],
             )
             .map_err(db_error)?;
-        self.lockbox_touched.borrow_mut().push(LockboxTouch { scope: "lockbox", key: item.item_id.clone(), sha });
+        self.lockbox_touched.borrow_mut().push(LockboxTouch { scope: "lockbox", key: item.item_id.clone(), sha: Some(sha) });
         Ok(())
     }
 
@@ -301,7 +309,7 @@ impl<'a> SqliteVfs<'a> {
             .map_err(db_error)?;
         self.lockbox_touched
             .borrow_mut()
-            .push(LockboxTouch { scope: "lockbox_manifest", key: "manifest".to_string(), sha });
+            .push(LockboxTouch { scope: "lockbox_manifest", key: "manifest".to_string(), sha: Some(sha) });
         Ok(())
     }
 
@@ -387,7 +395,7 @@ impl<'a> SqliteVfs<'a> {
         }
     }
 
-    fn ensure_writable(&self) -> io::Result<()> {
+    pub(super) fn ensure_writable(&self) -> io::Result<()> {
         if self.writable {
             Ok(())
         } else {

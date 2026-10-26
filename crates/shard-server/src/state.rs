@@ -17,6 +17,8 @@ use crate::{
 pub struct CommitEvent {
     pub last_seq: i64,
     pub changes: Vec<ChangeRecord>,
+    /// 密匣有变化：SSE 推 `lockbox-changed`，客户端重取密匣快照（服务器不知道内容，只能让它整体重取）。
+    pub lockbox: bool,
 }
 
 pub struct Inner {
@@ -68,9 +70,11 @@ impl AppState {
     }
 
     /// 写入成功后广播给 SSE 订阅者。没有订阅者时发送失败是正常的。
-    pub fn publish(&self, changes: Vec<ChangeRecord>) {
-        if let Some(last_seq) = changes.last().map(|change| change.seq) {
-            let _ = self.events.send(Arc::new(CommitEvent { last_seq, changes }));
+    pub fn publish(&self, changes: Vec<ChangeRecord>, lockbox: bool) {
+        let last_seq = changes.last().map(|change| change.seq);
+        if last_seq.is_some() || lockbox {
+            let last_seq = last_seq.unwrap_or(0);
+            let _ = self.events.send(Arc::new(CommitEvent { last_seq, changes, lockbox }));
         }
     }
 }

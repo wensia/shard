@@ -22,6 +22,8 @@ serde = { workspace = true }
 serde_json = { workspace = true, features = ["float_roundtrip"] }
 sha2 = { workspace = true }
 shard-core = { path = "../shard-core" }
+# 只用来校验密匣 manifest 与信封的结构；服务器从不解密。
+shard-lockbox = { path = "../shard-lockbox" }
 shard-store = { path = "../shard-store" }
 shard-vault = { path = "../shard-vault" }
 tokio = { version = "1", features = ["full"] }

@@ -9,6 +9,7 @@ pub mod error;
 pub mod events;
 pub mod files;
 pub mod history;
+pub mod lockbox;
 pub mod rpc;
 pub mod search;
 pub mod state;

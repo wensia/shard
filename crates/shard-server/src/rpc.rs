@@ -5,7 +5,10 @@
 //!   同一个键配不同的请求体返回 422（客户端 bug，绝不能当成功）。
 //! - 领域错误沿用现有的字符串约定：`STALE_BASE:` 前缀 → 409，前端照旧进入冲突流程。
 
-use std::{cell::RefCell, collections::HashMap};
+use std::{
+    cell::{Cell, RefCell},
+    collections::HashMap,
+};
 
 use axum::{
     body::Bytes,
@@ -128,6 +131,8 @@ pub struct RpcEnv<'a> {
     /// 新建内容的 `source`：web / desktop / cli。
     pub source: &'static str,
     committed: RefCell<Vec<ChangeRecord>>,
+    /// 这次调用改了密匣（条目或 manifest）：提交后推 `lockbox-changed`。
+    lockbox_changed: Cell<bool>,
 }
 
 /// 幂等记录里存的响应：成功的值，或当时返回的错误（重试时原样回放）。
@@ -169,8 +174,13 @@ impl RpcEnv<'_> {
         let mut ctx = self.write_ctx();
         ctx.revision_reason = Some(reason);
         let (value, committed) = self.store.write_recorded(&ctx, f, |value| encode_recorded(&Ok(value.clone())))?;
-        self.committed.borrow_mut().extend(committed.changes);
+        self.record(committed);
         Ok(value)
+    }
+
+    fn record(&self, committed: shard_store::Committed) {
+        self.lockbox_changed.set(self.lockbox_changed.get() || committed.lockbox_changed);
+        self.committed.borrow_mut().extend(committed.changes);
     }
 
     fn write_ctx(&self) -> WriteCtx {
@@ -184,7 +194,7 @@ impl RpcEnv<'_> {
     pub fn write(&self, f: impl FnOnce(&SqliteVfs<'_>) -> Result<Value, RpcError>) -> Result<Value, RpcError> {
         let (value, committed) =
             self.store.write_recorded(&self.write_ctx(), f, |value| encode_recorded(&Ok(value.clone())))?;
-        self.committed.borrow_mut().extend(committed.changes);
+        self.record(committed);
         Ok(value)
     }
 
@@ -195,7 +205,7 @@ impl RpcEnv<'_> {
         f: impl FnOnce(&SqliteVfs<'_>) -> Result<Value, RpcError>,
     ) -> Result<Value, RpcError> {
         let (result, committed) = self.store.write_keeping_partial(&self.write_ctx(), f, encode_recorded)?;
-        self.committed.borrow_mut().extend(committed.changes);
+        self.record(committed);
         result
     }
 }
@@ -309,7 +319,7 @@ async fn dispatch(
     let task_name = name.clone();
     let task_op = op_id.clone();
     let task_sha = request_sha.clone();
-    let (result, changes) = tokio::task::spawn_blocking(move || {
+    let (result, changes, lockbox_changed) = tokio::task::spawn_blocking(move || {
         let env = RpcEnv {
             store: &task_state.store,
             command: &task_name,
@@ -321,14 +331,16 @@ async fn dispatch(
             utc_offset,
             vault_identity: &task_state.vault_identity,
             committed: RefCell::new(Vec::new()),
+            lockbox_changed: Cell::new(false),
         };
         let result = (command.handler)(&env, args);
-        (result, env.committed.into_inner())
+        let lockbox_changed = env.lockbox_changed.get();
+        (result, env.committed.into_inner(), lockbox_changed)
     })
     .await
     .map_err(ApiError::internal)?;
 
-    state.publish(changes);
+    state.publish(changes, lockbox_changed);
     if let (Some((actor, meta)), Ok(_)) = (&audit, &result) {
         state.auth.audit(actor, &format!("rpc.{name}"), meta.ip.as_deref(), meta.user_agent.as_deref(), None);
     }

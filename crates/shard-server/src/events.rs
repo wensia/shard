@@ -103,6 +103,10 @@ async fn events(
                             return;
                         }
                     }
+                    // 不带 id：密匣变化不推进公开内容的游标；断线重连后客户端本来就会重取密匣快照。
+                    if commit.lockbox && sender.send(Ok(Event::default().event("lockbox-changed").data("{}"))).await.is_err() {
+                        return;
+                    }
                 }
                 Err(RecvError::Lagged(_)) => {
                     let head = state.store.head_seq().unwrap_or(cursor);

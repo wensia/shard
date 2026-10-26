@@ -11,6 +11,7 @@
 
 mod blobs;
 mod history;
+mod lockbox;
 mod schema;
 mod sqlite_vfs;
 
@@ -26,6 +27,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 
 pub use blobs::INLINE_MAX;
 pub use history::{DeletedEntry, EraseReport, RevisionInfo, PURGED_HISTORY_DAYS};
+pub use lockbox::{LockboxItemEntry, LockboxManifestEntry};
 pub use sqlite_vfs::{LockboxItemRaw, SqliteVfs};
 
 use crate::projection::{project, Projection};
@@ -136,6 +138,10 @@ pub struct ChangeRecord {
 pub struct Committed {
     pub txn_id: i64,
     pub changes: Vec<ChangeRecord>,
+    /// 密匣（条目或 manifest）这次有没有变：服务端据此推 `lockbox-changed`，客户端重取快照。
+    pub lockbox_changed: bool,
+    /// 本事务分配的最大 seq（含密匣范围）。
+    pub last_seq: Option<i64>,
 }
 
 #[derive(Clone, Debug)]
@@ -255,6 +261,22 @@ impl Store {
         Ok(conn
             .query_row("SELECT value FROM meta WHERE key = ?1", params![key], |row| row.get(0))
             .optional()?)
+    }
+
+    /// 服务端设置（如「允许网页解锁密匣」）。随内容库备份与恢复。
+    pub fn set_meta(&self, key: &str, value: &str) -> Result<(), StoreError> {
+        let conn = self.writer.lock().expect("写连接锁中毒");
+        conn.execute(
+            "INSERT INTO meta (key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![key, value],
+        )?;
+        Ok(())
+    }
+
+    /// 抹掉明文之后调用：检查点并把 WAL 截成 0 字节。有读者占着旧快照时返回 false（下次再截）。
+    pub fn truncate_wal(&self) -> Result<bool, StoreError> {
+        let conn = self.writer.lock().expect("写连接锁中毒");
+        history::truncate_wal(&conn)
     }
 
     /// 从备份恢复后调用：换一个 epoch，客户端发现后走全量对账。
@@ -659,16 +681,41 @@ fn finalize(
         }
     }
 
-    for touch in vfs.take_lockbox_touched() {
+    let lockbox_touched = vfs.take_lockbox_touched();
+    let lockbox_changed = !lockbox_touched.is_empty();
+    for touch in lockbox_touched {
         conn.execute(
-            "INSERT INTO changes (txn_id, scope, key, node_id, exists_, sha, kind) VALUES (?1, ?2, ?3, NULL, 1, ?4, 'file')",
-            params![txn_id, touch.scope, touch.key, touch.sha],
+            "INSERT INTO changes (txn_id, scope, key, node_id, exists_, sha, kind) VALUES (?1, ?2, ?3, NULL, ?4, ?5, 'file')",
+            params![txn_id, touch.scope, touch.key, touch.sha.is_some() as i64, touch.sha],
         )?;
         let seq = conn.last_insert_rowid();
         match touch.scope {
-            "lockbox" => conn.execute("UPDATE lockbox_items SET seq = ?1 WHERE item_id = ?2", params![seq, touch.key])?,
-            _ => conn.execute("UPDATE lockbox_manifest SET seq = ?1 WHERE id = 1", params![seq])?,
+            "lockbox" => {
+                conn.execute("UPDATE lockbox_items SET seq = ?1 WHERE item_id = ?2", params![seq, touch.key])?;
+                // 密文的版本历史（只有密文，服务器读不出内容）。
+                if touch.sha.is_some() {
+                    conn.execute(
+                        "INSERT INTO lockbox_revisions (item_id, envelope, sha, txn_id, created_at)
+                         SELECT item_id, envelope, sha, ?1, ?2 FROM lockbox_items WHERE item_id = ?3 AND envelope IS NOT NULL",
+                        params![txn_id, now_string(now), touch.key],
+                    )?;
+                }
+            }
+            _ => {
+                conn.execute("UPDATE lockbox_manifest SET seq = ?1 WHERE id = 1", params![seq])?;
+            }
         };
+    }
+
+    // 移入密匣的公开内容：连同全部明文修订、幂等记录里带正文的响应一起抹掉（本事务自己的响应不含正文）。
+    for node_id in vfs.take_erase_on_commit() {
+        conn.execute(
+            "UPDATE txns SET response = NULL
+             WHERE txn_id <> ?2 AND txn_id IN (SELECT txn_id FROM revisions WHERE node_id = ?1
+                                                UNION SELECT txn_id FROM changes WHERE node_id = ?1)",
+            params![node_id, txn_id],
+        )?;
+        conn.execute("DELETE FROM revisions WHERE node_id = ?1", params![node_id])?;
     }
 
     let (first_seq, last_seq): (Option<i64>, Option<i64>) = conn.query_row(
@@ -680,7 +727,7 @@ fn finalize(
         "UPDATE txns SET first_seq = ?1, last_seq = ?2 WHERE txn_id = ?3",
         params![first_seq, last_seq, txn_id],
     )?;
-    Ok(Committed { txn_id, changes })
+    Ok(Committed { txn_id, changes, lockbox_changed, last_seq })
 }
 
 #[allow(clippy::too_many_arguments)]
