@@ -167,7 +167,7 @@ CREATE TABLE lockbox_revisions (rev_id INTEGER PRIMARY KEY, item_id TEXT NOT NUL
 
 **修订**：同设备、同条目 5 分钟内的编辑合并成一条（`sealed=0` 原地覆盖）；结构操作单独一条。
 最新一条就是 last-good，`maps/.last-good`、`.shard/canvas/last-good` 不再需要。
-保留策略：全部保留 90 天，之后每天留一条；彻底删除的条目历史再留 30 天，「立即抹除」同事务删除。
+保留策略：全部保留 90 天，之后每天留一条（S10 实现）；彻底删除的条目历史再留 30 天（服务启动后每 6 小时清理到期的），「立即抹除」删修订、只被它们引用的 blob 与幂等响应里的副本，再截断 WAL（S9 已实现）。
 
 ### 2.2 blobs.db（图片与 > 1 MiB 的文件）
 
@@ -298,19 +298,36 @@ set_fragment_pinned、set/remove_fragment_property、save_fragment_image（内�
 
 ## 6. 密匣端到端加密
 
-- 服务器永不解密。`lib.rs` 的加解密（`derive_lockbox_key`、`encrypt_bytes`、`wrap_master_key`、
-  `write_lockbox_payload` 等）抽成 `crates/shard-lockbox`，原生与 wasm32 双目标。桌面在 Rust 层解密；网页用
-  WebCrypto（AES-GCM、RSA-OAEP-SHA256）+ argon2 wasm；固定测试向量互解。
+服务器永不解密。三层：
+
+| 层 | 位置 | 内容 |
+|---|---|---|
+| 加密格式 | `crates/shard-lockbox`（已完成 S7a） | Argon2id 口令派生、主密钥两份包裹、免密写入 RSA 密钥对、信封加解密；格式与报错文案与旧桌面一字不改。固定向量 `tests/fixtures/lockbox-v1.json` 与旧桌面真实生成的 `lockbox-desktop-v1.json` |
+| 密匣领域逻辑 | `shard-lockbox::domain`（S7b） | 载荷（frontmatter 原文 + 正文）的读改写、标签规整、置顶 / 归档 / 属性、密匣笔记、公开内容移入密匣、内存搜索。运行在抽象的「密匣条目存储」上：桌面本地模式背后是 `lockbox/` 下的文件，网页与将来的桌面客户端模式背后是与服务器同步的内存副本 |
+| 浏览器 | `crates/shard-lockbox-wasm` → `src/lib/lockbox-client/`（S7c） | 同一份 Rust 编成 wasm（wasm-bindgen）；主密钥只在 wasm 内存里，TS 只拿不透明句柄。传输层把密匣相关命令（解锁、列表合并、碎片写命令的密匣分支）在客户端执行，再用下面的服务端接口带 CAS 写回 |
+
+选 wasm 而不是在 TS 里重写：难点不是加密（WebCrypto 都有），而是 frontmatter 保真写回（G-P0）等约 1000 行领域逻辑，
+两份实现必然漂移。加密也一并走 wasm，避免第二套实现；浏览器只负责网络与租约计时。
+
+**服务端接口（S7b）**：`lockbox_snapshot`（manifest 原文 + 全部信封 + 游标）；`lockbox_apply`（一批 put / delete，
+每条带 `expectedSha`，manifest 可选带 CAS，整批一个事务）；`seal_fragment_into_lockbox`（公开碎片移入密匣：同一事务里
+彻底删除公开文件、删它的全部明文修订与幂等响应里的副本，并写入客户端加密好的信封）。SSE 增加 `lockbox` 范围的变化。
+服务端校验信封能解析、信封 id 与条目 id 一致，不校验内容。
+
 - **v2 信封**：AAD = `"shard-lockbox-v2|" + id`，解密后核对载荷内 id 与信封 id 一致（防服务器调换密文）；
-  路径、标题、所在分区（fragments / archive / notes）挪进密文，修掉 `lockbox/notes` 明文文件名泄露标题。
-  信封 id 保持明文（随机，泄露有限；公开图「不能链接密匣碎片」的校验需要它）。v1 信封照常可读，写回时升级。
-- **KDF**：现 Argon2id m=19 MiB、t=2。在 iPhone Safari 上实测后提到约 1 秒的参数；口令那份包裹在解锁时重包；
-  恢复密钥那份（192 bit 熵）只能在重新生成恢复密钥时升级。
+  路径、标题、所在分区（fragments / archive / notes）挪进载荷，服务端的 `legacy_path` 清空（修掉 `lockbox/notes`
+  明文文件名泄露标题）。信封 id 保持明文（随机，泄露有限；公开图「不能链接密匣碎片」的校验需要它）。
+  v1 照常可读，写回时升级。代价：v2 信封旧版 App 读不了，导出 zip 回退旧版 App 时密匣需要新版。
+- **KDF**：现 Argon2id m=19 MiB、t=2。manifest 增加可选的派生参数字段，缺省即现参数；在 iPhone Safari 上实测
+  wasm 耗时后提到约 1 秒，口令那份在解锁时重包，恢复密钥那份（192 bit 熵）只在重新生成时升级。
 - 会话与租约全在客户端：每设备、每标签页各自 15 分钟，主密钥只在内存。服务器没有「已解锁」状态；会话过期或
   注销时清掉密钥。改口令只重包 manifest（CAS），其他设备内存里的主密钥不受影响。
 - 密匣搜索只在客户端内存，与服务端公开搜索结果合并显示。
-- 公开内容移入密匣：同事务删除它的明文修订；界面提示已有备份与旧 GitHub 历史里的旧版本不会消失。
-- 设置开关「允许在网页解锁密匣」，默认开。
+- 公开内容移入密匣：同事务删除它的明文修订（连接开 `secure_delete`，抹除后截断 WAL）；界面提示已有备份与旧
+  GitHub 历史里的旧版本不会消失。
+- 设置开关「允许在网页解锁密匣」，默认开，存服务器（所有浏览器一致）；关掉后服务器拒绝向浏览器会话下发信封。
+  它防的是被盗的浏览器会话与误操作，**防不了被篡改的网页**（篡改的网页可以无视开关）——那种情况唯一的防线
+  是不在网页输入密匣口令，威胁模型如实写明。
 
 ## 7. 认证与安全
 
@@ -318,8 +335,9 @@ set_fragment_pinned、set/remove_fragment_property、save_fragment_image（内�
   签名计数与备份标志每次登录后更新。第一把用 `shard-server setup` 打印的一次性链接注册（15 分钟、一次性）。
   换域名会让全部通行密钥失效，需 SSH 重跑 setup。
 - **会话**：Cookie `__Host-shard`，`HttpOnly; Secure; SameSite=Strict; Path=/`；32 字节随机，库里只存 sha256；
-  闲置 14 天、绝对 90 天；登录时轮换。敏感操作要求 10 分钟内重新验证通行密钥：增删通行密钥、批准设备配对、
-  导出全部、彻底删除与清空回收站、注销其他会话。
+  闲置 14 天、绝对 90 天；登录时轮换（登录本身算一次验证）。敏感操作要求 10 分钟内重新验证通行密钥：增删通行密钥、
+  批准设备配对、导出全部、「立即抹除」删除历史、注销其他会话（RPC 里标 `Access::Sensitive`，成功后记审计）。
+  彻底删除与清空回收站**不**要求：有 30 天找回期，可逆；要求的话桌面客户端用设备令牌就清不了回收站。
 - **CSRF**：SameSite=Strict；非 GET 必须带 `X-Shard-Request: 1`，`Origin` 等于配置地址，`Sec-Fetch-Site` 为
   `same-origin`；只接受 JSON 或指定字节类型；不开 CORS；GET 无副作用。
 - **CSP**：`default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline';
@@ -389,7 +407,7 @@ set_fragment_pinned、set/remove_fragment_property、save_fragment_image（内�
 | S4 | CLI 改调服务器 RPC（设备令牌）；更新 guide.rs | CLI 集成测试在临时服务器上通过；`--expect`、错误码、JSON 输出不变 |
 | S5 | 前端传输层 + 网页版 | 现有 Playwright 在 Tauri mock 下全绿；新增 `tests/e2e/` 真服务器用例 |
 | S6 | 移动端布局 | WebKit iPhone 视口端到端用例；真机人工清单 |
-| S7 | 密匣端到端（shard-lockbox 双目标、v2 信封、KDF 升级、网页解锁开关） | 固定测试向量互解；写入金丝雀明文后 shard.db / blobs.db / WAL grep 命中 0 |
+| S7 | 密匣端到端（S7a 加密格式 crate ✅；S7b 领域逻辑 + 服务端接口；S7c wasm + 网页客户端；v2 信封、KDF 升级、网页解锁开关） | 固定测试向量互解；写入金丝雀明文后 shard.db / blobs.db / WAL grep 命中 0 |
 | S8 | 桌面客户端模式（副本、outbox、离线子集、钥匙串、配对） | 双客户端断网脚本覆盖 server-and-sync-plan §十一 的 9 条 + 恢复后 epoch 对账找回数据 |
 | S9 | 版本历史界面 + 导出 zip | 恢复任意修订后 sha 与当时一致 |
 | S10 | 生产加固 + 真实数据副本恢复演练 + 监控 | 每周自动恢复演练通过；healthz 监控 |
