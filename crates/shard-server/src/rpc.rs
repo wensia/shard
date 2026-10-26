@@ -178,6 +178,11 @@ impl RpcEnv<'_> {
         Ok(value)
     }
 
+    /// 不经内容事务、但改变了密匣可见性（如网页解锁开关）：提交后同样推 `lockbox-changed`，其他页面重取快照。
+    pub fn mark_lockbox_changed(&self) {
+        self.lockbox_changed.set(true);
+    }
+
     fn record(&self, committed: shard_store::Committed) {
         self.lockbox_changed.set(self.lockbox_changed.get() || committed.lockbox_changed);
         self.committed.borrow_mut().extend(committed.changes);

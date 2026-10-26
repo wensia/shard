@@ -217,13 +217,7 @@ async fn web_unlock_switch_withholds_envelopes_from_browsers() {
     assert_eq!(h.ok("lockbox_snapshot", json!({})).await["items"].as_array().unwrap().len(), 1);
 }
 
-#[tokio::test]
-async fn lockbox_writes_are_pushed_over_sse() {
-    let h = Harness::new().await;
-    let response = h.app.clone().oneshot(h.browser(Method::GET, "/api/events").body(Body::empty()).unwrap()).await.unwrap();
-    let mut body = response.into_body();
-    let (manifest, _) = new_manifest();
-    h.ok("lockbox_apply", json!({ "manifest": { "body": manifest.to_text().unwrap(), "expectedSha": null } })).await;
+async fn read_lockbox_changed(body: &mut Body) {
     let mut text = String::new();
     while !text.contains("event: lockbox-changed") {
         let frame = tokio::time::timeout(Duration::from_secs(5), body.frame()).await.expect("SSE 超时").unwrap().unwrap();
@@ -231,6 +225,19 @@ async fn lockbox_writes_are_pushed_over_sse() {
             text.push_str(&String::from_utf8_lossy(data));
         }
     }
+}
+
+#[tokio::test]
+async fn lockbox_writes_are_pushed_over_sse() {
+    let h = Harness::new().await;
+    let response = h.app.clone().oneshot(h.browser(Method::GET, "/api/events").body(Body::empty()).unwrap()).await.unwrap();
+    let mut body = response.into_body();
+    let (manifest, _) = new_manifest();
+    h.ok("lockbox_apply", json!({ "manifest": { "body": manifest.to_text().unwrap(), "expectedSha": null } })).await;
+    read_lockbox_changed(&mut body).await;
+    // 网页解锁开关也推：其他已解锁的页面据此重取快照、立即上锁。
+    h.ok("set_lockbox_web_unlock", json!({ "allowed": false })).await;
+    read_lockbox_changed(&mut body).await;
 }
 
 fn contains(haystack: &[u8], needle: &[u8]) -> bool {

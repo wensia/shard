@@ -223,5 +223,7 @@ struct WebUnlockArgs {
 fn set_lockbox_web_unlock(env: &RpcEnv<'_>, args: Value) -> Result<Value, RpcError> {
     let args: WebUnlockArgs = parse(args)?;
     env.store.set_meta(WEB_UNLOCK_KEY, if args.allowed { "1" } else { "0" })?;
+    // 已解锁的其他网页收到后重取快照：信封被扣下，它们立即上锁。
+    env.mark_lockbox_changed();
     Ok(json!({ "webUnlock": args.allowed }))
 }
