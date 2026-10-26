@@ -76,4 +76,14 @@ describe("planVaultChanges", () => {
     expect(planVaultChanges([change("datasets/新.csv", "sha")], known)).toMatchObject({ csvFiles: true, datasets: ["datasets/新.csv"] })
     expect(planVaultChanges([change("datasets/阅读.csv", null)], known).csvFiles).toBe(true)
   })
+
+  it("reloads fragments when the web lockbox snapshot changes, but not for its own saves", () => {
+    const withLockbox = { ...known, fragments: [...known.fragments, fragment("lockbox/fragments/2026/10/x.shard", "sha-x")] }
+    const plan = (changes: VaultFileChange[]) => planVaultChanges(changes, withLockbox)
+    expect(plan([change("lockbox/fragments/2026/10/x.shard", "sha-x")]).fragments).toBe(false)
+    expect(plan([change("lockbox/fragments/2026/10/x.shard", "sha-y")])).toMatchObject({ fragments: true, libraryTree: false })
+    expect(plan([change("lockbox/fragments/2026/10/new.shard", "sha-n")]).fragments).toBe(true)
+    expect(plan([change("lockbox/fragments/2026/10/x.shard", null)]).fragments).toBe(true)
+    expect(plan([change("lockbox/archive/2026/10/gone.shard", null)]).fragments).toBe(false)
+  })
 })

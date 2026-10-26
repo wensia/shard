@@ -15,6 +15,9 @@ dist-ssr
 playwright-report/
 test-results/
 
+# 网页端密匣的 wasm 胶水：scripts/build-lockbox-wasm.sh 生成（pnpm dev / build 自动执行）
+src/lib/lockbox-client/wasm/
+
 # Tauri / Rust build artifacts
 # workspace 化之后构建产物与锁文件都收敛到仓库根，子目录里的是历史残留。
 target/

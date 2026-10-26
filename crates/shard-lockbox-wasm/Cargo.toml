@@ -11,8 +11,16 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 shard-lockbox = { path = "../shard-lockbox" }
 shard-core = { path = "../shard-core" }
+shard-vault = { path = "../shard-vault" }
+serde = { workspace = true }
+serde_yaml = "0.9"
+sha2 = { workspace = true }
+zeroize = "1"
 serde_json = { workspace = true }
 wasm-bindgen = "=0.2.122"
 # wasm32-unknown-unknown 上的随机数与时钟走浏览器（crypto.getRandomValues、Date）。
 getrandom = { version = "0.2", features = ["js"] }
 chrono = { workspace = true, features = ["wasmbind"] }
+
+[dev-dependencies]
+tempfile = "3"

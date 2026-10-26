@@ -53,6 +53,12 @@ export function planVaultChanges(
       if (added || removed) plan.libraryTree = true
       continue
     }
+    if (path.startsWith("lockbox/") && path.endsWith(".shard")) {
+      // 密匣客户端的快照变化（别的设备写了密匣，见 lockbox-client）：与内存不一致就重读碎片列表。
+      const knownSha = fragmentShas.get(path)
+      if (exists ? knownSha !== change.sha : knownSha !== undefined) plan.fragments = true
+      continue
+    }
     if (path.endsWith(".csv")) {
       plan.datasets.push(path)
       if (exists !== csvPaths.has(path)) plan.csvFiles = true

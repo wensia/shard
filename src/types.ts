@@ -339,6 +339,11 @@ export interface LockboxState {
   unlocked: boolean
   expiresAt: string | null
   ttlSeconds: number
+  /**
+   * 以服务器为真相时才有：这个客户端能不能解锁（网页上即「允许在网页解锁密匣」）。为 false 时密匣空间
+   * 只显示提示，锁着的 #密匣 速记照常可用。桌面本地模式没有这个字段。
+   */
+  webUnlock?: boolean
 }
 
 export interface LockboxSetupResult {

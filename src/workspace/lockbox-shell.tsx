@@ -98,6 +98,8 @@ export function LockboxShell({
               ) : null}
               <FragmentTimeline {...timeline} />
             </>
+          ) : lockbox?.webUnlock === false ? (
+            <LockboxWebUnlockOff />
           ) : (
             <LockboxGate
               onReset={onResetPassword}
@@ -127,6 +129,27 @@ function describeAutoLock(ttlSeconds?: number) {
   if (!ttlSeconds || ttlSeconds <= 0) return "闲置一段时间后自动上锁"
   if (ttlSeconds < 60) return `闲置 ${ttlSeconds} 秒后自动上锁`
   return `闲置 ${Math.round(ttlSeconds / 60)} 分钟后自动上锁`
+}
+
+/**
+ * 网页端关掉了「允许在网页解锁密匣」：不给口令框（服务器也不再下发密文）。
+ * 锁着用 #密匣 速记仍可用——那只用公钥加密，不需要口令。
+ */
+function LockboxWebUnlockOff() {
+  return (
+    <div className={styles.gate}>
+      <section aria-labelledby="lockbox-web-unlock-off-title" className={styles.lid}>
+        <div className={styles.lidBody}>
+          <h1 className={styles.gateTitle} id="lockbox-web-unlock-off-title">
+            网页解锁已关闭
+          </h1>
+          <p className={styles.gateHint}>
+            在网页上不能打开密匣。用 #密匣 速记仍会加密存入；要查看或修改，到桌面应用里解锁，或在设置的「账号与安全」里重新允许网页解锁。
+          </p>
+        </div>
+      </section>
+    </div>
+  )
 }
 
 /**

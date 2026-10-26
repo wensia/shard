@@ -2,9 +2,13 @@ import { useCallback, useEffect, useState } from "react"
 
 import { SettingsGroup, SettingsGroupItem, SettingsRow } from "@/components/shard/settings-controls"
 import { Button } from "@/components/ui/button"
+import { Switch } from "@/components/ui/switch"
+import { isServerFailure } from "@/lib/lockbox-client/client"
+import { serverLockbox } from "@/lib/lockbox-client/transport"
 import { notify } from "@/lib/notify"
 
 import {
+  AuthError,
   addPasskey,
   defaultPasskeyLabel,
   listDevices,
@@ -14,6 +18,7 @@ import {
   revokeDevice,
   revokePasskey,
   revokeSession,
+  withStepUp,
   type DeviceInfo,
   type PasskeyInfo,
   type SessionInfo,
@@ -57,6 +62,18 @@ interface AccountData {
   devices: DeviceInfo[]
 }
 
+/** 「允许在网页解锁密匣」：敏感操作，服务器要求 10 分钟内验证过通行密钥，过期时弹出系统确认。 */
+function setLockboxWebUnlock(allowed: boolean) {
+  return withStepUp(async () => {
+    const lockbox = serverLockbox()
+    if (!lockbox) throw new Error("没有连接服务器。")
+    await lockbox.setWebUnlock(allowed).catch((failure: unknown) => {
+      if (isServerFailure(failure)) throw new AuthError(failure.code ?? "ERROR", String(failure.detail))
+      throw failure
+    })
+  })
+}
+
 /**
  * 网页端设置里的「账号与安全」：通行密钥、登录会话、已配对设备、退出登录。
  * 吊销与添加都要求最近 10 分钟内验证过通行密钥，过期时会弹出系统的通行密钥确认。
@@ -64,6 +81,7 @@ interface AccountData {
 export function AccountSettings() {
   const [data, setData] = useState<AccountData | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
+  const [webUnlock, setWebUnlock] = useState<boolean | null>(null)
 
   const load = useCallback(async () => {
     try {
@@ -74,9 +92,19 @@ export function AccountSettings() {
     }
   }, [])
 
+  const loadWebUnlock = useCallback(async () => {
+    try {
+      const lockbox = serverLockbox()
+      if (lockbox) setWebUnlock((await lockbox.webUnlock()) ?? true)
+    } catch (error) {
+      notify.failure("读取密匣设置失败", error)
+    }
+  }, [])
+
   useEffect(() => {
     void load()
-  }, [load])
+    void loadWebUnlock()
+  }, [load, loadWebUnlock])
 
   async function run(key: string, action: () => Promise<unknown>, success: string) {
     setBusy(key)
@@ -84,6 +112,7 @@ export function AccountSettings() {
       await action()
       notify.success(success)
       await load()
+      await loadWebUnlock()
     } catch (error) {
       notify.failure("操作没有完成", error)
     } finally {
@@ -136,6 +165,23 @@ export function AccountSettings() {
           >
             在这台设备上添加
           </Button>
+        </SettingsRow>
+      </SettingsGroup>
+
+      <SettingsGroup busy={busy === "webUnlock"}>
+        <SettingsRow
+          controlWidth="auto"
+          description="关掉后服务器不再把密文发给浏览器，网页上打不开密匣（本页立即上锁，其他已解锁的网页下次上锁后也打不开）；用 #密匣 速记照常加密存入。它防的是被盗的浏览器会话，防不了被篡改的网页：在不信任的设备上不要输入密匣口令。"
+          label="允许在网页解锁密匣"
+        >
+          <Switch
+            aria-label="允许在网页解锁密匣"
+            checked={webUnlock ?? true}
+            disabled={busy !== null || webUnlock === null}
+            onCheckedChange={(next) =>
+              void run("webUnlock", () => setLockboxWebUnlock(next), next ? "已允许在网页解锁密匣" : "已关闭网页解锁")
+            }
+          />
         </SettingsRow>
       </SettingsGroup>
 

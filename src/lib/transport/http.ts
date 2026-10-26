@@ -1,5 +1,5 @@
-import { AUTH_REQUIRED_EVENT, type ShardTransport } from "./index"
-import { subscribeVaultEvents } from "./sse"
+import { AUTH_REQUIRED_EVENT, type ServerFailure, type ShardTransport } from "./index"
+import { subscribeLockboxEvents, subscribeVaultEvents } from "./sse"
 
 const RPC_PREFIX = "/api/rpc/"
 /** 网络失败或网关错误时的重试次数；重试用同一个幂等键，服务端保证只提交一次。 */
@@ -29,13 +29,18 @@ interface ErrorBody {
   error?: unknown
 }
 
-async function readError(response: Response): Promise<unknown> {
+/** 失败的响应：`detail` 是界面该显示的内容（结构化错误或消息），另带状态码与错误码（密匣客户端要看）。 */
+async function readFailure(response: Response): Promise<ServerFailure> {
   const body = (await response.json().catch(() => null)) as ErrorBody | null
   if (response.status === 401) {
     window.dispatchEvent(new CustomEvent(AUTH_REQUIRED_EVENT))
   }
-  if (body?.error !== undefined) return body.error
-  return body?.message ?? `请求失败（${response.status}）`
+  const detail = body?.error !== undefined ? body.error : (body?.message ?? `请求失败（${response.status}）`)
+  return { status: response.status, code: body?.code, detail }
+}
+
+async function readError(response: Response): Promise<unknown> {
+  return (await readFailure(response)).detail
 }
 
 /** 发一个请求；网络失败与 502/503/504 用同一个幂等键重试。 */
@@ -58,6 +63,16 @@ export async function request(url: string, init: RequestInit, fetcher: typeof fe
 }
 
 async function rpc<T>(command: string, body: BodyInit, contentType: string): Promise<T> {
+  try {
+    return await rpcWithFailure<T>(command, body, contentType)
+  } catch (failure) {
+    // 服务器的错误换成界面显示的内容；网络错误（已是提示字符串）原样抛出。
+    throw typeof failure === "object" && failure !== null && "detail" in failure ? (failure as ServerFailure).detail : failure
+  }
+}
+
+/** 同 {@link rpc}，失败时 reject 成带状态码与错误码的 {@link ServerFailure}。 */
+async function rpcWithFailure<T>(command: string, body: BodyInit, contentType: string): Promise<T> {
   const response = await request(RPC_PREFIX + encodeURIComponent(command), {
     method: "POST",
     headers: {
@@ -68,8 +83,42 @@ async function rpc<T>(command: string, body: BodyInit, contentType: string): Pro
     },
     body,
   })
-  if (!response.ok) throw await readError(response)
+  if (!response.ok) throw await readFailure(response)
   return (await response.json()) as T
+}
+
+function decodeBase64(data: string) {
+  const binary = atob(data)
+  const bytes = new Uint8Array(binary.length)
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index)
+  return bytes
+}
+
+/**
+ * 读一个资料库文件的原文与 sha（`/api/sync/fetch`）。移入密匣要整篇原文才能保住 frontmatter，
+ * 并以它的 sha 作基线；保留 BOM，字节与服务器上的逐字一致。
+ */
+async function fetchVaultText(path: string): Promise<{ text: string; sha: string }> {
+  const response = await request("/api/sync/fetch", {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-shard-request": "1" },
+    body: JSON.stringify({ paths: [path] }),
+  })
+  if (!response.ok) throw await readFailure(response)
+  const { items } = (await response.json()) as {
+    items?: Array<{ sha?: string; data?: string | null; blob?: boolean; missing?: boolean }>
+  }
+  const item = items?.[0]
+  if (!item?.sha || item.missing) throw { status: 404, code: "NOT_FOUND", detail: `找不到 ${path}` } satisfies ServerFailure
+  let bytes: Uint8Array
+  if (item.blob) {
+    const blob = await request(`/api/blobs/${item.sha}`, { method: "GET" })
+    if (!blob.ok) throw await readFailure(blob)
+    bytes = new Uint8Array(await blob.arrayBuffer())
+  } else {
+    bytes = decodeBase64(item.data ?? "")
+  }
+  return { text: new TextDecoder("utf-8", { ignoreBOM: true }).decode(bytes), sha: item.sha }
 }
 
 async function sha256Hex(bytes: Uint8Array) {
@@ -111,8 +160,13 @@ export const httpTransport: ShardTransport = {
     throw `网页版不支持这个操作（${command}）。`
   },
   listen(event, handler) {
+    if (event === "lockbox-changed") return Promise.resolve(subscribeLockboxEvents(() => handler(undefined as never)))
     if (event !== "vault-changed") return Promise.resolve(() => {})
     return Promise.resolve(subscribeVaultEvents(handler as (payload: unknown) => void))
   },
   fileUrl: filesUrl,
+  server: {
+    call: (command, args) => rpcWithFailure(command, JSON.stringify(args), "application/json"),
+    fetchText: fetchVaultText,
+  },
 }

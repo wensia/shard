@@ -1,4 +1,4 @@
-import { AUTH_REQUIRED_EVENT, AUTHENTICATED_EVENT, VAULT_RESYNC_EVENT } from "./index"
+import { AUTH_REQUIRED_EVENT, AUTHENTICATED_EVENT, LOCKBOX_CHANGED_EVENT, VAULT_RESYNC_EVENT } from "./index"
 
 /**
  * `/api/events` 的 SSE 客户端。用 fetch 流而不是 EventSource：能读到 401（EventSource 只会静默关闭），
@@ -82,6 +82,11 @@ function dispatch(message: SseMessage) {
     window.dispatchEvent(new CustomEvent(VAULT_RESYNC_EVENT))
     return
   }
+  if (message.event === "lockbox-changed") {
+    // 服务器不知道密匣内容，只说「变了」：密匣客户端重取快照，算出变化后以 vault-changed 推给界面。
+    window.dispatchEvent(new CustomEvent(LOCKBOX_CHANGED_EVENT))
+    return
+  }
   if (message.event !== "vault-changed") return
   let payload: unknown
   try {
@@ -153,5 +158,25 @@ export function subscribeVaultEvents(handler: Handler): () => void {
       controller.abort()
       controller = null
     }
+  }
+}
+
+/**
+ * 密匣可能变了：SSE 推来 `lockbox-changed`、游标过旧（`resync`）、断线后重连上（期间的 `lockbox-changed`
+ * 不会补发）。不单独开连接——碎片列表的 `vault-changed` 订阅一直开着它。
+ */
+export function subscribeLockboxEvents(handler: () => void): () => void {
+  const notify = () => handler()
+  window.addEventListener(LOCKBOX_CHANGED_EVENT, notify)
+  window.addEventListener(VAULT_RESYNC_EVENT, notify)
+  let previous = connectionState
+  const stop = subscribeConnection((next) => {
+    if (next === "connected" && previous === "reconnecting") handler()
+    previous = next
+  })
+  return () => {
+    window.removeEventListener(LOCKBOX_CHANGED_EVENT, notify)
+    window.removeEventListener(VAULT_RESYNC_EVENT, notify)
+    stop()
   }
 }
