@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  每周日 10:00 在 Mac 上跑一次恢复演练。复制到 ~/Library/LaunchAgents/ 后把下面的路径、远端、私钥位置改成自己的，
+  再 `launchctl load ~/Library/LaunchAgents/dev.shard.restore-drill.plist`。日志在 /tmp/shard-restore-drill.log。
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>dev.shard.restore-drill</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/路径/到/shard/deploy/restore-drill-latest.sh</string>
+    <string>远端名:bucket</string>
+    <string>/Users/你/.config/shard/backup-identity.txt</string>
+    <string>/路径/到/shard-server</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <dict><key>Weekday</key><integer>0</integer><key>Hour</key><integer>10</integer><key>Minute</key><integer>0</integer></dict>
+  <key>EnvironmentVariables</key>
+  <dict><key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string></dict>
+  <key>StandardOutPath</key><string>/tmp/shard-restore-drill.log</string>
+  <key>StandardErrorPath</key><string>/tmp/shard-restore-drill.log</string>
+</dict>
+</plist>

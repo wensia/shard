@@ -6,7 +6,7 @@
 > **数据与凭据安全**
 > - 通行密钥至少注册两把（例如 iPhone 一把、Mac 一把）。只有一把时，丢了设备就只能 SSH 上服务器走恢复流程。
 > - 备份用 age 加密，**私钥只在你自己手里**（1Password + 纸质）。VPS 上只放公钥：服务器被入侵也解不开备份。
-> - 没演练过的备份等于没有备份：每月在 Mac 上跑一次 `restore-drill.sh`（见最后一节）。
+> - 没演练过的备份等于没有备份：Mac 上每周自动演练一次（见第 8 节）。
 
 ## 0. 前提
 
@@ -105,7 +105,9 @@ systemctl start shard-server
 `auth.db`（通行密钥、会话、设备令牌）不随内容回滚：否则已吊销的会话和令牌会随旧库复活。
 怀疑服务器被入侵时，另外执行 `shard-server recover --revoke-all`，吊销全部凭据后重新注册。
 
-## 8. 恢复演练（每月一次，在 Mac 上）
+## 8. 恢复演练（每周自动一次，在 Mac 上）
+
+私钥只在 Mac 上，VPS 解不开自己的备份，所以演练在 Mac 上跑。手动跑一次：
 
 ```bash
 rclone copy <远端>:<最近一份备份> .          # 或从 VPS 的 /var/backups/shard 拷一份
@@ -113,6 +115,10 @@ deploy/restore-drill.sh shard-时间.tar.zst.age shard-backup.key target/release
 ```
 
 输出「演练通过」才算备份可用。
+
+每周自动跑：`deploy/restore-drill-latest.sh <rclone 远端> <age 私钥> [shard-server]` 从异地取最新一份做同样的事，
+失败或最新备份超过 2 天时弹 macOS 通知。把 `deploy/dev.shard.restore-drill.plist` 复制到 `~/Library/LaunchAgents/`，
+改好里面的路径后 `launchctl load` 即可（每周日 10:00）。
 
 ## 9. 通行密钥全部丢失
 
