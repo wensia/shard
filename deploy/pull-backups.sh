@@ -32,7 +32,7 @@ stamp_seconds() {
 mkdir -p "$dest"
 latest=$(ssh -o BatchMode=yes -o ConnectTimeout=20 "$host" "sudo ls -1 $remote_dir" 2>/dev/null | grep -E "$pattern" | sort | tail -1)
 if [ -z "$latest" ]; then
-	notify "失败：连不上 $host，或服务器上没有任何备份。"
+	notify "失败：连不上 ${host}，或服务器上没有任何备份。"
 	exit 1
 fi
 if [ ! -f "$dest/$latest" ]; then
@@ -49,7 +49,7 @@ now=$(date -u +%s)
 # 服务器每小时备份一次：最新一份超过 6 小时，说明服务器上的定时备份停了。
 latest_seconds=$(stamp_seconds "$latest" || echo 0)
 if [ $((now - latest_seconds)) -gt $((6 * 3600)) ]; then
-	notify "警告：服务器上最新的备份是 $latest，已超过 6 小时没有新备份。"
+	notify "警告：服务器上最新的备份是 ${latest}，已超过 6 小时没有新备份。"
 fi
 
 # 保留策略：从新到旧，14 天以前的每天只留遇到的第一份（当天最晚的）。

@@ -27,7 +27,7 @@ build() {
 	cp -R dist "$out/app/web"
 	cp deploy/docker/compose.yml "$out/"
 	git rev-parse --short HEAD > "$out/REVISION"
-	echo "已组装 $out（$(cat "$out/REVISION")）"
+	echo "已组装 ${out}（$(cat "$out/REVISION")）"
 }
 
 upload() {

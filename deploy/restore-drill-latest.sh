@@ -20,7 +20,7 @@ work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 latest=$(rclone lsf --files-only --include 'shard-*.tar.zst.age' "$remote/" | sort | tail -1)
 if [ -z "$latest" ]; then
-	notify "失败：异地没有找到任何备份（$remote）。"
+	notify "失败：异地没有找到任何备份（${remote}）。"
 	exit 1
 fi
 if ! rclone copy "$remote/$latest" "$work/"; then
@@ -31,7 +31,7 @@ fi
 stamp=$(echo "$latest" | sed -E 's/^shard-([0-9]{8}T[0-9]{6}Z).*/\1/')
 age_seconds=$(( $(date -u +%s) - $(date -u -j -f "%Y%m%dT%H%M%SZ" "$stamp" +%s 2>/dev/null || echo 0) ))
 if [ "$age_seconds" -gt $((2 * 86400)) ]; then
-	notify "警告：最新异地备份是 $stamp，已超过 2 天。"
+	notify "警告：最新异地备份是 ${stamp}，已超过 2 天。"
 fi
 if "$here/restore-drill.sh" "$work/$latest" "$identity" "$server"; then
 	echo "演练通过：$latest"

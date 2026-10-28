@@ -19,7 +19,7 @@ upload=false
 [ "${1:-}" = "--upload" ] && upload=true
 
 if [ ! -s "$RECIPIENTS" ]; then
-	echo "缺少 age 公钥文件：$RECIPIENTS（见 deploy/README.md 的「备份」一节）" >&2
+	echo "缺少 age 公钥文件：${RECIPIENTS}（见 deploy/README.md 的「备份」一节）" >&2
 	exit 1
 fi
 
