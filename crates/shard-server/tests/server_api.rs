@@ -46,6 +46,7 @@ fn stale(_env: &RpcEnv<'_>, _args: Value) -> Result<Value, RpcError> {
 
 struct Harness {
     _dir: tempfile::TempDir,
+    state: AppState,
     app: Router,
     cookie: String,
 }
@@ -63,7 +64,7 @@ impl Harness {
         registry.register("put_file", Access::Write, put_file);
         registry.register("stale", Access::Read, stale);
         let state = AppState::open(config, registry).unwrap();
-        let app = app::build(state);
+        let app = app::build(state.clone());
         let response = app
             .clone()
             .oneshot(Request::post("/api/test/session").body(Body::empty()).unwrap())
@@ -71,7 +72,7 @@ impl Harness {
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
         let cookie = response.headers()[header::SET_COOKIE].to_str().unwrap().split(';').next().unwrap().to_string();
-        Self { _dir: dir, app, cookie }
+        Self { _dir: dir, state, app, cookie }
     }
 
     fn browser(&self, method: Method, uri: &str) -> axum::http::request::Builder {
@@ -256,6 +257,24 @@ async fn events_replay_from_the_cursor_and_then_stream_live_changes() {
 
     h.rpc("put_file", Some("after"), json!({ "path": "notes/new.md", "base64": STANDARD.encode("y") })).await;
     read_until("notes/new.md", &mut body, &mut text).await;
+}
+
+#[tokio::test]
+async fn events_end_when_the_server_begins_shutting_down() {
+    let h = Harness::new().await;
+    let response = h.send(h.browser(Method::GET, "/api/events").body(Body::empty()).unwrap()).await;
+    let mut body = response.into_body();
+    let mut text = String::new();
+    read_until(": connected", &mut body, &mut text).await;
+    // SSE 不结束，优雅停机就一直等它，直到被 systemd / docker 强杀。
+    h.state.begin_shutdown();
+    let ended = tokio::time::timeout(Duration::from_secs(5), async {
+        while let Some(frame) = body.frame().await {
+            frame.unwrap();
+        }
+    })
+    .await;
+    assert!(ended.is_ok(), "开始停机后 SSE 连接应当结束");
 }
 
 #[tokio::test]

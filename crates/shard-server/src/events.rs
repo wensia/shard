@@ -57,6 +57,7 @@ async fn events(
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.parse::<i64>().ok());
     let mut live = state.events.subscribe();
+    let mut shutdown = state.shutdown.subscribe();
     let head = state.store.head_seq()?;
     // 没给游标就从现在开始；给了就补发之后的。
     let mut cursor = last_event_id.or(query.since).unwrap_or(head);
@@ -91,9 +92,13 @@ async fn events(
                 break;
             }
         }
-        // 实时。
+        // 实时。停机时结束：客户端会按退避重连到重启后的服务。
         loop {
-            match live.recv().await {
+            let received = tokio::select! {
+                _ = shutdown.wait_for(|stopping| *stopping) => return,
+                received = live.recv() => received,
+            };
+            match received {
                 Ok(commit) => {
                     let fresh: Vec<ChangeRecord> =
                         commit.changes.iter().filter(|change| change.seq > cursor).cloned().collect();

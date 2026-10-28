@@ -94,7 +94,7 @@ pub fn client_meta(parts: &Parts, config: &Config) -> ClientMeta {
             .filter(|ip| ip.parse::<IpAddr>().is_ok())
     };
     let ip = match peer {
-        Some(peer) if config.trust_proxy && peer.is_loopback() => forwarded().or(Some(peer.to_string())),
+        Some(peer) if config.trusts_proxy(peer) => forwarded().or(Some(peer.to_string())),
         Some(peer) => Some(peer.to_string()),
         None if config.trust_proxy => forwarded(),
         None => None,
@@ -228,5 +228,36 @@ impl FromRequestParts<AppState> for Meta {
 
     async fn from_request_parts(parts: &mut Parts, state: &AppState) -> Result<Self, Self::Rejection> {
         Ok(Meta(client_meta(parts, &state.config)))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::http::Request;
+
+    fn meta(config: &Config, peer: &str, forwarded: Option<&str>) -> Option<String> {
+        let mut request = Request::builder().uri("/api/auth/login/start");
+        if let Some(forwarded) = forwarded {
+            request = request.header("x-forwarded-for", forwarded);
+        }
+        let (mut parts, _) = request.body(()).unwrap().into_parts();
+        parts.extensions.insert(ConnectInfo(SocketAddr::new(peer.parse().unwrap(), 50000)));
+        client_meta(&parts, config).ip
+    }
+
+    #[test]
+    fn the_client_ip_comes_from_the_proxy_only_when_the_peer_is_the_proxy() {
+        let config = Config::new("/tmp".into(), "https://shard.example.com", None, true)
+            .unwrap()
+            .with_proxy_networks(vec!["172.18.0.0/16".parse().unwrap()]);
+        // Caddy（docker 网络里）转发：限流和审计按真实客户端 IP 算，而不是所有人都算成 Caddy 一个 IP。
+        assert_eq!(meta(&config, "172.18.0.4", Some("198.51.100.7")).as_deref(), Some("198.51.100.7"));
+        assert_eq!(meta(&config, "127.0.0.1", Some("198.51.100.7")).as_deref(), Some("198.51.100.7"));
+        // 直连的对端自己填的头不算数。
+        assert_eq!(meta(&config, "203.0.113.5", Some("198.51.100.7")).as_deref(), Some("203.0.113.5"));
+        // 头缺失或不是 IP 时退回对端地址。
+        assert_eq!(meta(&config, "172.18.0.4", None).as_deref(), Some("172.18.0.4"));
+        assert_eq!(meta(&config, "172.18.0.4", Some("unknown")).as_deref(), Some("172.18.0.4"));
     }
 }

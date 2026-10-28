@@ -1,5 +1,5 @@
 //! `shard-server` 命令行：
-//! - `serve`：启动服务（只监听本机，由 Caddy 反代并终止 TLS）。
+//! - `serve`：启动服务（只监听本机，或在 docker 里只暴露给 Caddy 所在的网络；由 Caddy 反代并终止 TLS）。
 //! - `setup`：打印首次注册通行密钥的一次性链接。
 //! - `recover`：通行密钥全部丢失时打印恢复链接，可同时吊销全部旧凭据。
 //! - `rotate-epoch`：从备份恢复内容库后执行，客户端发现后走全量对账。
@@ -39,6 +39,10 @@ enum Command {
         /// 前面有 Caddy 反代时打开：信任本机回环连接带来的 X-Forwarded-For。
         #[arg(long)]
         trust_proxy: bool,
+        /// Caddy 跑在 docker 里时，填它所在 docker 网络的网段（例如 172.18.0.0/16）：
+        /// 信任从这里转发来的 X-Forwarded-For，限流与审计才按真实客户端 IP 算。可写多次。
+        #[arg(long = "proxy-network")]
+        proxy_networks: Vec<ipnet::IpNet>,
     },
     Setup {
         #[arg(long)]
@@ -105,14 +109,14 @@ fn issue_link(data_dir: &PathBuf, origin: &str, purpose: &str) -> Result<String,
 async fn main() {
     let cli = Cli::parse();
     let result = match cli.command {
-        Command::Serve { data_dir, origin, listen, static_dir, trust_proxy } => {
+        Command::Serve { data_dir, origin, listen, static_dir, trust_proxy, proxy_networks } => {
             tracing_subscriber::fmt()
                 .with_env_filter(
                     tracing_subscriber::EnvFilter::try_from_default_env()
                         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
                 )
                 .init();
-            serve(data_dir, &origin, listen, static_dir, trust_proxy).await
+            serve(data_dir, &origin, listen, static_dir, trust_proxy, proxy_networks).await
         }
         Command::Setup { data_dir, origin } => issue_link(&data_dir, &origin, "first_passkey").map(|link| {
             println!("在 15 分钟内用浏览器打开下面的链接，注册第一把通行密钥：\n{link}");
@@ -160,11 +164,13 @@ async fn serve(
     listen: SocketAddr,
     static_dir: Option<PathBuf>,
     trust_proxy: bool,
+    proxy_networks: Vec<ipnet::IpNet>,
 ) -> Result<(), String> {
-    if !listen.ip().is_loopback() {
+    // docker 里只能监听容器网卡（端口不映射到宿主），这时给了 Caddy 的网段，不算误配。
+    if !listen.ip().is_loopback() && proxy_networks.is_empty() {
         tracing::warn!(%listen, "服务没有只监听本机：公网访问应当经过 Caddy 终止 TLS");
     }
-    let config = Config::new(data_dir, origin, static_dir, trust_proxy)?;
+    let config = Config::new(data_dir, origin, static_dir, trust_proxy)?.with_proxy_networks(proxy_networks);
     let mut registry = rpc::base_registry();
     commands::register(&mut registry);
     shard_server::search::register(&mut registry);
@@ -173,15 +179,33 @@ async fn serve(
     let state = AppState::open(config, registry)?;
     commands::ensure_layout(&state.store)?;
     spawn_maintenance(state.store.clone());
-    let router = app::build(state);
+    let router = app::build(state.clone());
     let listener = tokio::net::TcpListener::bind(listen).await.map_err(|error| error.to_string())?;
     tracing::info!(%listen, "shard-server 已启动");
     axum::serve(listener, router.into_make_service_with_connect_info::<SocketAddr>())
-        .with_graceful_shutdown(async {
-            let _ = tokio::signal::ctrl_c().await;
+        .with_graceful_shutdown(async move {
+            stop_requested().await;
+            tracing::info!("收到停止信号：不再接新连接，等在途请求结束");
+            state.begin_shutdown();
         })
         .await
         .map_err(|error| error.to_string())
+}
+
+/// Ctrl-C，或 systemd / `docker stop` 发的 SIGTERM。容器里服务是 1 号进程，SIGTERM 没有处理函数会被内核直接忽略。
+async fn stop_requested() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{signal, SignalKind};
+        if let Ok(mut terminate) = signal(SignalKind::terminate()) {
+            tokio::select! {
+                _ = tokio::signal::ctrl_c() => {}
+                _ = terminate.recv() => {}
+            }
+            return;
+        }
+    }
+    let _ = tokio::signal::ctrl_c().await;
 }
 
 /// 例行维护，启动后先跑一次，之后每 6 小时一次：彻底删除满 30 天的历史到期抹除；

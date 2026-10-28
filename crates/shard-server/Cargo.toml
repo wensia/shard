@@ -8,6 +8,8 @@ publish = false
 [features]
 # 只给端到端测试用：提供直接签发会话的测试端点。发行版绝不能打开。
 test-auth = []
+# 交叉编译 Linux 版（cargo zigbuild）时把 OpenSSL 一起编进来：webauthn-rs 依赖它，目标机不必装 libssl。
+vendored-openssl = ["dep:openssl"]
 
 [dependencies]
 axum = "0.8"
@@ -15,6 +17,8 @@ base64 = "0.22"
 chrono = { workspace = true }
 clap = { version = "4", features = ["derive"] }
 futures-util = "0.3"
+ipnet = "2"
+openssl = { version = "0.10", optional = true, features = ["vendored"] }
 rand = "0.8"
 rusqlite = { version = "=0.40.2", features = ["bundled"] }
 serde = { workspace = true }

@@ -3,7 +3,7 @@
 use std::{ops::Deref, sync::Arc};
 
 use shard_store::{ChangeRecord, Store};
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, watch};
 use webauthn_rs::{Webauthn, WebauthnBuilder};
 
 use crate::{
@@ -31,6 +31,8 @@ pub struct Inner {
     pub ceremonies: Ceremonies,
     pub limiter: RateLimiter,
     pub events: broadcast::Sender<Arc<CommitEvent>>,
+    /// 停机信号：SSE 长连接收到后结束，优雅停机才不会一直等它们。
+    pub shutdown: watch::Sender<bool>,
     pub rpc: Registry,
     /// 前端 `vaultPath` 字段的值：`shard://<域名>/<vault_id>`，只作身份用。
     pub vault_identity: String,
@@ -66,9 +68,15 @@ impl AppState {
             ceremonies: Ceremonies::default(),
             limiter: RateLimiter::default(),
             events,
+            shutdown: watch::Sender::new(false),
             rpc,
             vault_identity,
         })))
+    }
+
+    /// 收到 SIGTERM / Ctrl-C 后调用：让 SSE 连接结束，在途的普通请求照常做完。
+    pub fn begin_shutdown(&self) {
+        self.shutdown.send_replace(true);
     }
 
     /// 写入成功后广播给 SSE 订阅者。没有订阅者时发送失败是正常的。
