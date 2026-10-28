@@ -17,6 +17,8 @@ services:
       - --proxy-network=${SHARD_PROXY_SUBNET:-172.16.0.0/12}
     environment:
       RUST_LOG: info
+      # docker 日志不是终端：不要颜色转义码
+      NO_COLOR: "1"
       # 备份脚本（docker exec shard-server shard-backup.sh）读取
       SHARD_DATA_DIR: /data
       SHARD_BACKUP_DIR: /backups
