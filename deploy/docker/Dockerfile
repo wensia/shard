@@ -7,7 +7,8 @@ RUN sed -i "s|http://deb.debian.org/debian|${DEBIAN_APT_MIRROR}|g" /etc/apt/sour
 	&& apt-get update \
 	&& apt-get install -y --no-install-recommends age zstd wget \
 	&& rm -rf /var/lib/apt/lists/* \
-	&& useradd --system --uid 10001 --home-dir /data --no-create-home --shell /usr/sbin/nologin shard
+	&& groupadd --system --gid 10001 shard \
+	&& useradd --system --uid 10001 --gid 10001 --home-dir /data --no-create-home --shell /usr/sbin/nologin shard
 
 COPY shard-server /usr/local/bin/shard-server
 COPY shard-backup.sh /usr/local/bin/shard-backup.sh
