@@ -14,6 +14,76 @@
 - VPS：Debian / Ubuntu，开放 22、80、443；SSH 只允许密钥登录。
 - 防火墙：`ufw allow OpenSSH && ufw allow 80,443/tcp && ufw enable`。
 
+## docker 部署（和其他服务共用一台机器）
+
+80/443 已经被别的项目的 Caddy 容器占着时（例如 askfish.net 这台），不另装 Caddy，服务端也不走 systemd：
+Shard 跑在自己的容器里，加入那个 Caddy 所在的 docker 网络，Caddy 用 `import` 多挂一个站点。端口不映射到宿主，
+公网只能经 Caddy 访问。下面第 1～3 节换成本节；第 4 节以后的 `sudo -u shard shard-server …` 换成
+`sudo docker exec shard-server shard-server …`，`--data-dir` 写 `/data`。
+
+| 路径（VPS） | 内容 |
+|---|---|
+| `/opt/shard/compose.yml`、`app/`、`REVISION` | `release.sh upload` 上传，不要手改 |
+| `/opt/shard/.env` | 站点地址与 Caddy 所在的 docker 网络（`deploy/docker/env.example`） |
+| `/opt/shard/data/` | 三个库，属主 10001（容器里的 shard 用户） |
+| `/opt/shard/backups/` | 每小时一份加密快照，保留 48 份 |
+| `/opt/shard/backup-recipients.txt` | age 公钥 |
+
+首次部署：
+
+```bash
+# VPS 上：目录、站点地址、age 公钥
+sudo install -d -m 755 /opt/shard /opt/shard/app
+sudo install -d -m 700 -o 10001 -g 10001 /opt/shard/data /opt/shard/backups
+sudo tee /opt/shard/.env < deploy/docker/env.example      # 改 SHARD_ORIGIN 与 SHARD_PROXY_DOCKER_NETWORK
+echo 'age1…' | sudo tee /opt/shard/backup-recipients.txt
+
+# Mac 上：交叉编译 + 构建网页，上传并启动（以后每次发布也只跑这两步）
+brew install cargo-zigbuild && rustup target add x86_64-unknown-linux-gnu
+deploy/docker/release.sh build
+deploy/docker/release.sh upload <ssh 主机>
+
+# VPS 上：Caddy 站点（以 ai-ditui 的 Caddy 为例：配置目录挂在容器的 /config，Caddyfile 是单文件挂载）
+sudo cp deploy/docker/shard.caddy /opt/ai-ditui/caddy/config/shard.caddy         # 改域名
+# Caddyfile 先备份，末尾追加一行 import /config/shard.caddy。单文件挂载要原地追加（>>），
+# 用 sed -i 之类换了 inode，容器里看到的还是旧文件。
+sudo docker exec ai-ditui-web-1 caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+sudo docker exec ai-ditui-web-1 caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
+curl -s https://<域名>/healthz                                                     # 应输出 ok
+
+# VPS 上：每小时备份（快照、校验、加密都在容器里做）
+sudo cp deploy/docker/shard-backup.service deploy/docker/shard-backup.timer /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable --now shard-backup.timer
+sudo systemctl start shard-backup.service && sudo ls /opt/shard/backups           # 先手动跑一次
+```
+
+注册第一把通行密钥：`sudo docker exec shard-server shard-server setup --data-dir /data --origin https://<域名>`。
+
+**异地副本放在 Mac 上**（不用另开云存储账号）：Mac 每天两次把最新一份加密快照拉到 `~/shard-backups`，
+每 7 天顺带做一次恢复演练，失败或服务器超过 6 小时没有新备份时弹通知。
+
+```bash
+mkdir -p ~/.config/shard/bin
+cp deploy/pull-backups.sh deploy/restore-drill.sh ~/.config/shard/bin/
+cargo build --release -p shard-server --features vendored-openssl                # 演练用的本机 shard-server
+cp target/release/shard-server ~/.config/shard/bin/
+~/.config/shard/bin/pull-backups.sh <ssh 主机> ~/.config/shard/backup.key ~/.config/shard/bin/shard-server --drill
+cp deploy/dev.shard.pull-backups.plist ~/Library/LaunchAgents/                  # 改里面的路径与 ssh 主机
+launchctl load ~/Library/LaunchAgents/dev.shard.pull-backups.plist
+```
+
+从备份恢复（对应第 7 节）：
+
+```bash
+cd /opt/shard && sudo docker compose stop
+sudo rm -f data/shard.db-wal data/shard.db-shm data/blobs.db-wal data/blobs.db-shm
+# 把 Mac 上解密出的 shard.db、blobs.db 放进 /opt/shard/data（auth.db 保留现有的），属主改回 10001
+sudo chown 10001:10001 data/*.db
+sudo docker compose run --rm shard-server verify --data-dir /data
+sudo docker compose run --rm shard-server rotate-epoch --data-dir /data
+sudo docker compose up -d
+```
+
 ## 1. 构建
 
 服务端二进制在 VPS 上编译最省事（webauthn-rs 依赖 OpenSSL）：

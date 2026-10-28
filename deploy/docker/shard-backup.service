@@ -1,0 +1,9 @@
+[Unit]
+Description=Shard encrypted snapshot (docker)
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+# 快照、校验、打包加密都在容器里做（镜像里有 age 和 zstd），产物落在 /opt/shard/backups。
+ExecStart=/usr/bin/docker exec shard-server /usr/local/bin/shard-backup.sh

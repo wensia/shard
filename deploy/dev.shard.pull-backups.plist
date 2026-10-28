@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  每天 12:40、20:40 在 Mac 上拉取服务器的最新加密快照，每 7 天顺带做一次恢复演练（deploy/pull-backups.sh）。
+  把下面的「你」换成自己的用户名、ssh 主机换成 ~/.ssh/config 里的名字，复制到 ~/Library/LaunchAgents/ 后
+  `launchctl load ~/Library/LaunchAgents/dev.shard.pull-backups.plist`。日志在 /tmp/shard-pull-backups.log。
+  launchd 不展开 ~，路径都写绝对路径。
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>dev.shard.pull-backups</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/你/.config/shard/bin/pull-backups.sh</string>
+    <string>ssh 主机</string>
+    <string>/Users/你/.config/shard/backup.key</string>
+    <string>/Users/你/.config/shard/bin/shard-server</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <array>
+    <dict><key>Hour</key><integer>12</integer><key>Minute</key><integer>40</integer></dict>
+    <dict><key>Hour</key><integer>20</integer><key>Minute</key><integer>40</integer></dict>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict><key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string></dict>
+  <key>StandardOutPath</key><string>/tmp/shard-pull-backups.log</string>
+  <key>StandardErrorPath</key><string>/tmp/shard-pull-backups.log</string>
+</dict>
+</plist>

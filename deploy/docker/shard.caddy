@@ -1,0 +1,21 @@
+# Shard：反代到 shard-server 容器（/opt/shard，经 docker 网络）。由 Caddyfile 末尾的 import 加载。
+# 本文件来自 Shard 仓库 deploy/docker/shard.caddy，改动请回到仓库改，再由 release.sh caddy 覆盖。
+# 不写 log：其他站点也没开访问日志，会话 Cookie 与设备令牌就不会落进日志。
+shard.example.com {
+	encode zstd gzip
+
+	# 单次请求上限：图片上传 50 MiB、RPC 请求体 64 MiB。
+	request_body {
+		max_size 64MB
+	}
+
+	reverse_proxy shard-server:8787 {
+		# SSE（/api/events）要立刻下发，不能被缓冲。
+		flush_interval -1
+		# 慢速上行传大图时默认超时不够。
+		transport http {
+			read_timeout 300s
+			write_timeout 300s
+		}
+	}
+}

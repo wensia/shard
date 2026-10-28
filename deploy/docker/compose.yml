@@ -1,0 +1,58 @@
+# Shard 服务端（docker 部署，和其他服务共用一台机器时用）。
+# Caddy 在另一个 compose 项目的容器里，经 SHARD_PROXY_DOCKER_NETWORK 这个 docker 网络转发到这里；
+# 端口不映射到宿主，公网只能经 Caddy 访问。站点地址等写在同目录的 .env（见 env.example）。
+services:
+  shard-server:
+    build: ./app
+    image: shard-server:latest
+    container_name: shard-server
+    restart: unless-stopped
+    command:
+      - serve
+      - --data-dir=/data
+      - --origin=${SHARD_ORIGIN:?SHARD_ORIGIN 未设置，见 env.example}
+      - --listen=0.0.0.0:8787
+      - --static-dir=/usr/local/share/shard/web
+      # 只有同一 docker 网络里的容器连得到这里，所以信任 docker 的私有网段即可（网络重建换网段也不受影响）。
+      - --proxy-network=${SHARD_PROXY_SUBNET:-172.16.0.0/12}
+    environment:
+      RUST_LOG: info
+      # 备份脚本（docker exec shard-server shard-backup.sh）读取
+      SHARD_DATA_DIR: /data
+      SHARD_BACKUP_DIR: /backups
+      SHARD_BACKUP_RECIPIENTS: /etc/shard/backup-recipients.txt
+      SHARD_SERVER_BIN: /usr/local/bin/shard-server
+    volumes:
+      - ./data:/data
+      - ./backups:/backups
+      # age 公钥。私钥只在你自己手里，服务器上永远只有公钥。
+      - ./backup-recipients.txt:/etc/shard/backup-recipients.txt:ro
+    # 与 systemd 版的收紧措施对应：只读根文件系统、去掉全部 capability、禁止提权。
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    # 收到 SIGTERM 后等在途写入结束。
+    stop_grace_period: 30s
+    expose:
+      - "8787"
+    networks:
+      - edge
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8787/healthz >/dev/null"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+networks:
+  edge:
+    external: true
+    name: ${SHARD_PROXY_DOCKER_NETWORK:-ai-ditui_default}
