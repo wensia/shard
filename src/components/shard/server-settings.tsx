@@ -1,6 +1,5 @@
 import { invoke } from "@tauri-apps/api/core"
-import { openUrl } from "@tauri-apps/plugin-opener"
-import { useEffect, useRef, useState, type FormEvent } from "react"
+import { useEffect, useState, type FormEvent } from "react"
 
 import { Loader2Icon } from "@/components/icons"
 import { Button } from "@/components/ui/button"
@@ -13,6 +12,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
+import { emailProblem, normalizeEmail } from "@/features/auth/api"
 import { getApiErrorMessage } from "@/lib/api"
 import { notify } from "@/lib/notify"
 import { desktopRemoteStatus } from "@/lib/transport"
@@ -25,26 +25,18 @@ import {
 } from "@/lib/transport/desktop-remote"
 import type { ConnectionState } from "@/lib/transport/sse"
 
+import { LockboxPasswordInput } from "./lockbox-dialog"
 import { SettingsGroup, SettingsGroupItem, SettingsMono, SettingsRow } from "./settings-controls"
 import { StatusIndicator, type StationTone } from "./settings-status"
 import styles from "./vault-guide.module.css"
 
 const DEFAULT_DEVICE_NAME = "我的 Mac"
 
-/** Rust `remote_pair_start`。 */
-interface PairingInfo {
+/** Rust `remote_login`：成功后 Rust 已存好设备令牌，前端整页重载切到服务器模式。 */
+interface RemoteLoginResult {
   server: string
-  userCode: string
-  verificationUri: string
-  expiresIn: number
-  intervalMs: number
+  name: string
 }
-
-/** Rust `remote_pair_poll`。 */
-type PairPollResult =
-  | { status: "pending"; intervalMs: number }
-  | { status: "connected"; server: string; name: string }
-  | { status: "expired" }
 
 const CONNECTION_STATUS: Record<ConnectionState, { label: string; tone: StationTone }> = {
   connecting: { label: "正在连接", tone: "info" },
@@ -59,12 +51,12 @@ function reloadApp() {
 }
 
 /**
- * 设置里的「服务器」分区（桌面专属）。没连接时发起设备配对；连接后显示服务器与这台设备，可以断开回到本机资料库。
+ * 设置里的「服务器」分区（桌面专属）。没连接时用邮箱和密码登录服务器；连接后显示服务器与这台设备，可以断开回到本机资料库。
  * 网页端没有这个分区（网页本身就在服务器上）。
  */
 export function ServerSettings() {
   const status = desktopRemoteStatus()
-  return status ? <ConnectedServer status={status} /> : <PairServer />
+  return status ? <ConnectedServer status={status} /> : <LoginServer />
 }
 
 /** 与服务器的实时通道状态，以及设备令牌是否已失效。 */
@@ -161,171 +153,61 @@ function ConnectedServer({ status }: { status: RemoteStatus }) {
   )
 }
 
-type Phase =
-  | { kind: "idle"; error: string | null }
-  | { kind: "starting" }
-  | { kind: "pairing"; info: PairingInfo; deadline: number }
-  | { kind: "connected" }
+type Phase = { kind: "idle"; error: string | null } | { kind: "signingIn" } | { kind: "connected" }
 
-function delay(ms: number) {
-  return new Promise((resolve) => window.setTimeout(resolve, ms))
-}
-
-function formatRemaining(ms: number) {
-  const seconds = Math.max(0, Math.ceil(ms / 1000))
-  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`
-}
-
-/** 每秒一跳的当前时间（只在配对等待时走）。 */
-function useNow(active: boolean) {
-  const [now, setNow] = useState(() => Date.now())
-  useEffect(() => {
-    if (!active) return
-    setNow(Date.now())
-    const timer = window.setInterval(() => setNow(Date.now()), 1000)
-    return () => window.clearInterval(timer)
-  }, [active])
-  return now
-}
-
-function PairServer() {
+/**
+ * 没连接时的登录表单：服务器地址、邮箱、密码、设备名。Rust 拿邮箱和密码向服务器换这台设备的令牌，
+ * 之后凭令牌访问服务器；邮箱格式先按服务器的规则拦一道，服务器是最终裁决。
+ */
+function LoginServer() {
   const [server, setServer] = useState("")
+  const [email, setEmail] = useState("")
+  const [password, setPassword] = useState("")
   const [name, setName] = useState(DEFAULT_DEVICE_NAME)
   const [phase, setPhase] = useState<Phase>({ kind: "idle", error: null })
-  /** 每次发起配对加一；取消、关闭设置或重新发起后，旧的轮询看到编号变了就停。 */
-  const session = useRef(0)
-  const pairing = useRef(false)
-  const now = useNow(phase.kind === "pairing")
 
-  useEffect(
-    () => () => {
-      // 关掉设置时放弃进行中的配对：服务器上的配对码随之过期作废。
-      session.current += 1
-      if (pairing.current) void invoke("remote_pair_cancel").catch(() => undefined)
-    },
-    []
-  )
-
-  async function poll(id: number, interval: number) {
-    await delay(interval)
-    if (id !== session.current) return
-    let result: PairPollResult
-    try {
-      result = await invoke<PairPollResult>("remote_pair_poll")
-    } catch (error) {
-      if (id === session.current) {
-        pairing.current = false
-        setPhase({ kind: "idle", error: getApiErrorMessage(error) })
-      }
-      return
-    }
-    if (result.status === "connected") {
-      // 取消后才收到批准也已经连上了：照样切换，免得 Rust 已连接而界面还在本地模式。
-      pairing.current = false
-      setPhase({ kind: "connected" })
-      reloadApp()
-      return
-    }
-    if (id !== session.current) return
-    if (result.status === "expired") {
-      pairing.current = false
-      setPhase({ kind: "idle", error: "配对码已过期，请重新连接。" })
-      return
-    }
-    void poll(id, result.intervalMs)
-  }
-
-  async function start(event: FormEvent) {
+  async function signIn(event: FormEvent) {
     event.preventDefault()
     const address = server.trim()
-    if (!address) {
-      setPhase({ kind: "idle", error: "请填写服务器地址。" })
+    const problem = (address ? null : "请填写服务器地址。") ?? emailProblem(email) ?? (password ? null : "请填写密码。")
+    if (problem) {
+      setPhase({ kind: "idle", error: problem })
       return
     }
-    const id = ++session.current
-    setPhase({ kind: "starting" })
+    setPhase({ kind: "signingIn" })
     try {
-      const info = await invoke<PairingInfo>("remote_pair_start", {
+      await invoke<RemoteLoginResult>("remote_login", {
         server: address,
+        email: normalizeEmail(email),
+        password,
         name: name.trim() || DEFAULT_DEVICE_NAME,
       })
-      if (id !== session.current) return
-      pairing.current = true
-      setPhase({ kind: "pairing", info, deadline: Date.now() + info.expiresIn * 1000 })
-      void poll(id, info.intervalMs)
+      setPassword("")
+      setPhase({ kind: "connected" })
+      reloadApp()
     } catch (error) {
-      if (id === session.current) setPhase({ kind: "idle", error: getApiErrorMessage(error) })
+      setPhase({ kind: "idle", error: getApiErrorMessage(error) })
     }
   }
 
-  function cancel() {
-    session.current += 1
-    pairing.current = false
-    void invoke("remote_pair_cancel").catch(() => undefined)
-    setPhase({ kind: "idle", error: null })
-  }
-
-  async function openVerification(uri: string) {
-    try {
-      await openUrl(uri)
-    } catch (error) {
-      notify.failure("没能打开浏览器", error, { description: "可以手动复制地址到浏览器里打开。" })
-    }
-  }
-
-  if (phase.kind === "pairing" || phase.kind === "connected") {
-    const info = phase.kind === "pairing" ? phase.info : null
+  if (phase.kind === "connected") {
     return (
       <SettingsGroup busy>
-        {info ? (
-          <>
-            <SettingsRow
-              controlWidth="auto"
-              description="在已登录的浏览器里打开验证地址，输入配对码并验证通行密钥。"
-              label="配对码"
-            >
-              <span className={styles.pairingCode} data-testid="server-pairing-code">
-                {info.userCode}
-              </span>
-            </SettingsRow>
-            <SettingsRow
-              controlWidth="auto"
-              description={<SettingsMono>{info.verificationUri}</SettingsMono>}
-              label="验证地址"
-            >
-              <Button onClick={() => void openVerification(info.verificationUri)} size="md" type="button" variant="outline">
-                在浏览器中打开
-              </Button>
-            </SettingsRow>
-            <SettingsRow
-              controlWidth="auto"
-              description={
-                phase.kind === "pairing" ? `${formatRemaining(phase.deadline - now)} 后过期，过期后需要重新连接。` : undefined
-              }
-              label="等待批准"
-            >
-              <Button onClick={cancel} size="md" type="button" variant="outline">
-                取消
-              </Button>
-            </SettingsRow>
-          </>
-        ) : (
-          <SettingsGroupItem>
-            <div aria-live="polite" className={styles.busyLine}>
-              <Loader2Icon aria-hidden="true" className={`${styles.spin} size-(--shard-icon-size-md)`} />
-              <span>已连接，正在切换到服务器上的资料库…</span>
-            </div>
-          </SettingsGroupItem>
-        )}
+        <SettingsGroupItem>
+          <div aria-live="polite" className={styles.busyLine}>
+            <Loader2Icon aria-hidden="true" className={`${styles.spin} size-(--shard-icon-size-md)`} />
+            <span>已连接，正在切换到服务器上的资料库…</span>
+          </div>
+        </SettingsGroupItem>
       </SettingsGroup>
     )
   }
 
-  const starting = phase.kind === "starting"
+  const signingIn = phase.kind === "signingIn"
   const error = phase.kind === "idle" ? phase.error : null
   return (
-    <form noValidate onSubmit={(event) => void start(event)}>
-      <SettingsGroup busy={starting}>
+    <form noValidate onSubmit={(event) => void signIn(event)}>
+      <SettingsGroup busy={signingIn}>
         <SettingsRow
           controlWidth="default"
           description="https 地址；本机开发可以用 http://localhost。"
@@ -336,7 +218,7 @@ function PairServer() {
             aria-labelledby="server-settings-address"
             autoCapitalize="off"
             autoComplete="url"
-            disabled={starting}
+            disabled={signingIn}
             inputMode="url"
             onChange={(event) => setServer(event.target.value)}
             placeholder="https://shard.example.com"
@@ -346,13 +228,43 @@ function PairServer() {
         </SettingsRow>
         <SettingsRow
           controlWidth="default"
+          description="网页版登录用的邮箱和密码。"
+          label="邮箱"
+          labelId="server-settings-email"
+        >
+          <Input
+            aria-labelledby="server-settings-email"
+            autoCapitalize="off"
+            autoComplete="username"
+            disabled={signingIn}
+            inputMode="email"
+            onChange={(event) => setEmail(event.target.value)}
+            spellCheck={false}
+            type="email"
+            value={email}
+          />
+        </SettingsRow>
+        <SettingsRow controlWidth="default" label="密码" labelId="server-settings-password">
+          {/* 桌面 WKWebView 的密码框统一用 LockboxPasswordInput（type="text" + 遮蔽，见 frontend-rules.css）；
+              外面包一层撑满控件列，与上下的输入框同宽。 */}
+          <div className="w-full">
+            <LockboxPasswordInput
+              aria-labelledby="server-settings-password"
+              disabled={signingIn}
+              onChange={(event) => setPassword(event.target.value)}
+              value={password}
+            />
+          </div>
+        </SettingsRow>
+        <SettingsRow
+          controlWidth="default"
           description="显示在网页「设置 → 设备」里，可以单独吊销。"
           label="设备名"
           labelId="server-settings-device"
         >
           <Input
             aria-labelledby="server-settings-device"
-            disabled={starting}
+            disabled={signingIn}
             onChange={(event) => setName(event.target.value)}
             value={name}
           />
@@ -362,9 +274,9 @@ function PairServer() {
           description="连接后数据以服务器为准，需要联网；这台电脑上的资料库不会改动，断开后回到它。"
           label="连接服务器"
         >
-          <Button aria-busy={starting} disabled={starting} size="md" type="submit" variant="default">
-            {starting ? <Loader2Icon aria-hidden="true" className={styles.spin} /> : null}
-            {starting ? "正在发起" : "连接"}
+          <Button aria-busy={signingIn} disabled={signingIn} size="md" type="submit" variant="default">
+            {signingIn ? <Loader2Icon aria-hidden="true" className={styles.spin} /> : null}
+            {signingIn ? "正在连接" : "连接"}
           </Button>
         </SettingsRow>
         {error ? (

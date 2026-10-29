@@ -10,7 +10,7 @@
 |---|---|
 | 真相源 | VPS 上一份 SQLite，只有服务器写库。桌面与网页都是客户端；桌面留本地副本，离线能看、能记，联网补交，冲突按条目另存副本 |
 | 文件与 Git | 彻底不用。备份是 age 加密的数据库快照；版本历史是库里的修订表 |
-| 网页访问 | 公网域名 + 通行密钥（WebAuthn），Caddy 终止 TLS，服务只监听 127.0.0.1 |
+| 网页访问 | 公网域名 + 邮箱密码（2026-10-29 改定，原为通行密钥），Caddy 终止 TLS，服务只监听 127.0.0.1 |
 | 网页上的密匣 | 允许解锁（端到端加密，口令只在浏览器内用），设置里可关 |
 | 彻底删除 | 历史版本再留 30 天；另有「立即抹除」 |
 | iOS | 暂不做；切换时停用现有读 GitHub 的 iOS App |
@@ -22,7 +22,7 @@
 
 ```
                浏览器（手机 / 平板 / 任何电脑）         桌面 App（Tauri）              shard CLI / AI 助手
-                         │ HTTPS + 通行密钥 Cookie            │ HTTPS + 设备令牌（钥匙串）       │ HTTPS + 设备令牌
+                         │ HTTPS + 会话 Cookie                │ HTTPS + 设备令牌（钥匙串）       │ HTTPS + 设备令牌
                          ▼                                    ▼                                ▼
    Caddy（TLS、HTTP/2、HSTS） ──► shard-server（axum，127.0.0.1）──► shard.db / blobs.db / auth.db
                                          │                               │
@@ -187,25 +187,24 @@ CREATE TABLE blobs (
 ### 2.3 auth.db（认证，不随内容回滚）
 
 ```sql
-CREATE TABLE owner (id INTEGER PRIMARY KEY CHECK (id = 1), user_handle BLOB NOT NULL,
-  auth_epoch TEXT NOT NULL, created_at TEXT NOT NULL);
-CREATE TABLE passkeys (cred_id BLOB PRIMARY KEY, passkey_json TEXT NOT NULL, label TEXT,
-  created_at TEXT NOT NULL, last_used_at TEXT, revoked_at TEXT);
+CREATE TABLE owner (id INTEGER PRIMARY KEY CHECK (id = 1), email TEXT NOT NULL,
+  password_hash TEXT NOT NULL,            -- argon2id PHC 字符串（m=19 MiB, t=2, p=1）
+  password_changed_at TEXT NOT NULL, created_at TEXT NOT NULL);
 CREATE TABLE sessions (id_hash BLOB PRIMARY KEY, created_at TEXT NOT NULL, last_seen_at TEXT NOT NULL,
   idle_expires_at TEXT NOT NULL, absolute_expires_at TEXT NOT NULL, step_up_at TEXT,
   user_agent TEXT, ip TEXT, revoked_at TEXT) WITHOUT ROWID;
 CREATE TABLE devices (device_id TEXT PRIMARY KEY, name TEXT NOT NULL,
   kind TEXT NOT NULL CHECK (kind IN ('desktop','cli')), token_hash BLOB NOT NULL UNIQUE,
   scopes TEXT NOT NULL, created_at TEXT NOT NULL, last_seen_at TEXT, last_ip TEXT, revoked_at TEXT);
-CREATE TABLE pairing_requests (device_code_hash BLOB PRIMARY KEY, user_code TEXT NOT NULL UNIQUE,
-  client_name TEXT, kind TEXT NOT NULL, created_at TEXT NOT NULL, expires_at TEXT NOT NULL,
-  attempts INTEGER NOT NULL DEFAULT 0, approved_at TEXT, consumed_at TEXT);
 CREATE TABLE setup_tokens (token_hash BLOB PRIMARY KEY,
-  purpose TEXT NOT NULL CHECK (purpose IN ('first_passkey','recover')),
+  purpose TEXT NOT NULL CHECK (purpose IN ('setup','reset')),
   created_at TEXT NOT NULL, expires_at TEXT NOT NULL, used_at TEXT);
 CREATE TABLE audit_log (id INTEGER PRIMARY KEY, at TEXT NOT NULL, actor TEXT NOT NULL,
   event TEXT NOT NULL, ip TEXT, user_agent TEXT, detail TEXT);
 ```
+
+迁移 2（2026-10-29）从通行密钥版升级：删 `passkeys`、`pairing_requests`，重建 `owner` 与 `setup_tokens`；
+`sessions`、`devices`、`audit_log` 原样保留。升级后没有所有者行，需要重新跑 setup。
 
 ### 2.4 一致性规则
 
@@ -256,7 +255,7 @@ wikilink 解析从 `src/lib/wikilink.ts` 移植到 `shard-core/wikilink.rs`，�
 - **S8a 在线客户端**：桌面「连接服务器」后，前端走与网页同一套命令（`invoke(命令, 参数)`），由 Rust 带设备令牌
   （钥匙串，服务名与命令行分开，可单独吊销）转发到 `/api/rpc`；图片经 `shard-asset` 协议代理 `/api/files`；
   Rust 订阅 SSE 并转成现有的 `vault-changed` / `lockbox-changed` 事件。界面与网页完全一致，密匣走 S7 的 wasm 客户端。
-  配对、令牌存取、带幂等键与重试的 RPC 客户端从命令行抽成共享的 `crates/shard-remote`，桌面与命令行同一份。
+  登录、令牌存取、带幂等键与重试的 RPC 客户端从命令行抽成共享的 `crates/shard-remote`，桌面与命令行同一份。
   这一步之后桌面就能在切换后照常用（要联网）。
 - **S8b 离线**：下面的副本 + overlay + outbox，在 S8a 的转发层底下接入：在线照旧直发，离线落 overlay 与 outbox，
   联网后先拉后推。
@@ -353,12 +352,15 @@ set_fragment_pinned、set/remove_fragment_property、save_fragment_image（内�
 
 ## 7. 认证与安全
 
-- **通行密钥**：webauthn-rs；RP ID = 域名，origin 精确匹配，要求 UV；单用户，allowCredentials 列出全部凭据；
-  签名计数与备份标志每次登录后更新。第一把用 `shard-server setup` 打印的一次性链接注册（15 分钟、一次性）。
-  换域名会让全部通行密钥失效，需 SSH 重跑 setup。
+- **邮箱密码**（2026-10-29 用户觉得通行密钥太麻烦，拍板换成邮箱密码，通行密钥与配对码一并删除）：
+  单用户，邮箱只当登录名（去空白、转小写），不发邮件；密码 12–256 个字符，argon2id（m=19 MiB、t=2、p=1）
+  加盐存 PHC 字符串。邮箱不对时拿诱饵哈希陪算一次，响应时间与提示都不暴露邮箱对不对。
+  首次设置用 `shard-server setup` 打印的一次性链接（24 小时、只能用一次，只在还没有账号时有效）；
+  忘记密码用 `shard-server reset-password` 的链接，设置后全部浏览器会话退出，`--revoke-all` 另吊销设备令牌。
+  设置里凭当前密码改邮箱、密码；改密码让其他浏览器会话退出。
 - **会话**：Cookie `__Host-shard`，`HttpOnly; Secure; SameSite=Strict; Path=/`；32 字节随机，库里只存 sha256；
-  闲置 14 天、绝对 90 天；登录时轮换（登录本身算一次验证）。敏感操作要求 10 分钟内重新验证通行密钥：增删通行密钥、
-  批准设备配对、导出全部、「立即抹除」删除历史、注销其他会话（RPC 里标 `Access::Sensitive`，成功后记审计）。
+  闲置 14 天、绝对 90 天；登录时轮换（登录本身算一次验证）。敏感操作要求 10 分钟内再输一次密码：吊销设备、
+  导出全部、「立即抹除」删除历史、注销其他会话、改密匣 manifest（RPC 里标 `Access::Sensitive`，成功后记审计）。
   彻底删除与清空回收站**不**要求：有 30 天找回期，可逆；要求的话桌面客户端用设备令牌就清不了回收站。
 - **CSRF**：SameSite=Strict；非 GET 必须带 `X-Shard-Request: 1`，`Origin` 等于配置地址，`Sec-Fetch-Site` 为
   `same-origin`；只接受 JSON 或指定字节类型；不开 CORS；GET 无副作用。
@@ -367,15 +369,15 @@ set_fragment_pinned、set/remove_fragment_property、save_fragment_image（内�
   frame-ancestors 'none'; form-action 'self'`。`index.html` 的内联首帧主题脚本移到 `/theme-init.js`；
   `style-src 'unsafe-inline'` 是否可去掉，逐个核对 xyflow、glide、sonner。另加 HSTS（一年）、
   `Referrer-Policy: no-referrer`、COOP / CORP same-origin、Permissions-Policy。
-- **限流**：发起登录每 IP 每分钟 10 次，输入配对码每分钟 5 次；全局连续失败指数退避。
-- **设备配对**（RFC 8628 式）：客户端 `POST /api/device/start` 得 `device_code` 与 8 位 `user_code`（10 分钟、
-  最多 5 次尝试）；在已登录浏览器 `/pair` 输入并重新验证通行密钥后批准；客户端轮询 `POST /api/device/token`
-  得 `shd_dev_` 开头的 256 bit 令牌。库里只存 sha256，带作用域，可单独吊销。桌面存 macOS 钥匙串且只在 Rust 层，
-  网页 JS 拿不到；CLI 单独配对，Linux 退回 0600 文件。
-- **审计**：登录成败、通行密钥增删、会话签发与吊销、配对与吊销、setup / recover 链接签发与使用、导出、
+- **限流**：登录（网页、桌面、命令行）每 IP 每分钟 10 次；全站每小时最多 50 次密码错误（登录、再次输入、改密码
+  合计），用完暂停新登录直到额度恢复——换 IP 分散猜测也绕不过；代价是被刷满时新登录要等，已登录的会话与设备不受影响。
+- **桌面与命令行登录**：`POST /api/device/login {email, password, name, kind}` 直接换 `shd_dev_` 开头的 256 bit
+  令牌（只发一次，不自动重试）。库里只存 sha256，带作用域，可单独吊销。桌面存 macOS 钥匙串且只在 Rust 层，
+  网页 JS 拿不到；CLI 在终端里输入密码（不回显），Linux 退回 0600 文件。密码都不保存。
+- **审计**：登录成败、改邮箱与密码、会话签发与吊销、设备登录与吊销、setup / reset 链接签发与使用、导出、
   彻底删除、清空回收站、manifest 替换、导入、恢复、epoch 轮换。不记请求体。
-- **恢复路径**：通行密钥全丢 → SSH 执行 `shard-server admin recover`；手机丢失 → 桌面吊销其会话；
-  服务器被入侵 → 轮换 auth_epoch、吊销全部令牌、从备份恢复内容并轮换 epoch。
+- **恢复路径**：忘记密码 → SSH 执行 `shard-server reset-password`；手机丢失 → 在别的浏览器吊销其会话；
+  服务器被入侵 → `reset-password --revoke-all` 吊销全部会话与令牌、从备份恢复内容并轮换 epoch。
 - **运维**：systemd 非 root、`ProtectSystem=strict`、`NoNewPrivileges`、`Restart=always`；CI 跑
   `cargo deny` / `cargo audit`；tracing 日志脱敏；只信任 Caddy 传来的 X-Forwarded-For。
 
@@ -413,7 +415,7 @@ set_fragment_pinned、set/remove_fragment_property、save_fragment_image（内�
   网页：`<input type=file>`、DOM 拖放、浏览器下载。`vaultImageUrl` 生成 `/api/files` 地址。
 - 身份：`vaultPath` 字段名保留，值为 `shard://<域名>/<vault_id>`；`gitStatus` → saved / sync_pending / sync_failed；
   状态栏显示连接与同步状态。
-- `vault-guide.tsx` 的选库改为「连接服务器 / 设备配对」；新增登录页、设置页（通行密钥、设备、会话、网页解锁密匣开关）。
+- `vault-guide.tsx` 的选库改为「连接服务器」（服务器地址 + 邮箱密码）；新增登录页、设置页（账号、设备、会话、网页解锁密匣开关）。
 - 移动端：`viewport-fit=cover` 与 safe-area；网页去掉 80px 红绿灯避让；输入框字号 ≥ 16px；长按菜单用 pointer
   事件；不能拖放的地方提供「移动到…」；悬停按钮在触屏可达；`dvh`；VisualViewport 处理键盘；表格在手机上只看
   并能单格编辑。
@@ -425,7 +427,7 @@ set_fragment_pinned、set/remove_fragment_property、save_fragment_image（内�
 | S0 | 本文档；修订与新方向冲突的文档与 AGENTS.md | 文档评审 |
 | S1 | `crates/shard-store`：Vfs（Fs / Sqlite）、nodes、投影、changes、txns、revisions、blobs；shard-core 时区参数化；wikilink 移植 | 现有测试在两种 Vfs 上通过；随机操作序列在两种实现上得到相同路径树与 sha；seq 同事务分配的并发测试；wikilink TS/Rust 一致性测试 |
 | S2 | import / export / verify | 真实库副本「导入 → 导出 → diff -r」逐字节一致；前置检查拒绝路径有测试；旧版 App 能打开导出结果 |
-| S3 | shard-server（RPC、SSE、files、blobs、认证、限流、安全头）+ 部署到 VPS（Caddy、systemd、备份） | Mac Safari 与 iPhone 在真实域名用通行密钥登录；测试数据完成第一次恢复演练 |
+| S3 | shard-server（RPC、SSE、files、blobs、认证、限流、安全头）+ 部署到 VPS（Caddy、systemd、备份） | Mac Safari 与 iPhone 在真实域名用邮箱密码登录；测试数据完成第一次恢复演练 |
 | S4 | CLI 改调服务器 RPC（设备令牌）；更新 guide.rs | CLI 集成测试在临时服务器上通过；`--expect`、错误码、JSON 输出不变 |
 | S5 | 前端传输层 + 网页版 | 现有 Playwright 在 Tauri mock 下全绿；新增 `tests/e2e/` 真服务器用例 |
 | S6 | 移动端布局 | WebKit iPhone 视口端到端用例；真机人工清单 |
@@ -437,8 +439,8 @@ set_fragment_pinned、set/remove_fragment_property、save_fragment_image（内�
 | S12+ | 网页只读离线、添加到主屏幕、提醒推送 | 另行规划 |
 
 真服务器端到端：`playwright.e2e.config.ts` 同时起 `shard-server --data-dir <临时目录>` 与 Vite（同源代理
-`/api`）；种子数据从 `tests/fixtures/vault-golden` 导入，每 worker 独立库；Chromium 用 CDP
-`WebAuthn.addVirtualAuthenticator` 走真实通行密钥，WebKit 用 `test-auth` feature 的测试端点（发行版不编译）。
+`/api`）；种子数据从 `tests/fixtures/vault-golden` 导入，每 worker 独立库；登录走 `test-auth` feature 的
+测试端点（发行版不编译），邮箱密码的真实流程由 `crates/shard-server/tests/auth_api.rs` 覆盖。
 
 ## 12. 数据丢失风险表
 
@@ -461,7 +463,7 @@ set_fragment_pinned、set/remove_fragment_property、save_fragment_image（内�
 | 攻击者 | 能拿到 | 防护 |
 |---|---|---|
 | 网络窃听 | 流量 | TLS（Caddy）、HSTS |
-| 互联网扫描、撞库 | 登录端点 | 只有通行密钥，没有密码；限流；审计 |
+| 互联网扫描、撞库、钓鱼 | 登录端点 | 密码至少 12 位、argon2id；每 IP 与全站失败限流；审计。**密码泄露或被钓走就能登录**（没有第二因素，用户选择）；密匣另有口令，不受影响 |
 | 跨站请求 | 用户已登录的浏览器 | SameSite=Strict + 自定义头 + Origin / Sec-Fetch-Site 校验；无 CORS |
 | 上传内容里的脚本（SVG） | 同源执行 | SVG sandbox CSP、nosniff、CORP；全站严格 CSP |
 | VPS 服务商、磁盘或备份泄露 | 库文件、快照 | 公开内容：无保护（单用户自用，接受）；密匣：只有密文（AES-GCM + AAD）；备份 age 加密 |

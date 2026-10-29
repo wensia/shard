@@ -147,8 +147,8 @@ Shard 是用户的 Markdown 资料库（碎片、笔记、数据集）加桌面�
 ## 不要做
 
 - 不要直接读写资料库目录里的文件，也不要运行 git 提交（Shard 会自动保存版本）。
-- 不要运行 `shard login`、`shard logout`，也不要替用户在浏览器里批准配对：登录服务器
-  需要用户本人的通行密钥，只能由用户完成。遇到 UNAUTHENTICATED 时请用户自己重新登录。
+- 不要运行 `shard login`、`shard logout`，也不要向用户索要或代填 Shard 的邮箱与密码：登录服务器
+  只能由用户本人在终端里完成。遇到 UNAUTHENTICATED 时请用户自己重新登录。
 - CLI 不提供删除；需要删除时请用户在 Shard 里操作。
 - 不要使用交互命令 `shard -i`、`shard -e`，它们需要终端界面。
 "#;

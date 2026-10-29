@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test"
 
 // 桌面「连接服务器」（S8a 在线客户端）：Tauri IPC 替身模拟 Rust——`remote_status` 决定启动走哪条通道，
-// `remote_invoke` 回放服务器的响应。是否连接存在 localStorage 里，配对成功、断开后的整页重载能接着用。
+// `remote_invoke` 回放服务器的响应。是否连接存在 localStorage 里，登录成功、断开后的整页重载能接着用。
 
 test.use({ viewport: { width: 1280, height: 860 }, locale: "zh-CN" })
 
@@ -104,7 +104,6 @@ async function installDesktopRemoteMock(page: Page, options: MockOptions) {
         install_cli: () => ({ state: "installed", linkPath: "/usr/local/bin/shard", shellConfigPath: null, message: null, declined: false }),
       }
 
-      let pollCount = 0
       const remoteHandlers: Record<string, (args: Record<string, unknown>) => unknown> = {
         remote_status: () =>
           connected
@@ -112,22 +111,14 @@ async function installDesktopRemoteMock(page: Page, options: MockOptions) {
             : { connected: false, server: null, deviceId: null, name: null, connection: null },
         remote_sync_now: () => null,
         remote_sync_dismiss: () => null,
-        remote_pair_start: (args) => ({
-          server: String(args.server),
-          userCode: "WXYZ-2345",
-          verificationUri: `${String(args.server)}/pair`,
-          expiresIn: 600,
-          intervalMs: 50,
-        }),
-        remote_pair_poll: () => {
-          pollCount += 1
-          // 「取消」用例：一直等待批准。
-          if (localStorage.getItem("__desktop_remote_poll_block__") === "1") return { status: "pending", intervalMs: 50 }
-          if (pollCount < 2) return { status: "pending", intervalMs: 50 }
+        // Rust 拿邮箱和密码向服务器换设备令牌；失败时抛给人看的中文。
+        remote_login: (args) => {
+          if (args.password !== "correct horse battery") throw "邮箱或密码不对。"
           localStorage.setItem(CONNECTED_KEY, "1")
-          return { status: "connected", server, name: "我的 Mac" }
+          // 成功后整页重载、调用记录清空：参数另存一份给用例核对。
+          localStorage.setItem("__desktop_remote_login__", JSON.stringify(args))
+          return { server: String(args.server), name: String(args.name) }
         },
-        remote_pair_cancel: () => null,
         remote_disconnect: () => {
           localStorage.setItem(CONNECTED_KEY, "0")
           return null
@@ -369,43 +360,54 @@ test.describe("本机资料库", () => {
     await expect(page.getByRole("menuitem", { name: "版本历史" })).toHaveCount(0)
   })
 
-  test("配对：发起 → 显示配对码 → 轮询成功 → 重载进入服务器模式", async ({ page }) => {
+  test("登录：填写服务器、邮箱和密码 → 重载进入服务器模式", async ({ page }) => {
     const dialog = await openSettings(page)
     await dialog.getByRole("navigation", { name: "设置分区" }).getByRole("button", { name: "服务器" }).click()
     const server = dialog.locator('[data-settings-section="server"]')
     await expect(server.getByRole("textbox", { name: "设备名" })).toHaveValue("我的 Mac")
+    // 不再有配对码与「在浏览器中打开」。
+    await expect(server.getByText("配对码")).toHaveCount(0)
+    const connect = server.getByRole("button", { name: "连接", exact: true })
 
-    // 地址必填。
-    await server.getByRole("button", { name: "连接", exact: true }).click()
+    // 前端先拦：地址、邮箱格式、密码。
+    await connect.click()
     await expect(server.getByRole("alert")).toHaveText("请填写服务器地址。")
-
     await server.getByRole("textbox", { name: "服务器地址" }).fill(SERVER)
-    await server.getByRole("button", { name: "连接", exact: true }).click()
-    await expect(server.getByTestId("server-pairing-code")).toHaveText("WXYZ-2345")
-    await expect(server.getByText(`${SERVER}/pair`)).toBeVisible()
-    await expect(server.getByText(/\d+:\d{2} 后过期/u)).toBeVisible()
+    await server.getByRole("textbox", { name: "邮箱" }).fill("me@")
+    await connect.click()
+    await expect(server.getByRole("alert")).toHaveText("邮箱格式不对。")
+    await server.getByRole("textbox", { name: "邮箱" }).fill("  Me@Example.com ")
+    await connect.click()
+    await expect(server.getByRole("alert")).toHaveText("请填写密码。")
+    expect((await calls(page)).map((call) => call.command)).not.toContain("remote_login")
 
-    // 批准后整页重载，进入服务器模式。
+    await server.getByRole("textbox", { name: "密码", exact: true }).fill("correct horse battery")
+    await server.getByRole("textbox", { name: "设备名" }).fill("书房 Mac")
+    await connect.click()
+
+    // 登录成功后整页重载，进入服务器模式。
     await expect(statusBar(page).getByText("已连接服务器")).toBeVisible()
     await expect.poll(() => serverCommands(page)).toContain("list_fragments")
-    const start = (await calls(page)).find((call) => call.command === "remote_pair_start")
-    expect(start).toBeUndefined() // 重载后的新页面不会再发起配对
+    expect((await calls(page)).map((call) => call.command)).not.toContain("remote_login") // 重载后的新页面不会再登录
+    const login = await page.evaluate(() => JSON.parse(localStorage.getItem("__desktop_remote_login__") ?? "null"))
+    expect(login).toEqual({ server: SERVER, email: "me@example.com", password: "correct horse battery", name: "书房 Mac" })
   })
 
-  test("配对可以取消", async ({ page }) => {
+  test("登录失败：显示 Rust 给的原话，留在表单上", async ({ page }) => {
     const dialog = await openSettings(page)
     await dialog.getByRole("navigation", { name: "设置分区" }).getByRole("button", { name: "服务器" }).click()
     const server = dialog.locator('[data-settings-section="server"]')
     await server.getByRole("textbox", { name: "服务器地址" }).fill(SERVER)
-    await server.getByRole("textbox", { name: "设备名" }).fill("书房 Mac")
-    await page.evaluate(() => localStorage.setItem("__desktop_remote_poll_block__", "1"))
+    await server.getByRole("textbox", { name: "邮箱" }).fill("me@example.com")
+    await server.getByRole("textbox", { name: "密码", exact: true }).fill("wrong password!")
     await server.getByRole("button", { name: "连接", exact: true }).click()
-    await expect(server.getByTestId("server-pairing-code")).toBeVisible()
-    const start = (await calls(page)).find((call) => call.command === "remote_pair_start")
-    expect(start?.args).toEqual({ server: SERVER, name: "书房 Mac" })
-    await server.getByRole("button", { name: "取消" }).click()
-    await expect(server.getByRole("button", { name: "连接", exact: true })).toBeVisible()
-    expect((await calls(page)).map((call) => call.command)).toContain("remote_pair_cancel")
+    await expect(server.getByRole("alert")).toHaveText("邮箱或密码不对。")
+    const login = (await calls(page)).find((call) => call.command === "remote_login")
+    expect(login?.args).toEqual({ server: SERVER, email: "me@example.com", password: "wrong password!", name: "我的 Mac" })
+    await expect(server.getByRole("button", { name: "连接", exact: true })).toBeEnabled()
+    // 没有整页重载：表单还在、填过的内容还在，仍是本机资料库。
+    await expect(server.getByRole("textbox", { name: "服务器地址" })).toHaveValue(SERVER)
+    expect(await serverCommands(page)).toEqual([])
   })
 })
 

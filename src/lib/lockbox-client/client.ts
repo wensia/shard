@@ -85,7 +85,7 @@ export interface RunOptions {
   unlocks?: boolean
   /** 写回服务器失败时不报错：回滚、保持现状（解锁时顺带的 manifest 升级、旧条目路径迁移）。 */
   bestEffort?: boolean
-  /** 写 manifest 遇到 STEP_UP_REQUIRED 时验证一次通行密钥再试（设置、改口令、重置）。 */
+  /** 写 manifest 遇到 STEP_UP_REQUIRED 时输入一次账号密码确认再试（设置、改口令、重置）。 */
   stepUp?: boolean
 }
 
@@ -95,7 +95,7 @@ export interface LockboxClientOptions {
   onChanges?: (changes: LockboxFileChange[]) => void
   /** 不是用户主动上锁：界面该藏起已显示的密匣内容。 */
   onLockedOut?: (reason: LockOutReason) => void
-  /** 验证一次通行密钥（网页端是 `webauthn.stepUp`）。 */
+  /** 输入一次账号密码确认（网页端是 `features/auth/api` 的 `stepUp`）。 */
   stepUp?: () => Promise<void>
   /** `lockbox-changed` 的防抖（毫秒）。 */
   refreshDelayMs?: number

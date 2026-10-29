@@ -1,4 +1,4 @@
-//! Shard 服务端：内容库的唯一写者。提供 RPC、SSE、文件与同步端点，通行密钥登录，并托管网页。
+//! Shard 服务端：内容库的唯一写者。提供 RPC、SSE、文件与同步端点，邮箱密码登录，并托管网页。
 //! 设计见 `docs/dev/server-sqlite-plan.md` §3、§7。
 
 pub mod app;

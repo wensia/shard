@@ -5,7 +5,7 @@
 #   deploy/docker/release.sh upload <ssh 主机>  上传到 /opt/shard，重建镜像并重启容器，等健康检查通过
 #
 # 构建要 cargo-zigbuild（brew install cargo-zigbuild）和 x86_64-unknown-linux-gnu 目标（rustup target add）。
-# OpenSSL 静态编进二进制（vendored-openssl 特性），glibc 版本对齐镜像里的 Debian bookworm（2.36）。
+# glibc 版本对齐镜像里的 Debian bookworm（2.36）。
 set -euo pipefail
 
 root=$(cd "$(dirname "$0")/../.." && pwd)
@@ -18,7 +18,7 @@ build() {
 		echo "工作区有未提交的改动：先提交，发布的版本才能对应到一个提交。" >&2
 		exit 1
 	fi
-	cargo zigbuild --release -p shard-server --features vendored-openssl --target "$target.2.36"
+	cargo zigbuild --release -p shard-server --target "$target.2.36"
 	pnpm build
 	rm -rf "$out" && mkdir -p "$out/app"
 	cp deploy/docker/Dockerfile "$out/app/"

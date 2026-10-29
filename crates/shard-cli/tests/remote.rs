@@ -1,17 +1,15 @@
 //! 远程模式的端到端测试：测试进程里起一个真的 shard-server（绑 127.0.0.1:0，导入示例资料库
 //! `tests/fixtures/vault-golden` 再加一篇大纲、一篇流程图），以子进程运行 shard-cli 二进制走
-//! `shard login` 配对，之后所有命令都经 HTTP 读写服务器。
+//! `shard login` 输入邮箱密码登录，之后所有命令都经 HTTP 读写服务器。
 //!
-//! 「用户在浏览器里批准配对码」「在网页里吊销设备」直接调服务器认证库的同一个函数
+//! 「首次设置账号」「在网页里吊销设备」直接调服务器认证库的同一个函数
 //! （HTTP 端点本身由 shard-server 的测试覆盖），这样 dev-dependency 不必打开 `test-auth`：
 //! 那个特性会签发免密会话，绝不能有机会被特性合并带进别的构建。
 //! 令牌用文件后备（`SHARD_TOKEN_STORE=file`），不碰用户的钥匙串。登录与退出要求终端，
-//! 测试里用 `SHARD_CLI_TEST_ALLOW_NONINTERACTIVE_LOGIN=1` 放行（另有一条测试核对不放行时会拒绝）。
+//! 测试里用 `SHARD_CLI_TEST_ALLOW_NONINTERACTIVE_LOGIN=1` 放行，密码随之改从标准输入读（另有一条测试核对不放行时会拒绝）。
 
 use serde_json::{json, Value};
-use shard_server::{
-    app, auth::tokens::normalize_user_code, commands, config::Config, rpc::base_registry, state::AppState,
-};
+use shard_server::{app, auth::password::hash_password, commands, config::Config, rpc::base_registry, state::AppState};
 use std::{
     collections::HashMap,
     fs,
@@ -28,10 +26,11 @@ const RIDE_ID: &str = "20261026-073012-a1b2c3d4-0a0b0c";
 const MEMO_ID: &str = "20261025-221500-b2c3d4e5-1a1b1c";
 const BOOK_NOTE: &str = "notes/读书/置身事内.md";
 const DATASET: &str = "datasets/阅读记录.csv";
+const EMAIL: &str = "me@example.com";
+const PASSWORD: &str = "correct horse battery";
 
 struct Server {
     url: String,
-    origin: String,
     state: AppState,
     _data: tempfile::TempDir,
     _runtime: tokio::runtime::Runtime,
@@ -107,6 +106,11 @@ fn start_server(root: &Path) -> Server {
     let state = AppState::open(config, registry).unwrap();
     shard_store::transfer::import_vault(&state.store, &source).unwrap();
     commands::ensure_layout(&state.store).unwrap();
+    state.auth.create_setup_token("setup", "setup").unwrap();
+    assert!(matches!(
+        state.auth.complete_setup("setup", EMAIL, &hash_password(PASSWORD).unwrap()).unwrap(),
+        shard_server::auth::db::SetupOutcome::Done(_)
+    ));
     let router = app::build(state.clone());
     runtime.spawn(async move {
         let listener = tokio::net::TcpListener::from_std(listener).unwrap();
@@ -114,7 +118,7 @@ fn start_server(root: &Path) -> Server {
             .await
             .unwrap();
     });
-    Server { url: format!("http://127.0.0.1:{port}"), origin, state, _data: data, _runtime: runtime }
+    Server { url: format!("http://127.0.0.1:{port}"), state, _data: data, _runtime: runtime }
 }
 
 /// 文件后备的令牌文件：`remote-token-<sha256(服务器地址) 前 16 位>`。
@@ -262,33 +266,19 @@ impl Fixture {
             .unwrap_or_else(|_| panic!("{args:?} 的输出不是 JSON：{}", stdout(&output)))
     }
 
-    /// `shard login <服务器>`：读出配对码，替用户批准，等 CLI 拿到令牌退出。返回设备 id。
+    /// `shard login <服务器>`：替用户输入邮箱和密码，等 CLI 拿到令牌退出。返回设备 id。
     fn login(&self) -> String {
-        self.login_to(&self.server.url, &self.server, None)
+        self.login_to(&self.server.url, None)
     }
 
-    /// 登录 `url`（真服务器或它前面的代理）；`confirm` 是切换服务器时在标准输入里的回答。
-    fn login_to(&self, url: &str, server: &Server, confirm: Option<&str>) -> String {
-        let mut child = self
-            .command(&["login", url, "--name", "测试命令行"])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .unwrap();
-        child.stdin.take().unwrap().write_all(confirm.unwrap_or("").as_bytes()).unwrap();
-        let mut lines = BufReader::new(child.stdout.take().unwrap()).lines();
-        let prompt = lines.next().unwrap().unwrap();
-        assert!(prompt.starts_with(&format!("在浏览器打开 {}/pair 输入配对码 ", server.origin)), "{prompt}");
-        let code = prompt.rsplit(' ').next().unwrap().to_string();
-        assert_eq!(code.len(), 9, "配对码形如 XXXX-XXXX：{code}");
-        let approved = server.state.auth.approve_pairing(&normalize_user_code(&code)).unwrap();
-        assert_eq!(approved.as_deref(), Some("测试命令行"));
-        let rest = lines.map(Result::unwrap).collect::<Vec<_>>().join("\n");
-        let mut error = String::new();
-        child.stderr.take().unwrap().read_to_string(&mut error).unwrap();
-        assert!(child.wait().unwrap().success(), "{error}");
-        assert!(rest.contains("已登录"), "{rest}");
+    /// 登录 `url`（真服务器或它前面的代理）；`confirm` 是切换服务器时在标准输入里的回答，之后依次输入邮箱、密码。
+    fn login_to(&self, url: &str, confirm: Option<&str>) -> String {
+        let input = format!("{}{EMAIL}\n{PASSWORD}\n", confirm.unwrap_or(""));
+        let output = self.run(&["login", url, "--name", "测试命令行"], Some(&input));
+        assert!(output.status.success(), "{}", stderr(&output));
+        assert!(stderr(&output).contains("邮箱："), "{}", stderr(&output));
+        assert!(!stderr(&output).contains(PASSWORD) && !stdout(&output).contains(PASSWORD), "不回显密码");
+        assert!(stdout(&output).contains("已登录"), "{}", stdout(&output));
         let config: Value = serde_json::from_str(&fs::read_to_string(self.state.join("remote.json")).unwrap()).unwrap();
         assert_eq!(config["server"], url);
         assert_eq!(config["name"], "测试命令行");
@@ -389,21 +379,9 @@ fn login_whoami_explicit_local_and_logout() {
     assert_eq!(serde_json::from_slice::<Value>(&env_local.stdout).unwrap()["mode"], "local");
 
     // 重新登录同一台服务器：提示旧设备仍有效。
-    let mut child = f
-        .command(&["login"])
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
-    let mut lines = BufReader::new(child.stdout.take().unwrap()).lines();
-    let code = lines.next().unwrap().unwrap().rsplit(' ').next().unwrap().to_string();
-    f.server.state.auth.approve_pairing(&normalize_user_code(&code)).unwrap();
-    let _ = lines.count();
-    let mut error = String::new();
-    child.stderr.take().unwrap().read_to_string(&mut error).unwrap();
-    assert!(child.wait().unwrap().success(), "{error}");
-    assert!(error.contains(&device) && error.contains("吊销"), "{error}");
+    let again = f.run(&["login"], Some(&format!("{EMAIL}\n{PASSWORD}\n")));
+    assert!(again.status.success(), "{}", stderr(&again));
+    assert!(stderr(&again).contains(&device) && stderr(&again).contains("吊销"), "{}", stderr(&again));
 
     let out = f.run(&["logout"], None);
     assert!(out.status.success());
@@ -451,7 +429,7 @@ fn switching_servers_keeps_the_new_token_and_needs_confirmation() {
     assert_eq!(f.json(&["--whoami", "--json"], None)["server"], f.server.url);
 
     // 输入 y 确认后切换：新令牌按服务器单独存放，旧服务器的令牌删掉，之后的读写都能用。
-    f.login_to(&other.url, &other, Some("y\n"));
+    f.login_to(&other.url, Some("y\n"));
     assert!(!first_token.exists());
     assert!(token_file(&f.state, &other.url).exists());
     assert_eq!(f.token_files().len(), 1);
@@ -510,7 +488,7 @@ fn writes_retry_with_the_same_idempotency_key_and_commit_once() {
             _ => Some(response),
         }
     });
-    f.login_to(&proxy, &f.server, None);
+    f.login_to(&proxy, None);
 
     let created = f.json(&["--json", "重试只提交一次 #重试"], None);
     let appended = f.json(&["--append", created["id"].as_str().unwrap(), "--json", "追加一次"], None);
@@ -911,30 +889,22 @@ fn revoked_token_and_unreachable_server_have_clear_errors() {
 }
 
 #[test]
-fn login_polling_backs_off_through_gateway_errors() {
+fn wrong_passwords_and_unset_servers_are_explained_without_saving_anything() {
     let f = Fixture::new();
-    // 假服务器：配对开始正常，换令牌先回两次 503（服务重启中）、一次 428（还没批准），再发令牌。
-    let polls = Arc::new(Mutex::new(0usize));
-    let counter = Arc::clone(&polls);
-    let server = fake_server(move |request| match request.path.as_str() {
-        "/api/device/start" => Some((
-            200,
-            json!({ "deviceCode": "dc", "userCode": "ABCD-EFGH", "verificationUri": "http://127.0.0.1/pair", "expiresIn": 60, "interval": 1 })
-                .to_string(),
-        )),
-        "/api/device/token" => {
-            let mut count = counter.lock().unwrap();
-            *count += 1;
-            Some(match *count {
-                1 | 2 => (503, String::new()),
-                3 => (428, json!({ "code": "AUTHORIZATION_PENDING", "message": "等待" }).to_string()),
-                _ => (200, json!({ "token": "shd_dev_fake", "deviceId": "dev_fake", "name": "x" }).to_string()),
-            })
-        }
-        _ => Some((404, String::new())),
+    let wrong = f.run(&["login", &f.server.url], Some(&format!("{EMAIL}\nnot the password\n")));
+    assert_eq!(wrong.status.code(), Some(1));
+    assert!(stderr(&wrong).contains("邮箱或密码不对"), "{}", stderr(&wrong));
+    let empty = f.run(&["login", &f.server.url], Some(&format!("{EMAIL}\n\n")));
+    assert!(stderr(&empty).contains("没有输入密码"), "{}", stderr(&empty));
+    assert!(!f.state.join("remote.json").exists());
+    assert!(f.token_files().is_empty());
+
+    // 服务器还没设置账号：提示去服务器上运行 setup。
+    let unset = fake_server(|request| {
+        assert_eq!(request.path, "/api/device/login");
+        Some((409, json!({ "code": "SETUP_REQUIRED", "message": "还没有设置账号。" }).to_string()))
     });
-    let output = f.command(&["login", &server]).stdin(Stdio::null()).output().unwrap();
-    assert!(output.status.success(), "{}", stderr(&output));
-    assert_eq!(*polls.lock().unwrap(), 4);
-    assert_eq!(fs::read_to_string(token_file(&f.state, &server)).unwrap(), "shd_dev_fake");
+    let output = f.run(&["login", &unset], Some(&format!("{EMAIL}\n{PASSWORD}\n")));
+    assert_eq!(output.status.code(), Some(1));
+    assert!(stderr(&output).contains("shard-server setup"), "{}", stderr(&output));
 }

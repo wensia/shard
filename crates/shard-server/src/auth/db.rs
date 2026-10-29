@@ -75,19 +75,39 @@ CREATE TABLE audit_log (
   user_agent TEXT,
   detail TEXT
 );
+"#,
+// 2：登录从通行密钥改为邮箱 + 密码，设备从配对码改为直接登录。通行密钥与配对请求整表删除；
+// 所有者改存邮箱与 argon2id 哈希（没有所有者行即需要首次设置）；setup 令牌的用途改为 setup / reset。
+// 会话与设备令牌不动。
+r#"
+DROP TABLE passkeys;
+DROP TABLE pairing_requests;
+DROP TABLE setup_tokens;
+DROP TABLE owner;
+CREATE TABLE owner (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  email TEXT NOT NULL,
+  password_hash TEXT NOT NULL,
+  password_changed_at TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE TABLE setup_tokens (
+  token_hash BLOB PRIMARY KEY,
+  purpose TEXT NOT NULL CHECK (purpose IN ('setup','reset')),
+  created_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  used_at TEXT
+);
 "#];
 
 /// 会话闲置多久过期。
 pub const SESSION_IDLE: Duration = Duration::days(14);
 /// 会话最长有效期，到期必须重新登录。
 pub const SESSION_ABSOLUTE: Duration = Duration::days(90);
-/// 敏感操作要求最近这么久内重新验证过通行密钥。
+/// 敏感操作要求最近这么久内输过密码。
 pub const STEP_UP_WINDOW: Duration = Duration::minutes(10);
-/// 设备配对码的有效期与最多尝试次数。
-pub const PAIRING_TTL: Duration = Duration::minutes(10);
-pub const PAIRING_MAX_ATTEMPTS: i64 = 5;
-/// setup / recover 链接的有效期。
-pub const SETUP_TOKEN_TTL: Duration = Duration::minutes(15);
+/// setup / reset 链接的有效期。链接由管理员在服务器上生成、只能用一次，给足一天免得来不及打开。
+pub const SETUP_TOKEN_TTL: Duration = Duration::hours(24);
 
 #[derive(Clone, Debug)]
 pub struct SessionRow {
@@ -111,18 +131,18 @@ pub struct DeviceRow {
 }
 
 #[derive(Clone, Debug)]
-pub struct PasskeyRow {
-    pub cred_id: Vec<u8>,
-    pub passkey_json: String,
-    pub label: Option<String>,
-    pub created_at: String,
-    pub last_used_at: Option<String>,
+pub struct OwnerRow {
+    pub email: String,
+    pub password_hash: String,
+    pub password_changed_at: String,
 }
 
-pub enum PairingPoll {
-    Pending,
-    Expired,
-    Approved { client_name: String, kind: String },
+/// 用 setup / reset 链接设置邮箱密码的结果。
+pub enum SetupOutcome {
+    /// 设置好了，附链接的用途（`setup` 或 `reset`）。
+    Done(String),
+    /// 链接无效、过期、已用，或首次设置链接遇到已经有账号。
+    InvalidToken,
 }
 
 pub struct AuthDb {
@@ -162,79 +182,31 @@ impl AuthDb {
 
     // ---------- 所有者 ----------
 
-    pub fn owner_handle(&self) -> rusqlite::Result<Option<Vec<u8>>> {
+    pub fn owner(&self) -> rusqlite::Result<Option<OwnerRow>> {
         self.conn()
-            .query_row("SELECT user_handle FROM owner WHERE id = 1", [], |row| row.get(0))
+            .query_row("SELECT email, password_hash, password_changed_at FROM owner WHERE id = 1", [], |row| {
+                Ok(OwnerRow { email: row.get(0)?, password_hash: row.get(1)?, password_changed_at: row.get(2)? })
+            })
             .optional()
     }
 
-    pub fn ensure_owner(&self, user_handle: &[u8], epoch: &str) -> rusqlite::Result<Vec<u8>> {
-        let conn = self.conn();
-        conn.execute(
-            "INSERT OR IGNORE INTO owner (id, user_handle, auth_epoch, created_at) VALUES (1, ?1, ?2, ?3)",
-            params![user_handle, epoch, now_text()],
-        )?;
-        conn.query_row("SELECT user_handle FROM owner WHERE id = 1", [], |row| row.get(0))
+    pub fn has_owner(&self) -> rusqlite::Result<bool> {
+        Ok(self.owner()?.is_some())
     }
 
-    // ---------- 通行密钥 ----------
-
-    pub fn active_passkeys(&self) -> rusqlite::Result<Vec<PasskeyRow>> {
-        let conn = self.conn();
-        let mut statement = conn.prepare(
-            "SELECT cred_id, passkey_json, label, created_at, last_used_at FROM passkeys
-             WHERE revoked_at IS NULL ORDER BY created_at",
-        )?;
-        let rows = statement
-            .query_map([], |row| {
-                Ok(PasskeyRow {
-                    cred_id: row.get(0)?,
-                    passkey_json: row.get(1)?,
-                    label: row.get(2)?,
-                    created_at: row.get(3)?,
-                    last_used_at: row.get(4)?,
-                })
-            })?
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(rows)
-    }
-
-    pub fn has_active_passkey(&self) -> rusqlite::Result<bool> {
-        Ok(!self.active_passkeys()?.is_empty())
-    }
-
-    pub fn insert_passkey(&self, cred_id: &[u8], passkey_json: &str, label: Option<&str>) -> rusqlite::Result<()> {
+    /// 改邮箱与密码哈希（设置里改密码、改邮箱）。只改邮箱时传原来的哈希，`password_changed_at` 不变。
+    pub fn update_owner(&self, email: &str, password_hash: &str) -> rusqlite::Result<()> {
         self.conn().execute(
-            "INSERT INTO passkeys (cred_id, passkey_json, label, created_at) VALUES (?1, ?2, ?3, ?4)",
-            params![cred_id, passkey_json, label, now_text()],
+            "UPDATE owner SET email = ?1,
+                password_changed_at = CASE WHEN password_hash = ?2 THEN password_changed_at ELSE ?3 END,
+                password_hash = ?2
+             WHERE id = 1",
+            params![email, password_hash, now_text()],
         )?;
         Ok(())
     }
 
-    pub fn update_passkey_after_use(&self, cred_id: &[u8], passkey_json: &str) -> rusqlite::Result<()> {
-        self.conn().execute(
-            "UPDATE passkeys SET passkey_json = ?1, last_used_at = ?2 WHERE cred_id = ?3",
-            params![passkey_json, now_text(), cred_id],
-        )?;
-        Ok(())
-    }
-
-    /// 吊销一把通行密钥；返回是否真的吊销了（最后一把不允许吊销，免得把自己锁在门外）。
-    pub fn revoke_passkey(&self, cred_id: &[u8]) -> rusqlite::Result<bool> {
-        let conn = self.conn();
-        let active: i64 =
-            conn.query_row("SELECT COUNT(*) FROM passkeys WHERE revoked_at IS NULL", [], |row| row.get(0))?;
-        if active <= 1 {
-            return Ok(false);
-        }
-        let changed = conn.execute(
-            "UPDATE passkeys SET revoked_at = ?1 WHERE cred_id = ?2 AND revoked_at IS NULL",
-            params![now_text(), cred_id],
-        )?;
-        Ok(changed == 1)
-    }
-
-    // ---------- setup / recover 令牌 ----------
+    // ---------- setup / reset 令牌 ----------
 
     pub fn create_setup_token(&self, token: &str, purpose: &str) -> rusqlite::Result<()> {
         let now = Utc::now();
@@ -260,13 +232,39 @@ impl AuthDb {
         }))
     }
 
-    /// 一次性：只有第一次调用返回 true。
-    pub fn consume_setup_token(&self, token: &str) -> rusqlite::Result<bool> {
-        let changed = self.conn().execute(
-            "UPDATE setup_tokens SET used_at = ?1 WHERE token_hash = ?2 AND used_at IS NULL AND expires_at > ?3",
-            params![now_text(), hash_token(token), Utc::now().to_rfc3339()],
+    /// 一个事务里：用掉令牌、写邮箱与密码哈希。首次设置的链接只在还没有账号时有效；
+    /// 重置链接还会让全部浏览器会话退出（密码可能已经泄露）。设备令牌不动，要吊销在生成链接时加 `--revoke-all`。
+    pub fn complete_setup(&self, token: &str, email: &str, password_hash: &str) -> rusqlite::Result<SetupOutcome> {
+        let conn = self.conn();
+        let tx = conn.unchecked_transaction()?;
+        let now = now_text();
+        let purpose: Option<String> = tx
+            .query_row(
+                "UPDATE setup_tokens SET used_at = ?1
+                 WHERE token_hash = ?2 AND used_at IS NULL AND expires_at > ?3
+                 RETURNING purpose",
+                params![now, hash_token(token), Utc::now().to_rfc3339()],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let Some(purpose) = purpose else {
+            return Ok(SetupOutcome::InvalidToken);
+        };
+        let has_owner: bool = tx.query_row("SELECT EXISTS (SELECT 1 FROM owner WHERE id = 1)", [], |row| row.get(0))?;
+        if purpose == "setup" && has_owner {
+            return Ok(SetupOutcome::InvalidToken);
+        }
+        tx.execute(
+            "INSERT INTO owner (id, email, password_hash, password_changed_at, created_at) VALUES (1, ?1, ?2, ?3, ?3)
+             ON CONFLICT (id) DO UPDATE SET email = excluded.email, password_hash = excluded.password_hash,
+                                            password_changed_at = excluded.password_changed_at",
+            params![email, password_hash, now],
         )?;
-        Ok(changed == 1)
+        if purpose == "reset" {
+            tx.execute("UPDATE sessions SET revoked_at = ?1 WHERE revoked_at IS NULL", params![now])?;
+        }
+        tx.commit()?;
+        Ok(SetupOutcome::Done(purpose))
     }
 
     // ---------- 会话 ----------
@@ -383,11 +381,12 @@ impl AuthDb {
         Ok(rows)
     }
 
-    /// 恢复时可选：吊销全部通行密钥，之后只能用恢复链接注册的新密钥登录。
-    pub fn revoke_all_passkeys(&self) -> rusqlite::Result<()> {
-        self.conn()
-            .execute("UPDATE passkeys SET revoked_at = ?1 WHERE revoked_at IS NULL", params![now_text()])?;
-        Ok(())
+    /// 改密码后让其他浏览器会话退出，只留下当前这个。
+    pub fn revoke_other_sessions(&self, keep: &[u8]) -> rusqlite::Result<usize> {
+        self.conn().execute(
+            "UPDATE sessions SET revoked_at = ?1 WHERE revoked_at IS NULL AND id_hash != ?2",
+            params![now_text(), keep],
+        )
     }
 
     pub fn revoke_all_credentials(&self) -> rusqlite::Result<()> {
@@ -453,70 +452,6 @@ impl AuthDb {
         Ok(changed == 1)
     }
 
-    // ---------- 设备配对 ----------
-
-    pub fn create_pairing(&self, device_code: &str, user_code: &str, client_name: &str, kind: &str) -> rusqlite::Result<()> {
-        let now = Utc::now();
-        self.conn().execute(
-            "INSERT INTO pairing_requests (device_code_hash, user_code, client_name, kind, created_at, expires_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![hash_token(device_code), user_code, client_name, kind, now.to_rfc3339(), (now + PAIRING_TTL).to_rfc3339()],
-        )?;
-        Ok(())
-    }
-
-    /// 用户在浏览器里输入配对码后批准。返回批准的客户端名字；码错误、过期或已用返回 None。
-    pub fn approve_pairing(&self, user_code: &str) -> rusqlite::Result<Option<String>> {
-        let conn = self.conn();
-        let row: Option<(Vec<u8>, String, String, i64, Option<String>)> = conn
-            .query_row(
-                "SELECT device_code_hash, client_name, expires_at, attempts, approved_at FROM pairing_requests
-                 WHERE user_code = ?1 AND consumed_at IS NULL",
-                params![user_code],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
-            )
-            .optional()?;
-        let Some((hash, client_name, expires_at, attempts, approved_at)) = row else {
-            return Ok(None);
-        };
-        if parse_time(&expires_at) <= Utc::now() || attempts >= PAIRING_MAX_ATTEMPTS || approved_at.is_some() {
-            return Ok(None);
-        }
-        conn.execute(
-            "UPDATE pairing_requests SET approved_at = ?1 WHERE device_code_hash = ?2",
-            params![now_text(), hash],
-        )?;
-        Ok(Some(client_name))
-    }
-
-    /// 客户端轮询。批准后只能换一次令牌。
-    pub fn poll_pairing(&self, device_code: &str) -> rusqlite::Result<Option<PairingPoll>> {
-        let conn = self.conn();
-        let hash = hash_token(device_code);
-        let row: Option<(String, String, String, Option<String>, Option<String>, i64)> = conn
-            .query_row(
-                "SELECT client_name, kind, expires_at, approved_at, consumed_at, attempts FROM pairing_requests
-                 WHERE device_code_hash = ?1",
-                params![hash],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?)),
-            )
-            .optional()?;
-        let Some((client_name, kind, expires_at, approved_at, consumed_at, attempts)) = row else {
-            return Ok(None);
-        };
-        if consumed_at.is_some() || parse_time(&expires_at) <= Utc::now() || attempts >= PAIRING_MAX_ATTEMPTS {
-            return Ok(Some(PairingPoll::Expired));
-        }
-        if approved_at.is_none() {
-            return Ok(Some(PairingPoll::Pending));
-        }
-        conn.execute(
-            "UPDATE pairing_requests SET consumed_at = ?1 WHERE device_code_hash = ?2",
-            params![now_text(), hash],
-        )?;
-        Ok(Some(PairingPoll::Approved { client_name, kind }))
-    }
-
     // ---------- 审计 ----------
 
     pub fn audit(&self, actor: &str, event: &str, ip: Option<&str>, user_agent: Option<&str>, detail: Option<&str>) {
@@ -550,4 +485,53 @@ fn map_device(row: &rusqlite::Row<'_>) -> rusqlite::Result<DeviceRow> {
         last_seen_at: row.get(5)?,
         last_ip: row.get(6)?,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 已部署的服务器上 auth.db 停在迁移 1（通行密钥时代）：升级后要求重新设置账号，会话与设备令牌保留。
+    #[test]
+    fn upgrading_from_passkeys_keeps_sessions_and_devices_and_asks_for_setup() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("auth.db");
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(MIGRATIONS[0]).unwrap();
+            conn.execute_batch(
+                "PRAGMA user_version = 1;
+                 INSERT INTO owner VALUES (1, x'01', 'epoch', '2026-10-28T00:00:00Z');
+                 INSERT INTO passkeys (cred_id, passkey_json, created_at) VALUES (x'02', '{}', '2026-10-28T00:00:00Z');
+                 INSERT INTO setup_tokens VALUES (x'03', 'first_passkey', '2026-10-28T00:00:00Z', '2099-01-01T00:00:00Z', NULL);",
+            )
+            .unwrap();
+            let now = Utc::now();
+            conn.execute(
+                "INSERT INTO sessions (id_hash, created_at, last_seen_at, idle_expires_at, absolute_expires_at)
+                 VALUES (?1, ?2, ?2, ?3, ?3)",
+                params![hash_token("old-session"), now.to_rfc3339(), (now + Duration::days(1)).to_rfc3339()],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO devices (device_id, name, kind, token_hash, scopes, created_at)
+                 VALUES ('dev_1', '我的 Mac', 'desktop', ?1, 'vault', ?2)",
+                params![hash_token("shd_dev_x"), now.to_rfc3339()],
+            )
+            .unwrap();
+        }
+        let auth = AuthDb::open(&path).unwrap();
+        assert!(!auth.has_owner().unwrap(), "通行密钥作废，要重新设置账号");
+        assert!(auth.touch_session("old-session").unwrap().is_some());
+        assert!(auth.device_by_token("shd_dev_x", None).unwrap().is_some());
+
+        auth.create_setup_token("t", "setup").unwrap();
+        assert!(matches!(auth.complete_setup("t", "me@example.com", "hash").unwrap(), SetupOutcome::Done(purpose) if purpose == "setup"));
+        assert_eq!(auth.owner().unwrap().unwrap().email, "me@example.com");
+        assert!(auth.create_setup_token("u", "recover").is_err(), "旧用途不再接受");
+        drop(auth);
+        // 再次打开不会重复迁移。
+        let reopened = AuthDb::open(&path).unwrap();
+        assert!(reopened.has_owner().unwrap());
+    }
 }

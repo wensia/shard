@@ -1,7 +1,16 @@
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useId, useRef, useState, type FormEvent } from "react"
 
-import { SettingsGroup, SettingsGroupItem, SettingsRow } from "@/components/shard/settings-controls"
+import { SettingsGroup, SettingsGroupItem, SettingsMono, SettingsRow } from "@/components/shard/settings-controls"
 import { Button } from "@/components/ui/button"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
 import { isServerFailure } from "@/lib/lockbox-client/client"
 import { serverLockbox } from "@/lib/lockbox-client/transport"
@@ -9,20 +18,24 @@ import { notify } from "@/lib/notify"
 
 import {
   AuthError,
-  addPasskey,
-  defaultPasskeyLabel,
+  emailProblem,
+  fetchAuthState,
+  isCancelled,
   listDevices,
-  listPasskeys,
   listSessions,
   logout,
+  MIN_PASSWORD_CHARS,
+  newPasswordProblem,
+  normalizeEmail,
   revokeDevice,
-  revokePasskey,
   revokeSession,
+  updateAccount,
   withStepUp,
   type DeviceInfo,
-  type PasskeyInfo,
   type SessionInfo,
-} from "./webauthn"
+} from "./api"
+import styles from "./auth-pages.module.css"
+import { FormError, FormField, PasswordInput } from "./form-fields"
 
 function formatTime(value: string | null | undefined) {
   if (!value) return "从未"
@@ -57,12 +70,12 @@ function describeUserAgent(userAgent: string | null) {
 }
 
 interface AccountData {
-  passkeys: PasskeyInfo[]
+  email: string | null
   sessions: SessionInfo[]
   devices: DeviceInfo[]
 }
 
-/** 「允许在网页解锁密匣」：敏感操作，服务器要求 10 分钟内验证过通行密钥，过期时弹出系统确认。 */
+/** 「允许在网页解锁密匣」：敏感操作，服务器要求 10 分钟内输过密码，过期时弹出密码确认框。 */
 function setLockboxWebUnlock(allowed: boolean) {
   return withStepUp(async () => {
     const lockbox = serverLockbox()
@@ -75,18 +88,19 @@ function setLockboxWebUnlock(allowed: boolean) {
 }
 
 /**
- * 网页端设置里的「账号与安全」：通行密钥、登录会话、已配对设备、退出登录。
- * 吊销与添加都要求最近 10 分钟内验证过通行密钥，过期时会弹出系统的通行密钥确认。
+ * 网页端设置里的「账号与安全」：登录邮箱与密码、网页解锁密匣开关、已连接的设备、登录会话、退出登录。
+ * 吊销与开关都要求最近 10 分钟内输过密码，过期时弹出密码确认框。
  */
 export function AccountSettings() {
   const [data, setData] = useState<AccountData | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [webUnlock, setWebUnlock] = useState<boolean | null>(null)
+  const [editing, setEditing] = useState(false)
 
   const load = useCallback(async () => {
     try {
-      const [passkeys, sessions, devices] = await Promise.all([listPasskeys(), listSessions(), listDevices()])
-      setData({ passkeys, sessions, devices })
+      const [state, sessions, devices] = await Promise.all([fetchAuthState(), listSessions(), listDevices()])
+      setData({ email: state.email, sessions, devices })
     } catch (error) {
       notify.failure("读取账号信息失败", error)
     }
@@ -114,7 +128,8 @@ export function AccountSettings() {
       await load()
       await loadWebUnlock()
     } catch (error) {
-      notify.failure("操作没有完成", error)
+      // 在密码确认框里点了取消：什么都不做。
+      if (!isCancelled(error)) notify.failure("操作没有完成", error)
     } finally {
       setBusy(null)
     }
@@ -128,42 +143,16 @@ export function AccountSettings() {
     )
   }
 
-  const onlyOnePasskey = data.passkeys.length <= 1
-
   return (
     <>
       <SettingsGroup busy={busy !== null}>
-        {data.passkeys.map((passkey) => (
-          <SettingsRow
-            controlWidth="auto"
-            description={`添加于 ${formatTime(passkey.createdAt)}，上次使用 ${formatTime(passkey.lastUsedAt)}`}
-            key={passkey.id}
-            label={passkey.label || "通行密钥"}
-          >
-            <Button
-              disabled={busy !== null || onlyOnePasskey}
-              onClick={() => void run(`passkey:${passkey.id}`, () => revokePasskey(passkey.id), "通行密钥已吊销")}
-              size="sm"
-              title={onlyOnePasskey ? "至少保留一把通行密钥" : undefined}
-              variant="outline"
-            >
-              吊销
-            </Button>
-          </SettingsRow>
-        ))}
         <SettingsRow
           controlWidth="auto"
-          description="建议至少两把（例如手机与电脑各一把），丢了一台设备还能登录。"
-          label="添加通行密钥"
+          description={data.email ? <SettingsMono>{data.email}</SettingsMono> : "没有读到当前邮箱。"}
+          label="登录邮箱"
         >
-          <Button
-            aria-busy={busy === "add"}
-            disabled={busy !== null}
-            onClick={() => void run("add", () => addPasskey(defaultPasskeyLabel()), "已添加通行密钥")}
-            size="sm"
-            variant="outline"
-          >
-            在这台设备上添加
+          <Button disabled={busy !== null} onClick={() => setEditing(true)} size="sm" variant="outline">
+            修改邮箱或密码
           </Button>
         </SettingsRow>
       </SettingsGroup>
@@ -187,7 +176,7 @@ export function AccountSettings() {
 
       <SettingsGroup busy={busy !== null}>
         {data.devices.length === 0 ? (
-          <SettingsGroupItem>还没有配对的桌面应用或命令行。在它们那里选择「连接服务器」，再到本站 /pair 页面输入配对码。</SettingsGroupItem>
+          <SettingsGroupItem>还没有连接的桌面应用或命令行。在它们那里输入服务器地址、邮箱和密码即可连接。</SettingsGroupItem>
         ) : (
           data.devices.map((device) => (
             <SettingsRow
@@ -244,6 +233,150 @@ export function AccountSettings() {
           </SettingsRow>
         ))}
       </SettingsGroup>
+
+      {editing ? (
+        <AccountDialog
+          currentEmail={data.email ?? ""}
+          onClose={() => setEditing(false)}
+          onSaved={({ emailChanged, passwordChanged }) => {
+            setEditing(false)
+            notify.success(
+              passwordChanged
+                ? `${emailChanged ? "邮箱和密码" : "密码"}已修改，其他浏览器已退出登录`
+                : "登录邮箱已修改"
+            )
+            void load()
+          }}
+        />
+      ) : null}
     </>
+  )
+}
+
+/** 「修改邮箱或密码」：凭当前密码；新密码留空表示只改邮箱。 */
+function AccountDialog({
+  currentEmail,
+  onClose,
+  onSaved,
+}: {
+  currentEmail: string
+  onClose: () => void
+  onSaved: (changes: { emailChanged: boolean; passwordChanged: boolean }) => void
+}) {
+  const [currentPassword, setCurrentPassword] = useState("")
+  const [email, setEmail] = useState(currentEmail)
+  const [newPassword, setNewPassword] = useState("")
+  const [repeat, setRepeat] = useState("")
+  const [error, setError] = useState("")
+  const [busy, setBusy] = useState(false)
+  const currentRef = useRef<HTMLInputElement>(null)
+  const currentId = useId()
+  const emailId = useId()
+  const newId = useId()
+  const repeatId = useId()
+  const hintId = useId()
+  const errorId = useId()
+
+  async function submit(event: FormEvent) {
+    event.preventDefault()
+    if (busy) return
+    const changingPassword = newPassword !== "" || repeat !== ""
+    const changingEmail = normalizeEmail(email) !== normalizeEmail(currentEmail)
+    const problem =
+      (currentPassword ? null : "请输入当前密码。") ??
+      emailProblem(email) ??
+      (changingPassword ? newPasswordProblem(newPassword, repeat) : null) ??
+      (changingPassword || changingEmail ? null : "邮箱和密码都没有改动。")
+    if (problem) {
+      setError(problem)
+      return
+    }
+    setBusy(true)
+    setError("")
+    try {
+      await updateAccount({ currentPassword, email, newPassword: changingPassword ? newPassword : undefined })
+      onSaved({ emailChanged: changingEmail, passwordChanged: changingPassword })
+    } catch (caught) {
+      setBusy(false)
+      setError(caught instanceof Error ? caught.message : String(caught))
+      if (caught instanceof AuthError && caught.code === "INVALID_CREDENTIALS") {
+        setCurrentPassword("")
+        currentRef.current?.focus()
+      }
+    }
+  }
+
+  const describedBy = error ? errorId : undefined
+  return (
+    <Dialog open onOpenChange={(open) => !open && !busy && onClose()}>
+      <DialogContent aria-busy={busy} className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>修改邮箱或密码</DialogTitle>
+          <DialogDescription>新密码留空表示只改邮箱。改了密码，其他浏览器会退出登录，这个页面不受影响。</DialogDescription>
+        </DialogHeader>
+        <form className={styles.form} noValidate onSubmit={(event) => void submit(event)}>
+          <FormField htmlFor={currentId} label="当前密码">
+            <PasswordInput
+              aria-describedby={describedBy}
+              autoComplete="current-password"
+              autoFocus
+              id={currentId}
+              onChange={(event) => setCurrentPassword(event.target.value)}
+              readOnly={busy}
+              ref={currentRef}
+              value={currentPassword}
+            />
+          </FormField>
+          <FormField htmlFor={emailId} label="邮箱">
+            <Input
+              aria-describedby={describedBy}
+              autoCapitalize="off"
+              autoComplete="username"
+              id={emailId}
+              inputMode="email"
+              onChange={(event) => setEmail(event.target.value)}
+              readOnly={busy}
+              spellCheck={false}
+              type="email"
+              value={email}
+            />
+          </FormField>
+          <FormField
+            hint={`留空表示不改；至少 ${MIN_PASSWORD_CHARS} 个字符。`}
+            hintId={hintId}
+            htmlFor={newId}
+            label="新密码"
+          >
+            <PasswordInput
+              aria-describedby={describedBy ? `${hintId} ${describedBy}` : hintId}
+              autoComplete="new-password"
+              id={newId}
+              onChange={(event) => setNewPassword(event.target.value)}
+              readOnly={busy}
+              value={newPassword}
+            />
+          </FormField>
+          <FormField htmlFor={repeatId} label="确认新密码">
+            <PasswordInput
+              aria-describedby={describedBy}
+              autoComplete="new-password"
+              id={repeatId}
+              onChange={(event) => setRepeat(event.target.value)}
+              readOnly={busy}
+              value={repeat}
+            />
+          </FormField>
+          <FormError id={errorId} message={error} />
+          <DialogFooter>
+            <Button disabled={busy} onClick={onClose} type="button" variant="outline">
+              取消
+            </Button>
+            <Button aria-busy={busy} disabled={busy} type="submit">
+              {busy ? "正在保存…" : "保存"}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   )
 }

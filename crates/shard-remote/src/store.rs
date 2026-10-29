@@ -15,14 +15,14 @@ use std::{
     path::{Path, PathBuf},
 };
 
-/// 远程配置：配对成功后记下的服务器与设备。
+/// 远程配置：登录成功后记下的服务器与设备。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct RemoteConfig {
     /// 规范化的站点地址（`https://shard.example.com`，无结尾斜杠）。
     pub server: String,
     pub device_id: String,
-    /// 配对时服务器记下的设备名（网页「设置 → 设备」里显示的名字）。
+    /// 登录时服务器记下的设备名（网页「设置 → 设备」里显示的名字）。
     pub name: String,
 }
 
@@ -52,9 +52,9 @@ impl TokenBackend {
 pub enum StoreError {
     /// 没有状态目录（例如没有 HOME）。
     NoStateDir,
-    /// 配置文件存在但无法解析：可以 [`CredentialStore::remove_config_file`] 后重新配对。
+    /// 配置文件存在但无法解析：可以 [`CredentialStore::remove_config_file`] 后重新登录。
     ConfigCorrupt { path: PathBuf, detail: String },
-    /// 钥匙串里的令牌不是 UTF-8：需要重新配对。
+    /// 钥匙串里的令牌不是 UTF-8：需要重新登录。
     KeychainTokenCorrupt,
     /// 其他读写失败，附给人看的说明（含路径与系统错误）。
     Failed(String),

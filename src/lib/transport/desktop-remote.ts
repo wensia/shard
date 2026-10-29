@@ -330,7 +330,7 @@ export function subscribeRemoteConnection(listener: (state: ConnectionState) => 
   }
 }
 
-/** 这台设备的连接是否已失效（需要重新配对）。 */
+/** 这台设备的连接是否已失效（需要断开后重新登录服务器）。 */
 export function isRemoteAuthRequired() {
   return authRequired
 }

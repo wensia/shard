@@ -330,7 +330,7 @@ async fn lockbox_seq_lets_clients_skip_their_own_echo() {
 }
 
 #[tokio::test]
-async fn browser_sessions_need_a_fresh_passkey_to_replace_the_manifest() {
+async fn browser_sessions_need_the_password_again_to_replace_the_manifest() {
     let h = Harness::new().await;
     let (manifest, _) = new_manifest();
     let setup = h.ok("lockbox_apply", json!({ "manifest": { "body": manifest.to_text().unwrap(), "expectedSha": null } })).await;

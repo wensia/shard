@@ -16,11 +16,13 @@ chrono = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 shard-core = { path = "../shard-core" }
-# 远程模式：RPC 客户端、服务器地址规则、令牌存储（钥匙串服务 dev.shard.cli）与设备配对，与桌面共用。
+# 远程模式：RPC 客户端、服务器地址规则、令牌存储（钥匙串服务 dev.shard.cli）与登录，与桌面共用。
 shard-remote = { path = "../shard-remote" }
 # 追加规则、目标解析、数据集幂等追加等与服务端命令行 RPC 共用的领域逻辑（shard_vault::cli）。
 shard-vault = { path = "../shard-vault" }
 ratatui = "0.30.2"
+# shard login 输入密码时不回显。
+rpassword = "7"
 unicode-segmentation = "1.13.3"
 unicode-width = "0.2.2"
 

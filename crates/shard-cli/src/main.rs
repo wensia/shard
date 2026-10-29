@@ -1,7 +1,7 @@
 //! Shard 终端快捷创建与读写。两种模式：
 //! - 本地模式：直接读写资料库目录，App 不运行也能用；提交交给 App 的检查点，运行中的 App
 //!   监听到文件变化后实时刷新。显式 `--vault` / `SHARD_VAULT`，或没有登录服务器时使用。
-//! - 远程模式：`shard login <服务器>` 配对之后，所有读写调服务器的 RPC（`remote`），本机不碰 vault 文件。
+//! - 远程模式：`shard login <服务器>` 登录之后，所有读写调服务器的 RPC（`remote`），本机不碰 vault 文件。
 //!
 //! 给 AI 助手的非交互读写在 `agent`（本地）与 `remote::ops`（远程），使用说明与 skill 安装在 `guide`。
 
@@ -40,7 +40,7 @@ shard — 在终端里记一条 Shard 碎片
 AI 助手与脚本：先运行 shard --agent-guide 查看完整说明（格式规则、JSON 输出、退出码）。
 
 用法:
-  shard login <服务器地址> [--name <设备名>]   与 Shard 服务器配对，之后的命令都读写服务器
+  shard login <服务器地址> [--name <设备名>]   用邮箱和密码登录 Shard 服务器，之后的命令都读写服务器
   shard logout                       删除本机登录令牌（回到本地模式）
   shard --whoami [--json]            显示当前是远程还是本地模式
   shard [选项] [#标签…] [/块命令] 内容

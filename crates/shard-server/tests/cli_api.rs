@@ -1,5 +1,5 @@
 //! 命令行专用 RPC（`commands/cli.rs`）经 HTTP 的端到端测试：把示例资料库 `tests/fixtures/vault-golden`
-//! 导入内容库，用配对得到的 CLI 设备令牌调用，核对与 CLI 本地模式一致的结果形状、报错码与幂等。
+//! 导入内容库，用邮箱密码登录得到的 CLI 设备令牌调用，核对与 CLI 本地模式一致的结果形状、报错码与幂等。
 //! 运行：`cargo test -p shard-server --features test-auth`。
 #![cfg(feature = "test-auth")]
 
@@ -46,7 +46,7 @@ struct Reply {
 }
 
 impl Harness {
-    /// 导入示例资料库，再走一遍设备配对（kind=cli）拿到设备令牌：之后的调用都以 CLI 设备身份发出。
+    /// 导入示例资料库，设置好账号后像 `shard login` 一样用邮箱密码换设备令牌（kind=cli）：之后的调用都以 CLI 设备身份发出。
     async fn new() -> Self {
         let data = tempfile::tempdir().unwrap();
         let config = Config::new(data.path().to_path_buf(), ORIGIN, None, false).unwrap();
@@ -55,9 +55,10 @@ impl Harness {
         let state = AppState::open(config, registry).unwrap();
         shard_store::transfer::import_vault(&state.store, &golden()).unwrap();
         commands::ensure_layout(&state.store).unwrap();
+        state.auth.create_setup_token("setup-token", "setup").unwrap();
         let app = app::build(state);
         let mut harness = Self { _data: data, app, token: String::new(), keys: AtomicUsize::new(0) };
-        harness.token = harness.pair().await;
+        harness.token = harness.login().await;
         harness
     }
 
@@ -73,31 +74,20 @@ impl Harness {
         Request::post(uri).header(header::CONTENT_TYPE, "application/json")
     }
 
-    async fn pair(&self) -> String {
-        let session = self.send(Request::post("/api/test/session").body(Body::empty()).unwrap()).await;
-        assert_eq!(session.status, StatusCode::OK);
-        let cookie = session.headers[header::SET_COOKIE].to_str().unwrap().split(';').next().unwrap().to_string();
-        let start_body = json!({ "name": "测试命令行", "kind": "cli" });
-        let start = self
-            .send(Self::json_post("/api/device/start").body(Body::from(start_body.to_string())).unwrap())
-            .await;
-        assert_eq!(start.status, StatusCode::OK, "{}", start.body);
-        let approve_body = json!({ "userCode": start.body["userCode"] });
-        let approve = self
+    async fn login(&self) -> String {
+        let account = json!({ "token": "setup-token", "email": "me@example.com", "password": "correct horse battery" });
+        let setup = self
             .send(
-                Self::json_post("/api/device/approve")
-                    .header(header::COOKIE, &cookie)
+                Self::json_post("/api/auth/setup")
                     .header("x-shard-request", "1")
                     .header(header::ORIGIN, ORIGIN)
-                    .body(Body::from(approve_body.to_string()))
+                    .body(Body::from(account.to_string()))
                     .unwrap(),
             )
             .await;
-        assert_eq!(approve.status, StatusCode::OK, "{}", approve.body);
-        let poll_body = json!({ "deviceCode": start.body["deviceCode"] });
-        let issued = self
-            .send(Self::json_post("/api/device/token").body(Body::from(poll_body.to_string())).unwrap())
-            .await;
+        assert_eq!(setup.status, StatusCode::OK, "{}", setup.body);
+        let login = json!({ "email": "me@example.com", "password": "correct horse battery", "name": "测试命令行", "kind": "cli" });
+        let issued = self.send(Self::json_post("/api/device/login").body(Body::from(login.to_string())).unwrap()).await;
         assert_eq!(issued.status, StatusCode::OK, "{}", issued.body);
         issued.body["token"].as_str().unwrap().to_string()
     }

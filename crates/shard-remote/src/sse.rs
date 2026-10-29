@@ -431,7 +431,7 @@ mod tests {
         let server = fake_server(move |request| {
             log.lock().unwrap().push(request.clone());
             if request.header("authorization") != Some("Bearer shd_dev_ok") {
-                return Reply::json(401, &json!({ "code": "UNAUTHENTICATED", "message": "请重新配对" }));
+                return Reply::json(401, &json!({ "code": "UNAUTHENTICATED", "message": "请重新登录" }));
             }
             Reply::Chunks(
                 200,
@@ -459,7 +459,7 @@ mod tests {
 
         let revoked = Client::new(&server, "shd_dev_revoked", options).unwrap().events(None).unwrap_err();
         assert!(revoked.is_unauthenticated() && revoked.is("UNAUTHENTICATED"), "{revoked:?}");
-        assert_eq!((revoked.command.as_str(), revoked.message.as_str()), ("events", "请重新配对"));
+        assert_eq!((revoked.command.as_str(), revoked.message.as_str()), ("events", "请重新登录"));
 
         let seen = seen.lock().unwrap();
         assert_eq!((seen[0].method.as_str(), seen[0].path.as_str()), ("GET", "/api/events"));

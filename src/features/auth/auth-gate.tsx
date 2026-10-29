@@ -4,15 +4,20 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { AUTH_REQUIRED_EVENT } from "@/lib/transport"
 
-import styles from "./auth-pages.module.css"
 import {
   AuthError,
-  approvePairing,
-  defaultPasskeyLabel,
+  checkSetupToken,
+  emailProblem,
   fetchAuthState,
-  loginWithPasskey,
-  registerWithSetupToken,
-} from "./webauthn"
+  login,
+  MIN_PASSWORD_CHARS,
+  newPasswordProblem,
+  setupAccount,
+  type SetupTokenInfo,
+} from "./api"
+import styles from "./auth-pages.module.css"
+import { FormError, FormField, PasswordInput } from "./form-fields"
+import { PasswordPromptHost } from "./password-prompt"
 
 type Phase =
   | { kind: "loading" }
@@ -31,12 +36,12 @@ function goHome() {
 }
 
 /**
- * 网页端的入口门：没登录先登录；`/setup#token=…` 是服务器上 `shard-server setup` 生成的一次性注册链接；
- * `/pair` 是桌面或命令行配对时要打开的批准页。登录过期时（任意请求 401）退回登录页。
+ * 网页端的入口门：没登录先用邮箱和密码登录；`/setup#token=…` 是服务器上 `shard-server setup`（首次设置）或
+ * `shard-server reset-password`（忘记密码）生成的一次性链接。登录过期时（任意请求 401）退回登录页。
+ * 已登录时挂上密码确认框的宿主，敏感操作前由它要密码。
  */
 export function AuthGate({ children }: { children: ReactNode }) {
   const [phase, setPhase] = useState<Phase>({ kind: "loading" })
-  const [path, setPath] = useState(() => window.location.pathname)
 
   const refresh = useCallback(async () => {
     try {
@@ -53,6 +58,8 @@ export function AuthGate({ children }: { children: ReactNode }) {
       setPhase({ kind: "setup", token })
       return
     }
+    // 设备配对页已经取消（桌面与命令行改为直接输入邮箱和密码）：旧链接回首页。
+    if (window.location.pathname === "/pair") goHome()
     void refresh()
   }, [refresh])
 
@@ -64,7 +71,6 @@ export function AuthGate({ children }: { children: ReactNode }) {
 
   const enter = () => {
     if (window.location.pathname === "/setup") goHome()
-    setPath(window.location.pathname)
     setPhase({ kind: "ready" })
   }
 
@@ -72,28 +78,17 @@ export function AuthGate({ children }: { children: ReactNode }) {
     case "loading":
       return <div className={styles.page} aria-busy="true" />
     case "offline":
-      return (
-        <AuthCard title="连不上服务器">
-          <p className={styles.hint}>{phase.message}</p>
-          <Button className={styles.action} size="lg" variant="outline" onClick={() => void refresh()}>
-            重试
-          </Button>
-        </AuthCard>
-      )
+      return <OfflineCard message={phase.message} onRetry={() => void refresh()} />
     case "setup":
       return <SetupPage token={phase.token} onDone={enter} />
     case "login":
       return <LoginPage setupRequired={phase.setupRequired} onDone={enter} />
     case "ready":
-      return path === "/pair" ? (
-        <PairPage
-          onDone={() => {
-            goHome()
-            setPath("/")
-          }}
-        />
-      ) : (
-        children
+      return (
+        <>
+          {children}
+          <PasswordPromptHost />
+        </>
       )
   }
 }
@@ -113,175 +108,262 @@ function AuthCard({ title, children }: { title: string; children: ReactNode }) {
   )
 }
 
-function useAction() {
+function OfflineCard({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return (
+    <AuthCard title="连不上服务器">
+      <p className={styles.hint}>{message}</p>
+      <Button className={styles.action} size="lg" variant="outline" onClick={onRetry}>
+        重试
+      </Button>
+    </AuthCard>
+  )
+}
+
+/** 表单提交的忙碌态与错误行。`fail` 用于前端预校验拦下的情况（不发请求）。 */
+function useSubmit() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState("")
-  const run = async (action: () => Promise<void>) => {
+  const run = async (action: () => Promise<void>, onError?: (error: unknown) => void) => {
     setBusy(true)
     setError("")
     try {
       await action()
     } catch (caught) {
       setError(messageOf(caught))
+      onError?.(caught)
     } finally {
       setBusy(false)
     }
   }
-  return { busy, error, run }
+  return { busy, error, fail: setError, run }
 }
 
 function LoginPage({ setupRequired, onDone }: { setupRequired: boolean; onDone: () => void }) {
-  const { busy, error, run } = useAction()
+  const { busy, error, fail, run } = useSubmit()
+  const [email, setEmail] = useState("")
+  const [password, setPassword] = useState("")
+  const emailId = useId()
+  const passwordId = useId()
+  const errorId = useId()
+
   if (setupRequired) {
     return (
-      <AuthCard title="还没有设置通行密钥">
+      <AuthCard title="还没有设置账号">
         <p className={styles.hint}>
-          在服务器上运行 <code>shard-server setup</code>，用这台设备打开它给出的链接，注册第一把通行密钥。
+          在服务器上运行 <code>shard-server setup</code>，打开它给出的链接设置邮箱和密码。
         </p>
       </AuthCard>
     )
   }
+
+  const submit = (event: FormEvent) => {
+    event.preventDefault()
+    const problem = emailProblem(email) ?? (password ? null : "请填写密码。")
+    if (problem) {
+      fail(problem)
+      return
+    }
+    void run(
+      async () => {
+        await login(email, password)
+        onDone()
+      },
+      (caught) => {
+        // 邮箱或密码不对：清空密码重输，邮箱留着。
+        if (caught instanceof AuthError && caught.code === "INVALID_CREDENTIALS") setPassword("")
+      }
+    )
+  }
+
+  const describedBy = error ? errorId : undefined
   return (
     <AuthCard title="登录">
-      <p className={styles.hint}>用这台设备上的通行密钥登录，面容、指纹或设备密码确认即可。</p>
-      <Button
-        aria-busy={busy}
-        className={styles.action}
-        disabled={busy}
-        size="lg"
-        variant="primary"
-        onClick={() => void run(async () => {
-          await loginWithPasskey()
-          onDone()
-        })}
-      >
-        {busy ? "等待确认…" : "用通行密钥登录"}
-      </Button>
-      {error ? (
-        <p className={styles.error} role="alert">
-          {error}
-        </p>
-      ) : null}
+      <form className={styles.form} noValidate onSubmit={submit}>
+        <FormField htmlFor={emailId} label="邮箱">
+          <Input
+            aria-describedby={describedBy}
+            autoCapitalize="off"
+            autoComplete="username"
+            autoFocus
+            className={styles.input}
+            id={emailId}
+            inputMode="email"
+            onChange={(event) => setEmail(event.target.value)}
+            spellCheck={false}
+            type="email"
+            value={email}
+          />
+        </FormField>
+        <FormField htmlFor={passwordId} label="密码">
+          <PasswordInput
+            aria-describedby={describedBy}
+            autoComplete="current-password"
+            className={styles.input}
+            id={passwordId}
+            onChange={(event) => setPassword(event.target.value)}
+            readOnly={busy}
+            value={password}
+          />
+        </FormField>
+        <FormError id={errorId} message={error} />
+        <Button aria-busy={busy} className={styles.action} disabled={busy} size="lg" type="submit" variant="primary">
+          {busy ? "正在登录…" : "登录"}
+        </Button>
+      </form>
+      <p className={styles.hint}>
+        忘记密码：在服务器上运行 <code>shard-server reset-password</code>，打开它给出的链接重设。
+      </p>
     </AuthCard>
   )
 }
 
+type SetupCheck =
+  | { kind: "checking" }
+  | { kind: "invalid"; message: string }
+  | { kind: "offline"; message: string }
+  | { kind: "ready"; info: SetupTokenInfo }
+
+/** 一次性链接：先问服务器链接还有没有效、是首次设置还是重置，再给对应的表单。 */
 function SetupPage({ token, onDone }: { token: string; onDone: () => void }) {
-  const { busy, error, run } = useAction()
-  const [label, setLabel] = useState(() => defaultPasskeyLabel())
-  const labelId = useId()
+  const [check, setCheck] = useState<SetupCheck>({ kind: "checking" })
+  const [attempt, setAttempt] = useState(0)
+
+  useEffect(() => {
+    if (!token) return
+    let active = true
+    setCheck({ kind: "checking" })
+    checkSetupToken(token).then(
+      (info) => {
+        if (active) setCheck({ kind: "ready", info })
+      },
+      (error: unknown) => {
+        if (!active) return
+        setCheck(
+          error instanceof AuthError && error.code === "SETUP_TOKEN_INVALID"
+            ? { kind: "invalid", message: error.message }
+            : { kind: "offline", message: messageOf(error) }
+        )
+      }
+    )
+    return () => {
+      active = false
+    }
+  }, [token, attempt])
 
   if (!token) {
     return (
       <AuthCard title="链接不完整">
         <p className={styles.hint}>
-          这个设置链接缺少令牌。请复制 <code>shard-server setup</code> 输出的完整链接重新打开。
+          这个链接缺少令牌。请复制 <code>shard-server setup</code> 或 <code>shard-server reset-password</code>{" "}
+          输出的完整链接重新打开。
         </p>
       </AuthCard>
     )
   }
 
+  switch (check.kind) {
+    case "checking":
+      return <div className={styles.page} aria-busy="true" />
+    case "offline":
+      return <OfflineCard message={check.message} onRetry={() => setAttempt((value) => value + 1)} />
+    case "invalid":
+      return (
+        <AuthCard title="链接无效或已过期">
+          <p className={styles.hint}>{check.message}</p>
+          <p className={styles.hint}>
+            请在服务器上重新运行 <code>shard-server setup</code>（忘记密码用 <code>shard-server reset-password</code>
+            ），打开新给出的链接。
+          </p>
+        </AuthCard>
+      )
+    case "ready":
+      return <SetupForm info={check.info} token={token} onDone={onDone} />
+  }
+}
+
+function SetupForm({ info, token, onDone }: { info: SetupTokenInfo; token: string; onDone: () => void }) {
+  const { busy, error, fail, run } = useSubmit()
+  const reset = info.purpose === "reset"
+  const [email, setEmail] = useState(info.email ?? "")
+  const [password, setPassword] = useState("")
+  const [repeat, setRepeat] = useState("")
+  const emailId = useId()
+  const passwordId = useId()
+  const repeatId = useId()
+  const hintId = useId()
+  const errorId = useId()
+
   const submit = (event: FormEvent) => {
     event.preventDefault()
+    const problem = emailProblem(email) ?? newPasswordProblem(password, repeat)
+    if (problem) {
+      fail(problem)
+      return
+    }
     void run(async () => {
-      await registerWithSetupToken(token, label.trim() || defaultPasskeyLabel())
+      await setupAccount(token, email, password)
       onDone()
     })
   }
 
+  const describedBy = error ? errorId : undefined
   return (
-    <AuthCard title="注册通行密钥">
+    <AuthCard title={reset ? "重置密码" : "设置账号"}>
       <p className={styles.hint}>
-        通行密钥保存在这台设备上（iPhone 与 Mac 会经 iCloud 钥匙串同步），以后用面容、指纹或设备密码登录，没有密码可被盗。
+        {reset ? "为这个账号设置新密码，完成后直接登录。" : "设置登录用的邮箱和密码，完成后直接登录。"}
       </p>
-      <form className={styles.form} onSubmit={submit}>
-        <label className={styles.field} htmlFor={labelId}>
-          名称
+      {/* 用户名 + 两个 new-password 字段在同一个表单里：Safari / iCloud 钥匙串据此建议并保存强密码。 */}
+      <form className={styles.form} noValidate onSubmit={submit}>
+        <FormField htmlFor={emailId} label="邮箱">
           <Input
-            autoComplete="off"
-            id={labelId}
-            maxLength={60}
-            value={label}
-            onChange={(event) => setLabel(event.target.value)}
-          />
-        </label>
-        <Button aria-busy={busy} className={styles.action} disabled={busy} size="lg" type="submit" variant="primary">
-          {busy ? "等待确认…" : "注册并登录"}
-        </Button>
-      </form>
-      {error ? (
-        <p className={styles.error} role="alert">
-          {error}
-        </p>
-      ) : null}
-    </AuthCard>
-  )
-}
-
-function PairPage({ onDone }: { onDone: () => void }) {
-  const { busy, error, run } = useAction()
-  const [code, setCode] = useState("")
-  const [approved, setApproved] = useState<string | null>(null)
-  const codeId = useId()
-
-  if (approved) {
-    return (
-      <AuthCard title="已批准">
-        <p className={styles.success}>「{approved}」已经可以访问你的资料库。回到那台设备继续。</p>
-        <Button className={styles.action} size="lg" variant="outline" onClick={onDone}>
-          返回 Shard
-        </Button>
-      </AuthCard>
-    )
-  }
-
-  const submit = (event: FormEvent) => {
-    event.preventDefault()
-    void run(async () => {
-      const result = await approvePairing(code)
-      setApproved(result.name)
-    })
-  }
-
-  return (
-    <AuthCard title="批准设备">
-      <p className={styles.hint}>
-        要连接的电脑或终端上会显示一个 8 位配对码。只批准你自己正在操作的设备；批准前会再验证一次通行密钥。
-      </p>
-      <form className={styles.form} onSubmit={submit}>
-        <label className={styles.field} htmlFor={codeId}>
-          配对码
-          <Input
-            autoCapitalize="characters"
-            autoComplete="off"
-            id={codeId}
-            inputMode="text"
-            maxLength={9}
-            placeholder="ABCD-EFGH"
+            aria-describedby={describedBy}
+            autoCapitalize="off"
+            autoComplete="username"
+            autoFocus={!reset}
+            className={styles.input}
+            id={emailId}
+            inputMode="email"
+            onChange={(event) => setEmail(event.target.value)}
             spellCheck={false}
-            value={code}
-            onChange={(event) => setCode(event.target.value.toUpperCase())}
+            type="email"
+            value={email}
           />
-        </label>
-        <Button
-          aria-busy={busy}
-          className={styles.action}
-          disabled={busy || code.replace(/[^A-Z0-9]/gu, "").length !== 8}
-          size="lg"
-          type="submit"
-          variant="primary"
+        </FormField>
+        <FormField
+          hint={`至少 ${MIN_PASSWORD_CHARS} 个字符。可以让浏览器或钥匙串生成并保存一个强密码。`}
+          hintId={hintId}
+          htmlFor={passwordId}
+          label={reset ? "新密码" : "密码"}
         >
-          {busy ? "等待确认…" : "批准"}
+          <PasswordInput
+            aria-describedby={describedBy ? `${hintId} ${describedBy}` : hintId}
+            autoComplete="new-password"
+            autoFocus={reset}
+            className={styles.input}
+            id={passwordId}
+            minLength={MIN_PASSWORD_CHARS}
+            onChange={(event) => setPassword(event.target.value)}
+            readOnly={busy}
+            value={password}
+          />
+        </FormField>
+        <FormField htmlFor={repeatId} label={reset ? "确认新密码" : "确认密码"}>
+          <PasswordInput
+            aria-describedby={describedBy}
+            autoComplete="new-password"
+            className={styles.input}
+            id={repeatId}
+            minLength={MIN_PASSWORD_CHARS}
+            onChange={(event) => setRepeat(event.target.value)}
+            readOnly={busy}
+            value={repeat}
+          />
+        </FormField>
+        <FormError id={errorId} message={error} />
+        <Button aria-busy={busy} className={styles.action} disabled={busy} size="lg" type="submit" variant="primary">
+          {busy ? "正在保存…" : reset ? "重置并登录" : "设置并登录"}
         </Button>
       </form>
-      {error ? (
-        <p className={styles.error} role="alert">
-          {error}
-        </p>
-      ) : null}
-      <Button className={styles.action} size="lg" variant="ghost" onClick={onDone}>
-        取消
-      </Button>
     </AuthCard>
   )
 }

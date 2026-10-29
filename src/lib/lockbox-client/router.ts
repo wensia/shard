@@ -65,7 +65,7 @@ export interface LockboxRouterDeps {
   emitVaultChanged: (payload: { vault: string; changes: LockboxFileChange[] }) => void
   /** 订阅「密匣可能变了」：服务器推来 `lockbox-changed`（带这次的 `seq`），以及重连、游标过旧（没有 seq）。 */
   onLockboxChanged: (handler: (seq?: number) => void) => void
-  /** 验证一次通行密钥：浏览器会话写 manifest 要求最近验证过。 */
+  /** 输入一次账号密码确认：浏览器会话写 manifest 要求 10 分钟内输过密码。 */
   stepUp?: () => Promise<void>
 }
 

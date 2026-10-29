@@ -3,7 +3,7 @@
 //! overlay 上执行并记进 outbox，其余报「需要联网：…」。图片经 `shard-asset` 协议代理 `/api/files`
 //! （离线时读副本，见 `vault_asset_protocol`），服务器的 SSE 转成 Tauri 事件并触发后台同步。
 //!
-//! 配对、令牌存取、RPC 与 SSE 都用共享的 `shard-remote`（与命令行同一份）。令牌存钥匙串
+//! 登录、令牌存取、RPC 与 SSE 都用共享的 `shard-remote`（与命令行同一份）。令牌存钥匙串
 //! `dev.shard.desktop`，与命令行（`dev.shard.cli`）分开，网页「设置 → 设备」里可以单独吊销。
 //! 副本放 `<App 数据目录>/remote/replica.db`（与令牌配置分开），断开连接时删除；还没补交的操作先另存到
 //! `<App 数据目录>/remote-recovered/`。
@@ -20,8 +20,7 @@ use std::{
 use serde::Serialize;
 use serde_json::{json, Value};
 use shard_remote::{
-    start_pairing, Client, ClientOptions, CredentialStore, Pairing, PairingRequest, PollStatus, RemoteConfig,
-    RemoteError, TokenBackend,
+    login_device, Client, ClientOptions, CredentialStore, LoginRequest, RemoteConfig, RemoteError, TokenBackend,
 };
 use shard_sync::{EngineOptions, SyncEngine, SyncEvent, SyncRunner, SyncStatus};
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -103,7 +102,6 @@ struct SyncHandle {
 #[derive(Default)]
 struct RemoteState {
     connected: Option<Connected>,
-    pairing: Option<Pairing>,
 }
 
 #[derive(Default)]
@@ -249,94 +247,43 @@ pub fn remote_status(runtime: State<'_, RemoteRuntime>) -> RemoteStatus {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct PairingInfo {
-    server: String,
-    user_code: String,
-    /// 在已登录的浏览器里打开它、输入配对码并验证通行密钥。
-    verification_uri: String,
-    expires_in: u64,
-    interval_ms: u64,
-}
-
-/// 发起配对：返回配对码与网页地址，前端展示后按 `intervalMs` 轮询 [`remote_pair_poll`]。
-#[tauri::command]
-pub async fn remote_pair_start(
-    runtime: State<'_, RemoteRuntime>,
+pub struct LoginResult {
     server: String,
     name: String,
-) -> Result<PairingInfo, String> {
-    let pairing = tauri::async_runtime::spawn_blocking(move || {
-        start_pairing(&server, PairingRequest { name: &name, kind: "desktop" }, &user_agent())
+}
+
+/// 用邮箱密码登录服务器：换到设备令牌后存好令牌与配置并连上。密码只用这一次，不保存。
+#[tauri::command]
+pub async fn remote_login(
+    app: AppHandle,
+    runtime: State<'_, RemoteRuntime>,
+    server: String,
+    email: String,
+    password: String,
+    name: String,
+) -> Result<LoginResult, String> {
+    let credentials = tauri::async_runtime::spawn_blocking(move || {
+        login_device(&server, LoginRequest { email: &email, password: &password, name: &name, kind: "desktop" }, &user_agent())
     })
     .await
     .map_err(|error| error.to_string())?
     .map_err(|error| error.to_string())?;
-    let info = PairingInfo {
-        server: pairing.server().to_string(),
-        user_code: pairing.user_code().to_string(),
-        verification_uri: pairing.verification_uri().to_string(),
-        expires_in: pairing.expires_in(),
-        interval_ms: pairing.interval().as_millis() as u64,
+    let store = credential_store(&app);
+    let config = RemoteConfig {
+        server: credentials.server.clone(),
+        device_id: credentials.device_id.clone(),
+        name: credentials.name.clone(),
     };
-    runtime.lock().pairing = Some(pairing);
-    Ok(info)
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase", rename_all_fields = "camelCase", tag = "status")]
-pub enum PairPollResult {
-    Pending { interval_ms: u64 },
-    Connected { server: String, name: String },
-    Expired,
-}
-
-/// 轮询一次配对结果；批准后存好令牌与配置并连上服务器。
-#[tauri::command]
-pub async fn remote_pair_poll(app: AppHandle, runtime: State<'_, RemoteRuntime>) -> Result<PairPollResult, String> {
-    let Some(mut pairing) = runtime.lock().pairing.take() else {
-        return Err("没有进行中的配对，请重新发起。".to_string());
-    };
-    if pairing.is_expired() {
-        return Ok(PairPollResult::Expired);
+    // 先存新令牌与配置，再连；换了服务器时删掉旧服务器的令牌（按服务器分开存，不会删到新的）。
+    let previous = store.load_config().ok().flatten();
+    store.save_token(&config.server, &credentials.token).map_err(|error| error.to_string())?;
+    store.save_config(&config).map_err(|error| error.to_string())?;
+    if let Some(previous) = previous.filter(|previous| previous.server != config.server) {
+        let _ = store.delete_token(&previous.server);
     }
-    let (pairing, polled) = tauri::async_runtime::spawn_blocking(move || {
-        let polled = pairing.poll_once();
-        (pairing, polled)
-    })
-    .await
-    .map_err(|error| error.to_string())?;
-    match polled {
-        Ok(PollStatus::Pending) => {
-            let interval_ms = pairing.interval().as_millis() as u64;
-            runtime.lock().pairing = Some(pairing);
-            Ok(PairPollResult::Pending { interval_ms })
-        }
-        Ok(PollStatus::Issued(credentials)) => {
-            let store = credential_store(&app);
-            let config = RemoteConfig {
-                server: credentials.server.clone(),
-                device_id: credentials.device_id.clone(),
-                name: credentials.name.clone(),
-            };
-            // 先存新令牌与配置，再连；换了服务器时删掉旧服务器的令牌（按服务器分开存，不会删到新的）。
-            let previous = store.load_config().ok().flatten();
-            store.save_token(&config.server, &credentials.token).map_err(|error| error.to_string())?;
-            store.save_config(&config).map_err(|error| error.to_string())?;
-            if let Some(previous) = previous.filter(|previous| previous.server != config.server) {
-                let _ = store.delete_token(&previous.server);
-            }
-            let client = Client::new(&config.server, credentials.token, client_options()).map_err(|error| error.to_string())?;
-            runtime.connect(&app, client, config.clone());
-            Ok(PairPollResult::Connected { server: config.server, name: config.name })
-        }
-        Err(shard_remote::PairingError::Expired | shard_remote::PairingError::Gone) => Ok(PairPollResult::Expired),
-        Err(error) => Err(error.to_string()),
-    }
-}
-
-#[tauri::command]
-pub fn remote_pair_cancel(runtime: State<'_, RemoteRuntime>) {
-    runtime.lock().pairing = None;
+    let client = Client::new(&config.server, credentials.token, client_options()).map_err(|error| error.to_string())?;
+    runtime.connect(&app, client, config.clone());
+    Ok(LoginResult { server: config.server, name: config.name })
 }
 
 /// 断开：删掉本机令牌与配置，停掉实时通道。服务器上的设备记录要到网页「设置 → 设备」吊销。
@@ -790,12 +737,9 @@ mod tests {
     }
 
     #[test]
-    fn pairing_poll_results_use_camel_case_fields() {
-        assert_eq!(
-            serde_json::to_value(PairPollResult::Pending { interval_ms: 2000 }).unwrap(),
-            json!({ "status": "pending", "intervalMs": 2000 })
-        );
-        assert_eq!(serde_json::to_value(PairPollResult::Expired).unwrap(), json!({ "status": "expired" }));
+    fn login_results_use_camel_case_fields() {
+        let result = LoginResult { server: "https://shard.test".into(), name: "我的 Mac".into() };
+        assert_eq!(serde_json::to_value(result).unwrap(), json!({ "server": "https://shard.test", "name": "我的 Mac" }));
     }
 
     #[test]

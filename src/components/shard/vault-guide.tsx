@@ -122,7 +122,7 @@ type SettingsRuntime = "local" | "remote" | "web"
 
 /**
  * 设置单页里的分区顺序，也是左侧锚点导航的顺序。网页端没有本机资料库、Git 与终端命令，换成账号与安全；
- * 桌面连接服务器后，本机资料库与 Git 换成服务器连接与数据找回（导出、抹除要在网页验证通行密钥）。
+ * 桌面连接服务器后，本机资料库与 Git 换成服务器连接与数据找回（导出、抹除要在网页版输入密码确认）。
  */
 const SETTINGS_SECTIONS: Record<SettingsRuntime, SettingsSection[]> = {
   local: ["vault", "git", "server", "appearance", "cli", "shortcuts"],

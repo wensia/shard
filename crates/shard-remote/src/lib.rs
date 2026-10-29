@@ -5,7 +5,7 @@
 //! - [`server`]：服务器地址规则（公网只许 https，回环可 http，拒绝用户名密码与路径）。
 //! - [`store`]：本机远程配置（`remote.json`）与设备令牌（macOS 钥匙串或 0600 文件，按服务器区分）。
 //!   钥匙串服务名、状态目录与文件名由调用方给：命令行是 `dev.shard.cli`，桌面另用自己的。
-//! - [`pairing`]：设备配对协议（`/api/device/start` → 轮询 `/api/device/token`，退避）。
+//! - [`login`]：桌面与命令行用邮箱密码换设备令牌（`/api/device/login`）。
 //! - [`sse`]：`GET /api/events` 的阻塞读取与增量解析，`Last-Event-ID` 续传。
 //! - [`bytes`]：带令牌读字节（图片、修订原文）与按内容哈希上传附件。
 //!
@@ -14,7 +14,7 @@
 
 pub mod bytes;
 pub mod client;
-pub mod pairing;
+pub mod login;
 pub mod server;
 pub mod sse;
 pub mod store;
@@ -24,7 +24,7 @@ mod test_server;
 
 pub use bytes::{FetchedBytes, MAX_FETCH_BYTES};
 pub use client::{decode, idempotency_key, utc_offset_minutes, Client, ClientOptions, RemoteError};
-pub use pairing::{start_pairing, DeviceCredentials, Pairing, PairingError, PairingRequest, PollStatus};
+pub use login::{login_device, DeviceCredentials, LoginError, LoginRequest};
 pub use server::{normalize_server, ServerAddressError};
 pub use sse::{EventStream, SseEvent, SseParser};
 pub use store::{CredentialStore, RemoteConfig, StoreError, TokenBackend};

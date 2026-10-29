@@ -34,7 +34,7 @@ pub struct EngineOptions {
     pub dir: PathBuf,
     /// 恢复备份后找回的条目、断开连接时还没补交的操作，原文另存到这里（不随副本删除）。
     pub recovered_dir: Option<PathBuf>,
-    /// 新建内容的 `source`；与服务器给配对桌面记的一致（desktop），离线新建与补交后的字节才一样。
+    /// 新建内容的 `source`；与服务器给桌面设备记的一致（desktop），离线新建与补交后的字节才一样。
     pub source: String,
     pub device_id: String,
     /// 同一条操作服务器连续出错（5xx）到这么多次、并且距第一次出错已过 [`EngineOptions::server_failure_window`]，

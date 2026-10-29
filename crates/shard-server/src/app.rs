@@ -31,7 +31,7 @@ pub fn build(state: AppState) -> Router {
         .layer(DefaultBodyLimit::max(MAX_RPC_BODY));
     let mut app = Router::new().route("/healthz", get(|| async { "ok" })).nest("/api", api);
     if let Some(dir) = state.config.static_dir.clone() {
-        // 单页应用：找不到的路径回 index.html（/setup、/pair 等前端路由）。
+        // 单页应用：找不到的路径回 index.html（/setup 等前端路由）。
         app = app.fallback_service(ServeDir::new(&dir).fallback(ServeFile::new(dir.join("index.html"))));
     }
     app.layer(middleware::from_fn_with_state(state.clone(), security_headers)).with_state(state)

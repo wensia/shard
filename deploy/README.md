@@ -4,7 +4,7 @@
 设计见 `docs/dev/server-sqlite-plan.md`。下面每一步都在 VPS 上做，除非特别说明。
 
 > **数据与凭据安全**
-> - 通行密钥至少注册两把（例如 iPhone 一把、Mac 一把）。只有一把时，丢了设备就只能 SSH 上服务器走恢复流程。
+> - 登录用邮箱 + 密码（至少 12 位，建议让 iCloud 钥匙串或 1Password 生成并保存）。忘记密码只能 SSH 上服务器生成重置链接（第 9 节）。
 > - 备份用 age 加密，**私钥只在你自己手里**（1Password + 纸质）。VPS 上只放公钥：服务器被入侵也解不开备份。
 > - 没演练过的备份等于没有备份：Mac 上每周自动演练一次（见第 8 节）。
 
@@ -57,7 +57,8 @@ sudo systemctl daemon-reload && sudo systemctl enable --now shard-backup.timer
 sudo systemctl start shard-backup.service && sudo ls /opt/shard/backups           # 先手动跑一次
 ```
 
-注册第一把通行密钥：`sudo docker exec shard-server shard-server setup --data-dir /data --origin https://<域名>`。
+设置登录用的邮箱和密码：`sudo docker exec shard-server shard-server setup --data-dir /data --origin https://<域名>`，24 小时内打开输出的链接（只能用一次）。
+忘记密码：同样的参数改用 `reset-password`（加 `--revoke-all` 同时吊销全部会话与设备令牌）。
 
 **异地副本放在 Mac 上**（不用另开云存储账号）：Mac 每天两次把最新一份加密快照拉到 `~/shard-backups`，
 每 7 天顺带做一次恢复演练，失败或服务器超过 6 小时没有新备份时弹通知。
@@ -65,7 +66,7 @@ sudo systemctl start shard-backup.service && sudo ls /opt/shard/backups         
 ```bash
 mkdir -p ~/.config/shard/bin
 cp deploy/pull-backups.sh deploy/restore-drill.sh ~/.config/shard/bin/
-cargo build --release -p shard-server --features vendored-openssl                # 演练用的本机 shard-server
+cargo build --release -p shard-server                                           # 演练用的本机 shard-server
 cp target/release/shard-server ~/.config/shard/bin/
 ~/.config/shard/bin/pull-backups.sh <ssh 主机> ~/.config/shard/backup.key ~/.config/shard/bin/shard-server --drill
 cp deploy/dev.shard.pull-backups.plist ~/Library/LaunchAgents/                  # 改里面的路径与 ssh 主机
@@ -86,10 +87,10 @@ sudo docker compose up -d
 
 ## 1. 构建
 
-服务端二进制在 VPS 上编译最省事（webauthn-rs 依赖 OpenSSL）：
+服务端二进制可以直接在 VPS 上编译（不依赖 OpenSSL；docker 部署则在 Mac 上交叉编译，见上一节）：
 
 ```bash
-apt install -y build-essential pkg-config libssl-dev git
+apt install -y build-essential git
 curl https://sh.rustup.rs -sSf | sh -s -- -y
 git clone <仓库> shard && cd shard
 cargo build --release -p shard-server          # 发行版不要加 test-auth 特性
@@ -125,19 +126,22 @@ caddy validate --config /etc/caddy/Caddyfile && systemctl reload caddy
 
 日志里的 Cookie、Authorization、Set-Cookie 已在 Caddyfile 里删除，不要去掉这几行。
 
-## 4. 注册第一把通行密钥
+## 4. 设置登录用的邮箱和密码
 
 ```bash
 sudo -u shard shard-server setup --data-dir /var/lib/shard --origin https://shard.example.com
 ```
 
-15 分钟内用手机打开输出的链接，注册通行密钥（iPhone 会存进 iCloud 钥匙串）。登录后在
-「设置 › 通行密钥」里再用 Mac 添加第二把。
+24 小时内用浏览器打开输出的链接（只能用一次），填邮箱和密码（至少 12 位）。Safari 会建议强密码并存进
+iCloud 钥匙串，之后 iPhone 与 Mac 都能自动填。之后在「设置 › 账号与安全」里可以改邮箱和密码，
+改密码会让其他浏览器退出登录。
+
+服务器对密码错误限流：每个 IP 每分钟 10 次，全站每小时最多 50 次错误，用完后暂停新的登录（已登录的不受影响）。
 
 ## 5. 连接桌面应用与命令行
 
-桌面应用与 `shard` 命令行用设备配对：它们会显示一个 8 位配对码，在已登录的浏览器打开
-`https://shard.example.com/pair` 输入配对码并验证通行密钥即可。设备可以在设置里单独吊销。
+桌面应用在「设置 › 服务器」里填服务器地址、邮箱和密码；命令行运行 `shard login https://shard.example.com`
+后按提示输入。它们各自拿到一枚设备令牌（密码不保存），可以在网页设置里单独吊销。
 
 ## 6. 备份
 
@@ -172,8 +176,8 @@ sudo -u shard shard-server rotate-epoch --data-dir /var/lib/shard   # 客户端�
 systemctl start shard-server
 ```
 
-`auth.db`（通行密钥、会话、设备令牌）不随内容回滚：否则已吊销的会话和令牌会随旧库复活。
-怀疑服务器被入侵时，另外执行 `shard-server recover --revoke-all`，吊销全部凭据后重新注册。
+`auth.db`（账号、会话、设备令牌）不随内容回滚：否则已吊销的会话和令牌会随旧库复活。
+怀疑服务器被入侵时，另外执行 `shard-server reset-password --revoke-all`，吊销全部凭据后重设密码。
 
 ## 8. 恢复演练（每周自动一次，在 Mac 上）
 
@@ -190,14 +194,14 @@ deploy/restore-drill.sh shard-时间.tar.zst.age shard-backup.key target/release
 失败或最新备份超过 2 天时弹 macOS 通知。把 `deploy/dev.shard.restore-drill.plist` 复制到 `~/Library/LaunchAgents/`，
 改好里面的路径后 `launchctl load` 即可（每周日 10:00）。
 
-## 9. 通行密钥全部丢失
+## 9. 忘记密码
 
 ```bash
-sudo -u shard shard-server recover --data-dir /var/lib/shard --origin https://shard.example.com
-# 怀疑凭据泄露时加 --revoke-all：同时吊销全部通行密钥、会话与设备令牌
+sudo -u shard shard-server reset-password --data-dir /var/lib/shard --origin https://shard.example.com
+# 怀疑密码泄露时加 --revoke-all：同时吊销全部会话与设备令牌（桌面与命令行要重新登录）
 ```
 
-打开输出的链接注册新的通行密钥。
+24 小时内打开输出的链接，重新设置邮箱和密码。设置后全部浏览器会话退出。
 
 ## 10. 正式切换：导入现有资料库（只在你确认后做一次）
 

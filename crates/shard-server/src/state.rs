@@ -4,10 +4,9 @@ use std::{ops::Deref, sync::Arc};
 
 use shard_store::{ChangeRecord, Store};
 use tokio::sync::{broadcast, watch};
-use webauthn_rs::{Webauthn, WebauthnBuilder};
 
 use crate::{
-    auth::{ceremony::Ceremonies, db::AuthDb, ratelimit::RateLimiter},
+    auth::{db::AuthDb, ratelimit::RateLimiter},
     config::Config,
     rpc::Registry,
 };
@@ -27,8 +26,6 @@ pub struct Inner {
     pub config: Config,
     pub store: Arc<Store>,
     pub auth: AuthDb,
-    pub webauthn: Webauthn,
-    pub ceremonies: Ceremonies,
     pub limiter: RateLimiter,
     pub events: broadcast::Sender<Arc<CommitEvent>>,
     /// 停机信号：SSE 长连接收到后结束，优雅停机才不会一直等它们。
@@ -54,18 +51,13 @@ impl AppState {
         std::fs::create_dir_all(&config.data_dir).map_err(|error| error.to_string())?;
         let store = Store::open(&config.data_dir).map_err(|error| error.to_string())?;
         let auth = AuthDb::open(&config.data_dir.join("auth.db")).map_err(|error| error.to_string())?;
-        let webauthn = WebauthnBuilder::new(&config.rp_id, &config.origin)
-            .and_then(|builder| builder.rp_name("Shard").build())
-            .map_err(|error| format!("通行密钥配置无效：{error}"))?;
         let vault_id = store.meta("vault_id").map_err(|error| error.to_string())?.unwrap_or_default();
-        let vault_identity = format!("shard://{}/{vault_id}", config.rp_id);
+        let vault_identity = format!("shard://{}/{vault_id}", config.host);
         let (events, _) = broadcast::channel(256);
         Ok(Self(Arc::new(Inner {
             config,
             store: Arc::new(store),
             auth,
-            webauthn,
-            ceremonies: Ceremonies::default(),
             limiter: RateLimiter::default(),
             events,
             shutdown: watch::Sender::new(false),

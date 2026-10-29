@@ -1,5 +1,5 @@
 //! 版本历史与导出经 HTTP 的端到端测试：在虚构示例库 `tests/fixtures/vault-golden` 上
-//! 改碎片、恢复旧版本、彻底删除后找回、立即抹除（要求重新验证通行密钥）、导出 zip。
+//! 改碎片、恢复旧版本、彻底删除后找回、立即抹除（要求再输一次密码）、导出 zip。
 //! 运行：`cargo test -p shard-server --features test-auth`。
 #![cfg(feature = "test-auth")]
 
@@ -207,7 +207,7 @@ async fn purged_items_come_back_with_their_history() {
 }
 
 #[tokio::test]
-async fn erasing_requires_a_fresh_passkey_check() {
+async fn erasing_requires_the_password_again() {
     let h = Harness::new().await;
     h.ok("delete_library_entry", json!({ "path": IMAGE_PATH })).await;
     h.ok("empty_trash", json!({ "scope": "all" })).await;

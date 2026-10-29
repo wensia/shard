@@ -1,8 +1,8 @@
 //! `shard login [<服务器>]`、`shard logout`、`shard --whoami`。
 //!
-//! 登录走设备配对（RFC 8628 式）：`POST /api/device/start {name, kind:"cli"}` 拿到配对码，用户在浏览器
-//! `<服务器>/pair` 输入并批准（需要通行密钥），CLI 轮询 `POST /api/device/token` 换到设备令牌。
-//! 令牌只在这台机器上（钥匙串或 0600 文件），服务器只存它的哈希，可在网页「设置 → 设备」里单独吊销。
+//! 登录：在终端里输入邮箱与密码（密码不回显），`POST /api/device/login {email, password, name, kind:"cli"}`
+//! 换到设备令牌。密码只用这一次，不保存；令牌只在这台机器上（钥匙串或 0600 文件），服务器只存它的哈希，
+//! 可在网页「设置 → 设备」里单独吊销。
 //!
 //! 登录与退出会改变之后所有命令读写的去处，只能由用户本人在终端里运行：标准输入与输出都必须是终端，
 //! 否则拒绝（防止被提示注入的 AI 一条命令就把读写转到别的服务器）；改登另一台服务器时还要输入 y 确认。
@@ -10,18 +10,17 @@
 use super::{normalize_server, server_address_message, store, user_agent, Remote, RemoteConfig};
 use crate::{agent::print_json, CliError};
 use serde_json::{json, Value};
-use shard_remote::{start_pairing, PairingError, PairingRequest};
+use shard_remote::{login_device, LoginError, LoginRequest};
 use std::{
     env,
     io::{self, BufRead, IsTerminal, Write},
     path::PathBuf,
     process::Command,
-    time::Duration,
 };
 
 pub const USAGE: &str = "\
 用法:
-  shard login <服务器地址> [--name <设备名>]   与 Shard 服务器配对（在浏览器里用通行密钥批准）
+  shard login <服务器地址> [--name <设备名>]   用邮箱和密码登录 Shard 服务器
   shard login --name <设备名> <服务器地址>
   shard login                                  重新登录当前的服务器
   shard logout                                 删除本机的登录令牌，回到本地模式
@@ -29,13 +28,15 @@ pub const USAGE: &str = "\
 登录与退出只能由你本人在终端里运行。服务器地址形如 https://shard.example.com
 （只写站点；明文 http 只允许本机地址）。要记一条以 login/logout 开头的碎片，写 shard -- login …";
 
-/// 只给自动化测试用：允许在非终端里登录、退出。
+/// 只给自动化测试用：允许在非终端里登录、退出（密码改从标准输入读一行）。
 const TEST_ALLOW_NONINTERACTIVE: &str = "SHARD_CLI_TEST_ALLOW_NONINTERACTIVE_LOGIN";
 
+fn testing() -> bool {
+    env::var(TEST_ALLOW_NONINTERACTIVE).as_deref() == Ok("1")
+}
+
 fn require_terminal(action: &str) -> Result<(), CliError> {
-    if env::var(TEST_ALLOW_NONINTERACTIVE).as_deref() == Ok("1")
-        || (io::stdin().is_terminal() && io::stdout().is_terminal())
-    {
+    if testing() || (io::stdin().is_terminal() && io::stdout().is_terminal()) {
         return Ok(());
     }
     Err(CliError::new(
@@ -46,7 +47,7 @@ fn require_terminal(action: &str) -> Result<(), CliError> {
     ))
 }
 
-fn confirm(prompt: &str) -> Result<bool, CliError> {
+fn ask(prompt: &str) -> Result<String, CliError> {
     eprint!("{prompt}");
     io::stderr().flush().ok();
     let mut answer = String::new();
@@ -54,7 +55,26 @@ fn confirm(prompt: &str) -> Result<bool, CliError> {
         .lock()
         .read_line(&mut answer)
         .map_err(|error| format!("读取输入失败：{error}"))?;
-    Ok(matches!(answer.trim(), "y" | "Y" | "yes" | "YES" | "Yes"))
+    Ok(answer.trim().to_string())
+}
+
+fn confirm(prompt: &str) -> Result<bool, CliError> {
+    Ok(matches!(ask(prompt)?.as_str(), "y" | "Y" | "yes" | "YES" | "Yes"))
+}
+
+/// 密码不回显，直接从终端读；测试里从标准输入读一行。
+fn ask_password() -> Result<String, CliError> {
+    let password = if testing() {
+        let mut line = String::new();
+        io::stdin().lock().read_line(&mut line).map_err(|error| format!("读取输入失败：{error}"))?;
+        line.trim_end_matches(['\r', '\n']).to_string()
+    } else {
+        rpassword::prompt_password("密码：").map_err(|error| format!("读取密码失败：{error}"))?
+    };
+    if password.is_empty() {
+        return Err("没有输入密码，已取消。".into());
+    }
+    Ok(password)
 }
 
 /// `server` 为 `None` 时重新登录当前配置的服务器。
@@ -80,19 +100,13 @@ pub fn login(server: Option<&str>, name: Option<String>) -> Result<(), CliError>
         .map(|name| name.trim().to_string())
         .filter(|name| !name.is_empty())
         .unwrap_or_else(default_device_name);
-    let failed = |error: PairingError| pairing_error(error, &server);
-    let mut pairing = start_pairing(&server, PairingRequest { name: &name, kind: "cli" }, &user_agent()).map_err(failed)?;
-    if let Some(interval) = test_poll_interval() {
-        pairing.set_interval(interval);
+    let email = ask("邮箱：")?;
+    if email.is_empty() {
+        return Err("没有输入邮箱，已取消。".into());
     }
-
-    println!("在浏览器打开 {} 输入配对码 {}", pairing.verification_uri(), pairing.user_code());
-    eprintln!(
-        "等待在浏览器里批准（{} 分钟内有效，Ctrl+C 取消）…",
-        pairing.expires_in().div_ceil(60).max(1)
-    );
-
-    let issued = pairing.wait().map_err(failed)?;
+    let password = ask_password()?;
+    let request = LoginRequest { email: &email, password: &password, name: &name, kind: "cli" };
+    let issued = login_device(&server, request, &user_agent()).map_err(|error| login_error(error, &server))?;
     let token = issued.token;
     let config = RemoteConfig { server: server.clone(), device_id: issued.device_id, name: issued.name };
 
@@ -200,28 +214,22 @@ pub fn whoami(explicit_local: bool, local_vault: impl FnOnce() -> Result<PathBuf
     checked.map(|_| ())
 }
 
-/// 配对失败 → 命令行的错误码与提示（带上服务器地址与重新登录的命令）。
-fn pairing_error(error: PairingError, server: &str) -> CliError {
+/// 登录失败 → 命令行的错误码与提示（带上服务器地址）。
+fn login_error(error: LoginError, server: &str) -> CliError {
     match error {
-        PairingError::InvalidServer(error) => server_address_message(error).into(),
-        PairingError::Unreachable(message) => {
+        LoginError::InvalidServer(error) => server_address_message(error).into(),
+        LoginError::Unreachable(message) => {
             CliError::new("NETWORK", format!("连不上 Shard 服务器 {server}（{message}）。请检查地址与网络。"))
         }
-        PairingError::NotJson => format!("{server} 的响应不是 JSON，它可能不是 Shard 服务器").into(),
-        PairingError::MissingField(key) => format!("{server} 的配对响应缺少 {key}，它可能不是 Shard 服务器").into(),
-        PairingError::Rejected(message) => format!("配对失败：{message}").into(),
-        PairingError::Gone => "配对已过期或被拒绝，请重新运行 shard login".into(),
-        PairingError::Expired => "配对已过期，请重新运行 shard login".into(),
-        PairingError::MissingToken => "服务器没有返回设备令牌".into(),
+        LoginError::NotJson => format!("{server} 的响应不是 JSON，它可能不是 Shard 服务器").into(),
+        LoginError::WrongCredentials(message) => format!("登录失败：{message}").into(),
+        LoginError::SetupRequired(message) => {
+            format!("{message}请先在服务器上运行 shard-server setup，用浏览器打开它给出的链接设置邮箱和密码。").into()
+        }
+        LoginError::RateLimited(message) => message.into(),
+        LoginError::Rejected(message) => format!("登录失败：{message}").into(),
+        LoginError::MissingToken => "服务器没有返回设备令牌".into(),
     }
-}
-
-/// `SHARD_LOGIN_POLL_MS` 只给测试缩短轮询等待（代替服务器建议的间隔）。
-fn test_poll_interval() -> Option<Duration> {
-    env::var("SHARD_LOGIN_POLL_MS")
-        .ok()
-        .and_then(|value| value.parse::<u64>().ok())
-        .map(Duration::from_millis)
 }
 
 /// 网页「设置 → 设备」里显示的名字：`shard 命令行 · <电脑名>`。

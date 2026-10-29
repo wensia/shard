@@ -1,7 +1,7 @@
 //! `shard-server` 命令行：
 //! - `serve`：启动服务（只监听本机，或在 docker 里只暴露给 Caddy 所在的网络；由 Caddy 反代并终止 TLS）。
-//! - `setup`：打印首次注册通行密钥的一次性链接。
-//! - `recover`：通行密钥全部丢失时打印恢复链接，可同时吊销全部旧凭据。
+//! - `setup`：打印首次设置邮箱和密码的一次性链接。
+//! - `reset-password`：忘记密码时打印重置链接，可同时吊销全部会话与设备令牌。
 //! - `rotate-epoch`：从备份恢复内容库后执行，客户端发现后走全量对账。
 
 use std::{net::SocketAddr, path::PathBuf};
@@ -50,12 +50,13 @@ enum Command {
         #[arg(long)]
         origin: String,
     },
-    Recover {
+    /// 忘记密码：打印重置链接。打开后重新设置邮箱和密码，全部浏览器会话随之退出。
+    ResetPassword {
         #[arg(long)]
         data_dir: PathBuf,
         #[arg(long)]
         origin: String,
-        /// 同时吊销全部通行密钥、会话与设备令牌（怀疑凭据泄露时用）。
+        /// 同时吊销全部会话与设备令牌（怀疑密码泄露时用；桌面与命令行要重新登录）。
         #[arg(long)]
         revoke_all: bool,
     },
@@ -95,8 +96,12 @@ fn issue_link(data_dir: &PathBuf, origin: &str, purpose: &str) -> Result<String,
     let config = Config::new(data_dir.clone(), origin, None, false)?;
     std::fs::create_dir_all(data_dir).map_err(|error| error.to_string())?;
     let auth = AuthDb::open(&data_dir.join("auth.db")).map_err(|error| error.to_string())?;
-    if purpose == "first_passkey" && auth.has_active_passkey().map_err(|error| error.to_string())? {
-        return Err("已经设置过通行密钥。丢失了请改用 `shard-server recover`。".to_string());
+    let has_owner = auth.has_owner().map_err(|error| error.to_string())?;
+    if purpose == "setup" && has_owner {
+        return Err("已经设置过账号。忘记密码请改用 `shard-server reset-password`。".to_string());
+    }
+    if purpose == "reset" && !has_owner {
+        return Err("还没有设置账号，请用 `shard-server setup`。".to_string());
     }
     let token = random_token();
     auth.create_setup_token(&token, purpose).map_err(|error| error.to_string())?;
@@ -118,24 +123,23 @@ async fn main() {
                 .init();
             serve(data_dir, &origin, listen, static_dir, trust_proxy, proxy_networks).await
         }
-        Command::Setup { data_dir, origin } => issue_link(&data_dir, &origin, "first_passkey").map(|link| {
-            println!("在 15 分钟内用浏览器打开下面的链接，注册第一把通行密钥：\n{link}");
+        Command::Setup { data_dir, origin } => issue_link(&data_dir, &origin, "setup").map(|link| {
+            println!("在 24 小时内用浏览器打开下面的链接，设置登录用的邮箱和密码（只能用一次）：\n{link}");
         }),
-        Command::Recover { data_dir, origin, revoke_all } => {
-            let revoked = if revoke_all {
-                AuthDb::open(&data_dir.join("auth.db"))
-                    .and_then(|auth| {
-                        auth.revoke_all_passkeys()?;
-                        auth.revoke_all_credentials()?;
-                        auth.audit("admin", "recover.revoked_all", None, None, None);
-                        Ok(())
-                    })
-                    .map_err(|error| error.to_string())
-            } else {
+        Command::ResetPassword { data_dir, origin, revoke_all } => {
+            issue_link(&data_dir, &origin, "reset").and_then(|link| {
+                if revoke_all {
+                    AuthDb::open(&data_dir.join("auth.db"))
+                        .and_then(|auth| {
+                            auth.revoke_all_credentials()?;
+                            auth.audit("admin", "reset.revoked_all", None, None, None);
+                            Ok(())
+                        })
+                        .map_err(|error| error.to_string())?;
+                    println!("已吊销全部会话与设备令牌，桌面与命令行需要重新登录。");
+                }
+                println!("在 24 小时内用浏览器打开下面的链接，重新设置邮箱和密码（只能用一次）：\n{link}");
                 Ok(())
-            };
-            revoked.and_then(|_| issue_link(&data_dir, &origin, "recover")).map(|link| {
-                println!("在 15 分钟内用浏览器打开下面的链接，注册新的通行密钥：\n{link}");
             })
         }
         Command::RotateEpoch { data_dir } => shard_store::Store::open(&data_dir)

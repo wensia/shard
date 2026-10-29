@@ -1,4 +1,4 @@
-//! 请求的调用者：浏览器会话（Cookie）或已配对的设备（Bearer 设备令牌）。
+//! 请求的调用者：浏览器会话（Cookie）或已登录的设备（Bearer 设备令牌）。
 //!
 //! CSRF：只有 Cookie 这种「浏览器自动携带」的凭据才有跨站伪造的问题。凡是用 Cookie 认证、或者
 //! 还没登录的浏览器变更请求（登录、setup），都要求：
@@ -46,12 +46,12 @@ impl Caller {
         }
     }
 
-    /// 修订合并按设备区分：每个浏览器会话、每台配对设备各算一个。
+    /// 修订合并按设备区分：每个浏览器会话、每台登录的设备各算一个。
     pub fn device(&self) -> String {
         self.actor()
     }
 
-    /// 新建内容写进 frontmatter 的 `source`：浏览器 web，配对的桌面 desktop，命令行 cli。
+    /// 新建内容写进 frontmatter 的 `source`：浏览器 web，桌面 desktop，命令行 cli。
     pub fn source(&self) -> &'static str {
         match &self.principal {
             Principal::Session { .. } => "web",
@@ -67,7 +67,7 @@ impl Caller {
         }
     }
 
-    /// 敏感操作：只能由最近 10 分钟内验证过通行密钥的浏览器会话执行。
+    /// 敏感操作：只能由最近 10 分钟内输过密码的浏览器会话执行。
     pub fn require_step_up(&self) -> Result<&[u8], ApiError> {
         match &self.principal {
             Principal::Session { id_hash, step_up_at: Some(at) } if Utc::now() - *at <= STEP_UP_WINDOW => Ok(id_hash),
@@ -220,7 +220,7 @@ impl FromRequestParts<AppState> for BrowserRequest {
     }
 }
 
-/// 非浏览器客户端的匿名请求（设备配对）：只取元信息。
+/// 非浏览器客户端的匿名请求（桌面、命令行登录）：只取元信息。
 pub struct Meta(pub ClientMeta);
 
 impl FromRequestParts<AppState> for Meta {
@@ -237,7 +237,7 @@ mod tests {
     use axum::http::Request;
 
     fn meta(config: &Config, peer: &str, forwarded: Option<&str>) -> Option<String> {
-        let mut request = Request::builder().uri("/api/auth/login/start");
+        let mut request = Request::builder().uri("/api/auth/login");
         if let Some(forwarded) = forwarded {
             request = request.header("x-forwarded-for", forwarded);
         }

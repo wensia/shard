@@ -37,8 +37,8 @@ export function withLockboxClient(base: ShardTransport): LockboxTransport {
           handler(typeof payload?.seq === "number" ? payload.seq : undefined)
         })
       },
-      // 浏览器会话写 manifest 要求最近验证过通行密钥（设备令牌不受限，不会走到这里）。
-      stepUp: () => import("@/features/auth/webauthn").then((module) => module.stepUp()),
+      // 浏览器会话写 manifest 要求 10 分钟内输过密码（设备令牌不受限，不会走到这里）：弹出密码确认框。
+      stepUp: () => import("@/features/auth/api").then((module) => module.stepUp()),
     })
     router = created
     return created

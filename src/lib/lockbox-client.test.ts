@@ -332,7 +332,7 @@ describe("密匣分流：明文不出客户端", () => {
   })
 })
 
-describe("密匣分流：回声、通行密钥、上锁", () => {
+describe("密匣分流：回声、密码确认、上锁", () => {
   it("自己写入的 lockbox-changed 回声与已含在快照里的 seq 不重取快照；别人的、没有 seq 的照常重取", async () => {
     vi.useFakeTimers()
     const test = setup({
@@ -356,7 +356,7 @@ describe("密匣分流：回声、通行密钥、上锁", () => {
     expect(test.snapshots()).toBe(base + 2)
   })
 
-  it("设置密匣遇到 STEP_UP_REQUIRED：验证一次通行密钥后重试", async () => {
+  it("设置密匣遇到 STEP_UP_REQUIRED：输入一次账号密码确认后重试", async () => {
     let attempts = 0
     const test = setup({
       items: [],
@@ -367,7 +367,7 @@ describe("密匣分流：回声、通行密钥、上锁", () => {
       server: {
         lockbox_apply: () => {
           attempts += 1
-          if (attempts === 1) throw { status: 403, code: "STEP_UP_REQUIRED", detail: "这个操作需要重新验证通行密钥。" }
+          if (attempts === 1) throw { status: 403, code: "STEP_UP_REQUIRED", detail: "这个操作需要再输入一次密码。" }
           return { manifest: { sha: "m2" }, items: [], lockboxSeq: 6 }
         },
       },
@@ -397,7 +397,7 @@ describe("密匣分流：回声、通行密钥、上锁", () => {
     expect(test.stepUp).not.toHaveBeenCalled()
   })
 
-  it("解锁时顺带的 manifest 升级被拒：仍然解锁，不要求通行密钥", async () => {
+  it("解锁时顺带的 manifest 升级被拒：仍然解锁，不要求输入密码", async () => {
     const test = setup({
       engine: {
         unlock: () => ({ result: null, write: { apply: { manifest: { body: "{}", expectedSha: "m" }, items: [] }, seal: null } }),
@@ -407,7 +407,7 @@ describe("密匣分流：回声、通行密钥、上锁", () => {
       },
       server: {
         lockbox_apply: () => {
-          throw { status: 403, code: "STEP_UP_REQUIRED", detail: "这个操作需要重新验证通行密钥。" }
+          throw { status: 403, code: "STEP_UP_REQUIRED", detail: "这个操作需要再输入一次密码。" }
         },
       },
     })

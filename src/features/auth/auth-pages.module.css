@@ -1,5 +1,6 @@
-/* 网页端的登录、首次设置、设备配对：kiln 的消费者流程卡片——品牌行、标题、一张白卡、一个主色动作。
- * 与密匣上锁卡片同一套几何（lockbox-shell.module.css 的 .lid）。 */
+/* 网页端的登录、设置 / 重置密码：kiln 的消费者流程卡片——品牌行、标题、一张白卡、一个主色动作。
+ * 与密匣上锁卡片同一套几何（lockbox-shell.module.css 的 .lid）。字段积木（form-fields.tsx）也用在
+ * 密码确认框与设置里的「修改邮箱或密码」对话框。 */
 
 .page {
   display: flex;
@@ -67,15 +68,48 @@
   font-weight: var(--weight-medium);
 }
 
-/* 主动作：手机上 44px 触控高度（kiln 消费者流程），桌面回到 lg 控件高度。 */
+.fieldHint {
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: var(--text-meta);
+  font-weight: var(--weight-regular);
+  line-height: var(--leading-normal);
+}
+
+/* 密码框：显示 / 隐藏按钮嵌在输入框右侧（kiln Password Input），文字给它留出位置。 */
+.passwordBox {
+  position: relative;
+}
+
+.passwordInput {
+  padding-right: calc(var(--control-height-sm) + var(--space-2));
+}
+
+.passwordToggle {
+  position: absolute;
+  inset-block: 0;
+  right: var(--space-1);
+  display: flex;
+  align-items: center;
+}
+
+/* 主动作与登录页的输入框：手机上 44px 触控高度（kiln 消费者流程），桌面回到 lg 控件高度。 */
 .action {
   width: 100%;
   min-height: 44px;
 }
 
+.input {
+  height: 44px;
+}
+
 @media (pointer: fine) {
   .action {
     min-height: var(--control-height-lg);
+  }
+
+  .input {
+    height: var(--control-height-lg);
   }
 }
 
@@ -86,9 +120,3 @@
   line-height: var(--leading-normal);
 }
 
-.success {
-  margin: 0;
-  color: var(--foreground);
-  font-size: var(--text-body);
-  line-height: var(--leading-normal);
-}

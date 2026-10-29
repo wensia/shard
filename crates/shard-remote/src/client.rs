@@ -75,7 +75,7 @@ impl RemoteError {
         self.status.is_none()
     }
 
-    /// 401：令牌无效或已吊销，需要重新配对。
+    /// 401：令牌无效或已吊销，需要重新登录。
     pub fn is_unauthenticated(&self) -> bool {
         self.status == Some(401)
     }

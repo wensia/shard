@@ -33,6 +33,15 @@ impl ApiError {
         Self::new(StatusCode::BAD_REQUEST, "BAD_REQUEST", message)
     }
 
+    /// 带具体错误码的 400（例如 `INVALID_EMAIL`、`WEAK_PASSWORD`），前端可按码处理。
+    pub fn bad_request_code(code: &str, message: impl Into<String>) -> Self {
+        Self::new(StatusCode::BAD_REQUEST, code, message)
+    }
+
+    pub fn invalid_credentials(message: impl Into<String>) -> Self {
+        Self::new(StatusCode::UNAUTHORIZED, "INVALID_CREDENTIALS", message)
+    }
+
     pub fn not_found() -> Self {
         Self::new(StatusCode::NOT_FOUND, "NOT_FOUND", "不存在。")
     }
@@ -42,7 +51,7 @@ impl ApiError {
     }
 
     pub fn step_up_required() -> Self {
-        Self::forbidden("STEP_UP_REQUIRED", "这个操作需要重新验证通行密钥。")
+        Self::forbidden("STEP_UP_REQUIRED", "这个操作需要再输入一次密码。")
     }
 
     /// 内部错误：细节进日志，客户端只看到通用提示。

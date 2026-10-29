@@ -1,7 +1,7 @@
-//! 远程模式：用 `shard login` 配对过服务器、且没有显式指定 `--vault` / `SHARD_VAULT` 时，所有读写都调
+//! 远程模式：用 `shard login` 登录过服务器、且没有显式指定 `--vault` / `SHARD_VAULT` 时，所有读写都调
 //! 服务器的 RPC（`POST <服务器>/api/rpc/{命令}`，`Authorization: Bearer shd_dev_…`），本机不再碰 vault 文件。
 //!
-//! RPC 客户端、服务器地址规则、令牌存储与配对协议在 `shard-remote`（与桌面共用）：
+//! RPC 客户端、服务器地址规则、令牌存储与登录协议在 `shard-remote`（与桌面共用）：
 //! - 写请求每次带新的 `Idempotency-Key`（前缀 `cli-`）；网络失败或网关临时不可用（502/503/504）时用同一个键重试，
 //!   服务器保证同一个键只提交一次。
 //! - 都带 `X-Shard-UTC-Offset`（本机时区，分钟）：碎片 id、月份目录与时间按本机时区算，与本地模式一致。

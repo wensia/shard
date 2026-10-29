@@ -4222,9 +4222,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             remote_client::remote_status,
-            remote_client::remote_pair_start,
-            remote_client::remote_pair_poll,
-            remote_client::remote_pair_cancel,
+            remote_client::remote_login,
             remote_client::remote_disconnect,
             remote_client::remote_invoke,
             remote_client::remote_upload_blob,

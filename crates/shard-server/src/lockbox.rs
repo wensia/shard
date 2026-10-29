@@ -107,9 +107,9 @@ struct ApplyArgs {
     items: Vec<ItemWrite>,
 }
 
-/// 浏览器会话写 manifest（设置、改口令、重置、升级）：要求 10 分钟内验证过通行密钥，网页解锁关闭时拒绝。
+/// 浏览器会话写 manifest（设置、改口令、重置、升级）：要求 10 分钟内输过密码，网页解锁关闭时拒绝。
 /// 被盗的浏览器会话不能整体换掉 manifest（换掉后口令失效，之后锁着记下的内容会加密到攻击者的公钥上）。
-/// 设备令牌（桌面、命令行）不受限：它们的配对本身经过了通行密钥批准。
+/// 设备令牌（桌面、命令行）不受限：它们登录时本身就输了密码。
 fn guard_manifest_write(env: &RpcEnv<'_>) -> Result<(), RpcError> {
     if env.source != "web" {
         return Ok(());
@@ -118,7 +118,7 @@ fn guard_manifest_write(env: &RpcEnv<'_>) -> Result<(), RpcError> {
         return Err(RpcError::new(StatusCode::FORBIDDEN, "LOCKBOX_WEB_DISABLED", "网页解锁已关闭，不能在网页上修改密匣设置。"));
     }
     if !env.step_up_fresh {
-        return Err(RpcError::new(StatusCode::FORBIDDEN, "STEP_UP_REQUIRED", "这个操作需要重新验证通行密钥。"));
+        return Err(RpcError::new(StatusCode::FORBIDDEN, "STEP_UP_REQUIRED", "这个操作需要再输入一次密码。"));
     }
     Ok(())
 }

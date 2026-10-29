@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react"
 
 import { SettingsGroup, SettingsGroupItem, SettingsRow } from "@/components/shard/settings-controls"
 import { Button } from "@/components/ui/button"
-import { fetchAuthState, stepUp } from "@/features/auth/webauthn"
+import { fetchAuthState, isCancelled, stepUp } from "@/features/auth/api"
 import { notify } from "@/lib/notify"
 import { isWebRuntime } from "@/lib/transport"
 
@@ -26,15 +26,15 @@ function daysLeft(expiresAt: string) {
   return Number.isFinite(ms) ? Math.max(0, Math.ceil(ms / 86_400_000)) : null
 }
 
-/** 服务器要求 10 分钟内验证过通行密钥（登录本身算一次）：过期了才弹系统确认。 */
-async function ensureFreshPasskey() {
+/** 服务器要求 10 分钟内输过密码（登录本身算一次）：过期了才弹出密码确认框。 */
+async function ensureRecentPassword() {
   const state = await fetchAuthState()
   if (!state.stepUpValid) await stepUp()
 }
 
-/** 导出是一次普通下载（流式，不进内存），先确认验证没过期再跳转。 */
+/** 导出是一次普通下载（流式，不进内存），先确保 10 分钟内输过密码再跳转。 */
 async function downloadExport() {
-  await ensureFreshPasskey()
+  await ensureRecentPassword()
   const link = document.createElement("a")
   link.href = exportZipUrl()
   link.download = ""
@@ -45,13 +45,13 @@ async function downloadExport() {
 
 /**
  * 设置里的「数据与备份」：导出全部为 zip（旧版桌面 App 能直接打开），以及最近 30 天彻底删除的内容——
- * 可以找回，也可以立即抹除（不可撤销，要求验证通行密钥）。
+ * 可以找回，也可以立即抹除（不可撤销，要求输入密码确认）。
  *
- * 连接服务器的桌面凭设备令牌，能看最近删除、找回与看历史；导出全部与立即抹除要在浏览器里验证通行密钥，
+ * 连接服务器的桌面凭设备令牌，能看最近删除、找回与看历史；导出全部与立即抹除要在网页版输入密码确认，
  * 这里只说明去网页版操作。
  */
 export function DataSettings() {
-  const canVerifyPasskey = isWebRuntime()
+  const canConfirmPassword = isWebRuntime()
   const [entries, setEntries] = useState<DeletedEntry[] | null>(null)
   const [retentionDays, setRetentionDays] = useState(30)
   const [busy, setBusy] = useState<string | null>(null)
@@ -86,7 +86,7 @@ export function DataSettings() {
     void run(
       `erase:${entry.nodeId}`,
       async () => {
-        await ensureFreshPasskey()
+        await ensureRecentPassword()
         return eraseDeletedEntries([entry.nodeId])
       },
       `已抹除 ${fileName(entry.path)} 的全部历史`
@@ -100,7 +100,8 @@ export function DataSettings() {
       notify.success(success)
       await load()
     } catch (error) {
-      notify.failure("操作没有完成", error)
+      // 在密码确认框里点了取消：什么都不做。
+      if (!isCancelled(error)) notify.failure("操作没有完成", error)
     } finally {
       setBusy(null)
     }
@@ -108,11 +109,11 @@ export function DataSettings() {
 
   return (
     <>
-      {canVerifyPasskey ? (
+      {canConfirmPassword ? (
         <SettingsGroup busy={busy === "export"}>
           <SettingsRow
             controlWidth="auto"
-            description="按原来的资料库目录打包成 zip，旧版桌面 App 能直接打开；密匣内容仍是加密的。需要验证通行密钥。"
+            description="按原来的资料库目录打包成 zip，旧版桌面 App 能直接打开；密匣内容仍是加密的。需要输入密码确认。"
             label="导出全部"
           >
             <Button
@@ -124,7 +125,7 @@ export function DataSettings() {
                   try {
                     await downloadExport()
                   } catch (error) {
-                    notify.failure("导出没有开始", error)
+                    if (!isCancelled(error)) notify.failure("导出没有开始", error)
                   } finally {
                     setBusy(null)
                   }
@@ -140,7 +141,7 @@ export function DataSettings() {
       ) : (
         <SettingsGroup>
           <SettingsRow
-            description="需要在浏览器里验证通行密钥，请在网页版「设置 → 数据与备份」里操作。"
+            description="需要输入账号密码确认，请在网页版「设置 → 数据与备份」里操作。"
             label="导出全部、立即抹除"
           />
         </SettingsGroup>
@@ -180,7 +181,7 @@ export function DataSettings() {
                   >
                     找回
                   </Button>
-                  {canVerifyPasskey ? (
+                  {canConfirmPassword ? (
                     <Button
                       disabled={busy !== null}
                       onClick={() => eraseNow(entry)}

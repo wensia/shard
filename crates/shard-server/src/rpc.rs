@@ -28,7 +28,7 @@ use crate::{auth::principal::Caller, error::ApiError, state::AppState};
 pub enum Access {
     Read,
     Write,
-    /// 不可逆的写（立即抹除）：要求浏览器会话 10 分钟内验证过通行密钥，成功后记审计。
+    /// 不可逆的写（立即抹除）：要求浏览器会话 10 分钟内输过密码，成功后记审计。
     Sensitive,
 }
 
@@ -139,7 +139,7 @@ pub struct RpcEnv<'a> {
     lockbox_changed: Cell<bool>,
     /// 这次调用写入的密匣变化里最大的 seq（推送与响应里带上，客户端据此跳过自己写入的回声）。
     lockbox_seq: Cell<Option<i64>>,
-    /// 调用方是 10 分钟内验证过通行密钥的浏览器会话（登录本身算一次）。
+    /// 调用方是 10 分钟内输过密码的浏览器会话（登录本身算一次）。
     pub step_up_fresh: bool,
 }
 

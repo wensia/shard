@@ -1,4 +1,7 @@
-//! 认证相关端点：首次设置、登录、二次验证、退出、通行密钥 / 会话 / 设备管理、设备配对。
+//! 认证相关端点：首次设置与重置、邮箱密码登录、再次输入密码（敏感操作）、退出、改邮箱密码、
+//! 会话 / 设备管理、桌面与命令行登录。
+
+use std::time::Duration;
 
 use axum::{
     extract::{Path, State},
@@ -9,36 +12,32 @@ use axum::{
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
-use webauthn_rs::prelude::{CredentialID, Passkey, PublicKeyCredential, RegisterPublicKeyCredential, Uuid};
 
 use super::{
-    ceremony::Ceremony,
-    db::{PairingPoll, SESSION_ABSOLUTE},
+    db::{OwnerRow, SetupOutcome, SESSION_ABSOLUTE},
+    password::{decoy_hash, hash_password, normalize_email, validate_password, verify_password},
     principal::{BrowserRequest, Caller, ClientMeta, MaybeCaller, Meta},
-    tokens::{device_token, hex, normalize_user_code, random_id, random_token, user_code},
+    tokens::{device_token, hex, random_id, random_token},
 };
 use crate::{error::ApiError, state::AppState};
+
+/// 全站每小时最多这么多次密码错误（登录、再次输入、改密码、桌面命令行登录合计），用完就暂停，
+/// 换 IP 分散猜测也绕不过去。代价是被人刷满时，新登录要等额度回来；已登录的会话与设备不受影响。
+const PASSWORD_FAILURES_PER_HOUR: u32 = 50;
 
 pub fn router() -> Router<AppState> {
     let router = Router::new()
         .route("/auth/state", get(auth_state))
-        .route("/auth/setup/start", post(setup_start))
-        .route("/auth/setup/finish", post(setup_finish))
-        .route("/auth/login/start", post(login_start))
-        .route("/auth/login/finish", post(login_finish))
-        .route("/auth/stepup/start", post(step_up_start))
-        .route("/auth/stepup/finish", post(step_up_finish))
+        .route("/auth/setup/check", post(setup_check))
+        .route("/auth/setup", post(setup))
+        .route("/auth/login", post(login))
+        .route("/auth/stepup", post(step_up))
         .route("/auth/logout", post(logout))
-        .route("/auth/passkeys", get(list_passkeys))
-        .route("/auth/passkeys/start", post(add_passkey_start))
-        .route("/auth/passkeys/finish", post(add_passkey_finish))
-        .route("/auth/passkeys/{id}", delete(revoke_passkey))
+        .route("/auth/account", post(update_account))
         .route("/auth/sessions", get(list_sessions))
         .route("/auth/sessions/{id}", delete(revoke_session))
         .route("/auth/audit", get(audit_log))
-        .route("/device/start", post(device_start))
-        .route("/device/approve", post(device_approve))
-        .route("/device/token", post(device_token_poll))
+        .route("/device/login", post(device_login))
         .route("/devices", get(list_devices))
         .route("/devices/{id}", delete(revoke_device));
     #[cfg(feature = "test-auth")]
@@ -46,7 +45,7 @@ pub fn router() -> Router<AppState> {
     router
 }
 
-/// 同步的认证库调用放进阻塞线程池，别卡住异步执行器。
+/// 同步的认证库调用放进阻塞线程池，别卡住异步执行器（argon2 每次几十毫秒也在这里算）。
 async fn blocking<T, F>(state: &AppState, f: F) -> Result<T, ApiError>
 where
     T: Send + 'static,
@@ -85,225 +84,160 @@ fn start_session(state: &AppState, meta: &ClientMeta, body: Value) -> Result<Res
     Ok(with_cookie(body, state.config.session_cookie(&token, SESSION_ABSOLUTE.num_seconds())))
 }
 
-fn stored_passkeys(state: &AppState) -> Result<Vec<Passkey>, ApiError> {
-    state
-        .auth
-        .active_passkeys()?
-        .into_iter()
-        .map(|row| serde_json::from_str::<Passkey>(&row.passkey_json).map_err(ApiError::internal))
-        .collect()
-}
+const FAILURE_WINDOW: Duration = Duration::from_secs(3600);
 
-fn credential_id_bytes(id: &CredentialID) -> Vec<u8> {
-    id.as_ref().to_vec()
-}
-
-fn owner_uuid(state: &AppState) -> Result<Uuid, ApiError> {
-    let fresh = Uuid::new_v4();
-    let handle = state.auth.ensure_owner(fresh.as_bytes(), &random_token())?;
-    Uuid::from_slice(&handle).map_err(ApiError::internal)
-}
-
-fn begin_registration(state: &AppState, setup_token: Option<String>) -> Result<Value, ApiError> {
-    let uuid = owner_uuid(state)?;
-    let exclude = stored_passkeys(state)?
-        .iter()
-        .map(|passkey| passkey.cred_id().clone())
-        .collect::<Vec<_>>();
-    let (options, registration) = state
-        .webauthn
-        .start_passkey_registration(uuid, "owner", "Shard", Some(exclude))
-        .map_err(ApiError::internal)?;
-    let ceremony_id = state.ceremonies.begin(Ceremony::Register { state: registration, setup_token });
-    Ok(json!({ "ceremonyId": ceremony_id, "options": options }))
+/// 核对密码。`email` 为 `None` 时只核对密码（已登录后的再次输入）；`actor` 是审计里记的操作者。
+/// 全站失败额度用完时直接拒绝；核对失败记一次失败与审计。
+fn check_password(
+    state: &AppState,
+    actor: &str,
+    email: Option<&str>,
+    password: &str,
+    meta: &ClientMeta,
+    failure_event: &str,
+) -> Result<OwnerRow, ApiError> {
+    if !state.limiter.available("password-failures", "all", PASSWORD_FAILURES_PER_HOUR, FAILURE_WINDOW) {
+        audit(state, actor, &format!("{failure_event}.locked"), meta, None);
+        return Err(ApiError::new(
+            StatusCode::TOO_MANY_REQUESTS,
+            "RATE_LIMITED",
+            "密码错误次数太多，已暂停登录，请过一会儿再试。",
+        ));
+    }
+    let Some(owner) = state.auth.owner()? else {
+        return Err(ApiError::new(StatusCode::CONFLICT, "SETUP_REQUIRED", "还没有设置账号。"));
+    };
+    let email_matches = email.is_none_or(|email| normalize_email(email).is_ok_and(|email| email == owner.email));
+    // 邮箱不对也照样算一次哈希，响应时间不暴露邮箱对不对。
+    let hash = if email_matches { owner.password_hash.as_str() } else { decoy_hash() };
+    if verify_password(password, hash) && email_matches {
+        return Ok(owner);
+    }
+    state.limiter.record("password-failures", "all", PASSWORD_FAILURES_PER_HOUR, FAILURE_WINDOW);
+    audit(state, actor, failure_event, meta, None);
+    Err(ApiError::invalid_credentials(if email.is_some() { "邮箱或密码不对。" } else { "密码不对。" }))
 }
 
 // ---------- 状态 ----------
 
 async fn auth_state(State(state): State<AppState>, MaybeCaller(caller): MaybeCaller) -> Result<Json<Value>, ApiError> {
-    let setup_required = blocking(&state, |state| Ok(!state.auth.has_active_passkey()?)).await?;
+    let signed_in = caller.as_ref().is_some_and(|caller| caller.session_hash().is_some());
+    let owner = blocking(&state, |state| Ok(state.auth.owner()?)).await?;
     let step_up_valid = caller.as_ref().map(|caller| caller.require_step_up().is_ok()).unwrap_or(false);
     Ok(Json(json!({
-        "setupRequired": setup_required,
+        "setupRequired": owner.is_none(),
         "authenticated": caller.is_some(),
         "stepUpValid": step_up_valid,
         "vaultId": state.vault_identity,
+        "email": if signed_in { owner.map(|owner| owner.email) } else { None },
     })))
 }
 
-// ---------- 首次设置 / 恢复 ----------
+// ---------- 首次设置 / 重置密码 ----------
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct SetupStart {
+struct SetupCheck {
     token: String,
 }
 
-async fn setup_start(
+fn invalid_setup_token() -> ApiError {
+    ApiError::forbidden("SETUP_TOKEN_INVALID", "链接无效、已过期或已经用过，请在服务器上重新生成。")
+}
+
+/// 打开链接时先看它能不能用、是设置还是重置（重置时预填当前邮箱）。不消耗令牌。
+async fn setup_check(
     State(state): State<AppState>,
     BrowserRequest(meta): BrowserRequest,
-    Json(body): Json<SetupStart>,
+    Json(body): Json<SetupCheck>,
 ) -> Result<Json<Value>, ApiError> {
     limited(&state, "setup", &meta, 10)?;
     blocking(&state, move |state| {
-        if state.auth.peek_setup_token(&body.token)?.is_none() {
+        let Some(purpose) = state.auth.peek_setup_token(&body.token)? else {
             audit(state, "anonymous", "setup.invalid_token", &meta, None);
-            return Err(ApiError::forbidden("SETUP_TOKEN_INVALID", "设置链接无效或已过期，请在服务器上重新生成。"));
+            return Err(invalid_setup_token());
+        };
+        let owner = state.auth.owner()?;
+        if purpose == "setup" && owner.is_some() {
+            return Err(invalid_setup_token());
         }
-        begin_registration(state, Some(body.token)).map(Json)
+        Ok(Json(json!({ "purpose": purpose, "email": owner.map(|owner| owner.email) })))
     })
     .await
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct RegisterFinish {
-    ceremony_id: String,
-    credential: RegisterPublicKeyCredential,
-    #[serde(default)]
-    label: Option<String>,
+struct SetupBody {
+    token: String,
+    email: String,
+    password: String,
 }
 
-fn finish_registration(state: &AppState, body: RegisterFinish, expect_setup: bool) -> Result<Passkey, ApiError> {
-    let Some(Ceremony::Register { state: registration, setup_token }) = state.ceremonies.take(&body.ceremony_id) else {
-        return Err(ApiError::bad_request("注册已过期，请重新开始。"));
-    };
-    if setup_token.is_some() != expect_setup {
-        return Err(ApiError::bad_request("注册流程不匹配。"));
-    }
-    if let Some(token) = &setup_token {
-        if !state.auth.consume_setup_token(token)? {
-            return Err(ApiError::forbidden("SETUP_TOKEN_INVALID", "设置链接无效或已过期，请在服务器上重新生成。"));
-        }
-    }
-    let passkey = state
-        .webauthn
-        .finish_passkey_registration(&body.credential, &registration)
-        .map_err(|error| ApiError::bad_request(format!("通行密钥注册失败：{error}")))?;
-    let label = body.label.map(|label| label.chars().take(60).collect::<String>());
-    state.auth.insert_passkey(
-        &credential_id_bytes(passkey.cred_id()),
-        &serde_json::to_string(&passkey).map_err(ApiError::internal)?,
-        label.as_deref(),
-    )?;
-    Ok(passkey)
-}
-
-async fn setup_finish(
+async fn setup(
     State(state): State<AppState>,
     BrowserRequest(meta): BrowserRequest,
-    Json(body): Json<RegisterFinish>,
+    Json(body): Json<SetupBody>,
 ) -> Result<Response, ApiError> {
     limited(&state, "setup", &meta, 10)?;
+    let email = normalize_email(&body.email)?;
+    validate_password(&body.password)?;
     blocking(&state, move |state| {
-        let passkey = finish_registration(state, body, true)?;
-        audit(state, "setup", "passkey.registered", &meta, Some(&hex(&credential_id_bytes(passkey.cred_id()))));
-        start_session(state, &meta, json!({ "ok": true }))
+        let hash = hash_password(&body.password)?;
+        match state.auth.complete_setup(&body.token, &email, &hash)? {
+            SetupOutcome::Done(purpose) => {
+                audit(state, "setup", &format!("{purpose}.completed"), &meta, None);
+                start_session(state, &meta, json!({ "ok": true }))
+            }
+            SetupOutcome::InvalidToken => {
+                audit(state, "anonymous", "setup.invalid_token", &meta, None);
+                Err(invalid_setup_token())
+            }
+        }
     })
     .await
 }
 
 // ---------- 登录 ----------
 
-async fn login_start(State(state): State<AppState>, BrowserRequest(meta): BrowserRequest) -> Result<Json<Value>, ApiError> {
-    limited(&state, "login", &meta, 10)?;
-    blocking(&state, |state| {
-        let passkeys = stored_passkeys(state)?;
-        if passkeys.is_empty() {
-            return Err(ApiError::new(StatusCode::CONFLICT, "SETUP_REQUIRED", "还没有设置通行密钥。"));
-        }
-        let (options, authentication) =
-            state.webauthn.start_passkey_authentication(&passkeys).map_err(ApiError::internal)?;
-        let ceremony_id = state.ceremonies.begin(Ceremony::Login { state: authentication });
-        Ok(Json(json!({ "ceremonyId": ceremony_id, "options": options })))
-    })
-    .await
-}
-
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct AuthFinish {
-    ceremony_id: String,
-    credential: PublicKeyCredential,
+struct LoginBody {
+    email: String,
+    password: String,
 }
 
-/// 校验断言并更新这把通行密钥的计数器。
-fn verify_assertion(
-    state: &AppState,
-    credential: &PublicKeyCredential,
-    authentication: &webauthn_rs::prelude::PasskeyAuthentication,
-) -> Result<Vec<u8>, ApiError> {
-    let result = state
-        .webauthn
-        .finish_passkey_authentication(credential, authentication)
-        .map_err(|_| ApiError::new(StatusCode::UNAUTHORIZED, "PASSKEY_REJECTED", "通行密钥验证没有通过。"))?;
-    let used = credential_id_bytes(result.cred_id());
-    for mut passkey in stored_passkeys(state)? {
-        if credential_id_bytes(passkey.cred_id()) == used {
-            passkey.update_credential(&result);
-            state
-                .auth
-                .update_passkey_after_use(&used, &serde_json::to_string(&passkey).map_err(ApiError::internal)?)?;
-            return Ok(used);
-        }
-    }
-    Err(ApiError::new(StatusCode::UNAUTHORIZED, "PASSKEY_REJECTED", "这把通行密钥已被吊销。"))
-}
-
-async fn login_finish(
+async fn login(
     State(state): State<AppState>,
     BrowserRequest(meta): BrowserRequest,
-    Json(body): Json<AuthFinish>,
+    Json(body): Json<LoginBody>,
 ) -> Result<Response, ApiError> {
     limited(&state, "login", &meta, 10)?;
     blocking(&state, move |state| {
-        let Some(Ceremony::Login { state: authentication }) = state.ceremonies.take(&body.ceremony_id) else {
-            return Err(ApiError::bad_request("登录已过期，请重新开始。"));
-        };
-        match verify_assertion(state, &body.credential, &authentication) {
-            Ok(cred) => {
-                audit(state, "login", "login.success", &meta, Some(&hex(&cred)));
-                start_session(state, &meta, json!({ "ok": true }))
-            }
-            Err(error) => {
-                audit(state, "anonymous", "login.failure", &meta, None);
-                Err(error)
-            }
-        }
+        check_password(state, "anonymous", Some(&body.email), &body.password, &meta, "login.failure")?;
+        audit(state, "login", "login.success", &meta, None);
+        start_session(state, &meta, json!({ "ok": true }))
     })
     .await
 }
 
-// ---------- 二次验证 ----------
+// ---------- 再次输入密码（敏感操作） ----------
 
-async fn step_up_start(State(state): State<AppState>, caller: Caller) -> Result<Json<Value>, ApiError> {
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StepUpBody {
+    password: String,
+}
+
+async fn step_up(
+    State(state): State<AppState>,
+    caller: Caller,
+    Json(body): Json<StepUpBody>,
+) -> Result<Json<Value>, ApiError> {
     let session = caller.require_session()?.to_vec();
     limited(&state, "stepup", &caller.meta, 10)?;
     blocking(&state, move |state| {
-        let passkeys = stored_passkeys(state)?;
-        let (options, authentication) =
-            state.webauthn.start_passkey_authentication(&passkeys).map_err(ApiError::internal)?;
-        let ceremony_id = state.ceremonies.begin(Ceremony::StepUp { state: authentication, session });
-        Ok(Json(json!({ "ceremonyId": ceremony_id, "options": options })))
-    })
-    .await
-}
-
-async fn step_up_finish(
-    State(state): State<AppState>,
-    caller: Caller,
-    Json(body): Json<AuthFinish>,
-) -> Result<Json<Value>, ApiError> {
-    let session = caller.require_session()?.to_vec();
-    blocking(&state, move |state| {
-        let Some(Ceremony::StepUp { state: authentication, session: expected }) = state.ceremonies.take(&body.ceremony_id)
-        else {
-            return Err(ApiError::bad_request("验证已过期，请重新开始。"));
-        };
-        if expected != session {
-            return Err(ApiError::bad_request("验证不属于当前会话。"));
-        }
-        verify_assertion(state, &body.credential, &authentication)?;
+        check_password(state, &caller.actor(), None, &body.password, &caller.meta, "stepup.failure")?;
         state.auth.mark_step_up(&session)?;
         audit(state, &caller.actor(), "stepup.success", &caller.meta, None);
         Ok(Json(json!({ "ok": true })))
@@ -321,66 +255,46 @@ async fn logout(State(state): State<AppState>, caller: Caller) -> Result<Respons
     .await
 }
 
-// ---------- 通行密钥管理 ----------
+// ---------- 改邮箱与密码 ----------
 
-async fn list_passkeys(State(state): State<AppState>, caller: Caller) -> Result<Json<Value>, ApiError> {
-    caller.require_session()?;
-    blocking(&state, |state| {
-        let items = state
-            .auth
-            .active_passkeys()?
-            .into_iter()
-            .map(|row| {
-                json!({
-                    "id": hex(&row.cred_id),
-                    "label": row.label,
-                    "createdAt": row.created_at,
-                    "lastUsedAt": row.last_used_at,
-                })
-            })
-            .collect::<Vec<_>>();
-        Ok(Json(json!({ "passkeys": items })))
-    })
-    .await
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AccountBody {
+    current_password: String,
+    email: String,
+    #[serde(default)]
+    new_password: Option<String>,
 }
 
-async fn add_passkey_start(State(state): State<AppState>, caller: Caller) -> Result<Json<Value>, ApiError> {
-    caller.require_step_up()?;
-    blocking(&state, |state| begin_registration(state, None).map(Json)).await
-}
-
-async fn add_passkey_finish(
+/// 凭当前密码改邮箱、密码。改了密码会让其他浏览器会话全部退出（当前会话保留）；设备令牌不受影响，
+/// 怀疑泄露时到设备列表里逐个吊销。
+async fn update_account(
     State(state): State<AppState>,
     caller: Caller,
-    Json(body): Json<RegisterFinish>,
+    Json(body): Json<AccountBody>,
 ) -> Result<Json<Value>, ApiError> {
-    caller.require_step_up()?;
-    blocking(&state, move |state| {
-        let passkey = finish_registration(state, body, false)?;
-        audit(state, &caller.actor(), "passkey.registered", &caller.meta, Some(&hex(&credential_id_bytes(passkey.cred_id()))));
-        Ok(Json(json!({ "ok": true })))
-    })
-    .await
-}
-
-fn parse_hex(value: &str) -> Result<Vec<u8>, ApiError> {
-    if !value.len().is_multiple_of(2) || !value.chars().all(|c| c.is_ascii_hexdigit()) {
-        return Err(ApiError::bad_request("id 无效。"));
+    let session = caller.require_session()?.to_vec();
+    limited(&state, "stepup", &caller.meta, 10)?;
+    let email = normalize_email(&body.email)?;
+    let new_password = body.new_password.filter(|password| !password.is_empty());
+    if let Some(password) = &new_password {
+        validate_password(password)?;
     }
-    (0..value.len())
-        .step_by(2)
-        .map(|index| u8::from_str_radix(&value[index..index + 2], 16).map_err(|_| ApiError::bad_request("id 无效。")))
-        .collect()
-}
-
-async fn revoke_passkey(State(state): State<AppState>, caller: Caller, Path(id): Path<String>) -> Result<Json<Value>, ApiError> {
-    caller.require_step_up()?;
-    let cred = parse_hex(&id)?;
     blocking(&state, move |state| {
-        if !state.auth.revoke_passkey(&cred)? {
-            return Err(ApiError::new(StatusCode::CONFLICT, "LAST_PASSKEY", "不能吊销最后一把通行密钥，先添加一把新的。"));
+        let owner = check_password(state, &caller.actor(), None, &body.current_password, &caller.meta, "account.failure")?;
+        let hash = match &new_password {
+            Some(password) => hash_password(password)?,
+            None => owner.password_hash,
+        };
+        state.auth.update_owner(&email, &hash)?;
+        state.auth.mark_step_up(&session)?;
+        if new_password.is_some() {
+            let signed_out = state.auth.revoke_other_sessions(&session)?;
+            audit(state, &caller.actor(), "password.changed", &caller.meta, Some(&format!("signed_out={signed_out}")));
         }
-        audit(state, &caller.actor(), "passkey.revoked", &caller.meta, Some(&id));
+        if email != owner.email {
+            audit(state, &caller.actor(), "email.changed", &caller.meta, None);
+        }
         Ok(Json(json!({ "ok": true })))
     })
     .await
@@ -450,17 +364,21 @@ async fn audit_log(State(state): State<AppState>, caller: Caller) -> Result<Json
     .await
 }
 
-// ---------- 设备配对（RFC 8628 式） ----------
+// ---------- 桌面与命令行登录 ----------
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct DeviceStart {
+struct DeviceLogin {
+    email: String,
+    password: String,
     name: String,
     kind: String,
 }
 
-async fn device_start(State(state): State<AppState>, Meta(meta): Meta, Json(body): Json<DeviceStart>) -> Result<Json<Value>, ApiError> {
-    limited(&state, "pairing", &meta, 10)?;
+/// 桌面应用或命令行用邮箱密码换一枚设备令牌（`shd_dev_…`）。令牌只在那台机器上，服务器只存哈希，
+/// 可在网页「设置 → 设备」里单独吊销。设备令牌不带 Cookie，不受 CSRF 影响。
+async fn device_login(State(state): State<AppState>, Meta(meta): Meta, Json(body): Json<DeviceLogin>) -> Result<Json<Value>, ApiError> {
+    limited(&state, "login", &meta, 10)?;
     if body.kind != "desktop" && body.kind != "cli" {
         return Err(ApiError::bad_request("kind 只能是 desktop 或 cli。"));
     }
@@ -469,67 +387,12 @@ async fn device_start(State(state): State<AppState>, Meta(meta): Meta, Json(body
         return Err(ApiError::bad_request("请给设备起个名字。"));
     }
     blocking(&state, move |state| {
-        let device_code = random_token();
-        let code = user_code();
-        state.auth.create_pairing(&device_code, &code, &name, &body.kind)?;
-        audit(state, "anonymous", "pairing.started", &meta, Some(&name));
-        Ok(Json(json!({
-            "deviceCode": device_code,
-            "userCode": format!("{}-{}", &code[..4], &code[4..]),
-            "verificationUri": format!("{}/pair", state.config.origin_text),
-            "expiresIn": super::db::PAIRING_TTL.num_seconds(),
-            "interval": 3,
-        })))
-    })
-    .await
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct DeviceApprove {
-    user_code: String,
-}
-
-async fn device_approve(State(state): State<AppState>, caller: Caller, Json(body): Json<DeviceApprove>) -> Result<Json<Value>, ApiError> {
-    caller.require_step_up()?;
-    limited(&state, "pairing-approve", &caller.meta, 5)?;
-    blocking(&state, move |state| {
-        let code = normalize_user_code(&body.user_code);
-        match state.auth.approve_pairing(&code)? {
-            Some(name) => {
-                audit(state, &caller.actor(), "pairing.approved", &caller.meta, Some(&name));
-                Ok(Json(json!({ "ok": true, "name": name })))
-            }
-            None => Err(ApiError::new(StatusCode::NOT_FOUND, "PAIRING_NOT_FOUND", "配对码不对或已过期。")),
-        }
-    })
-    .await
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct DeviceTokenPoll {
-    device_code: String,
-}
-
-async fn device_token_poll(State(state): State<AppState>, Meta(meta): Meta, Json(body): Json<DeviceTokenPoll>) -> Result<Json<Value>, ApiError> {
-    limited(&state, "pairing-poll", &meta, 40)?;
-    blocking(&state, move |state| match state.auth.poll_pairing(&body.device_code)? {
-        None | Some(PairingPoll::Expired) => {
-            Err(ApiError::new(StatusCode::GONE, "PAIRING_EXPIRED", "配对已过期，请重新开始。"))
-        }
-        Some(PairingPoll::Pending) => Err(ApiError::new(
-            StatusCode::PRECONDITION_REQUIRED,
-            "AUTHORIZATION_PENDING",
-            "等待在浏览器里批准。",
-        )),
-        Some(PairingPoll::Approved { client_name, kind }) => {
-            let device_id = random_id("dev_");
-            let token = device_token();
-            state.auth.create_device(&device_id, &client_name, &kind, &token, "vault")?;
-            audit(state, &format!("device:{device_id}"), "device.created", &meta, Some(&client_name));
-            Ok(Json(json!({ "token": token, "deviceId": device_id, "name": client_name })))
-        }
+        check_password(state, "anonymous", Some(&body.email), &body.password, &meta, "device.login_failure")?;
+        let device_id = random_id("dev_");
+        let token = device_token();
+        state.auth.create_device(&device_id, &name, &body.kind, &token, "vault")?;
+        audit(state, &format!("device:{device_id}"), "device.created", &meta, Some(&name));
+        Ok(Json(json!({ "token": token, "deviceId": device_id, "name": name })))
     })
     .await
 }
@@ -569,13 +432,13 @@ async fn revoke_device(State(state): State<AppState>, caller: Caller, Path(id): 
     .await
 }
 
-/// 仅端到端测试：不走通行密钥直接签发会话（WebKit 没有虚拟验证器）。
+/// 仅端到端测试：不输密码直接签发会话。
 #[cfg(feature = "test-auth")]
 async fn test_session(State(state): State<AppState>, Meta(meta): Meta) -> Result<Response, ApiError> {
     blocking(&state, move |state| start_session(state, &meta, json!({ "ok": true }))).await
 }
 
-/// 仅端到端测试：把当前会话标记为刚验证过通行密钥；`?expire=1` 则让验证过期
+/// 仅端到端测试：把当前会话标记为刚输过密码；`?expire=1` 则让验证过期
 /// （登录本身算一次验证，测「需要重新验证」时先让它过期）。
 #[cfg(feature = "test-auth")]
 async fn test_step_up(

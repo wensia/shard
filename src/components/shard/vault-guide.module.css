@@ -436,19 +436,7 @@
   color: var(--muted-foreground);
 }
 
-/* ---------- Server pairing ---------- */
-
-/* 配对码要在另一台设备上照着输入：等宽、加字距，整段可选中复制。 */
-.pairingCode {
-  font-family: var(--font-mono);
-  font-size: var(--text-section-title);
-  line-height: 24px;
-  font-weight: 600;
-  letter-spacing: 0.12em;
-  font-variant-numeric: tabular-nums;
-  color: var(--foreground);
-  user-select: all;
-}
+/* ---------- Server connection ---------- */
 
 .errorLine {
   font-size: var(--text-meta);

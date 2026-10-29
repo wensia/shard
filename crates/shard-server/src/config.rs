@@ -1,10 +1,10 @@
 //! 服务端配置。`origin` 是浏览器地址栏里的站点（`https://shard.example.com`），
-//! 通行密钥的 RP ID、CSRF 的 Origin 校验、Cookie 是否加 `Secure` 都由它决定。
+//! 资料库身份里的域名、CSRF 的 Origin 校验、Cookie 是否加 `Secure` 都由它决定。
 
 use std::{net::IpAddr, path::PathBuf};
 
 use ipnet::IpNet;
-use webauthn_rs::prelude::Url;
+use url::Url;
 
 #[derive(Clone, Debug)]
 pub struct Config {
@@ -12,7 +12,8 @@ pub struct Config {
     pub origin: Url,
     /// `origin` 的规范写法（无结尾斜杠），与请求头 `Origin` 逐字比较。
     pub origin_text: String,
-    pub rp_id: String,
+    /// 站点域名，写进资料库身份 `shard://<域名>/<vault_id>`。
+    pub host: String,
     pub static_dir: Option<PathBuf>,
     /// 只有这时才信任 `X-Forwarded-For`，并且只信任来自本机回环地址（Caddy）的连接。
     pub trust_proxy: bool,
@@ -28,16 +29,16 @@ impl Config {
         trust_proxy: bool,
     ) -> Result<Self, String> {
         let origin = Url::parse(origin).map_err(|error| format!("origin 无效：{error}"))?;
-        let rp_id = origin
+        let host = origin
             .domain()
             .ok_or_else(|| "origin 必须是域名（本地开发用 http://localhost:端口，不能用 IP）。".to_string())?
             .to_string();
         let secure = origin.scheme() == "https";
-        if !secure && rp_id != "localhost" {
+        if !secure && host != "localhost" {
             return Err("公网部署必须用 https。".to_string());
         }
         let origin_text = origin.origin().ascii_serialization();
-        Ok(Self { data_dir, origin, origin_text, rp_id, static_dir, trust_proxy, proxy_networks: Vec::new() })
+        Ok(Self { data_dir, origin, origin_text, host, static_dir, trust_proxy, proxy_networks: Vec::new() })
     }
 
     pub fn with_proxy_networks(mut self, networks: Vec<IpNet>) -> Self {
@@ -90,7 +91,7 @@ mod tests {
         assert!(Config::new("/tmp".into(), "https://203.0.113.5", None, false).is_err());
         let config = Config::new("/tmp".into(), "https://shard.example.com/", None, true).unwrap();
         assert_eq!(config.origin_text, "https://shard.example.com");
-        assert_eq!(config.rp_id, "shard.example.com");
+        assert_eq!(config.host, "shard.example.com");
         assert!(config.session_cookie("t", 60).starts_with("__Host-shard=t; Path=/; HttpOnly; SameSite=Strict"));
         assert!(config.session_cookie("t", 60).ends_with("; Secure"));
     }
