@@ -17,11 +17,8 @@ import {
 
 import appStyles from "@/App.module.css"
 import { FragmentTimeline } from "@/components/shard/fragment-timeline"
-import {
-  LockboxPasswordInput,
-  PASSWORD_IME_HINT,
-  validateLockboxPasswordPair,
-} from "@/components/shard/lockbox-dialog"
+import { validateLockboxPasswordPair } from "@/components/shard/lockbox-dialog"
+import { PASSWORD_IME_HINT, PasswordInput } from "@/components/shard/password-input"
 import type { TaggedSummary } from "@/components/shard/tagged-panel"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -227,7 +224,7 @@ function LockboxGate({
                 密匣密码
               </label>
               <div className={styles.gateRow}>
-                <LockboxPasswordInput
+                <PasswordInput
                   aria-describedby="lockbox-gate-meta"
                   aria-invalid={error ? true : undefined}
                   disabled={isBusy}
@@ -304,7 +301,7 @@ function LockboxGate({
               </div>
               <div className={styles.gateField}>
                 <label htmlFor="lockbox-gate-new-password">新密码</label>
-                <LockboxPasswordInput
+                <PasswordInput
                   disabled={isBusy}
                   id="lockbox-gate-new-password"
                   onChange={(event) => setNewPassword(event.target.value)}
@@ -314,7 +311,7 @@ function LockboxGate({
               </div>
               <div className={styles.gateField}>
                 <label htmlFor="lockbox-gate-repeat-password">确认新密码</label>
-                <LockboxPasswordInput
+                <PasswordInput
                   disabled={isBusy}
                   id="lockbox-gate-repeat-password"
                   onChange={(event) => setRepeatPassword(event.target.value)}

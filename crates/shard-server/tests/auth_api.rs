@@ -159,7 +159,7 @@ async fn the_setup_link_creates_the_account_and_signs_in_once() {
     assert_eq!(checked.body, json!({ "purpose": "setup", "email": null }));
 
     assert_eq!(h.setup(&token, "not-an-email", PASSWORD).await.body["code"], "INVALID_EMAIL");
-    assert_eq!(h.setup(&token, EMAIL, "too-short").await.body["code"], "WEAK_PASSWORD");
+    assert_eq!(h.setup(&token, EMAIL, "short12").await.body["code"], "WEAK_PASSWORD");
     // 校验没过不消耗链接。
     let done = h.setup(&token, "  Me@Example.COM ", PASSWORD).await;
     assert_eq!(done.status, StatusCode::OK, "{}", done.body);

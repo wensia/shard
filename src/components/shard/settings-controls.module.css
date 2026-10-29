@@ -64,6 +64,13 @@
   text-wrap: pretty;
 }
 
+.rowError {
+  font-size: var(--text-meta);
+  line-height: 18px;
+  color: var(--destructive);
+  text-wrap: pretty;
+}
+
 .control {
   display: flex;
   width: 100%;

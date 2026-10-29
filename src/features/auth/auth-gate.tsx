@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useId, useState, type FormEvent, type ReactNode } from "react"
+import { useCallback, useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from "react"
 
+import { PasswordInput } from "@/components/shard/password-input"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { AUTH_REQUIRED_EVENT } from "@/lib/transport"
@@ -11,12 +12,13 @@ import {
   fetchAuthState,
   login,
   MIN_PASSWORD_CHARS,
-  newPasswordProblem,
+  passwordProblem,
+  repeatProblem,
   setupAccount,
   type SetupTokenInfo,
 } from "./api"
 import styles from "./auth-pages.module.css"
-import { FormError, FormField, PasswordInput } from "./form-fields"
+import { fieldProps, FormError, FormField, useFieldErrors, type FieldErrors } from "./form-fields"
 import { PasswordPromptHost } from "./password-prompt"
 
 type Phase =
@@ -82,7 +84,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
     case "setup":
       return <SetupPage token={phase.token} onDone={enter} />
     case "login":
-      return <LoginPage setupRequired={phase.setupRequired} onDone={enter} />
+      return phase.setupRequired ? <SetupRequiredCard /> : <LoginForm onDone={enter} />
     case "ready":
       return (
         <>
@@ -119,48 +121,55 @@ function OfflineCard({ message, onRetry }: { message: string; onRetry: () => voi
   )
 }
 
-/** 表单提交的忙碌态与错误行。`fail` 用于前端预校验拦下的情况（不发请求）。 */
+/** 还没有账号：说明下一步在哪里做（kiln 空状态：为什么没有、接下来怎么办）。 */
+function SetupRequiredCard() {
+  return (
+    <AuthCard title="还没有设置账号">
+      <p className={styles.hint}>
+        在服务器上运行 <code>shard-server setup</code>，用它给出的链接设置邮箱和密码。
+      </p>
+    </AuthCard>
+  )
+}
+
+/** 提交的忙碌态与表单级错误（服务器拒绝、连不上）。字段自己的错误各自放在字段下方。 */
 function useSubmit() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState("")
-  const run = async (action: () => Promise<void>, onError?: (error: unknown) => void) => {
+  const run = async (action: () => Promise<void>, onError?: (error: unknown) => boolean | void) => {
     setBusy(true)
     setError("")
     try {
       await action()
     } catch (caught) {
-      setError(messageOf(caught))
-      onError?.(caught)
+      // onError 返回 true 表示它已把错误放到了某个字段下，不再显示成表单级错误
+      if (onError?.(caught) !== true) setError(messageOf(caught))
     } finally {
       setBusy(false)
     }
   }
-  return { busy, error, fail: setError, run }
+  return { busy, error, run }
 }
 
-function LoginPage({ setupRequired, onDone }: { setupRequired: boolean; onDone: () => void }) {
-  const { busy, error, fail, run } = useSubmit()
+type LoginField = "email" | "password"
+
+function LoginForm({ onDone }: { onDone: () => void }) {
+  const { busy, error, run } = useSubmit()
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
+  const emailRef = useRef<HTMLInputElement>(null)
+  const passwordRef = useRef<HTMLInputElement>(null)
   const emailId = useId()
   const passwordId = useId()
-  const errorId = useId()
-
-  if (setupRequired) {
-    return (
-      <AuthCard title="还没有设置账号">
-        <p className={styles.hint}>
-          在服务器上运行 <code>shard-server setup</code>，打开它给出的链接设置邮箱和密码。
-        </p>
-      </AuthCard>
-    )
-  }
+  const { errors, setErrors, revalidate } = useFieldErrors<LoginField>()
+  const missingPassword = (value: string) => (value ? null : "请填写密码。")
 
   const submit = (event: FormEvent) => {
     event.preventDefault()
-    const problem = emailProblem(email) ?? (password ? null : "请填写密码。")
-    if (problem) {
-      fail(problem)
+    const next = { email: emailProblem(email) ?? undefined, password: missingPassword(password) ?? undefined }
+    setErrors(next)
+    if (next.email || next.password) {
+      ;(next.email ? emailRef : passwordRef).current?.focus()
       return
     }
     void run(
@@ -170,56 +179,61 @@ function LoginPage({ setupRequired, onDone }: { setupRequired: boolean; onDone: 
       },
       (caught) => {
         // 邮箱或密码不对：清空密码重输，邮箱留着。
-        if (caught instanceof AuthError && caught.code === "INVALID_CREDENTIALS") setPassword("")
+        if (caught instanceof AuthError && caught.code === "INVALID_CREDENTIALS") {
+          setPassword("")
+          passwordRef.current?.focus()
+        }
       }
     )
   }
 
-  const describedBy = error ? errorId : undefined
   return (
     <AuthCard title="登录">
       <form className={styles.form} noValidate onSubmit={submit}>
-        <FormField htmlFor={emailId} label="邮箱">
+        <FormField error={errors.email} htmlFor={emailId} label="邮箱">
           <Input
-            aria-describedby={describedBy}
+            {...fieldProps(emailId, errors.email)}
             autoCapitalize="off"
             autoComplete="username"
             autoFocus
-            className={styles.input}
             id={emailId}
             inputMode="email"
-            onChange={(event) => setEmail(event.target.value)}
+            onChange={(event) => {
+              setEmail(event.target.value)
+              revalidate("email", emailProblem(event.target.value))
+            }}
+            ref={emailRef}
             spellCheck={false}
             type="email"
             value={email}
           />
         </FormField>
-        <FormField htmlFor={passwordId} label="密码">
+        <FormField error={errors.password} htmlFor={passwordId} label="密码">
           <PasswordInput
-            aria-describedby={describedBy}
-            autoComplete="current-password"
-            className={styles.input}
+            {...fieldProps(passwordId, errors.password)}
+            credential="current-password"
             id={passwordId}
-            onChange={(event) => setPassword(event.target.value)}
+            onChange={(event) => {
+              setPassword(event.target.value)
+              revalidate("password", missingPassword(event.target.value))
+            }}
             readOnly={busy}
+            ref={passwordRef}
             value={password}
           />
         </FormField>
-        <FormError id={errorId} message={error} />
+        <FormError message={error} />
         <Button aria-busy={busy} className={styles.action} disabled={busy} size="lg" type="submit" variant="primary">
           {busy ? "正在登录…" : "登录"}
         </Button>
       </form>
-      <p className={styles.hint}>
-        忘记密码：在服务器上运行 <code>shard-server reset-password</code>，打开它给出的链接重设。
-      </p>
     </AuthCard>
   )
 }
 
 type SetupCheck =
   | { kind: "checking" }
-  | { kind: "invalid"; message: string }
+  | { kind: "invalid" }
   | { kind: "offline"; message: string }
   | { kind: "ready"; info: SetupTokenInfo }
 
@@ -240,7 +254,7 @@ function SetupPage({ token, onDone }: { token: string; onDone: () => void }) {
         if (!active) return
         setCheck(
           error instanceof AuthError && error.code === "SETUP_TOKEN_INVALID"
-            ? { kind: "invalid", message: error.message }
+            ? { kind: "invalid" }
             : { kind: "offline", message: messageOf(error) }
         )
       }
@@ -253,10 +267,7 @@ function SetupPage({ token, onDone }: { token: string; onDone: () => void }) {
   if (!token) {
     return (
       <AuthCard title="链接不完整">
-        <p className={styles.hint}>
-          这个链接缺少令牌。请复制 <code>shard-server setup</code> 或 <code>shard-server reset-password</code>{" "}
-          输出的完整链接重新打开。
-        </p>
+        <p className={styles.hint}>请复制服务器输出的完整链接重新打开。</p>
       </AuthCard>
     )
   }
@@ -269,10 +280,9 @@ function SetupPage({ token, onDone }: { token: string; onDone: () => void }) {
     case "invalid":
       return (
         <AuthCard title="链接无效或已过期">
-          <p className={styles.hint}>{check.message}</p>
           <p className={styles.hint}>
-            请在服务器上重新运行 <code>shard-server setup</code>（忘记密码用 <code>shard-server reset-password</code>
-            ），打开新给出的链接。
+            链接只能用一次，24 小时内有效。请在服务器上重新运行 <code>shard-server setup</code>（忘记密码用{" "}
+            <code>shard-server reset-password</code>）。
           </p>
         </AuthCard>
       )
@@ -281,85 +291,113 @@ function SetupPage({ token, onDone }: { token: string; onDone: () => void }) {
   }
 }
 
+type SetupField = "email" | "password" | "repeat"
+
+const PASSWORD_HINT = `至少 ${MIN_PASSWORD_CHARS} 个字符。`
+
 function SetupForm({ info, token, onDone }: { info: SetupTokenInfo; token: string; onDone: () => void }) {
-  const { busy, error, fail, run } = useSubmit()
+  const { busy, error, run } = useSubmit()
   const reset = info.purpose === "reset"
   const [email, setEmail] = useState(info.email ?? "")
   const [password, setPassword] = useState("")
   const [repeat, setRepeat] = useState("")
+  const refs = {
+    email: useRef<HTMLInputElement>(null),
+    password: useRef<HTMLInputElement>(null),
+    repeat: useRef<HTMLInputElement>(null),
+  }
   const emailId = useId()
   const passwordId = useId()
   const repeatId = useId()
-  const hintId = useId()
-  const errorId = useId()
+  const { errors, setErrors, revalidate } = useFieldErrors<SetupField>()
 
   const submit = (event: FormEvent) => {
     event.preventDefault()
-    const problem = emailProblem(email) ?? newPasswordProblem(password, repeat)
-    if (problem) {
-      fail(problem)
+    const weak = passwordProblem(password)
+    const next: FieldErrors<SetupField> = {
+      email: emailProblem(email) ?? undefined,
+      password: weak ?? undefined,
+      // 新密码本身不合格时先只提示它，确认框等新密码改好再比
+      repeat: weak ? undefined : (repeatProblem(password, repeat) ?? undefined),
+    }
+    setErrors(next)
+    const first = (["email", "password", "repeat"] as const).find((field) => next[field])
+    if (first) {
+      refs[first].current?.focus()
       return
     }
-    void run(async () => {
-      await setupAccount(token, email, password)
-      onDone()
-    })
+    void run(
+      async () => {
+        await setupAccount(token, email, password)
+        onDone()
+      },
+      (caught) => {
+        // 服务器的格式校验落到对应字段下；其余（链接失效、连不上）是表单级错误
+        if (caught instanceof AuthError && caught.code === "INVALID_EMAIL") {
+          setErrors({ email: caught.message })
+          return true
+        }
+        if (caught instanceof AuthError && caught.code === "WEAK_PASSWORD") {
+          setErrors({ password: caught.message })
+          return true
+        }
+      }
+    )
   }
 
-  const describedBy = error ? errorId : undefined
   return (
     <AuthCard title={reset ? "重置密码" : "设置账号"}>
-      <p className={styles.hint}>
-        {reset ? "为这个账号设置新密码，完成后直接登录。" : "设置登录用的邮箱和密码，完成后直接登录。"}
-      </p>
       {/* 用户名 + 两个 new-password 字段在同一个表单里：Safari / iCloud 钥匙串据此建议并保存强密码。 */}
       <form className={styles.form} noValidate onSubmit={submit}>
-        <FormField htmlFor={emailId} label="邮箱">
+        <FormField error={errors.email} htmlFor={emailId} label="邮箱">
           <Input
-            aria-describedby={describedBy}
+            {...fieldProps(emailId, errors.email)}
             autoCapitalize="off"
             autoComplete="username"
             autoFocus={!reset}
-            className={styles.input}
             id={emailId}
             inputMode="email"
-            onChange={(event) => setEmail(event.target.value)}
+            onChange={(event) => {
+              setEmail(event.target.value)
+              revalidate("email", emailProblem(event.target.value))
+            }}
+            ref={refs.email}
             spellCheck={false}
             type="email"
             value={email}
           />
         </FormField>
-        <FormField
-          hint={`至少 ${MIN_PASSWORD_CHARS} 个字符。可以让浏览器或钥匙串生成并保存一个强密码。`}
-          hintId={hintId}
-          htmlFor={passwordId}
-          label={reset ? "新密码" : "密码"}
-        >
+        <FormField error={errors.password} hint={PASSWORD_HINT} htmlFor={passwordId} label={reset ? "新密码" : "密码"}>
           <PasswordInput
-            aria-describedby={describedBy ? `${hintId} ${describedBy}` : hintId}
-            autoComplete="new-password"
+            {...fieldProps(passwordId, errors.password, PASSWORD_HINT)}
             autoFocus={reset}
-            className={styles.input}
+            credential="new-password"
             id={passwordId}
-            minLength={MIN_PASSWORD_CHARS}
-            onChange={(event) => setPassword(event.target.value)}
+            onChange={(event) => {
+              setPassword(event.target.value)
+              revalidate("password", passwordProblem(event.target.value))
+              revalidate("repeat", repeatProblem(event.target.value, repeat))
+            }}
             readOnly={busy}
+            ref={refs.password}
             value={password}
           />
         </FormField>
-        <FormField htmlFor={repeatId} label={reset ? "确认新密码" : "确认密码"}>
+        <FormField error={errors.repeat} htmlFor={repeatId} label={reset ? "确认新密码" : "确认密码"}>
           <PasswordInput
-            aria-describedby={describedBy}
-            autoComplete="new-password"
-            className={styles.input}
+            {...fieldProps(repeatId, errors.repeat)}
+            credential="new-password"
             id={repeatId}
-            minLength={MIN_PASSWORD_CHARS}
-            onChange={(event) => setRepeat(event.target.value)}
+            onChange={(event) => {
+              setRepeat(event.target.value)
+              revalidate("repeat", repeatProblem(password, event.target.value))
+            }}
             readOnly={busy}
+            ref={refs.repeat}
             value={repeat}
           />
         </FormField>
-        <FormError id={errorId} message={error} />
+        <FormError message={error} />
         <Button aria-busy={busy} className={styles.action} disabled={busy} size="lg" type="submit" variant="primary">
           {busy ? "正在保存…" : reset ? "重置并登录" : "设置并登录"}
         </Button>

@@ -30,7 +30,7 @@ export function isCancelled(error: unknown) {
 
 // ---------- 规则（与服务器 auth/password.rs 一致；前端先拦一道，服务器是最终裁决） ----------
 
-export const MIN_PASSWORD_CHARS = 12
+export const MIN_PASSWORD_CHARS = 8
 export const MAX_PASSWORD_CHARS = 256
 const MAX_EMAIL_CHARS = 254
 
@@ -49,13 +49,17 @@ export function emailProblem(value: string) {
   return valid ? null : "邮箱格式不对。"
 }
 
-/** 新密码的问题（长度按 Unicode 字符计，与服务器一致）；没问题返回 null。 */
-export function newPasswordProblem(password: string, repeat: string) {
+/** 新密码的长度问题（按 Unicode 字符计，与服务器一致）；没问题返回 null。 */
+export function passwordProblem(password: string) {
   const length = [...password].length
   if (length < MIN_PASSWORD_CHARS) return `密码至少 ${MIN_PASSWORD_CHARS} 个字符。`
   if (length > MAX_PASSWORD_CHARS) return `密码最多 ${MAX_PASSWORD_CHARS} 个字符。`
-  if (password !== repeat) return "两次输入的密码不一致。"
   return null
+}
+
+/** 确认密码与新密码不一致；一致返回 null。 */
+export function repeatProblem(password: string, repeat: string) {
+  return password === repeat ? null : "两次输入的密码不一致。"
 }
 
 // ---------- 请求 ----------

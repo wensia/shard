@@ -369,16 +369,15 @@ test.describe("本机资料库", () => {
     await expect(server.getByText("配对码")).toHaveCount(0)
     const connect = server.getByRole("button", { name: "连接", exact: true })
 
-    // 前端先拦：地址、邮箱格式、密码。
+    // 前端先拦：错误各自替换那一行的说明（地址、邮箱、密码），改对就消失。
     await connect.click()
-    await expect(server.getByRole("alert")).toHaveText("请填写服务器地址。")
+    await expect(server.getByRole("alert")).toHaveText(["请填写服务器地址。", "请填写邮箱。", "请填写密码。"])
+    await expect(server.getByRole("textbox", { name: "服务器地址" })).toHaveAttribute("aria-invalid", "true")
     await server.getByRole("textbox", { name: "服务器地址" }).fill(SERVER)
     await server.getByRole("textbox", { name: "邮箱" }).fill("me@")
-    await connect.click()
-    await expect(server.getByRole("alert")).toHaveText("邮箱格式不对。")
+    await expect(server.getByRole("alert")).toHaveText(["邮箱格式不对。", "请填写密码。"])
     await server.getByRole("textbox", { name: "邮箱" }).fill("  Me@Example.com ")
-    await connect.click()
-    await expect(server.getByRole("alert")).toHaveText("请填写密码。")
+    await expect(server.getByRole("alert")).toHaveText(["请填写密码。"])
     expect((await calls(page)).map((call) => call.command)).not.toContain("remote_login")
 
     await server.getByRole("textbox", { name: "密码", exact: true }).fill("correct horse battery")

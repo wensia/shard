@@ -29,6 +29,9 @@ function DialogOverlay({
 }: DialogPrimitive.Backdrop.Props) {
   return (
     <DialogPrimitive.Backdrop
+      // 嵌套对话框也画遮罩（Base UI 默认不画）：叠在另一个对话框上时把下层压暗，
+      // 两只白面板才不会连成一块（kiln Dialog → Stacking）。遮罩与面板同一层级，按打开先后叠放。
+      forceRender
       data-slot="dialog-overlay"
       className={cn(
         "fixed inset-0 isolate z-50 bg-black/[var(--shard-alpha-13)] dark:bg-black/[var(--shard-alpha-55)] transition-opacity duration-150 supports-backdrop-filter:backdrop-blur-xs data-ending-style:opacity-0 data-starting-style:opacity-0",

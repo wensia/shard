@@ -353,7 +353,7 @@ set_fragment_pinned、set/remove_fragment_property、save_fragment_image（内�
 ## 7. 认证与安全
 
 - **邮箱密码**（2026-10-29 用户觉得通行密钥太麻烦，拍板换成邮箱密码，通行密钥与配对码一并删除）：
-  单用户，邮箱只当登录名（去空白、转小写），不发邮件；密码 12–256 个字符，argon2id（m=19 MiB、t=2、p=1）
+  单用户，邮箱只当登录名（去空白、转小写），不发邮件；密码 8–256 个字符（10-29 用户要求从 12 降到 8），argon2id（m=19 MiB、t=2、p=1）
   加盐存 PHC 字符串。邮箱不对时拿诱饵哈希陪算一次，响应时间与提示都不暴露邮箱对不对。
   首次设置用 `shard-server setup` 打印的一次性链接（24 小时、只能用一次，只在还没有账号时有效）；
   忘记密码用 `shard-server reset-password` 的链接，设置后全部浏览器会话退出，`--revoke-all` 另吊销设备令牌。
@@ -463,7 +463,7 @@ set_fragment_pinned、set/remove_fragment_property、save_fragment_image（内�
 | 攻击者 | 能拿到 | 防护 |
 |---|---|---|
 | 网络窃听 | 流量 | TLS（Caddy）、HSTS |
-| 互联网扫描、撞库、钓鱼 | 登录端点 | 密码至少 12 位、argon2id；每 IP 与全站失败限流；审计。**密码泄露或被钓走就能登录**（没有第二因素，用户选择）；密匣另有口令，不受影响 |
+| 互联网扫描、撞库、钓鱼 | 登录端点 | 密码至少 8 位、argon2id；每 IP 与全站失败限流；审计。**密码泄露或被钓走就能登录**（没有第二因素，用户选择）；密匣另有口令，不受影响 |
 | 跨站请求 | 用户已登录的浏览器 | SameSite=Strict + 自定义头 + Origin / Sec-Fetch-Site 校验；无 CORS |
 | 上传内容里的脚本（SVG） | 同源执行 | SVG sandbox CSP、nosniff、CORP；全站严格 CSP |
 | VPS 服务商、磁盘或备份泄露 | 库文件、快照 | 公开内容：无保护（单用户自用，接受）；密匣：只有密文（AES-GCM + AAD）；备份 age 加密 |

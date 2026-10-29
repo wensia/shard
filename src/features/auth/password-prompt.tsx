@@ -1,18 +1,12 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from "react"
 
+import { PasswordInput } from "@/components/shard/password-input"
 import { Button } from "@/components/ui/button"
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog"
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 
 import { AuthError, confirmPassword, currentAccountEmail, registerPasswordPrompt } from "./api"
 import styles from "./auth-pages.module.css"
-import { FormError, FormField, PasswordInput } from "./form-fields"
+import { fieldProps, FormField } from "./form-fields"
 
 interface PendingPrompt {
   resolve: () => void
@@ -64,7 +58,6 @@ function PasswordPromptDialog({ onCancel, onConfirmed }: { onCancel: () => void;
   const [busy, setBusy] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
   const passwordId = useId()
-  const errorId = useId()
   // 隐藏的用户名字段：密码管理器据此认出是哪个账号的密码。
   const [email] = useState(currentAccountEmail)
 
@@ -95,24 +88,25 @@ function PasswordPromptDialog({ onCancel, onConfirmed }: { onCancel: () => void;
       <DialogContent aria-busy={busy} className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>输入密码确认</DialogTitle>
-          <DialogDescription>这个操作需要确认是你本人。确认后 10 分钟内不用再输。</DialogDescription>
         </DialogHeader>
         <form className={styles.form} noValidate onSubmit={(event) => void submit(event)}>
           {email ? <input autoComplete="username" hidden readOnly type="email" value={email} /> : null}
-          <FormField htmlFor={passwordId} label="密码">
+          {/* 只有一个字段：任何错误（密码不对、太频繁、连不上）都放在它下方那一行 */}
+          <FormField error={error} htmlFor={passwordId} label="密码">
             <PasswordInput
-              aria-describedby={error ? errorId : undefined}
-              aria-invalid={error ? true : undefined}
-              autoComplete="current-password"
+              {...fieldProps(passwordId, error)}
               autoFocus
+              credential="current-password"
               id={passwordId}
-              onChange={(event) => setPassword(event.target.value)}
+              onChange={(event) => {
+                setPassword(event.target.value)
+                setError("")
+              }}
               readOnly={busy}
               ref={inputRef}
               value={password}
             />
           </FormField>
-          <FormError id={errorId} message={error} />
           <DialogFooter>
             <Button disabled={busy} onClick={onCancel} type="button" variant="outline">
               取消

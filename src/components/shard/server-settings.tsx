@@ -25,7 +25,7 @@ import {
 } from "@/lib/transport/desktop-remote"
 import type { ConnectionState } from "@/lib/transport/sse"
 
-import { LockboxPasswordInput } from "./lockbox-dialog"
+import { PasswordInput } from "./password-input"
 import { SettingsGroup, SettingsGroupItem, SettingsMono, SettingsRow } from "./settings-controls"
 import { StatusIndicator, type StationTone } from "./settings-status"
 import styles from "./vault-guide.module.css"
@@ -159,25 +159,38 @@ type Phase = { kind: "idle"; error: string | null } | { kind: "signingIn" } | { 
  * 没连接时的登录表单：服务器地址、邮箱、密码、设备名。Rust 拿邮箱和密码向服务器换这台设备的令牌，
  * 之后凭令牌访问服务器；邮箱格式先按服务器的规则拦一道，服务器是最终裁决。
  */
+type LoginField = "server" | "email" | "password"
+
 function LoginServer() {
   const [server, setServer] = useState("")
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [name, setName] = useState(DEFAULT_DEVICE_NAME)
   const [phase, setPhase] = useState<Phase>({ kind: "idle", error: null })
+  // 字段自己的错误放在各自那一行（替换说明）；服务器的拒绝放在「连接」那一行，挨着按钮
+  const [errors, setErrors] = useState<Partial<Record<LoginField, string>>>({})
+  const missingServer = (value: string) => (value.trim() ? null : "请填写服务器地址。")
+  const missingPassword = (value: string) => (value ? null : "请填写密码。")
+  /** 改动后只更新已经报过错的字段，改对了错误就消失。 */
+  const revalidate = (field: LoginField, problem: string | null) =>
+    setErrors((current) => (current[field] ? { ...current, [field]: problem ?? undefined } : current))
 
   async function signIn(event: FormEvent) {
     event.preventDefault()
-    const address = server.trim()
-    const problem = (address ? null : "请填写服务器地址。") ?? emailProblem(email) ?? (password ? null : "请填写密码。")
-    if (problem) {
-      setPhase({ kind: "idle", error: problem })
+    const next = {
+      server: missingServer(server) ?? undefined,
+      email: emailProblem(email) ?? undefined,
+      password: missingPassword(password) ?? undefined,
+    }
+    setErrors(next)
+    if (next.server || next.email || next.password) {
+      setPhase({ kind: "idle", error: null })
       return
     }
     setPhase({ kind: "signingIn" })
     try {
       await invoke<RemoteLoginResult>("remote_login", {
-        server: address,
+        server: server.trim(),
         email: normalizeEmail(email),
         password,
         name: name.trim() || DEFAULT_DEVICE_NAME,
@@ -208,50 +221,52 @@ function LoginServer() {
   return (
     <form noValidate onSubmit={(event) => void signIn(event)}>
       <SettingsGroup busy={signingIn}>
-        <SettingsRow
-          controlWidth="default"
-          description="https 地址；本机开发可以用 http://localhost。"
-          label="服务器地址"
-          labelId="server-settings-address"
-        >
+        <SettingsRow controlWidth="default" error={errors.server} label="服务器地址" labelId="server-settings-address">
           <Input
+            aria-invalid={errors.server ? true : undefined}
             aria-labelledby="server-settings-address"
             autoCapitalize="off"
             autoComplete="url"
             disabled={signingIn}
             inputMode="url"
-            onChange={(event) => setServer(event.target.value)}
+            onChange={(event) => {
+              setServer(event.target.value)
+              revalidate("server", missingServer(event.target.value))
+            }}
             placeholder="https://shard.example.com"
             spellCheck={false}
             value={server}
           />
         </SettingsRow>
-        <SettingsRow
-          controlWidth="default"
-          description="网页版登录用的邮箱和密码。"
-          label="邮箱"
-          labelId="server-settings-email"
-        >
+        <SettingsRow controlWidth="default" error={errors.email} label="邮箱" labelId="server-settings-email">
           <Input
+            aria-invalid={errors.email ? true : undefined}
             aria-labelledby="server-settings-email"
             autoCapitalize="off"
             autoComplete="username"
             disabled={signingIn}
             inputMode="email"
-            onChange={(event) => setEmail(event.target.value)}
+            onChange={(event) => {
+              setEmail(event.target.value)
+              revalidate("email", emailProblem(event.target.value))
+            }}
             spellCheck={false}
             type="email"
             value={email}
           />
         </SettingsRow>
-        <SettingsRow controlWidth="default" label="密码" labelId="server-settings-password">
-          {/* 桌面 WKWebView 的密码框统一用 LockboxPasswordInput（type="text" + 遮蔽，见 frontend-rules.css）；
-              外面包一层撑满控件列，与上下的输入框同宽。 */}
+        <SettingsRow controlWidth="default" error={errors.password} label="密码" labelId="server-settings-password">
+          {/* 共享密码框：桌面 WKWebView 上是遮蔽文本（见 password-input.tsx）；外面包一层撑满控件列，与上下的输入框同宽。 */}
           <div className="w-full">
-            <LockboxPasswordInput
+            <PasswordInput
+              aria-invalid={errors.password ? true : undefined}
               aria-labelledby="server-settings-password"
+              credential="current-password"
               disabled={signingIn}
-              onChange={(event) => setPassword(event.target.value)}
+              onChange={(event) => {
+                setPassword(event.target.value)
+                revalidate("password", missingPassword(event.target.value))
+              }}
               value={password}
             />
           </div>
@@ -272,6 +287,7 @@ function LoginServer() {
         <SettingsRow
           controlWidth="auto"
           description="连接后数据以服务器为准，需要联网；这台电脑上的资料库不会改动，断开后回到它。"
+          error={error}
           label="连接服务器"
         >
           <Button aria-busy={signingIn} disabled={signingIn} size="md" type="submit" variant="default">
@@ -279,13 +295,6 @@ function LoginServer() {
             {signingIn ? "正在连接" : "连接"}
           </Button>
         </SettingsRow>
-        {error ? (
-          <SettingsGroupItem>
-            <span className={styles.errorLine} role="alert">
-              {error}
-            </span>
-          </SettingsGroupItem>
-        ) : null}
       </SettingsGroup>
     </form>
   )

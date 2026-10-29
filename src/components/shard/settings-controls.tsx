@@ -57,12 +57,15 @@ export function SettingsRow({
   children,
   controlWidth = "default",
   description,
+  error,
   label,
   labelId,
 }: {
   children?: ReactNode
   controlWidth?: ControlWidth
   description?: ReactNode
+  /** 这一行的错误：替换说明显示（kiln：每个字段只有一行说明，出错时替换），屏幕阅读器立即读出。 */
+  error?: ReactNode
   label: ReactNode
   labelId?: string
 }) {
@@ -72,7 +75,11 @@ export function SettingsRow({
         <div className={styles.rowLabel} id={labelId}>
           {label}
         </div>
-        {description ? (
+        {error ? (
+          <div className={styles.rowError} role="alert">
+            {error}
+          </div>
+        ) : description ? (
           <div className={styles.rowDescription}>{description}</div>
         ) : null}
       </div>

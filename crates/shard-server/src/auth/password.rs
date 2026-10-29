@@ -13,7 +13,7 @@ use rand::rngs::OsRng;
 
 use crate::error::ApiError;
 
-pub const MIN_PASSWORD_CHARS: usize = 12;
+pub const MIN_PASSWORD_CHARS: usize = 8;
 /// 上限防的是拿超长输入拖慢哈希。
 pub const MAX_PASSWORD_CHARS: usize = 256;
 const MAX_EMAIL_CHARS: usize = 254;
@@ -93,11 +93,12 @@ mod tests {
     }
 
     #[test]
-    fn passwords_need_twelve_to_256_characters() {
-        assert_eq!(validate_password("short-pass1").unwrap_err().code, "WEAK_PASSWORD");
-        assert!(validate_password("twelve-chars").is_ok());
-        // 按字符而不是字节计：12 个汉字够长。
-        assert!(validate_password("十二个汉字组成的一句长长密码").is_ok());
+    fn passwords_need_eight_to_256_characters() {
+        assert_eq!(validate_password("seven77").unwrap_err().code, "WEAK_PASSWORD");
+        assert!(validate_password("eight888").is_ok());
+        // 按字符而不是字节计：3 个汉字是 9 个字节，仍然太短；8 个汉字够长。
+        assert!(validate_password("三个字").is_err());
+        assert!(validate_password("八个汉字组成密码").is_ok());
         assert!(validate_password(&"x".repeat(257)).is_err());
     }
 

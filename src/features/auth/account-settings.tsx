@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useId, useRef, useState, type FormEvent } from "react"
 
+import { PasswordInput } from "@/components/shard/password-input"
 import { SettingsGroup, SettingsGroupItem, SettingsMono, SettingsRow } from "@/components/shard/settings-controls"
 import { Button } from "@/components/ui/button"
 import {
@@ -25,8 +26,9 @@ import {
   listSessions,
   logout,
   MIN_PASSWORD_CHARS,
-  newPasswordProblem,
   normalizeEmail,
+  passwordProblem,
+  repeatProblem,
   revokeDevice,
   revokeSession,
   updateAccount,
@@ -35,7 +37,7 @@ import {
   type SessionInfo,
 } from "./api"
 import styles from "./auth-pages.module.css"
-import { FormError, FormField, PasswordInput } from "./form-fields"
+import { fieldProps, FormError, FormField, useFieldErrors, type FieldErrors } from "./form-fields"
 
 function formatTime(value: string | null | undefined) {
   if (!value) return "从未"
@@ -254,6 +256,10 @@ export function AccountSettings() {
 }
 
 /** 「修改邮箱或密码」：凭当前密码；新密码留空表示只改邮箱。 */
+type AccountField = "current" | "email" | "next" | "repeat"
+
+const NEW_PASSWORD_HINT = `留空表示不改，至少 ${MIN_PASSWORD_CHARS} 个字符。`
+
 function AccountDialog({
   currentEmail,
   onClose,
@@ -267,106 +273,140 @@ function AccountDialog({
   const [email, setEmail] = useState(currentEmail)
   const [newPassword, setNewPassword] = useState("")
   const [repeat, setRepeat] = useState("")
-  const [error, setError] = useState("")
+  const [formError, setFormError] = useState("")
   const [busy, setBusy] = useState(false)
-  const currentRef = useRef<HTMLInputElement>(null)
+  const { errors, setErrors, revalidate } = useFieldErrors<AccountField>()
+  const refs = {
+    current: useRef<HTMLInputElement>(null),
+    email: useRef<HTMLInputElement>(null),
+    next: useRef<HTMLInputElement>(null),
+    repeat: useRef<HTMLInputElement>(null),
+  }
   const currentId = useId()
   const emailId = useId()
   const newId = useId()
   const repeatId = useId()
-  const hintId = useId()
-  const errorId = useId()
+  const missingCurrent = (value: string) => (value ? null : "请输入当前密码。")
+  // 新密码留空（两个框都空）表示不改密码
+  const nextProblem = (next: string, again: string) => (next || again ? passwordProblem(next) : null)
+
+  function fail(field: AccountField, message: string) {
+    setErrors({ [field]: message })
+    refs[field].current?.focus()
+  }
 
   async function submit(event: FormEvent) {
     event.preventDefault()
     if (busy) return
     const changingPassword = newPassword !== "" || repeat !== ""
     const changingEmail = normalizeEmail(email) !== normalizeEmail(currentEmail)
-    const problem =
-      (currentPassword ? null : "请输入当前密码。") ??
-      emailProblem(email) ??
-      (changingPassword ? newPasswordProblem(newPassword, repeat) : null) ??
-      (changingPassword || changingEmail ? null : "邮箱和密码都没有改动。")
-    if (problem) {
-      setError(problem)
+    const weak = nextProblem(newPassword, repeat)
+    const next: FieldErrors<AccountField> = {
+      current: missingCurrent(currentPassword) ?? undefined,
+      email: emailProblem(email) ?? undefined,
+      next: weak ?? undefined,
+      repeat: changingPassword && !weak ? (repeatProblem(newPassword, repeat) ?? undefined) : undefined,
+    }
+    setErrors(next)
+    setFormError("")
+    const first = (["current", "email", "next", "repeat"] as const).find((field) => next[field])
+    if (first) {
+      refs[first].current?.focus()
+      return
+    }
+    if (!changingPassword && !changingEmail) {
+      setFormError("邮箱和密码都没有改动。")
       return
     }
     setBusy(true)
-    setError("")
     try {
       await updateAccount({ currentPassword, email, newPassword: changingPassword ? newPassword : undefined })
       onSaved({ emailChanged: changingEmail, passwordChanged: changingPassword })
     } catch (caught) {
       setBusy(false)
-      setError(caught instanceof Error ? caught.message : String(caught))
-      if (caught instanceof AuthError && caught.code === "INVALID_CREDENTIALS") {
+      const message = caught instanceof Error ? caught.message : String(caught)
+      const code = caught instanceof AuthError ? caught.code : ""
+      // 服务器的校验落到对应字段下；其余（太频繁、连不上）是表单级错误，放在按钮旁边
+      if (code === "INVALID_CREDENTIALS") {
         setCurrentPassword("")
-        currentRef.current?.focus()
-      }
+        fail("current", message)
+      } else if (code === "INVALID_EMAIL") fail("email", message)
+      else if (code === "WEAK_PASSWORD") fail("next", message)
+      else setFormError(message)
     }
   }
 
-  const describedBy = error ? errorId : undefined
   return (
     <Dialog open onOpenChange={(open) => !open && !busy && onClose()}>
       <DialogContent aria-busy={busy} className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>修改邮箱或密码</DialogTitle>
-          <DialogDescription>新密码留空表示只改邮箱。改了密码，其他浏览器会退出登录，这个页面不受影响。</DialogDescription>
+          <DialogDescription>改了密码，其他浏览器会退出登录。</DialogDescription>
         </DialogHeader>
         <form className={styles.form} noValidate onSubmit={(event) => void submit(event)}>
-          <FormField htmlFor={currentId} label="当前密码">
+          <FormField error={errors.current} htmlFor={currentId} label="当前密码">
             <PasswordInput
-              aria-describedby={describedBy}
-              autoComplete="current-password"
+              {...fieldProps(currentId, errors.current)}
               autoFocus
+              credential="current-password"
               id={currentId}
-              onChange={(event) => setCurrentPassword(event.target.value)}
+              onChange={(event) => {
+                setCurrentPassword(event.target.value)
+                revalidate("current", missingCurrent(event.target.value))
+              }}
               readOnly={busy}
-              ref={currentRef}
+              ref={refs.current}
               value={currentPassword}
             />
           </FormField>
-          <FormField htmlFor={emailId} label="邮箱">
+          <FormField error={errors.email} htmlFor={emailId} label="邮箱">
             <Input
-              aria-describedby={describedBy}
+              {...fieldProps(emailId, errors.email)}
               autoCapitalize="off"
               autoComplete="username"
               id={emailId}
               inputMode="email"
-              onChange={(event) => setEmail(event.target.value)}
+              onChange={(event) => {
+                setEmail(event.target.value)
+                revalidate("email", emailProblem(event.target.value))
+              }}
               readOnly={busy}
+              ref={refs.email}
               spellCheck={false}
               type="email"
               value={email}
             />
           </FormField>
-          <FormField
-            hint={`留空表示不改；至少 ${MIN_PASSWORD_CHARS} 个字符。`}
-            hintId={hintId}
-            htmlFor={newId}
-            label="新密码"
-          >
+          <FormField error={errors.next} hint={NEW_PASSWORD_HINT} htmlFor={newId} label="新密码">
             <PasswordInput
-              aria-describedby={describedBy ? `${hintId} ${describedBy}` : hintId}
-              autoComplete="new-password"
+              {...fieldProps(newId, errors.next, NEW_PASSWORD_HINT)}
+              credential="new-password"
               id={newId}
-              onChange={(event) => setNewPassword(event.target.value)}
+              onChange={(event) => {
+                setNewPassword(event.target.value)
+                revalidate("next", nextProblem(event.target.value, repeat))
+                revalidate("repeat", repeatProblem(event.target.value, repeat))
+              }}
               readOnly={busy}
+              ref={refs.next}
               value={newPassword}
             />
           </FormField>
-          <FormField htmlFor={repeatId} label="确认新密码">
+          <FormField error={errors.repeat} htmlFor={repeatId} label="确认新密码">
             <PasswordInput
-              aria-describedby={describedBy}
-              autoComplete="new-password"
+              {...fieldProps(repeatId, errors.repeat)}
+              credential="new-password"
               id={repeatId}
-              onChange={(event) => setRepeat(event.target.value)}
+              onChange={(event) => {
+                setRepeat(event.target.value)
+                revalidate("repeat", repeatProblem(newPassword, event.target.value))
+              }}
               readOnly={busy}
+              ref={refs.repeat}
               value={repeat}
             />
           </FormField>
-          <FormError id={errorId} message={error} />
+          <FormError message={formError} />
           <DialogFooter>
             <Button disabled={busy} onClick={onClose} type="button" variant="outline">
               取消

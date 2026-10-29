@@ -4,7 +4,7 @@
 设计见 `docs/dev/server-sqlite-plan.md`。下面每一步都在 VPS 上做，除非特别说明。
 
 > **数据与凭据安全**
-> - 登录用邮箱 + 密码（至少 12 位，建议让 iCloud 钥匙串或 1Password 生成并保存）。忘记密码只能 SSH 上服务器生成重置链接（第 9 节）。
+> - 登录用邮箱 + 密码（至少 8 位，建议让 iCloud 钥匙串或 1Password 生成并保存）。忘记密码只能 SSH 上服务器生成重置链接（第 9 节）。
 > - 备份用 age 加密，**私钥只在你自己手里**（1Password + 纸质）。VPS 上只放公钥：服务器被入侵也解不开备份。
 > - 没演练过的备份等于没有备份：Mac 上每周自动演练一次（见第 8 节）。
 
@@ -132,7 +132,7 @@ caddy validate --config /etc/caddy/Caddyfile && systemctl reload caddy
 sudo -u shard shard-server setup --data-dir /var/lib/shard --origin https://shard.example.com
 ```
 
-24 小时内用浏览器打开输出的链接（只能用一次），填邮箱和密码（至少 12 位）。Safari 会建议强密码并存进
+24 小时内用浏览器打开输出的链接（只能用一次），填邮箱和密码（至少 8 位）。Safari 会建议强密码并存进
 iCloud 钥匙串，之后 iPhone 与 Mac 都能自动填。之后在「设置 › 账号与安全」里可以改邮箱和密码，
 改密码会让其他浏览器退出登录。
 
