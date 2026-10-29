@@ -106,6 +106,13 @@
   padding-bottom: var(--space-3);
 }
 
+/* 钉在底部的一块（网页端个人中心）：导航区滚动时它不动，上沿一条分隔线与品牌行下沿呼应 */
+.footer {
+  flex: none;
+  border-top: 1px solid var(--sidebar-border);
+  padding: var(--space-2) var(--space-3);
+}
+
 .navSubGroup {
   display: flex;
   flex-direction: column;

@@ -1,3 +1,5 @@
+import { isTauri } from "@tauri-apps/api/core"
+
 export type AccentTheme = "clay" | "teal" | "peacock" | "amber"
 
 export interface AccentThemeOption {
@@ -18,7 +20,13 @@ export const ACCENT_THEMES: AccentThemeOption[] = [
   { id: "amber", hex: "#be7c32", labelZh: "暖琥珀", labelEn: "Warm amber" },
 ]
 
-export const DEFAULT_ACCENT_THEME: AccentTheme = "peacock"
+/**
+ * 这台设备没在「外观」里选过颜色时用的强调色：网页版用 kiln 的默认品牌色陶土红，桌面沿用孔雀蓝。
+ * 选过的照旧。index.css 里不带 data-shard-theme 的兜底仍是孔雀蓝，启动时由 initAccentTheme 写上属性。
+ */
+export function defaultAccentTheme(): AccentTheme {
+  return isTauri() ? "peacock" : "clay"
+}
 
 const ACCENT_THEME_STORAGE_KEY = "shard.accentTheme"
 
@@ -29,10 +37,10 @@ function isAccentTheme(value: string | null): value is AccentTheme {
 export function getStoredAccentTheme(): AccentTheme {
   try {
     const stored = localStorage.getItem(ACCENT_THEME_STORAGE_KEY)
-    return isAccentTheme(stored) ? stored : DEFAULT_ACCENT_THEME
+    return isAccentTheme(stored) ? stored : defaultAccentTheme()
   } catch {
     // 隐私模式等场景 localStorage 可能不可用，静默回退默认值。
-    return DEFAULT_ACCENT_THEME
+    return defaultAccentTheme()
   }
 }
 

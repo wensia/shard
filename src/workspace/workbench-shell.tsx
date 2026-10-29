@@ -47,6 +47,8 @@ import {
 } from "@/lib/app-settings"
 import { Button } from "@/components/ui/button"
 import { ZenSurface } from "@/components/shard/zen-surface"
+import { AccountMenu } from "@/features/auth/account-menu"
+import { isWebRuntime } from "@/lib/transport"
 import {
   CanvasWorkspace,
   type CanvasWorkspaceHandle,
@@ -3187,6 +3189,8 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
           {isSidebarCollapsed ? null : (
             <SidebarNav
               fragments={publicOnlyFragments}
+              // 只有网页有登录账号；桌面凭设备令牌连服务器，没有个人中心
+              footer={isWebRuntime() ? <AccountMenu onOpenAccount={() => openSettings("account")} /> : undefined}
               isCollapsed={false}
               onOpenSearch={openSearch}
               onRouteChange={handleRouteChange}

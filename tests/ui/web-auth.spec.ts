@@ -28,7 +28,7 @@ async function installAuthServerMock(page: Page, options: MockOptions) {
   await page.addInitScript(
     ({ options, ride, email, password }) => {
       const auth = {
-        authenticated: options.authenticated ?? false,
+        authenticated: (options.authenticated ?? false) && sessionStorage.getItem("__AUTH_SIGNED_OUT__") !== "1",
         setupRequired: options.setupRequired ?? false,
         stepUpValid: options.stepUpValid ?? true,
         email: options.setupToken?.purpose === "setup" ? null : email,
@@ -155,7 +155,12 @@ async function installAuthServerMock(page: Page, options: MockOptions) {
           }
           return json({ ok: true })
         }
-        if (path === "/api/auth/logout") return json({ ok: true })
+        if (path === "/api/auth/logout") {
+          // 退出后整页重载，假服务端随页面重建：退出记在 sessionStorage 里，重载后仍是未登录。
+          sessionStorage.setItem("__AUTH_SIGNED_OUT__", "1")
+          auth.authenticated = false
+          return json({ ok: true })
+        }
         if (path === "/api/auth/sessions") return json({ sessions: clone(sessions) })
         if (path.startsWith("/api/auth/sessions/") && method === "DELETE") {
           if (!auth.stepUpValid) return stepUpRequired()
@@ -512,8 +517,98 @@ test.describe("账号设置", () => {
     await expect(dialog).toBeHidden()
     await expect(page.getByText("登录邮箱已修改")).toBeVisible()
     await expect(account.getByText("work@example.com")).toBeVisible()
+    // 侧栏底部的个人中心随之换上新邮箱与首字母（设置还开着，侧栏在遮罩下，按属性找）。
+    const trigger = page.locator("[data-shard-account-menu-trigger]")
+    await expect(trigger).toHaveAttribute("aria-label", "个人中心：work@example.com")
+    await expect(trigger).toHaveText("Wwork@example.com")
     expect((await apiCalls(page, "/api/auth/account")).map((call) => call.body)).toEqual([
       { currentPassword: PASSWORD, email: "work@example.com" },
     ])
+  })
+})
+
+test.describe("个人中心", () => {
+  const sidebar = (page: Page) => page.getByRole("complementary", { name: "Shard 侧边栏" })
+  const trigger = (page: Page) => sidebar(page).getByRole("button", { name: `个人中心：${EMAIL}` })
+
+  test("钉在侧栏底部：陶土红头像与登录邮箱，和导航项对齐；菜单向上打开「账号与安全」", async ({ page }) => {
+    await installAuthServerMock(page, { authenticated: true })
+    await page.goto("/")
+    await expect(card(page)).toBeVisible()
+    await expect(trigger(page)).toBeVisible()
+    await expect(trigger(page)).toHaveText(`M${EMAIL}`)
+
+    const geometry = await page.evaluate(() => {
+      const aside = document.querySelector('aside[aria-label="Shard 侧边栏"]') as HTMLElement
+      const button = aside.querySelector("[data-shard-account-menu-trigger]") as HTMLElement
+      const [avatar, email] = Array.from(button.querySelectorAll(":scope > span")) as HTMLElement[]
+      const nav = Array.from(aside.querySelectorAll("nav button")).find((node) => node.textContent?.startsWith("日历")) as HTMLElement
+      const navIcon = nav.querySelector("svg") as SVGElement
+      const navLabel = nav.querySelector("span") as HTMLElement
+      const box = (node: Element) => node.getBoundingClientRect()
+      const center = (node: Element) => box(node).left + box(node).width / 2
+      const avatarStyle = getComputedStyle(avatar)
+      return {
+        avatarBackground: avatarStyle.backgroundColor,
+        avatarColor: avatarStyle.color,
+        avatarCenter: center(avatar),
+        navIconCenter: center(navIcon),
+        emailLeft: box(email).left,
+        navLabelLeft: box(navLabel).left,
+        buttonHeight: box(button).height,
+        navHeight: box(nav).height,
+        buttonBackground: getComputedStyle(button).backgroundColor,
+        footerBottom: box(button.parentElement as HTMLElement).bottom,
+        asideBottom: box(aside).bottom,
+      }
+    })
+    // 陶土红实底 + 白字（kiln --primary / --primary-foreground）；触发器本身不是陶土红按钮。
+    expect(geometry.avatarBackground).toBe("rgb(182, 83, 60)")
+    expect(geometry.avatarColor).toBe("rgb(255, 255, 255)")
+    expect(geometry.buttonBackground).not.toBe("rgb(182, 83, 60)")
+    // 与导航项同高；头像中心对齐导航图标中心，邮箱左缘对齐导航文字左缘；钉在侧栏最底。
+    expect(geometry.buttonHeight).toBe(geometry.navHeight)
+    expect(Math.abs(geometry.avatarCenter - geometry.navIconCenter)).toBeLessThanOrEqual(0.5)
+    expect(Math.abs(geometry.emailLeft - geometry.navLabelLeft)).toBeLessThanOrEqual(0.5)
+    expect(Math.abs(geometry.asideBottom - geometry.footerBottom)).toBeLessThanOrEqual(1)
+
+    await trigger(page).click()
+    const menu = page.getByRole("menu")
+    await expect(menu.getByRole("menuitem")).toHaveText(["账号与安全", "退出登录"])
+    const [menuBox, triggerBox] = await Promise.all([menu.boundingBox(), trigger(page).boundingBox()])
+    expect((menuBox?.y ?? 0) + (menuBox?.height ?? 0)).toBeLessThanOrEqual(triggerBox?.y ?? 0)
+
+    await menu.getByRole("menuitem", { name: "账号与安全" }).click()
+    const settings = page.getByRole("dialog", { name: "设置" })
+    await expect(settings).toBeVisible()
+    await expect(settings.getByRole("button", { name: "账号与安全" })).toHaveAttribute("aria-current", "true")
+    const account = settings.locator('[data-settings-section="account"]')
+    await expect(account.getByText(EMAIL)).toBeVisible()
+    await expect(account.getByRole("button", { name: "修改邮箱或密码" })).toBeInViewport()
+  })
+
+  test("退出登录：通知服务器后回到登录页", async ({ page }) => {
+    await installAuthServerMock(page, { authenticated: true })
+    await page.goto("/")
+    await expect(card(page)).toBeVisible()
+    await trigger(page).click()
+    await page.getByRole("menuitem", { name: "退出登录" }).click()
+    await expect(page.getByRole("heading", { name: "登录" })).toBeVisible()
+    // 假服务端收到了退出请求（调用记录随重载清空，看它留下的标记）。
+    expect(await page.evaluate(() => sessionStorage.getItem("__AUTH_SIGNED_OUT__"))).toBe("1")
+  })
+
+  test("网页默认陶土红；外观里选过别的颜色就照旧，头像跟着强调色", async ({ page }) => {
+    await installAuthServerMock(page, { authenticated: true })
+    await page.goto("/")
+    await expect(card(page)).toBeVisible()
+    await expect(page.locator("html")).toHaveAttribute("data-shard-theme", "clay")
+
+    await page.evaluate(() => localStorage.setItem("shard.accentTheme", "peacock"))
+    await page.reload()
+    await expect(trigger(page)).toBeVisible()
+    await expect(page.locator("html")).toHaveAttribute("data-shard-theme", "peacock")
+    const avatar = trigger(page).locator("span").first()
+    await expect(avatar).toHaveCSS("background-color", "rgb(46, 110, 121)")
   })
 })

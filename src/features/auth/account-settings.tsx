@@ -24,13 +24,13 @@ import {
   isCancelled,
   listDevices,
   listSessions,
-  logout,
   MIN_PASSWORD_CHARS,
   normalizeEmail,
   passwordProblem,
   repeatProblem,
   revokeDevice,
   revokeSession,
+  signOut,
   updateAccount,
   withStepUp,
   type DeviceInfo,
@@ -209,17 +209,7 @@ export function AccountSettings() {
             label={`${describeUserAgent(session.userAgent)}${session.current ? "（当前）" : ""}`}
           >
             {session.current ? (
-              <Button
-                disabled={busy !== null}
-                onClick={() =>
-                  void (async () => {
-                    await logout().catch(() => undefined)
-                    window.location.assign("/")
-                  })()
-                }
-                size="sm"
-                variant="outline"
-              >
+              <Button disabled={busy !== null} onClick={() => void signOut()} size="sm" variant="outline">
                 退出登录
               </Button>
             ) : (

@@ -84,23 +84,40 @@ async function call<T>(method: "GET" | "POST" | "DELETE", path: string, body?: u
   return data as T
 }
 
-/** 最近一次知道的登录邮箱：密码确认框拿它填隐藏的用户名字段，密码管理器才认得是哪个账号。 */
+/**
+ * 最近一次知道的登录邮箱：密码确认框拿它填隐藏的用户名字段，密码管理器才认得是哪个账号；
+ * 侧栏底部的个人中心订阅它，改了邮箱立即换上。
+ */
 let knownEmail: string | null = null
+const emailListeners = new Set<() => void>()
+
+function setKnownEmail(email: string | null) {
+  if (knownEmail === email) return
+  knownEmail = email
+  for (const listener of emailListeners) listener()
+}
 
 export function currentAccountEmail() {
   return knownEmail
+}
+
+export function subscribeAccountEmail(listener: () => void) {
+  emailListeners.add(listener)
+  return () => {
+    emailListeners.delete(listener)
+  }
 }
 
 export async function fetchAuthState(): Promise<AuthState> {
   const response = await send("/api/auth/state", {})
   if (!response.ok) throw new AuthError("ERROR", `连不上服务器（${response.status}）`)
   const state = (await response.json()) as AuthState
-  knownEmail = state.authenticated ? (state.email ?? null) : null
+  setKnownEmail(state.authenticated ? (state.email ?? null) : null)
   return { ...state, email: knownEmail }
 }
 
 function announceLogin(email: string) {
-  knownEmail = email
+  setKnownEmail(email)
   window.dispatchEvent(new CustomEvent(AUTHENTICATED_EVENT))
 }
 
@@ -131,6 +148,12 @@ export async function login(email: string, password: string) {
 
 export function logout() {
   return call("POST", "/api/auth/logout")
+}
+
+/** 退出登录并回到首页（登录页）。服务器没响应也照样回去：整页重载清掉内存里的密匣密钥与缓存。 */
+export async function signOut() {
+  await logout().catch(() => undefined)
+  window.location.assign("/")
 }
 
 // ---------- 敏感操作前输入密码确认 ----------
@@ -206,7 +229,7 @@ export async function updateAccount(input: { currentPassword: string; email: str
     email,
     ...(input.newPassword ? { newPassword: input.newPassword } : {}),
   })
-  knownEmail = email
+  setKnownEmail(email)
 }
 
 export async function listSessions() {

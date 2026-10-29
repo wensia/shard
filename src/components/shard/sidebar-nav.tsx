@@ -28,6 +28,8 @@ import styles from "./sidebar-nav.module.css"
 
 interface SidebarNavProps {
   fragments: Fragment[]
+  /** 钉在侧栏底部、不随导航滚动的一块（网页端的个人中心）。 */
+  footer?: ReactNode
   isCollapsed: boolean
   onOpenSearch: () => void
   onRouteChange: (route: WorkspaceRoute) => void
@@ -189,6 +191,7 @@ const NAV_LABEL_STYLE: CSSProperties = {
 
 export function SidebarNav({
   fragments,
+  footer,
   isCollapsed,
   onOpenSearch,
   onRouteChange,
@@ -388,6 +391,7 @@ export function SidebarNav({
           </div>
         )}
       </nav>
+      {footer ? <div className={styles.footer}>{footer}</div> : null}
     </aside>
   )
 }

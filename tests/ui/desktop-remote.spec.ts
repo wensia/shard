@@ -269,6 +269,8 @@ test.describe("已连接服务器", () => {
     await expect(bar.getByText("与服务器断开，正在重连…")).toBeVisible()
     await emit(page, "remote-connection", { state: "connected" })
     await expect(bar.getByText("已连接服务器")).toBeVisible()
+    // 桌面凭设备令牌连服务器，没有登录账号，侧栏底部没有网页那样的个人中心。
+    await expect(page.locator("[data-shard-account-menu-trigger]")).toHaveCount(0)
   })
 
   test("令牌失效：提示重新连接并带去设置的服务器分区", async ({ page }) => {

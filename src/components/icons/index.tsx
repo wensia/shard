@@ -34,6 +34,7 @@ import {
   ChevronDownIcon as LChevronDown,
   ChevronLeftIcon as LChevronLeft,
   ChevronRightIcon as LChevronRight,
+  ChevronsUpDownIcon as LChevronsUpDown,
   CircleAlertIcon as LCircleAlert,
   CircleCheckIcon as LCircleCheck,
   ClockIcon as LClock,
@@ -66,6 +67,7 @@ import {
   ListTreeIcon as LListTree,
   Loader2Icon as LLoader2,
   LockKeyholeIcon as LLockKeyhole,
+  LogOutIcon as LLogOut,
   EyeIcon as LEye,
   EyeOffIcon as LEyeOff,
   Maximize2Icon as LMaximize2,
@@ -134,6 +136,7 @@ export const SunIcon = /*#__PURE__*/ withIconDefaults(LSun)
 export const ChevronDownIcon = /*#__PURE__*/ withIconDefaults(LChevronDown)
 export const ChevronLeftIcon = /*#__PURE__*/ withIconDefaults(LChevronLeft)
 export const ChevronRightIcon = /*#__PURE__*/ withIconDefaults(LChevronRight)
+export const ChevronsUpDownIcon = /*#__PURE__*/ withIconDefaults(LChevronsUpDown)
 export const CircleAlertIcon = /*#__PURE__*/ withIconDefaults(LCircleAlert)
 export const CircleCheckIcon = /*#__PURE__*/ withIconDefaults(LCircleCheck)
 export const ClockIcon = /*#__PURE__*/ withIconDefaults(LClock)
@@ -166,6 +169,7 @@ export const ListTodoIcon = /*#__PURE__*/ withIconDefaults(LListTodo)
 export const ListTreeIcon = /*#__PURE__*/ withIconDefaults(LListTree)
 export const Loader2Icon = /*#__PURE__*/ withIconDefaults(LLoader2)
 export const LockKeyholeIcon = /*#__PURE__*/ withIconDefaults(LLockKeyhole)
+export const LogOutIcon = /*#__PURE__*/ withIconDefaults(LLogOut)
 export const EyeIcon = /*#__PURE__*/ withIconDefaults(LEye)
 export const EyeOffIcon = /*#__PURE__*/ withIconDefaults(LEyeOff)
 export const Maximize2Icon = /*#__PURE__*/ withIconDefaults(LMaximize2)

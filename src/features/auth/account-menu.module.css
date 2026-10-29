@@ -1,0 +1,62 @@
+/* 侧栏底部的个人中心触发器：几何照搬侧栏导航项（同高、同圆角、同 hover）。
+   头像比导航图标大一圈，左右各多出的那截从内边距和间距里扣回，
+   头像中心与导航图标中心、邮箱左缘与导航文字左缘对齐在同一条竖线上。 */
+
+.trigger {
+  --account-avatar-overhang: calc((var(--space-6) - var(--shard-icon-size-nav)) / 2);
+
+  display: flex;
+  align-items: center;
+  width: 100%;
+  height: var(--nav-item-height);
+  gap: calc(var(--space-3) - var(--account-avatar-overhang));
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  padding-right: var(--space-2);
+  padding-left: calc(var(--space-3) - var(--account-avatar-overhang));
+  text-align: left;
+  font-size: var(--text-body);
+  font-weight: var(--weight-regular);
+  color: var(--sidebar-foreground);
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease;
+}
+
+.trigger:hover,
+.trigger[data-popup-open] {
+  background: var(--sidebar-accent);
+  color: var(--sidebar-accent-foreground);
+}
+
+/* 品牌色实底 + on-fill 字色，与 kiln 品牌标同一种釉面（网页默认陶土红）；
+   换强调色、换暗色主题都随 token 走，暗色下是提亮的釉色配深色字 */
+.avatar {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: var(--space-6);
+  height: var(--space-6);
+  border-radius: var(--radius-control);
+  background: var(--primary);
+  color: var(--primary-foreground);
+  font-size: var(--text-meta);
+  font-weight: var(--weight-semibold);
+  line-height: 1;
+}
+
+.email {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chevron {
+  flex: none;
+  width: var(--shard-icon-size-sm);
+  height: var(--shard-icon-size-sm);
+  color: var(--muted-foreground);
+}
