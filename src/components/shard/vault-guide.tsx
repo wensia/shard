@@ -798,6 +798,8 @@ export function VaultGuide({
 
   useEffect(() => {
     if (isOpen) {
+      // 个人中心也能切换主题，重新打开设置时读取最新选择。
+      setColorMode(getStoredColorMode())
       requestAnimationFrame(() => {
         dialogRef.current?.focus()
       })

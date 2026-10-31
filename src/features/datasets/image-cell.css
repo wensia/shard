@@ -35,21 +35,13 @@
 
 .dataset-image-editor__paths {
   display: block;
+  field-sizing: fixed;
   width: 100%;
+  min-height: 0;
   resize: none;
   padding: var(--space-1) var(--space-2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-control);
-  outline: none;
-  background: var(--background);
-  color: var(--foreground);
-  font: inherit;
   font-size: var(--text-meta);
   line-height: var(--leading-normal);
-}
-
-.dataset-image-editor__paths:focus-visible {
-  box-shadow: var(--ring-focus);
 }
 
 .dataset-image-editor__actions {

@@ -96,7 +96,6 @@
     --info: var(--shard-accent);
     --info-bg: color-mix(in srgb, var(--info) 12%, var(--card));
     --border: color-mix(in srgb, var(--border-visible) 45%, var(--card));
-    --input: color-mix(in srgb, var(--border-visible) 82%, var(--card));
     --chart-1: var(--shard-accent);
     --chart-5: var(--muted-foreground);
     --radius: var(--radius-card);
@@ -351,7 +350,8 @@
 /* managed-navigation（src/lib/focus-navigation.ts）：<html data-focus-mode> 决定焦点装饰。
    pointer（默认）：只抑制焦点环，保留控件表面、选中与校验态；零长度阴影在前置
    `inset` 的消费方中同样合法。keyboard（F6 或外壳 Tab 导航后）：恢复 kiln 焦点环，
-   非编辑器控件加 outline。正文编辑器始终只靠光标和选区表达焦点，不画整块焦点框。 */
+   共享控件使用自身的 kiln 焦点样式，其他非编辑器控件以 outline 兜底。
+   正文编辑器始终只靠光标和选区表达焦点，不画整块焦点框。 */
 /* 网页端没有 macOS 红绿灯：侧栏折叠或无侧栏时不必给它让出左边的空位。 */
 :root[data-runtime="web"] {
   --shard-traffic-light-clearance: 0px;
@@ -395,8 +395,9 @@
 
 /* 非交互元素上的 tabindex="-1" 是程序化焦点容器（画布根、面板），不画 outline；
    按钮、标签页、网格单元等方向键轮转控件同样用 -1 表示「非当前项」，必须保留焦点环。
+   共享表单与按钮已有边框/阴影焦点环，不叠加兜底描边。
    --shard-focus-offset 可继承：overflow 裁切的容器把它设为负值，焦点环改画在控件内侧。 */
-:root[data-focus-mode="keyboard"] :focus-visible:not([contenteditable]:not([contenteditable="false"]), [data-focus-editor], [data-mind-map-outline] textarea, [tabindex="-1"]:not(button, a[href], [role="tab"], [role="treeitem"], [role="gridcell"], [role="row"], [role="radio"], [role="checkbox"])) {
+:root[data-focus-mode="keyboard"] :focus-visible:not([data-slot="input"], [data-slot="textarea"], .group\/button, .kiln-control-trigger, [contenteditable]:not([contenteditable="false"]), [data-focus-editor], [data-mind-map-outline] textarea, [tabindex="-1"]:not(button, a[href], [role="tab"], [role="treeitem"], [role="gridcell"], [role="row"], [role="radio"], [role="checkbox"])) {
   outline: 2px solid var(--primary-text);
   outline-offset: var(--shard-focus-offset);
 }

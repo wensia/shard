@@ -12,6 +12,7 @@ import {
   Trash2Icon,
 } from "@/components/icons"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 import {
   Dialog,
   DialogContent,
@@ -308,7 +309,7 @@ function DatatableSurface({ spec, readOnly, onChange, allowDatasetActions }: Dat
   const title = spec.title || DEFAULT_TITLE
   const controls = (
     <div className={styles.controls}>
-      <input
+      <Input
         aria-label="搜索表格"
         className={styles.search}
         data-datatable-search=""

@@ -4,7 +4,7 @@ import { installContentTypesMock } from "./content-types-mock"
 
 // 键盘焦点环（index.css 的 managed-navigation 焦点块）外扩 --shard-focus-offset。
 // 贴着 overflow 边缘的容器必须把它设为负值，否则焦点环会被裁掉一半甚至全部。
-// 这里逐个聚焦页面上的可聚焦控件，断言：非编辑器控件都画出焦点环，且没有被祖先裁切。
+// 共享控件用 Kiln 阴影环，其他控件用 outline 兜底；两种环都必须完整可见。
 
 interface ProbeResult {
   total: number
@@ -29,14 +29,19 @@ async function probe(page: Page, scope = "body"): Promise<ProbeResult> {
       if (el.tagName === "CANVAS" || el.matches(editor)) continue
       el.focus({ preventScroll: true })
       if (document.activeElement !== el) continue
+      // 阴影会过渡；逐个聚焦时先完成当前动画，再测环的最终厚度与边界。
+      el.getAnimations().forEach(animation => animation.finish())
       result.total += 1
       const style = getComputedStyle(el)
-      if (style.outlineStyle === "none") {
+      const outline = style.outlineStyle !== "none"
+      const ring = style.boxShadow.split(/,(?![^()]*\))/).find(shadow =>
+        !shadow.includes("rgba(0, 0, 0, 0)") && /0px 0px 0px 1px/.test(shadow))
+      if (!outline && !ring) {
         result.missing.push(name(el))
         continue
       }
       result.drawn += 1
-      const grow = parseFloat(style.outlineWidth) + parseFloat(style.outlineOffset)
+      const grow = outline ? parseFloat(style.outlineWidth) + parseFloat(style.outlineOffset) : ring!.includes("inset") ? 0 : 1
       const rect = el.getBoundingClientRect()
       for (let ancestor = el.parentElement; ancestor; ancestor = ancestor.parentElement) {
         const ancestorStyle = getComputedStyle(ancestor)

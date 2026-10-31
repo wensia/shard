@@ -32,10 +32,12 @@ function visibleRegions(page: Page) {
 function activeFocusStyle(page: Page) {
   return page.evaluate(() => {
     const element = document.activeElement as HTMLElement
+    element.getAnimations().forEach(animation => animation.finish())
     const style = getComputedStyle(element)
     return {
       outlineStyle: style.outlineStyle,
       outlineWidth: style.outlineWidth,
+      boxShadow: style.boxShadow,
       ring: getComputedStyle(document.documentElement).getPropertyValue("--ring").trim(),
     }
   })
@@ -122,7 +124,7 @@ test("外壳控件间恢复原生 Tab 轮转，并切到 keyboard 模式", async
   await expect(first).toBeFocused()
 })
 
-test("鼠标点击后没有焦点环；F6 之后当前控件有可见 outline", async ({ page }) => {
+test("鼠标点击后没有焦点环；F6 之后共享按钮显示单一 Kiln 焦点环", async ({ page }) => {
   const settings = page.locator("[data-shard-utility-menu-trigger]:visible")
   await settings.click()
   await page.keyboard.press("Escape")
@@ -135,8 +137,8 @@ test("鼠标点击后没有焦点环；F6 之后当前控件有可见 outline", 
   await page.keyboard.press("F6")
   expect(await focusMode(page)).toBe("keyboard")
   style = await activeFocusStyle(page)
-  expect(style.outlineStyle).toBe("solid")
-  expect(style.outlineWidth).toBe("2px")
+  expect(style.outlineStyle).toBe("none")
+  expect(style.boxShadow).toContain("0px 0px 0px 1px")
   expect(style.ring).not.toBe("transparent")
 
   // 正文编辑器在键盘模式下也不画整块焦点框。

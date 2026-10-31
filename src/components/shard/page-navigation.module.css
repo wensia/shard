@@ -1,0 +1,73 @@
+.navigation {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  height: var(--shard-titlebar-height);
+  min-width: 0;
+  gap: var(--space-3);
+  padding-inline: var(--shard-content-inset);
+  border-bottom: 1px solid var(--border);
+  background: var(--topbar);
+  box-shadow: var(--shadow-topbar);
+}
+
+.location,
+.actions {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.location { flex: 1; }
+.actions { max-width: 60%; }
+
+.title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-page-title);
+  font-weight: var(--weight-semibold);
+}
+
+.ancestor {
+  color: var(--muted-foreground);
+}
+
+.chevron {
+  flex: none;
+  width: var(--shard-icon-size-sm);
+  height: var(--shard-icon-size-sm);
+  color: var(--muted-foreground);
+}
+
+.connection { min-width: 0; }
+.connection :global(button) { max-width: 100%; }
+.connection :global([aria-live]) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tools,
+.sidebarToggle,
+.saveState { display: none; }
+
+.saveState {
+  color: var(--muted-foreground);
+  font-size: var(--text-meta);
+  white-space: nowrap;
+}
+
+.saveState[data-state="dirty"],
+.saveState[data-state="saving"] { color: var(--warning); }
+.saveState[data-state="error"] { color: var(--destructive); }
+
+@media (min-width: 1024px) {
+  .navigation { padding-inline: var(--shard-content-inset-lg); }
+  .tools,
+  .sidebarToggle,
+  .saveState { display: block; }
+}

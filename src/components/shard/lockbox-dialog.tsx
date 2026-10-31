@@ -8,7 +8,6 @@ import { Button } from "@/components/ui/button"
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
@@ -106,14 +105,12 @@ export function LockboxDialog({
     >
       <DialogContent
         aria-busy={isBusy}
+        aria-describedby={undefined}
         className="gap-0 overflow-hidden p-0 sm:max-w-[440px]"
         showCloseButton={false}
       >
         <DialogHeader className="relative gap-1 border-b border-border px-4 py-3">
           <DialogTitle>{title()}</DialogTitle>
-          <DialogDescription>
-            本地加密，解锁后闲置数分钟自动上锁。
-          </DialogDescription>
           {!isBusy && !recoveryKey ? (
             <Button
               aria-label="关闭"

@@ -1,5 +1,7 @@
 import { expect, test, type Page } from "@playwright/test"
 
+import { fillEditor } from "./editor-helpers"
+
 // 网页端的邮箱 + 密码登录、一次性链接设置 / 重置密码、敏感操作前的密码确认框、设置里的「修改邮箱或密码」。
 // 与 web-history.spec.ts 一样在页面里改写 fetch，把 /api/* 接到内存里的假服务端，走真实的网页代码路径。
 
@@ -372,20 +374,20 @@ test.describe("敏感操作前输入密码", () => {
     const account = settings.locator('[data-settings-section="account"]')
     await account.getByRole("button", { name: "退出这个会话" }).click()
 
-    const prompt = page.getByRole("dialog", { name: "输入密码确认" })
+    const prompt = page.getByRole("dialog", { name: "确认登录密码" })
     await expect(prompt).toBeVisible()
-    const password = prompt.getByLabel("密码", { exact: true })
+    const password = prompt.getByLabel("登录密码", { exact: true })
     await expect(password).toBeFocused()
     await expect(password).toHaveAttribute("type", "password")
     await expect(password).toHaveAttribute("autocomplete", "current-password")
 
     // 空着提交：框内提示，不发请求。
     await prompt.getByRole("button", { name: "确认" }).click()
-    await expect(prompt.getByRole("alert")).toHaveText("请输入密码。")
+    await expect(prompt.getByRole("alert")).toHaveText("请输入登录密码。")
 
     await password.fill("wrong password!!")
     await prompt.getByRole("button", { name: "确认" }).click()
-    await expect(prompt.getByRole("alert")).toHaveText("密码不对。")
+    await expect(prompt.getByRole("alert")).toHaveText("登录密码不正确。")
     await expect(password).toHaveValue("")
     await expect(password).toBeFocused()
 
@@ -410,8 +412,8 @@ test.describe("敏感操作前输入密码", () => {
     const account = settings.locator('[data-settings-section="account"]')
     await account.getByRole("button", { name: "退出这个会话" }).click()
 
-    const prompt = page.getByRole("dialog", { name: "输入密码确认" })
-    await prompt.getByLabel("密码", { exact: true }).fill("typed but cancelled")
+    const prompt = page.getByRole("dialog", { name: "确认登录密码" })
+    await prompt.getByLabel("登录密码", { exact: true }).fill("typed but cancelled")
     await prompt.getByRole("button", { name: "取消" }).click()
     await expect(prompt).toBeHidden()
     await expect(account.getByRole("button", { name: "退出这个会话" })).toBeEnabled()
@@ -438,8 +440,8 @@ test.describe("敏感操作前输入密码", () => {
     await data.getByRole("button", { name: "立即抹除" }).click()
     await data.getByRole("button", { name: "再点一次抹除" }).click()
 
-    const prompt = page.getByRole("dialog", { name: "输入密码确认" })
-    await prompt.getByLabel("密码", { exact: true }).fill(PASSWORD)
+    const prompt = page.getByRole("dialog", { name: "确认登录密码" })
+    await prompt.getByLabel("登录密码", { exact: true }).fill(PASSWORD)
     await prompt.getByRole("button", { name: "确认" }).click()
     await expect(prompt).toBeHidden()
     await expect(data.getByText("最近 30 天没有彻底删除的内容", { exact: false })).toBeVisible()
@@ -527,9 +529,178 @@ test.describe("账号设置", () => {
   })
 })
 
+test("首次设置密匣前先验证登录密码，取消或验证失败不会创建密匣", async ({ page }) => {
+  await installAuthServerMock(page, { authenticated: true, stepUpValid: false })
+  await page.goto("/")
+  await page.getByRole("navigation", { name: "工作台导航" }).getByRole("button", { name: "资料库", exact: true }).click()
+  const entry = page.getByRole("complementary", { name: "资料库目录" }).getByRole("button", { name: "密匣（上锁空间）", exact: true })
+  await entry.click()
+  const prompt = page.getByRole("dialog", { name: "确认登录密码", exact: true })
+  const setup = page.getByRole("dialog", { name: "设置密匣", exact: true })
+  await expect(prompt).toBeVisible()
+  await expect(prompt.locator('[data-slot="dialog-description"]')).toHaveCount(0)
+  await expect(prompt).not.toContainText(EMAIL)
+  await prompt.screenshot({ path: "/tmp/shard-password-confirm-clean.png" })
+  await expect(setup).toHaveCount(0)
+  await prompt.getByLabel("登录密码", { exact: true }).fill("a separate lockbox password")
+  await prompt.getByRole("button", { name: "确认", exact: true }).click()
+  await expect(prompt.getByRole("alert")).toHaveText("登录密码不正确。")
+  await expect(setup).toHaveCount(0)
+  expect(await apiCalls(page, "/api/rpc/lockbox_apply")).toEqual([])
+  await prompt.getByRole("button", { name: "取消", exact: true }).click()
+  await expect(prompt).toBeHidden()
+  await expect(setup).toHaveCount(0)
+  await expect(page.getByText("暂时无法设置密匣", { exact: true })).toHaveCount(0)
+  await entry.click()
+  await expect(prompt).toBeVisible()
+  await prompt.getByLabel("登录密码", { exact: true }).fill(PASSWORD)
+  await prompt.getByRole("button", { name: "确认", exact: true }).click()
+  await expect(prompt).toBeHidden()
+  await expect(setup).toBeVisible()
+  await expect(setup.locator('[data-slot="dialog-description"]')).toHaveCount(0)
+  expect(await apiCalls(page, "/api/rpc/lockbox_apply")).toEqual([])
+})
+
+test("网页密匣设置使用原生密码框，校验与显隐不丢失输入", async ({ page }) => {
+  await installAuthServerMock(page, { authenticated: true })
+  await page.goto("/")
+  await page.getByRole("navigation", { name: "工作台导航" }).getByRole("button", { name: "资料库", exact: true }).click()
+  await page.getByRole("complementary", { name: "资料库目录" }).getByRole("button", { name: "密匣（上锁空间）", exact: true }).click()
+  const dialog = page.getByRole("dialog", { name: "设置密匣", exact: true })
+  const password = dialog.getByLabel("新密码，至少 8 个字符", { exact: true })
+  const repeat = dialog.getByLabel("再次输入新密码", { exact: true })
+  for (const input of [password, repeat]) {
+    await expect(input).toHaveAttribute("type", "password")
+    await expect(input).toHaveAttribute("autocomplete", "off")
+    await expect(input).not.toHaveAttribute("data-shard-password", /.*/)
+  }
+  await password.fill("short")
+  await repeat.fill("short")
+  await dialog.getByRole("button", { name: "设置密匣", exact: true }).click()
+  await expect(dialog.getByRole("alert")).toHaveText("密匣密码至少需要 8 个字符。")
+  await password.fill("test lockbox password")
+  await repeat.fill("another password")
+  await dialog.getByRole("button", { name: "设置密匣", exact: true }).click()
+  await expect(dialog.getByRole("alert")).toHaveText("两次输入的密码不一致。")
+  await dialog.getByRole("button", { name: "显示密码", exact: true }).first().click()
+  await expect(password).toHaveAttribute("type", "text")
+  await expect(password).toHaveValue("test lockbox password")
+  await dialog.getByRole("button", { name: "隐藏密码", exact: true }).click()
+  await expect(password).toHaveAttribute("type", "password")
+  await expect(password).toHaveValue("test lockbox password")
+  await expect(dialog.getByRole("status")).toHaveCount(0)
+  expect(await apiCalls(page, "/api/rpc/lockbox_apply")).toEqual([])
+})
+
+test("密匣密码表单只显示单一 Kiln 焦点环，显隐按钮的细环留在输入框内", async ({ page }) => {
+  await installAuthServerMock(page, { authenticated: true })
+  await page.goto("/")
+  await page.getByRole("navigation", { name: "工作台导航" }).getByRole("button", { name: "资料库", exact: true }).click()
+  await page.getByRole("complementary", { name: "资料库目录" }).getByRole("button", { name: "密匣（上锁空间）", exact: true }).click()
+  const dialog = page.getByRole("dialog", { name: "设置密匣", exact: true })
+  const password = dialog.getByLabel("新密码，至少 8 个字符", { exact: true })
+  const repeat = dialog.getByLabel("再次输入新密码", { exact: true })
+  await password.fill("fixture password")
+  await page.keyboard.press("Tab")
+  const reveal = dialog.getByRole("button", { name: "显示密码", exact: true }).first()
+  await expect(reveal).toBeFocused()
+  await expect(reveal).toHaveCSS("outline-style", "none")
+  await expect(reveal).toHaveCSS("box-shadow", /0px 0px 0px 1px inset/)
+  await page.keyboard.press("Tab")
+  await repeat.fill("fixture password")
+  await expect(repeat).toHaveCSS("border-width", "1px")
+  await expect(repeat).toHaveCSS("border-radius", "4px")
+  await expect(repeat).toHaveCSS("outline-style", "none")
+  await expect(repeat).toHaveCSS("box-shadow", /0px 0px 0px 1px/)
+  await dialog.screenshot({ path: "/tmp/shard-kiln-password-focus.png" })
+})
+
+test("网页导航移到顶部，跟随页面切换，折叠侧栏后设置仍可访问", async ({ page }) => {
+  await installAuthServerMock(page, { authenticated: true })
+  await page.goto("/")
+  await expect(card(page)).toBeVisible()
+
+  const nav = page.getByRole("navigation", { name: "页面导航", exact: true })
+  const sidebar = page.getByRole("complementary", { name: "Shard 侧边栏" })
+  const spaces = sidebar.getByRole("navigation", { name: "工作台导航" })
+  const title = nav.getByRole("heading", { level: 1 })
+  await expect(nav).toBeVisible()
+  await expect(nav).toHaveAttribute("data-focus-region", "page-navigation")
+  await expect(page.getByRole("contentinfo", { name: "状态栏" })).toHaveCount(0)
+  const box = (await nav.boundingBox())!
+  expect(box.y).toBeCloseTo(0, 1)
+  expect(box.x + box.width).toBeLessThanOrEqual(page.viewportSize()!.width)
+
+  await spaces.getByRole("button", { name: "碎片", exact: true }).click()
+  await expect(title).toHaveText("全部碎片")
+  await spaces.getByRole("button", { name: /^全部碎片 \d+$/u }).click()
+  await expect(title).toHaveText("全部碎片")
+  await card(page).getByRole("button", { name: "打开标签主题页：骑行", exact: true }).click()
+  await expect(title).toHaveText("#骑行")
+  await nav.getByRole("button", { name: "碎片", exact: true }).click()
+  await expect(title).toHaveText("全部碎片")
+  await spaces.getByRole("button", { name: "日历", exact: true }).click()
+  await expect(title).toHaveText("日历")
+  await spaces.getByRole("button", { name: "资料库", exact: true }).click()
+  await expect(title).toHaveText("资料库")
+
+  await page.getByRole("button", { name: "折叠侧边栏", exact: true }).click()
+  await expect(sidebar).toBeHidden()
+  await expect(nav).toBeVisible()
+  await nav.getByRole("button", { name: "展开侧边栏", exact: true }).click()
+  await expect(sidebar).toBeVisible()
+
+  await nav.getByText("已连接服务器", { exact: true }).click()
+  const settings = page.getByRole("dialog", { name: "设置", exact: true })
+  await expect(settings).toBeVisible()
+  await page.keyboard.press("Escape")
+  await expect(settings).toBeHidden()
+  await nav.locator("[data-shard-utility-menu-trigger]").click()
+  await page.getByRole("menuitem", { name: "设置", exact: true }).click()
+  await expect(settings).toBeVisible()
+})
+
+test("长草稿达到高度上限后仍保留导航下方的间距，页面不参与滚动", async ({ page }) => {
+  await installAuthServerMock(page, { authenticated: true })
+  await page.goto("/")
+  const editor = page.locator('[data-shard-editor="composer"]')
+  const composer = page.locator(".shard-content-measure").filter({ has: editor })
+  await expect(editor).toBeVisible()
+  // 读取捕捉框实际继承的值，网页外壳会覆盖根元素上的原生标题栏避让。
+  const expectedGap = await composer.evaluate((element) =>
+    parseFloat(getComputedStyle(element).getPropertyValue("--shard-composer-top-gap")))
+  expect(expectedGap).toBeGreaterThan(0)
+
+  await fillEditor(page, "composer", Array.from({ length: 120 }, (_, index) => `长草稿第 ${index + 1} 行`).join("\n"))
+  await expect(editor.locator(".ProseMirror p")).toHaveCount(120)
+  await expect.poll(() => composer.evaluate((element) => element.getBoundingClientRect().height))
+    .toBeGreaterThan(page.viewportSize()!.height / 2)
+  await expect.poll(() => composer.evaluate((element) => {
+    const nav = document.querySelector('nav[aria-label="页面导航"]')!
+    return element.getBoundingClientRect().top - nav.getBoundingClientRect().bottom
+  })).toBeCloseTo(expectedGap, 1)
+
+  const geometry = await composer.evaluate((element) => ({
+    height: element.getBoundingClientRect().height,
+    contentHeight: element.querySelector(".ProseMirror")!.scrollHeight,
+    scrollY: window.scrollY,
+    pageOverflow: document.documentElement.scrollHeight - document.documentElement.clientHeight,
+  }))
+  expect(geometry.contentHeight).toBeGreaterThan(geometry.height)
+  expect(geometry.scrollY).toBe(0)
+  expect(geometry.pageOverflow).toBeLessThanOrEqual(1)
+})
+
 test.describe("个人中心", () => {
   const sidebar = (page: Page) => page.getByRole("complementary", { name: "Shard 侧边栏" })
   const trigger = (page: Page) => sidebar(page).getByRole("button", { name: `个人中心：${EMAIL}` })
+
+  async function openThemeMenu(page: Page) {
+    if (await trigger(page).getAttribute("aria-expanded") !== "true") await trigger(page).click()
+    const theme = page.getByRole("menuitem", { name: "主题", exact: true })
+    if (await theme.getAttribute("aria-expanded") !== "true") await theme.click()
+    await expect(page.getByRole("menuitemradio", { name: "跟随系统" })).toBeVisible()
+  }
 
   test("钉在侧栏底部：陶土红头像与登录邮箱，和导航项对齐；菜单向上打开「账号与安全」", async ({ page }) => {
     await installAuthServerMock(page, { authenticated: true })
@@ -574,7 +745,8 @@ test.describe("个人中心", () => {
 
     await trigger(page).click()
     const menu = page.getByRole("menu")
-    await expect(menu.getByRole("menuitem")).toHaveText(["账号与安全", "退出登录"])
+    await expect(menu.getByRole("menuitem")).toHaveText(["账号与安全", "主题", "退出登录"])
+    await menu.evaluate(node => Promise.all(node.getAnimations().map(animation => animation.finished)))
     const [menuBox, triggerBox] = await Promise.all([menu.boundingBox(), trigger(page).boundingBox()])
     expect((menuBox?.y ?? 0) + (menuBox?.height ?? 0)).toBeLessThanOrEqual(triggerBox?.y ?? 0)
 
@@ -596,6 +768,73 @@ test.describe("个人中心", () => {
     await expect(page.getByRole("heading", { name: "登录" })).toBeVisible()
     // 假服务端收到了退出请求（调用记录随重载清空，看它留下的标记）。
     expect(await page.evaluate(() => sessionStorage.getItem("__AUTH_SIGNED_OUT__"))).toBe("1")
+  })
+
+  test("主题菜单切换日夜并持久化，固定模式不跟随系统", async ({ page }) => {
+    await page.emulateMedia({ colorScheme: "light" })
+    await installAuthServerMock(page, { authenticated: true })
+    await page.goto("/")
+    await expect(card(page)).toBeVisible()
+
+    await openThemeMenu(page)
+    await expect(page.getByRole("menuitemradio", { name: "跟随系统" })).toBeChecked()
+    await page.getByRole("menuitemradio", { name: "深色" }).click()
+    await expect(page.locator("html")).toHaveClass(/\bdark\b/)
+    await expect(page.locator("body")).toHaveCSS("background-color", "rgb(22, 18, 15)")
+    expect(await page.evaluate(() => localStorage.getItem("shard.colorMode"))).toBe("dark")
+
+    await page.reload()
+    await expect(trigger(page)).toBeVisible()
+    await expect(page.locator("html")).toHaveClass(/\bdark\b/)
+    await openThemeMenu(page)
+    await expect(page.getByRole("menuitemradio", { name: "深色" })).toBeChecked()
+    await page.getByRole("menuitemradio", { name: "浅色" }).click()
+    await expect(page.locator("html")).not.toHaveClass(/\bdark\b/)
+    await expect(page.locator("body")).toHaveCSS("background-color", "rgb(251, 250, 248)")
+    expect(await page.evaluate(() => localStorage.getItem("shard.colorMode"))).toBe("light")
+    await page.emulateMedia({ colorScheme: "dark" })
+    await expect(page.locator("html")).not.toHaveClass(/\bdark\b/)
+
+    await openThemeMenu(page)
+    await page.getByRole("menuitemradio", { name: "跟随系统" }).click()
+    await expect(page.locator("html")).toHaveClass(/\bdark\b/)
+    await page.emulateMedia({ colorScheme: "light" })
+    await expect(page.locator("html")).not.toHaveClass(/\bdark\b/)
+  })
+
+  test("主题菜单支持键盘，和设置里的外观选择保持一致", async ({ page }) => {
+    await page.emulateMedia({ colorScheme: "light" })
+    await installAuthServerMock(page, { authenticated: true })
+    await page.goto("/")
+    await expect(card(page)).toBeVisible()
+
+    await trigger(page).focus()
+    await page.keyboard.press("Enter")
+    const theme = page.getByRole("menuitem", { name: "主题", exact: true })
+    await theme.focus()
+    await page.keyboard.press("ArrowRight")
+    const dark = page.getByRole("menuitemradio", { name: "深色" })
+    await expect(dark).toBeVisible()
+    await dark.focus()
+    await page.keyboard.press("Enter")
+    await expect(page.locator("html")).toHaveClass(/\bdark\b/)
+    await page.keyboard.press("Escape")
+    await page.keyboard.press("Escape")
+    await expect(trigger(page)).toBeFocused()
+
+    const settings = await openSettings(page)
+    await settings.getByRole("button", { name: "外观", exact: true }).click()
+    await expect(settings.getByRole("button", { name: "深色", exact: true })).toHaveAttribute("aria-pressed", "true")
+    await settings.getByRole("button", { name: "浅色", exact: true }).click()
+    await page.keyboard.press("Escape")
+    await expect(settings).toBeHidden()
+    await openThemeMenu(page)
+    await expect(page.getByRole("menuitemradio", { name: "浅色" })).toBeChecked()
+    await page.getByRole("menuitemradio", { name: "深色" }).click()
+    await trigger(page).click()
+    const reopened = await openSettings(page)
+    await reopened.getByRole("button", { name: "外观", exact: true }).click()
+    await expect(reopened.getByRole("button", { name: "深色", exact: true })).toHaveAttribute("aria-pressed", "true")
   })
 
   test("网页默认陶土红；外观里选过别的颜色就照旧，头像跟着强调色", async ({ page }) => {

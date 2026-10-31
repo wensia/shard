@@ -3,6 +3,7 @@ import { GridCellKind, type CustomCell, type CustomRenderer, type ProvideEditorC
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog"
 
 import { Button } from "@/components/ui/button"
+import { Textarea } from "@/components/ui/textarea"
 import { saveFragmentImage, saveImageAttachmentFromPath } from "@/lib/api"
 import { vaultImageUrl } from "@/lib/fragment-images"
 import { notify } from "@/lib/notify"
@@ -164,7 +165,7 @@ const ImageCellEditor: ProvideEditorComponent<ImageCell> = ({ value, onChange, o
           ))
         )}
       </div>
-      <textarea
+      <Textarea
         ref={input}
         aria-label="图片路径"
         className="gdg-input dataset-image-editor__paths"

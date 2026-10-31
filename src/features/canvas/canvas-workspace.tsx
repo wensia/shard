@@ -15,6 +15,7 @@ import { PropertiesPanel } from "@/components/shard/properties-panel"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
+import { Textarea } from "@/components/ui/textarea"
 import { CheckIcon, ChevronDownIcon, ChevronRightIcon, FileTextIcon, MoreHorizontalIcon, XIcon } from "@/components/icons"
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,
@@ -1182,7 +1183,7 @@ export const CanvasWorkspace = forwardRef<CanvasWorkspaceHandle, CanvasWorkspace
               <strong title={selectedTreeNode.text}>{selectedTreeNode.text || "新主题"}</strong></div>
             <section className="shard-canvas-inspector-section">
           <label className="shard-canvas-field">节点文字
-            <textarea ref={treeEditorRef} aria-label="导图节点文字" rows={3}
+            <Textarea ref={treeEditorRef} aria-label="导图节点文字" rows={3}
               value={pendingText?.kind === "tree" && pendingText.id === selectedNode.id && pendingText.treeNodeId === selectedTreeNode.id ? pendingText.text : selectedTreeNode.text}
               disabled={blocked} className="shard-canvas-inspector-editor"
               onChange={(event) => stageText({ kind: "tree", id: selectedNode.id, treeNodeId: selectedTreeNode.id, text: event.target.value })} onBlur={breakMerge}
@@ -1226,7 +1227,7 @@ export const CanvasWorkspace = forwardRef<CanvasWorkspaceHandle, CanvasWorkspace
             <Button size="sm" variant="outline" disabled={blocked || sourcePreview(selectedNode.link, fragments, documents).missing}
               onClick={() => selectedNode.link && void openLink(selectedNode.link)}>{sourcePreview(selectedNode.link, fragments, documents).isFragment ? "在碎片中打开" : "打开原文"}</Button>
           </div> : <section className="shard-canvas-inspector-section"><label className="shard-canvas-field">文字
-            <textarea className="shard-canvas-inspector-editor" aria-label="对象文字" rows={3} disabled={blocked}
+            <Textarea className="shard-canvas-inspector-editor" aria-label="对象文字" rows={3} disabled={blocked}
               value={pendingText?.kind === "node" && pendingText.id === selectedNode.id ? pendingText.text : selectedNode.text}
               onChange={(event) => stageText({ kind: "node", id: selectedNode.id, text: event.target.value })} onBlur={breakMerge}
               onKeyDown={(event) => {

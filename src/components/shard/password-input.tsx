@@ -23,9 +23,8 @@ export const PASSWORD_IME_HINT = "请切换到英文输入法"
 
 type PasswordInputProps = ComponentProps<typeof Input> & {
   /**
-   * 账号密码（登录、设置、改密码）：网页上用真正的 `type="password"`，并按它设 autocomplete，
-   * 浏览器与 iCloud 钥匙串才认得出、填得进、存得下，new-password 还会建议强密码。
-   * 桌面 WKWebView 上照旧是遮蔽文本（理由见下）。不传（密匣口令）时各端都是遮蔽文本。
+   * 账号密码（登录、设置、改密码）按它设 autocomplete，浏览器与 iCloud 钥匙串才认得出、
+   * 填得进、存得下，new-password 还会建议强密码。不传（密匣口令）时关闭自动填充。
    */
   credential?: "current-password" | "new-password"
   /**
@@ -39,10 +38,10 @@ type PasswordInputProps = ComponentProps<typeof Input> & {
  * 全应用唯一的密码输入框（kiln Password Input）：框内右侧显示 / 隐藏按钮、不接受输入法组合。
  * 密匣口令、网页登录与改密码、桌面连接服务器都用它。
  *
- * 默认刻意不用 type="password"：WKWebView 会在它上面直接绘制一个实底 Caps Lock 指示器，CSS 关不掉
- * （详见 frontend-rules.css 里 data-shard-password 那段）。这里改用 type="text" + text-security 遮蔽，
- * 再用规范内的细线 ⇪ 自绘提示。因为不是真的 password 字段，浏览器不再托管遮蔽与复制保护，
- * 所以自动填充、拼写检查、复制剪切都在这里显式关掉。网页上的账号密码见 `credential`。
+ * 网页一律用原生密码框，让系统切换到密码输入模式，避免普通文本框触发中文组合后被清空。
+ * 桌面 WKWebView 上仍用 type="text" + text-security：原生 Caps Lock 指示器无法通过 CSS 关闭
+ * （见 frontend-rules.css 的 data-shard-password），这里用细线图标替代。
+ * 密匣口令的自动填充、拼写检查与复制剪切仍显式关闭。
  */
 export function PasswordInput({ credential, onImeBlockedChange, ref, ...props }: PasswordInputProps) {
   const [capsLockOn, setCapsLockOn] = useState(false)
@@ -52,7 +51,7 @@ export function PasswordInput({ credential, onImeBlockedChange, ref, ...props }:
   // 组合开始前的值与选区：组合产生的字符一律丢弃，恢复到这里
   const beforeCompositionRef = useRef<{ value: string; start: number; end: number } | null>(null)
   // 真正的 password 字段：浏览器托管遮蔽、复制保护与大写锁定提示（Safari 自己画），这里不再重复
-  const native = Boolean(credential) && isWebRuntime()
+  const native = isWebRuntime()
   const syncCapsLock = (event: ReactKeyboardEvent<HTMLInputElement>) =>
     setCapsLockOn(!native && event.getModifierState("CapsLock"))
   const disabled = Boolean(props.disabled)
@@ -110,7 +109,7 @@ export function PasswordInput({ credential, onImeBlockedChange, ref, ...props }:
       <div style={{ position: "relative" }}>
         <Input
           autoCapitalize="off"
-          autoComplete={native ? credential : "off"}
+          autoComplete={native && credential ? credential : "off"}
           autoCorrect="off"
           // 遮蔽文本的钩子（frontend-rules.css 以它画圆点）；显示明文与真正的 password 字段都不要
           data-shard-password={native || revealed ? undefined : "true"}
@@ -164,6 +163,7 @@ export function PasswordInput({ credential, onImeBlockedChange, ref, ...props }:
           <Button
             aria-label={revealed ? "隐藏密码" : "显示密码"}
             aria-pressed={revealed}
+            className="text-muted-foreground hover:text-foreground focus-visible:ring-inset"
             disabled={disabled}
             onClick={() => setRevealed((value) => !value)}
             // 点按不抢走输入框焦点，光标留在原位继续输入

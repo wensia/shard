@@ -91,22 +91,8 @@
   width: calc(var(--space-8) * 2.5);
   min-width: 0;
   height: calc(var(--control-height-sm) - var(--space-1));
-  border: 1px solid transparent;
-  border-radius: var(--radius-control);
-  background: var(--card);
   padding-inline: var(--space-2);
-  color: var(--foreground);
-  font: inherit;
   font-size: var(--text-meta);
-  outline: none;
-}
-
-.search::placeholder {
-  color: var(--muted-foreground);
-}
-
-.search:focus {
-  border-color: var(--border-visible);
 }
 
 .controlButton {

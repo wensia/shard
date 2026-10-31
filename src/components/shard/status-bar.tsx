@@ -180,40 +180,44 @@ export function StatusBar({
           </>
         ) : null}
 
-        <DropdownMenu>
-          <DropdownMenuTrigger
-            render={
-              <Button
-                aria-label="更多操作"
-                data-shard-utility-menu-trigger
-                size="icon-sm"
-                variant="ghost"
-              />
-            }
-          >
-            <MoreHorizontalIcon className="size-(--shard-icon-size-sm)" />
-            <span className="sr-only">更多操作</span>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" side="top" style={{ width: 160 }}>
-            <StatusBarMenuItem
-              icon={SettingsIcon}
-              label="设置"
-              onSelect={onOpenSettings}
-            />
-            <StatusBarMenuItem
-              icon={KeyboardIcon}
-              label="快捷键"
-              onSelect={onShortcuts}
-            />
-            <StatusBarMenuItem
-              icon={HelpCircleIcon}
-              label="帮助"
-              onSelect={onHelp}
-            />
-          </DropdownMenuContent>
-        </DropdownMenu>
+        <WorkbenchMenu onHelp={onHelp} onOpenSettings={onOpenSettings} onShortcuts={onShortcuts} />
       </div>
     </footer>
+  )
+}
+
+/** 桌面状态栏与网页顶部导航共用的工作台操作。 */
+export function WorkbenchMenu({
+  onHelp,
+  onOpenSettings,
+  onShortcuts,
+  side = "top",
+  size = "icon-sm",
+}: Pick<StatusBarProps, "onHelp" | "onOpenSettings" | "onShortcuts"> & {
+  side?: "top" | "bottom"
+  size?: "icon" | "icon-sm"
+}) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        render={
+          <Button
+            aria-label="更多操作"
+            data-shard-utility-menu-trigger
+            size={size}
+            variant="ghost"
+          />
+        }
+      >
+        <MoreHorizontalIcon className="size-(--shard-icon-size-sm)" />
+        <span className="sr-only">更多操作</span>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" side={side} style={{ width: 160 }}>
+        <StatusBarMenuItem icon={SettingsIcon} label="设置" onSelect={onOpenSettings} />
+        <StatusBarMenuItem icon={KeyboardIcon} label="快捷键" onSelect={onShortcuts} />
+        <StatusBarMenuItem icon={HelpCircleIcon} label="帮助" onSelect={onHelp} />
+      </DropdownMenuContent>
+    </DropdownMenu>
   )
 }
 
@@ -380,7 +384,7 @@ const DESKTOP_SIGNED_OUT_LABEL = "连接已失效"
  * 网页的状态来自自己的 SSE 连接；桌面来自 Rust 转发的 `remote-connection` 事件。
  * 桌面另有本机副本（S8b）：离线、同步中优先显示，后面跟待上传 / 冲突 / 上传失败的条数。
  */
-function ServerConnectionStatus({ onOpenSettings }: { onOpenSettings: () => void }) {
+export function ServerConnectionStatus({ onOpenSettings }: { onOpenSettings: () => void }) {
   const desktop = transport().kind === "tauri-remote"
   const [state, setState] = useState<ConnectionState>(desktop ? remoteConnectionState : getConnectionState)
   const [sync, setSync] = useState<RemoteSyncStatus | null>(desktop ? remoteSyncStatus : null)

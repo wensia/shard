@@ -802,13 +802,13 @@ function getCaptureTextareaMaxHeight(
   const containerRect = container.getBoundingClientRect()
   const editorFrameRect = editorFrame.getBoundingClientRect()
   const viewportBottom = getCaptureViewportBottom(container)
-  const rootStyles = window.getComputedStyle(document.documentElement)
+  const containerStyles = window.getComputedStyle(container)
   const topGap = toPixelValue(
-    rootStyles.getPropertyValue("--shard-composer-top-gap"),
+    containerStyles.getPropertyValue("--shard-composer-top-gap"),
     32
   )
   const bottomGap = toPixelValue(
-    rootStyles.getPropertyValue("--shard-composer-bottom-gap"),
+    containerStyles.getPropertyValue("--shard-composer-bottom-gap"),
     16
   )
   const composerChromeHeight = Math.max(

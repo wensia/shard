@@ -133,7 +133,7 @@ async function unlock(page: Page, password: string) {
   const gate = page.getByRole("form", { name: "解锁密匣" })
   await gate.getByPlaceholder("密匣密码").fill(password)
   await gate.getByRole("button", { name: "解锁", exact: true }).click()
-  await expect(page.getByRole("heading", { name: "密匣", exact: true })).toBeVisible()
+  await expect(page.locator('[data-focus-region="content"]').getByRole("heading", { name: "密匣", exact: true })).toBeVisible()
 }
 
 function card(page: Page, id: string) {
@@ -174,6 +174,8 @@ test("网页端密匣：设置、速记、解锁编辑、移入、改口令、SS
   await test.step("在网页上设置密匣，拿到恢复密钥", async () => {
     await openLockboxSpace(page)
     const dialog = page.getByRole("dialog", { name: "设置密匣" })
+    await expect(dialog.getByPlaceholder("新密码，至少 8 个字符")).toHaveAttribute("type", "password")
+    await expect(dialog.getByPlaceholder("再次输入新密码")).toHaveAttribute("type", "password")
     await dialog.getByPlaceholder("新密码，至少 8 个字符").fill(PASSWORD)
     await dialog.getByPlaceholder("再次输入新密码").fill(PASSWORD)
     await dialog.getByRole("button", { name: "设置密匣", exact: true }).click()
@@ -217,7 +219,7 @@ test("网页端密匣：设置、速记、解锁编辑、移入、改口令、SS
     const editorId = `fragment:${lockedId}`
     await expect(page.locator(`[data-shard-editor="${editorId}"] .ProseMirror`)).toBeVisible()
     await fillEditor(page, editorId, `${CANARY.edit} 第二段`)
-    await page.getByRole("heading", { name: "密匣", exact: true }).click()
+    await page.locator('[data-focus-region="content"]').getByRole("heading", { name: "密匣", exact: true }).click()
     await expect(target).toContainText(CANARY.edit)
     await expect.poll(async () => (await snapshot()).items[0].sha).not.toBe(before)
     expect((await snapshot()).items[0].envelope).not.toContain(CANARY.edit)
@@ -328,7 +330,7 @@ test("网页端密匣：设置、速记、解锁编辑、移入、改口令、SS
     await palette.getByRole("option").filter({ hasText: CANARY.edit }).click()
     await expect(palette).toHaveCount(0)
     await expect(card(page, lockedId)).toContainText(CANARY.edit)
-    await expect(page.getByRole("heading", { name: "密匣", exact: true })).toBeVisible()
+    await expect(page.locator('[data-focus-region="content"]').getByRole("heading", { name: "密匣", exact: true })).toBeVisible()
   })
 
   await test.step("另一个浏览器上下文写入密匣，这边经 SSE 看到", async () => {

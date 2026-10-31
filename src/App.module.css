@@ -30,6 +30,12 @@
   overflow: hidden;
 }
 
+/* 网页顶部导航已承担标题栏，内容不再预留原生窗口的顶部避让。 */
+:global(:root[data-runtime="web"]) .workspaceSlot {
+  --shard-top-inset: 0px;
+  --shard-composer-top-gap: var(--space-4);
+}
+
 .workspaceContent {
   display: flex;
   flex: 1;
@@ -113,6 +119,10 @@
   .appShell {
     grid-template-columns: var(--shard-sidebar-width) minmax(0, 1fr);
     grid-template-rows: minmax(0, 1fr) auto;
+  }
+
+  :global(:root[data-runtime="web"]) .appShell {
+    grid-template-rows: minmax(0, 1fr);
   }
 
   .appShell[data-sidebar-collapsed="true"] {

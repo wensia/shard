@@ -4,6 +4,9 @@ import { Button } from "@/components/ui/button"
 import { DatePicker } from "@/components/ui/date-picker"
 import { Dialog, DialogContent, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
+import { Textarea } from "@/components/ui/textarea"
+import { PasswordInput } from "@/components/shard/password-input"
+import { installFocusNavigation } from "@/lib/focus-navigation"
 import { SelectControl } from "@/components/ui/select"
 import { TimePicker } from "@/components/ui/time-picker"
 import "../index.css"
@@ -43,6 +46,17 @@ function Harness() {
         <TimePicker aria-label="弹窗时间" value={time} onValueChange={setTime} />
       </DialogContent>
     </Dialog>
+    <section aria-label="输入状态验收" className="flex flex-col gap-4 max-w-md">
+      <Input aria-label="单行文本" />
+      <Textarea aria-label="多行文本" />
+      <PasswordInput aria-label="验收密码" />
+      <Input aria-label="无效文本" aria-invalid="true" />
+      <Textarea aria-label="无效多行文本" aria-invalid="true" />
+      <Input aria-label="禁用文本" disabled />
+    </section>
   </main>
 }
-if (import.meta.env.DEV) createRoot(document.getElementById("root")!).render(<Harness />)
+if (import.meta.env.DEV) {
+  installFocusNavigation()
+  createRoot(document.getElementById("root")!).render(<Harness />)
+}

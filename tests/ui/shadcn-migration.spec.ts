@@ -903,7 +903,9 @@ test("search recall mode preserves context, focus, and timeline scrolling", asyn
       bottom: dialogBounds.bottom,
       borderRadius: style.borderRadius,
       borderColor: style.borderColor,
+      borderWidth: style.borderWidth,
       boxShadow: style.boxShadow,
+      outlineStyle: style.outlineStyle,
       dialogRadius: dialogStyle.borderRadius,
       dialogShadow: dialogStyle.boxShadow,
       fontFamily: style.fontFamily,
@@ -920,8 +922,10 @@ test("search recall mode preserves context, focus, and timeline scrolling", asyn
   // 圆角不随密度档变，仍是 4px。
   expect(searchStyles.height).toBe("32px")
   expect(searchStyles.borderRadius).toBe("4px")
-  expect(searchStyles.borderColor).toBe("rgba(0, 0, 0, 0)")
-  expect(searchStyles.boxShadow).toBe("none")
+  expect(searchStyles.borderColor).not.toBe("rgba(0, 0, 0, 0)")
+  expect(searchStyles.borderWidth).toBe("1px")
+  expect(searchStyles.boxShadow).not.toBe("none")
+  expect(searchStyles.outlineStyle).toBe("none")
   expect(searchStyles.fontFamily).toContain("Noto Sans SC")
   expect(searchStyles.dialogRadius).toBe("6px")
   expect(searchStyles.dialogShadow).not.toBe("none")
@@ -1051,7 +1055,7 @@ test("search recall mode preserves context, focus, and timeline scrolling", asyn
   expect(compactGeometry.inputLeft).toBeGreaterThan(compactGeometry.left)
   expect(compactGeometry.inputRight).toBeLessThan(compactGeometry.right)
   expect(compactGeometry.inputBottom).toBeLessThan(compactGeometry.bottom)
-  expect(compactGeometry.inputShadow).toBe("none")
+  expect(compactGeometry.inputShadow).not.toBe("none")
   await page.getByRole("button", { name: "关闭搜索" }).click()
   await page.setViewportSize({ height: 720, width: 1280 })
 

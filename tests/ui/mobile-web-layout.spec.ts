@@ -128,6 +128,27 @@ test.beforeEach(async ({ page }) => {
   await installWebServerMock(page)
 })
 
+test("顶部页面导航在手机上不溢出，状态栏移除而底部页签保持可用", async ({ page }) => {
+  await page.goto("/")
+  const nav = page.getByRole("navigation", { name: "页面导航", exact: true })
+  await expect(nav).toBeVisible()
+  await expect(nav).toHaveAttribute("data-focus-region", "page-navigation")
+  await expect(page.getByRole("contentinfo", { name: "状态栏" })).toHaveCount(0)
+  // 手机统一使用底部的更多菜单，顶部不重复同一入口。
+  await expect(nav.getByRole("button", { name: "更多操作", exact: true })).toHaveCount(0)
+  const box = (await nav.boundingBox())!
+  expect(box.y).toBeCloseTo(0, 1)
+  expect(box.x).toBeGreaterThanOrEqual(0)
+  expect(box.x + box.width).toBeLessThanOrEqual(page.viewportSize()!.width)
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBe(0)
+
+  const tabs = page.getByRole("navigation", { name: "工作台", exact: true })
+  await expect(tabs.getByRole("button")).toHaveCount(3)
+  await tabs.getByRole("button", { name: "资料库", exact: true }).tap()
+  await expect(nav.getByRole("heading", { level: 1 })).toHaveText("资料库")
+  await expect(tabs).toBeVisible()
+})
+
 test("目录列表在手机宽度收成单列卡片，不横向溢出，「…」在屏内", async ({ page }) => {
   const { list } = await openReadingFolder(page)
 

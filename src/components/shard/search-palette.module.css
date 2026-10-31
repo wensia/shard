@@ -36,15 +36,6 @@
   width: 0;
   min-width: 0;
   flex: 1 1 auto;
-  border-color: transparent;
-  background: transparent;
-  box-shadow: none;
-}
-
-.input:hover,
-.input:focus {
-  border-color: transparent;
-  box-shadow: none;
 }
 
 /* 模式页签：外观见 components/ui/tabs.css（墨迹 bar 档）。这里只让它抵消标题栏上下内边距、

@@ -65,7 +65,7 @@ function PasswordPromptDialog({ onCancel, onConfirmed }: { onCancel: () => void;
     event.preventDefault()
     if (busy) return
     if (!password) {
-      setError("请输入密码。")
+      setError("请输入登录密码。")
       inputRef.current?.focus()
       return
     }
@@ -76,7 +76,9 @@ function PasswordPromptDialog({ onCancel, onConfirmed }: { onCancel: () => void;
       onConfirmed()
     } catch (caught) {
       setBusy(false)
-      setError(caught instanceof Error ? caught.message : String(caught))
+      setError(caught instanceof AuthError && caught.code === "INVALID_CREDENTIALS"
+        ? "登录密码不正确。"
+        : caught instanceof Error ? caught.message : String(caught))
       // 密码不对：清空重输。输入框忙碌时只读而不禁用，焦点一直留在里面。
       if (caught instanceof AuthError && caught.code === "INVALID_CREDENTIALS") setPassword("")
       inputRef.current?.focus()
@@ -85,14 +87,14 @@ function PasswordPromptDialog({ onCancel, onConfirmed }: { onCancel: () => void;
 
   return (
     <Dialog open onOpenChange={(open) => !open && !busy && onCancel()}>
-      <DialogContent aria-busy={busy} className="sm:max-w-md">
+      <DialogContent aria-busy={busy} aria-describedby={undefined} className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>输入密码确认</DialogTitle>
+          <DialogTitle>确认登录密码</DialogTitle>
         </DialogHeader>
         <form className={styles.form} noValidate onSubmit={(event) => void submit(event)}>
           {email ? <input autoComplete="username" hidden readOnly type="email" value={email} /> : null}
           {/* 只有一个字段：任何错误（密码不对、太频繁、连不上）都放在它下方那一行 */}
-          <FormField error={error} htmlFor={passwordId} label="密码">
+          <FormField error={error} htmlFor={passwordId} label="登录密码">
             <PasswordInput
               {...fieldProps(passwordId, error)}
               autoFocus

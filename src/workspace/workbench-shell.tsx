@@ -4,6 +4,7 @@ import styles from "../App.module.css"
 import { LockKeyholeIcon, XIcon } from "@/components/icons"
 import { BottomTabs } from "@/components/shard/bottom-tabs"
 import { StatusBar } from "@/components/shard/status-bar"
+import { PageNavigation } from "@/components/shard/page-navigation"
 import {
   FragmentEditor,
   setFragmentEditorBlurCommitPaused,
@@ -48,6 +49,7 @@ import {
 import { Button } from "@/components/ui/button"
 import { ZenSurface } from "@/components/shard/zen-surface"
 import { AccountMenu } from "@/features/auth/account-menu"
+import { fetchAuthState, isCancelled, stepUp } from "@/features/auth/api"
 import { isWebRuntime } from "@/lib/transport"
 import {
   CanvasWorkspace,
@@ -288,6 +290,8 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
   const [librarySaveState, setLibrarySaveState] =
     useState<SaveState | null>(null)
   const [isClosing, setIsClosing] = useState(false)
+  const [isPreparingLockboxSetup, setIsPreparingLockboxSetup] = useState(false)
+  const preparingLockboxSetupRef = useRef(false)
   const [openDatasetPath, setOpenDatasetPath] = useState<string | null>(null)
   const openDatasetPathRef = useRef<string | null>(null)
   const datasetZenRef = useRef<DatasetZenHandle>(null)
@@ -1579,15 +1583,37 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     return false
   }
 
+  async function openLockboxSetup() {
+    if (!isWebRuntime()) {
+      setLockboxDialogMode("setup")
+      return
+    }
+    if (preparingLockboxSetupRef.current) return
+    preparingLockboxSetupRef.current = true
+    setIsPreparingLockboxSetup(true)
+    try {
+      if (!(await fetchAuthState()).stepUpValid) {
+        await stepUp()
+      }
+      setLockboxDialogMode("setup")
+    } catch (error) {
+      setPendingLockboxMoveId(null)
+      if (!isCancelled(error)) notify.failure("暂时无法设置密匣", error)
+    } finally {
+      preparingLockboxSetupRef.current = false
+      setIsPreparingLockboxSetup(false)
+    }
+  }
+
   function ensureLockboxConfigured() {
     if (lockbox?.configured) return true
-    setLockboxDialogMode("setup")
+    void openLockboxSetup()
     return false
   }
 
   function openLockboxGate() {
     if (!lockbox?.configured) {
-      setLockboxDialogMode("setup")
+      void openLockboxSetup()
       return
     }
     if (!lockbox.unlocked) {
@@ -1603,7 +1629,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
   // 不在推门瞬间弹出。未配置时空间还不存在，仍先引导设置。
   function enterLockboxSpace() {
     if (!lockbox?.configured) {
-      setLockboxDialogMode("setup")
+      void openLockboxSetup()
       return
     }
     setSelectedLockboxTag(null)
@@ -2188,7 +2214,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
       setNavigationOrigin(null)
 
       if (nextRoute.space === "lockbox" && !lockbox?.configured) {
-        setLockboxDialogMode("setup")
+        await openLockboxSetup()
         return
       }
 
@@ -3180,7 +3206,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     <>
       <main
         aria-hidden={isBlockingDialogOpen ? true : undefined}
-        aria-busy={isClosing || undefined}
+        aria-busy={isClosing || isPreparingLockboxSetup || undefined}
         inert={isClosing || undefined}
         className={styles.appShell}
         data-sidebar-collapsed={isSidebarCollapsed}
@@ -3202,7 +3228,20 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
           )}
         </div>
         <div className={styles.workspaceSlot} data-workspace-slot>
-          {isSidebarCollapsed && route.space !== "calendar" ? (
+          {isWebRuntime() ? (
+            <PageNavigation
+              route={route}
+              isSidebarCollapsed={isSidebarCollapsed}
+              isCreating={isCreating}
+              saveState={librarySaveState}
+              onRouteChange={handleRouteChange}
+              onToggleSidebar={() => setIsSidebarCollapsed(false)}
+              onOpenSettings={() => openSettings("vault")}
+              onHelp={showHelp}
+              onShortcuts={showShortcuts}
+            />
+          ) : null}
+          {!isWebRuntime() && isSidebarCollapsed && route.space !== "calendar" ? (
             <div
               className={styles.collapsedTitlebar}
               data-focus-region="sidebar-toggle"
@@ -3313,7 +3352,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
               <CalendarWorkspace
                 fragments={publicActiveFragments}
                 onOpenFragment={(id) => void handleNavigateToFragment(id)}
-                isSidebarCollapsed={isSidebarCollapsed}
+                isSidebarCollapsed={isSidebarCollapsed && !isWebRuntime()}
                 onToggleSidebar={() => setIsSidebarCollapsed(false)}
               />
             ) : route.space === "lockbox" ? (
@@ -3401,7 +3440,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
           />
         </div>
 
-        <div className={styles.statusBarSlot} data-focus-region="status-bar">
+        {!isWebRuntime() ? <div className={styles.statusBarSlot} data-focus-region="status-bar">
           <StatusBar
             git={git}
             isCreating={isCreating}
@@ -3415,7 +3454,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
             onSync={() => void handleSync()}
             saveState={librarySaveState}
           />
-        </div>
+        </div> : null}
       </main>
       <FragmentEditor
         csvFiles={csvFiles}

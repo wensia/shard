@@ -39,8 +39,8 @@ export function OutlineUpgradeContext({ count, onDismiss, onOpen }: {
   return <div className="shard-content-inset shrink-0 pb-2 [--shard-focus-offset:-2px]" role="region" aria-label="旧格式大纲升级提示">
     <div className="shard-content-measure flex items-center gap-2 text-[length:var(--text-meta)] text-muted-foreground">
       <span className="min-w-0 flex-1">有 {count} 篇旧格式大纲，升级后可用导图编辑</span>
-      <Button size="sm" variant="outline" onClick={onOpen}>查看并升级</Button>
-      <Button size="sm" variant="ghost" onClick={onDismiss}>暂不</Button>
+      <Button className="focus-visible:ring-inset" size="sm" variant="outline" onClick={onOpen}>查看并升级</Button>
+      <Button className="focus-visible:ring-inset" size="sm" variant="ghost" onClick={onDismiss}>暂不</Button>
     </div>
   </div>
 }
