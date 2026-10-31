@@ -1,0 +1,11 @@
+# Shard iOS app icon
+
+Generation mode: built-in `image_gen`.
+
+Design: complementary ceramic fragments form an abstract S. Clay red on warm white follows Shard's Kiln palette. The square asset is opaque; iOS applies the home-screen mask.
+
+Final asset: `../Shard/Resources/Assets.xcassets/AppIcon.appiconset/AppIcon.png`.
+
+## Generation prompt
+
+Create a new original iOS app icon for Shard, a quiet personal notes and knowledge fragments app. Design a single bold, memorable abstract mark: two complementary angular ceramic fragments interlock into a compact flowing S-shaped silhouette, separated by one crisp diagonal negative-space seam. The geometry should suggest gathered fragments and continuity, with slightly softened outer corners and a strong readable silhouette at small home-screen sizes. Use a rich warm terracotta/clay red #B6533C for the mark against an entirely flat warm near-white #FBFAF8 background, edge to edge. Flat vector-like graphic design, exceptional optical balance, confident and restrained, not generic. Center the mark, approximately 65% of the square width, generous clear safe area. No literal typography, no app name, no lettering, no leaf, no feather, no paper airplane, no notebook drawing, no sparkle, no gradient, no texture, no bevel, no 3D, no cast shadow, no border, no inset icon tile, no pre-rounded square corners, no device mockup. The canvas must be a complete square with opaque background all the way to all four edges; iOS supplies the outer mask. Output only the final single icon asset, exactly 1024 by 1024 pixels, opaque RGB PNG.
