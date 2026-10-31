@@ -4,7 +4,9 @@ struct RootView: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
-        if model.isConfigured {
+        if model.isRestoring {
+            ProgressView()
+        } else if model.isConfigured {
             MainView()
         } else {
             NavigationStack {

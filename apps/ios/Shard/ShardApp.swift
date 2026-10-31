@@ -11,9 +11,7 @@ struct ShardApp: App {
                 .environment(model)
                 .tint(Theme.accent)
                 .task {
-                    if model.isConfigured {
-                        await model.start()
-                    }
+                    await model.start()
                 }
                 .onChange(of: scenePhase) { _, phase in
                     // Pull whatever the desktop pushed while the app was in the background.

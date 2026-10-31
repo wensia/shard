@@ -14,16 +14,28 @@ struct SettingsView: View {
     var body: some View {
         Form {
             Section("资料库") {
-                LabeledContent("仓库", value: model.repository?.displayName ?? "—")
-                LabeledContent("分支", value: model.repository?.branch ?? "—")
-                NavigationLink("更换仓库或令牌") {
-                    SetupView(isReplacing: true)
+                if let account = model.serverAccount {
+                    LabeledContent("服务器", value: account.serverURL.absoluteString)
+                    NavigationLink("更换服务器") {
+                        SetupView(isReplacing: true)
+                    }
+                } else {
+                    LabeledContent("仓库", value: model.repository?.displayName ?? "—")
+                    LabeledContent("分支", value: model.repository?.branch ?? "—")
+                    NavigationLink("更换仓库或令牌") {
+                        GitHubSetupView(isReplacing: true)
+                    }
+                    NavigationLink("连接服务器") {
+                        SetupView(isReplacing: true)
+                    }
                 }
             }
 
             Section {
                 LabeledContent("上次同步", value: model.lastSyncedAt?.formatted(date: .abbreviated, time: .shortened) ?? "从未")
-                LabeledContent("远端提交", value: model.headCommit.map { String($0.prefix(7)) } ?? "—")
+                if model.serverAccount == nil {
+                    LabeledContent("远端提交", value: model.headCommit.map { String($0.prefix(7)) } ?? "—")
+                }
                 LabeledContent("碎片 / 笔记", value: "\(model.index.fragments.count) / \(model.index.notes.count)")
                 Button {
                     Task { await model.sync() }
@@ -40,7 +52,7 @@ struct SettingsView: View {
             } footer: {
                 if case .failed(let message) = model.syncState {
                     Text(message).foregroundStyle(Theme.accent)
-                } else {
+                } else if model.serverAccount == nil {
                     Text("密匣、回收站和 .shard 内部文件不会下载到手机。")
                 }
             }
@@ -60,13 +72,25 @@ struct SettingsView: View {
                 } header: {
                     Text("待同步（\(model.pending.count)）")
                 } footer: {
-                    Text("联网后自动推送到 GitHub。左滑可以放弃一条。")
+                    if model.serverAccount == nil {
+                        Text("联网后自动推送到 GitHub。左滑可以放弃一条。")
+                    }
                 }
             }
 
             Section {
-                Button("断开并清除本机数据", role: .destructive) {
-                    confirmingDisconnect = true
+                if model.serverAccount != nil {
+                    Button("退出登录", role: .destructive) {
+                        Task {
+                            await model.signOutServer()
+                            dismiss()
+                        }
+                    }
+                    .accessibilityIdentifier("logout-submit")
+                } else {
+                    Button("断开并清除本机数据", role: .destructive) {
+                        confirmingDisconnect = true
+                    }
                 }
             }
 

@@ -1,9 +1,110 @@
 import ShardKit
 import SwiftUI
 
-/// Connects the app to the vault repository. The token is checked against the branch
-/// before anything is saved, and then lives only in the Keychain.
 struct SetupView: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.dismiss) private var dismiss
+    var isReplacing = false
+
+    @State private var server = ""
+    @State private var email = ""
+    @State private var password = ""
+    @State private var revealed = false
+    @State private var isConnecting = false
+    @State private var errorMessage: String?
+
+    var body: some View {
+        Form {
+            Section {
+                TextField("服务器地址", text: $server)
+                    .keyboardType(.URL)
+                    .textContentType(.URL)
+                    .accessibilityIdentifier("server-address")
+                TextField("邮箱", text: $email)
+                    .keyboardType(.emailAddress)
+                    .textContentType(.username)
+                    .accessibilityIdentifier("login-email")
+                HStack {
+                    PasswordTextField(text: $password, revealed: revealed) {
+                        Task { await login() }
+                    }
+                    Button {
+                        revealed.toggle()
+                    } label: {
+                        Image(systemName: revealed ? "eye.slash" : "eye")
+                            .foregroundStyle(Theme.mutedInk)
+                            .frame(minWidth: Theme.minimumTouchTarget, minHeight: Theme.minimumTouchTarget)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(revealed ? "隐藏密码" : "显示密码")
+                    .accessibilityIdentifier("password-visibility")
+                }
+            }
+            .disabled(isConnecting)
+
+            if let errorMessage {
+                Section {
+                    Text(errorMessage)
+                        .foregroundStyle(Theme.accent)
+                        .accessibilityIdentifier("login-error")
+                }
+            }
+
+            Section {
+                Button {
+                    Task { await login() }
+                } label: {
+                    HStack {
+                        Text("登录")
+                        Spacer()
+                        if isConnecting { ProgressView() }
+                    }
+                }
+                .disabled(!isComplete || isConnecting)
+                .accessibilityIdentifier("login-submit")
+            }
+            Section {
+                NavigationLink("使用 GitHub 连接") {
+                    GitHubSetupView(isReplacing: isReplacing)
+                }
+                .disabled(isConnecting)
+            }
+        }
+        .textInputAutocapitalization(.never)
+        .autocorrectionDisabled()
+        .scrollContentBackground(.hidden)
+        .background(Theme.canvas)
+        .navigationTitle("登录")
+        .onAppear {
+            server = model.serverAccount?.serverURL.absoluteString ?? UserDefaults.standard.string(forKey: "debugServer") ?? ""
+            email = model.serverAccount?.email ?? ""
+            errorMessage = model.authenticationError
+        }
+    }
+
+    private var isComplete: Bool {
+        !server.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !email.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !password.isEmpty
+    }
+
+    private func login() async {
+        guard !isConnecting, isComplete else { return }
+        isConnecting = true
+        errorMessage = nil
+        defer { isConnecting = false }
+        do {
+            try await model.login(server: server, email: email, password: password, name: "Shard · \(UIDevice.current.model)")
+            password = ""
+            if isReplacing { dismiss() }
+        } catch {
+            errorMessage = AppModel.describe(error)
+        }
+    }
+}
+
+/// The original GitHub connection remains available for existing vaults.
+struct GitHubSetupView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     var isReplacing = false

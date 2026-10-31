@@ -3,6 +3,7 @@ import SwiftUI
 
 /// kiln palette as asset colors (light and dark variants live in the asset catalog).
 enum Theme {
+    static let minimumTouchTarget: CGFloat = 44
     static let canvas = Color("Canvas")
     static let surface = Color("Surface")
     static let fill = Color("Fill")

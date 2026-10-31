@@ -56,6 +56,14 @@ public actor VaultStore {
         }
     }
 
+    /// A server/account has a separate mirror and outbox from GitHub and other accounts.
+    public static func defaultRoot(for account: ServerAccount) -> URL {
+        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        let key = SHA256.hash(data: Data("\(account.serverURL.absoluteString)\n\(account.email)".utf8))
+            .map { String(format: "%02x", $0) }.joined()
+        return support.appending(path: "ServerVaults", directoryHint: .isDirectory).appending(path: key, directoryHint: .isDirectory)
+    }
+
     public var headCommit: String? { manifest.headCommit }
 
     public var pending: [PendingFragment] { outbox }
@@ -104,7 +112,7 @@ public actor VaultStore {
             // Mirror it right away so the timeline does not flicker before the next pull;
             // the pull then finds the same blob SHA and downloads nothing.
             try write(data, to: next.path)
-            manifest.documents[next.path] = Self.gitBlobSHA(data)
+            manifest.documents[next.path] = remote.contentSHA(data)
             try saveManifest()
             pushed += 1
         }
@@ -116,7 +124,7 @@ public actor VaultStore {
             try await remote.createFile(path: item.path, content: data, message: "手机记录：新增碎片 \(item.id)")
         } catch RemoteError.alreadyExists {
             // A retry after a lost response: the commit already landed if the content matches.
-            guard try await remote.fileBlobSHA(path: item.path) == Self.gitBlobSHA(data) else {
+            guard try await remote.fileBlobSHA(path: item.path) == remote.contentSHA(data) else {
                 throw RemoteError.conflict(path: item.path)
             }
         }
@@ -164,14 +172,14 @@ public actor VaultStore {
     /// An attachment such as `assets/52/<sha256>.png`, from cache or fetched on first use.
     public func assetData(_ path: String, from remote: any VaultRemote) async throws -> Data {
         let url = try fileURL(path)
-        if let cached = try? Data(contentsOf: url) {
-            return cached
-        }
         guard let sha = manifest.assets[path] else {
             throw StoreError.unknownAsset(path)
         }
+        if let cached = try? Data(contentsOf: url), remote.contentSHA(cached) == sha {
+            return cached
+        }
         let data = try await remote.blob(sha)
-        try Self.verify(data, sha: sha, path: path)
+        guard remote.contentSHA(data) == sha else { throw RemoteError.checksumMismatch(path: path) }
         try write(data, to: path)
         return data
     }
@@ -194,7 +202,7 @@ public actor VaultStore {
                 guard let (path, sha) = pending.next() else { return false }
                 group.addTask {
                     let data = try await remote.blob(sha)
-                    try Self.verify(data, sha: sha, path: path)
+                    guard remote.contentSHA(data) == sha else { throw RemoteError.checksumMismatch(path: path) }
                     return (path, data)
                 }
                 return true

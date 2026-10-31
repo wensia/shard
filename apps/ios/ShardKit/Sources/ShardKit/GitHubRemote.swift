@@ -46,6 +46,8 @@ public enum RemoteError: Error, Equatable, Sendable {
 
 /// The sync layer's view of a remote vault, so GitHub can later be swapped for another host.
 public protocol VaultRemote: Sendable {
+    /// Content-addressing used by this remote (Git blob SHA-1 or raw SHA-256).
+    func contentSHA(_ data: Data) -> String
     func head() async throws -> RemoteHead
     func tree(_ sha: String) async throws -> [RemoteEntry]
     func blob(_ sha: String) async throws -> Data
@@ -53,6 +55,10 @@ public protocol VaultRemote: Sendable {
     func createFile(path: String, content: Data, message: String) async throws
     /// Blob SHA of a file on the branch, or nil when it does not exist.
     func fileBlobSHA(path: String) async throws -> String?
+}
+
+public extension VaultRemote {
+    func contentSHA(_ data: Data) -> String { VaultStore.gitBlobSHA(data) }
 }
 
 
