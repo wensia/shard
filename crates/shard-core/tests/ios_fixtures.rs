@@ -9,7 +9,7 @@
 use chrono::{DateTime, FixedOffset};
 use serde_json::{json, Value};
 use shard_core::{
-    extract_tags, normalize_tags, normalize_type_tags, write_fragment_file, FragmentFrontmatter,
+    extract_tags, normalize_tags, normalize_type_tags, write_fragment_file, FragmentFrontmatter, FsVfs,
     PROTECTED_TYPE_TAGS,
 };
 use std::{env, fs, path::PathBuf};
@@ -136,7 +136,7 @@ fn fragment_text(id: &str, created_at: &str, tags: Vec<String>, body: &str) -> S
     };
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("fragment.md");
-    write_fragment_file(&path, &frontmatter, body).unwrap();
+    write_fragment_file(&FsVfs::new(dir.path()), &path, &frontmatter, body).unwrap();
     fs::read_to_string(path).unwrap()
 }
 
