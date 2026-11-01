@@ -83,6 +83,7 @@ interface CaptureBoxProps {
     tags: string[]
   ) => Promise<Fragment | void>
   onDraftChange?: (content: string) => void
+  onDirtyChange?: (dirty: boolean) => void
   onNavigateToFragment?: (fragmentId: string) => void
   onOpenMindMap?: (map: MindMapSummary) => void
   /** 用创建好的碎片打开禅模式；两套编辑器共用这一条路径。 */
@@ -109,6 +110,7 @@ export const CaptureBox = forwardRef<CaptureBoxHandle, CaptureBoxProps>(function
   onCreateOutline,
   onCreateFlowchart,
   onDraftChange,
+  onDirtyChange,
   onNavigateToFragment,
   onOpenMindMap,
   onOpenFragmentZen,
@@ -135,6 +137,9 @@ export const CaptureBox = forwardRef<CaptureBoxHandle, CaptureBoxProps>(function
   useEffect(() => {
     onDraftChange?.(content)
   }, [content, onDraftChange])
+  useEffect(() => {
+    onDirtyChange?.(Boolean(content.trim() || pendingImages.length || outlineCode !== null || importFile))
+  }, [content, pendingImages.length, outlineCode, importFile, onDirtyChange])
   const richEditorRef = useRef<ShardRichEditorHandle>(null)
   const hasSkippedInitialFocusRef = useRef(false)
   const pendingImagesRef = useRef<PendingImage[]>([])

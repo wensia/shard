@@ -52,6 +52,8 @@ export function FragmentImageExporter({
   const [templateId, setTemplateId] = useState<ExportImageTemplateId>("paper")
   const [showCreatedDate, setShowCreatedDate] = useState(true)
   const [showCreatedTime, setShowCreatedTime] = useState(false)
+  const [useHandwritingFont, setUseHandwritingFont] = useState(false)
+  const [hasPreview, setHasPreview] = useState(false)
   const [isPreviewing, setIsPreviewing] = useState(false)
   const [isExporting, setIsExporting] = useState(false)
   const [isCopying, setIsCopying] = useState(false)
@@ -73,21 +75,34 @@ export function FragmentImageExporter({
     if (!open || !fragment || !previewCanvas) return
 
     let cancelled = false
+    const renderedCanvas = document.createElement("canvas")
 
+    setHasPreview(false)
     setIsPreviewing(true)
     nextPaint()
       .then(() =>
-        drawFragmentExportImage(previewCanvas, {
+        drawFragmentExportImage(renderedCanvas, {
           fragment,
           pixelRatio: getCanvasPixelRatio(),
           showCreatedDate,
           showCreatedTime,
           templateId,
+          useHandwritingFont,
           vaultPath,
         })
       )
       .then(() => {
-        if (!cancelled) fitCanvasToContainer(previewCanvas, previewFrame)
+        // 字体和附件异步加载期间可能再次切换选项，只展示最后一次完成的预览。
+        if (cancelled) return
+        const context = previewCanvas.getContext("2d")
+        if (!context) throw new Error("无法创建图片画布。")
+        previewCanvas.width = renderedCanvas.width
+        previewCanvas.height = renderedCanvas.height
+        previewCanvas.dataset.logicalWidth = renderedCanvas.dataset.logicalWidth
+        previewCanvas.dataset.logicalHeight = renderedCanvas.dataset.logicalHeight
+        context.drawImage(renderedCanvas, 0, 0)
+        fitCanvasToContainer(previewCanvas, previewFrame)
+        setHasPreview(true)
       })
       .catch((error) => {
         if (cancelled) return
@@ -108,6 +123,7 @@ export function FragmentImageExporter({
     showCreatedDate,
     showCreatedTime,
     templateId,
+    useHandwritingFont,
     vaultPath,
   ])
 
@@ -132,6 +148,7 @@ export function FragmentImageExporter({
       showCreatedDate,
       showCreatedTime,
       templateId,
+      useHandwritingFont,
       vaultPath,
     })
     return canvasToPngBlob(canvas)
@@ -293,6 +310,22 @@ export function FragmentImageExporter({
               </section>
 
               <section className={styles.settingsSection}>
+                <h2 className={styles.sectionTitle}>字体</h2>
+                <label
+                  className="flex items-center gap-2 text-sm"
+                  htmlFor="export-use-handwriting-font"
+                >
+                  <Checkbox
+                    checked={useHandwritingFont}
+                    disabled={isBusy}
+                    id="export-use-handwriting-font"
+                    onCheckedChange={setUseHandwritingFont}
+                  />
+                  手写稿体·日常
+                </label>
+              </section>
+
+              <section className={styles.settingsSection}>
                 <div>
                   <h2 className={styles.sectionTitle}>信息</h2>
                   <p className={styles.sectionDescription}>
@@ -359,7 +392,7 @@ export function FragmentImageExporter({
             */}
             <Button
               aria-busy={isCopying || undefined}
-              disabled={isBusy || isPreviewing || !fragment}
+              disabled={isBusy || isPreviewing || !hasPreview || !fragment}
               onClick={() => {
                 void handleCopy()
               }}
@@ -374,7 +407,7 @@ export function FragmentImageExporter({
             </Button>
             <Button
               aria-busy={isExporting || undefined}
-              disabled={isBusy || isPreviewing || !fragment}
+              disabled={isBusy || isPreviewing || !hasPreview || !fragment}
               onClick={() => {
                 void handleExport()
               }}

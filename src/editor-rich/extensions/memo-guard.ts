@@ -1,9 +1,10 @@
 import { Extension } from "@tiptap/core"
+import { closeHistory, isHistoryTransaction } from "@tiptap/pm/history"
 import type { Node as ProseMirrorNode, ResolvedPos } from "@tiptap/pm/model"
 import { Plugin, PluginKey, TextSelection } from "@tiptap/pm/state"
 import type { EditorView } from "@tiptap/pm/view"
 
-import { taskItemHasDetail } from "../schema/task-item-view"
+import { taskItemHasDetail } from "../schema/task-item-utils"
 
 /**
  * 备忘卡片的备注栏不可删除。
@@ -23,6 +24,9 @@ import { taskItemHasDetail } from "../schema/task-item-view"
  */
 
 const memoGuardKey = new PluginKey("shardMemoGuard")
+
+/** 只有显式的「保留正文，转为复选框」命令允许移除备注栏。 */
+export const MEMO_CONVERSION_META = "shardMemoConversion"
 
 /**
  * 按键这一刻的光标位置，以 DOM 为准：连续按方向键再立刻按删除时，
@@ -100,44 +104,52 @@ export const ShardMemoGuard = Extension.create({
   },
 
   addProseMirrorPlugins() {
-    return [
-      new Plugin({
-        key: memoGuardKey,
-        appendTransaction(transactions, oldState, newState) {
-          const changing = transactions.filter((tr) => tr.docChanged)
-          if (changing.length === 0) return null
-
-          const paragraph = newState.schema.nodes.paragraph
-          if (!paragraph) return null
-          const inserts: number[] = []
-          for (const oldPos of memoItemPositions(oldState.doc)) {
-            let pos = oldPos
-            let deleted = false
-            for (const tr of changing) {
-              const result = tr.mapping.mapResult(pos, 1)
-              if (result.deleted) {
-                deleted = true
-                break
-              }
-              pos = result.pos
-            }
-            if (deleted) continue
-            const node = newState.doc.nodeAt(pos)
-            if (!node || node.type.name !== "taskItem" || taskItemHasDetail(node)) continue
-            const title = node.firstChild
-            if (!title) continue
-            inserts.push(pos + 1 + title.nodeSize)
-          }
-          if (inserts.length === 0) return null
-
-          // 从后往前插，前面的位置不受后面插入的影响。
-          const tr = newState.tr
-          for (const at of inserts.sort((left, right) => right - left)) {
-            tr.insert(at, paragraph.create())
-          }
-          return tr.setMeta(memoGuardKey, true)
-        },
-      }),
-    ]
+    return [createMemoGuardPlugin()]
   },
 })
+
+export function createMemoGuardPlugin() {
+  return new Plugin({
+    key: memoGuardKey,
+    appendTransaction(transactions, oldState, newState) {
+      const changing = transactions.filter((tr) => tr.docChanged)
+      if (changing.length === 0) return null
+      if (changing.some((tr) => tr.getMeta(MEMO_CONVERSION_META))) {
+        // 转换前后都划开历史边界，后续输入不会与这次结构操作合并。
+        return closeHistory(newState.tr)
+      }
+      // 历史记录已包含守卫补回的步骤；重做显式转换时也不应再造备注栏。
+      if (changing.some(isHistoryTransaction)) return null
+
+      const paragraph = newState.schema.nodes.paragraph
+      if (!paragraph) return null
+      const inserts: number[] = []
+      for (const oldPos of memoItemPositions(oldState.doc)) {
+        let pos = oldPos
+        let deleted = false
+        for (const tr of changing) {
+          const result = tr.mapping.mapResult(pos, 1)
+          if (result.deleted) {
+            deleted = true
+            break
+          }
+          pos = result.pos
+        }
+        if (deleted) continue
+        const node = newState.doc.nodeAt(pos)
+        if (!node || node.type.name !== "taskItem" || taskItemHasDetail(node)) continue
+        const title = node.firstChild
+        if (!title) continue
+        inserts.push(pos + 1 + title.nodeSize)
+      }
+      if (inserts.length === 0) return null
+
+      // 从后往前插，前面的位置不受后面插入的影响。
+      const tr = newState.tr
+      for (const at of inserts.sort((left, right) => right - left)) {
+        tr.insert(at, paragraph.create())
+      }
+      return tr.setMeta(memoGuardKey, true)
+    },
+  })
+}

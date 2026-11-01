@@ -66,6 +66,7 @@ use tauri::Manager;
 mod cli_install;
 mod canvas_commands;
 mod export_commands;
+mod kdocs_commands;
 mod markdown_dialect;
 mod window_frame;
 mod reminder_badge;
@@ -8433,6 +8434,11 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            kdocs_commands::kdocs_status,
+            kdocs_commands::kdocs_initialize,
+            kdocs_commands::kdocs_list_records,
+            kdocs_commands::kdocs_save_record,
+            kdocs_commands::kdocs_attachment_url,
             search_commands::search_vault,
             search_commands::read_search_target,
             watch_vault,

@@ -256,4 +256,43 @@ test.describe("备忘卡片提醒", () => {
     await expect.poll(() => readEditor(page, "fragment:memo-fragment"))
       .toBe("- [ ] 买菜 ⏰ 2026-09-26 09:00\n  番茄、鸡蛋")
   })
+
+  test("行内备忘菜单不触发失焦提交，转换后保留细节、提醒并保存", async ({ page }) => {
+    await page.locator('[data-shard-fragment-id="memo-fragment"]')
+      .getByRole("button", { name: "片段操作", exact: true }).click()
+    await page.getByRole("menuitem", { name: "编辑", exact: true }).click()
+    const editor = page.locator(INLINE)
+    const prose = editor.locator(".ProseMirror")
+    await editor.getByRole("button", { name: "备忘卡片操作" }).click()
+    const menu = page.getByRole("menu", { name: "备忘卡片操作" })
+    await expect(menu).toBeVisible()
+    await page.keyboard.press("Escape")
+    await expect(menu).toHaveCount(0)
+    await expect(prose).toBeFocused()
+    await editor.getByRole("button", { name: "备忘卡片操作" }).click()
+    // 菜单打开时点击卡片外部仍按正常失焦流程结束编辑，不抢回焦点。
+    await page.locator('[data-shard-fragment-id="future-fragment"] time').click()
+    await expect(prose).toHaveCount(0)
+    await page.locator('[data-shard-fragment-id="memo-fragment"]')
+      .getByRole("button", { name: "片段操作", exact: true }).click()
+    await page.getByRole("menuitem", { name: "编辑", exact: true }).click()
+    await editor.getByRole("button", { name: "备忘卡片操作" }).click()
+    await menu.getByRole("menuitem", { name: "转为复选框" }).click()
+    await expect(editor.locator('[data-shard-memo-card="true"]')).toHaveCount(0)
+    await expect(prose).toBeFocused()
+    const converted = "- [ ] 买菜 ⏰ 2026-09-20 09:00\n\n番茄、鸡蛋"
+    await expect.poll(() => readEditor(page, "fragment:memo-fragment")).toBe(converted)
+    // 离开编辑器后正常保存，重新编辑仍是普通复选框。
+    await page.locator('[data-shard-fragment-id="future-fragment"] time').click()
+    await expect(prose).toHaveCount(0)
+    await expect.poll(() => page.evaluate(() => (
+      globalThis as typeof globalThis & { __SHARD_REMINDER_CALLS__: TestCall[] }
+    ).__SHARD_REMINDER_CALLS__.filter(call => call.command === "update_fragment").at(-1)?.args.content)).toBe(converted)
+    await page.locator('[data-shard-fragment-id="memo-fragment"]')
+      .getByRole("button", { name: "片段操作", exact: true }).click()
+    await page.getByRole("menuitem", { name: "编辑", exact: true }).click()
+    await expect(editor.locator('[data-shard-memo-card="true"]')).toHaveCount(0)
+    await expect(prose.getByRole("checkbox")).toHaveCount(1)
+    await expect.poll(() => readEditor(page, "fragment:memo-fragment")).toBe(converted)
+  })
 })

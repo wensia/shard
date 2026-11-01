@@ -212,6 +212,7 @@ interface ZenDraft {
 interface WorkbenchShellProps {
   route: WorkspaceRoute
   setRoute: (route: WorkspaceRoute) => void
+  onOpenCloud?: () => void
 }
 
 function readSidebarCollapsed(): boolean {
@@ -237,7 +238,8 @@ function warnSkippedLargeFiles(paths: string[] | undefined) {
   })
 }
 
-export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
+export function WorkbenchShell({ route, setRoute, onOpenCloud }: WorkbenchShellProps) {
+  const [isOpeningCloud, setIsOpeningCloud] = useState(false)
   const {
     acceptsVaultStateResponse,
     beginVaultStateRequest,
@@ -351,6 +353,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
   const mindMapWorkspaceRef = useRef<MindMapWorkspaceHandle>(null)
   const flowchartWorkspaceRef = useRef<CanvasWorkspaceHandle>(null)
   const composerDraftRef = useRef("")
+  const composerDirtyRef = useRef(false)
   const fragmentFlushRef = useRef<(() => Promise<boolean>) | null>(null)
   const registerFragmentFlush = useCallback((flush: (() => Promise<boolean>) | null) => { fragmentFlushRef.current = flush }, [])
   useEffect(() => {
@@ -2177,6 +2180,29 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     }
   }
 
+  async function openCloudWorkspace() {
+    if (!onOpenCloud || isOpeningCloud || workspaceNavigationInFlightRef.current || isWorkspaceNavigationBlocked() || isCreating) return
+    if (composerDirtyRef.current) {
+      notify.info("请先保存本地草稿，再切换到云端")
+      return
+    }
+    workspaceNavigationInFlightRef.current = true
+    setIsOpeningCloud(true)
+    try {
+      if (!(await saveLibraryDraftBeforeNavigation())) return
+      if (lockbox?.unlocked) {
+        await lockLockbox()
+      }
+      revokeSearchSession("spaceChanged")
+      onOpenCloud()
+    } catch (error) {
+      notify.failure("切换到云端失败", error)
+    } finally {
+      workspaceNavigationInFlightRef.current = false
+      setIsOpeningCloud(false)
+    }
+  }
+
   const lockboxTagSummaries = useMemo(
     () => buildTagSummaries(lockboxFragments, []),
     [lockboxFragments]
@@ -3161,6 +3187,8 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
               fragments={publicOnlyFragments}
               isCollapsed={false}
               onOpenSearch={openSearch}
+              onOpenCloud={onOpenCloud ? () => void openCloudWorkspace() : undefined}
+              isOpeningCloud={isOpeningCloud}
               onRouteChange={handleRouteChange}
               onToggleCollapsed={() => {
                 setIsSidebarCollapsed(true)
@@ -3235,6 +3263,9 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
               onCreateFlowchart: handleCreateFlowchart,
               onDraftChange: (content) => {
                 composerDraftRef.current = content
+              },
+              onDirtyChange: (dirty) => {
+                composerDirtyRef.current = dirty
               },
               onCreateOutline: handleCreateOutline,
               onNavigateToFragment: (fragmentId) => {
@@ -3358,6 +3389,8 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
         </div>
         <div className={styles.bottomTabsSlot} data-focus-region="bottom-tabs">
           <BottomTabs
+            onOpenCloud={onOpenCloud ? () => void openCloudWorkspace() : undefined}
+            isOpeningCloud={isOpeningCloud}
             fragments={publicOnlyFragments}
             onHelp={showHelp}
             onOpenSearch={openSearch}

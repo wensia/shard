@@ -863,6 +863,213 @@ test("table fragment exports a non-empty PNG", async ({ page }) => {
   expect(pngByteLength).toBeGreaterThan(0)
 })
 
+test("分享图片手写字体切换只影响导出，复制与保存使用相同字形", async ({ page }, testInfo) => {
+  await fillEditor(page, "composer", [
+    "手写分享正文",
+    "手写分享续行",
+    "- [ ] 手写待办事项",
+    "| 手写表头 | 说明 |",
+    "| --- | --- |",
+    "| 手写表格内容 | 日常记录 |",
+  ].join("\n"))
+  await focusEditor(page, "composer")
+  await page.keyboard.press("Control+Enter")
+  const savedNotice = page.locator("[data-sonner-toast]").filter({ hasText: "碎片已保存" })
+  await expect(savedNotice).toBeVisible()
+  await savedNotice.getByRole("button", { name: "关闭通知" }).click()
+
+  await page.evaluate(() => {
+    const target = globalThis as typeof globalThis & {
+      __SHARD_EXPORT_FONT_CALLS__?: Array<{ font: string; text: string; width: number; y: number }>
+      __TAURI_INTERNALS__: { invoke: (command: string, args?: Record<string, unknown>) => Promise<unknown> }
+    }
+    target.__SHARD_EXPORT_FONT_CALLS__ = []
+    const fillText = CanvasRenderingContext2D.prototype.fillText
+    CanvasRenderingContext2D.prototype.fillText = function (text, x, y, maxWidth) {
+      target.__SHARD_EXPORT_FONT_CALLS__!.push({ font: this.font, text, width: this.canvas.width, y })
+      if (maxWidth === undefined) fillText.call(this, text, x, y)
+      else fillText.call(this, text, x, y, maxWidth)
+    }
+    const invoke = target.__TAURI_INTERNALS__.invoke
+    target.__TAURI_INTERNALS__.invoke = (command, args) =>
+      command === "plugin:dialog|save"
+        ? Promise.resolve("/tmp/shard-handwriting-export-test.png")
+        : invoke(command, args)
+  })
+
+  const card = page.locator("[data-shard-fragment-id]").filter({ hasText: "手写分享正文" })
+  await card.getByRole("button", { name: "片段操作" }).click()
+  await page.getByRole("menuitem", { name: "分享" }).last().click()
+  const dialog = page.getByRole("dialog")
+  const handwriting = dialog.getByRole("checkbox", { name: "手写稿体·日常" })
+  const canvas = dialog.getByLabel("分享图片预览")
+  const copy = dialog.getByRole("button", { name: "复制图片" })
+  await expect(copy).toBeEnabled()
+  await expect(handwriting).not.toBeChecked()
+  const originalPixels = await canvas.evaluate((element: HTMLCanvasElement) => element.toDataURL())
+  const originalText = await page.evaluate(() =>
+    (globalThis as typeof globalThis & { __SHARD_EXPORT_FONT_CALLS__: Array<{ font: string; text: string; y: number }> }).__SHARD_EXPORT_FONT_CALLS__
+  )
+  const bodyTexts = ["手写分享正文", "手写分享续行", "手写待办事项", "手写表头", "说明", "手写表格内容", "日常记录"]
+  const fontSize = (font: string) => Number(font.match(/([\d.]+)px/u)?.[1] ?? 0)
+  const metadataStyles = (calls: Array<{ font: string; text: string }>) =>
+    Array.from(new Set(calls.filter(call => !bodyTexts.includes(call.text)).map(call => `${call.text}: ${call.font}`))).sort()
+  const originalMetadata = metadataStyles(originalText)
+  expect(originalMetadata.some(text => /^\d{4}\/\d{2}\/\d{2}:/u.test(text))).toBe(true)
+  expect(originalMetadata.filter(text => text.startsWith("Shard:"))).toHaveLength(2)
+  expect(originalMetadata.some(text => text.startsWith("LOCAL MEMO · GIT VAULT:"))).toBe(true)
+  const assertHandwritingTypography = (calls: Array<{ font: string; text: string; y: number }>) => {
+    for (const text of bodyTexts) {
+      const bodyCalls = calls.filter(call => call.text === text)
+      expect(bodyCalls.length, text).toBeGreaterThan(0)
+      const originalSize = fontSize(originalText.find(call => call.text === text)!.font)
+      for (const call of bodyCalls) {
+        expect(call.font, text).toContain("Shard Handwriting Daily")
+        expect(fontSize(call.font), text).toBeGreaterThan(originalSize)
+        expect(fontSize(call.font), text).toBeCloseTo(20, 0)
+      }
+    }
+    // 正文行距随字号增大；顶部日期和页脚的字号、字体、字重完整保留。
+    const lineGap = (textCalls: typeof calls) =>
+      textCalls.find(call => call.text === "手写分享续行")!.y - textCalls.find(call => call.text === "手写分享正文")!.y
+    expect(lineGap(calls) / lineGap(originalText)).toBeGreaterThan(1.3)
+    expect(lineGap(calls) / lineGap(originalText)).toBeLessThan(1.5)
+    expect(metadataStyles(calls)).toEqual(originalMetadata)
+  }
+  const readUiStyles = () => dialog.evaluate(element => ({
+    dialogFamily: getComputedStyle(element).fontFamily,
+    labelFamily: getComputedStyle(element.querySelector('label[for="export-use-handwriting-font"]')!).fontFamily,
+    editorFamily: getComputedStyle(document.querySelector('[data-shard-editor="composer"] .ProseMirror')!).fontFamily,
+    checkboxRadius: getComputedStyle(element.querySelector('label[for="export-use-handwriting-font"] [data-slot="checkbox"]')!).borderRadius,
+  }))
+  const originalStyles = await readUiStyles()
+  expect(originalStyles.checkboxRadius).toBe("4px")
+
+  await page.evaluate(() => {
+    (globalThis as typeof globalThis & { __SHARD_EXPORT_FONT_CALLS__: unknown[] }).__SHARD_EXPORT_FONT_CALLS__ = []
+  })
+  await handwriting.check()
+  await expect.poll(() => page.evaluate(() => Array.from(document.fonts).some(font =>
+    font.family.includes("Shard Handwriting Daily") && font.status === "loaded"
+  ))).toBe(true)
+  await expect.poll(() => canvas.evaluate((element: HTMLCanvasElement) => element.toDataURL())).not.toBe(originalPixels)
+  await expect(copy).toBeEnabled()
+  const previewText = await page.evaluate(() =>
+    (globalThis as typeof globalThis & { __SHARD_EXPORT_FONT_CALLS__: Array<{ font: string; text: string; y: number }> }).__SHARD_EXPORT_FONT_CALLS__
+  )
+  assertHandwritingTypography(previewText)
+  expect(await readUiStyles()).toEqual(originalStyles)
+  await dialog.screenshot({ path: testInfo.outputPath("handwriting-share-dialog.png") })
+
+  await handwriting.uncheck()
+  await expect.poll(() => canvas.evaluate((element: HTMLCanvasElement) => element.toDataURL())).toBe(originalPixels)
+  await expect(copy).toBeEnabled()
+  expect(await readUiStyles()).toEqual(originalStyles)
+  await handwriting.check()
+  await expect.poll(() => canvas.evaluate((element: HTMLCanvasElement) => element.toDataURL())).not.toBe(originalPixels)
+  await expect(copy).toBeEnabled()
+  await page.evaluate(() => {
+    (globalThis as typeof globalThis & { __SHARD_EXPORT_FONT_CALLS__: unknown[] }).__SHARD_EXPORT_FONT_CALLS__ = []
+  })
+  await copy.click()
+  await expect(page.getByText("分享图片已复制", { exact: true })).toBeVisible()
+  await page.locator("[data-sonner-toast]").filter({ hasText: "分享图片已复制" }).getByRole("button", { name: "关闭通知" }).click()
+  await dialog.getByRole("button", { name: "保存图片" }).click()
+  await expect(page.getByText("分享图片已保存", { exact: true })).toBeVisible()
+
+  const exported = await page.evaluate(async () => {
+    const target = globalThis as typeof globalThis & {
+      __SHARD_TEST_CALLS__: Array<{ args: { bytes?: number[] }; command: string }>
+      __SHARD_EXPORT_FONT_CALLS__: Array<{ font: string; text: string; width: number; y: number }>
+    }
+    const files = await Promise.all(["copy_exported_image", "save_exported_image"].map(async command => {
+      const bytes = target.__SHARD_TEST_CALLS__.filter(call => call.command === command).at(-1)?.args.bytes ?? []
+      const pixels = await createImageBitmap(new Blob([new Uint8Array(bytes)], { type: "image/png" }))
+      const digest = await crypto.subtle.digest("SHA-256", new Uint8Array(bytes))
+      return {
+        length: bytes.length,
+        signature: bytes.slice(0, 8),
+        width: pixels.width,
+        digest: Array.from(new Uint8Array(digest)),
+      }
+    }))
+    return { files, text: target.__SHARD_EXPORT_FONT_CALLS__.filter(call => call.width === 960) }
+  })
+  expect(exported.files[0].length).toBeGreaterThan(100)
+  expect(exported.files[0].signature).toEqual([137, 80, 78, 71, 13, 10, 26, 10])
+  expect(exported.files[0].width).toBe(960)
+  expect(exported.files[1]).toEqual(exported.files[0])
+  expect(exported.text.length).toBeGreaterThan(0)
+  assertHandwritingTypography(exported.text)
+})
+
+test("分享图片手写字体延迟加载时取消勾选不会被过期预览覆盖", async ({ page }) => {
+  let releaseFont!: () => void
+  let fontRequested!: () => void
+  const heldFont = new Promise<void>(resolve => { releaseFont = resolve })
+  const requested = new Promise<void>(resolve => { fontRequested = resolve })
+  await page.route("**/*shouxie-gaoti-daily.ttf*", async route => {
+    fontRequested()
+    await heldFont
+    await route.continue()
+  })
+  try {
+    await page.locator("[data-shard-fragment-id]").first().getByRole("button", { name: "片段操作" }).click()
+    await page.getByRole("menuitem", { name: "分享" }).last().click()
+    const dialog = page.getByRole("dialog")
+    const handwriting = dialog.getByRole("checkbox", { name: "手写稿体·日常" })
+    const canvas = dialog.getByLabel("分享图片预览")
+    const copy = dialog.getByRole("button", { name: "复制图片" })
+    await expect(copy).toBeEnabled()
+    const originalPixels = await canvas.evaluate((element: HTMLCanvasElement) => element.toDataURL())
+    await handwriting.check()
+    await requested
+    await expect(copy).toBeDisabled()
+    await expect(dialog.getByRole("button", { name: "保存图片" })).toBeDisabled()
+    await handwriting.uncheck()
+    await expect(copy).toBeEnabled()
+    releaseFont()
+    await expect.poll(() => page.evaluate(() => Array.from(document.fonts).some(font =>
+      font.family.includes("Shard Handwriting Daily") && font.status === "loaded"
+    ))).toBe(true)
+    // 等待两个绘制帧，给过期的异步绘制机会暴露覆盖问题。
+    await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
+    expect(await canvas.evaluate((element: HTMLCanvasElement) => element.toDataURL())).toBe(originalPixels)
+    await expect(handwriting).not.toBeChecked()
+    await expect(copy).toBeEnabled()
+  } finally {
+    releaseFont()
+  }
+})
+
+test("分享图片手写字体加载失败后禁止导出，取消和重新勾选均可恢复", async ({ page }) => {
+  let attempts = 0
+  await page.route("**/*shouxie-gaoti-daily.ttf*", async route => {
+    attempts += 1
+    if (attempts === 1) await route.abort("failed")
+    else await route.continue()
+  })
+  await page.locator("[data-shard-fragment-id]").first().getByRole("button", { name: "片段操作" }).click()
+  await page.getByRole("menuitem", { name: "分享" }).last().click()
+  const dialog = page.getByRole("dialog")
+  const handwriting = dialog.getByRole("checkbox", { name: "手写稿体·日常" })
+  const canvas = dialog.getByLabel("分享图片预览")
+  const copy = dialog.getByRole("button", { name: "复制图片" })
+  await expect(copy).toBeEnabled()
+  const originalPixels = await canvas.evaluate((element: HTMLCanvasElement) => element.toDataURL())
+  await handwriting.check()
+  await expect(page.getByText("分享图片预览生成失败", { exact: true })).toBeVisible()
+  await expect(copy).toBeDisabled()
+  await expect(dialog.getByRole("button", { name: "保存图片" })).toBeDisabled()
+  await handwriting.uncheck()
+  await expect(copy).toBeEnabled()
+  expect(await canvas.evaluate((element: HTMLCanvasElement) => element.toDataURL())).toBe(originalPixels)
+  await handwriting.check()
+  await expect.poll(() => canvas.evaluate((element: HTMLCanvasElement) => element.toDataURL())).not.toBe(originalPixels)
+  await expect(copy).toBeEnabled()
+  expect(attempts).toBe(2)
+})
+
 test("search recall mode preserves context, focus, and timeline scrolling", async ({
   page,
 }) => {

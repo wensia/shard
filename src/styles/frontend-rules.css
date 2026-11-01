@@ -427,12 +427,31 @@
     --shard-tag-padding-x: 10px;
     --shard-tag-bg: rgb(var(--shard-primary-rgb) / var(--shard-alpha-13));
     --shard-tag-hover: rgb(var(--shard-primary-rgb) / var(--shard-alpha-21));
-    --shard-tag-font-size: 12px;
+    --shard-tag-font-size: var(--text-meta);
     --shard-tag-ring: rgb(var(--shard-primary-rgb) / var(--shard-alpha-21));
     --shard-tag-active-bg: rgb(var(--shard-primary-rgb) / var(--shard-alpha-21));
     --shard-tag-active-ring: rgb(var(--shard-primary-rgb) / var(--shard-alpha-34));
     --shard-tag-muted-bg: var(--shard-tag-bg);
     --shard-tag-muted-fg: var(--shard-tag-fg);
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--shard-space-2);
+    margin-bottom: var(--shard-space-3);
+    font-size: var(--shard-tag-font-size);
+    line-height: var(--leading-tight);
+  }
+
+  /* 元数据行统一管理文字度量与居中；长标签可增高，状态徽标保持完整。 */
+  .shard-card-tags > .shard-tag {
+    flex-shrink: 0;
+    line-height: inherit;
+  }
+
+  .shard-card-tags > .shard-tag-inline {
+    display: inline-flex;
+    min-height: var(--shard-tag-height);
+    align-items: center;
   }
 
   .shard-card-tags .shard-tag-muted {

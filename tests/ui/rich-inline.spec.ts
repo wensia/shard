@@ -723,12 +723,70 @@ test.describe("富文本行内与附件组件", () => {
     const detail = card.locator("p").nth(1)
     await expect(detail).toBeVisible()
 
-    await card.getByRole("button", { name: "收起备忘细节" }).click()
+    await card.getByRole("button", { name: "备忘卡片操作" }).click()
+    await page.getByRole("menuitem", { name: "收起备忘细节" }).click()
     await expect(detail).toBeHidden()
     await expect.poll(() => readEditor(page, "composer")).toBe("- [ ] 标题\n\n  细节")
 
-    await card.getByRole("button", { name: "展开备忘细节" }).click()
+    await card.getByRole("button", { name: "备忘卡片操作" }).click()
+    await page.getByRole("menuitem", { name: "展开备忘细节" }).click()
     await expect(detail).toBeVisible()
+  })
+
+  test("备忘卡片操作菜单可将空细节卡片转为复选框，并支持撤销重做", async ({ page }) => {
+    await resetComposer(page)
+    await typeEditor(page, "composer", "/备忘")
+    await expect(commandMenu(page).getByRole("option")).toHaveCount(1)
+    await page.keyboard.press("Enter")
+    await page.keyboard.type("猛火炉头")
+    await expect(memoCard(page)).toHaveCount(1)
+    const trigger = memoCard(page).getByRole("button", { name: "备忘卡片操作" })
+    await expect(trigger).toHaveAttribute("aria-haspopup", "menu")
+    await trigger.click()
+    const menu = page.getByRole("menu", { name: "备忘卡片操作" })
+    await expect(menu.getByRole("menuitem", { name: "转为复选框" })).toBeVisible()
+    const styles = await menu.evaluate(element => ({
+      radius: getComputedStyle(element).borderRadius,
+      itemHeight: Number.parseFloat(getComputedStyle(element.querySelector('[role="menuitem"]')!).height),
+    }))
+    expect(styles).toEqual({ radius: "6px", itemHeight: 32 })
+    await menu.getByRole("menuitem", { name: "转为复选框" }).click()
+    await expect(menu).toHaveCount(0)
+    await expect(memoCard(page)).toHaveCount(0)
+    await expect(proseMirror(page).getByRole("checkbox")).toHaveCount(1)
+    await expect(proseMirror(page)).toBeFocused()
+    await expect.poll(() => readEditor(page, "composer")).toBe("- [ ] 猛火炉头")
+
+    await page.keyboard.press("ControlOrMeta+z")
+    await expect(memoCard(page)).toHaveCount(1)
+    await expect(memoCard(page).locator("p")).toHaveCount(2)
+    await expect(memoCard(page).locator("p").first()).toHaveText("猛火炉头")
+    await page.keyboard.press("ControlOrMeta+Shift+z")
+    await expect(memoCard(page)).toHaveCount(0)
+    await expect.poll(() => readEditor(page, "composer")).toBe("- [ ] 猛火炉头")
+    await submitComposer(page)
+    await expect.poll(() => createdContents(page)).toEqual(["- [ ] 猛火炉头"])
+  })
+
+  test("备忘转复选框保留勾选、标题格式和提醒，细节成为下方正文", async ({ page }) => {
+    const source = "- [x] **买菜** ⏰ 2026-10-25 09:00\n  番茄、鸡蛋\n- [ ] 整理需求"
+    await fillEditor(page, "composer", source)
+    await memoCard(page).getByRole("button", { name: "备忘卡片操作" }).click()
+    await page.getByRole("menuitem", { name: "转为复选框" }).click()
+    await expect(memoCard(page)).toHaveCount(0)
+    await expect(proseMirror(page).getByRole("checkbox").first()).toBeChecked()
+    await expect(proseMirror(page).locator("strong")).toHaveText("买菜")
+    await expect(proseMirror(page).locator(".shard-rich-reminder")).toHaveAttribute("title", "提醒：2026-10-25 09:00")
+    const converted = "- [x] **买菜** ⏰ 2026-10-25 09:00\n\n番茄、鸡蛋\n\n- [ ] 整理需求"
+    await expect.poll(() => readEditor(page, "composer")).toBe(converted)
+    await page.keyboard.press("ControlOrMeta+z")
+    await expect(memoCard(page)).toHaveCount(1)
+    await expect.poll(() => readEditor(page, "composer")).toBe(source)
+    await page.keyboard.press("ControlOrMeta+Shift+z")
+    await expect(memoCard(page)).toHaveCount(0)
+    await fillEditor(page, "composer", converted)
+    await expect(memoCard(page)).toHaveCount(0)
+    await expect(proseMirror(page).getByRole("checkbox")).toHaveCount(2)
   })
 
   test("备忘卡片勾选写回 [x]，提交内容一致", async ({ page }) => {
