@@ -12,7 +12,8 @@ test("公开卡片、编辑器和保存后的卡片保持硬换行与空行", as
   const target = card(page, "card-fragment")
   await revealCard(target)
   const body = target.locator(".shard-fragment-card-content")
-  await expect(body).toHaveText("开头\n\n呼吸也不顺畅")
+  await expect(body).toHaveText("开头\n\n呼吸也不顺畅", { useInnerText: true })
+  await expect(body.locator("br")).toHaveCount(2)
   await target.getByRole("button", { name: "片段操作" }).click()
   await page.getByRole("menuitem", { name: "编辑", exact: true }).click()
   const editorId = "fragment:card-fragment"
@@ -26,5 +27,6 @@ test("公开卡片、编辑器和保存后的卡片保持硬换行与空行", as
   await expect.poll(() => lastSavedFragment(page, "card-fragment")).toMatchObject({
     content: `开头${slash}\n${slash}\n呼吸也不顺畅！`,
   })
-  await expect(body).toHaveText("开头\n\n呼吸也不顺畅！")
+  await expect(body).toHaveText("开头\n\n呼吸也不顺畅！", { useInnerText: true })
+  await expect(body.locator("br")).toHaveCount(2)
 })

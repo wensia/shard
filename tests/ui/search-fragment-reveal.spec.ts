@@ -296,10 +296,11 @@ test("硬换行移除后仍按可见文本定位搜索高亮", async ({ page }) 
     if (target) target.content = "T10 定位目标 firstneedle\\\n\\\nsecondneedle 结尾"
   })
   await page.goto("/")
+  await expect(page.locator(".shard-timeline-item")).toHaveCount(40)
   await openSearchResult(page, "secondneedle", /T10 定位目标/)
   const target = page.locator(`[data-shard-fragment-id="${TARGET_ID}"]`)
   await expect(target.locator(".shard-fragment-card-content")).toHaveText(
-    "T10 定位目标 firstneedle\n\nsecondneedle 结尾"
+    "T10 定位目标 firstneedle\n\nsecondneedle 结尾", { useInnerText: true }
   )
   expect(normalRanges(await waitForVisibleHighlight(page)).map(({ text }) => text)).toEqual(["secondneedle"])
 })

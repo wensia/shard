@@ -53,6 +53,8 @@ const UNDERLINE_OPEN = /^<u\s*>$/iu
 const UNDERLINE_CLOSE = /^<\/u\s*>$/iu
 
 export interface ParseShardMarkdownOptions {
+  /** Read-only views need original task rows; metadata never enters the editor schema. */
+  sourcePositions?: boolean
   /**
    * 按旧方言（v1）解析：段落之间的一个空行只是分隔符，多出来的空行才是空段落，
    * 段内软换行不拆段。只给一次性数据迁移比对用。
@@ -67,6 +69,7 @@ export interface ParseShardMarkdownOptions {
 interface BlockMode {
   legacy: boolean
   lines: boolean
+  lineAt?: (offset: number) => number
 }
 
 export function parseShardMarkdown(
@@ -75,9 +78,27 @@ export function parseShardMarkdown(
 ): ShardMarkdownDocument {
   const { body, frontmatter } = splitFrontmatter(markdown)
   const tree = markdownParser.parse(body)
+  const starts = [0]
+  if (options.sourcePositions) {
+    for (let index = 0; index < body.length; index += 1) {
+      if (body[index] === "\n") starts.push(index + 1)
+    }
+  }
+  const prefixLines = options.sourcePositions
+    ? markdown.replace(/\r\n?/gu, "\n").split("\n").length - body.split("\n").length : 0
   const content = parseBlocks(childrenOf(tree.topNode), body, {
     legacy: options.legacyParagraphs === true,
     lines: true,
+    lineAt: options.sourcePositions ? (offset) => {
+      let low = 0
+      let high = starts.length
+      while (low + 1 < high) {
+        const middle = (low + high) >>> 1
+        if (starts[middle] <= offset) low = middle
+        else high = middle
+      }
+      return prefixLines + low
+    } : undefined,
   })
   return {
     doc: { type: "doc", content: content.length > 0 ? content : [{ type: "paragraph" }] },
@@ -249,6 +270,7 @@ function parseList(node: LezerNode, src: string, mode: BlockMode): JSONContent[]
       : empty
         ? parseEmptyTaskItem(empty, children, src, itemMode)
         : parseListItem(children, src, itemMode)
+    if (isTask && mode.lineAt) parsed.sourceLine = mode.lineAt(item.from)
     const last = groups[groups.length - 1]
     if (last && last.task === isTask) last.items.push(parsed)
     else groups.push({ task: isTask, items: [parsed] })
@@ -823,11 +845,11 @@ function decodeEntity(raw: string) {
   const body = raw.slice(1, -1)
   if (body.startsWith("#x") || body.startsWith("#X")) {
     const code = Number.parseInt(body.slice(2), 16)
-    return Number.isFinite(code) ? String.fromCodePoint(code) : raw
+    return Number.isFinite(code) && code <= 0x10ffff ? String.fromCodePoint(code) : raw
   }
   if (body.startsWith("#")) {
     const code = Number.parseInt(body.slice(1), 10)
-    return Number.isFinite(code) ? String.fromCodePoint(code) : raw
+    return Number.isFinite(code) && code <= 0x10ffff ? String.fromCodePoint(code) : raw
   }
   return NAMED_ENTITIES[body] ?? raw
 }
