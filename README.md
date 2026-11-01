@@ -1,8 +1,18 @@
 # Shard
 
-Shard 是一个桌面端快速录入应用，目前只发布 Apple Silicon macOS 安装包。新工作区使用金山文档多维表格存储记录和附件；原有本地资料库仍可独立打开。
+Shard 是用于记录与整理 Markdown 碎片和笔记的应用，提供 **iOS App、Web 和 macOS 桌面**三种客户端。
 
-## 金山多维表格
+| 客户端 | 使用方式 | 入口 |
+| --- | --- | --- |
+| **iOS App** | iOS 17+ 原生移动客户端，连接 Shard 服务器，也保留 GitHub 资料库连接 | [iOS 构建与安装](https://github.com/wensia/shard/blob/main/apps/ios/README.md) |
+| **Web** | 浏览器访问部署好的 Shard 站点，使用服务器账号登录 | [Web 与服务端部署](https://github.com/wensia/shard/blob/main/deploy/README.md) |
+| **macOS 桌面** | Apple Silicon Mac 桌面应用 | [下载 DMG](https://github.com/wensia/shard/releases/latest) |
+
+三端的代码入口、共享范围和发布状态见 [三端说明](docs/dev/platforms.md)。完整平台代码汇总在 `main`；本 `astryx-migration` 分支主要承载桌面开发，下面的金山文档工作区说明适用于本分支。
+
+## 金山多维表格（本分支桌面工作区）
+
+新工作区使用金山文档多维表格存储记录和附件；原有本地资料库仍可独立打开。
 
 首次打开默认进入云端工作区。安装并登录 `kdocs-cli`（2.8.2 或更新版本）后，点击创建 Shard 多维表格，即可录入正文、标签和附件，用 `Cmd+Enter` / `Ctrl+Enter` 保存。下方表格查看云端记录，附件可点击打开，也可直接进入金山文档管理字段、视图和记录。
 
@@ -16,7 +26,7 @@ Shard 是一个桌面端快速录入应用，目前只发布 Apple Silicon macOS
 
 以下介绍保留的本地资料功能。
 
-它借鉴了 [flomo](https://flomoapp.com/) 的核心心智：先把稍纵即逝的想法记下来，让碎片在时间流里自然沉淀，再在需要时回看、整理和连接。Shard 不是 flomo 的复刻，也与 flomo 没有关联；它把这个灵感收敛到本地优先、Markdown 优先、Git 可追踪的桌面工具里。
+它借鉴了 [flomo](https://flomoapp.com/) 的核心心智：先把稍纵即逝的想法记下来，让碎片在时间流里自然沉淀，再在需要时回看、整理和连接。Shard 不是 flomo 的复刻，也与 flomo 没有关联。
 
 ![Shard 主界面：片段捕捉、时间线、标签和 Git 状态](docs/design/shard-main-screen-concept.png)
 
@@ -24,10 +34,20 @@ Shard 是一个桌面端快速录入应用，目前只发布 Apple Silicon macOS
 
 ## 下载与安装
 
-当前发布目标：
+### iOS App
+
+当前提供 iOS 17+ 源码，需要使用 Xcode 和自己的 Apple 签名配置构建安装，步骤见 [iOS 文档](https://github.com/wensia/shard/blob/main/apps/ios/README.md)。当前 GitHub Release 不含 IPA。
+
+### Web
+
+访问已部署的 Shard 站点即可使用。自建站点请按 [部署文档](https://github.com/wensia/shard/blob/main/deploy/README.md) 配置服务端和 Web 静态资源；GitHub Releases 提供 Linux x86_64 服务端包。
+
+### macOS 桌面
+
+当前桌面安装包支持：
 
 - macOS Apple Silicon，M1/M2/M3/M4 芯片
-- 不支持 Intel Mac、Windows、Linux
+- 暂不提供 Intel Mac、Windows、Linux 桌面安装包；Linux 服务端与桌面客户端是不同的发布产物。
 
 安装方式：
 
@@ -45,6 +65,8 @@ Shard 是一个桌面端快速录入应用，目前只发布 Apple Silicon macOS
 ## 核心理念
 
 Shard 只优化一个动作：快速捕捉灵感。
+
+以下保存流程与功能表描述 **macOS 桌面的本地资料模式**；Web 与 iOS 的存储及功能范围见 [三端说明](docs/dev/platforms.md)。
 
 1. 写下一段想法、摘录、任务或观察。
 2. 按 `Cmd+Enter`、`Ctrl+Enter`，或点击发送按钮保存。
@@ -86,6 +108,8 @@ Shard 只优化一个动作：快速捕捉灵感。
 
 ## Development
 
+以下命令用于本分支的 macOS 桌面开发；Web 和 iOS 开发请使用 `main` 的对应入口，见 [三端说明](docs/dev/platforms.md)。
+
 ```bash
 pnpm install
 pnpm tauri dev
@@ -116,7 +140,7 @@ Markdown 渲染与纯解析工具位于独立 workspace 包 [`@shard/markdown`](
 
 ## Vault
 
-Shard stores fragments in:
+In macOS local-vault mode, Shard stores fragments in:
 
 ```text
 ~/Documents/ShardVault
@@ -149,6 +173,8 @@ source: desktop
 ```
 
 ## 终端快捷创建
+
+此入口面向 macOS 桌面的本地资料库。
 
 安装 Shard.app 并首次启动后，App 会自动安装 `shard` 终端命令。仅当需要向 shell 配置加入 PATH 时，App 才会先征求确认；也可以在设置的「终端命令」中查看状态或卸载。
 

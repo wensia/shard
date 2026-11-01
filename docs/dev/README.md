@@ -1,5 +1,15 @@
 # Shard 设计与实施文档
 
+## 应用平台
+
+Shard 提供 **iOS App、Web、macOS 桌面**三种客户端。[三端说明](platforms.md) 汇总各端定位、代码入口、共享边界和发布方式；平台现状以该文档和对应代码为准。
+
+| 客户端 | 开发 / 部署文档 |
+| --- | --- |
+| iOS App | [iOS 构建与安装（main）](https://github.com/wensia/shard/blob/main/apps/ios/README.md) |
+| Web | [Web 与服务端部署（main）](https://github.com/wensia/shard/blob/main/deploy/README.md) |
+| macOS 桌面 | [项目 README](../../README.md) |
+
 ## 当前产品方向
 
 2026-09-15 起，Shard 的目标收敛为本地优先的碎片系统，支持可组合的 Git / 飞书 / 夸克存储目标，以及 Hermes / OpenClaw 聊天入口。私密碎片能力保留，取消独立密匣工作台。
