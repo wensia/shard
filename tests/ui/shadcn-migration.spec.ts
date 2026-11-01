@@ -2346,17 +2346,17 @@ test.describe("正文表格", () => {
       .locator("[data-shard-fragment-id]")
       .filter({ hasText: "本周安排" })
       .first()
-    const table = card.locator("table.shard-markdown-table")
+    const table = card.getByRole("table")
     await expect(table).toBeVisible()
 
     // 表头与数据行按分隔行的列数解析
-    await expect(table.locator("thead th")).toHaveCount(5)
-    await expect(table.locator("tbody tr")).toHaveCount(2)
-    await expect(table.locator("thead th").first()).toHaveText("日期")
-    await expect(table.locator("tbody tr").first().locator("td").nth(2)).toHaveText("行知中学")
+    await expect(table.locator("th")).toHaveCount(5)
+    await expect(table.locator("tr:has(td)")).toHaveCount(2)
+    await expect(table.locator("th").first()).toHaveText("日期")
+    await expect(table.locator("tr:has(td)").first().locator("td").nth(2)).toHaveText("行知中学")
 
     // :---: 落成居中对齐
-    await expect(table.locator("thead th").first()).toHaveCSS(
+    await expect(table.locator("th").first()).toHaveCSS(
       "text-align",
       "center"
     )
@@ -2389,17 +2389,17 @@ test.describe("正文表格", () => {
       .locator("[data-shard-fragment-id]")
       .filter({ hasText: "超宽排期" })
       .first()
-    const table = card.locator("table.shard-markdown-table")
+    const table = card.getByRole("table")
 
     await expect(table).toBeVisible()
-    await expect(table.locator("tbody tr")).toHaveCount(8)
+    await expect(table.locator("tr:has(td)")).toHaveCount(8)
     // 含连字符的时间不能被误判成分隔行
     await expect(
-      table.locator("tbody tr").first().locator("td").nth(1)
+      table.locator("tr:has(td)").first().locator("td").nth(1)
     ).toHaveText("8:30-11:00")
     // 破折号单元格保留
     await expect(
-      table.locator("tbody tr").last().locator("td").nth(1)
+      table.locator("tr:has(td)").last().locator("td").nth(1)
     ).toHaveText("—")
   })
 })
