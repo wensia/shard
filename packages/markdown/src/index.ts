@@ -1,4 +1,5 @@
 export * from "./core/index.js"
+export { useRenderedBlocks } from "./use-markdown.js"
 export {
   MarkdownContent,
   type MarkdownContentProps,

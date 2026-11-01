@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test"
+import { expect, test, type Locator, type Page } from "@playwright/test"
 
 import {
   fillEditor,
@@ -14,6 +14,51 @@ import { routeShardAssets } from "./shard-asset-mock"
 interface TestCall {
   command: string
   args: Record<string, unknown>
+}
+
+interface MarkdownWorkerProbe {
+  workers: { pending: (() => void)[]; terminated: boolean }[]
+}
+
+async function holdMarkdownResponses(page: Page) {
+  await page.evaluate(() => {
+    const probe: MarkdownWorkerProbe = { workers: [] }
+    Object.assign(window, { __shardMarkdownWorkerProbe: probe })
+    const NativeWorker = window.Worker
+    window.Worker = class extends NativeWorker {
+      record = { pending: [] as (() => void)[], terminated: false }
+      markdown = false
+      constructor(url: string | URL, options?: WorkerOptions) {
+        super(url, options)
+        this.markdown = String(url).includes("/editor-rich/markdown/parse.worker")
+        if (this.markdown) probe.workers.push(this.record)
+      }
+      set onmessage(callback: ((this: Worker, event: MessageEvent) => unknown) | null) {
+        super.onmessage = this.markdown && callback
+          ? (event) => { this.record.pending.push(() => callback.call(this, event)) }
+          : callback
+      }
+      terminate() {
+        this.record.terminated = true
+        super.terminate()
+      }
+    }
+  })
+}
+
+async function pendingMarkdownWorkerCount(page: Page) {
+  return page.evaluate(() => (window as typeof window & {
+    __shardMarkdownWorkerProbe: MarkdownWorkerProbe
+  }).__shardMarkdownWorkerProbe.workers.filter((worker) => worker.pending.length > 0).length)
+}
+
+async function releaseMarkdownWorker(page: Page, index: number) {
+  await page.evaluate((workerIndex) => {
+    const probe = (window as typeof window & {
+      __shardMarkdownWorkerProbe: MarkdownWorkerProbe
+    }).__shardMarkdownWorkerProbe
+    for (const deliver of probe.workers[workerIndex].pending.splice(0)) deliver()
+  }, index)
 }
 
 const COMPOSER = '[data-shard-editor="composer"]'
@@ -176,11 +221,252 @@ async function blurComposer(page: Page) {
   await proseMirror(page).evaluate((element) => element.blur())
 }
 
+const RENDERING_HEADING = '版本二：【三观挑衅版】把“逃跑”合理化，直接宣扬“烂人哲学”'
+const RENDERING_SOURCE = [
+  `### ${RENDERING_HEADING}`,
+  "",
+  "**粗体**、*斜体*、~~删除线~~、==高亮==、`行内代码`、<u>下划线</u>、[链接](https://example.com)",
+  "",
+  "> 引用正文",
+  "",
+  "- 无序第一项",
+  "  - 嵌套子项",
+  "",
+  "3. 有序第三项",
+  "4. 有序第四项",
+  "",
+  "```text",
+  "### 代码中的标题",
+  "- [ ] 代码中的假任务",
+  "**代码中的星号**",
+  "```",
+  "",
+  "| 名称 | 值 |",
+  "| --- | --: |",
+  "| 表格内容 | **表内粗体** |",
+  "",
+  "\\### 字面标题",
+  "\\*\\*字面加粗\\*\\* 和 \\#不是标签",
+].join("\n")
+
+async function expectMarkdownSemantics(root: Locator) {
+  await expect(root.locator("h3")).toHaveText(RENDERING_HEADING)
+  await expect(root.locator("strong")).toHaveText(["粗体", "表内粗体"])
+  await expect(root.locator("em")).toHaveText("斜体")
+  await expect(root.locator("s, del")).toHaveText("删除线")
+  await expect(root.locator("mark")).toHaveText("高亮")
+  await expect(root.locator("u")).toHaveText("下划线")
+  await expect(root.locator('a[href="https://example.com"]')).toHaveText("链接")
+  await expect(root.locator("code").filter({ hasText: /^行内代码$/u })).toHaveCount(1)
+  await expect(root.locator("blockquote")).toHaveText("引用正文")
+  await expect(root.locator("ul > li > ul > li")).toHaveText("嵌套子项")
+  await expect(root.locator("ol")).toHaveAttribute("start", "3")
+  await expect(root.locator("ol > li")).toHaveText(["有序第三项", "有序第四项"])
+  await expect(root.locator("pre code")).toHaveText("### 代码中的标题\n- [ ] 代码中的假任务\n**代码中的星号**")
+  await expect(root.locator("pre h3, pre strong, pre button")).toHaveCount(0)
+  await expect(root.locator("table th")).toHaveText(["名称", "值"])
+  await expect(root.locator("table td")).toHaveText(["表格内容", "表内粗体"])
+  await expect(root.getByText("### 字面标题", { exact: true })).toHaveCount(1)
+  await expect(root.getByText("**字面加粗** 和 #不是标签", { exact: true })).toHaveCount(1)
+}
+
+async function headingStyle(root: Locator) {
+  return root.locator("h3").evaluate((element) => {
+    const style = getComputedStyle(element)
+    return {
+      fontFamily: style.fontFamily,
+      fontSize: style.fontSize,
+      fontWeight: style.fontWeight,
+      lineHeight: style.lineHeight,
+      marginTop: style.marginTop,
+      marginBottom: style.marginBottom,
+    }
+  })
+}
+
+async function codeBlockStyle(root: Locator) {
+  return root.locator("pre").evaluate((element) => {
+    const style = getComputedStyle(element)
+    return {
+      background: style.backgroundColor,
+      padding: style.padding,
+      radius: style.borderRadius,
+    }
+  })
+}
+
 test.describe("富文本行内与附件组件", () => {
   test.beforeEach(async ({ page }) => {
     await installRichInlineMock(page)
     await page.goto("/")
     await expect(proseMirror(page)).toBeFocused()
+  })
+
+  test("异常数字实体不使正文崩溃，卡片未知块保留可复制的原文", async ({ page }) => {
+    await fillEditor(page, "composer", "<!-- 原文块 -->\n\n&#9999999; &#xFFFFFF;")
+    await expect(proseMirror(page)).toContainText("&#9999999; &#xFFFFFF;")
+    await submitComposer(page)
+    const content = page.locator('[data-shard-fragment-id="rich-inline-created-1"] .shard-fragment-content')
+    await expect(content).toContainText("&#9999999; &#xFFFFFF;")
+    await expect(content.locator(".shard-rich-raw-block")).toHaveText("<!-- 原文块 -->")
+    await expect(content.locator(".shard-rich-raw-block")).toHaveCSS("user-select", "text")
+  })
+
+  test("Markdown 在输入框、卡片、行内编辑和禅模式使用一致的语义与标题样式", async ({ page }, testInfo) => {
+    await fillEditor(page, "composer", RENDERING_SOURCE)
+    await expectMarkdownSemantics(proseMirror(page))
+    const composerStyle = await headingStyle(proseMirror(page))
+    const composerCodeStyle = await codeBlockStyle(proseMirror(page))
+    expect(composerCodeStyle.background).not.toBe("transparent")
+    expect(composerCodeStyle.background).not.toBe("rgba(0, 0, 0, 0)")
+    expect(Number.parseFloat(composerCodeStyle.padding)).toBeGreaterThan(0)
+    expect(Number.parseFloat(composerCodeStyle.radius)).toBeGreaterThan(0)
+    await submitComposer(page)
+    await expect.poll(() => createdContents(page)).toEqual([RENDERING_SOURCE])
+
+    const card = page.locator('[data-shard-fragment-id="rich-inline-created-1"]')
+    const content = card.locator(".shard-fragment-content")
+    await expectMarkdownSemantics(content)
+    expect(await headingStyle(content)).toEqual(composerStyle)
+    expect(await codeBlockStyle(content)).toEqual(composerCodeStyle)
+    await content.screenshot({ path: testInfo.outputPath("markdown-shared-card.png") })
+    // 搜索只标正文；代码不参与卡片正文定位。
+    await expect(content.locator('h3[data-markdown-search-block="text"]')).toHaveCount(1)
+    await expect(content.locator('[data-markdown-search-exclude="codeBlock"]')).toContainText("代码中的假任务")
+
+    await card.getByRole("button", { name: "片段操作", exact: true }).click()
+    await page.getByRole("menuitem", { name: "编辑", exact: true }).click()
+    const reopened = page.locator('[data-shard-editor="fragment:rich-inline-created-1"] .ProseMirror')
+    await expectMarkdownSemantics(reopened)
+    expect(await headingStyle(reopened)).toEqual(composerStyle)
+    expect(await codeBlockStyle(reopened)).toEqual(composerCodeStyle)
+    await page.getByRole("button", { name: "取消", exact: true }).click()
+    await expect(content.locator("h3")).toHaveText(RENDERING_HEADING)
+
+    await card.getByRole("button", { name: "片段操作", exact: true }).click()
+    await page.getByRole("menuitem", { name: "禅模式", exact: true }).click()
+    const zen = page.locator('section[aria-label="禅模式"] .ProseMirror')
+    await expectMarkdownSemantics(zen)
+    expect(await headingStyle(zen)).toEqual(composerStyle)
+    expect(await codeBlockStyle(zen)).toEqual(composerCodeStyle)
+    await expect.poll(() => readEditor(page, "zen:rich-inline-created-1")).toBe(RENDERING_SOURCE)
+  })
+
+  test("卡片待办勾选保留源码行号，跳过代码假任务并支持嵌套与空任务", async ({ page }) => {
+    const lines = [
+      "### 任务行号",
+      "",
+      "```text",
+      "- [ ] 代码假任务",
+      "```",
+      "",
+      "- [ ] 父任务",
+      "  - [ ] 子任务",
+      "- [ ]",
+      "",
+      "> - [ ] 引用任务",
+    ]
+    await fillEditor(page, "composer", lines.join("\n"))
+    await submitComposer(page)
+    const card = page.locator('[data-shard-fragment-id="rich-inline-created-1"]')
+    const content = card.locator(".shard-fragment-content")
+    await expect(content.getByRole("checkbox", { name: "标记为完成", exact: true })).toHaveCount(4)
+    await expect(content.locator("pre button")).toHaveCount(0)
+
+    const taskOrder = [6, 7, 8, 10]
+    for (const lineIndex of taskOrder) {
+      await content.locator(`[data-task-line-index="${lineIndex}"]`).getByRole("checkbox").click()
+      lines[lineIndex] = lines[lineIndex].replace("[ ]", "[x]")
+      await expect.poll(() => page.evaluate(() => {
+        const calls = (globalThis as typeof globalThis & { __SHARD_RICH_CALLS__: TestCall[] }).__SHARD_RICH_CALLS__
+        return calls.filter((call) => call.command === "update_fragment").at(-1)?.args.content
+      })).toBe(lines.join("\n"))
+      await expect(content.getByRole("checkbox", { name: "标记为未完成", exact: true })).toHaveCount(taskOrder.indexOf(lineIndex) + 1)
+      await expect(page.locator('[data-shard-editor="fragment:rich-inline-created-1"]')).toHaveCount(0)
+      const title = content.locator(`[data-task-line-index="${lineIndex}"]`).locator("..")
+        .locator(":scope > .shard-rich-task-body > div > [data-shard-paragraph]").first()
+      await expect(title).toHaveCSS("text-decoration-line", "line-through")
+      if (lineIndex === 6) {
+        const childTask = content.locator('[data-task-line-index="7"]').getByRole("checkbox")
+        await expect(childTask).not.toBeChecked()
+        await expect(content.getByRole("paragraph").filter({ hasText: /^子任务$/u })).toHaveCSS("text-decoration-line", "none")
+      }
+    }
+    await expect(content.locator("pre code")).toHaveText("- [ ] 代码假任务")
+  })
+
+  test("长卡片在 Worker 解析，切换编辑终止旧任务且迟到结果不覆盖新正文", async ({ page }) => {
+    const errors: string[] = []
+    page.on("pageerror", (error) => errors.push(error.message))
+    await holdMarkdownResponses(page)
+    const oldSource = "### 过期长文\n\n" + "较长的旧正文 ".repeat(5_000)
+    const newSource = "### 最新长文\n\n" + "较长的新正文 ".repeat(5_000)
+    expect(oldSource.length).toBeGreaterThan(32_000)
+    await fillEditor(page, "composer", oldSource)
+    await submitComposer(page)
+    const card = page.locator('[data-shard-fragment-id="rich-inline-created-1"]')
+    const content = card.locator(".shard-fragment-content")
+    await expect(content).toHaveAttribute("aria-busy", "true")
+    await expect.poll(() => pendingMarkdownWorkerCount(page)).toBe(1)
+    const oldWorkerIndex = await page.evaluate(() => (window as typeof window & {
+      __shardMarkdownWorkerProbe: MarkdownWorkerProbe
+    }).__shardMarkdownWorkerProbe.workers.findIndex((worker) => worker.pending.length > 0))
+
+    await card.getByRole("button", { name: "片段操作", exact: true }).click()
+    await page.getByRole("menuitem", { name: "编辑", exact: true }).click()
+    const editorId = "fragment:rich-inline-created-1"
+    await expect(page.locator(`[data-shard-editor="${editorId}"] .ProseMirror h3`)).toHaveText("过期长文")
+    expect(await page.evaluate((index) => (window as typeof window & {
+      __shardMarkdownWorkerProbe: MarkdownWorkerProbe
+    }).__shardMarkdownWorkerProbe.workers[index].terminated, oldWorkerIndex)).toBe(true)
+    await fillEditor(page, editorId, newSource)
+    await page.getByRole("button", { name: "保存修改", exact: true }).click()
+    await expect(content).toHaveAttribute("aria-busy", "true")
+    await expect.poll(() => pendingMarkdownWorkerCount(page)).toBe(2)
+    const latestWorkerIndex = await page.evaluate((oldIndex) => (window as typeof window & {
+      __shardMarkdownWorkerProbe: MarkdownWorkerProbe
+    }).__shardMarkdownWorkerProbe.workers.findIndex((worker, index) => index !== oldIndex && worker.pending.length > 0), oldWorkerIndex)
+    await releaseMarkdownWorker(page, latestWorkerIndex)
+    await expect(content.locator("h3")).toHaveText("最新长文")
+    await expect(content).not.toHaveAttribute("aria-busy", "true")
+    await releaseMarkdownWorker(page, oldWorkerIndex)
+    await expect(content.locator("h3")).toHaveText("最新长文")
+    await expect(content).not.toContainText("过期长文")
+    expect(errors).toEqual([])
+  })
+
+  test("长卡片 Worker 不可用时安全显示源码，重新编辑成短文后恢复渲染", async ({ page }) => {
+    await page.evaluate(() => {
+      const NativeWorker = window.Worker
+      Object.defineProperty(window, "Worker", {
+        configurable: true,
+        value: class extends NativeWorker {
+          constructor(url: string | URL, options?: WorkerOptions) {
+            if (String(url).includes("/editor-rich/markdown/parse.worker")) throw new Error("worker unavailable in test")
+            super(url, options)
+          }
+        },
+      })
+    })
+    const source = "<img src=x onerror=alert(1)>\n<script>window.__injected=true</script>\n\n" + "长文源码 ".repeat(7_000)
+    expect(source.length).toBeGreaterThan(32_000)
+    await fillEditor(page, "composer", source)
+    await submitComposer(page)
+    const card = page.locator('[data-shard-fragment-id="rich-inline-created-1"]')
+    const content = card.locator(".shard-fragment-content")
+    await expect(content).toHaveAttribute("data-markdown-error", "true")
+    expect(await content.textContent()).toBe((await createdContents(page))[0])
+    await expect(content.locator("img, script, [onerror]")).toHaveCount(0)
+    await expect(content).not.toHaveAttribute("aria-busy", "true")
+
+    await card.getByRole("button", { name: "片段操作", exact: true }).click()
+    await page.getByRole("menuitem", { name: "编辑", exact: true }).click()
+    const editorId = "fragment:rich-inline-created-1"
+    await expect(page.locator(`[data-shard-editor="${editorId}"]`)).toBeVisible()
+    await fillEditor(page, editorId, "### 短文恢复")
+    await page.getByRole("button", { name: "保存修改", exact: true }).click()
+    await expect(content.locator("h3")).toHaveText("短文恢复")
+    await expect(content).not.toHaveAttribute("data-markdown-error", "true")
   })
 
   test("双左括号弹出双链建议，选中后写成芯片并提交为 [[目标]]", async ({ page }) => {

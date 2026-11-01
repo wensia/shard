@@ -26,11 +26,11 @@ import {
 } from "@/components/ui/dialog"
 
 import {
-  MarkdownContent,
   type MarkdownFenceRenderProps,
   type MarkdownImageRenderProps,
   type MarkdownTaskReminderRenderProps,
 } from "@shard/markdown"
+import { ShardMarkdownContent } from "@/editor-rich/ShardMarkdownContent"
 import {
   attachmentHash,
   downloadFragmentImageAttachment,
@@ -92,7 +92,7 @@ export function FragmentContent({
   ), [downloadableImages, previewImages, vaultPath])
 
   return (
-    <MarkdownContent
+    <ShardMarkdownContent
       className={className}
       content={content}
       hideTags={hideTags}

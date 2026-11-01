@@ -41,7 +41,7 @@ export function toggleTaskLine(value: string, lineIndex: number) {
   if (currentLine === undefined) return value
 
   const nextLine = currentLine.replace(
-    /^(\s*(?:[-*+]|\d+[.)])\s+\[)([ xX])(\]\s*)/,
+    /^(\s*(?:>\s*)*(?:[-*+]|\d+[.)])\s+\[)([ xX])(\]\s*)/,
     (_, prefix: string, marker: string, suffix: string) =>
       `${prefix}${marker.toLowerCase() === "x" ? " " : "x"}${suffix}`
   )

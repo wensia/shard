@@ -1,4 +1,4 @@
-/* 富文本编辑器（Tiptap / ProseMirror）的编辑区与浮层样式。
+/* 编辑框、卡片和禅模式共享的正文排版，以及富文本编辑器浮层样式。
  *
  * 排版继承 `.shard-editor` 已有的字体、行高与间距 token（见
  * src/styles/frontend-rules.css 的 `.md-content, .md-document, .shard-editor` 块），
@@ -6,7 +6,7 @@
  * 标签着色，以及标签建议 / 命令菜单共用的浮层。
  * 不修改 frontend-rules.css 的现有规则，只新增本文件。 */
 
-.shard-rich-editor .ProseMirror {
+:is(.shard-rich-editor .ProseMirror, .shard-rich-content) {
   outline: none;
   color: var(--shard-memo-content-color);
   font-family: var(--shard-memo-font-family);
@@ -64,80 +64,79 @@
 }
 
 /* 段落之间的空行由 Markdown 的块语义表达，编辑态用一个行距而不是 1em 大块留白。 */
-.shard-rich-editor .ProseMirror > * + * {
+:is(.shard-rich-editor .ProseMirror, .shard-rich-content) > * + * {
   margin-top: var(--shard-space-2);
 }
 
-.shard-rich-editor .ProseMirror p {
+:is(.shard-rich-editor .ProseMirror, .shard-rich-content) :is(p, [data-shard-paragraph]) {
   margin: 0;
 }
 
-.shard-rich-editor .ProseMirror ul,
-.shard-rich-editor .ProseMirror ol {
+:is(.shard-rich-editor .ProseMirror, .shard-rich-content) ul,
+:is(.shard-rich-editor .ProseMirror, .shard-rich-content) ol {
   margin: 0;
   padding-inline-start: var(--shard-space-5);
 }
 
-.shard-rich-editor .ProseMirror ul {
+:is(.shard-rich-editor .ProseMirror, .shard-rich-content) ul {
   list-style: disc;
 }
 
-.shard-rich-editor .ProseMirror ol {
+:is(.shard-rich-editor .ProseMirror, .shard-rich-content) ol {
   list-style: decimal;
 }
 
-.shard-rich-editor .ProseMirror li > p {
+:is(.shard-rich-editor .ProseMirror, .shard-rich-content) li > :is(p, [data-shard-paragraph]) {
   margin: 0;
 }
 
 /* 标题：只有文档档的工具栏与输入前缀能产出，但任何档位载入含标题的正文都要
  * 按层级显示（技术方案 §3「碎片不在工具栏暴露，但正确解析与保存」）。
- * 层级比例与上下留白都与卡片渲染（packages/markdown/styles.css 的 .md-document）
- * 同一套，相对标题字号取 em，编辑态所见与卡片一致。段落一行一段不留白，
+ * 卡片与编辑器直接使用以下同一组规则，相对标题字号取 em。段落一行一段不留白，
  * 标题却要自带留白：方言 v2 里标题前后的第一个空行只是 Markdown 分隔符、不显示，
  * 没有这层留白，标准 Markdown 写成的文章（AI 经 shard 命令写入的笔记）标题会
  * 紧贴上下文。正文开头的标题不留上白。 */
-.shard-rich-editor .ProseMirror :is(h1, h2, h3, h4, h5, h6) {
+:is(.shard-rich-editor .ProseMirror, .shard-rich-content) :is(h1, h2, h3, h4, h5, h6) {
   margin-block: 1em 0.5em;
   margin-inline: 0;
   font-weight: var(--weight-semibold);
   line-height: var(--leading-tight);
 }
 
-.shard-rich-editor .ProseMirror :is(h1, h2, h3, h4, h5, h6):first-child {
+:is(.shard-rich-editor .ProseMirror, .shard-rich-content) :is(h1, h2, h3, h4, h5, h6):first-child {
   margin-top: 0;
 }
 
-.shard-rich-editor .ProseMirror h1 {
+:is(.shard-rich-editor .ProseMirror, .shard-rich-content) h1 {
   font-size: 2em;
 }
 
-.shard-rich-editor .ProseMirror h2 {
+:is(.shard-rich-editor .ProseMirror, .shard-rich-content) h2 {
   font-size: 1.5em;
 }
 
-.shard-rich-editor .ProseMirror h3 {
+:is(.shard-rich-editor .ProseMirror, .shard-rich-content) h3 {
   font-size: 1.25em;
 }
 
-.shard-rich-editor .ProseMirror :is(h4, h5, h6) {
+:is(.shard-rich-editor .ProseMirror, .shard-rich-content) :is(h4, h5, h6) {
   font-size: 1em;
 }
 
-.shard-rich-editor .ProseMirror blockquote {
+:is(.shard-rich-editor .ProseMirror, .shard-rich-content) blockquote {
   margin-inline: 0;
   padding-inline-start: var(--shard-space-3);
   border-inline-start: 2px solid var(--border-visible);
   color: var(--muted-foreground);
 }
 
-.shard-rich-editor .ProseMirror hr {
+:is(.shard-rich-editor .ProseMirror, .shard-rich-content) hr {
   margin-block: var(--shard-space-2);
   border: 0;
   border-top: 1px solid var(--border-visible);
 }
 
-.shard-rich-editor .ProseMirror pre {
+:is(.shard-rich-editor .ProseMirror, .shard-rich-content) pre {
   margin: 0;
   padding: var(--shard-space-3);
   border-radius: var(--shard-radius-control);
@@ -145,7 +144,7 @@
   white-space: pre-wrap;
 }
 
-.shard-rich-editor .ProseMirror mark {
+:is(.shard-rich-editor .ProseMirror, .shard-rich-content) mark {
   padding-block: var(--shard-editor-highlight-pad-y);
   border-radius: calc(var(--shard-radius-control) / 2);
   background: rgb(var(--shard-warning-rgb) / var(--shard-alpha-21));
@@ -156,7 +155,7 @@
 
 /* 搜索定位只画临时 decoration，不复用可持久化的 Highlight mark。普通命中保持
  * 低噪声，当前命中用同一语义色加一圈，切换 active 不改变文字几何。 */
-.shard-rich-editor .ProseMirror .shard-rich-search-hit {
+:is(.shard-rich-editor .ProseMirror, .shard-rich-content) .shard-rich-search-hit {
   border-radius: calc(var(--shard-radius-control) / 2);
   background: rgb(var(--shard-warning-rgb) / var(--shard-alpha-13));
   box-shadow: 0 0 0 1px transparent;
@@ -164,14 +163,14 @@
   -webkit-box-decoration-break: clone;
 }
 
-.shard-rich-editor .ProseMirror .shard-rich-search-hit--active {
+:is(.shard-rich-editor .ProseMirror, .shard-rich-content) .shard-rich-search-hit--active {
   background: rgb(var(--shard-warning-rgb) / var(--shard-alpha-21));
   box-shadow: 0 0 0 1px rgb(var(--shard-warning-rgb) / var(--shard-alpha-34));
 }
 
 /* WebKit/Chromium 在原生 composition 期间会暂缓 decoration DOM 重绘；状态已经失效时
  * 先隐藏旧背景，避免拼音候选还在变化却显示旧坐标。 */
-.shard-rich-editor .ProseMirror.shard-rich-search-composing .shard-rich-search-hit {
+:is(.shard-rich-editor .ProseMirror, .shard-rich-content).shard-rich-search-composing .shard-rich-search-hit {
   background: transparent;
   box-shadow: none;
 }
@@ -223,18 +222,18 @@
   white-space: nowrap;
 }
 
-.shard-rich-editor .ProseMirror strong {
+:is(.shard-rich-editor .ProseMirror, .shard-rich-content) strong {
   font-weight: var(--weight-semibold);
 }
 
-.shard-rich-editor .ProseMirror img {
+:is(.shard-rich-editor .ProseMirror, .shard-rich-content) img {
   max-width: 100%;
   border-radius: var(--shard-radius-control);
 }
 
 /* 占位符：Placeholder 扩展把提示语写进首个顶层文本块的 data-placeholder。
  * 只在整篇只剩一个空文本块时显示——插了空任务、空列表后就不再出提示语。 */
-.shard-rich-editor .ProseMirror > .is-empty:only-child::before {
+:is(.shard-rich-editor .ProseMirror, .shard-rich-content) > .is-empty:only-child::before {
   content: attr(data-placeholder);
   float: inline-start;
   height: 0;
@@ -244,23 +243,23 @@
 
 /* 标签：只着色，不画背景块，也不加内外边距——
  * 否则 `#标签 ` 前后的空格会被挤没，与仓库既定的 flomo 式间隔规则冲突。 */
-.shard-rich-editor .ProseMirror .shard-rich-tag {
+:is(.shard-rich-editor .ProseMirror, .shard-rich-content) .shard-rich-tag {
   color: var(--shard-editor-tag-fg);
 }
 
 /* #密匣 是保存目的地指令而非分类标签，沿用密匣的琥珀色。 */
-.shard-rich-editor .ProseMirror .shard-rich-tag--lockbox {
+:is(.shard-rich-editor .ProseMirror, .shard-rich-content) .shard-rich-tag--lockbox {
   color: rgb(var(--shard-warning-rgb) / var(--shard-alpha-89));
 }
 
 /* 正在输入的 `#查询` / `/查询`：与已落地的标签同色，便于看出当前在输什么。 */
-.shard-rich-editor .ProseMirror .shard-rich-suggestion-mark--tag {
+:is(.shard-rich-editor .ProseMirror, .shard-rich-content) .shard-rich-suggestion-mark--tag {
   color: var(--shard-editor-tag-fg);
 }
 
 /* 双链芯片：几何与配色沿用旧 CM6 双链装饰的规格（info 色下划线、hover 底色），
  * 断链复用同一套 --missing 语义；这里是 NodeView，不是文本上的一层 mark。 */
-.shard-rich-editor .ProseMirror .shard-rich-wikilink {
+:is(.shard-rich-editor .ProseMirror, .shard-rich-content) .shard-rich-wikilink {
   border-radius: var(--radius-control);
   color: var(--info);
   cursor: pointer;
@@ -269,12 +268,12 @@
   text-underline-offset: 0.16em;
 }
 
-.shard-rich-editor .ProseMirror .shard-rich-wikilink:hover {
+:is(.shard-rich-editor .ProseMirror, .shard-rich-content) .shard-rich-wikilink:hover {
   background: var(--info-bg);
   text-decoration-color: var(--info);
 }
 
-.shard-rich-editor .ProseMirror .shard-rich-wikilink--missing {
+:is(.shard-rich-editor .ProseMirror, .shard-rich-content) .shard-rich-wikilink--missing {
   background: var(--muted);
   color: var(--muted-foreground);
   text-decoration-style: dotted;
@@ -283,7 +282,7 @@
 
 /* 提醒芯片（`⏰ YYYY-MM-DD HH:mm`）：独立的行内原子，不走标签「只着色」的规则，
  * 画成一枚安静的 muted 芯片；图标跟随 1em（design.md：标签内图标优先跟随字号）。 */
-.shard-rich-editor .ProseMirror .shard-rich-reminder {
+:is(.shard-rich-editor .ProseMirror, .shard-rich-content) .shard-rich-reminder {
   display: inline-flex;
   align-items: center;
   gap: var(--space-1);
@@ -302,25 +301,24 @@
   --shard-icon-stroke: var(--shard-icon-stroke-sm);
 }
 
-.shard-rich-editor .ProseMirror button.shard-rich-reminder {
+:is(.shard-rich-editor .ProseMirror, .shard-rich-content) button.shard-rich-reminder {
   cursor: pointer;
 }
 
-.shard-rich-editor .ProseMirror button.shard-rich-reminder:hover,
-.shard-rich-editor .ProseMirror button.shard-rich-reminder[data-popup-open] {
+:is(.shard-rich-editor .ProseMirror, .shard-rich-content) button.shard-rich-reminder:hover,
+:is(.shard-rich-editor .ProseMirror, .shard-rich-content) button.shard-rich-reminder[data-popup-open] {
   border-color: var(--border-visible);
   color: var(--foreground);
 }
 
-.shard-rich-editor .ProseMirror .shard-rich-reminder svg {
+:is(.shard-rich-editor .ProseMirror, .shard-rich-content) .shard-rich-reminder svg {
   width: 1em;
   height: 1em;
 }
 
 /* 已到点且所在任务项未勾选：kiln 警示色。只认任务标题段里的芯片，
  * 与 Dock 角标「已到点且未勾选」的计数口径一致；勾选后自动退回安静态。 */
-.shard-rich-editor
-  .ProseMirror
+:is(.shard-rich-editor .ProseMirror, .shard-rich-content)
   li[data-checked="false"]
   > .shard-rich-task
   > .shard-rich-task-body
@@ -328,20 +326,20 @@
   > p:first-child
   .shard-rich-reminder[data-due="true"],
 /* 右侧控件位的芯片由 NodeView 按「已到点且未勾选」直接挂 data-due。 */
-.shard-rich-editor .ProseMirror .shard-rich-task-reminder-slot .shard-rich-reminder[data-due="true"] {
+:is(.shard-rich-editor .ProseMirror, .shard-rich-content) .shard-rich-task-reminder-slot .shard-rich-reminder[data-due="true"] {
   border-color: color-mix(in srgb, var(--warning) 35%, transparent);
   background: var(--warning-bg);
   color: var(--warning);
 }
 
 /* 正在输入的 `[[查询`：与已落地的双链同色。 */
-.shard-rich-editor .ProseMirror .shard-rich-suggestion-mark--wikilink {
+:is(.shard-rich-editor .ProseMirror, .shard-rich-content) .shard-rich-suggestion-mark--wikilink {
   color: var(--info);
 }
 
 /* 图片附件：缩略图 + alt/路径说明 + 删除，几何沿用附件行的方块规格。 */
 /* 粘贴、拖放图片后、存好之前的占位（装饰，不进文档）。 */
-.shard-rich-editor .ProseMirror .shard-rich-image-uploading {
+:is(.shard-rich-editor .ProseMirror, .shard-rich-content) .shard-rich-image-uploading {
   display: inline-flex;
   align-items: center;
   padding: var(--shard-space-1) var(--shard-space-2);
@@ -352,7 +350,7 @@
   vertical-align: top;
 }
 
-.shard-rich-editor .ProseMirror .shard-rich-image {
+:is(.shard-rich-editor .ProseMirror, .shard-rich-content) .shard-rich-image {
   display: inline-flex;
   max-width: 100%;
   align-items: center;
@@ -363,18 +361,18 @@
   white-space: normal;
 }
 
-.shard-rich-editor .ProseMirror .shard-rich-image[data-selected="true"] {
+:is(.shard-rich-editor .ProseMirror, .shard-rich-content) .shard-rich-image[data-selected="true"] {
   border-color: var(--accent);
 }
 
-.shard-rich-editor .ProseMirror .shard-rich-image-meta {
+:is(.shard-rich-editor .ProseMirror, .shard-rich-content) .shard-rich-image-meta {
   display: flex;
   min-width: 0;
   flex-direction: column;
   gap: var(--shard-space-1);
 }
 
-.shard-rich-editor .ProseMirror .shard-rich-image-alt {
+:is(.shard-rich-editor .ProseMirror, .shard-rich-content) .shard-rich-image-alt {
   overflow: hidden;
   color: var(--foreground);
   font-size: var(--text-meta);
@@ -382,14 +380,14 @@
   white-space: nowrap;
 }
 
-.shard-rich-editor .ProseMirror .shard-rich-image-path {
+:is(.shard-rich-editor .ProseMirror, .shard-rich-content) .shard-rich-image-path {
   color: var(--muted-foreground);
   font-family: var(--font-mono);
   font-size: var(--text-tiny);
   overflow-wrap: anywhere;
 }
 
-.shard-rich-editor .ProseMirror .shard-rich-image-action {
+:is(.shard-rich-editor .ProseMirror, .shard-rich-content) .shard-rich-image-action {
   flex-shrink: 0;
   color: var(--muted-foreground);
 }
@@ -397,24 +395,32 @@
 /* 任务列表：复选框留在文本流里，行高不被撑开，
  * 与 frontend-rules.css 的编辑器复选框对齐口径一致。
  * NodeView 在 li 里又包了一层 wrapper，横向排布挂在 wrapper 上。 */
-.shard-rich-editor .ProseMirror ul[data-type="taskList"] {
+:is(.shard-rich-editor .ProseMirror, .shard-rich-content) ul[data-type="taskList"] {
   padding-inline-start: 0;
   list-style: none;
 }
 
-.shard-rich-editor .ProseMirror ul[data-type="taskList"] > li {
+:is(.shard-rich-editor .ProseMirror, .shard-rich-content) ul[data-type="taskList"] > li {
   display: block;
+}
+
+/* 完成态共用一处规则；只划掉本项标题，不影响仍未完成的子任务。 */
+:is(.shard-rich-editor .ProseMirror, .shard-rich-content) li[data-checked="true"]
+  > .shard-rich-task > .shard-rich-task-body > div > :is(p, [data-shard-paragraph]):first-child {
+  color: var(--muted-foreground);
+  text-decoration-line: line-through;
+  text-decoration-color: color-mix(in srgb, var(--muted-foreground) 60%, transparent);
 }
 
 /* 普通任务就是 Markdown 复选框：一行一项，不加外框，与碎片卡片渲染一致（frontend-rules.css
  * 里 `.shard-task-group` 同样去掉了外框）。备忘卡片（带备注的任务项）是另一种东西，自己是一张卡；
  * 复选框行与备忘卡片之间留一档间距。 */
-.shard-rich-editor .ProseMirror ul[data-type="taskList"]:not(li *) > li + li:has(> .shard-rich-memo),
-.shard-rich-editor .ProseMirror ul[data-type="taskList"]:not(li *) > li:has(> .shard-rich-memo) + li {
+:is(.shard-rich-editor .ProseMirror, .shard-rich-content) ul[data-type="taskList"]:not(li *) > li + li:has(> .shard-rich-memo),
+:is(.shard-rich-editor .ProseMirror, .shard-rich-content) ul[data-type="taskList"]:not(li *) > li:has(> .shard-rich-memo) + li {
   margin-top: var(--shard-space-2);
 }
 
-.shard-rich-editor .ProseMirror .shard-rich-task {
+:is(.shard-rich-editor .ProseMirror, .shard-rich-content) .shard-rich-task {
   display: flex;
   align-items: flex-start;
   gap: var(--shard-space-2);
@@ -423,16 +429,15 @@
 /* 有序任务（`1. [ ] 事项`）：复选框前显示序号，与卡片渲染 packages/markdown 的
  * `.md-task-list-marker` 同一形态（序号 + 复选框 + 正文）。序号用 CSS 计数器按
  * 位置给出，与序列化的「从 1 起重排」一致；嵌套列表各自重新计数。 */
-.shard-rich-editor .ProseMirror ul[data-type="taskList"][data-ordered="true"] {
+:is(.shard-rich-editor .ProseMirror, .shard-rich-content) ul[data-type="taskList"][data-ordered="true"] {
   counter-reset: shard-rich-task-order;
 }
 
-.shard-rich-editor .ProseMirror ul[data-type="taskList"][data-ordered="true"] > li {
+:is(.shard-rich-editor .ProseMirror, .shard-rich-content) ul[data-type="taskList"][data-ordered="true"] > li {
   counter-increment: shard-rich-task-order;
 }
 
-.shard-rich-editor
-  .ProseMirror
+:is(.shard-rich-editor .ProseMirror, .shard-rich-content)
   ul[data-type="taskList"][data-ordered="true"]
   > li
   > .shard-rich-task::before {
@@ -447,7 +452,7 @@
  * 容器与正文首行同字体同行高，行盒基线与正文一致；复选框作为行内块，
  * 底边就是它的基线，`vertical-align` 把它的中心抬到基线上方 0.5cap。
  * 控件本身是共享的 Kiln Checkbox，几何与库里其他复选框同一档。 */
-.shard-rich-editor .ProseMirror .shard-rich-task-check {
+:is(.shard-rich-editor .ProseMirror, .shard-rich-content) .shard-rich-task-check {
   display: block;
   flex-shrink: 0;
   height: calc(var(--shard-editor-font-size) * var(--shard-editor-line-height));
@@ -455,20 +460,20 @@
   user-select: none;
 }
 
-.shard-rich-editor .ProseMirror .shard-rich-task-check > [data-slot="checkbox"] {
+:is(.shard-rich-editor .ProseMirror, .shard-rich-content) .shard-rich-task-check > [data-slot="checkbox"] {
   display: inline-block;
   vertical-align: calc(0.5cap - 0.5rem);
 }
 
 /* 勾选标记脱离文档流：行内块没有流内内容，基线恒为底边，勾选前后不跳。 */
-.shard-rich-editor .ProseMirror .shard-rich-task-check [data-slot="checkbox-indicator"] {
+:is(.shard-rich-editor .ProseMirror, .shard-rich-content) .shard-rich-task-check [data-slot="checkbox-indicator"] {
   position: absolute;
   inset: 0;
 }
 
-.shard-rich-editor .ProseMirror .shard-rich-task-body,
+:is(.shard-rich-editor .ProseMirror, .shard-rich-content) .shard-rich-task-body,
 /* NodeViewContent 里还有一层 @tiptap/react 自己的容器，块级子节点在它里面。 */
-.shard-rich-editor .ProseMirror .shard-rich-task-body > * {
+:is(.shard-rich-editor .ProseMirror, .shard-rich-content) .shard-rich-task-body > * {
   min-width: 0;
   flex: 1 1 0%;
 }
@@ -479,7 +484,7 @@
  * （--radius-card + --card 底色 + 细边框），细节区只在会话内折叠，不写文件。
  * ------------------------------------------------------------------------- */
 
-.shard-rich-editor .ProseMirror .shard-rich-memo {
+:is(.shard-rich-editor .ProseMirror, .shard-rich-content) .shard-rich-memo {
   box-sizing: border-box;
   border: 1px solid var(--border);
   border-radius: var(--radius-card);
@@ -489,14 +494,13 @@
 }
 
 /* 标题是第一块，细节是它后面的块：标题正常字重，细节降一档。 */
-.shard-rich-editor .ProseMirror .shard-rich-memo .shard-rich-task-body > * > * + * {
+:is(.shard-rich-editor .ProseMirror, .shard-rich-content) .shard-rich-memo .shard-rich-task-body > * > * + * {
   margin-top: var(--shard-space-1);
   color: var(--muted-foreground);
   font-size: var(--text-meta);
 }
 
-.shard-rich-editor
-  .ProseMirror
+:is(.shard-rich-editor .ProseMirror, .shard-rich-content)
   .shard-rich-memo[data-collapsed="true"]
   .shard-rich-task-body
   > *
@@ -506,7 +510,7 @@
 
 /* 占位提示只在备忘卡片的空标题段与空细节段上出现。
  * `is-empty` 由 Placeholder 扩展打上，文案由 NodeView 下发的自定义属性提供。 */
-.shard-rich-editor .ProseMirror .shard-rich-memo p.is-empty::before {
+:is(.shard-rich-editor .ProseMirror, .shard-rich-content) .shard-rich-memo p.is-empty::before {
   content: var(--shard-memo-detail-placeholder, "");
   float: inline-start;
   height: 0;
@@ -514,18 +518,18 @@
   pointer-events: none;
 }
 
-.shard-rich-editor .ProseMirror .shard-rich-memo p.is-empty:first-child::before {
+:is(.shard-rich-editor .ProseMirror, .shard-rich-content) .shard-rich-memo p.is-empty:first-child::before {
   content: var(--shard-memo-title-placeholder, "");
 }
 
-.shard-rich-editor .ProseMirror .shard-rich-memo-toggle {
+:is(.shard-rich-editor .ProseMirror, .shard-rich-content) .shard-rich-memo-toggle {
   flex-shrink: 0;
   color: var(--muted-foreground);
 }
 
 /* 任务项右侧的提醒位：标题行尾的提醒（taskItem 的 reminder 属性）画成芯片放在这里，
  * 备忘卡片上它替换铃铛。普通任务与首行等高，备忘卡片与折叠钮等高，芯片垂直居中。 */
-.shard-rich-editor .ProseMirror .shard-rich-task-reminder-slot {
+:is(.shard-rich-editor .ProseMirror, .shard-rich-content) .shard-rich-task-reminder-slot {
   display: flex;
   flex-shrink: 0;
   align-items: center;
@@ -533,17 +537,17 @@
   user-select: none;
 }
 
-.shard-rich-editor .ProseMirror .shard-rich-memo .shard-rich-task-reminder-slot {
+:is(.shard-rich-editor .ProseMirror, .shard-rich-content) .shard-rich-memo .shard-rich-task-reminder-slot {
   min-height: var(--control-height-sm);
 }
 
 /* 备忘卡片的提醒钮：与折叠钮同一档；已设提醒时提到正文色，一眼可见。 */
-.shard-rich-editor .ProseMirror .shard-rich-memo-reminder {
+:is(.shard-rich-editor .ProseMirror, .shard-rich-content) .shard-rich-memo-reminder {
   flex-shrink: 0;
   color: var(--muted-foreground);
 }
 
-.shard-rich-editor .ProseMirror .shard-rich-memo-reminder[data-active="true"] {
+:is(.shard-rich-editor .ProseMirror, .shard-rich-content) .shard-rich-memo-reminder[data-active="true"] {
   color: var(--foreground);
 }
 
@@ -719,7 +723,7 @@
  * 外框与间距在这里统一，块内部的样式由各自的组件负责。
  * ------------------------------------------------------------------------- */
 
-.shard-rich-editor .ProseMirror .shard-rich-block {
+:is(.shard-rich-editor .ProseMirror, .shard-rich-content) .shard-rich-block {
   display: block;
   box-sizing: border-box;
   min-width: 0;
@@ -730,17 +734,17 @@
 }
 
 /* 节点被选中只用 --accent 表达，不画焦点环：它是编辑器内的选区，不是键盘焦点。 */
-.shard-rich-editor .ProseMirror .shard-rich-block[data-selected="true"] {
+:is(.shard-rich-editor .ProseMirror, .shard-rich-content) .shard-rich-block[data-selected="true"] {
   border-color: var(--accent);
 }
 
-.shard-rich-editor .ProseMirror .shard-rich-block-note {
+:is(.shard-rich-editor .ProseMirror, .shard-rich-content) .shard-rich-block-note {
   margin: 0 0 var(--shard-space-1);
   color: var(--muted-foreground);
   font-size: var(--text-tiny);
 }
 
-.shard-rich-editor .ProseMirror .shard-rich-block-head {
+:is(.shard-rich-editor .ProseMirror, .shard-rich-content) .shard-rich-block-head {
   display: flex;
   min-height: var(--control-height-sm);
   align-items: center;
@@ -748,18 +752,18 @@
   padding-inline: var(--shard-space-3);
 }
 
-.shard-rich-editor .ProseMirror .shard-rich-block-lang {
+:is(.shard-rich-editor .ProseMirror, .shard-rich-content) .shard-rich-block-lang {
   color: var(--muted-foreground);
   font-size: var(--text-tiny);
   font-weight: var(--weight-medium);
 }
 
-.shard-rich-editor .ProseMirror .shard-rich-block-action {
+:is(.shard-rich-editor .ProseMirror, .shard-rich-content) .shard-rich-block-action {
   margin-inline-start: auto;
   color: var(--muted-foreground);
 }
 
-.shard-rich-editor .ProseMirror .shard-rich-block-source {
+:is(.shard-rich-editor .ProseMirror, .shard-rich-content) .shard-rich-block-source {
   margin: 0;
   padding: var(--shard-space-2) var(--shard-space-3);
   color: var(--muted-foreground);
@@ -770,8 +774,8 @@
 }
 
 /* 未注册的围栏语言与原始块：不可编辑的灰块，内容原样保留。 */
-.shard-rich-editor .ProseMirror .shard-rich-block-unknown,
-.shard-rich-editor .ProseMirror .shard-rich-raw-block {
+:is(.shard-rich-editor .ProseMirror, .shard-rich-content) .shard-rich-block-unknown,
+:is(.shard-rich-editor .ProseMirror, .shard-rich-content) .shard-rich-raw-block {
   border: 1px solid var(--border);
   border-radius: var(--radius-card);
   background: var(--muted);
@@ -780,9 +784,14 @@
   user-select: none;
 }
 
-.shard-rich-editor .ProseMirror .shard-rich-block-unknown .shard-rich-block-lang {
+:is(.shard-rich-editor .ProseMirror, .shard-rich-content) .shard-rich-block-unknown .shard-rich-block-lang {
   display: block;
   padding-inline: var(--shard-space-3);
+}
+
+/* 卡片里的未知块是可复制的原文，编辑器仍保留原子节点的选区策略。 */
+.shard-fragment-content.shard-rich-content .shard-rich-raw-block {
+  user-select: text;
 }
 
 /* ---------------------------------------------------------------------------
@@ -791,20 +800,20 @@
  * 单元格本身可编辑，不需要 input 替身。
  * ------------------------------------------------------------------------- */
 
-.shard-rich-editor .ProseMirror .tableWrapper {
+:is(.shard-rich-editor .ProseMirror, .shard-rich-content) .tableWrapper {
   max-width: 100%;
   overflow-x: auto;
 }
 
-.shard-rich-editor .ProseMirror .tableWrapper table {
+:is(.shard-rich-editor .ProseMirror, .shard-rich-content) .tableWrapper table {
   width: 100%;
   border-collapse: collapse;
   font-variant-numeric: tabular-nums;
   table-layout: fixed;
 }
 
-.shard-rich-editor .ProseMirror .tableWrapper th,
-.shard-rich-editor .ProseMirror .tableWrapper td {
+:is(.shard-rich-editor .ProseMirror, .shard-rich-content) .tableWrapper th,
+:is(.shard-rich-editor .ProseMirror, .shard-rich-content) .tableWrapper td {
   position: relative;
   min-width: calc(var(--shard-space-8) * 1.5);
   border: 1px solid var(--border);
@@ -812,19 +821,19 @@
   vertical-align: top;
 }
 
-.shard-rich-editor .ProseMirror .tableWrapper th {
+:is(.shard-rich-editor .ProseMirror, .shard-rich-content) .tableWrapper th {
   background: var(--muted);
   font-weight: var(--weight-semibold);
   text-align: start;
 }
 
-.shard-rich-editor .ProseMirror .tableWrapper th > p,
-.shard-rich-editor .ProseMirror .tableWrapper td > p {
+:is(.shard-rich-editor .ProseMirror, .shard-rich-content) .tableWrapper th > :is(p, [data-shard-paragraph]),
+:is(.shard-rich-editor .ProseMirror, .shard-rich-content) .tableWrapper td > :is(p, [data-shard-paragraph]) {
   margin: 0;
 }
 
 /* 跨单元格选区：与节点选中态共用 --accent，不另造一套高亮色。 */
-.shard-rich-editor .ProseMirror .selectedCell::after {
+:is(.shard-rich-editor .ProseMirror, .shard-rich-content) .selectedCell::after {
   position: absolute;
   z-index: 2;
   background: var(--accent);
@@ -837,7 +846,7 @@
 /* 自绘光标（extensions/shard-caret.ts）：WebKit 原生光标撑满 1.8em 行盒，
  * 这里画一根贴字形高度的竖线。原生光标只在 .ProseMirror 本身上透明，
  * 节点视图里的输入框（contenteditable=false 子树）恢复原生光标。 */
-.shard-rich-editor .ProseMirror [contenteditable="false"] {
+:is(.shard-rich-editor .ProseMirror, .shard-rich-content) [contenteditable="false"] {
   caret-color: var(--shard-caret-color);
 }
 
