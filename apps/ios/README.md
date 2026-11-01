@@ -2,6 +2,8 @@
 
 浏览 Shard 资料库并快速记录碎片的原生 iOS App（SwiftUI，iOS 17+）。支持用邮箱和密码连接 Shard 服务器，也保留 GitHub 仓库连接。设计与决策见 [docs/dev/ios-app-plan.md](../../docs/dev/ios-app-plan.md)。
 
+这是 Shard 的移动客户端，与 **Web、macOS 桌面**共同构成三个应用端。平台关系与发布状态见 [三端说明](../../docs/dev/platforms.md)。当前 GitHub Release 不含 IPA；真机安装需要自己的 Apple 签名配置。
+
 ## 目录
 
 | 路径 | 内容 |

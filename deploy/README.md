@@ -1,6 +1,8 @@
 # 部署 Shard 服务端
 
-服务端是资料库的唯一真相源：一台 VPS 上的 `shard-server`（只监听本机）+ Caddy（TLS 与反代）。
+本文用于部署 **Web 客户端及 iOS App、macOS 桌面可连接的共用服务端**。三种客户端的区别见 [三端说明](../docs/dev/platforms.md)。
+
+在服务器模式下，服务端是资料库的唯一真相源：一台 VPS 上的 `shard-server`（只监听本机）+ Caddy（TLS 与反代）。
 设计见 `docs/dev/server-sqlite-plan.md`。下面每一步都在 VPS 上做，除非特别说明。
 
 > **数据与凭据安全**
