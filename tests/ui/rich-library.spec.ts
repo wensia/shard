@@ -9,6 +9,7 @@ import {
 } from "./editor-helpers"
 import { installSearchIpcMock } from "./search-ipc-mock"
 import { routeShardAssets } from "./shard-asset-mock"
+import { installLocalVoiceMock } from "./voice-local-mock"
 
 /**
  * 阶段 D2a：资料库编辑器切富文本（技术方案 §5、§6 阶段 3）。
@@ -191,6 +192,43 @@ test.describe("资料库编辑器", () => {
     await installRichLibraryMock(page)
     await page.goto("/")
     await openSampleNote(page)
+  })
+
+  test("语音输入替换文档选区并可撤销", async ({ page }) => {
+    await installLocalVoiceMock(page)
+    await selectEditorText(page, `library:${NOTE_ID}`, "正文第一段")
+    await page.getByRole("button", { name: "语音输入", exact: true }).click()
+    await expect(proseMirror(page)).toHaveAttribute("contenteditable", "false")
+    await page.getByRole("button", { name: "结束并识别" }).click()
+    await expect(proseMirror(page)).toContainText("识别文字")
+    await expect(proseMirror(page)).toHaveAttribute("contenteditable", "true")
+    await proseMirror(page).press("Meta+z")
+    await expect(proseMirror(page)).toContainText("正文第一段")
+    await expect(proseMirror(page).locator("h1")).toContainText("文档样例")
+  })
+
+  test("文档朗读只发送当前选区", async ({ page }) => {
+    await installLocalVoiceMock(page)
+    await selectEditorText(page, `library:${NOTE_ID}`, "正文第一段")
+    await page.getByRole("button", { name: "朗读", exact: true }).click()
+    await expect.poll(() => page.evaluate(() => (window as any).__voiceCalls.filter((c: any) => c.command === "voice_synthesize").map((c: any) => c.args.text))).toEqual(["正文第一段"])
+    await page.getByLabel("朗读控制", { exact: true }).getByRole("button", { name: "停止", exact: true }).click()
+  })
+
+  test("切换文档取消识别，迟到结果不写入下一篇", async ({ page }) => {
+    await installLocalVoiceMock(page)
+    await page.evaluate(() => { (window as any).__voiceHold = true })
+    await page.getByRole("button", { name: "语音输入", exact: true }).click()
+    await page.getByRole("button", { name: "结束并识别" }).click()
+    await expect(page.getByText("识别中…", { exact: true })).toBeVisible()
+    await page.getByRole("button", { name: "返回所在目录", exact: true }).click()
+    await page.getByRole("button", { name: "打开文件 目标文档.md", exact: true }).click()
+    const target = page.locator('[data-shard-editor="library:library-target"] .ProseMirror')
+    await expect(target).toBeVisible()
+    await page.evaluate(() => (window as any).__voiceRelease())
+    await expect(target).toContainText("被双链指向的文档")
+    await expect(target).not.toContainText("识别文字")
+    await expect.poll(() => page.evaluate(() => (window as any).__voiceCalls.filter((c: any) => c.command === "voice_cancel").length)).toBeGreaterThan(0)
   })
 
   test("打开 md 文档即富文本：文档档、library 几何，编辑区里没有 Markdown 语法", async ({

@@ -28,6 +28,8 @@ import {
   type ShardRichEditorHandle,
 } from "@/editor-rich/ShardRichEditor"
 import { useImageUpload } from "@/hooks/use-image-upload"
+import { useRichVoice } from "@/hooks/use-rich-voice"
+import { VoiceInputControls, ReadAloudButton } from "@/features/voice"
 import {
   extractTags,
   getTagRanges,
@@ -187,6 +189,10 @@ export function FragmentEditor({
   const isOutlineSurface = kind === "outline"
   const isDocumentSurface = kind === "document"
   const tier = isDocumentSurface ? "document" : "fragment"
+  const voiceAllowed = isOpen && !isOutlineSurface && kind !== "flowchart" && !fragment?.lockbox && !wantsLockbox(content, fragment?.tags ?? [])
+  const voice = useRichVoice(editorId, richEditorRef, !voiceAllowed || readOnly || saveState === "saving")
+  const voiceBusyRef = useRef(voice.busy)
+  voiceBusyRef.current = voice.busy
   /** 禅模式下大纲的两个视图：幕布式大纲（默认）与只读导图。 */
   const [outlineView, setOutlineView] = useState<"outline" | "mindmap">("outline")
   const [mindMapViewHeight, setMindMapViewHeight] = useState(360)
@@ -439,6 +445,7 @@ export function FragmentEditor({
   if (!isZen && isDocumentSurface && onRequestZen) return null
 
   async function handleClose() {
+    void voice.cancel()
     clearBlurCommitTimer()
     clearSaveTimer()
 
@@ -461,6 +468,7 @@ export function FragmentEditor({
   }
 
   async function handleSubmit() {
+    if (voiceBusyRef.current) return false
     clearBlurCommitTimer()
     clearSaveTimer()
 
@@ -488,7 +496,7 @@ export function FragmentEditor({
   }
 
   function handleEditorBlur(event: FocusEvent<HTMLElement>) {
-    if (readOnly || !commitOnBlur || isZen || blurCommitPausedRef.current) return
+    if (readOnly || voiceBusyRef.current || !commitOnBlur || isZen || blurCommitPausedRef.current) return
 
     const editorElement = event.currentTarget
     const nextFocused = event.relatedTarget
@@ -497,7 +505,7 @@ export function FragmentEditor({
     clearBlurCommitTimer()
     blurCommitTimerRef.current = window.setTimeout(() => {
       blurCommitTimerRef.current = null
-      if (blurCommitPausedRef.current) return
+      if (blurCommitPausedRef.current || voiceBusyRef.current) return
       if (isInsideEditorSurface(editorElement, document.activeElement)) {
         return
       }
@@ -704,7 +712,7 @@ export function FragmentEditor({
         ))}
       </div>
     ) : null
-  const canSubmit = saveState !== "saving" && draftContent.trim().length > 0
+  const canSubmit = !voice.busy && saveState !== "saving" && draftContent.trim().length > 0
   const characterCount = Array.from(content.replace(/\s/g, "")).length
   // 公开笔记里出现 #密匣 意味着保存时会加密搬家，提前亮出目的地
   const willRouteToLockbox =
@@ -819,7 +827,7 @@ export function FragmentEditor({
               void handleSubmit()
             }}
             ref={richEditorRef}
-            readOnly={readOnly}
+            readOnly={readOnly || voice.busy}
             tier={tier}
             value={content}
             variant={isZen ? "zen" : "inline"}
@@ -956,7 +964,11 @@ export function FragmentEditor({
             </div>
           ) : (
             <EditorToolbar
-              disabled={readOnly || saveState === "saving"}
+              disabled={readOnly || voice.busy || saveState === "saving"}
+              leading={voiceAllowed ? <>
+                {!readOnly ? <VoiceInputControls dictation={voice} /> : null}
+                <ReadAloudButton targetId={editorId} disabled={voice.busy} getContent={() => ({ text: richEditorRef.current?.getSelectedMarkdown() ?? content, format: "markdown" })} />
+              </> : null}
               trailing={inlineTrailing}
             />
           )}
@@ -971,6 +983,10 @@ export function FragmentEditor({
       (isDraft ? "新碎片" : isDocumentSurface ? "未命名文档" : "未命名碎片")
   const zenActions = (
     <>
+      {voiceAllowed ? <>
+        {!readOnly ? <VoiceInputControls dictation={voice} /> : null}
+        <ReadAloudButton targetId={editorId} disabled={voice.busy} getContent={() => ({ text: richEditorRef.current?.getSelectedMarkdown() ?? content, format: "markdown" })} />
+      </> : null}
       {isOutlineSurface ? (
         // 导图是同一棵树的另一个视图，不是另一种文件（产品框架 §2）。
         <div

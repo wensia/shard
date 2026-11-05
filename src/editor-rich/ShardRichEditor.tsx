@@ -1,7 +1,7 @@
 import Placeholder from "@tiptap/extension-placeholder"
 import { EditorContent, useEditor } from "@tiptap/react"
 import type { AnyExtension, Editor, JSONContent } from "@tiptap/core"
-import { undoDepth } from "@tiptap/pm/history"
+import { closeHistory, undoDepth } from "@tiptap/pm/history"
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model"
 import {
   forwardRef,
@@ -139,6 +139,9 @@ export interface ShardRichEditorProps {
 
 export interface ShardRichEditorHandle extends SearchRevealHandle {
   focus(): void
+  /** Capture the document and selection before asynchronous dictation locks this editor. */
+  captureTextInsertion(): ((text: string) => boolean) | null
+  getSelectedMarkdown(): string | null
   insertDatasetReference(path: string): void
   /** 访达拖进来的图片：按页面坐标找落点（不给坐标就插在光标处），逐张存好后原位插入。 */
   insertImagesFromPaths(paths: string[], point?: { clientX: number; clientY: number }): void
@@ -671,6 +674,24 @@ export const ShardRichEditor = forwardRef<ShardRichEditorHandle, ShardRichEditor
         },
         focus() {
           editorRef.current?.commands.focus()
+        },
+        captureTextInsertion() {
+          const instance = editorRef.current
+          if (!instance || instance.isDestroyed || !instance.isEditable || instance.view.composing) return null
+          const { doc, selection } = instance.state
+          return (text) => {
+            // A reload or another writer invalidates the captured range. Never overwrite it.
+            if (editorRef.current !== instance || instance.isDestroyed || instance.state.doc !== doc) return false
+            instance.view.dispatch(closeHistory(instance.state.tr.insertText(text, selection.from, selection.to)))
+            instance.view.dispatch(closeHistory(instance.state.tr))
+            instance.view.focus()
+            return true
+          }
+        },
+        getSelectedMarkdown() {
+          const instance = editorRef.current
+          if (!instance || instance.isDestroyed || instance.state.selection.empty) return null
+          return serializeShardMarkdown({ type: "doc", content: instance.state.selection.content().content.toJSON() })
         },
         getMarkdown() {
           // 宿主读正文即「要用这份内容了」：先把手打的标签与双链收敛成节点，

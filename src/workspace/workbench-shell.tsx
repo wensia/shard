@@ -4,6 +4,7 @@ import styles from "../App.module.css"
 import { LockKeyholeIcon, XIcon } from "@/components/icons"
 import { BottomTabs } from "@/components/shard/bottom-tabs"
 import { StatusBar } from "@/components/shard/status-bar"
+import { useVoice } from "@/features/voice"
 import {
   FragmentEditor,
   setFragmentEditorBlurCommitPaused,
@@ -212,7 +213,6 @@ interface ZenDraft {
 interface WorkbenchShellProps {
   route: WorkspaceRoute
   setRoute: (route: WorkspaceRoute) => void
-  onOpenCloud?: () => void
 }
 
 function readSidebarCollapsed(): boolean {
@@ -238,8 +238,8 @@ function warnSkippedLargeFiles(paths: string[] | undefined) {
   })
 }
 
-export function WorkbenchShell({ route, setRoute, onOpenCloud }: WorkbenchShellProps) {
-  const [isOpeningCloud, setIsOpeningCloud] = useState(false)
+export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
+  const voice = useVoice()
   const {
     acceptsVaultStateResponse,
     beginVaultStateRequest,
@@ -353,7 +353,6 @@ export function WorkbenchShell({ route, setRoute, onOpenCloud }: WorkbenchShellP
   const mindMapWorkspaceRef = useRef<MindMapWorkspaceHandle>(null)
   const flowchartWorkspaceRef = useRef<CanvasWorkspaceHandle>(null)
   const composerDraftRef = useRef("")
-  const composerDirtyRef = useRef(false)
   const fragmentFlushRef = useRef<(() => Promise<boolean>) | null>(null)
   const registerFragmentFlush = useCallback((flush: (() => Promise<boolean>) | null) => { fragmentFlushRef.current = flush }, [])
   useEffect(() => {
@@ -856,6 +855,7 @@ export function WorkbenchShell({ route, setRoute, onOpenCloud }: WorkbenchShellP
   function applyVaultState(state: VaultState) {
     const previousVaultPath = vaultPathRef.current
     if (previousVaultPath && previousVaultPath !== state.vaultPath) {
+      voice.stop()
       revokeSearchSession("vaultChanged")
     } else if (
       !state.lockbox.unlocked &&
@@ -1233,6 +1233,7 @@ export function WorkbenchShell({ route, setRoute, onOpenCloud }: WorkbenchShellP
   }
 
   function openInlineEditor(fragment: Fragment) {
+    voice.stop()
     if (isJsonOutlineFragment(fragment)) {
       openOutlineEditor(fragment)
       return
@@ -1247,6 +1248,7 @@ export function WorkbenchShell({ route, setRoute, onOpenCloud }: WorkbenchShellP
   }
 
   function openZenEditor(fragment: Fragment) {
+    voice.stop()
     if (isJsonOutlineFragment(fragment)) {
       openOutlineEditor(fragment)
       return
@@ -1287,6 +1289,7 @@ export function WorkbenchShell({ route, setRoute, onOpenCloud }: WorkbenchShellP
   }
 
   function openOutlineEditor(fragment: Fragment, searchRequestId?: string) {
+    voice.stop()
     setZenDraft(null)
     setEditingFragmentId(null)
     setSearchEditorNavigation(null)
@@ -1297,6 +1300,7 @@ export function WorkbenchShell({ route, setRoute, onOpenCloud }: WorkbenchShellP
   }
 
   function openFlowchartEditor(fragment: Fragment, searchRequestId?: string) {
+    voice.stop()
     setZenDraft(null)
     setEditingFragmentId(null)
     setSearchEditorNavigation(null)
@@ -1357,6 +1361,7 @@ export function WorkbenchShell({ route, setRoute, onOpenCloud }: WorkbenchShellP
   }
 
   function openZenDraft(content: string) {
+    voice.stop()
     setEditingFragmentId(null)
     setEditingVariant("zen")
     setZenDraft({
@@ -2177,29 +2182,6 @@ export function WorkbenchShell({ route, setRoute, onOpenCloud }: WorkbenchShellP
       notify.failure("切换空间失败", error)
     } finally {
       workspaceNavigationInFlightRef.current = false
-    }
-  }
-
-  async function openCloudWorkspace() {
-    if (!onOpenCloud || isOpeningCloud || workspaceNavigationInFlightRef.current || isWorkspaceNavigationBlocked() || isCreating) return
-    if (composerDirtyRef.current) {
-      notify.info("请先保存本地草稿，再切换到云端")
-      return
-    }
-    workspaceNavigationInFlightRef.current = true
-    setIsOpeningCloud(true)
-    try {
-      if (!(await saveLibraryDraftBeforeNavigation())) return
-      if (lockbox?.unlocked) {
-        await lockLockbox()
-      }
-      revokeSearchSession("spaceChanged")
-      onOpenCloud()
-    } catch (error) {
-      notify.failure("切换到云端失败", error)
-    } finally {
-      workspaceNavigationInFlightRef.current = false
-      setIsOpeningCloud(false)
     }
   }
 
@@ -3187,8 +3169,6 @@ export function WorkbenchShell({ route, setRoute, onOpenCloud }: WorkbenchShellP
               fragments={publicOnlyFragments}
               isCollapsed={false}
               onOpenSearch={openSearch}
-              onOpenCloud={onOpenCloud ? () => void openCloudWorkspace() : undefined}
-              isOpeningCloud={isOpeningCloud}
               onRouteChange={handleRouteChange}
               onToggleCollapsed={() => {
                 setIsSidebarCollapsed(true)
@@ -3263,9 +3243,6 @@ export function WorkbenchShell({ route, setRoute, onOpenCloud }: WorkbenchShellP
               onCreateFlowchart: handleCreateFlowchart,
               onDraftChange: (content) => {
                 composerDraftRef.current = content
-              },
-              onDirtyChange: (dirty) => {
-                composerDirtyRef.current = dirty
               },
               onCreateOutline: handleCreateOutline,
               onNavigateToFragment: (fragmentId) => {
@@ -3389,8 +3366,6 @@ export function WorkbenchShell({ route, setRoute, onOpenCloud }: WorkbenchShellP
         </div>
         <div className={styles.bottomTabsSlot} data-focus-region="bottom-tabs">
           <BottomTabs
-            onOpenCloud={onOpenCloud ? () => void openCloudWorkspace() : undefined}
-            isOpeningCloud={isOpeningCloud}
             fragments={publicOnlyFragments}
             onHelp={showHelp}
             onOpenSearch={openSearch}

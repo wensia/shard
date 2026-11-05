@@ -6,7 +6,6 @@ import {
   MoreHorizontalIcon,
   SearchIcon,
   SettingsIcon,
-  TableIcon,
 } from "@/components/icons"
 import { useState } from "react"
 
@@ -38,8 +37,6 @@ interface BottomTabsProps {
   fragments: Fragment[]
   onHelp: () => void
   onOpenSearch: () => void
-  onOpenCloud?: () => void
-  isOpeningCloud?: boolean
   onOpenSettings: () => void
   onRouteChange: (route: WorkspaceRoute) => void
   onShortcuts: () => void
@@ -79,8 +76,6 @@ export function BottomTabs({
   fragments,
   onHelp,
   onOpenSearch,
-  onOpenCloud,
-  isOpeningCloud,
   onOpenSettings,
   onRouteChange,
   onShortcuts,
@@ -233,14 +228,6 @@ export function BottomTabs({
               <span className="sr-only">更多操作</span>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" side="top" style={{ width: 160 }}>
-              {onOpenCloud ? (
-                <BottomMenuItem
-                  icon={TableIcon}
-                  label="金山多维表格"
-                  disabled={isOpeningCloud}
-                  onSelect={onOpenCloud}
-                />
-              ) : null}
               <BottomMenuItem
                 icon={SearchIcon}
                 label="搜索笔记"
@@ -274,15 +261,13 @@ function BottomMenuItem({
   icon: Icon,
   label,
   onSelect,
-  disabled,
 }: {
   icon: typeof SearchIcon
   label: string
   onSelect: () => void
-  disabled?: boolean
 }) {
   return (
-    <DropdownMenuItem disabled={disabled} onClick={() => window.setTimeout(onSelect, 0)}>
+    <DropdownMenuItem onClick={() => window.setTimeout(onSelect, 0)}>
       <Icon aria-hidden="true" />
       <span>{label}</span>
     </DropdownMenuItem>

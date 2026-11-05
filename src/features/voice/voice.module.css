@@ -1,0 +1,6 @@
+.controls { display: inline-flex; align-items: center; flex-wrap: wrap; gap: var(--shard-space-2); }
+.error { color: var(--destructive); font-size: var(--text-meta); }
+.status { color: var(--muted-foreground); font-size: var(--text-meta); }
+.settings { --shard-focus-offset: -2px; display: flex; flex-direction: column; gap: var(--shard-space-4); overflow: auto; }
+.field { display: flex; flex-direction: column; gap: var(--shard-space-2); font-size: var(--text-body); }
+.player { position: fixed; bottom: var(--shard-space-6); right: var(--shard-space-6); z-index: var(--shard-z-voice-player); padding: var(--shard-space-3); background: var(--popover); color: var(--popover-foreground); border-radius: var(--shard-surface-radius); box-shadow: var(--shadow-popover); max-width: calc(100vw - var(--shard-space-8)); }

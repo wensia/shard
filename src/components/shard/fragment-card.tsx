@@ -22,6 +22,7 @@ import { MindMapFenceEmbed } from "@/components/shard/mind-map-fence-embed"
 import { FragmentRelated } from "@/components/shard/fragment-related"
 import { TagBadge } from "@/components/shard/tag-badge"
 import { Button } from "@/components/ui/button"
+import { ReadAloudButton, useVoice } from "@/features/voice"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -37,6 +38,7 @@ import {
 import { readOutlineContent } from "@/lib/mind-map-outline"
 import { readFlowchartContent } from "@/lib/flowchart-content"
 import { notify } from "@/lib/notify"
+import { wantsLockbox } from "@/lib/lockbox"
 import type { RelatedFragment } from "@/lib/relations"
 import { cn } from "@/lib/utils"
 import type { CsvFileSummary, Fragment } from "@/types"
@@ -110,6 +112,7 @@ export function FragmentCard({
   variant = "card",
   vaultPath,
 }: FragmentCardProps) {
+  const voice = useVoice()
   const [isMenuOpen, setIsMenuOpen] = useState(false)
   const [isRelatedOpen, setIsRelatedOpen] = useState(false)
   const createdTime = formatCreatedTime(fragment.createdAt)
@@ -120,6 +123,7 @@ export function FragmentCard({
   const typeBadge = TYPE_BADGES[fragment.kind]
 
   function openNextSurface(action: () => void) {
+    voice.stopOwner(`fragment-card:${fragment.id}`)
     setIsMenuOpen(false)
     window.setTimeout(action, 0)
   }
@@ -271,8 +275,12 @@ export function FragmentCard({
         </div>
 
         <div
-          style={{ display: "flex", flexShrink: 0, alignItems: "center" }}
+          style={{ display: "flex", flexShrink: 0, alignItems: "center", gap: "var(--shard-space-1)" }}
         >
+          {!fragment.lockbox && !wantsLockbox(fragment.content, fragment.tags)
+            && (fragment.kind === "fragment" || fragment.kind === "document" || fragment.kind === "note") ? (
+            <ReadAloudButton targetId={`fragment-card:${fragment.id}`} getContent={() => ({ text: fragment.content, format: "markdown" })} />
+          ) : null}
           <DropdownMenu open={isMenuOpen} onOpenChange={setIsMenuOpen}>
             <DropdownMenuTrigger
               render={
@@ -352,7 +360,10 @@ export function FragmentCard({
         fragment={fragment}
         indexVersion={relationIndexVersion}
         isOpen={isRelatedOpen}
-        onNavigate={onNavigateToFragment}
+        onNavigate={onNavigateToFragment ? (id) => {
+          voice.stopOwner(`fragment-card:${fragment.id}`)
+          onNavigateToFragment(id)
+        } : undefined}
         onToggle={() => setIsRelatedOpen((open) => !open)}
         onUnlinkFragment={onUnlinkFragment}
         requestRelated={requestRelated}

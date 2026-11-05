@@ -7,6 +7,7 @@ import {
   KeyboardIcon,
   Loader2Icon,
   MonitorIcon,
+  MicIcon,
   MoonIcon,
   PaletteIcon,
   RefreshCwIcon,
@@ -52,6 +53,7 @@ import {
   uninstallCli,
 } from "@/lib/api"
 import { notify } from "@/lib/notify"
+import { VoiceSettings } from "@/features/voice"
 import type {
   CliInstallStatus,
   GithubCliInfo,
@@ -107,10 +109,10 @@ const monoPathStyle: CSSProperties = {
   userSelect: "all",
 }
 
-export type SettingsSection = "appearance" | "cli" | "git" | "shortcuts" | "vault"
+export type SettingsSection = "appearance" | "cli" | "git" | "shortcuts" | "vault" | "voice"
 
 /** 设置单页里的分区顺序，也是左侧锚点导航的顺序。 */
-const SETTINGS_SECTIONS: SettingsSection[] = ["vault", "git", "appearance", "cli", "shortcuts"]
+const SETTINGS_SECTIONS: SettingsSection[] = ["vault", "git", "appearance", "voice", "cli", "shortcuts"]
 
 interface VaultGuideProps {
   autoSyncEnabled: boolean
@@ -1206,6 +1208,7 @@ export function VaultGuide({
     git: { icon: GitBranchIcon, label: copy.navGit },
     shortcuts: { icon: KeyboardIcon, label: copy.navShortcuts },
     vault: { icon: FolderOpenIcon, label: copy.vaultTitle },
+    voice: { icon: MicIcon, label: locale === "zh" ? "语音" : "Voice" },
   }
   const spinner = <Loader2Icon aria-hidden="true" className={styles.spin} />
   const cliStatusDescription = cliError ? (
@@ -1237,7 +1240,7 @@ export function VaultGuide({
         }}
       >
         <DialogDescription className="sr-only">
-          配置 Shard 的目录、Git 同步、外观、终端命令与快捷键。
+          配置 Shard 的目录、Git 同步、外观、语音、终端命令与快捷键。
         </DialogDescription>
         <header className={styles.settingsHeader}>
           <DialogTitle className={styles.settingsTitle}>
@@ -1577,6 +1580,10 @@ export function VaultGuide({
                   </div>
                 </SettingsRow>
               </SettingsGroup>
+            </SettingsBlock>
+
+            <SettingsBlock id="voice" title={locale === "zh" ? "语音" : "Voice"}>
+              <VoiceSettings />
             </SettingsBlock>
 
             <SettingsBlock id="cli" title={copy.cliTitle}>

@@ -70,6 +70,9 @@ import {
   ShardRichEditor,
   type ShardRichEditorHandle,
 } from "@/editor-rich/ShardRichEditor"
+import { useRichVoice } from "@/hooks/use-rich-voice"
+import { VoiceInputControls, ReadAloudButton } from "@/features/voice"
+import { wantsLockbox } from "@/lib/lockbox"
 import {
   createLibraryDataset,
   createLibraryDirectory,
@@ -381,6 +384,13 @@ export function LibraryShell({
   ) || Boolean(searchNote?.archived && searchNote.id === selectedNoteId)
   const selectedTargetReadOnly =
     selectedNoteReadOnly || Boolean(activeSearchNavigation?.target.archived)
+  const voiceTargetId = `library:${selectedNoteId ?? "closed"}:${isZen ? "zen" : "normal"}`
+  const voiceAllowed = Boolean(selectedNote && !selectedNote.lockbox && !wantsLockbox(draft, selectedNote.tags))
+  const voice = useRichVoice(voiceTargetId, richNoteEditor, !voiceAllowed || selectedNoteReadOnly || interactionBlocked || structureBusy || busyAction !== null)
+  const voiceControls = voiceAllowed ? <>
+    {!selectedNoteReadOnly ? <VoiceInputControls dictation={voice} /> : null}
+    <ReadAloudButton targetId={voiceTargetId} disabled={voice.busy} getContent={() => ({ text: richNoteEditor.current?.getSelectedMarkdown() ?? draft, format: "markdown" })} />
+  </> : null
   const libraryMindMaps = useMemo(
     () => collectMindMapEntries(libraryTree?.entries ?? []),
     [libraryTree]
@@ -1875,7 +1885,7 @@ export function LibraryShell({
             fragment={selectedNote}
             inset={false}
             onFragmentUpdated={handlePropertyUpdated}
-            readOnly={selectedNoteReadOnly || interactionBlocked || structureBusy || busyAction !== null}
+            readOnly={selectedNoteReadOnly || voice.busy || interactionBlocked || structureBusy || busyAction !== null}
           />
           <div className="min-h-0 flex-1">
             <ShardRichEditor
@@ -1904,7 +1914,7 @@ export function LibraryShell({
               uploadImage={selectedNoteReadOnly ? undefined : saveImage}
               uploadImageFromPath={selectedNoteReadOnly ? undefined : saveImage}
               placeholder={selectedNote.path.startsWith("fragments/") ? "编辑碎片…" : "开始写文档…"}
-              readOnly={selectedNoteReadOnly || interactionBlocked || structureBusy || busyAction !== null}
+              readOnly={selectedNoteReadOnly || voice.busy || interactionBlocked || structureBusy || busyAction !== null}
               // 资料库文档按文档档开放工具（产品框架 §2）；碎片（非 document 类型）仍按碎片档。
               tier={selectedNote.path.startsWith("fragments/") && deriveKind(selectedNote.tags) !== "document" ? "fragment" : "document"}
               value={draft}
@@ -2304,6 +2314,7 @@ export function LibraryShell({
             )}
             {selectedNote || canEnterZen ? (
               <div className={styles.editorActions}>
+                {!isZen ? voiceControls : null}
                 {selectedNote ? (
                   <span
                     className={styles.saveState}
@@ -2362,6 +2373,7 @@ export function LibraryShell({
         <ZenSurface
           ariaLabel="资料库文档禅模式"
           bar={{
+            actions: voiceControls,
             meta: <LibraryZenWordCount content={draft} />,
             saveState: selectedNoteReadOnly ? "readOnly" : saveState,
             title: selectedTitle,

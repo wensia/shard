@@ -4,7 +4,6 @@ import {
   InboxIcon,
   PanelLeftIcon,
   SearchIcon,
-  TableIcon,
   type LucideIcon,
 } from "@/components/icons"
 import {
@@ -31,8 +30,6 @@ interface SidebarNavProps {
   fragments: Fragment[]
   isCollapsed: boolean
   onOpenSearch: () => void
-  onOpenCloud?: () => void
-  isOpeningCloud?: boolean
   onRouteChange: (route: WorkspaceRoute) => void
   onToggleCollapsed: () => void
   route: WorkspaceRoute
@@ -194,8 +191,6 @@ export function SidebarNav({
   fragments,
   isCollapsed,
   onOpenSearch,
-  onOpenCloud,
-  isOpeningCloud,
   onRouteChange,
   onToggleCollapsed,
   route,
@@ -281,18 +276,6 @@ export function SidebarNav({
           paddingInline: isCollapsed ? "var(--space-2)" : "var(--space-3)",
         }}
       >
-        {onOpenCloud ? (
-          <Button
-            variant="outline"
-            className="mb-2 w-full justify-start"
-            disabled={isOpeningCloud}
-            aria-busy={isOpeningCloud || undefined}
-            onClick={onOpenCloud}
-          >
-            <TableIcon />
-            {isOpeningCloud ? "正在切换…" : "金山多维表格"}
-          </Button>
-        ) : null}
         {isCollapsed ? (
           <CollapsedGroupMarker label={copy.groups.workbench} />
         ) : null}
