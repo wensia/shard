@@ -47,3 +47,5 @@ iOS 原生端到端用 `WebWorkspaceUITests.testNativeVoiceReadAloudAndDictation
 发布前还需在打包 App 中手动完成麦克风授权、真实录音与 MiMo 识别/合成、系统钥匙串持久化验证。浏览器 mock 和 HTTP fixture 通过不代表这些实机验证已完成。
 
 2026-11-04 验证：`pnpm test:unit` 868 项、语音 Rust 测试 10 项、上述语音及相关编辑器/焦点 UI 回归 142 项通过；`pnpm build`、`cargo check -p shard`、`git diff --check` 通过。已生成 `target/debug/bundle/macos/Shard.app`，检查麦克风说明，并对测试包进行本地 ad-hoc 签名和 audio-input entitlement 校验；未安装、未发布，也未执行上述真实音频与密钥实测。
+
+2026-11-05 移植到 `feat/voice-mobile`（设备上 VPS 桌面版与 iOS App 所在的线）后的验证：`pnpm build`、前端单测 1120 项、语音 Rust 测试 14 项、ShardKit 61 项（含 VoiceTests 8 项）通过；全量 Playwright 829 项通过，失败项均为该线基线失败或单独重跑通过的偶发；iOS 模拟器真实 WKWebView 全套 6 项 UI 测试通过，其中语音端到端覆盖原生设置保存进钥匙串、朗读无手势自动播放、16 kHz 单声道录音识别插入。Codex 只读审查提出的响应边下载边限额、退役页面拒收迟到命令、启动回复与停止事件竞态、底部导航观察器重绑四项已修复。Mac 包需在打包后以 ad-hoc + hardened runtime 重签并带 `Entitlements.plist`（Tauri 未配置签名身份时只留链接器签名，没有 audio-input 权限）。仍未在真机上用真实 MiMo 密钥验证。
