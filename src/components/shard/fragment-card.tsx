@@ -217,15 +217,7 @@ export function FragmentCard({
           fragment.conflictOf ||
           typeBadge ||
           displayTags.length > 0 ? (
-            <div
-              className="shard-card-tags"
-              style={{
-                display: "flex",
-                flexWrap: "wrap",
-                gap: "var(--shard-space-2)",
-                marginBottom: "var(--shard-space-3)",
-              }}
-            >
+            <div className="shard-card-tags">
               {fragment.pinned ? (
                 <span
                   className="shard-tag shard-tag-muted"

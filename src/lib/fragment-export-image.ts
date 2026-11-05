@@ -1,3 +1,4 @@
+import handwritingFontUrl from "@/assets/fonts/shouxie-gaoti-daily.ttf?url"
 import { parseMarkdownImageLine } from "@/lib/editor-format"
 import { stripInlineMarkdown } from "@/lib/markdown-preview"
 import { stripMarkdownHardBreaks } from "@shard/markdown/core"
@@ -33,6 +34,7 @@ interface ExportImageTemplate {
 }
 
 interface MemoTextStyle {
+  bodyFontFamily: string
   bodyColor: string
   bodyFontSize: number
   bodyFontWeight: number
@@ -59,6 +61,29 @@ type LoadedImages = Map<string, HTMLImageElement>
 
 const FONT_STACK =
   '"Barlow", "PingFang SC", "Microsoft YaHei", ui-sans-serif, system-ui, sans-serif'
+const HANDWRITING_FONT_FAMILY = "Shard Handwriting Daily"
+const HANDWRITING_FONT_SCALE = 1.4
+let handwritingFontPromise: Promise<void> | null = null
+
+function loadHandwritingFont() {
+  if (!handwritingFontPromise) {
+    const font = new FontFace(
+      HANDWRITING_FONT_FAMILY,
+      `url("${handwritingFontUrl}") format("truetype")`
+    )
+    handwritingFontPromise = font
+      .load()
+      .then((loadedFont) => {
+        document.fonts.add(loadedFont)
+      })
+      .catch(() => {
+        handwritingFontPromise = null
+        throw new Error("手写字体加载失败，请重试或取消勾选手写字体。")
+      })
+  }
+  return handwritingFontPromise
+}
+
 const EXPORT_MARK = "Shard"
 const EXPORT_CAPTION = "LOCAL MEMO · GIT VAULT"
 const MAX_IMAGE_HEIGHT = 260
@@ -139,19 +164,22 @@ export async function drawFragmentExportImage(
     templateId,
     showCreatedDate = true,
     showCreatedTime = false,
+    useHandwritingFont = false,
   }: {
     fragment: Fragment
     pixelRatio?: number
     showCreatedDate?: boolean
     showCreatedTime?: boolean
     templateId: ExportImageTemplateId
+    useHandwritingFont?: boolean
     vaultPath?: string
   }
 ) {
   await document.fonts?.ready
+  if (useHandwritingFont) await loadHandwritingFont()
 
   const template = getExportTemplate(templateId)
-  const textStyle = readMemoTextStyle(template)
+  const textStyle = readMemoTextStyle(template, useHandwritingFont)
   const blocks = fragmentToBlocks(fragment)
   const images = await loadImages(blocks)
   const logicalHeight = measureImageHeight(blocks, images, template, textStyle)
@@ -220,18 +248,27 @@ function getExportTemplate(id: ExportImageTemplateId) {
   )
 }
 
-function readMemoTextStyle(template: ExportImageTemplate): MemoTextStyle {
+function readMemoTextStyle(
+  template: ExportImageTemplate,
+  useHandwritingFont: boolean
+): MemoTextStyle {
   const root = getComputedStyle(document.documentElement)
-  const bodyFontSize = parseCssPx(
+  const memoFontSize = parseCssPx(
     root.getPropertyValue("--shard-memo-font-size"),
     14
   )
+  const bodyFontSize = useHandwritingFont
+    ? Math.round(memoFontSize * HANDWRITING_FONT_SCALE)
+    : memoFontSize
   const metaFontSize = parseCssPx(
     root.getPropertyValue("--shard-memo-meta-font-size"),
     13
   )
 
   return {
+    bodyFontFamily: useHandwritingFont
+      ? `"${HANDWRITING_FONT_FAMILY}", ${FONT_STACK}`
+      : FONT_STACK,
     bodyColor:
       template.id === "paper"
         ? resolveCssColor(
@@ -248,11 +285,12 @@ function readMemoTextStyle(template: ExportImageTemplate): MemoTextStyle {
       root.getPropertyValue("--shard-memo-letter-spacing"),
       0
     ),
-    bodyLineHeight: parseLineHeight(
-      root.getPropertyValue("--shard-memo-line-height"),
-      bodyFontSize,
-      1.8
-    ),
+    bodyLineHeight:
+      parseLineHeight(
+        root.getPropertyValue("--shard-memo-line-height"),
+        memoFontSize,
+        1.8
+      ) * (bodyFontSize / memoFontSize),
     metaFontSize,
     metaFontWeight: parseCssNumber(
       root.getPropertyValue("--shard-memo-meta-font-weight"),
@@ -327,7 +365,13 @@ function drawTemplate(
   )
 
   if (result.truncated) {
-    setFont(context, textStyle.bodyFontSize, 600, textStyle.bodyLetterSpacing)
+    setFont(
+      context,
+      textStyle.bodyFontSize,
+      600,
+      textStyle.bodyLetterSpacing,
+      textStyle.bodyFontFamily
+    )
     context.fillStyle = template.muted
     context.fillText("...", layout.contentX, bodyMaxY - textStyle.bodyLineHeight)
   }
@@ -430,7 +474,8 @@ function renderBody(
       context,
       textStyle.bodyFontSize,
       textStyle.bodyFontWeight,
-      textStyle.bodyLetterSpacing
+      textStyle.bodyLetterSpacing,
+      textStyle.bodyFontFamily
     )
     context.fillStyle = textStyle.bodyColor
 
@@ -498,7 +543,8 @@ function renderTableBlock(
     context,
     textStyle.bodyFontSize,
     textStyle.bodyFontWeight,
-    textStyle.bodyLetterSpacing
+    textStyle.bodyLetterSpacing,
+    textStyle.bodyFontFamily
   )
   const columnLayout = layoutTableColumns(context, table, layout.contentWidth)
   const widths = columnLayout.widths.slice(
@@ -511,7 +557,8 @@ function renderTableBlock(
       context,
       textStyle.bodyFontSize,
       rowIndex === 0 ? 600 : textStyle.bodyFontWeight,
-      textStyle.bodyLetterSpacing
+      textStyle.bodyLetterSpacing,
+      textStyle.bodyFontFamily
     )
     const cellLines = widths.map((width, columnIndex) =>
       wrapTableCell(context, cells[columnIndex] ?? "", width)
@@ -539,7 +586,8 @@ function renderTableBlock(
       context,
       textStyle.bodyFontSize,
       rowIndex === 0 ? 600 : textStyle.bodyFontWeight,
-      textStyle.bodyLetterSpacing
+      textStyle.bodyLetterSpacing,
+      textStyle.bodyFontFamily
     )
     context.fillStyle = textStyle.bodyColor
 
@@ -993,9 +1041,10 @@ function setFont(
   context: CanvasRenderingContext2D,
   size: number,
   weight: number,
-  letterSpacing = 0
+  letterSpacing = 0,
+  fontFamily = FONT_STACK
 ) {
-  context.font = `${weight} ${size}px ${FONT_STACK}`
+  context.font = `${weight} ${size}px ${fontFamily}`
   context.textBaseline = "top"
   context.textAlign = "left"
   setCanvasLetterSpacing(context, letterSpacing)

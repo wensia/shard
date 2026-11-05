@@ -316,7 +316,8 @@ test("密匣卡片隐藏硬换行标记，编辑保存后仍保留空行", async
   await unlockThroughPortal(page)
   const target = page.locator('[data-shard-fragment-id="secret-fragment"]')
   const body = target.locator(".shard-fragment-card-content")
-  await expect(body).toHaveText("密匣里的碎片\n\n呼吸也不顺畅")
+  await expect(body).toHaveText("密匣里的碎片\n\n呼吸也不顺畅", { useInnerText: true })
+  await expect(body.locator("br")).toHaveCount(2)
   await target.getByRole("button", { name: "片段操作" }).click()
   await page.getByRole("menuitem", { name: "编辑", exact: true }).click()
   const editorId = "fragment:secret-fragment"
@@ -329,7 +330,72 @@ test("密匣卡片隐藏硬换行标记，编辑保存后仍保留空行", async
   await page.getByRole("heading", { name: "密匣", exact: true }).click()
   await expect.poll(async () => (await commandCalls(page, "update_fragment")).at(-1)?.args.content)
     .toBe("密匣里的碎片\\\n\\\n呼吸也不顺畅！")
-  await expect(body).toHaveText("密匣里的碎片\n\n呼吸也不顺畅！")
+  await expect(body).toHaveText("密匣里的碎片\n\n呼吸也不顺畅！", { useInnerText: true })
+  await expect(body.locator("br")).toHaveCount(2)
+})
+
+test("卡片元数据中的密匣徽标与标签文字居中对齐，窄行仍可换行", async ({ page }, testInfo) => {
+  await page.addInitScript(() => {
+    const internals = (globalThis as unknown as {
+      __TAURI_INTERNALS__: { invoke: (command: string, args?: Record<string, unknown>) => Promise<unknown> }
+    }).__TAURI_INTERNALS__
+    const original = internals.invoke
+    internals.invoke = async (command, args = {}) => {
+      const result = await original(command, args)
+      if (command === "list_fragments" || command === "unlock_lockbox") {
+        const state = result as { fragments: Array<{ id: string; tags: string[]; pinned: boolean; conflictOf?: string }> }
+        const fragment = state.fragments.find(item => item.id === "secret-fragment")
+        if (fragment) {
+          fragment.tags = ["日记", "高菲", "Weekly", "很长的中文标签用于验证换行时不会溢出卡片内容区域"]
+          fragment.pinned = true
+          fragment.conflictOf = "original-fragment"
+        }
+      }
+      return result
+    }
+  })
+  await page.goto("/")
+  await unlockThroughPortal(page)
+  await page.evaluate(() => document.fonts.ready)
+  const card = page.locator('[data-shard-fragment-id="secret-fragment"]')
+  const row = card.locator(".shard-card-tags")
+
+  for (const width of [640, 240]) {
+    // 约束真实卡片的可用宽度，覆盖密匣、瀑布流与资料库中列共用的卡片布局。
+    await card.evaluate((element, width) => { element.style.width = `${width}px` }, width)
+    const metrics = await row.evaluate(element => {
+      const rowRect = element.getBoundingClientRect()
+      return Array.from(element.children, child => {
+        const rect = child.getBoundingClientRect()
+        const text = Array.from(child.childNodes).filter(node => node.nodeType === Node.TEXT_NODE && node.textContent?.trim())
+        const range = document.createRange()
+        range.setStartBefore(text[0])
+        range.setEndAfter(text.at(-1)!)
+        const textRect = range.getBoundingClientRect()
+        const style = getComputedStyle(child)
+        return {
+          top: rect.top,
+          center: rect.top + rect.height / 2,
+          textCenter: textRect.top + textRect.height / 2,
+          fontSize: style.fontSize,
+          inside: rect.left >= rowRect.left - 1 && rect.right <= rowRect.right + 1,
+          wraps: Array.from(range.getClientRects()).some(rect => rect.top > textRect.top + 1),
+        }
+      })
+    })
+    const firstLine = metrics.filter(item => Math.abs(item.top - metrics[0].top) < 1)
+    expect(firstLine.length).toBeGreaterThan(1)
+    expect(Math.max(...firstLine.map(item => item.textCenter)) - Math.min(...firstLine.map(item => item.textCenter))).toBeLessThanOrEqual(1)
+    // 字体的 ascent/descent 不要求对称，但所有标签的文字相对行盒应保持相同偏移。
+    const textOffsets = metrics.map(item => item.textCenter - item.center)
+    expect(Math.max(...textOffsets) - Math.min(...textOffsets), JSON.stringify(metrics)).toBeLessThanOrEqual(1)
+    expect(metrics.every(item => item.fontSize === metrics[0].fontSize && item.inside)).toBe(true)
+    if (width === 240) {
+      expect(metrics.some(item => item.top > metrics[0].top + 1)).toBe(true)
+      expect(metrics.at(-1)?.wraps).toBe(true)
+    }
+    await card.screenshot({ path: testInfo.outputPath(`tag-alignment-${width}.png`) })
+  }
 })
 
 test("离开密匣空间立即上锁，手动上锁送回资料库", async ({ page }) => {

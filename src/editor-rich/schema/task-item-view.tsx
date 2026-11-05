@@ -1,10 +1,15 @@
-import type { Node as ProseMirrorNode } from "@tiptap/pm/model"
 import { NodeViewContent, NodeViewWrapper, type ReactNodeViewProps } from "@tiptap/react"
-import { useState, type CSSProperties } from "react"
+import { useRef, useState, type CSSProperties } from "react"
 
-import { BellIcon, ChevronDownIcon, ChevronRightIcon, ClockIcon } from "@/components/icons"
+import { BellIcon, ChevronDownIcon, ChevronRightIcon, ClockIcon, ListTodoIcon } from "@/components/icons"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import {
   MEMO_CARD_DETAIL_PLACEHOLDER,
   MEMO_CARD_TITLE_PLACEHOLDER,
@@ -14,7 +19,9 @@ import { useReminderDue } from "@/lib/use-reminder-due"
 
 import { ReminderDialog } from "../blocks/reminder-dialog"
 import { setTaskReminder, taskReminderOf } from "../commands"
+import { convertMemoToTask } from "../memo-conversion"
 import { useNodeViewEditable } from "./node-view-utils"
+import { taskItemHasDetail } from "./task-item-utils"
 
 /** NodeView 里不属于正文的装饰（复选框、提醒钮、折叠钮），事件不交给 ProseMirror。 */
 export const TASK_ITEM_CONTROL_ATTRIBUTE = "data-shard-task-control"
@@ -32,36 +39,6 @@ const MEMO_PLACEHOLDER_STYLE = {
 } as CSSProperties
 
 /**
- * 任务项带细节时就是备忘卡片（产品框架 §5.2）。
- *
- * 判定用「这一项除了标题还有备注」：
- * - 第二个及以后的子块里有非列表块（备注段落等）——`/备忘卡片` 产出的形态；
- *   只挂着子任务、子列表的仍是普通任务，归任务列表的卡片，不是备忘卡片；
- * - 或者标题段落里本身就有换行——`- [ ] 买菜\n  番茄、鸡蛋、葱` 这种缩进续行，
- *   方言把它解析成带软换行的单个段落（见 golden `task-list`），
- *   产品框架里的存储示例正是这一种，卡片形态必须认它。
- */
-const NESTED_LIST_TYPES = new Set(["taskList", "bulletList", "orderedList"])
-
-export function taskItemHasDetail(node: ProseMirrorNode) {
-  for (let index = 1; index < node.childCount; index += 1) {
-    if (!NESTED_LIST_TYPES.has(node.child(index).type.name)) return true
-  }
-
-  const title = node.firstChild
-  if (!title) return false
-
-  let hasBreak = false
-  title.descendants((child) => {
-    if (hasBreak) return false
-    if (child.type.name === "hardBreak") hasBreak = true
-    else if (child.isText && (child.text ?? "").includes("\n")) hasBreak = true
-    return !hasBreak
-  })
-  return hasBreak
-}
-
-/**
  * 任务项的 NodeView。内容区始终是可编辑的 `NodeViewContent`，不是隔离岛——
  * 标题与细节都要能直接打字、走输入法，只有复选框与折叠钮是不可编辑的装饰。
  *
@@ -77,6 +54,9 @@ export function TaskItemNodeView({
 }: ReactNodeViewProps) {
   const editable = useNodeViewEditable(editor)
   const [collapsed, setCollapsed] = useState(false)
+  const [menuOpen, setMenuOpen] = useState(false)
+  const convertAfterClose = useRef(false)
+  const restoreMenuFocus = useRef(true)
   const checked = node.attrs.checked === true
   const memo = taskItemHasDetail(node)
   // 标题行尾的提醒已提升为属性：芯片画在右侧控件位，备忘卡片上替换铃铛。
@@ -171,18 +151,50 @@ export function TaskItemNodeView({
         </span>
       ) : null}
       {memo ? (
-        <span contentEditable={false} {...{ [TASK_ITEM_CONTROL_ATTRIBUTE]: "collapse" }}>
-          <Button
-            aria-expanded={!collapsed}
-            aria-label={collapsed ? "展开备忘细节" : "收起备忘细节"}
-            className="shard-rich-memo-toggle"
-            onClick={() => setCollapsed((current) => !current)}
-            onMouseDown={(event) => event.preventDefault()}
-            size="icon-sm"
-            variant="ghost"
+        <span contentEditable={false} {...{ [TASK_ITEM_CONTROL_ATTRIBUTE]: "menu" }}>
+          <DropdownMenu
+            modal={false}
+            open={menuOpen}
+            onOpenChange={(open, details) => {
+              restoreMenuFocus.current = open || (details.reason !== "outside-press" && details.reason !== "focus-out")
+              setMenuOpen(open)
+            }}
+            onOpenChangeComplete={(open) => {
+              if (open || !convertAfterClose.current) return
+              convertAfterClose.current = false
+              const pos = getPos()
+              if (typeof pos === "number") convertMemoToTask(editor, pos)
+            }}
           >
-            {collapsed ? <ChevronRightIcon /> : <ChevronDownIcon />}
-          </Button>
+            <DropdownMenuTrigger
+              render={
+                <Button
+                  aria-label="备忘卡片操作"
+                  className="shard-rich-memo-toggle"
+                  onMouseDown={(event) => event.preventDefault()}
+                  size="icon-sm"
+                  variant="ghost"
+                />
+              }
+            >
+              <ChevronDownIcon aria-hidden="true" />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent
+              align="end"
+              aria-label="备忘卡片操作"
+              className="kiln-control-positioner"
+              finalFocus={() => restoreMenuFocus.current && !editor.isDestroyed ? editor.view.dom : false}
+            >
+              <DropdownMenuItem onClick={() => setCollapsed(current => !current)}>
+                {collapsed ? <ChevronRightIcon /> : <ChevronDownIcon />}
+                {collapsed ? "展开备忘细节" : "收起备忘细节"}
+              </DropdownMenuItem>
+              <DropdownMenuItem disabled={!editable} onClick={() => { convertAfterClose.current = true }}>
+                <ListTodoIcon />
+                转为复选框
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </span>
       ) : null}
     </NodeViewWrapper>
