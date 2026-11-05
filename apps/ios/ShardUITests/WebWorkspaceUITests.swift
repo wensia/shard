@@ -8,9 +8,12 @@ final class WebWorkspaceUITests: XCTestCase {
     private let controlServer = "http://127.0.0.1:18792"
     private let email = "me@example.com"
     private let password = "correct horse battery"
+    // The blank line after the list matters: cards share the editor's CommonMark parser, where a line
+    // directly under a list item is a lazy continuation of that task, not a paragraph of its own.
     private let renderingBody = #"""
     - [ ] 项目
     - [x] 完成
+
     甲\
     乙
 
@@ -45,9 +48,29 @@ final class WebWorkspaceUITests: XCTestCase {
         XCTAssertFalse(web.staticTexts["甲\\"].exists, "A Markdown hard-break marker must not leak into display")
         let lineStep = second.frame.minY - first.frame.minY
         XCTAssertGreaterThan(lineStep, 0, "A hard break must display the next source line below the first")
+        XCTAssertLessThan(abs(first.frame.minX - second.frame.minX), 1, "A hard break starts the next line at the same edge")
         XCTAssertGreaterThan(literal.frame.minY - second.frame.minY, lineStep * 1.6,
                              "The blank source line must remain visibly blank")
         snapshot("web-workspace-tasks-hardbreaks-literal-backslash")
+    }
+
+    /// Cards over the async threshold (32,000 characters) parse in a module Worker loaded through shard://app.
+    /// A Worker failure falls back to raw Markdown, which has no task buttons and keeps the literal "# ".
+    @MainActor
+    func testLargeCardParsesInWorkerThroughTheAppScheme() async throws {
+        let filler = (1...1200).map { "填充段落 \($0)：用于把卡片推过异步解析阈值的普通文字。" }.joined(separator: "\n\n")
+        let body = "# 大文档标题\n\n- [ ] 大文档任务\n\n\(filler)"
+        XCTAssertGreaterThan(body.count, 32_000)
+        try await control("reset", body: ["fragmentContent": body])
+        let app = launch(reset: true)
+        try await login(app)
+        let web = app.webViews.firstMatch
+
+        XCTAssertTrue(interactive("标记为完成", in: web).waitForExistence(timeout: 30), app.debugDescription)
+        XCTAssertTrue(web.staticTexts["大文档标题"].exists, app.debugDescription)
+        XCTAssertFalse(web.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "# 大文档标题")).firstMatch.exists,
+                       "A Worker failure must not leave the raw Markdown fallback on screen")
+        snapshot("web-workspace-large-card-worker")
     }
 
     @MainActor
