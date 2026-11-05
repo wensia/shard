@@ -2,6 +2,8 @@
 
 iOS 17+ 客户端。服务器模式使用 WKWebView 加载本地打包的完整网页前端，与网页版共用 React 界面、编辑器、Markdown 和 Kiln 样式；Swift 保留凭据、网络、缓存、待发队列和系统分享。旧 GitHub 连接保留兼容入口。迁移计划见 [ios-shared-web-plan.md](../../docs/dev/ios-shared-web-plan.md)。
 
+这是 Shard 的移动客户端，与 **Web、macOS 桌面**共同构成三个应用端。平台关系与发布状态见 [三端说明](../../docs/dev/platforms.md)。当前 GitHub Release 不含 IPA；真机安装需要自己的 Apple 签名配置。
+
 ## 目录
 
 | 路径 | 内容 |

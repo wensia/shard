@@ -1,10 +1,18 @@
 # Shard
 
-Shard 是一个本地优先的桌面端 Markdown 片段捕捉应用，目前只发布 Apple Silicon macOS 安装包。
+Shard 是用于记录与整理 Markdown 碎片和笔记的应用，提供 **iOS App、Web 和 macOS 桌面**三种客户端。
+
+| 客户端 | 使用方式 | 入口 |
+| --- | --- | --- |
+| **iOS App** | iOS 17+ 的 iPhone 原生应用，连接 Shard 服务器，也保留 GitHub 资料库连接 | [iOS 构建与安装](apps/ios/README.md) |
+| **Web** | 浏览器访问部署好的 Shard 站点，使用服务器账号登录 | [Web 与服务端部署](deploy/README.md) |
+| **macOS 桌面** | Apple Silicon Mac 安装应用，使用本地资料库或连接 Shard 服务器 | [下载 DMG](https://github.com/wensia/shard/releases/latest) |
+
+Web 与 macOS 共用 React 工作台，iOS 提供原生移动客户端。各端能力、代码入口和发布状态见 [三端说明](docs/dev/platforms.md)。
 
 > 产品方向（2026-09-15）：正在设计只围绕碎片的版本，移除资料库、思维导图、画布与内置多维表格等独立模块（大纲成为碎片内容类型之一，导图是其视图，见 docs/dev/product-framework.md），加入可组合的 Git / 飞书 / 夸克存储目标和 Hermes / OpenClaw 接入。详见 [设计方案](docs/dev/fragment-only-design.md) 与 [实施文档入口](docs/dev/README.md)。目前仅完成方案整理，相关代码移除、数据迁移及新同步能力尚未实施；下文仍描述现有版本。
 
-它借鉴了 [flomo](https://flomoapp.com/) 的核心心智：先把稍纵即逝的想法记下来，让碎片在时间流里自然沉淀，再在需要时回看、整理和连接。Shard 不是 flomo 的复刻，也与 flomo 没有关联；它把这个灵感收敛到本地优先、Markdown 优先、Git 可追踪的桌面工具里。
+它借鉴了 [flomo](https://flomoapp.com/) 的核心心智：先把稍纵即逝的想法记下来，让碎片在时间流里自然沉淀，再在需要时回看、整理和连接。Shard 不是 flomo 的复刻，也与 flomo 没有关联。
 
 ![Shard 主界面：片段捕捉、时间线、标签和 Git 状态](docs/design/shard-main-screen-concept.png)
 
@@ -12,10 +20,20 @@ Shard 是一个本地优先的桌面端 Markdown 片段捕捉应用，目前只�
 
 ## 下载与安装
 
-当前发布目标：
+### iOS App
+
+当前提供 iOS 17+ 源码，需要使用 Xcode 和自己的 Apple 签名配置构建安装，步骤见 [iOS 文档](apps/ios/README.md)。当前 GitHub Release 不含 IPA。
+
+### Web
+
+访问已部署的 Shard 站点即可使用。自建站点请按 [部署文档](deploy/README.md) 配置服务端和 Web 静态资源；GitHub Releases 提供 Linux x86_64 服务端包。
+
+### macOS 桌面
+
+当前桌面安装包支持：
 
 - macOS Apple Silicon，M1/M2/M3/M4 芯片
-- 不支持 Intel Mac、Windows、Linux
+- 暂不提供 Intel Mac、Windows、Linux 桌面安装包；Linux 服务端与桌面客户端是不同的发布产物。
 
 安装方式：
 
@@ -33,6 +51,8 @@ Shard 是一个本地优先的桌面端 Markdown 片段捕捉应用，目前只�
 ## 核心理念
 
 Shard 只优化一个动作：快速捕捉灵感。
+
+以下保存流程与功能表描述 **macOS 桌面的本地资料模式**；Web 与 iOS 的存储及功能范围见 [三端说明](docs/dev/platforms.md)。
 
 1. 写下一段想法、摘录、任务或观察。
 2. 按 `Cmd+Enter`、`Ctrl+Enter`，或点击发送按钮保存。
@@ -71,8 +91,12 @@ Shard 只优化一个动作：快速捕捉灵感。
 - Tailwind CSS 4
 - shadcn/ui with Base UI primitives
 - Rust filesystem and Git commands
+- SwiftUI / Swift（iOS App）
+- Rust / axum / SQLite（Web 与多端共用的服务端）
 
 ## Development
+
+### macOS 桌面
 
 ```bash
 pnpm install
@@ -92,11 +116,28 @@ Build Apple Silicon macOS DMG:
 pnpm build:mac:apple-silicon
 ```
 
-Frontend-only development:
+### Web
+
+安装根目录依赖后，连接本机已启动的 `shard-server` 开发前端：
 
 ```bash
-pnpm dev
+SHARD_SERVER_URL=http://127.0.0.1:8787 pnpm dev
 ```
+
+`pnpm build` 生成 `dist/`，由服务端托管。服务器配置和完整部署见 [部署文档](deploy/README.md)。
+
+### iOS App
+
+在 macOS 上安装根目录依赖后：
+
+```bash
+apps/ios/scripts/generate-project.sh
+open apps/ios/Shard.xcodeproj
+```
+
+XcodeGen、签名配置和测试步骤见 [iOS 文档](apps/ios/README.md)。
+
+### 共享 Markdown 包
 
 Markdown 渲染与纯解析工具位于独立 workspace 包 [`@shard/markdown`](packages/markdown/README.md)。
 主项目开发、构建和测试会先构建该包；运行 `pnpm pack:markdown` 可生成供其他产品安装的 `.tgz`。
@@ -104,7 +145,7 @@ Markdown 渲染与纯解析工具位于独立 workspace 包 [`@shard/markdown`](
 
 ## Vault
 
-Shard stores fragments in:
+In macOS local-vault mode, Shard stores fragments in:
 
 ```text
 ~/Documents/ShardVault
@@ -137,6 +178,8 @@ source: desktop
 ```
 
 ## 终端快捷创建
+
+此入口面向 macOS 桌面的本地资料库。
 
 安装 Shard.app 并首次启动后，App 会自动安装 `shard` 终端命令。仅当需要向 shell 配置加入 PATH 时，App 才会先征求确认；也可以在设置的「终端命令」中查看状态或卸载。
 
