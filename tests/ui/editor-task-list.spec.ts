@@ -109,10 +109,10 @@ interface TaskSelectors {
   marker: string
 }
 
-/** 碎片卡片的只读渲染（packages/markdown）。 */
-const CARD_TASK: TaskSelectors = { checkbox: ".shard-task-checkbox", marker: ".shard-task-marker" }
 /** 富文本编辑器任务项 NodeView（src/editor-rich/schema/task-item-view.tsx）。 */
 const RICH_TASK: TaskSelectors = { checkbox: '[role="checkbox"]', marker: ".shard-rich-task-check" }
+/** 碎片卡片的只读渲染（src/editor-rich/ShardMarkdownContent.tsx）与编辑器共用任务结构。 */
+const CARD_TASK: TaskSelectors = RICH_TASK
 
 async function measureTaskGeometry(lineLocator: Locator, sample: string, selectors: TaskSelectors = CARD_TASK) {
   await lineLocator.evaluate(() => document.fonts.ready)
@@ -344,13 +344,14 @@ test("字号和行高变化、长任务换行后复选框仍与首行字形居�
 test("碎片切入禅模式、文档切入禅模式并保存读回仍使用同一任务渲染", async ({ page }) => {
   const inline = await openSurface(page, "inline")
   await fillEditor(page, inline.id, "- [ ] 任务正文")
+  const editorTask = await taskGeometry(inline.editor)
   await inline.toolbar.getByRole("button", { name: "保存修改", exact: true }).click()
   await expect.poll(() => latestSavedContent(page, "task-fragment")).toBe("- [ ] 任务正文")
   // 保存修改即落盘并收起行内编辑，回到碎片卡片（fragment-editor handleSubmit）。
   await expect(inline.editor).toBeHidden()
   const cardBody = page.locator('[data-shard-fragment-id="task-fragment"] .shard-fragment-content')
   const cardUnchecked = await measureTaskGeometry(cardBody, "任务正文")
-  expect(cardUnchecked.leadingGap).toBeCloseTo(8, 1)
+  expect(cardUnchecked.leadingGap, "card checkbox sits where the editor's does").toBeCloseTo(editorTask.leadingGap, 1)
   expect(cardUnchecked.gap).toBeCloseTo(8, 1)
   expect(cardUnchecked.centerOffset, "saved card uses the same glyph alignment").toBeLessThanOrEqual(0.75)
   const zen = await openSurface(page, "zen")
@@ -360,7 +361,7 @@ test("碎片切入禅模式、文档切入禅模式并保存读回仍使用同�
   await page.getByRole("button", { name: "退出禅模式", exact: true }).click()
   await expect.poll(() => latestSavedContent(page, "task-fragment")).toBe("- [x] 任务正文")
   await expect(page.locator('[data-shard-fragment-id="task-fragment"]')
-    .getByRole("button", { name: "标记为未完成", exact: true })).toHaveAttribute("aria-pressed", "true")
+    .getByRole("checkbox", { name: "标记为未完成", exact: true })).toHaveAttribute("aria-checked", "true")
   const cardChecked = await measureTaskGeometry(cardBody, "任务正文")
   expect(cardChecked.centerOffset, "checked card keeps the same glyph alignment").toBeLessThanOrEqual(0.75)
   expect(cardChecked.width).toBe(cardUnchecked.width)

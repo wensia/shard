@@ -163,12 +163,12 @@ test("瀑布流双列视图里导图预览同样可见", async ({ page }) => {
   await expect(created.getByRole("img", { name: "思维导图预览", exact: true })).toBeVisible()
 })
 
-test("非 mindmap 围栏保持原样文本", async ({ page }) => {
+test("非 mindmap 围栏与编辑器一样渲染为代码块，不渲染导图", async ({ page }) => {
   const js = card(page, "fence-js")
   await revealCard(js)
 
-  await expect(js).toContainText("```js")
-  await expect(js).toContainText("const answer = 42")
+  await expect(js.locator("pre code")).toHaveText("const answer = 42")
+  await expect(js).not.toContainText("```")
   await expect(js.locator("[data-mind-map-fence]")).toHaveCount(0)
   await expect(js.getByRole("img", { name: "思维导图预览", exact: true })).toHaveCount(0)
 })
@@ -192,12 +192,14 @@ test("超过 200 节点的围栏截断预览并提示，卡片不横向溢出", 
   expect(overflow.documentScrollWidth).toBeLessThanOrEqual(overflow.documentClientWidth)
 })
 
-test("没有闭栏的 mindmap 围栏不渲染导图", async ({ page }) => {
+// 卡片与编辑器共用解析：按 CommonMark，没有闭栏的围栏延续到文末，编辑器同样把它当作导图块。
+test("没有闭栏的 mindmap 围栏与编辑器一致，延续到文末并渲染导图", async ({ page }) => {
   const unclosed = card(page, "fence-unclosed")
   await revealCard(unclosed)
+  const preview = unclosed.getByRole("img", { name: "思维导图预览", exact: true })
 
-  await expect(unclosed).toContainText("```mindmap")
-  await expect(unclosed).toContainText("- 没有闭栏的根")
-  await expect(unclosed.locator("[data-mind-map-fence]")).toHaveCount(0)
-  await expect(unclosed.getByRole("img", { name: "思维导图预览", exact: true })).toHaveCount(0)
+  await expect(preview).toBeVisible()
+  await expect(preview.locator("css=text")).toHaveCount(2)
+  await expect(unclosed).not.toContainText("```mindmap")
+  await expect(unclosed).not.toContainText("- 没有闭栏的根")
 })
