@@ -76,6 +76,8 @@ export function useVoiceDictation(options: { targetId: string; onBeforeStart?: (
       if (session.current !== current) return
       await voiceInvoke('voice_start_recording', { sessionId: current.id })
       if (session.current !== current) { void cancelSession(current.id); return }
+      // A stop event (interruption, device loss) can arrive before this reply; keep its error.
+      if (phaseRef.current !== 'starting') return
       update('recording')
     } catch (cause) {
       if (session.current === current) { const message = voiceError(cause); cancel(); setError(message) }
