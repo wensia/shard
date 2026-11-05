@@ -1893,7 +1893,7 @@ test.describe("片段关系层", () => {
     await expect(page.locator('[data-shard-fragment-id="fragment-3"]')).toHaveClass(/shard-fragment-card-highlight/)
   })
 
-  test("片段操作菜单只保留编辑、复制、禅模式、置顶、分享与删除", async ({ page }) => {
+  test("片段操作菜单只保留编辑、复制、朗读、禅模式、置顶、分享与删除", async ({ page }) => {
     const card = page.locator('[data-shard-fragment-id="fragment-5"]')
 
     // 无边的卡片没有任何关系入口，也不再从菜单打开相关片段
@@ -1903,6 +1903,7 @@ test.describe("片段关系层", () => {
     await expect(page.getByRole("menuitem")).toHaveText([
       "编辑",
       "复制",
+      "朗读",
       "禅模式",
       "置顶",
       "分享",
