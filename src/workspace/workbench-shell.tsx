@@ -652,7 +652,12 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
       window.dispatchEvent(new CustomEvent("shard:dataset-changed", { detail: { path } }))
     }
   }
-  useVaultWatch(vaultPath, handleVaultFilesChanged)
+  useVaultWatch(vaultPath, handleVaultFilesChanged, () => {
+    refreshFragmentsAfterExternalChange()
+    void refreshLibraryTree()
+    void refreshMindMaps()
+    void refreshCsvFiles()
+  })
 
   useEffect(() => {
     routeRef.current = route

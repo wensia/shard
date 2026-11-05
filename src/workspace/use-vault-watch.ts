@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react"
 
 import { transport } from "@/lib/transport"
+import { IOS_NATIVE_EVENT } from "@/lib/ios-native"
 import type { VaultFileChange } from "@/lib/vault-changes"
 
 const VAULT_CHANGED_EVENT = "vault-changed"
@@ -10,15 +11,21 @@ const VAULT_CHANGED_EVENT = "vault-changed"
  * App 不必等切回窗口就能刷新。桌面由 Rust 监听文件系统；网页由服务器经 SSE 推送同形的变化。
  * 没有监听能力的测试宿主静默退回聚焦对账。
  */
-export function useVaultWatch(vaultPath: string, onChange: (changes: VaultFileChange[]) => void) {
+export function useVaultWatch(vaultPath: string, onChange: (changes: VaultFileChange[]) => void, onResync?: () => void) {
   const onChangeRef = useRef(onChange)
   onChangeRef.current = onChange
+  const onResyncRef = useRef(onResync)
+  onResyncRef.current = onResync
 
   useEffect(() => {
     if (!vaultPath) return
     const channel = transport()
     let disposed = false
     let unlisten: (() => void) | undefined
+    const nativeChanged = (event: Event) => {
+      if ((event as CustomEvent).detail?.type === "vault-changed") onResyncRef.current?.()
+    }
+    window.addEventListener(IOS_NATIVE_EVENT, nativeChanged)
     void (async () => {
       try {
         // 先挂监听再开始监视，开始后的第一批变化不会漏。
@@ -38,6 +45,7 @@ export function useVaultWatch(vaultPath: string, onChange: (changes: VaultFileCh
     })()
     return () => {
       disposed = true
+      window.removeEventListener(IOS_NATIVE_EVENT, nativeChanged)
       unlisten?.()
     }
   }, [vaultPath])

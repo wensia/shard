@@ -22,6 +22,7 @@ final class AppModel {
     private(set) var headCommit: String?
     /// Fragments captured here that are not committed yet.
     private(set) var pending: [PendingFragment] = []
+    private(set) var webRequiresLegacyOffline = false
 
     @ObservationIgnored private var store: VaultStore?
     private var token: String?
@@ -77,7 +78,14 @@ final class AppModel {
         }
         await cancelSync()
         let credentials = try await ServerRemote.login(server: server, email: email, password: password, name: name)
-        let account = credentials.account
+        let account: ServerAccount
+        if let previous = serverAccount, previous.serverURL == credentials.account.serverURL,
+           previous.email == credentials.account.email {
+            account = ServerAccount(serverURL: credentials.account.serverURL, email: credentials.account.email,
+                deviceID: credentials.account.deviceID, name: credentials.account.name, storageEmail: previous.storageEmail)
+        } else {
+            account = credentials.account
+        }
         let restoredStore = try await Task.detached {
             try TokenStore.saveServer(credentials.token, for: account)
             UserDefaults.standard.set(try JSONEncoder().encode(account), forKey: "serverAccount")
@@ -203,6 +211,7 @@ final class AppModel {
     }
 
     private func cancelSync() async {
+        webRequiresLegacyOffline = false
         let operation = syncOperation
         connectionRevision = UUID()
         operation?.cancel()
@@ -217,6 +226,7 @@ final class AppModel {
     private func expireServerSession(revision: UUID) async {
         guard revision == connectionRevision, token != nil, let account = serverAccount else { return }
         token = nil
+        webRequiresLegacyOffline = false
         authenticationError = "登录已失效，请重新登录。"
         syncState = .idle
         syncRequested = false
@@ -339,6 +349,90 @@ final class AppModel {
         default:
             return error.localizedDescription
         }
+    }
+}
+
+/// Native-only connection snapshot. Credentials are deliberately not Codable and never enter WebKit.
+struct WebBridgeContext: Sendable {
+    var revision: UUID
+    var account: ServerAccount?
+    var token: String?
+    var store: VaultStore?
+    var authenticated: Bool
+    var syncState: String
+    var pendingCount: Int
+    var vaultID: String?
+}
+
+extension AppModel {
+    func webBridgeLegacyOffline(_ required: Bool) { webRequiresLegacyOffline = required }
+
+    func retryWebWorkspace() async {
+        webRequiresLegacyOffline = false
+        await sync()
+    }
+
+    /// Stop old pulls/pushes before removing a server-confirmed public copy. Retain the
+    /// same account and unrelated queue entries; the changed revision rejects late IO.
+    func webBridgeErasePublic(ids: Set<String>, paths: [String], context: WebBridgeContext) async throws -> WebBridgeContext {
+        guard !isChangingConnection, webBridgeAccepts(context), let store else { throw RemoteError.unauthorized }
+        isChangingConnection = true
+        defer { isChangingConnection = false }
+        await cancelSync()
+        try await store.erasePublicCopies(ids: ids, paths: paths)
+        await reloadIndex()
+        return webBridgeContext()
+    }
+
+    /// A successful server-side change belongs to the same owner; retain its mirror/outbox.
+    func webBridgeAccountEmail(_ email: String, context: WebBridgeContext) async throws -> WebBridgeContext {
+        let email = email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !isChangingConnection, webBridgeAccepts(context), let previous = serverAccount, let token,
+              !email.isEmpty else { throw RemoteError.unauthorized }
+        if previous.email == email { return webBridgeContext() }
+        isChangingConnection = true
+        defer { isChangingConnection = false }
+        await cancelSync()
+        let next = ServerAccount(serverURL: previous.serverURL, email: email, deviceID: previous.deviceID,
+                                 name: previous.name, storageEmail: previous.storageEmail ?? previous.email)
+        try await Task.detached {
+            try TokenStore.saveServer(token, for: next)
+            UserDefaults.standard.set(try JSONEncoder().encode(next), forKey: "serverAccount")
+            TokenStore.deleteServer(previous)
+        }.value
+        serverAccount = next
+        return webBridgeContext()
+    }
+
+    func webBridgeContext() -> WebBridgeContext {
+        let state: String
+        switch syncState {
+        case .idle: state = "online"
+        case .syncing: state = "syncing"
+        case .failed: state = "offline"
+        }
+        return WebBridgeContext(revision: connectionRevision, account: serverAccount, token: token, store: store,
+            authenticated: serverAccount != nil && token != nil, syncState: state, pendingCount: pending.count,
+            vaultID: serverAccount == nil ? nil : headCommit?.split(separator: ":").first.map(String.init))
+    }
+
+    func webBridgeAccepts(_ context: WebBridgeContext) -> Bool {
+        connectionRevision == context.revision && serverAccount == context.account && token == context.token
+    }
+
+    func webBridgeCapture(content: String, tags: [String]?, requestKey: String) async throws -> VaultDocument {
+        guard !isChangingConnection, serverAccount != nil, isConfigured, let store else { throw RemoteError.unauthorized }
+        let revision = connectionRevision
+        let document = try await store.captureForWeb(content: content, tags: tags, requestKey: requestKey)
+        guard revision == connectionRevision else { throw RemoteError.unauthorized }
+        await reloadIndex()
+        Task { await sync() }
+        return document
+    }
+
+    func webBridgeExpire(_ context: WebBridgeContext) async {
+        guard webBridgeAccepts(context) else { return }
+        await expireServerSession(revision: context.revision)
     }
 }
 

@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
+import { iosNativeState, isIOSNative } from "@/lib/ios-native"
 import { isServerFailure } from "@/lib/lockbox-client/client"
 import { serverLockbox } from "@/lib/lockbox-client/transport"
 import { notify } from "@/lib/notify"
@@ -31,6 +32,7 @@ import {
   revokeDevice,
   revokeSession,
   signOut,
+  stepUp,
   updateAccount,
   withStepUp,
   type DeviceInfo,
@@ -73,6 +75,9 @@ function describeUserAgent(userAgent: string | null) {
 
 interface AccountData {
   email: string | null
+}
+
+interface AccountAccess {
   sessions: SessionInfo[]
   devices: DeviceInfo[]
 }
@@ -94,53 +99,94 @@ function setLockboxWebUnlock(allowed: boolean) {
  * 吊销与开关都要求最近 10 分钟内输过密码，过期时弹出密码确认框。
  */
 export function AccountSettings() {
-  const [data, setData] = useState<AccountData | null>(null)
+  const native = isIOSNative()
+  const [data, setData] = useState<AccountData | null>(() => native ? { email: iosNativeState()?.email ?? null } : null)
+  const [access, setAccess] = useState<AccountAccess | null>(null)
+  const [loadFailed, setLoadFailed] = useState(false)
   const [busy, setBusy] = useState<string | null>(null)
   const [webUnlock, setWebUnlock] = useState<boolean | null>(null)
   const [editing, setEditing] = useState(false)
+  const mounted = useRef(false)
+  const loadVersion = useRef(0)
+  const webUnlockVersion = useRef(0)
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (includeAccess = !native) => {
+    const version = ++loadVersion.current
     try {
-      const [state, sessions, devices] = await Promise.all([fetchAuthState(), listSessions(), listDevices()])
-      setData({ email: state.email, sessions, devices })
+      const [state, lists] = await Promise.all([
+        fetchAuthState(),
+        includeAccess ? Promise.all([listSessions(), listDevices()]) : null,
+      ])
+      if (!mounted.current || version !== loadVersion.current) return
+      setData({ email: state.email })
+      if (lists) setAccess({ sessions: lists[0], devices: lists[1] })
+      setLoadFailed(false)
     } catch (error) {
+      if (!mounted.current || version !== loadVersion.current || isCancelled(error)) return
+      setLoadFailed(true)
       notify.failure("读取账号信息失败", error)
     }
-  }, [])
+  }, [native])
 
-  const loadWebUnlock = useCallback(async () => {
+  const loadWebUnlock = useCallback(async (allowRequest = !native) => {
+    const version = ++webUnlockVersion.current
     try {
       const lockbox = serverLockbox()
-      if (lockbox) setWebUnlock((await lockbox.webUnlock()) ?? true)
+      if (lockbox) {
+        const allowed = allowRequest ? await lockbox.webUnlock() : lockbox.client.webUnlock
+        if (mounted.current && version === webUnlockVersion.current && allowed !== undefined) setWebUnlock(allowed)
+      }
     } catch (error) {
-      notify.failure("读取密匣设置失败", error)
+      if (mounted.current && version === webUnlockVersion.current && !isCancelled(error)) notify.failure("读取密匣设置失败", error)
     }
-  }, [])
+  }, [native])
 
   useEffect(() => {
+    mounted.current = true
     void load()
     void loadWebUnlock()
+    return () => { mounted.current = false; loadVersion.current += 1; webUnlockVersion.current += 1 }
   }, [load, loadWebUnlock])
+
+  async function manageAccess() {
+    if (busy !== null) return
+    setBusy("access")
+    try {
+      await stepUp()
+      if (!mounted.current) return
+      const [sessions, devices] = await Promise.all([listSessions(), listDevices()])
+      if (!mounted.current) return
+      setAccess({ sessions, devices })
+      await loadWebUnlock(true)
+    } catch (error) {
+      if (mounted.current && !isCancelled(error)) notify.failure("读取设备与会话失败", error)
+    } finally {
+      if (mounted.current) setBusy(null)
+    }
+  }
 
   async function run(key: string, action: () => Promise<unknown>, success: string) {
     setBusy(key)
     try {
       await action()
+      if (!mounted.current) return
       notify.success(success)
-      await load()
+      await load(!native || access !== null)
       await loadWebUnlock()
     } catch (error) {
       // 在密码确认框里点了取消：什么都不做。
-      if (!isCancelled(error)) notify.failure("操作没有完成", error)
+      if (mounted.current && !isCancelled(error)) notify.failure("操作没有完成", error)
     } finally {
-      setBusy(null)
+      if (mounted.current) setBusy(null)
     }
   }
 
   if (!data) {
     return (
-      <SettingsGroup busy>
-        <SettingsGroupItem>正在读取…</SettingsGroupItem>
+      <SettingsGroup busy={!loadFailed}>
+        <SettingsGroupItem>
+          {loadFailed ? <Button onClick={() => { setLoadFailed(false); void load() }} variant="outline">重新读取账号信息</Button> : "正在读取…"}
+        </SettingsGroupItem>
       </SettingsGroup>
     )
   }
@@ -159,7 +205,21 @@ export function AccountSettings() {
         </SettingsRow>
       </SettingsGroup>
 
-      <SettingsGroup busy={busy === "webUnlock"}>
+      {native ? (
+        <SettingsGroup busy={busy !== null}>
+          <SettingsRow controlWidth="auto" label="设备与会话">
+            <Button aria-busy={busy === "access" || undefined} disabled={busy !== null} onClick={() => void manageAccess()} size="sm" variant="outline">
+              {busy === "access" ? "正在读取…" : "管理设备与会话"}
+            </Button>
+          </SettingsRow>
+          <SettingsRow controlWidth="auto" label="退出登录">
+            <Button disabled={busy !== null} onClick={() => void signOut()} size="sm" variant="outline">退出登录</Button>
+          </SettingsRow>
+          {loadFailed ? <SettingsGroupItem><Button onClick={() => void load()} variant="outline">重新读取账号信息</Button></SettingsGroupItem> : null}
+        </SettingsGroup>
+      ) : null}
+
+      {!native || webUnlock !== null ? <SettingsGroup busy={busy === "webUnlock"}>
         <SettingsRow
           controlWidth="auto"
           description="关掉后服务器不再把密文发给浏览器，网页上打不开密匣（本页立即上锁，其他已解锁的网页下次上锁后也打不开）；用 #密匣 速记照常加密存入。它防的是被盗的浏览器会话，防不了被篡改的网页：在不信任的设备上不要输入密匣口令。"
@@ -174,13 +234,13 @@ export function AccountSettings() {
             }
           />
         </SettingsRow>
-      </SettingsGroup>
+      </SettingsGroup> : null}
 
-      <SettingsGroup busy={busy !== null}>
-        {data.devices.length === 0 ? (
+      {access ? <SettingsGroup busy={busy !== null}>
+        {access.devices.length === 0 ? (
           <SettingsGroupItem>还没有连接的桌面应用或命令行。在它们那里输入服务器地址、邮箱和密码即可连接。</SettingsGroupItem>
         ) : (
-          data.devices.map((device) => (
+          access.devices.map((device) => (
             <SettingsRow
               controlWidth="auto"
               description={`${device.kind === "cli" ? "命令行" : "桌面应用"} · 上次活动 ${formatTime(device.lastSeenAt)}${device.lastIp ? ` · ${device.lastIp}` : ""}`}
@@ -198,21 +258,21 @@ export function AccountSettings() {
             </SettingsRow>
           ))
         )}
-      </SettingsGroup>
+      </SettingsGroup> : null}
 
-      <SettingsGroup busy={busy !== null}>
-        {data.sessions.map((session) => (
+      {access ? <SettingsGroup busy={busy !== null}>
+        {access.sessions.map((session) => (
           <SettingsRow
             controlWidth="auto"
             description={`登录于 ${formatTime(session.createdAt)} · 上次活动 ${formatTime(session.lastSeenAt)}${session.ip ? ` · ${session.ip}` : ""}`}
             key={session.id}
             label={`${describeUserAgent(session.userAgent)}${session.current ? "（当前）" : ""}`}
           >
-            {session.current ? (
+            {session.current ? !native ? (
               <Button disabled={busy !== null} onClick={() => void signOut()} size="sm" variant="outline">
                 退出登录
               </Button>
-            ) : (
+            ) : null : (
               <Button
                 disabled={busy !== null}
                 onClick={() => void run(`session:${session.id}`, () => revokeSession(session.id), "已让这个会话退出")}
@@ -224,7 +284,7 @@ export function AccountSettings() {
             )}
           </SettingsRow>
         ))}
-      </SettingsGroup>
+      </SettingsGroup> : null}
 
       {editing ? (
         <AccountDialog

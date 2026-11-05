@@ -2,6 +2,8 @@
  * 网页端替代桌面原生对话框的两件事：用浏览器选文件、把字节存成下载。
  * 桌面仍走 Tauri 的系统对话框（能拿到本机路径、写到用户选的位置）。
  */
+import { isIOSNative, shareIOSBlob } from "@/lib/ios-native"
+import { notify } from "@/lib/notify"
 
 export const IMAGE_FILE_ACCEPT = "image/png,image/jpeg,image/gif,image/webp,image/svg+xml,image/heic,image/heif,image/avif"
 
@@ -25,6 +27,10 @@ export function pickFiles(options: { accept?: string; multiple?: boolean } = {})
 }
 
 export function downloadBlob(blob: Blob, fileName: string) {
+  if (isIOSNative()) {
+    void shareIOSBlob(blob, fileName).catch((error) => notify.failure("分享文件失败", error))
+    return
+  }
   const url = URL.createObjectURL(blob)
   const anchor = document.createElement("a")
   anchor.href = url

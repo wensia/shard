@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react"
+import { useEffect, useState, useSyncExternalStore, type ReactNode } from "react"
 import {
   HelpCircleIcon,
   KeyboardIcon,
@@ -21,6 +21,8 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip"
 import { formatSyncedAgo } from "@/lib/relative-time"
+import { iosNativeState, isIOSNative, requestIOSSync, subscribeIOSNativeState } from "@/lib/ios-native"
+import { notify } from "@/lib/notify"
 import { isServerBacked, transport } from "@/lib/transport"
 import {
   dismissRemoteSyncNotices,
@@ -385,6 +387,12 @@ const DESKTOP_SIGNED_OUT_LABEL = "连接已失效"
  * 桌面另有本机副本（S8b）：离线、同步中优先显示，后面跟待上传 / 冲突 / 上传失败的条数。
  */
 export function ServerConnectionStatus({ onOpenSettings }: { onOpenSettings: () => void }) {
+  return isIOSNative()
+    ? <IOSConnectionStatus onOpenSettings={onOpenSettings} />
+    : <WebOrDesktopConnectionStatus onOpenSettings={onOpenSettings} />
+}
+
+function WebOrDesktopConnectionStatus({ onOpenSettings }: { onOpenSettings: () => void }) {
   const desktop = transport().kind === "tauri-remote"
   const [state, setState] = useState<ConnectionState>(desktop ? remoteConnectionState : getConnectionState)
   const [sync, setSync] = useState<RemoteSyncStatus | null>(desktop ? remoteSyncStatus : null)
@@ -435,6 +443,56 @@ export function ServerConnectionStatus({ onOpenSettings }: { onOpenSettings: () 
         </StatusBarAction>
       )}
       {sync ? <RemoteSyncCounts sync={sync} /> : null}
+    </>
+  )
+}
+
+function IOSConnectionStatus({ onOpenSettings }: { onOpenSettings: () => void }) {
+  const native = useSyncExternalStore(subscribeIOSNativeState, iosNativeState, () => null)
+  const [retrying, setRetrying] = useState(false)
+  const offline = native?.authenticated && native.sync.state === "offline"
+  const syncing = retrying || native?.sync.state === "syncing"
+  const label = !native?.authenticated ? CONNECTION_LABEL.signedOut
+    : syncing ? SYNC_SYNCING_LABEL : offline ? SYNC_OFFLINE_LABEL : CONNECTION_LABEL.connected
+
+  async function retry() {
+    if (retrying) return
+    setRetrying(true)
+    try { await requestIOSSync() }
+    catch (error) { notify.failure("同步失败", error) }
+    finally { setRetrying(false) }
+  }
+
+  return (
+    <>
+      {offline ? (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                aria-busy={syncing || undefined}
+                className={styles.action}
+                disabled={retrying}
+                onClick={() => void retry()}
+                size="sm"
+                type="button"
+                variant="ghost"
+              />
+            }
+          >
+            <span aria-live="polite" className={styles.badge} data-tone="warning">{label}</span>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">可离线查看和新建碎片。点击重试同步。</TooltipContent>
+        </Tooltip>
+      ) : (
+        <StatusBarAction onClick={onOpenSettings}><span aria-live="polite">{label}</span></StatusBarAction>
+      )}
+      {native && native.sync.pending > 0 ? (
+        <>
+          <StatusBarSeparator />
+          <span aria-live="polite" className={styles.syncCount} data-shard-sync-pending="true">待上传 {native.sync.pending} 条</span>
+        </>
+      ) : null}
     </>
   )
 }

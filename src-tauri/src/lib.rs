@@ -4215,8 +4215,8 @@ pub fn run() {
                 window_frame::configure_startup(window)?;
             }
             reminder_badge::spawn_badge_worker(app.handle().clone())?;
-            // 连接过服务器就直接连上（在线客户端，S8a）。
-            remote_client::restore(app.handle());
+            // remote_status restores saved credentials off the UI thread before
+            // the frontend chooses its authenticated server workspace.
 
             Ok(())
         })

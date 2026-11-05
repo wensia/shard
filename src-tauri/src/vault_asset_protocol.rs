@@ -4,7 +4,9 @@
 //! 还常驻 JS 堆；资料库宫格、表格缩略图一多就扛不住。这里只供图片：路径先过
 //! `resolve_vault_asset_path`（密匣、内部目录、越界符号链接都拒绝），再按文件头确认是
 //! 图片才返回。任何失败都回 404，不在响应里带路径。
-use std::{fs, path::Path, time::UNIX_EPOCH};
+use std::path::Path;
+#[cfg(test)]
+use std::{fs, time::UNIX_EPOCH};
 
 use tauri::http::{header, Method, Request, Response, StatusCode};
 use tauri::Manager;
@@ -18,10 +20,6 @@ pub fn handle(app: &tauri::AppHandle, request: &Request<Vec<u8>>) -> Response<Ve
         .headers()
         .get(header::ORIGIN)
         .and_then(|value| value.to_str().ok());
-    let if_none_match = request
-        .headers()
-        .get(header::IF_NONE_MATCH)
-        .and_then(|value| value.to_str().ok());
     // 连接了服务器：图片在服务器上，带设备令牌代理 `/api/files`（在线客户端，S8a）；
     // 离线、或本机还有没补交的写（例如离线粘贴的图）时读本机副本（S8b）。
     let runtime = app.state::<crate::remote_client::RemoteRuntime>();
@@ -29,10 +27,9 @@ pub fn handle(app: &tauri::AppHandle, request: &Request<Vec<u8>>) -> Response<Ve
         let engine = runtime.engine();
         return serve_remote(&client, engine.as_deref(), request.method(), request.uri().path(), origin);
     }
-    match crate::configured_vault_path(app) {
-        Ok(vault) => serve(&vault, request.method(), request.uri().path(), origin, if_none_match),
-        Err(_) => empty(StatusCode::NOT_FOUND, origin),
-    }
+    // The desktop opens a server session by default. Never expose images from a
+    // previously selected Git vault while signed out or after a token refusal.
+    empty(StatusCode::NOT_FOUND, origin)
 }
 
 /// 代理服务器的 `/api/files/<路径>`：路径原样（已百分号编码）转过去，服务器只供图片、自带 nosniff 与 SVG 沙箱 CSP。
@@ -101,6 +98,7 @@ fn serve_replica(engine: &shard_sync::SyncEngine, method: &Method, path: &str, o
     builder.body(body).ok()
 }
 
+#[cfg(test)]
 pub fn serve(
     vault: &Path,
     method: &Method,
@@ -162,6 +160,7 @@ pub fn serve(
         .unwrap_or_else(|_| empty(StatusCode::NOT_FOUND, origin))
 }
 
+#[cfg(test)]
 fn with_common_headers(
     builder: tauri::http::response::Builder,
     origin: Option<&str>,
@@ -206,6 +205,7 @@ fn allowed_origin(origin: &str) -> bool {
 }
 
 /// `assets/<hh>/<64 位 hex>.<ext>` 的内容永不变，可以让 webview 永久缓存。
+#[cfg(test)]
 fn is_content_addressed(vault: &Path, path: &Path) -> bool {
     let Ok(canonical_vault) = vault.canonicalize() else {
         return false;

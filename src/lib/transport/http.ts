@@ -49,7 +49,10 @@ export async function request(url: string, init: RequestInit, fetcher: typeof fe
     let response: Response
     try {
       response = await fetcher(url, { credentials: "same-origin", ...init })
-    } catch {
+    } catch (error) {
+      // Native password confirmation can be cancelled; cancellation is never a network retry.
+      if (error && typeof error === "object" &&
+          ("code" in error && error.code === "CANCELLED" || "name" in error && error.name === "AbortError")) throw error
       if (attempt >= MAX_RETRIES) throw NETWORK_ERROR_MESSAGE
       await delay(300 * 2 ** attempt)
       continue

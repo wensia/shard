@@ -4,6 +4,7 @@ import { PasswordInput } from "@/components/shard/password-input"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { AUTH_REQUIRED_EVENT } from "@/lib/transport"
+import { iosNativeState, isIOSNative, openIOSLegacy } from "@/lib/ios-native"
 
 import {
   AuthError,
@@ -98,7 +99,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
 function AuthCard({ title, children }: { title: string; children: ReactNode }) {
   const titleId = useId()
   return (
-    <main className={styles.page}>
+    <main className={styles.page} data-focus-region="auth">
       <section aria-labelledby={titleId} className={styles.card}>
         <p className={styles.brand}>Shard</p>
         <h1 className={styles.title} id={titleId}>
@@ -151,35 +152,47 @@ function useSubmit() {
   return { busy, error, run }
 }
 
-type LoginField = "email" | "password"
+type LoginField = "server" | "email" | "password"
 
-function LoginForm({ onDone }: { onDone: () => void }) {
+export function LoginForm({ onDone, connection }: {
+  onDone: () => void
+  connection?: { server: string; signIn: (email: string, password: string, server: string) => Promise<void> }
+}) {
   const { busy, error, run } = useSubmit()
-  const [email, setEmail] = useState("")
+  const native = isIOSNative()
+  const [server, setServer] = useState(() => connection?.server ?? iosNativeState()?.serverURL ?? "")
+  const [email, setEmail] = useState(() => iosNativeState()?.email ?? "")
   const [password, setPassword] = useState("")
+  const serverRef = useRef<HTMLInputElement>(null)
   const emailRef = useRef<HTMLInputElement>(null)
   const passwordRef = useRef<HTMLInputElement>(null)
   const emailId = useId()
+  const serverId = useId()
   const passwordId = useId()
   const { errors, setErrors, revalidate } = useFieldErrors<LoginField>()
   const missingPassword = (value: string) => (value ? null : "请填写密码。")
 
   const submit = (event: FormEvent) => {
     event.preventDefault()
-    const next = { email: emailProblem(email) ?? undefined, password: missingPassword(password) ?? undefined }
+    const next = {
+      server: (native || connection) && !server.trim() ? "请填写服务器地址。" : undefined,
+      email: emailProblem(email) ?? undefined,
+      password: missingPassword(password) ?? undefined,
+    }
     setErrors(next)
-    if (next.email || next.password) {
-      ;(next.email ? emailRef : passwordRef).current?.focus()
+    if (next.server || next.email || next.password) {
+      ;(next.server ? serverRef : next.email ? emailRef : passwordRef).current?.focus()
       return
     }
     void run(
       async () => {
-        await login(email, password)
+        if (connection) await connection.signIn(email, password, server)
+        else await login(email, password, server)
         onDone()
       },
       (caught) => {
         // 邮箱或密码不对：清空密码重输，邮箱留着。
-        if (caught instanceof AuthError && caught.code === "INVALID_CREDENTIALS") {
+        if (connection || (caught instanceof AuthError && caught.code === "INVALID_CREDENTIALS")) {
           setPassword("")
           passwordRef.current?.focus()
         }
@@ -190,6 +203,27 @@ function LoginForm({ onDone }: { onDone: () => void }) {
   return (
     <AuthCard title="登录">
       <form className={styles.form} noValidate onSubmit={submit}>
+        {native || connection ? (
+          <FormField error={errors.server} htmlFor={serverId} label="服务器地址">
+            <Input
+              {...fieldProps(serverId, errors.server)}
+              autoCapitalize="off"
+              autoComplete="url"
+              id={serverId}
+              inputMode="url"
+              onChange={(event) => {
+                setServer(event.target.value)
+                revalidate("server", event.target.value.trim() ? null : "请填写服务器地址。")
+              }}
+              placeholder="https://…"
+              readOnly={busy}
+              ref={serverRef}
+              spellCheck={false}
+              type="url"
+              value={server}
+            />
+          </FormField>
+        ) : null}
         <FormField error={errors.email} htmlFor={emailId} label="邮箱">
           <Input
             {...fieldProps(emailId, errors.email)}
@@ -227,6 +261,11 @@ function LoginForm({ onDone }: { onDone: () => void }) {
           {busy ? "正在登录…" : "登录"}
         </Button>
       </form>
+      {native && iosNativeState()?.legacyAvailable ? (
+        <Button disabled={busy} onClick={() => void run(openIOSLegacy)} variant="ghost">
+          使用 GitHub 连接
+        </Button>
+      ) : null}
     </AuthCard>
   )
 }

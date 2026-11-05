@@ -11,7 +11,7 @@
 use std::{
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc, Mutex,
+        Arc, Mutex, Once,
     },
     thread,
     time::Duration,
@@ -102,11 +102,18 @@ struct SyncHandle {
 #[derive(Default)]
 struct RemoteState {
     connected: Option<Connected>,
+    last_config: Option<RemoteConfig>,
 }
 
-#[derive(Default)]
 pub struct RemoteRuntime {
     state: Mutex<RemoteState>,
+    restored: Once,
+}
+
+impl Default for RemoteRuntime {
+    fn default() -> Self {
+        Self { state: Mutex::new(RemoteState::default()), restored: Once::new() }
+    }
 }
 
 impl RemoteRuntime {
@@ -116,12 +123,32 @@ impl RemoteRuntime {
 
     /// 已连接时的客户端（克隆很便宜）。
     pub fn client(&self) -> Option<Client> {
-        self.lock().connected.as_ref().map(|connected| connected.client.clone())
+        self.lock().connected.as_ref().filter(|connected| connected.link.get() != "signedOut")
+            .map(|connected| connected.client.clone())
     }
 
     /// 已连接时的同步引擎。
     pub fn engine(&self) -> Option<Arc<SyncEngine>> {
-        self.lock().connected.as_ref().and_then(|connected| connected.sync.as_ref()).map(|sync| Arc::clone(&sync.engine))
+        self.lock().connected.as_ref().filter(|connected| connected.link.get() != "signedOut")
+            .and_then(|connected| connected.sync.as_ref()).map(|sync| Arc::clone(&sync.engine))
+    }
+
+    fn link(&self) -> Option<LinkState> {
+        self.lock().connected.as_ref().map(|connected| connected.link.clone())
+    }
+
+    /// Reject only the connection which received the refusal. Late callbacks from a
+    /// previous login cannot invalidate its replacement, even on the same server.
+    fn reject_link(&self, link: &LinkState) -> bool {
+        let state = self.lock();
+        let Some(connected) = state.connected.as_ref().filter(|connected| Arc::ptr_eq(&connected.link.0, &link.0)) else {
+            return false;
+        };
+        if connected.link.get() == "signedOut" { return false; }
+        connected.link.set("signedOut");
+        connected.stop.store(true, Ordering::SeqCst);
+        if let Some(sync) = &connected.sync { sync.runner.stop(); }
+        true
     }
 
     fn connect(&self, app: &AppHandle, client: Client, config: RemoteConfig) {
@@ -129,12 +156,18 @@ impl RemoteRuntime {
         drop(self.disconnect());
         let stop = Arc::new(AtomicBool::new(false));
         let link = LinkState::new();
-        let sync = open_sync(app, client.clone(), &config);
-        spawn_event_bridge(app.clone(), client.clone(), Arc::clone(&stop), link.clone(), sync.clone());
-        let previous = self.lock().connected.replace(Connected { client, config, sync, stop, link });
+        let sync = open_sync(app, client.clone(), &config, Arc::clone(&stop), link.clone());
+        let previous = {
+            let mut state = self.lock();
+            state.last_config = Some(config.clone());
+            state.connected.replace(Connected {
+                client: client.clone(), config, sync: sync.clone(), stop: Arc::clone(&stop), link: link.clone(),
+            })
+        };
         if let Some(previous) = previous {
             previous.stop.store(true, Ordering::SeqCst);
         }
+        spawn_event_bridge(app.clone(), client, stop, link, sync);
     }
 
     fn disconnect(&self) -> Option<Connected> {
@@ -156,7 +189,7 @@ fn sync_dirs(app: &AppHandle) -> Option<(std::path::PathBuf, std::path::PathBuf)
 }
 
 /// 打开（必要时新建）副本并起后台同步。打不开时返回空：退回 S8a 的全部直发，并在终端说明。
-fn open_sync(app: &AppHandle, client: Client, config: &RemoteConfig) -> Option<SyncHandle> {
+fn open_sync(app: &AppHandle, client: Client, config: &RemoteConfig, stop: Arc<AtomicBool>, link: LinkState) -> Option<SyncHandle> {
     let (dir, recovered) = sync_dirs(app)?;
     let mut options = EngineOptions::new(dir);
     options.recovered_dir = Some(recovered);
@@ -164,7 +197,11 @@ fn open_sync(app: &AppHandle, client: Client, config: &RemoteConfig) -> Option<S
     let handle = app.clone();
     let vault = Arc::new(Mutex::new(String::new()));
     let vault_for_events = Arc::clone(&vault);
-    let engine = match SyncEngine::open(client, options, move |event| emit_sync_event(&handle, &vault_for_events, event)) {
+    let engine = match SyncEngine::open(client, options, move |event| {
+        if !stop.load(Ordering::SeqCst) {
+            emit_sync_event(&handle, &vault_for_events, &link, event)
+        }
+    }) {
         Ok(engine) => Arc::new(engine),
         Err(error) => {
             eprintln!("打不开本机副本，离线功能不可用：{error}");
@@ -176,7 +213,7 @@ fn open_sync(app: &AppHandle, client: Client, config: &RemoteConfig) -> Option<S
     Some(SyncHandle { engine, runner })
 }
 
-fn emit_sync_event(app: &AppHandle, vault: &Mutex<String>, event: SyncEvent) {
+fn emit_sync_event(app: &AppHandle, vault: &Mutex<String>, link: &LinkState, event: SyncEvent) {
     match event {
         SyncEvent::Status(status) => {
             let _ = app.emit(SYNC_STATUS_EVENT, status);
@@ -195,24 +232,46 @@ fn emit_sync_event(app: &AppHandle, vault: &Mutex<String>, event: SyncEvent) {
             let _ = app.emit(SYNC_RECOVERED_EVENT, json!({ "pushed": pushed, "saved": saved, "dir": dir }));
         }
         SyncEvent::AuthRequired => {
-            let _ = app.emit(REMOTE_AUTH_REQUIRED_EVENT, json!({}));
+            auth_required(app, link);
         }
     }
 }
 
-/// 启动时：有配置与令牌就直接连上。
-pub fn restore(app: &AppHandle) {
+/// Called once by remote_status's background task, before any workspace command.
+fn restore(app: &AppHandle) {
     let store = credential_store(app);
     let Ok(Some(config)) = store.load_config() else {
         return;
     };
+    app.state::<RemoteRuntime>().lock().last_config = Some(config.clone());
     let token = match store.load_token(&config.server) {
         Ok(Some(token)) => token,
         _ => return,
     };
     match Client::new(&config.server, token, client_options()) {
-        Ok(client) => app.state::<RemoteRuntime>().connect(app, client, config),
+        Ok(client) => {
+            // Validate saved credentials before opening cached content. A network
+            // outage preserves previously established offline access, never 401.
+            match restored_auth(&client) {
+                Ok(()) => app.state::<RemoteRuntime>().connect(app, client, config),
+                Err(error) => eprintln!("服务器登录未恢复：{error}"),
+            }
+        }
         Err(error) => eprintln!("远程配置里的服务器地址无效：{error}"),
+    }
+}
+
+fn restored_auth(client: &Client) -> Result<(), String> {
+    match client.get_bytes("api/auth/state") {
+        Ok(response) if matches!(response.status, 502..=504) => Ok(()),
+        Ok(response) if response.status == 200 => {
+            let state: Value = serde_json::from_slice(&response.bytes).map_err(|_| "服务器登录状态无效。".to_string())?;
+            if state.get("authenticated").and_then(Value::as_bool) == Some(true) { Ok(()) }
+            else { Err("登录已失效，请重新登录。".to_string()) }
+        }
+        Ok(_) => Err("登录已失效，请重新登录。".to_string()),
+        Err(error) if error.is_retryable() => Ok(()),
+        Err(error) => Err(error.to_string()),
     }
 }
 
@@ -229,20 +288,35 @@ pub struct RemoteStatus {
     sync: Option<SyncStatus>,
 }
 
-#[tauri::command]
-pub fn remote_status(runtime: State<'_, RemoteRuntime>) -> RemoteStatus {
+fn connection_status(runtime: &RemoteRuntime) -> RemoteStatus {
     let state = runtime.lock();
     match &state.connected {
         Some(connected) => RemoteStatus {
-            connected: true,
+            connected: connected.link.get() != "signedOut",
             server: Some(connected.config.server.clone()),
             device_id: Some(connected.config.device_id.clone()),
             name: Some(connected.config.name.clone()),
             connection: Some(connected.link.get()),
             sync: connected.sync.as_ref().map(|sync| sync.engine.status()),
         },
-        None => RemoteStatus { connected: false, server: None, device_id: None, name: None, connection: None, sync: None },
+        None => RemoteStatus {
+            connected: false,
+            server: state.last_config.as_ref().map(|config| config.server.clone()),
+            device_id: state.last_config.as_ref().map(|config| config.device_id.clone()),
+            name: state.last_config.as_ref().map(|config| config.name.clone()),
+            connection: None,
+            sync: None,
+        },
     }
+}
+
+#[tauri::command]
+pub async fn remote_status(app: AppHandle) -> Result<RemoteStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let runtime = app.state::<RemoteRuntime>();
+        runtime.restored.call_once(|| restore(&app));
+        connection_status(&runtime)
+    }).await.map_err(|error| error.to_string())
 }
 
 #[derive(Debug, Serialize)]
@@ -256,83 +330,102 @@ pub struct LoginResult {
 #[tauri::command]
 pub async fn remote_login(
     app: AppHandle,
-    runtime: State<'_, RemoteRuntime>,
     server: String,
     email: String,
     password: String,
     name: String,
 ) -> Result<LoginResult, String> {
-    let credentials = tauri::async_runtime::spawn_blocking(move || {
-        login_device(&server, LoginRequest { email: &email, password: &password, name: &name, kind: "desktop" }, &user_agent())
-    })
-    .await
-    .map_err(|error| error.to_string())?
-    .map_err(|error| error.to_string())?;
-    let store = credential_store(&app);
-    let config = RemoteConfig {
-        server: credentials.server.clone(),
-        device_id: credentials.device_id.clone(),
-        name: credentials.name.clone(),
-    };
-    // 先存新令牌与配置，再连；换了服务器时删掉旧服务器的令牌（按服务器分开存，不会删到新的）。
-    let previous = store.load_config().ok().flatten();
-    store.save_token(&config.server, &credentials.token).map_err(|error| error.to_string())?;
-    store.save_config(&config).map_err(|error| error.to_string())?;
-    if let Some(previous) = previous.filter(|previous| previous.server != config.server) {
-        let _ = store.delete_token(&previous.server);
-    }
-    let client = Client::new(&config.server, credentials.token, client_options()).map_err(|error| error.to_string())?;
-    runtime.connect(&app, client, config.clone());
-    Ok(LoginResult { server: config.server, name: config.name })
+    tauri::async_runtime::spawn_blocking(move || {
+        let credentials = login_device(&server, LoginRequest { email: &email, password: &password, name: &name, kind: "desktop" }, &user_agent())
+            .map_err(|error| error.to_string())?;
+        let runtime = app.state::<RemoteRuntime>();
+        runtime.restored.call_once(|| {});
+        let store = credential_store(&app);
+        let config = RemoteConfig {
+            server: credentials.server.clone(),
+            device_id: credentials.device_id.clone(),
+            name: credentials.name.clone(),
+        };
+        // 先存新令牌与配置，再连；换了服务器时删掉旧服务器的令牌（按服务器分开存，不会删到新的）。
+        let previous = store.load_config().ok().flatten();
+        store.save_token(&config.server, &credentials.token).map_err(|error| error.to_string())?;
+        store.save_config(&config).map_err(|error| error.to_string())?;
+        if let Some(previous) = previous.filter(|previous| previous.server != config.server) {
+            let _ = store.delete_token(&previous.server);
+        }
+        let client = Client::new(&config.server, credentials.token, client_options()).map_err(|error| error.to_string())?;
+        runtime.connect(&app, client, config.clone());
+        Ok(LoginResult { server: config.server, name: config.name })
+    }).await.map_err(|error| error.to_string())?
 }
 
-/// 断开：删掉本机令牌与配置，停掉实时通道。服务器上的设备记录要到网页「设置 → 设备」吊销。
+/// 退出：删掉本机令牌并停止通道，保留服务器/设备名用于下次登录。
+/// 服务器上的设备记录要到网页「设置 → 设备」吊销。
 #[tauri::command]
-pub fn remote_disconnect(app: AppHandle, runtime: State<'_, RemoteRuntime>) -> Result<(), String> {
-    let store = credential_store(&app);
-    if let Ok(Some(config)) = store.load_config() {
-        let _ = store.delete_token(&config.server);
-    }
-    store.remove_config_file().map_err(|error| error.to_string())?;
-    let previous = runtime.disconnect();
-    // 先放掉引擎（关掉副本的连接），再删副本；还没补交的操作另存到 remote-recovered。
-    drop(previous);
-    if let Some((dir, recovered)) = sync_dirs(&app) {
-        if let Err(error) = SyncEngine::discard(&dir, Some(&recovered)) {
-            eprintln!("删除本机副本失败：{error}");
+pub async fn remote_disconnect(app: AppHandle) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let runtime = app.state::<RemoteRuntime>();
+        runtime.restored.call_once(|| {});
+        let store = credential_store(&app);
+        let remembered = { runtime.lock().last_config.clone() };
+        let config = match remembered {
+            Some(config) => Some(config),
+            None => store.load_config().map_err(|error| error.to_string())?,
+        };
+        if let Some(config) = config {
+            store.delete_token(&config.server).map_err(|error| error.to_string())?;
         }
-    }
-    let _ = app.emit(REMOTE_CONNECTION_EVENT, json!({ "state": "signedOut" }));
-    Ok(())
+        let previous = runtime.disconnect();
+        // 先放掉引擎（关掉副本的连接），再删副本；还没补交的操作另存到 remote-recovered。
+        drop(previous);
+        if let Some((dir, recovered)) = sync_dirs(&app) {
+            if let Err(error) = SyncEngine::discard(&dir, Some(&recovered)) {
+                eprintln!("删除本机副本失败：{error}");
+            }
+        }
+        let _ = app.emit(REMOTE_CONNECTION_EVENT, json!({ "state": "signedOut" }));
+        Ok(())
+    }).await.map_err(|error| error.to_string())?
 }
 
 /// 立即同步一轮（状态栏「同步中」以外的手动触发、联网恢复）。
 #[tauri::command]
-pub fn remote_sync_now(runtime: State<'_, RemoteRuntime>) {
-    if let Some(engine) = runtime.engine() {
-        engine.retry_now();
-        engine.request_sync();
-    }
+pub async fn remote_sync_now(runtime: State<'_, RemoteRuntime>) -> Result<(), String> {
+    let engine = runtime.engine();
+    tauri::async_runtime::spawn_blocking(move || {
+        if let Some(engine) = engine {
+            engine.retry_now();
+            engine.request_sync();
+        }
+    }).await.map_err(|error| error.to_string())
 }
 
 /// 用户看过冲突 / 失败提示：状态栏计数清零。
 #[tauri::command]
-pub fn remote_sync_dismiss(runtime: State<'_, RemoteRuntime>) {
-    if let Some(engine) = runtime.engine() {
-        engine.dismiss_notices();
-    }
+pub async fn remote_sync_dismiss(runtime: State<'_, RemoteRuntime>) -> Result<(), String> {
+    let engine = runtime.engine();
+    tauri::async_runtime::spawn_blocking(move || {
+        if let Some(engine) = engine { engine.dismiss_notices(); }
+    }).await.map_err(|error| error.to_string())
 }
 
 /// 给前端的错误：与网页端 `readError` 同形——有结构化错误就给它，否则给说明文字。
-fn frontend_error(app: &AppHandle, error: RemoteError) -> Value {
-    failure_value(app, error, false)
+fn frontend_error(app: &AppHandle, link: Option<&LinkState>, error: RemoteError) -> Value {
+    failure_value(app, link, error, false)
+}
+
+fn auth_required(app: &AppHandle, link: &LinkState) {
+    if app.state::<RemoteRuntime>().reject_link(link) {
+        let _ = app.emit(REMOTE_CONNECTION_EVENT, json!({ "state": "signedOut" }));
+        let _ = app.emit(REMOTE_AUTH_REQUIRED_EVENT, json!({}));
+    }
 }
 
 /// `detailed` 为真时（密匣客户端的服务器通道）与网页端 `readFailure` 同形：`{status, code, detail}`，
 /// `detail` 即 [`frontend_error`] 的值；没拿到 HTTP 响应（网络失败）时与网页一样只给说明文字。
-fn failure_value(app: &AppHandle, error: RemoteError, detailed: bool) -> Value {
+fn failure_value(app: &AppHandle, link: Option<&LinkState>, error: RemoteError, detailed: bool) -> Value {
     if error.is_unauthenticated() {
-        let _ = app.emit(REMOTE_AUTH_REQUIRED_EVENT, json!({ "server": error.server }));
+        if let Some(link) = link { auth_required(app, link); }
     }
     failure_payload(error, detailed)
 }
@@ -421,6 +514,7 @@ pub async fn remote_invoke(
     args: Option<Value>,
     detailed: Option<bool>,
 ) -> Result<Value, Value> {
+    let link = runtime.link();
     let client = runtime.client().ok_or_else(not_connected)?;
     let engine = runtime.engine();
     let args = args.unwrap_or_else(|| json!({}));
@@ -439,7 +533,7 @@ pub async fn remote_invoke(
     })
     .await
     .map_err(|error| Value::String(error.to_string()))?;
-    result.map_err(|error| failure_value(&app, error, detailed.unwrap_or(false)))
+    result.map_err(|error| failure_value(&app, link.as_ref(), error, detailed.unwrap_or(false)))
 }
 
 /// 上传附件字节（请求体是原始字节），返回 sha；前端再用 sha 调对应的登记命令。
@@ -449,6 +543,7 @@ pub async fn remote_upload_blob(
     runtime: State<'_, RemoteRuntime>,
     request: tauri::ipc::Request<'_>,
 ) -> Result<String, Value> {
+    let link = runtime.link();
     let client = runtime.client().ok_or_else(not_connected)?;
     let engine = runtime.engine();
     let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
@@ -462,7 +557,7 @@ pub async fn remote_upload_blob(
     })
         .await
         .map_err(|error| Value::String(error.to_string()))?;
-    result.map_err(|error| frontend_error(&app, error))
+    result.map_err(|error| frontend_error(&app, link.as_ref(), error))
 }
 
 /// 单个本机文件的上传上限（与桌面保存图片、服务器单次上传一致）。
@@ -490,6 +585,7 @@ pub async fn remote_save_image_from_path(
     runtime: State<'_, RemoteRuntime>,
     path: String,
 ) -> Result<Value, Value> {
+    let link = runtime.link();
     let client = runtime.client().ok_or_else(not_connected)?;
     let engine = runtime.engine();
     let result = tauri::async_runtime::spawn_blocking(move || -> Result<Value, Result<RemoteError, String>> {
@@ -509,7 +605,7 @@ pub async fn remote_save_image_from_path(
     .await
     .map_err(|error| Value::String(error.to_string()))?;
     result.map_err(|error| match error {
-        Ok(remote) => frontend_error(&app, remote),
+        Ok(remote) => frontend_error(&app, link.as_ref(), remote),
         Err(message) => Value::String(message),
     })
 }
@@ -523,6 +619,7 @@ pub async fn remote_import_library_files(
     paths: Vec<String>,
     directory: Option<String>,
 ) -> Result<Value, Value> {
+    let link = runtime.link();
     let client = runtime.client().ok_or_else(not_connected)?;
     let engine = runtime.engine();
     let result = tauri::async_runtime::spawn_blocking(move || -> Result<Value, RemoteError> {
@@ -558,7 +655,7 @@ pub async fn remote_import_library_files(
     })
     .await
     .map_err(|error| Value::String(error.to_string()))?;
-    result.map_err(|error| frontend_error(&app, error))
+    result.map_err(|error| frontend_error(&app, link.as_ref(), error))
 }
 
 /// 服务器的 SSE → Tauri 事件：`vault-changed`（与本地文件监听同形）、`lockbox-changed`、`vault-resync`。
@@ -570,6 +667,7 @@ fn spawn_event_bridge(app: AppHandle, client: Client, stop: Arc<AtomicBool>, lin
         let mut last_event_id: Option<String> = None;
         let mut retry = Duration::from_secs(1);
         let emit_state = |state: &'static str| {
+            if stop.load(Ordering::SeqCst) { return; }
             link.set(state);
             let _ = app.emit(REMOTE_CONNECTION_EVENT, json!({ "state": state }));
         };
@@ -592,8 +690,7 @@ fn spawn_event_bridge(app: AppHandle, client: Client, stop: Arc<AtomicBool>, lin
                                 }
                             }
                             Err(error) if error.is_unauthenticated() => {
-                                emit_state("signedOut");
-                                let _ = app.emit(REMOTE_AUTH_REQUIRED_EVENT, json!({ "server": client.server() }));
+                                if !stop.load(Ordering::SeqCst) { auth_required(&app, &link); }
                                 return;
                             }
                             Err(error) => {
@@ -607,8 +704,7 @@ fn spawn_event_bridge(app: AppHandle, client: Client, stop: Arc<AtomicBool>, lin
                     last_event_id = stream.last_event_id().map(str::to_string);
                 }
                 Err(error) if error.is_unauthenticated() => {
-                    emit_state("signedOut");
-                    let _ = app.emit(REMOTE_AUTH_REQUIRED_EVENT, json!({ "server": client.server() }));
+                    if !stop.load(Ordering::SeqCst) { auth_required(&app, &link); }
                     return;
                 }
                 Err(error) => {
@@ -664,6 +760,72 @@ fn lockbox_changed_payload(data: &str) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn restored_credentials_accept_only_authenticated_or_offline_responses() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+
+        for (status, body, accepted) in [
+            (200, r#"{"authenticated":true}"#, true),
+            (200, r#"{"authenticated":false}"#, false),
+            (200, "invalid-json", false),
+            (401, r#"{"code":"UNAUTHENTICATED"}"#, false),
+            (403, r#"{"code":"FORBIDDEN"}"#, false),
+            (503, "temporarily unavailable", true),
+        ] {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let address = listener.local_addr().unwrap();
+            let worker = thread::spawn(move || {
+                let (mut socket, _) = listener.accept().unwrap();
+                socket.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+                let mut bytes = [0; 8192];
+                let mut received = Vec::new();
+                while !received.windows(4).any(|part| part == b"\r\n\r\n") {
+                    let count = socket.read(&mut bytes).unwrap();
+                    assert!(count > 0);
+                    received.extend_from_slice(&bytes[..count]);
+                }
+                let request = String::from_utf8_lossy(&received).to_lowercase();
+                assert!(request.starts_with("get /api/auth/state "));
+                assert!(request.contains("authorization: bearer isolated-test-token\r\n"));
+                write!(socket, "HTTP/1.1 {status} Test\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
+            });
+            let mut options = ClientOptions::new("shard-native-unit", "native-test");
+            options.retry_delays.clear();
+            let client = Client::new(&format!("http://localhost:{}", address.port()), "isolated-test-token", options).unwrap();
+            assert_eq!(restored_auth(&client).is_ok(), accepted, "status={status}, body={body}");
+            worker.join().unwrap();
+        }
+    }
+
+    #[test]
+    fn signed_out_runtime_blocks_cached_commands_and_retains_server_metadata() {
+        let runtime = RemoteRuntime::default();
+        assert!(!connection_status(&runtime).connected);
+        assert!(connection_status(&runtime).server.is_none());
+        let config = RemoteConfig { server: "https://private.shard.test".into(), device_id: "device-fixture".into(), name: "测试 Mac".into() };
+        let previous = LinkState::new();
+        let current = LinkState::new();
+        let client = Client::new(&config.server, "isolated-test-token", client_options()).unwrap();
+        let mut state = runtime.lock();
+        state.last_config = Some(config.clone());
+        state.connected = Some(Connected {
+            client, config, sync: None, stop: Arc::new(AtomicBool::new(false)), link: current.clone(),
+        });
+        drop(state);
+        assert!(!runtime.reject_link(&previous), "A previous session cannot reject its replacement");
+        assert!(runtime.client().is_some());
+        assert!(runtime.reject_link(&current));
+        assert!(runtime.client().is_none());
+        assert!(runtime.engine().is_none());
+        assert!(!connection_status(&runtime).connected);
+        drop(runtime.disconnect());
+        let logged_out = connection_status(&runtime);
+        assert!(!logged_out.connected);
+        assert_eq!(logged_out.server.as_deref(), Some("https://private.shard.test"));
+        assert_eq!(logged_out.name.as_deref(), Some("测试 Mac"));
+    }
 
     #[test]
     fn lockbox_changes_keep_the_server_seq() {

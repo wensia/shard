@@ -45,13 +45,13 @@ const CONNECTION_STATUS: Record<ConnectionState, { label: string; tone: StationT
   signedOut: { label: "连接已失效", tone: "ruby" },
 }
 
-/** 切换本地 / 服务器模式：整页重载，启动时按 Rust 的连接状态重新选择传输。 */
+/** 凭据变更后重载，重新进入 VPS 登录门。 */
 function reloadApp() {
   window.location.reload()
 }
 
 /**
- * 设置里的「服务器」分区（桌面专属）。没连接时用邮箱和密码登录服务器；连接后显示服务器与这台设备，可以断开回到本机资料库。
+ * 设置里的「服务器」分区（桌面专属）。连接后显示服务器与这台设备，断开后返回登录页。
  * 网页端没有这个分区（网页本身就在服务器上）。
  */
 export function ServerSettings() {
@@ -121,7 +121,7 @@ function ConnectedServer({ status }: { status: RemoteStatus }) {
         </SettingsRow>
         <SettingsRow
           controlWidth="auto"
-          description="断开后回到这台电脑上的资料库；服务器上的数据不受影响。"
+          description="断开后返回登录页，服务器数据不受影响。"
           label="断开连接"
         >
           <Button disabled={busy} onClick={() => setConfirming(true)} size="md" type="button" variant="outline">
@@ -135,7 +135,7 @@ function ConnectedServer({ status }: { status: RemoteStatus }) {
           <DialogHeader>
             <DialogTitle>断开与服务器的连接？</DialogTitle>
             <DialogDescription>
-              本机不再保存这台设备的令牌，App 回到本机资料库。服务器上的设备记录请到网页「设置 → 设备」吊销。
+              清除本机登录凭据并返回登录页，服务器数据保留。
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -286,7 +286,7 @@ function LoginServer() {
         </SettingsRow>
         <SettingsRow
           controlWidth="auto"
-          description="连接后数据以服务器为准，需要联网；这台电脑上的资料库不会改动，断开后回到它。"
+          description="连接后使用服务器上的资料库。"
           error={error}
           label="连接服务器"
         >

@@ -10,8 +10,8 @@ settings:
     DEVELOPMENT_TEAM: LN8XZQ6ZX7
     CODE_SIGN_STYLE: Automatic
     SWIFT_VERSION: "6.0"
-    MARKETING_VERSION: "0.1.0"
-    CURRENT_PROJECT_VERSION: "1"
+    MARKETING_VERSION: "1.0"
+    CURRENT_PROJECT_VERSION: "3"
 packages:
   ShardKit:
     path: ShardKit
@@ -24,20 +24,27 @@ targets:
         excludes:
           - "Resources/Renderer"
           - "Resources/Renderer/**"
+          - "Resources/WebApp"
+          - "Resources/WebApp/**"
       # Folder reference keeps the Vite output tree (index.html + assets/) intact.
       - path: Shard/Resources/Renderer
+        type: folder
+        buildPhase: resources
+      - path: Shard/Resources/WebApp
         type: folder
         buildPhase: resources
     dependencies:
       - package: ShardKit
     preBuildScripts:
-      - name: Build Markdown renderer
+      - name: Build shared Web interface
         script: '"$SRCROOT/scripts/build-renderer.sh"'
         basedOnDependencyAnalysis: false
     info:
       path: Shard/Info.plist
       properties:
         CFBundleDisplayName: Shard
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         CFBundleDevelopmentRegion: zh-Hans
         UILaunchScreen: {}
         UIApplicationSceneManifest:
@@ -45,6 +52,9 @@ targets:
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
         ITSAppUsesNonExemptEncryption: false
+        NSCameraUsageDescription: 用于拍摄并插入图片。
+        NSPhotoLibraryUsageDescription: 用于选择并插入图片。
+        NSPhotoLibraryAddUsageDescription: 用于将导出的图片保存到相册。
         # Lets debug builds reach scripts/mock-github.py on the host; public internet stays HTTPS-only.
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true

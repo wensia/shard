@@ -1,8 +1,10 @@
 import { useState } from "react"
+import { isTauri } from "@tauri-apps/api/core"
 
 import { AuthGate } from "@/features/auth/auth-gate"
+import { DesktopAuthGate } from "@/features/auth/desktop-auth-gate"
 import { RevisionHistoryHost } from "@/features/history/revision-history-dialog"
-import { isServerBacked, isWebRuntime } from "@/lib/transport"
+import { isLegacyDesktopFixture, isServerBacked, isWebRuntime } from "@/lib/transport"
 
 import {
   DEFAULT_WORKSPACE_ROUTE,
@@ -15,7 +17,16 @@ function App() {
   const [route, setRoute] = useState<WorkspaceRoute>(DEFAULT_WORKSPACE_ROUTE)
 
   const shell = <WorkbenchShell route={route} setRoute={setRoute} />
-  // 网页端先过登录门；桌面应用直接进工作台（连接服务器时凭设备令牌，不需要登录）。
+  // 桌面默认进入 VPS 登录门，旧本地配置不构成已登录；只保留显式 DEV 组件测试宿主。
+  if (isTauri() && !isLegacyDesktopFixture()) {
+    return (
+      <DesktopAuthGate>
+        {shell}
+        <RevisionHistoryHost />
+      </DesktopAuthGate>
+    )
+  }
+  // 网页及 iOS 复用服务器账号登录门。
   if (isWebRuntime()) {
     return (
       <AuthGate>

@@ -87,6 +87,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals()
+  vi.unstubAllEnvs()
 })
 
 describe("命令清单", () => {
@@ -363,20 +364,54 @@ describe("启动时选传输", () => {
     expect(module.transport().server).toBeDefined()
   })
 
-  it("未连接或问不到 Rust：与改造前一样走本机", async () => {
-    replay({ remote_status: () => ({ connected: false, server: null, deviceId: null, name: null }) })
+  it("未登录或读取状态失败：只保留远程通道，不回到本机资料库", async () => {
+    replay({ remote_status: () => ({ connected: false, server: "https://private.shard.test", deviceId: null, name: null }) })
     let module = await freshTransport()
     await module.initTransport()
-    expect(module.transport().kind).toBe("tauri")
-    expect(module.isServerBacked()).toBe(false)
-    expect(module.canOpenLocalFiles()).toBe(true)
-    expect(module.desktopRemoteStatus()).toBeNull()
+    expect(module.transport().kind).toBe("tauri-remote")
+    expect(module.isServerBacked()).toBe(true)
+    expect(module.canOpenLocalFiles()).toBe(false)
+    expect(module.desktopRemoteStatus()).toMatchObject({ connected: false, server: "https://private.shard.test" })
 
     replay({})
     module = await freshTransport()
     await module.initTransport()
-    expect(module.transport().kind).toBe("tauri")
-    // 本地模式不订阅远程事件。
+    expect(module.transport().kind).toBe("tauri-remote")
+    expect(module.isLegacyDesktopFixture()).toBe(false)
+    expect(module.desktopRemoteStatus()).toBeNull()
+    // 未登录不启动远程事件或任何业务数据命令。
     expect(tauri.listen).not.toHaveBeenCalled()
+  })
+
+  it("显式DEV旧组件fixture只能接受明确缺失的IPC", async () => {
+    vi.stubEnv("DEV", true)
+    vi.stubEnv("VITE_SHARD_LEGACY_UI_TESTS", "1")
+    for (const reply of [() => undefined, () => { throw new Error("Unhandled Tauri test command: remote_status") }]) {
+      replay({ remote_status: reply })
+      const module = await freshTransport()
+      await module.initTransport()
+      expect(module.transport().kind).toBe("tauri")
+      expect(module.isLegacyDesktopFixture()).toBe(true)
+    }
+    for (const reply of [() => ({ connected: false }), () => { throw new Error("读取服务器登录状态失败") }]) {
+      replay({ remote_status: reply })
+      const module = await freshTransport()
+      await module.initTransport()
+      expect(module.transport().kind).toBe("tauri-remote")
+      expect(module.isLegacyDesktopFixture()).toBe(false)
+    }
+  })
+
+  it("生产构建即使误设fixture变量且IPC缺失，也不能打开本机库", async () => {
+    vi.stubEnv("DEV", false)
+    vi.stubEnv("VITE_SHARD_LEGACY_UI_TESTS", "1")
+    for (const reply of [() => undefined, () => { throw new Error("Unhandled Tauri test command: remote_status") }]) {
+      replay({ remote_status: reply })
+      const module = await freshTransport()
+      await module.initTransport()
+      expect(module.transport().kind).toBe("tauri-remote")
+      expect(module.isLegacyDesktopFixture()).toBe(false)
+      expect(module.canOpenLocalFiles()).toBe(false)
+    }
   })
 })

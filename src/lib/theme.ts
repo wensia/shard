@@ -69,6 +69,9 @@ export function initAccentTheme(): void {
 
 export type ColorMode = "system" | "light" | "dark"
 
+/** Hosts can follow the user's choice without coupling browser themes to a native bridge. */
+export const COLOR_MODE_CHANGED_EVENT = "shard:color-mode-changed"
+
 export interface ColorModeOption {
   id: ColorMode
   labelZh: string
@@ -148,6 +151,7 @@ export function applyColorMode(mode: ColorMode): void {
   } catch {
     // 写入失败不影响本次会话内已经生效的切换。
   }
+  window.dispatchEvent(new CustomEvent(COLOR_MODE_CHANGED_EVENT, { detail: { mode } }))
 }
 
 /** 启动时调用一次：应用上次的明暗模式，并在「跟随系统」时监听系统切换。 */

@@ -1,6 +1,7 @@
 import { invoke, isTauri } from "@tauri-apps/api/core"
 
 import { withLockboxClient } from "@/lib/lockbox-client/transport"
+import { initIOSNative } from "@/lib/ios-native"
 
 import { createDesktopRemoteTransport, startRemoteConnectionTracking, type RemoteStatus } from "./desktop-remote"
 import { httpTransport } from "./http"
@@ -9,11 +10,11 @@ import { tauriTransport } from "./tauri"
 /**
  * 前端与后端之间唯一的通道。
  *
- * - 桌面（Tauri）：IPC 直达 Rust 命令，行为与改造前一致。
- * - 桌面「连接服务器」（`tauri-remote`）：数据命令经 Rust 带设备令牌转发到服务器，与网页同一套命令；
+ * - 桌面（`tauri-remote`）：数据命令经 Rust 带设备令牌转发到 VPS，与网页同一套命令；
  *   本机能力（导出、红绿灯、Dock、终端命令）仍走本机 IPC。启动时由 {@link initTransport} 决定。
  * - 网页：`POST /api/rpc/<命令名>`，命令名与参数和 Tauri 命令一一对应；实时变化走 SSE。
  *
+ * 旧本地 IPC 仅用于明确开启的 DEV 组件 fixture；正常桌面启动不再自动读取本地/GitHub 资料库。
  * 几种实现的错误形态一致：领域错误 reject 成字符串（`STALE_BASE:` 等前缀照旧），
  * 结构化错误（搜索）reject 成对象。
  */
@@ -52,23 +53,46 @@ let override: ShardTransport | null = null
 let webTransport: ShardTransport | null = null
 let desktopRemote: ShardTransport | null = null
 let remoteStatus: RemoteStatus | null = null
+let legacyDesktopFixture = false
+
+/** Old component fixtures have no server IPC. This exception cannot enter a production build. */
+function unsupportedLegacyFixture(value: unknown, failed = false) {
+  if (!import.meta.env.DEV || import.meta.env.VITE_SHARD_LEGACY_UI_TESTS !== "1") return false
+  if (!failed) return value === null || value === undefined
+  const message = value instanceof Error ? value.message : String(value)
+  return /\b(?:unhandled|unknown|unexpected)\b.*\bremote_status\b/iu.test(message)
+}
+
+export function isLegacyDesktopFixture() {
+  return legacyDesktopFixture
+}
 
 /**
  * 启动时决定桌面走哪条通道，必须在任何命令发出之前完成（`main.tsx` 渲染前 await）。
- * 网页与没连接服务器的桌面什么也不改；问不到 Rust（旧版本、测试替身）时按未连接处理，行为与改造前一致。
+ * 桌面始终使用服务器通道；未连接或无法读取凭据时由登录门阻止工作台渲染。
  */
 export async function initTransport() {
+  await initIOSNative()
   if (!isTauri()) return
+  desktopRemote = withLockboxClient(createDesktopRemoteTransport())
   let status: RemoteStatus | null = null
   try {
     status = await invoke<RemoteStatus>("remote_status")
-  } catch {
+  } catch (error) {
+    if (unsupportedLegacyFixture(error, true)) {
+      legacyDesktopFixture = true
+      desktopRemote = null
+    }
     return
   }
-  if (!status?.connected) return
+  if (unsupportedLegacyFixture(status)) {
+    legacyDesktopFixture = true
+    desktopRemote = null
+    return
+  }
+  if (!status || typeof status.connected !== "boolean") return
   remoteStatus = status
-  // 与网页一样套上密匣客户端：密匣命令在本机（wasm）执行，再把密文经服务器通道写回。
-  desktopRemote = withLockboxClient(createDesktopRemoteTransport())
+  if (!status.connected) return
   await startRemoteConnectionTracking(status.connection, status.sync)
 }
 
@@ -105,7 +129,7 @@ export function canOpenLocalFiles() {
   return transport().kind === "tauri"
 }
 
-/** 桌面已连接的服务器（地址、设备名）；本地模式与网页为 null。 */
+/** 桌面服务器状态（未登录时也可保留原服务器地址）；网页与旧组件 fixture 为 null。 */
 export function desktopRemoteStatus(): RemoteStatus | null {
   return transport().kind === "tauri-remote" ? remoteStatus : null
 }

@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "pnpm build:markdown && pnpm build:lockbox-wasm && node node_modules/vite/bin/vite.js --host 127.0.0.1 --port 1420 --strictPort",
     "build": "pnpm build:markdown && pnpm build:lockbox-wasm && node scripts/verify-tokens.mjs && node scripts/verify-ui-controls.mjs && tsc && vite build",
+    "build:ios-web": "pnpm build:markdown && pnpm build:lockbox-wasm && node scripts/verify-tokens.mjs && node scripts/verify-ui-controls.mjs && tsc && vite build --config vite.ios.config.ts",
     "build:markdown": "pnpm --filter @shard/markdown build",
     "build:lockbox-wasm": "bash scripts/build-lockbox-wasm.sh --if-stale",
     "test:markdown": "pnpm build:markdown && node --test packages/markdown/tests/published.test.mjs",

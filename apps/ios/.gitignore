@@ -1,5 +1,6 @@
 Shard.xcodeproj/
 Shard/Resources/Renderer/
+Shard/Resources/WebApp/
 ShardKit/.build/
 ShardKit/.swiftpm/
 build/

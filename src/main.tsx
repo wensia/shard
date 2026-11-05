@@ -71,7 +71,7 @@ document.addEventListener("auxclick", suppressSecondaryPointerAction, {
   capture: true,
 });
 
-// 桌面先问 Rust 是否连接了服务器，决定之后所有命令走本机还是服务器；决定之前不渲染、不发任何数据命令。
+// 桌面先恢复并校验 VPS 凭据；决定之前不渲染、不发数据命令，未登录由入口门拦住工作台。
 void initTransport().finally(() => {
   ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
     <React.StrictMode>

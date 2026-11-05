@@ -6,12 +6,15 @@ public struct ServerAccount: Codable, Hashable, Sendable {
     public let email: String
     public let deviceID: String
     public let name: String
+    /// Keeps the original on-disk mirror identity when the same owner changes email.
+    public let storageEmail: String?
 
-    public init(serverURL: URL, email: String, deviceID: String, name: String) {
+    public init(serverURL: URL, email: String, deviceID: String, name: String, storageEmail: String? = nil) {
         self.serverURL = serverURL
         self.email = email
         self.deviceID = deviceID
         self.name = name
+        self.storageEmail = storageEmail
     }
 }
 

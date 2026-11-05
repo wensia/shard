@@ -1,4 +1,5 @@
 import { AUTHENTICATED_EVENT } from "@/lib/transport"
+import { iosNativeState, isIOSNative, refreshIOSNativeState } from "@/lib/ios-native"
 
 /**
  * 网页端的账号接口：邮箱 + 密码登录、凭服务器上生成的一次性链接设置或重置密码、敏感操作前输入密码确认，
@@ -68,7 +69,8 @@ export function repeatProblem(password: string, repeat: string) {
 async function send(path: string, init: RequestInit) {
   try {
     return await fetch(path, { credentials: "same-origin", ...init })
-  } catch {
+  } catch (error) {
+    if (error instanceof AuthError) throw error
     throw new AuthError("NETWORK", "连不上服务器，请检查网络后重试。")
   }
 }
@@ -112,7 +114,7 @@ export async function fetchAuthState(): Promise<AuthState> {
   const response = await send("/api/auth/state", {})
   if (!response.ok) throw new AuthError("ERROR", `连不上服务器（${response.status}）`)
   const state = (await response.json()) as AuthState
-  setKnownEmail(state.authenticated ? (state.email ?? null) : null)
+  setKnownEmail(state.authenticated ? (state.email ?? (isIOSNative() ? iosNativeState()?.email ?? null : null)) : null)
   return { ...state, email: knownEmail }
 }
 
@@ -140,9 +142,13 @@ export async function setupAccount(token: string, email: string, password: strin
   announceLogin(normalized)
 }
 
-export async function login(email: string, password: string) {
+export async function login(email: string, password: string, server?: string) {
   const normalized = normalizeEmail(email)
-  await call("POST", "/api/auth/login", { email: normalized, password })
+  await call("POST", "/api/auth/login", {
+    email: normalized, password,
+    ...(isIOSNative() ? { server: server?.trim() ?? iosNativeState()?.serverURL ?? "" } : {}),
+  })
+  if (isIOSNative()) await refreshIOSNativeState().catch(() => undefined)
   announceLogin(normalized)
 }
 
@@ -153,7 +159,8 @@ export function logout() {
 /** 退出登录并回到首页（登录页）。服务器没响应也照样回去：整页重载清掉内存里的密匣密钥与缓存。 */
 export async function signOut() {
   await logout().catch(() => undefined)
-  window.location.assign("/")
+  if (isIOSNative()) window.location.reload()
+  else window.location.assign("/")
 }
 
 // ---------- 敏感操作前输入密码确认 ----------

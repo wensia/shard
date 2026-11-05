@@ -24,6 +24,7 @@ public struct NewFragment: Equatable, Sendable {
 
     public static func make(
         content: String,
+        tags explicitTags: [String]? = nil,
         now: Date = Date(),
         timeZone: TimeZone = .current,
         id: String? = nil
@@ -32,8 +33,9 @@ public struct NewFragment: Equatable, Sendable {
         if body.isEmpty {
             throw .emptyContent
         }
-        let tags = ShardTags.captureTags(for: content)
-        if ShardTags.containsLockbox(tags) {
+        let tags = explicitTags.map { ShardTags.normalizeTypeTags(ShardTags.normalizeTags($0, includeInbox: true)) }
+            ?? ShardTags.captureTags(for: content)
+        if ShardTags.containsLockbox(tags) || ShardTags.containsLockbox(ShardTags.captureTags(for: content)) {
             throw .lockboxNotSupported
         }
         // One microsecond-rounded instant drives the id, directory and created_at alike.
