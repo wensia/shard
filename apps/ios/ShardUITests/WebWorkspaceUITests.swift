@@ -333,6 +333,114 @@ final class WebWorkspaceUITests: XCTestCase {
         XCTAssertTrue(web.buttons["密匣（上锁空间）"].waitForExistence(timeout: 5), app.debugDescription)
     }
 
+    /// Needs scripts/voice-service-fixture.py on 127.0.0.1:18794 and a granted microphone
+    /// (`xcrun simctl privacy <device> grant microphone dev.shard.mobile`).
+    @MainActor
+    func testNativeVoiceReadAloudAndDictationStayInTheHost() async throws {
+        try await control("reset")
+        try await voiceFixture("reset")
+        let app = launch(reset: true)
+        try await login(app)
+        let web = app.webViews.firstMatch
+
+        named("更多操作", in: web).tap()
+        let settings = named("设置", in: web)
+        XCTAssertTrue(settings.waitForExistence(timeout: 5), app.debugDescription)
+        settings.tap()
+        let section = interactive("语音", in: web)
+        XCTAssertTrue(section.waitForExistence(timeout: 10), app.debugDescription)
+        section.tap()
+        let base = web.textFields["Base URL"]
+        XCTAssertTrue(base.waitForExistence(timeout: 10), app.debugDescription)
+        overwrite(base, with: "http://127.0.0.1:18794/v1")
+        XCTAssertEqual(base.value as? String, "http://127.0.0.1:18794/v1")
+        let key = web.secureTextFields["API Key"]
+        replace(key, with: "test-voice-key")
+        let save = web.buttons.matching(NSPredicate(format: "label == %@", "保存")).allElementsBoundByIndex
+            .filter { $0.frame.minY > key.frame.maxY }.min { $0.frame.minY < $1.frame.minY }
+        XCTAssertNotNil(save, app.debugDescription)
+        save?.tap()
+        XCTAssertTrue(web.staticTexts["已保存"].waitForExistence(timeout: 10), app.debugDescription)
+        snapshot("voice-settings-saved-native")
+        web.buttons["关闭"].firstMatch.tap()
+
+        let editor = app.webViews.textViews["快速记录"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 10), app.debugDescription)
+        editor.tap()
+        editor.typeText("原生朗读验收")
+        interactive("朗读", in: web).tap()
+        let spoke = try await eventually(timeout: .seconds(20)) {
+            let state = try await self.voiceState()
+            return state.tts == 1 && state.lastText == "原生朗读验收"
+        }
+        XCTAssertTrue(spoke, "Synthesis must go through the native host with the Keychain key")
+        // Playback starts after the asynchronous synthesis: autoplay must not need a second tap.
+        XCTAssertTrue(web.staticTexts["正在朗读"].waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertFalse(web.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "无法播放")).firstMatch.exists)
+        snapshot("voice-read-aloud-playing")
+        web.buttons["停止"].firstMatch.tap()
+
+        interactive("语音输入", in: web).tap()
+        let finish = interactive("结束并识别", in: web)
+        XCTAssertTrue(finish.waitForExistence(timeout: 10), app.debugDescription)
+        snapshot("voice-dictation-recording")
+        try await Task.sleep(for: .milliseconds(1500))
+        finish.tap()
+        let inserted = await eventually(timeout: .seconds(20)) {
+            (editor.value as? String)?.contains("原生识别文字") == true
+                || web.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "原生识别文字")).firstMatch.exists
+        }
+        XCTAssertTrue(inserted, app.debugDescription)
+        let state = try await voiceState()
+        XCTAssertEqual(state.asr, 1)
+        XCTAssertEqual(state.unauthorized, 0)
+        XCTAssertEqual(state.rejected, 0)
+        XCTAssertEqual(state.lastRate, 16_000)
+        XCTAssertEqual(state.lastChannels, 1)
+        XCTAssertEqual(state.lastBits, 16)
+        XCTAssertGreaterThanOrEqual(state.lastSeconds ?? 0, 1)
+        snapshot("voice-dictation-inserted")
+    }
+
+    /// Puts the caret at the end of a prefilled field and deletes the old value key by key.
+    @MainActor
+    private func overwrite(_ field: XCUIElement, with value: String) {
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        let previous = field.value as? String ?? ""
+        // The first tap scrolls the field into view (WebKit puts the caret at the start);
+        // the second lands on the now-visible trailing edge.
+        field.tap()
+        field.coordinate(withNormalizedOffset: CGVector(dx: 0.97, dy: 0.5)).tap()
+        field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: previous.count + 2))
+        field.typeText(value)
+    }
+
+    private struct VoiceFixtureState: Decodable {
+        let asr: Int
+        let tts: Int
+        let unauthorized: Int
+        let rejected: Int
+        let lastText: String?
+        let lastRate: Int?
+        let lastChannels: Int?
+        let lastBits: Int?
+        let lastSeconds: Double?
+    }
+
+    @MainActor
+    private func voiceState() async throws -> VoiceFixtureState {
+        let (data, _) = try await URLSession.shared.data(from: URL(string: "http://127.0.0.1:18794/__voice/state")!)
+        return try JSONDecoder().decode(VoiceFixtureState.self, from: data)
+    }
+
+    @MainActor
+    private func voiceFixture(_ action: String) async throws {
+        var request = URLRequest(url: URL(string: "http://127.0.0.1:18794/__voice/" + action)!)
+        request.httpMethod = "POST"
+        let (_, response) = try await URLSession.shared.data(for: request)
+        XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
+    }
+
     @MainActor
     private func confirmLoginPassword(_ app: XCUIApplication) async throws {
         let field = app.webViews.secureTextFields["登录密码"]

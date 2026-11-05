@@ -49,6 +49,8 @@
     --shard-alpha-89: 89%;
     /* Full-screen editor surface; dialogs and menus retain Kiln's z-50 layer. */
     --shard-z-zen: 40;
+    /* 朗读控制条要浮在禅模式之上，但不能盖住菜单与对话框。 */
+    --shard-z-voice-player: 45;
   }
 
   /* Desktop chrome must not create browser text selections on double-click

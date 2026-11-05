@@ -44,13 +44,16 @@ struct WebBridgeEvent: Codable, Sendable {
     var chunk: String?
     var done: Bool?
     var error: String?
+    /// `voice-recording-stopped`: `limit` (the page finishes and transcribes) or `error`.
+    var reason: String?
 
-    init(type: String, id: String? = nil, chunk: String? = nil, done: Bool? = nil, error: String? = nil) {
+    init(type: String, id: String? = nil, chunk: String? = nil, done: Bool? = nil, error: String? = nil, reason: String? = nil) {
         self.type = type
         self.id = id
         self.chunk = chunk
         self.done = done
         self.error = error
+        self.reason = reason
     }
 }
 

@@ -851,3 +851,18 @@ test.describe("个人中心", () => {
     await expect(avatar).toHaveCSS("background-color", "rgb(46, 110, 121)")
   })
 })
+
+test("网页端没有录音与钥匙串：不显示语音输入、朗读和语音设置", async ({ page }) => {
+  await installAuthServerMock(page, { authenticated: true })
+  await page.goto("/")
+  await expect(card(page)).toBeVisible()
+  await expect(page.locator('[data-shard-editor="composer"] .ProseMirror')).toBeVisible()
+  await expect(page.getByRole("button", { name: "语音输入", exact: true })).toHaveCount(0)
+  await expect(page.getByRole("button", { name: "朗读", exact: true })).toHaveCount(0)
+
+  await page.getByRole("button", { name: "更多操作", exact: true }).first().click()
+  await page.getByRole("menuitem", { name: "设置", exact: true }).click()
+  const dialog = page.getByRole("dialog", { name: "设置", exact: true })
+  await expect(dialog.getByRole("navigation").getByRole("button", { name: "外观", exact: true })).toBeVisible()
+  await expect(dialog.getByRole("navigation").getByRole("button", { name: "语音", exact: true })).toHaveCount(0)
+})

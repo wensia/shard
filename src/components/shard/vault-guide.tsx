@@ -10,6 +10,7 @@ import {
   LinkIcon,
   Loader2Icon,
   MonitorIcon,
+  MicIcon,
   MoonIcon,
   PaletteIcon,
   RefreshCwIcon,
@@ -58,6 +59,7 @@ import { notify } from "@/lib/notify"
 import { desktopRemoteStatus, isWebRuntime } from "@/lib/transport"
 import { AccountSettings } from "@/features/auth/account-settings"
 import { DataSettings } from "@/features/history/data-settings"
+import { VoiceSettings, voiceAvailable } from "@/features/voice"
 import type {
   CliInstallStatus,
   GithubCliInfo,
@@ -115,7 +117,7 @@ const monoPathStyle: CSSProperties = {
   userSelect: "all",
 }
 
-export type SettingsSection = "account" | "appearance" | "cli" | "data" | "git" | "server" | "shortcuts" | "vault"
+export type SettingsSection = "account" | "appearance" | "cli" | "data" | "git" | "server" | "shortcuts" | "vault" | "voice"
 
 /** 设置的运行形态：网页、连接了服务器的桌面、本机资料库的桌面。 */
 type SettingsRuntime = "local" | "remote" | "web"
@@ -125,14 +127,20 @@ type SettingsRuntime = "local" | "remote" | "web"
  * 桌面连接服务器后，本机资料库与 Git 换成服务器连接与数据找回（导出、抹除要在网页版输入密码确认）。
  */
 const SETTINGS_SECTIONS: Record<SettingsRuntime, SettingsSection[]> = {
-  local: ["vault", "git", "server", "appearance", "cli", "shortcuts"],
-  remote: ["server", "data", "appearance", "cli", "shortcuts"],
-  web: ["account", "data", "appearance", "shortcuts"],
+  local: ["vault", "git", "server", "appearance", "voice", "cli", "shortcuts"],
+  remote: ["server", "data", "appearance", "voice", "cli", "shortcuts"],
+  web: ["account", "data", "appearance", "voice", "shortcuts"],
 }
 
 function settingsRuntime(): SettingsRuntime {
   if (isWebRuntime()) return "web"
   return desktopRemoteStatus() ? "remote" : "local"
+}
+
+/** 语音只在有原生录音与钥匙串的端出现（桌面、iOS App）；浏览器里没有。 */
+function settingsSections(runtime: SettingsRuntime): SettingsSection[] {
+  const sections = SETTINGS_SECTIONS[runtime]
+  return voiceAvailable() ? sections : sections.filter((section) => section !== "voice")
 }
 
 interface VaultGuideProps {
@@ -594,7 +602,7 @@ export function VaultGuide({
   const [remoteUrl, setRemoteUrl] = useState("")
   const [repoName, setRepoName] = useState(defaultRepoName(vaultPath))
   const runtime = settingsRuntime()
-  const sections = SETTINGS_SECTIONS[runtime]
+  const sections = settingsSections(runtime)
   // 请求的分区在当前形态下没有（例如网页、连接服务器时的「Vault」「Git」）：落在第一个分区。
   const startSection: SettingsSection = sections.includes(initialSection) ? initialSection : sections[0]
   const [activeSection, setActiveSection] =
@@ -1262,6 +1270,7 @@ export function VaultGuide({
     server: { icon: LinkIcon, label: copy.serverTitle },
     shortcuts: { icon: KeyboardIcon, label: copy.navShortcuts },
     vault: { icon: FolderOpenIcon, label: copy.vaultTitle },
+    voice: { icon: MicIcon, label: locale === "zh" ? "语音" : "Voice" },
   }
   const spinner = <Loader2Icon aria-hidden="true" className={styles.spin} />
   const cliStatusDescription = cliError ? (
@@ -1293,7 +1302,7 @@ export function VaultGuide({
         }}
       >
         <DialogDescription className="sr-only">
-          配置 Shard 的资料库、同步、外观、终端命令与快捷键。
+          配置 Shard 的资料库、同步、外观、语音、终端命令与快捷键。
         </DialogDescription>
         <header className={styles.settingsHeader}>
           <DialogTitle className={styles.settingsTitle}>
@@ -1660,6 +1669,12 @@ export function VaultGuide({
                 </SettingsRow>
               </SettingsGroup>
             </SettingsBlock>
+
+            {sections.includes("voice") ? (
+              <SettingsBlock id="voice" title={locale === "zh" ? "语音" : "Voice"}>
+                <VoiceSettings />
+              </SettingsBlock>
+            ) : null}
 
             {runtime === "web" ? null : (
             <SettingsBlock id="cli" title={copy.cliTitle}>

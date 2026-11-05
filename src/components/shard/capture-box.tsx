@@ -42,6 +42,8 @@ import {
   stripProtectedTypeTags,
 } from "@/lib/content-kind"
 import { wantsLockbox } from "@/lib/lockbox"
+import { useRichVoice } from "@/hooks/use-rich-voice"
+import { VoiceInputControls, ReadAloudButton } from "@/features/voice"
 import { notify } from "@/lib/notify"
 import {
   EMPTY_MIND_MAP_OUTLINE_SOURCE,
@@ -145,6 +147,7 @@ export const CaptureBox = forwardRef<CaptureBoxHandle, CaptureBoxProps>(function
     [knownTags]
   )
   const willSaveToLockbox = useMemo(() => wantsLockbox(content, []), [content])
+  const voice = useRichVoice("composer", richEditorRef, isCreating || willSaveToLockbox || outlineCode !== null)
   const knownTagsRef = useRef(normalizedKnownTags)
   knownTagsRef.current = normalizedKnownTags
   const wikilinkCandidates = useMemo(
@@ -377,7 +380,7 @@ export const CaptureBox = forwardRef<CaptureBoxHandle, CaptureBoxProps>(function
   }
 
   async function submit() {
-    if (isCreating) return
+    if (isCreating || voice.busy) return
     if (isOutlineMode) {
       await submitOutline()
       return
@@ -518,7 +521,7 @@ export const CaptureBox = forwardRef<CaptureBoxHandle, CaptureBoxProps>(function
   const submitButton = (
     <ToolbarIconButton
       className="shard-edge-action"
-      disabled={!canSubmit}
+      disabled={!canSubmit || voice.busy}
       label={isCreating ? "保存中" : "保存片段"}
       onClick={() => void submit()}
       type="button"
@@ -561,6 +564,7 @@ export const CaptureBox = forwardRef<CaptureBoxHandle, CaptureBoxProps>(function
           ref={codeMirrorViewportRef}
         >
           <ShardRichEditor
+            readOnly={voice.busy || isCreating}
             allowDatasetActions={!willSaveToLockbox}
             ariaLabel="快速记录"
             autoFocus
@@ -581,7 +585,7 @@ export const CaptureBox = forwardRef<CaptureBoxHandle, CaptureBoxProps>(function
             onNavigateWikilink={navigateWikilink}
             onPasteFiles={(files) => void uploadPastedImages(files)}
             onSubmit={() => void submit()}
-            onToggleZen={onOpenZen && !isCreating ? openZenEditor : undefined}
+            onToggleZen={onOpenZen && !isCreating && !voice.busy ? openZenEditor : undefined}
             placeholder="想到什么，写什么..."
             ref={richEditorRef}
             value={content}
@@ -667,7 +671,11 @@ export const CaptureBox = forwardRef<CaptureBoxHandle, CaptureBoxProps>(function
             </div>
           ) : (
           <EditorToolbar
-            disabled={isCreating}
+            disabled={isCreating || voice.busy}
+            leading={!willSaveToLockbox ? <>
+              <VoiceInputControls dictation={voice} />
+              <ReadAloudButton targetId="composer" disabled={voice.busy || !content.trim()} getContent={() => ({ text: richEditorRef.current?.getSelectedMarkdown() ?? content, format: "markdown" })} />
+            </> : null}
             onOpenZen={onOpenZen ? openZenEditor : undefined}
             trailing={
               <>

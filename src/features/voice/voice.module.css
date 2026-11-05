@@ -1,0 +1,13 @@
+.controls { display: inline-flex; align-items: center; flex-wrap: wrap; gap: var(--shard-space-2); }
+.error { color: var(--destructive); font-size: var(--text-meta); }
+.status { color: var(--muted-foreground); font-size: var(--text-meta); }
+/* 独立弹窗里表单可能超出高度要自己滚动；内边距给 Kiln 的 1px 阴影环留位，负外边距保持对齐。 */
+.settings { --shard-focus-offset: -2px; display: flex; flex-direction: column; gap: var(--shard-space-4); overflow: auto; padding: var(--space-1); margin: calc(-1 * var(--space-1)); }
+.field { display: flex; flex-direction: column; gap: var(--shard-space-2); font-size: var(--text-body); }
+.player { position: fixed; bottom: calc(var(--shard-bottom-chrome, 0px) + var(--shard-space-6)); right: var(--shard-space-6); z-index: var(--shard-z-voice-player); padding: var(--shard-space-3); background: var(--popover); color: var(--popover-foreground); border-radius: var(--shard-surface-radius); box-shadow: var(--shadow-popover); max-width: calc(100vw - var(--shard-space-8)); }
+.speed { width: auto; }
+/* 窄屏（有底部导航）：横贯两侧安全边距、贴着导航上沿，一行放下状态与三个控件。 */
+@media (width < 64rem) {
+  .player { left: var(--shard-space-4); right: var(--shard-space-4); bottom: calc(var(--shard-bottom-chrome, 0px) + var(--shard-space-2)); max-width: none; flex-wrap: nowrap; }
+  .player > [role="status"] { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+}

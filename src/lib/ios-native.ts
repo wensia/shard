@@ -2,7 +2,7 @@ import { COLOR_MODE_CHANGED_EVENT, getStoredColorMode, type ColorMode } from "@/
 
 /** Native capabilities for the bundled Web app. Credentials stay in the iOS host. */
 export interface IOSBridgeMessage {
-  type: "bootstrap" | "request" | "stream" | "cancel" | "share" | "legacy" | "sync" | "appearance"
+  type: "bootstrap" | "request" | "stream" | "cancel" | "share" | "legacy" | "sync" | "appearance" | "voice"
   id?: string
   path?: string
   method?: string
@@ -362,6 +362,15 @@ export async function shareIOSBlob(blob: Blob, fileName: string) {
     type: "share", fileName, bodyBase64, headers: { "content-type": blob.type || "application/octet-stream" },
   }))
   if (!response.ok) throw new Error("无法分享文件。")
+}
+
+/**
+ * Speech commands run in the iOS host: microphone, Keychain and the speech service request never
+ * enter the page. `command` mirrors the desktop Tauri command name; the reply keeps its HTTP shape.
+ */
+export async function invokeIOSVoice(command: string, args: Record<string, unknown> = {}) {
+  const bodyBase64 = await encodeIOSBytes(new TextEncoder().encode(JSON.stringify(args)))
+  return responseFromReply(await handler().postMessage({ type: "voice", path: command, bodyBase64 }))
 }
 
 export async function openIOSLegacy() {

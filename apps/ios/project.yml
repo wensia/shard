@@ -11,7 +11,7 @@ settings:
     CODE_SIGN_STYLE: Automatic
     SWIFT_VERSION: "6.0"
     MARKETING_VERSION: "1.0"
-    CURRENT_PROJECT_VERSION: "3"
+    CURRENT_PROJECT_VERSION: "4"
 packages:
   ShardKit:
     path: ShardKit
@@ -53,6 +53,7 @@ targets:
           - UIInterfaceOrientationPortrait
         ITSAppUsesNonExemptEncryption: false
         NSCameraUsageDescription: 用于拍摄并插入图片。
+        NSMicrophoneUsageDescription: Shard 使用麦克风把语音录入为文字。录音仅在你操作后发送至你配置的语音服务。
         NSPhotoLibraryUsageDescription: 用于选择并插入图片。
         NSPhotoLibraryAddUsageDescription: 用于将导出的图片保存到相册。
         # Lets debug builds reach scripts/mock-github.py on the host; public internet stays HTTPS-only.

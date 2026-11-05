@@ -76,6 +76,8 @@ mod search_lockbox;
 mod search_sources;
 mod vault_asset_protocol;
 mod vault_watch;
+mod voice;
+mod voice_recording;
 mod xlsx;
 
 const DEFAULT_WINDOW_TITLE: &str = "Shard";
@@ -4189,6 +4191,22 @@ pub fn run() {
         index_registry.clone(),
     );
     tauri::Builder::default()
+        .manage(voice::VoiceRuntime::default())
+        // 页面重载或窗口关闭后，旧页面再也发不出取消；由后端收掉它的录音与合成。
+        .on_page_load(|webview, payload| {
+            if payload.event() == tauri::webview::PageLoadEvent::Started {
+                if let Some(voice) = webview.try_state::<voice::VoiceRuntime>() {
+                    voice.cancel_owner(webview.label());
+                }
+            }
+        })
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::Destroyed = event {
+                if let Some(voice) = window.try_state::<voice::VoiceRuntime>() {
+                    voice.cancel_owner(window.label());
+                }
+            }
+        })
         .manage(lockbox_runtime)
         .manage(search_runtime)
         .manage(index_registry)
@@ -4221,6 +4239,12 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            voice::voice_get_settings,
+            voice::voice_save_settings,
+            voice::voice_start_recording,
+            voice::voice_transcribe,
+            voice::voice_synthesize,
+            voice::voice_cancel,
             remote_client::remote_status,
             remote_client::remote_login,
             remote_client::remote_disconnect,

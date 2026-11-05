@@ -72,6 +72,20 @@ ShardKit 另有仅允许私有测试端口 `18790` 的真实 Rust 服务互通�
 
 网页请求通过可信本地页面的异步桥接送到原生。设备令牌和 Cookie 不交给 JavaScript；敏感操作仍以用户输入的密码建立真实服务器会话。各账号使用独立 WKWebsiteDataStore，避免草稿与站点存储交叉。离线保留公开内容读取、缓存图片与新建碎片；其他写操作需要联网。首次升级若尚无完整网页响应缓存又处于离线，保留旧缓存兼容界面，联网后转入共享界面。
 
+## 语音输入与朗读
+
+共享界面的语音入口在 iOS 上经原生桥（`type: "voice"`）交给 `Shard/App/VoiceService.swift`：麦克风录音、API Key（iOS 钥匙串，仅本机）和语音服务请求都在 Swift 里，页面只拿到不含密钥的设置、识别文字和校验过的 WAV。首次录音会请求麦克风权限；语音配置与服务器账号无关，需要在手机的「设置 → 语音」里单独填写一次密钥。设计与两端分工见 [voice-input-and-reading.md](../../docs/dev/voice-input-and-reading.md)。
+
+原生语音验收另起本机假语音服务，并给独立模拟器预先授权麦克风：
+
+```sh
+python3 apps/ios/scripts/voice-service-fixture.py &   # 127.0.0.1:18794
+xcrun simctl privacy 'Shard Web Runtime Probe' grant microphone dev.shard.mobile
+xcodebuild test -project apps/ios/Shard.xcodeproj -scheme Shard \
+  -destination 'platform=iOS Simulator,name=Shard Web Runtime Probe' \
+  -only-testing:ShardUITests/WebWorkspaceUITests/testNativeVoiceReadAloudAndDictationStayInTheHost
+```
+
 ## 装到 iPhone
 
 手机用数据线连接并解锁后：

@@ -318,7 +318,7 @@ test.describe("已连接服务器", () => {
   test("设置：本机资料库与 Git 隐藏，服务器与数据找回出现，导出与抹除指向网页版", async ({ page }) => {
     const dialog = await openSettings(page)
     const nav = dialog.getByRole("navigation", { name: "设置分区" })
-    await expect(nav.getByRole("button")).toHaveText(["服务器", "数据与备份", "外观", "终端命令", "快捷键"])
+    await expect(nav.getByRole("button")).toHaveText(["服务器", "数据与备份", "外观", "语音", "终端命令", "快捷键"])
     await expect(nav.getByRole("button", { name: "服务器" })).toHaveAttribute("aria-current", "true")
     await expect(dialog.getByRole("button", { name: "选择已有目录" })).toHaveCount(0)
     await expect(dialog.getByText("本地 Git")).toHaveCount(0)

@@ -11,6 +11,9 @@
  */
 import { forwardRef } from "react"
 import {
+  MicIcon as LMic,
+  Volume2Icon as LVolume2,
+  SquareIcon as LSquare,
   ArchiveIcon as LArchive,
   ArchiveRestoreIcon as LArchiveRestore,
   ArrowBigUpIcon as LArrowBigUp,
@@ -202,3 +205,7 @@ export const XIcon = /*#__PURE__*/ withIconDefaults(LX)
 
 // 签名图标（design.md）：手绘、单色、与库图标同管道。
 export { ShardZenIcon } from "./signature/zen"
+
+export const MicIcon = /*#__PURE__*/ withIconDefaults(LMic)
+export const Volume2Icon = /*#__PURE__*/ withIconDefaults(LVolume2)
+export const SquareIcon = /*#__PURE__*/ withIconDefaults(LSquare)

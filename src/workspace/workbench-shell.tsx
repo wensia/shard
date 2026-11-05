@@ -5,6 +5,7 @@ import { LockKeyholeIcon, XIcon } from "@/components/icons"
 import { BottomTabs } from "@/components/shard/bottom-tabs"
 import { StatusBar } from "@/components/shard/status-bar"
 import { PageNavigation } from "@/components/shard/page-navigation"
+import { useVoice } from "@/features/voice"
 import {
   FragmentEditor,
   setFragmentEditorBlurCommitPaused,
@@ -244,7 +245,36 @@ function warnSkippedLargeFiles(paths: string[] | undefined) {
   })
 }
 
+/**
+ * 把移动端底部导航（含 iPhone 底部横条留白）的实际高度发布成 `--shard-bottom-chrome`，
+ * 让挂在工作台外的浮层（朗读播放条）停在导航之上。桌面上该插槽隐藏，高度为 0。
+ */
+function useBottomChromeHeight() {
+  const observer = useRef<ResizeObserver | null>(null)
+  useEffect(() => () => {
+    observer.current?.disconnect()
+    document.documentElement.style.removeProperty("--shard-bottom-chrome")
+  }, [])
+  // 大纲、导图等全屏编辑会卸下底部导航，回来时是新节点：用 callback ref 跟着节点重绑观察器。
+  return useCallback((slot: HTMLDivElement | null) => {
+    const root = document.documentElement
+    observer.current?.disconnect()
+    observer.current = null
+    if (!slot) {
+      root.style.setProperty("--shard-bottom-chrome", "0px")
+      return
+    }
+    const publish = () => root.style.setProperty("--shard-bottom-chrome", `${slot.getBoundingClientRect().height}px`)
+    publish()
+    if (typeof ResizeObserver === "undefined") return
+    observer.current = new ResizeObserver(publish)
+    observer.current.observe(slot)
+  }, [])
+}
+
 export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
+  const voice = useVoice()
+  const bottomTabsRef = useBottomChromeHeight()
   const {
     acceptsVaultStateResponse,
     beginVaultStateRequest,
@@ -867,6 +897,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
   function applyVaultState(state: VaultState) {
     const previousVaultPath = vaultPathRef.current
     if (previousVaultPath && previousVaultPath !== state.vaultPath) {
+      voice.stop()
       revokeSearchSession("vaultChanged")
     } else if (
       !state.lockbox.unlocked &&
@@ -1244,6 +1275,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
   }
 
   function openInlineEditor(fragment: Fragment) {
+    voice.stop()
     if (isJsonOutlineFragment(fragment)) {
       openOutlineEditor(fragment)
       return
@@ -1258,6 +1290,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
   }
 
   function openZenEditor(fragment: Fragment) {
+    voice.stop()
     if (isJsonOutlineFragment(fragment)) {
       openOutlineEditor(fragment)
       return
@@ -1298,6 +1331,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
   }
 
   function openOutlineEditor(fragment: Fragment, searchRequestId?: string) {
+    voice.stop()
     setZenDraft(null)
     setEditingFragmentId(null)
     setSearchEditorNavigation(null)
@@ -1308,6 +1342,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
   }
 
   function openFlowchartEditor(fragment: Fragment, searchRequestId?: string) {
+    voice.stop()
     setZenDraft(null)
     setEditingFragmentId(null)
     setSearchEditorNavigation(null)
@@ -1368,6 +1403,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
   }
 
   function openZenDraft(content: string) {
+    voice.stop()
     setEditingFragmentId(null)
     setEditingVariant("zen")
     setZenDraft({
@@ -3432,7 +3468,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
             </div>
           </div>
         </div>
-        <div className={styles.bottomTabsSlot} data-focus-region="bottom-tabs">
+        <div className={styles.bottomTabsSlot} data-focus-region="bottom-tabs" ref={bottomTabsRef}>
           <BottomTabs
             fragments={publicOnlyFragments}
             onHelp={showHelp}

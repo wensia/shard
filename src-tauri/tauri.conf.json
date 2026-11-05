@@ -29,6 +29,10 @@
   },
   "bundle": {
     "active": true,
+    "macOS": {
+      "entitlements": "Entitlements.plist",
+      "infoPlist": "Info.plist"
+    },
     "targets": "all",
     "externalBin": ["binaries/shard-cli"],
     "icon": [

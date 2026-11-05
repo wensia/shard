@@ -24,6 +24,10 @@ struct WebAppView: UIViewRepresentable {
     func makeUIView(context: Context) -> WKWebView {
         let coordinator = context.coordinator
         let configuration = WKWebViewConfiguration()
+        // Read-aloud plays one segment after another once synthesis returns; only this trusted
+        // local bundle runs here, so later segments must not wait for another tap.
+        configuration.mediaTypesRequiringUserActionForPlayback = []
+        configuration.allowsInlineMediaPlayback = true
         // A separate persistent store keeps each account's drafts and preferences
         // without making a previous account's localStorage available after logout.
         configuration.websiteDataStore = WKWebsiteDataStore(forIdentifier: Self.storeID(Self.identity(for: model)))
@@ -127,7 +131,7 @@ struct WebAppView: UIViewRepresentable {
                   let source = message.frameInfo.request.url,
                   source.scheme == "shard", source.host == "app",
                   let body = message.body as? [String: Any], let type = body["type"] as? String,
-                  ["bootstrap", "request", "stream", "cancel", "share", "legacy", "sync", "appearance"].contains(type)
+                  ["bootstrap", "request", "stream", "cancel", "share", "legacy", "sync", "appearance", "voice"].contains(type)
             else { reply(nil, "原生通道拒绝了这个请求。"); return }
             let request = WebBridgeMessage(
                 type: type, id: body["id"] as? String, path: body["path"] as? String,
@@ -161,6 +165,15 @@ struct WebAppView: UIViewRepresentable {
                     response = .json([:])
                 } else if request.type == "share" {
                     response = await self?.share(request) ?? .error("CANCELLED", "操作已取消。", status: 499)
+                } else if request.type == "voice" {
+                    // A command queued by a page that has since reloaded must not reach the microphone.
+                    if Task.isCancelled || self?.active != true || self?.generation != page {
+                        response = .error("CANCELLED", "操作已取消。", status: 499)
+                    } else {
+                        response = await VoiceService.shared.handle(
+                            command: request.path ?? "", bodyBase64: request.bodyBase64, owner: page
+                        ) { [weak self] event in self?.emit(event) }
+                    }
                 } else {
                     response = await session.handle(request)
                 }
@@ -202,6 +215,7 @@ struct WebAppView: UIViewRepresentable {
 
         func invalidate() {
             active = false
+            stopVoice()
             generation = UUID()
             operations.values.forEach { $0.cancel() }
             operations.removeAll()
@@ -210,6 +224,7 @@ struct WebAppView: UIViewRepresentable {
         }
 
         func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+            stopVoice()
             generation = UUID()
             operations.values.forEach { $0.cancel() }
             operations.removeAll()
@@ -285,7 +300,14 @@ struct WebAppView: UIViewRepresentable {
             presenter()?.present(alert, animated: true)
         }
 
+        /// The current page can no longer stop its microphone or pending speech requests.
+        private func stopVoice() {
+            let page = generation
+            Task { await VoiceService.shared.cancelOwner(page) }
+        }
+
         func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+            stopVoice()
             let previous = session!
             session = makeSession()
             connectScheme()

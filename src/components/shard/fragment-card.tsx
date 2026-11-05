@@ -12,10 +12,11 @@ import {
   Share2Icon,
   ShardZenIcon,
   Trash2Icon,
+  Volume2Icon,
   WorkflowIcon,
   type ShardIcon,
 } from "@/components/icons"
-import { useMemo, useState, type ReactNode } from "react"
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 
 import { FragmentEditor } from "@/components/shard/fragment-editor"
 import { FragmentBody } from "@/components/shard/fragment-body"
@@ -23,6 +24,7 @@ import { MindMapFenceEmbed } from "@/components/shard/mind-map-fence-embed"
 import { FragmentRelated } from "@/components/shard/fragment-related"
 import { TagBadge } from "@/components/shard/tag-badge"
 import { Button } from "@/components/ui/button"
+import { useVoice, voiceAvailable } from "@/features/voice"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -39,6 +41,7 @@ import { readOutlineContent } from "@/lib/mind-map-outline"
 import { readFlowchartContent } from "@/lib/flowchart-content"
 import { openRevisionHistory } from "@/features/history/history-api"
 import { notify } from "@/lib/notify"
+import { wantsLockbox } from "@/lib/lockbox"
 import { isServerBacked } from "@/lib/transport"
 import type { RelatedFragment } from "@/lib/relations"
 import { cn } from "@/lib/utils"
@@ -113,6 +116,15 @@ export function FragmentCard({
   variant = "card",
   vaultPath,
 }: FragmentCardProps) {
+  const voice = useVoice()
+  const readAloudOwner = `fragment-card:${fragment.id}`
+  // 朗读放在「片段操作」菜单里：卡片右侧只留一个按钮，正文宽度不因语音而变窄。
+  const canReadAloud = voiceAvailable() && !fragment.lockbox && !wantsLockbox(fragment.content, fragment.tags)
+    && (fragment.kind === "fragment" || fragment.kind === "document" || fragment.kind === "note")
+  const latestVoice = useRef(voice)
+  latestVoice.current = voice
+  // 卡片卸载（删除、换空间）时停掉它发起的朗读；provider 每次渲染都换新对象，只按卡片身份订阅。
+  useEffect(() => () => latestVoice.current.stopOwner(readAloudOwner), [readAloudOwner])
   const [isMenuOpen, setIsMenuOpen] = useState(false)
   const [isRelatedOpen, setIsRelatedOpen] = useState(false)
   const createdTime = formatCreatedTime(fragment.createdAt)
@@ -123,6 +135,7 @@ export function FragmentCard({
   const typeBadge = TYPE_BADGES[fragment.kind]
 
   function openNextSurface(action: () => void) {
+    voice.stopOwner(readAloudOwner)
     setIsMenuOpen(false)
     window.setTimeout(action, 0)
   }
@@ -313,6 +326,16 @@ export function FragmentCard({
                 label="复制"
                 onSelect={() => void copyFragmentContent()}
               />
+              {canReadAloud ? (
+                <CardMenuItem
+                  icon={<Volume2Icon aria-hidden="true" />}
+                  label="朗读"
+                  onSelect={() => {
+                    setIsMenuOpen(false)
+                    void voice.read(readAloudOwner, { text: fragment.content, format: "markdown" })
+                  }}
+                />
+              ) : null}
               {onOpenZen ? (
                 <CardMenuItem
                   icon={<ShardZenIcon aria-hidden="true" />}
@@ -377,7 +400,10 @@ export function FragmentCard({
         fragment={fragment}
         indexVersion={relationIndexVersion}
         isOpen={isRelatedOpen}
-        onNavigate={onNavigateToFragment}
+        onNavigate={onNavigateToFragment ? (id) => {
+          voice.stopOwner(readAloudOwner)
+          onNavigateToFragment(id)
+        } : undefined}
         onToggle={() => setIsRelatedOpen((open) => !open)}
         onUnlinkFragment={onUnlinkFragment}
         requestRelated={requestRelated}

@@ -7,6 +7,7 @@ interface EditorToolbarProps {
   disabled?: boolean
   onOpenZen?: () => void
   trailing?: ReactNode
+  leading?: ReactNode
 }
 
 /**
@@ -14,7 +15,7 @@ interface EditorToolbarProps {
  * 标题、引用、代码块）全部走 `/` 命令菜单，行内格式在选中文字后由
  * 编辑器里的选区浮动条提供；这里只留编辑面自身的动作与宿主的尾部操作。
  */
-export function EditorToolbar({ disabled = false, onOpenZen, trailing }: EditorToolbarProps) {
+export function EditorToolbar({ disabled = false, onOpenZen, trailing, leading }: EditorToolbarProps) {
   return (
     <div
       style={{
@@ -33,6 +34,7 @@ export function EditorToolbar({ disabled = false, onOpenZen, trailing }: EditorT
           gap: "var(--shard-space-1)",
         }}
       >
+        {leading}
         {onOpenZen ? (
           <ToolbarIconButton
             className="shard-edge-action"
