@@ -1,0 +1,7 @@
+Shard.xcodeproj/
+Shard/Resources/Renderer/
+ShardKit/.build/
+ShardKit/.swiftpm/
+build/
+DerivedData/
+Shard/Info.plist
