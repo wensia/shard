@@ -218,12 +218,29 @@ fn normalize_settings(mut settings: VoiceSettings) -> Result<VoiceSettings, Stri
         &mut settings.speech_model,
         &mut settings.voice,
     ] {
-        *value = value.trim().to_string();
-        if value.is_empty() || value.len() > 256 || value.chars().any(char::is_control) {
-            return Err("请填写有效的语音模型和音色。".into());
-        }
+        *value = normalize_name(value)?;
     }
     Ok(settings)
+}
+
+fn normalize_name(value: &str) -> Result<String, String> {
+    let value = value.trim();
+    if value.is_empty() || value.len() > 256 || value.chars().any(char::is_control) {
+        return Err("请填写有效的语音模型和音色。".into());
+    }
+    Ok(value.to_string())
+}
+
+/// Settings previews a voice before it is saved: the override lives only in
+/// this synthesis session and never touches the stored settings.
+fn with_voice(creds: Arc<Credentials>, voice: Option<&str>) -> Result<Arc<Credentials>, String> {
+    let Some(voice) = voice else { return Ok(creds) };
+    let mut settings = creds.settings.clone();
+    settings.voice = normalize_name(voice)?;
+    Ok(Arc::new(Credentials {
+        settings,
+        key: creds.key.clone(),
+    }))
 }
 
 fn read_settings(path: &Path) -> Result<VoiceSettings, String> {
@@ -749,18 +766,22 @@ pub async fn voice_synthesize(
     runtime: tauri::State<'_, VoiceRuntime>,
     session_id: String,
     text: String,
+    voice: Option<String>,
 ) -> Result<tauri::ipc::Response, String> {
     validate_session_id(&session_id)?;
     let text = text.trim().to_string();
     if text.is_empty() || text.chars().count() > 1500 {
         return Err("每段朗读内容应为 1–1500 字。".into());
     }
+    if let Some(voice) = &voice {
+        normalize_name(voice)?;
+    }
     let session = match runtime.get(&session_id)? {
         Some(session) => session,
         None => {
             let session = Arc::new(Session::new(
                 webview.label(),
-                credentials(app).await?,
+                with_voice(credentials(app).await?, voice.as_deref())?,
                 None,
                 None,
             ));
@@ -956,6 +977,25 @@ mod tests {
         .unwrap();
         assert_eq!(result.err().unwrap(), CANCELLED);
         assert!(!session.busy.load(Ordering::SeqCst));
+    }
+    #[test]
+    fn voice_preview_overrides_only_the_session_voice() {
+        let creds = fixture_credentials(VoiceSettings::default());
+        let same = with_voice(creds.clone(), None).unwrap();
+        assert!(Arc::ptr_eq(&creds, &same));
+        let preview = with_voice(creds.clone(), Some("  茉莉 ")).unwrap();
+        assert_eq!(preview.settings.voice, "茉莉");
+        assert_eq!(preview.settings.speech_model, creds.settings.speech_model);
+        assert_eq!(preview.key, creds.key);
+        assert_eq!(creds.settings.voice, "冰糖");
+        assert_eq!(
+            speech_body(&preview.settings, "你好")["audio"]["voice"],
+            "茉莉"
+        );
+        for invalid in ["", "   ", "a\nb"] {
+            assert!(with_voice(creds.clone(), Some(invalid)).is_err());
+        }
+        assert!(with_voice(creds, Some(&"x".repeat(257))).is_err());
     }
     #[test]
     fn settings_normalize_without_credentials_or_query() {

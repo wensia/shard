@@ -11,15 +11,19 @@ type Playback = { id: string; owner: string; audio: HTMLAudioElement | null; url
 type VoiceContextValue = {
   openSettings: () => void; configured: (isCurrent?: () => boolean) => Promise<boolean>; stop: () => void;
   claimRecording: (cancel: () => void) => () => void;
-  read: (owner: string, content: VoiceContent) => Promise<void>; stopOwner: (owner: string) => void
+  /** `voice` overrides the saved voice for this read only (settings preview). */
+  read: (owner: string, content: VoiceContent, options?: { voice?: string }) => Promise<void>; stopOwner: (owner: string) => void
+  /** Owner of the read in progress, so its trigger can offer Stop. */
+  activeOwner: string | null
 }
-const missing: VoiceContextValue = { openSettings() {}, configured: async () => false, stop() {}, claimRecording: () => () => {}, read: async () => {}, stopOwner() {} }
+const missing: VoiceContextValue = { openSettings() {}, configured: async () => false, stop() {}, claimRecording: () => () => {}, read: async () => {}, stopOwner() {}, activeOwner: null }
 const VoiceContext = createContext<VoiceContextValue>(missing)
 export const useVoice = () => useContext(VoiceContext)
 
 export function VoiceProvider({ children, scopeKey }: { children: ReactNode; scopeKey?: string }) {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [player, setPlayer] = useState<'idle' | 'loading' | 'playing' | 'paused'>('idle')
+  const [activeOwner, setActiveOwner] = useState<string | null>(null)
   const [error, setError] = useState('')
   const [speed, setSpeed] = useState(1)
   const speedRef = useRef(1)
@@ -33,7 +37,7 @@ export function VoiceProvider({ children, scopeKey }: { children: ReactNode; sco
       if (session.url) URL.revokeObjectURL(session.url)
       void cancelSession(session.id)
     }
-    setPlayer('idle'); setError('')
+    setPlayer('idle'); setError(''); setActiveOwner(null)
   }
   const stopRef = useRef(stop); stopRef.current = stop
   useEffect(() => () => { stopRef.current(); recording.current?.() }, [])
@@ -44,10 +48,10 @@ export function VoiceProvider({ children, scopeKey }: { children: ReactNode; sco
     if (!settings.hasKey) { setSettingsOpen(true); return false }
     return true
   }
-  async function read(owner: string, content: VoiceContent) {
+  async function read(owner: string, content: VoiceContent, options: { voice?: string } = {}) {
     stop(); recording.current?.()
     const session: Playback = { id: crypto.randomUUID(), owner, audio: null, url: null, paused: false }
-    current.current = session; setPlayer('loading')
+    current.current = session; setPlayer('loading'); setActiveOwner(owner)
     const active = () => current.current === session
     try {
       if (!(await configured(active))) { if (active()) stop(); return }
@@ -67,7 +71,7 @@ export function VoiceProvider({ children, scopeKey }: { children: ReactNode; sco
       if (!chunks.length) throw new Error('没有可朗读的正文')
       // The backend returns validated WAV bytes as a raw IPC payload: no base64, no decoding step here.
       // Wrap prefetch failures immediately, so cancelling during playback never leaks rejection.
-      const synthesize = (text: string) => voiceInvoke<ArrayBuffer>('voice_synthesize', { sessionId: session.id, text })
+      const synthesize = (text: string) => voiceInvoke<ArrayBuffer>('voice_synthesize', { sessionId: session.id, text, ...(options.voice ? { voice: options.voice } : {}) })
         .then(value => ({ value, error: null as unknown }), error => ({ value: null, error }))
       let next = synthesize(chunks[0])
       for (let index = 0; index < chunks.length && active(); index++) {
@@ -116,6 +120,7 @@ export function VoiceProvider({ children, scopeKey }: { children: ReactNode; sco
       return () => { if (recording.current === cancel) recording.current = null }
     }, read,
     stopOwner(owner) { if (current.current?.owner === owner) stop() },
+    activeOwner,
   }
   return <VoiceContext.Provider value={value}>
     {children}

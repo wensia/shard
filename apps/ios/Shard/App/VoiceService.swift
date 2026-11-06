@@ -89,7 +89,10 @@ actor VoiceService {
                 return .json(["text": try await transcribe(try sessionID(args))])
             case "voice_synthesize":
                 guard let text = args["text"] as? String else { throw VoiceFailure("每段朗读内容应为 1–1500 字。") }
-                let audio = try await synthesize(try sessionID(args), text: text, owner: owner)
+                // Settings previews an unsaved voice; the override lives only in this session.
+                var voice: String?
+                if let raw = args["voice"] as? String { voice = try VoiceContract.name(raw) }
+                let audio = try await synthesize(try sessionID(args), text: text, voice: voice, owner: owner)
                 return WebBridgeResponse(status: 200, headers: ["content-type": "audio/wav"], body: audio)
             case "voice_cancel":
                 cancel(try sessionID(args))
@@ -350,13 +353,19 @@ actor VoiceService {
         return text
     }
 
-    private func synthesize(_ id: String, text: String, owner: UUID) async throws(VoiceFailure) -> Data {
+    private func synthesize(_ id: String, text: String, voice: String?, owner: UUID) async throws(VoiceFailure) -> Data {
         let text = try VoiceContract.speechText(text)
         let session: Session
         if let existing = try get(id) {
             session = existing
         } else {
-            session = Session(owner: owner, credentials: try credentials(), recording: nil, emit: nil)
+            var credentials = try credentials()
+            if let voice {
+                var settings = credentials.settings
+                settings.voice = voice
+                credentials = Credentials(settings: settings, key: credentials.key)
+            }
+            session = Session(owner: owner, credentials: credentials, recording: nil, emit: nil)
             try insert(id, session)
         }
         try acquire(session)

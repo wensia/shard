@@ -73,13 +73,18 @@ public enum VoiceContract {
         let hostPart = host.contains(":") && !host.hasPrefix("[") ? "[\(host)]" : host
         settings.baseUrl = "\(scheme)://\(hostPart)\(port)\(path)"
         for keyPath in [\VoiceSettings.transcriptionModel, \VoiceSettings.speechModel, \VoiceSettings.voice] {
-            let value = settings[keyPath: keyPath].trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !value.isEmpty, value.utf8.count <= 256,
-                  !value.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) })
-            else { throw VoiceFailure("请填写有效的语音模型和音色。") }
-            settings[keyPath: keyPath] = value
+            settings[keyPath: keyPath] = try name(settings[keyPath: keyPath])
         }
         return settings
+    }
+
+    /// A model or voice name: trimmed, 1–256 bytes, no control characters.
+    public static func name(_ input: String) throws(VoiceFailure) -> String {
+        let value = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty, value.utf8.count <= 256,
+              !value.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) })
+        else { throw VoiceFailure("请填写有效的语音模型和音色。") }
+        return value
     }
 
     /// Mirrors the desktop: one Keychain item per endpoint.

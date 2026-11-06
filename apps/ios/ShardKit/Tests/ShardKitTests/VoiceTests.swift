@@ -45,6 +45,13 @@ import Testing
         #expect(failure { _ = try VoiceContract.normalize(blank) } == "请填写有效的语音模型和音色。")
     }
 
+    @Test func previewVoiceNamesFollowTheSettingsRules() throws {
+        #expect(try VoiceContract.name("  茉莉 ") == "茉莉")
+        for invalid in ["", "   ", "a\nb", String(repeating: "x", count: 257)] {
+            #expect(failure { _ = try VoiceContract.name(invalid) } == "请填写有效的语音模型和音色。")
+        }
+    }
+
     @Test func keysAreScopedPerEndpointAndHeaderSafe() throws {
         let a = VoiceContract.keyAccount(for: settings(.mimo, "https://a.example.com/v1"))
         #expect(a.hasPrefix("endpoint-") && a.count == "endpoint-".count + 64)
