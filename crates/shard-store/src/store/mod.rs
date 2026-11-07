@@ -9,6 +9,7 @@
 //!
 //! 单写者（进程内一把锁 + IMMEDIATE）保证提交顺序就是 seq 顺序，增量拉取不会漏数据。
 
+mod auto_tagging;
 mod blobs;
 mod history;
 mod lockbox;
@@ -27,6 +28,7 @@ use rand::RngCore;
 use rusqlite::{params, Connection, OptionalExtension};
 
 pub use blobs::INLINE_MAX;
+pub use auto_tagging::{AutoTaggingCandidate, AutoTaggingJob, AutoTaggingResult};
 pub use history::{DeletedEntry, EraseReport, RevisionInfo, PURGED_HISTORY_DAYS};
 pub use lockbox::{LockboxItemEntry, LockboxManifestEntry};
 pub use maintenance::{MaintenanceReport, BLOB_GRACE_DAYS, REVISION_FULL_DAYS};

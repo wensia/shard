@@ -12,6 +12,8 @@ Shard 提供 **iOS App、Web、macOS 桌面**三种客户端。[三端说明](pl
 
 ## 当前产品方向
 
+服务端能力：[自动标签](server-auto-tagging.md) · [分类 Prompt](auto-tagging-prompt.md)。
+
 当前 `main` 已包含 Web、iOS App 和 macOS 桌面。服务器模式使用 VPS 上的 SQLite 管理资料，三端可用邮箱与密码连接同一服务器账号；macOS 仍保留本地文件 + Git 模式。技术演进记录见 [服务端 SQLite + 网页版](server-sqlite-plan.md)，平台现状见 [三端说明](platforms.md)。
 
 （更早）2026-09-15 起，Shard 的目标收敛为本地优先的碎片系统，支持可组合的 Git / 飞书 / 夸克存储目标，以及 Hermes / OpenClaw 聊天入口。私密碎片能力保留，取消独立密匣工作台。

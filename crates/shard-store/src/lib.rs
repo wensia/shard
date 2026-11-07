@@ -12,6 +12,7 @@ mod store;
 pub mod transfer;
 
 pub use store::{
+    AutoTaggingCandidate, AutoTaggingJob, AutoTaggingResult,
     ChangeRecord, ChangesPage, Committed, DeletedEntry, EraseReport, LockboxItemEntry, LockboxManifestEntry,
     MaintenanceReport, ManifestEntry, RevisionInfo, VerifyReport, SqliteVfs, BLOB_GRACE_DAYS, REVISION_FULL_DAYS,
     Store, StoreError, TxnRecord, WriteCtx, DEFAULT_VIRTUAL_ROOT, INLINE_MAX, LockboxItemRaw, PURGED_HISTORY_DAYS,

@@ -103,6 +103,43 @@ pub fn apply_frontmatter(raw: &str, next: &FragmentFrontmatter) -> Result<String
     Ok(updated)
 }
 
+/// Replace only the tags entry, preserving every other raw entry and absent field.
+/// The caller owns qualification/tag validation and must preserve the original body.
+pub fn apply_tags(raw: &str, tags: &[String]) -> Result<String, String> {
+    let mut expected = parse_mapping(raw)?;
+    let mut items = split_raw_items(raw);
+    validate_system_entries(&expected, &items)?;
+    let key = Value::String("tags".to_string());
+    let value = serde_yaml::to_value(tags).map_err(|error| error.to_string())?;
+    if expected.get(&key) == Some(&value) {
+        return Ok(raw.to_string());
+    }
+    let replacement = RawItem {
+        key: Some("tags".to_string()),
+        text: serialize_entry("tags", &value)?,
+    };
+    if let Some(index) = items
+        .iter()
+        .position(|item| item.key.as_deref() == Some("tags"))
+    {
+        items[index] = replacement;
+    } else {
+        let index = insertion_index(&items, "tags");
+        items.insert(index, replacement);
+    }
+    let updated = items
+        .iter()
+        .map(|item| item.text.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    validate_custom_property_update(raw, &updated, "tags", Some(&value))?;
+    expected.insert(key, value);
+    if parse_mapping(&updated)? != expected {
+        return Err("标签局部改写后其他 frontmatter 值发生变化。".to_string());
+    }
+    Ok(updated)
+}
+
 pub fn validate_property_key(key: &str) -> Result<(), String> {
     let length = key.chars().count();
     if length == 0 {
@@ -688,6 +725,48 @@ source: test"#;
         assert_eq!(changed.matches("tags:").count(), 1);
         assert!(!changed.contains("tags: [a, b]"));
         assert_eq!(changed.replace("tags:\n- changed", "tags: [a, b]"), pinned);
+    }
+
+    #[test]
+    fn apply_tags_preserves_absent_fields_other_entries_and_body_bytes() {
+        let raw = "# 原有注释\nid: fragment-1\ncreated_at: 2026-09-28T08:00:00+08:00\nupdated_at: 2026-09-28T08:00:00+08:00\ntags: [inbox, outline] # 标签备注\nsource: 'test'\ncustom: |\n  逐字保留\n  第二行  \n# 末尾注释\n";
+        let tags = vec!["inbox".into(), "outline".into(), "骑行".into()];
+        let updated = apply_tags(raw, &tags).unwrap();
+        assert_eq!(
+            updated.replace(
+                "tags:\n- inbox\n- outline\n- 骑行",
+                "tags: [inbox, outline] # 标签备注"
+            ),
+            raw
+        );
+        assert!(!updated.contains("category:"));
+        assert!(!updated.contains("ai_status:"));
+        assert!(!updated.contains("pinned:"));
+        let body = "\n\n正文保留空格  \r\n末尾\n\n";
+        let parsed = parse_fragment(&format!("---\n{updated}\n---{body}")).unwrap();
+        assert_eq!(parsed.body, body);
+        assert_eq!(parsed.frontmatter.tags, tags);
+    }
+
+    #[test]
+    fn apply_tags_noop_and_insert_preserve_unrelated_bytes() {
+        let raw = "id: fragment-1\ntags: [inbox] # 格式不动\nsource: test\n";
+        assert_eq!(apply_tags(raw, &["inbox".into()]).unwrap(), raw);
+        let missing = "id: fragment-1\nsource: test\ncustom: '00123'\n";
+        let updated = apply_tags(missing, &["骑行".into()]).unwrap();
+        assert_eq!(updated.replace("tags:\n- 骑行\n", ""), missing);
+        assert!(!updated.contains("category:"));
+    }
+
+    #[test]
+    fn apply_tags_rejects_ambiguous_or_referenced_tags() {
+        for raw in [
+            "tags: [inbox]\ntags: [duplicate]",
+            "\"tags\": [inbox]",
+            "tags: &shared [inbox]\ncustom: *shared",
+        ] {
+            assert!(apply_tags(raw, &["骑行".into()]).is_err(), "{raw}");
+        }
     }
 
     #[test]

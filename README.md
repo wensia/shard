@@ -64,6 +64,8 @@ Shard 只优化一个动作：快速捕捉灵感。
 
 ## 主要功能
 
+服务器模式支持[后台自动标签](docs/dev/server-auto-tagging.md)：为未分类的公开内容补充多标签，优先复用现有标签。Web、iOS 和 macOS 服务器模式共用服务端实现；需配置模型并开启。分类 [Prompt](docs/dev/auto-tagging-prompt.md) 随代码维护。
+
 - **灵感卡片**：每条片段以卡片形式呈现，按时间倒序查看。
 - **Markdown 片段落盘**：每条记录都是独立 Markdown 文件，方便迁移、搜索和二次处理。
 - **本地优先 vault**：默认写入 `~/Documents/ShardVault`，不依赖云端服务才能保存。

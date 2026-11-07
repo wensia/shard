@@ -792,3 +792,131 @@ fn normalization_only_masks_run_dependent_text() {
     assert_eq!(norm.text("fragments/2026/10/20261026-101010-abcd1234-ef5678.md"), "fragments/2026/10/<id>.md");
     assert_eq!(norm.text("2026-10-26 不是时间 123456789-123456"), "2026-10-26 不是时间 123456789-123456");
 }
+
+#[test]
+fn dual_auto_tags_preserve_body_unknown_metadata_and_system_tags() {
+    use crate::auto_tagging::{apply_auto_tags, read_tagging_item};
+    run_both(|h| {
+        let path = h.path("notes/auto.md");
+        let raw = fragment_fixture("auto", &["inbox", "note"], "# 记录\n正文包含空白  \n\n")
+            .replace("category: null\nai_status: none\n", "")
+            .replace("author: 外部字段保留", "# 自定义注释\nauthor: '外部字段保留'\ncustom: |\n  保留缩进  \n  第二行");
+        h.put_text("notes/auto.md", &raw);
+        let item = h.read(|cx| read_tagging_item(cx, &path)).unwrap().unwrap();
+        assert_eq!(item.id, "auto");
+        assert_eq!(item.title, "记录");
+        assert_eq!(item.body, parse_fragment(&raw).unwrap().body);
+        assert!(h.write(|cx| apply_auto_tags(cx, &path, &hash_text(&raw), vec!["骑行".into(), "旅行".into()])).unwrap());
+        let saved = h.read(|cx| cx.vfs.read_to_string(&path)).unwrap();
+        let parsed = parse_fragment(&saved).unwrap();
+        assert_eq!(parsed.body.as_bytes(), item.body.as_bytes());
+        assert_eq!(parsed.frontmatter.tags, vec!["inbox", "note", "骑行", "旅行"]);
+        assert_eq!(parsed.frontmatter.updated_at, "2026-01-02T03:04:05+08:00");
+        assert!(!saved.contains("category:"));
+        assert!(!saved.contains("ai_status:"));
+        assert!(saved.contains("# 自定义注释\nauthor: '外部字段保留'\ncustom: |\n  保留缩进  \n  第二行"));
+        assert_eq!(saved, raw.replace("  - note\n", "  - note\n  - 骑行\n  - 旅行\n").replace("tags:\n  - inbox\n  - note\n  - 骑行\n  - 旅行\n", "tags:\n- inbox\n- note\n- 骑行\n- 旅行\n"));
+        assert!(h.read(|cx| read_tagging_item(cx, &path)).unwrap().is_none());
+        assert!(!h.write(|cx| apply_auto_tags(cx, &path, &hash_text(&saved), vec!["运动".into()])).unwrap());
+        vec![json!(saved)]
+    });
+}
+
+#[test]
+fn dual_auto_tags_recheck_full_sha_and_manual_labels_before_writing() {
+    use crate::auto_tagging::{apply_auto_tags, read_tagging_item};
+    run_both(|h| {
+        let path = h.path("fragments/auto.md");
+        let original = fragment_fixture("auto", &["inbox"], "骑行途中的记录");
+        h.put_text("fragments/auto.md", &original);
+        assert!(h.read(|cx| read_tagging_item(cx, &path)).unwrap().is_some());
+        let changed = original.replace("外部字段保留", "推理期间改过的元数据");
+        h.put_text("fragments/auto.md", &changed);
+        assert!(!h.write(|cx| apply_auto_tags(cx, &path, &hash_text(&original), vec!["骑行".into()])).unwrap());
+        assert_eq!(h.read(|cx| cx.vfs.read_to_string(&path)).unwrap(), changed);
+        for manual in [
+            fragment_fixture("auto", &["inbox", "手动分类"], "正文"),
+            fragment_fixture("auto", &["inbox"], "正文 #手动分类"),
+        ] {
+            h.put_text("fragments/auto.md", &manual);
+            assert!(h.read(|cx| read_tagging_item(cx, &path)).unwrap().is_none());
+            assert!(!h.write(|cx| apply_auto_tags(cx, &path, &hash_text(&manual), vec!["骑行".into()])).unwrap());
+            assert_eq!(h.read(|cx| cx.vfs.read_to_string(&path)).unwrap(), manual);
+        }
+        h.put_text("fragments/auto.md", &original);
+        for bad in [vec!["密匣".into()], vec!["note".into()], vec!["#注入".into()], vec!["正常".into(); 6]] {
+            assert!(h.write(|cx| apply_auto_tags(cx, &path, &hash_text(&original), bad)).is_err());
+        }
+        assert_eq!(h.read(|cx| cx.vfs.read_to_string(&path)).unwrap(), original);
+        h.write(|cx| cx.vfs.remove_file(&path)).unwrap();
+        assert!(!h.write(|cx| apply_auto_tags(cx, &path, &hash_text(&original), vec!["骑行".into()])).unwrap());
+        vec![json!("unchanged on conflicts")]
+    });
+}
+
+#[test]
+fn dual_auto_tags_never_read_or_write_private_hidden_archived_or_unmanaged_content() {
+    use crate::auto_tagging::{apply_auto_tags, read_tagging_item};
+    run_both(|h| {
+        let raw = fragment_fixture("skip", &["inbox"], "正文");
+        for relative in [".trash/fragments/skip.md", "notes/.hidden/skip.md", "fragments/.skip.md"] {
+            h.put_text(relative, &raw);
+            let path = h.path(relative);
+            assert!(h.read(|cx| read_tagging_item(cx, &path)).unwrap().is_none());
+            assert!(!h.write(|cx| apply_auto_tags(cx, &path, &hash_text(&raw), vec!["主题".into()])).unwrap());
+            assert_eq!(h.read(|cx| cx.vfs.read_to_string(&path)).unwrap(), raw);
+        }
+        // 在访问存储前拒绝密匣路径；SqliteVfs 根本没有公开 lockbox/ 树。
+        assert!(h.read(|cx| read_tagging_item(cx, Path::new("lockbox/fragments/skip.md"))).unwrap().is_none());
+        for relative in ["../outside.md", "data/skip.md", "notes/skip.csv"] {
+            assert!(h.read(|cx| read_tagging_item(cx, Path::new(relative))).is_err());
+        }
+        let path = h.path("notes/private.md");
+        for excluded in [
+            fragment_fixture("skip", &["inbox", "密匣"], "正文"),
+            fragment_fixture("skip", &["inbox"], "正文 #密匣"),
+            raw.replace("source: test", "source: test\narchived: true"),
+            raw.replace("source: test", "source: test\nhidden: true"),
+            raw.replace("source: test", "source: test\nlockbox: true"),
+            raw.replace("tags:\n  - inbox", "tags: ['inbox', ' #密匣 ' ]"),
+            "---\nid: missing-close\n正文".into(),
+            raw.replace("tags:\n  - inbox", "tags: [unterminated"),
+            raw.replace("id: skip", "id: skip\nid: duplicate"),
+            "# 未导入的外部 Markdown\n原文不动".into(),
+        ] {
+            h.put_text("notes/private.md", &excluded);
+            assert!(h.read(|cx| read_tagging_item(cx, &path)).unwrap().is_none());
+            assert!(!h.write(|cx| apply_auto_tags(cx, &path, &hash_text(&excluded), vec!["主题".into()])).unwrap());
+            assert_eq!(h.read(|cx| cx.vfs.read_to_string(&path)).unwrap(), excluded);
+        }
+        vec![json!("private documents skipped")]
+    });
+}
+
+#[test]
+fn dual_body_edits_keep_metadata_only_tags_and_explicit_tag_updates_can_remove_them() {
+    run_both(|h| {
+        for (relative, id, kind) in [("fragments/body.md", "body", "document"), ("notes/note.md", "note", "note")] {
+            h.put_text(relative, &fragment_fixture(id, &["inbox", kind, "自动主题", "旧正文标签"], "原文 #旧正文标签"));
+            let path = h.path(relative);
+            let saved = h.write(|cx| update_public_fragment_in_vault(cx, &path, "修改正文 #新标签", vec!["inbox".into(), kind.into(), "新标签".into()], None)).unwrap();
+            assert!(saved.tags.contains(&"自动主题".into()));
+            assert!(saved.tags.contains(&"新标签".into()));
+            assert!(saved.tags.contains(&kind.into()));
+            assert!(!saved.tags.contains(&"旧正文标签".into()));
+            // CLI 更新与追加共用 rewrite_document，同样保留元数据标签。
+            let rewritten = h.write(|cx| crate::cli::rewrite_document(cx.vfs, &path, None, |_| "CLI 替换正文".into(), cx.now().to_rfc3339())).unwrap();
+            assert!(rewritten.tags().contains(&"自动主题".into()));
+            assert!(!rewritten.tags().contains(&"新标签".into()));
+            let appended = h.write(|cx| crate::cli::rewrite_document(cx.vfs, &path, Some(&rewritten.sha), |body| format!("{body}\n追加 #追加标签"), cx.now().to_rfc3339())).unwrap();
+            assert!(appended.tags().contains(&"自动主题".into()));
+            assert!(appended.tags().contains(&"追加标签".into()));
+            let explicit = h.write(|cx| update_public_fragment_tags_in_vault(cx, &path, vec!["inbox".into(), kind.into()])).unwrap();
+            assert!(!explicit.tags.contains(&"自动主题".into()));
+            assert!(!explicit.tags.contains(&"追加标签".into()));
+            let after = h.write(|cx| update_public_fragment_in_vault(cx, &path, "后续正文", vec!["inbox".into(), kind.into()], None)).unwrap();
+            assert!(!after.tags.contains(&"自动主题".into()));
+        }
+        vec![json!("metadata tags survive body edits, explicit deletion survives")]
+    });
+}
