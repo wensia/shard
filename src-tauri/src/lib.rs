@@ -8406,6 +8406,12 @@ pub fn run() {
         index_registry.clone(),
     );
     tauri::Builder::default()
+        .on_menu_event(|app, event| {
+            if event.id() == OPEN_SETTINGS_MENU_ID {
+                use tauri::Emitter;
+                let _ = app.emit(OPEN_SETTINGS_MENU_EVENT, ());
+            }
+        })
         .manage(voice::VoiceRuntime::default())
         // 页面重载或窗口关闭后，旧页面再也发不出取消；由后端收掉它的录音与合成。
         .on_page_load(|webview, payload| {
@@ -8447,6 +8453,8 @@ pub fn run() {
                 window_frame::configure_startup(window)?;
             }
             reminder_badge::spawn_badge_worker(app.handle().clone())?;
+            #[cfg(target_os = "macos")]
+            install_settings_menu(app.handle())?;
 
             Ok(())
         })
@@ -12862,4 +12870,25 @@ mod tests {
         assert_eq!(cells, 4);
     }
 
+}
+
+/// macOS 应用菜单「设置…」的菜单项 id。
+const OPEN_SETTINGS_MENU_ID: &str = "open-settings";
+/// 点「设置…」后发给前端的事件（与 `src/lib/settings-events.ts` 的 `OPEN_SETTINGS_MENU_EVENT` 同名）。
+const OPEN_SETTINGS_MENU_EVENT: &str = "menu:open-settings";
+
+/// 在系统默认菜单的 App 菜单里，按 macOS 惯例插入「设置…」（⌘,）：关于 Shard 之后、服务之前。
+/// 其余菜单（编辑、窗口……）保持默认，复制粘贴等系统快捷键照常可用。
+#[cfg(target_os = "macos")]
+fn install_settings_menu(app: &tauri::AppHandle) -> tauri::Result<()> {
+    use tauri::menu::{Menu, MenuItem, MenuItemKind, PredefinedMenuItem};
+
+    let menu = Menu::default(app)?;
+    let items = menu.items()?;
+    if let Some(app_menu) = items.first().and_then(MenuItemKind::as_submenu) {
+        let settings = MenuItem::with_id(app, OPEN_SETTINGS_MENU_ID, "设置…", true, Some("CmdOrCtrl+,"))?;
+        app_menu.insert_items(&[&settings, &PredefinedMenuItem::separator(app)?], 2)?;
+    }
+    app.set_menu(menu)?;
+    Ok(())
 }

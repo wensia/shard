@@ -243,3 +243,13 @@
 .sidebar[data-collapsed="true"] .navSubItemInactive {
   color: var(--muted-foreground);
 }
+
+/* 侧栏底部常驻区（设置入口）：不随导航滚动 */
+.footer {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: var(--space-1);
+  border-top: 1px solid var(--sidebar-border);
+  padding: var(--space-2) var(--space-3);
+}

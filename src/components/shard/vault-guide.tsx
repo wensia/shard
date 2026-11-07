@@ -7,10 +7,10 @@ import {
   KeyboardIcon,
   Loader2Icon,
   MonitorIcon,
-  MicIcon,
   MoonIcon,
   PaletteIcon,
   RefreshCwIcon,
+  SparklesIcon,
   SquareTerminalIcon,
   SunIcon,
   XIcon,
@@ -53,7 +53,7 @@ import {
   uninstallCli,
 } from "@/lib/api"
 import { notify } from "@/lib/notify"
-import { VoiceSettings } from "@/features/voice"
+import { AiSettings } from "@/features/ai"
 import type {
   CliInstallStatus,
   GithubCliInfo,
@@ -109,10 +109,10 @@ const monoPathStyle: CSSProperties = {
   userSelect: "all",
 }
 
-export type SettingsSection = "appearance" | "cli" | "git" | "shortcuts" | "vault" | "voice"
+export type SettingsSection = "ai" | "appearance" | "cli" | "git" | "shortcuts" | "vault"
 
 /** 设置单页里的分区顺序，也是左侧锚点导航的顺序。 */
-const SETTINGS_SECTIONS: SettingsSection[] = ["vault", "git", "appearance", "voice", "cli", "shortcuts"]
+const SETTINGS_SECTIONS: SettingsSection[] = ["vault", "git", "appearance", "ai", "cli", "shortcuts"]
 
 interface VaultGuideProps {
   autoSyncEnabled: boolean
@@ -503,6 +503,7 @@ const shortcutRows: Record<
   en: [
     { keys: ["⌘", "Enter"], label: "Save fragment" },
     { keys: ["⌘", "K"], label: "Search" },
+    { keys: ["⌘", ","], label: "Settings" },
     { keys: ["⌘", "N"], label: "Quick capture" },
     { keys: ["⌘", "B"], label: "Collapse/expand sidebar" },
     { keys: ["⌘", "1"], label: "Fragments" },
@@ -516,6 +517,7 @@ const shortcutRows: Record<
   zh: [
     { keys: ["⌘", "Enter"], label: "保存片段" },
     { keys: ["⌘", "K"], label: "搜索" },
+    { keys: ["⌘", ","], label: "设置" },
     { keys: ["⌘", "N"], label: "快速捕捉" },
     { keys: ["⌘", "B"], label: "折叠/展开侧边栏" },
     { keys: ["⌘", "1"], label: "碎片" },
@@ -1208,7 +1210,7 @@ export function VaultGuide({
     git: { icon: GitBranchIcon, label: copy.navGit },
     shortcuts: { icon: KeyboardIcon, label: copy.navShortcuts },
     vault: { icon: FolderOpenIcon, label: copy.vaultTitle },
-    voice: { icon: MicIcon, label: locale === "zh" ? "语音" : "Voice" },
+    ai: { icon: SparklesIcon, label: "AI" },
   }
   const spinner = <Loader2Icon aria-hidden="true" className={styles.spin} />
   const cliStatusDescription = cliError ? (
@@ -1240,7 +1242,7 @@ export function VaultGuide({
         }}
       >
         <DialogDescription className="sr-only">
-          配置 Shard 的目录、Git 同步、外观、语音、终端命令与快捷键。
+          配置 Shard 的目录、Git 同步、外观、AI（语音、助手接入）、终端命令与快捷键。
         </DialogDescription>
         <header className={styles.settingsHeader}>
           <DialogTitle className={styles.settingsTitle}>
@@ -1582,8 +1584,12 @@ export function VaultGuide({
               </SettingsGroup>
             </SettingsBlock>
 
-            <SettingsBlock id="voice" title={locale === "zh" ? "语音" : "Voice"}>
-              <VoiceSettings />
+            <SettingsBlock id="ai" title="AI">
+              <AiSettings
+                onNavigate={(section) =>
+                  scrollToSection(section, prefersReducedMotion() ? "auto" : "smooth")
+                }
+              />
             </SettingsBlock>
 
             <SettingsBlock id="cli" title={copy.cliTitle}>

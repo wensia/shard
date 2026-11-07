@@ -4,6 +4,7 @@ import {
   InboxIcon,
   PanelLeftIcon,
   SearchIcon,
+  SettingsIcon,
   type LucideIcon,
 } from "@/components/icons"
 import {
@@ -30,6 +31,8 @@ interface SidebarNavProps {
   fragments: Fragment[]
   isCollapsed: boolean
   onOpenSearch: () => void
+  /** 侧栏底部常驻的「设置」入口（⌘,）。 */
+  onOpenSettings?: () => void
   onRouteChange: (route: WorkspaceRoute) => void
   onToggleCollapsed: () => void
   route: WorkspaceRoute
@@ -79,6 +82,7 @@ const SIDEBAR_COPY: Record<
     search: string
     searchPlaceholder: string
     searchShortcut: string
+    settings: string
     stats: {
       tags: string
       daySpan: string
@@ -110,6 +114,7 @@ const SIDEBAR_COPY: Record<
     search: "搜索内容",
     searchPlaceholder: "搜索或打开…",
     searchShortcut: "⌘K",
+    settings: "设置",
     stats: {
       tags: "个标签",
       daySpan: "记录跨度",
@@ -140,6 +145,7 @@ const SIDEBAR_COPY: Record<
     search: "Search notes",
     searchPlaceholder: "Search or open…",
     searchShortcut: "⌘K",
+    settings: "Settings",
     stats: {
       tags: "tags",
       daySpan: "Record span",
@@ -191,6 +197,7 @@ export function SidebarNav({
   fragments,
   isCollapsed,
   onOpenSearch,
+  onOpenSettings,
   onRouteChange,
   onToggleCollapsed,
   route,
@@ -388,6 +395,22 @@ export function SidebarNav({
           </div>
         )}
       </nav>
+      {onOpenSettings ? (
+        <div
+          className={styles.footer}
+          style={isCollapsed ? { paddingInline: "var(--space-2)" } : undefined}
+        >
+          <SidebarNavigationButton
+            className={`${styles.navItem} ${styles.navItemInactive}`}
+            icon={SettingsIcon}
+            isActive={false}
+            isCollapsed={isCollapsed}
+            label={copy.settings}
+            onClick={onOpenSettings}
+            shortcut=","
+          />
+        </div>
+      ) : null}
     </aside>
   )
 }
@@ -439,7 +462,7 @@ function SidebarNavigationButton({
   label: string
   level?: "primary" | "secondary"
   onClick: () => void
-  shortcut?: "1" | "2" | "3"
+  shortcut?: "1" | "2" | "3" | ","
   trailing?: ReactNode
 }) {
   const content = (

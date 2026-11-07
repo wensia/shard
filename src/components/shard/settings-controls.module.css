@@ -27,6 +27,40 @@
   background: var(--card);
 }
 
+/* 分区里的小标题组：标题 + 一句说明 + 卡片 */
+.groupSection {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.groupSection + .groupSection {
+  margin-top: var(--space-2);
+}
+
+.groupHeader {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-0\.5);
+  padding-inline: var(--space-1);
+}
+
+.groupTitle {
+  margin: 0;
+  font-size: var(--text-body);
+  line-height: 20px;
+  font-weight: 600;
+  color: var(--foreground);
+}
+
+.groupDescription {
+  margin: 0;
+  font-size: var(--text-meta);
+  line-height: 18px;
+  color: var(--muted-foreground);
+  text-wrap: pretty;
+}
+
 .item {
   padding: var(--space-3) var(--space-4);
   border-bottom: 1px solid var(--border);

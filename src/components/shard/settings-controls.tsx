@@ -37,13 +37,35 @@ export function SettingsBlock({
 export function SettingsGroup({
   children,
   busy,
+  description,
+  id,
+  title,
 }: {
   children: ReactNode
   busy?: boolean
+  /** 分组标题下的一句说明（如数据发往哪里）。 */
+  description?: ReactNode
+  /** 带标题时用作锚点（`data-settings-group`），测试与「前往」按钮据此定位。 */
+  id?: string
+  /** 一个分区里有几组不同用途的设置时（如 AI 下的自动标签与语音），给每组一个小标题。 */
+  title?: ReactNode
 }) {
-  return (
+  const card = (
     <div aria-busy={busy || undefined} className={styles.group}>
       {children}
+    </div>
+  )
+  if (!title) return card
+  const headingId = id ? `settings-group-${id}` : undefined
+  return (
+    <div aria-labelledby={headingId} className={styles.groupSection} data-settings-group={id} role="group">
+      <div className={styles.groupHeader}>
+        <h4 className={styles.groupTitle} id={headingId}>
+          {title}
+        </h4>
+        {description ? <p className={styles.groupDescription}>{description}</p> : null}
+      </div>
+      {card}
     </div>
   )
 }

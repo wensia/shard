@@ -148,12 +148,15 @@ test("麦克风权限被拒绝时提示并恢复编辑", async ({ page }) => {
   expect(await voiceCalls(page, "voice_start_recording")).toHaveLength(1)
 })
 
-test("未保存密钥时录音入口打开语音设置且不开麦，保存只改配置", async ({ page }) => {
+test("未保存密钥时录音入口打开设置的 AI 分区且不开麦，保存只改配置", async ({ page }) => {
   await setup(page)
   await page.evaluate(() => { (window as any).__voiceHasKey = false })
   await composerBox(page).getByRole("button", { name: "语音输入", exact: true }).click()
-  const dialog = page.getByRole("dialog")
-  await expect(dialog.getByRole("heading", { name: "语音", exact: true })).toBeVisible()
+  // 语音不再另开小窗：打开的是主设置，并定位到 AI 分区里的语音分组。
+  const settings = page.getByRole("dialog", { name: "设置", exact: true })
+  await expect(settings.getByRole("navigation").getByRole("button", { name: "AI", exact: true })).toHaveAttribute("aria-current", "true")
+  const dialog = settings.locator('[data-settings-group="voice"]')
+  await expect(dialog.getByRole("heading", { name: "语音输入与朗读", exact: true })).toBeVisible()
   expect(await voiceCalls(page, "voice_start_recording")).toHaveLength(0)
   await expect(dialog.getByLabel("识别模型", { exact: true })).toHaveValue("mimo-v2.5-asr")
   await expect(dialog.getByLabel("API Key", { exact: true })).toHaveValue("")
@@ -173,7 +176,7 @@ test("设置页的语音分区复用同一份配置", async ({ page }) => {
   await page.getByRole("button", { name: "更多操作", exact: true }).click()
   await page.getByRole("menuitem", { name: "设置", exact: true }).click()
   const dialog = page.getByRole("dialog")
-  await dialog.getByRole("navigation").getByRole("button", { name: "语音", exact: true }).click()
+  await dialog.getByRole("navigation").getByRole("button", { name: "AI", exact: true }).click()
   await expect(dialog.getByLabel("Base URL", { exact: true })).toBeInViewport()
   await expect(dialog.getByLabel("音色", { exact: true })).toHaveValue("冰糖")
 })

@@ -101,6 +101,12 @@ import { readFlowchartContent } from "@/lib/flowchart-content"
 import { toggleTaskLine } from "@/lib/editor-format"
 import { notify } from "@/lib/notify"
 import {
+  OPEN_SETTINGS_EVENT,
+  OPEN_SETTINGS_MENU_EVENT,
+  isSettingsShortcut,
+  type OpenSettingsDetail,
+} from "@/lib/settings-events"
+import {
   buildWikilinkCandidates,
   resolveWikilinkTarget,
 } from "@/lib/wikilink"
@@ -2654,6 +2660,49 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
     return () => window.removeEventListener("keydown", handleWorkspaceShortcut, true)
   })
 
+  // 打开设置的几条路：⌘,（网页与 iOS 外接键盘；桌面由原生菜单的快捷键接走）、
+  // 侧栏与菜单发出的请求事件、macOS 应用菜单「设置…」。都汇到 openSettings。
+  const isModalBusyRef = useRef(false)
+  isModalBusyRef.current = isModalBusy
+  const openSettingsRef = useRef(openSettings)
+  openSettingsRef.current = openSettings
+  useEffect(() => {
+    function open(section?: string) {
+      if (isModalBusyRef.current) return
+      openSettingsRef.current((section as SettingsSection | undefined) ?? "vault")
+    }
+    function handleShortcut(event: KeyboardEvent) {
+      if (!isSettingsShortcut(event)) return
+      event.preventDefault()
+      open()
+    }
+    function handleRequest(event: Event) {
+      open((event as CustomEvent<OpenSettingsDetail>).detail?.section)
+    }
+    window.addEventListener("keydown", handleShortcut)
+    window.addEventListener(OPEN_SETTINGS_EVENT, handleRequest)
+    let disposed = false
+    let unlisten: (() => void) | null = null
+    void (async () => {
+      try {
+        const { isTauri } = await import("@tauri-apps/api/core")
+        if (!isTauri()) return
+        const { listen } = await import("@tauri-apps/api/event")
+        const stop = await listen(OPEN_SETTINGS_MENU_EVENT, () => open())
+        if (disposed) stop()
+        else unlisten = stop
+      } catch {
+        // 浏览器与测试环境没有 Tauri 事件，静默跳过。
+      }
+    })()
+    return () => {
+      disposed = true
+      unlisten?.()
+      window.removeEventListener("keydown", handleShortcut)
+      window.removeEventListener(OPEN_SETTINGS_EVENT, handleRequest)
+    }
+  }, [])
+
   useEffect(() => {
     function handleGlobalSearchShortcut(event: KeyboardEvent) {
       const key = event.key.toLowerCase()
@@ -3169,6 +3218,7 @@ export function WorkbenchShell({ route, setRoute }: WorkbenchShellProps) {
               fragments={publicOnlyFragments}
               isCollapsed={false}
               onOpenSearch={openSearch}
+              onOpenSettings={() => openSettings("vault")}
               onRouteChange={handleRouteChange}
               onToggleCollapsed={() => {
                 setIsSidebarCollapsed(true)
