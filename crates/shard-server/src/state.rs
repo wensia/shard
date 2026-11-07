@@ -6,6 +6,7 @@ use shard_store::{ChangeRecord, Store};
 use tokio::sync::{broadcast, watch};
 
 use crate::{
+    ai_settings::AiSettings,
     auth::{db::AuthDb, ratelimit::RateLimiter},
     config::Config,
     rpc::Registry,
@@ -33,6 +34,8 @@ pub struct Inner {
     pub rpc: Registry,
     /// 前端 `vaultPath` 字段的值：`shard://<域名>/<vault_id>`，只作身份用。
     pub vault_identity: String,
+    /// 设置 → AI：自动标签的模型配置与运行状态，后台 worker 订阅它。
+    pub ai: Arc<AiSettings>,
 }
 
 #[derive(Clone)]
@@ -51,6 +54,7 @@ impl AppState {
         std::fs::create_dir_all(&config.data_dir).map_err(|error| error.to_string())?;
         let store = Store::open(&config.data_dir).map_err(|error| error.to_string())?;
         let auth = AuthDb::open(&config.data_dir.join("auth.db")).map_err(|error| error.to_string())?;
+        let ai = Arc::new(AiSettings::load(&config.data_dir)?);
         let vault_id = store.meta("vault_id").map_err(|error| error.to_string())?.unwrap_or_default();
         let vault_identity = format!("shard://{}/{vault_id}", config.host);
         let (events, _) = broadcast::channel(256);
@@ -63,6 +67,7 @@ impl AppState {
             shutdown: watch::Sender::new(false),
             rpc,
             vault_identity,
+            ai,
         })))
     }
 

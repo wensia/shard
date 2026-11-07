@@ -228,7 +228,8 @@ fn edit_by_index_preserves_frontmatter_bytes_and_removes_draft() {
         "id: {SECOND}\ncreated_at: 2026-09-26T06:18:30Z\n# 第 0 列注释\nauthor: 张三 # 行尾注释\n"
     )));
     let parsed = parse_fragment(&text).unwrap();
-    assert_eq!(parsed.frontmatter.tags, vec!["inbox", "新标签"]);
+    // 「旧标签」只在标签字段里（属性面板或自动标签写的），改正文不会把它丢掉；正文里新写的标签照常加入。
+    assert_eq!(parsed.frontmatter.tags, vec!["inbox", "新标签", "旧标签"]);
     assert_ne!(parsed.frontmatter.updated_at, "2026-09-26T07:18:30Z");
     assert!(f.draft_files().is_empty());
 }

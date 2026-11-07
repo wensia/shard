@@ -132,6 +132,8 @@ pub struct RpcEnv<'a> {
     /// 客户端时区（`X-Shard-UTC-Offset`，分钟）。碎片 id 与 `fragments/YYYY/MM` 按它算。
     pub utc_offset: FixedOffset,
     pub vault_identity: &'a str,
+    /// 设置 → AI（自动标签的模型配置）。
+    pub ai: &'a crate::ai_settings::AiSettings,
     /// 新建内容的 `source`：web / desktop / cli。
     pub source: &'static str,
     committed: RefCell<Vec<ChangeRecord>>,
@@ -352,6 +354,7 @@ async fn dispatch(
             request_sha: task_sha,
             utc_offset,
             vault_identity: &task_state.vault_identity,
+            ai: &task_state.ai,
             committed: RefCell::new(Vec::new()),
             lockbox_changed: Cell::new(false),
             lockbox_seq: Cell::new(None),

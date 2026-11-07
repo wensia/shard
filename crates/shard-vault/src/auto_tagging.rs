@@ -103,7 +103,8 @@ fn eligible_document(
             .extension()
             .is_some_and(|extension| extension.eq_ignore_ascii_case("md"))
     {
-        return Err("自动标签只接受 fragments/ 或 notes/ 下的 Markdown".into());
+        // 范围外（含大小写不同的 `Notes/`）是确定的不适用，不是错误：返回 Err 会让扫描整轮中断、饿死后续内容。
+        return Ok(None);
     }
     let mut resolved = cx.root().to_path_buf();
     for (index, part) in parts.iter().enumerate() {

@@ -28,7 +28,7 @@ use rand::RngCore;
 use rusqlite::{params, Connection, OptionalExtension};
 
 pub use blobs::INLINE_MAX;
-pub use auto_tagging::{AutoTaggingCandidate, AutoTaggingJob, AutoTaggingResult};
+pub use auto_tagging::{AutoTaggingCandidate, AutoTaggingCounts, AutoTaggingJob, AutoTaggingResult};
 pub use history::{DeletedEntry, EraseReport, RevisionInfo, PURGED_HISTORY_DAYS};
 pub use lockbox::{LockboxItemEntry, LockboxManifestEntry};
 pub use maintenance::{MaintenanceReport, BLOB_GRACE_DAYS, REVISION_FULL_DAYS};

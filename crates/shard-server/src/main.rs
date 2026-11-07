@@ -175,10 +175,10 @@ async fn serve(
         tracing::warn!(%listen, "服务没有只监听本机：公网访问应当经过 Caddy 终止 TLS");
     }
     let config = Config::new(data_dir, origin, static_dir, trust_proxy)?.with_proxy_networks(proxy_networks);
-    let tagging_model = shard_server::tagging_model::ModelClient::from_env()?;
     let mut registry = rpc::base_registry();
     commands::register(&mut registry);
     shard_server::search::register(&mut registry);
+    shard_server::ai_settings::register(&mut registry);
     shard_server::history::register(&mut registry);
     shard_server::lockbox::register(&mut registry);
     let state = AppState::open(config, registry)?;
@@ -186,7 +186,8 @@ async fn serve(
     spawn_maintenance(state.store.clone());
     let router = app::build(state.clone());
     let listener = tokio::net::TcpListener::bind(listen).await.map_err(|error| error.to_string())?;
-    let tagging_worker = tagging_model.map(|model| shard_server::auto_tagging::spawn(state.clone(), model));
+    // 自动标签 worker 常驻：关闭时只是等配置，设置里一开就开始，不用重启服务。
+    let tagging_worker = shard_server::auto_tagging::spawn(state.clone());
     tracing::info!(%listen, "shard-server 已启动");
     let shutdown_state = state.clone();
     let result = axum::serve(listener, router.into_make_service_with_connect_info::<SocketAddr>())
@@ -198,9 +199,7 @@ async fn serve(
         .await
         .map_err(|error| error.to_string());
     state.begin_shutdown();
-    if let Some(worker) = tagging_worker {
-        let _ = worker.await;
-    }
+    let _ = tagging_worker.await;
     result
 }
 

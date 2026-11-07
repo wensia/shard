@@ -10,9 +10,10 @@ use shard_vault::{
     auto_tagging::{apply_auto_tags, read_tagging_item},
     NoHooks, VaultCtx,
 };
-use tokio::task::JoinHandle;
+use tokio::{sync::watch, task::JoinHandle};
 
 use crate::{
+    ai_settings::AiSettings,
     state::AppState,
     tagging_model::{ModelClient, ModelError, PROMPT_VERSION},
 };
@@ -38,57 +39,108 @@ pub enum ProcessOutcome {
     ConfigurationPaused,
 }
 
-pub fn spawn(state: AppState, client: ModelClient) -> JoinHandle<()> {
+/// 常驻 worker：订阅「设置 → AI」的配置。关闭时只等配置；配置一变（开、关、换模型、换密钥）立即按新配置运行；
+/// 配置错误时暂停，直到下一次修改配置（环境变量托管的要重启服务）。
+pub fn spawn(state: AppState) -> JoinHandle<()> {
     tokio::spawn(async move {
         let mut shutdown = state.shutdown.subscribe();
-        if *shutdown.borrow() {
-            return;
-        }
-        let store = state.store.clone();
-        if tokio::task::spawn_blocking(move || {
-            store.auto_tagging_recover(PROMPT_VERSION, now(), MAX_ATTEMPTS)
-        })
-        .await
-        .map_err(|_| ())
-        .and_then(|result| result.map_err(|_| ()))
-        .is_err()
-        {
-            tracing::error!("自动标签任务恢复失败，等待服务重启");
-            return;
-        }
-        let mut ticks = tokio::time::interval(Duration::from_secs(POLL_SECONDS));
-        ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        let mut config = state.ai.subscribe();
+        let mut recovered = false;
         loop {
-            tokio::select! {
-                biased;
-                _ = shutdown.wait_for(|stopping| *stopping) => return,
-                _ = ticks.tick() => {}
+            if *shutdown.borrow() {
+                return;
             }
-            let result = tokio::select! {
-                biased;
-                _ = shutdown.wait_for(|stopping| *stopping) => return,
-                result = process_once(&state, &client) => result,
-            };
-            match result {
-                Ok(ProcessOutcome::ConfigurationPaused) => {
-                    tracing::warn!("自动标签已暂停：检查模型配置后重启服务");
+            let client = config.borrow_and_update().clone();
+            let Some(client) = client else {
+                if !wait_for_change(&mut shutdown, &mut config).await {
                     return;
                 }
-                Ok(ProcessOutcome::Applied) => tracing::info!("自动标签已应用"),
-                Ok(ProcessOutcome::Completed) => tracing::info!("自动标签处理完成，无需新增标签"),
-                Ok(ProcessOutcome::RetryScheduled) => {
-                    tracing::warn!("自动标签暂时失败，已安排重试")
+                continue;
+            };
+            if !recovered {
+                let store = state.store.clone();
+                let result = tokio::task::spawn_blocking(move || {
+                    store.auto_tagging_recover(PROMPT_VERSION, now(), MAX_ATTEMPTS)
+                })
+                .await;
+                if !matches!(result, Ok(Ok(()))) {
+                    tracing::error!("自动标签任务恢复失败，修改配置或重启服务后再试");
+                    if !wait_for_change(&mut shutdown, &mut config).await {
+                        return;
+                    }
+                    continue;
                 }
-                Ok(ProcessOutcome::Failed) => {
-                    tracing::warn!("自动标签处理失败，已停止重试该正文版本")
+                recovered = true;
+            }
+            tracing::info!("自动标签已开启");
+            match run(&state, &client, &mut shutdown, &mut config).await {
+                RunExit::Shutdown => return,
+                RunExit::ConfigChanged => tracing::info!("自动标签配置已更新"),
+                RunExit::Paused => {
+                    state.ai.set_paused(true);
+                    tracing::warn!("自动标签已暂停：模型配置有误，修改设置后自动恢复");
+                    if !wait_for_change(&mut shutdown, &mut config).await {
+                        return;
+                    }
                 }
-                Ok(ProcessOutcome::Stale) => tracing::debug!("自动标签输入已变化，已跳过过时结果"),
-                // Never log model messages, requests, responses, document paths or content.
-                Err(_) => tracing::error!("自动标签处理失败，稍后重试"),
-                _ => {}
             }
         }
     })
+}
+
+enum RunExit {
+    Shutdown,
+    ConfigChanged,
+    Paused,
+}
+
+/// 等配置变化；停机（或配置通道关闭）返回 false。
+async fn wait_for_change(
+    shutdown: &mut watch::Receiver<bool>,
+    config: &mut watch::Receiver<Option<ModelClient>>,
+) -> bool {
+    tokio::select! {
+        biased;
+        _ = shutdown.wait_for(|stopping| *stopping) => false,
+        changed = config.changed() => changed.is_ok(),
+    }
+}
+
+async fn run(
+    state: &AppState,
+    client: &ModelClient,
+    shutdown: &mut watch::Receiver<bool>,
+    config: &mut watch::Receiver<Option<ModelClient>>,
+) -> RunExit {
+    let mut ticks = tokio::time::interval(Duration::from_secs(POLL_SECONDS));
+    ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    loop {
+        tokio::select! {
+            biased;
+            _ = shutdown.wait_for(|stopping| *stopping) => return RunExit::Shutdown,
+            changed = config.changed() => {
+                return if changed.is_ok() { RunExit::ConfigChanged } else { RunExit::Shutdown };
+            }
+            _ = ticks.tick() => {}
+        }
+        // 进行中的一次请求不打断（打断会留下 running 租约）；配置变化在下一轮开头生效。
+        let result = tokio::select! {
+            biased;
+            _ = shutdown.wait_for(|stopping| *stopping) => return RunExit::Shutdown,
+            result = process_once(state, client) => result,
+        };
+        match result {
+            Ok(ProcessOutcome::ConfigurationPaused) => return RunExit::Paused,
+            Ok(ProcessOutcome::Applied) => tracing::info!("自动标签已应用"),
+            Ok(ProcessOutcome::Completed) => tracing::info!("自动标签处理完成，无需新增标签"),
+            Ok(ProcessOutcome::RetryScheduled) => tracing::warn!("自动标签暂时失败，已安排重试"),
+            Ok(ProcessOutcome::Failed) => tracing::warn!("自动标签处理失败，已停止重试该正文版本"),
+            Ok(ProcessOutcome::Stale) => tracing::debug!("自动标签输入已变化，已跳过过时结果"),
+            // Never log model messages, requests, responses, document paths or content.
+            Err(_) => tracing::error!("自动标签处理失败，稍后重试"),
+            _ => {}
+        }
+    }
 }
 
 /// Scan at most one bounded page and classify at most one item. Calls are sequential in
@@ -98,7 +150,32 @@ pub async fn process_once(
     client: &ModelClient,
 ) -> Result<ProcessOutcome, String> {
     process_with(state, |item, tags| async move {
-        client.classify(&[item], &tags).await
+        let mut result = client.classify(&[item], &tags).await;
+        if let Err(error) = &result {
+            // 400/422：用固定示例再探一次。示例能通过，说明配置没问题、是这一篇的内容被拒（太长、触发过滤），
+            // 只让这一篇失败；示例也被拒才暂停整个队列。否则一篇坏内容会让所有内容停止分类。
+            if error.maybe_item_specific() {
+                match client.test().await {
+                    Ok(_) => {
+                        result = Err(ModelError {
+                            retryable: false,
+                            configuration: false,
+                            status: error.status,
+                            message: "有一条内容被模型拒绝（可能过长或触发内容过滤），已跳过".into(),
+                        })
+                    }
+                    Err(probe) if probe.retryable => {
+                        result = Err(ModelError { retryable: true, configuration: false, ..probe })
+                    }
+                    Err(_) => {}
+                }
+            }
+        }
+        match &result {
+            Ok(_) => state.ai.record_success(now()),
+            Err(error) => state.ai.record_error(&error.message, now()),
+        }
+        result
     })
     .await
 }
@@ -109,7 +186,8 @@ where
     Fut: Future<Output = Result<Vec<TagSuggestion>, ModelError>>,
 {
     let store = state.store.clone();
-    let prepared = tokio::task::spawn_blocking(move || prepare(&store))
+    let ai = state.ai.clone();
+    let prepared = tokio::task::spawn_blocking(move || prepare(&store, &ai))
         .await
         .map_err(|_| "自动标签准备任务异常")??;
     let Some((job, item, vocabulary)) = prepared.job else {
@@ -201,8 +279,18 @@ struct Prepared {
     job: Option<(AutoTaggingJob, TaggingItem, Vec<String>)>,
 }
 
-fn prepare(store: &Store) -> Result<Prepared, String> {
-    let candidates = store.auto_tagging_candidates(PROMPT_VERSION, SCAN_PAGE)?;
+fn prepare(store: &Store, ai: &AiSettings) -> Result<Prepared, String> {
+    // 候选集合只会因内容写入（seq 前进）或本 worker 的扫描记录而变化：上次扫空之后 seq 没动，就不必再扫。
+    let head = store.head_seq()?;
+    let candidates = if ai.scan_settled_at() == Some(head) {
+        Vec::new()
+    } else {
+        let candidates = store.auto_tagging_candidates(PROMPT_VERSION, SCAN_PAGE)?;
+        if candidates.is_empty() {
+            ai.settle_scan(head);
+        }
+        candidates
+    };
     let scanned = !candidates.is_empty();
     for candidate in candidates {
         // A malformed or unsupported file is remembered by SHA instead of starving the page.
@@ -399,6 +487,7 @@ mod tests {
                 Err(ModelError {
                     retryable: false,
                     configuration: false,
+                    status: None,
                     message: "invalid JSON".into(),
                 })
             })
@@ -454,6 +543,7 @@ mod tests {
             Err(ModelError {
                 retryable: false,
                 configuration: true,
+                status: Some(401),
                 message: "configuration".into(),
             })
         })

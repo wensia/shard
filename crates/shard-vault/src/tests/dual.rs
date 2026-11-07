@@ -868,8 +868,10 @@ fn dual_auto_tags_never_read_or_write_private_hidden_archived_or_unmanaged_conte
         }
         // 在访问存储前拒绝密匣路径；SqliteVfs 根本没有公开 lockbox/ 树。
         assert!(h.read(|cx| read_tagging_item(cx, Path::new("lockbox/fragments/skip.md"))).unwrap().is_none());
-        for relative in ["../outside.md", "data/skip.md", "notes/skip.csv"] {
-            assert!(h.read(|cx| read_tagging_item(cx, Path::new(relative))).is_err());
+        // 路径穿越是调用方的错误；范围外（含大小写不同的根目录）是确定的不适用，返回 None 让扫描继续。
+        assert!(h.read(|cx| read_tagging_item(cx, Path::new("../outside.md"))).is_err());
+        for relative in ["data/skip.md", "notes/skip.csv", "Notes/skip.md", "FRAGMENTS/skip.md"] {
+            assert!(h.read(|cx| read_tagging_item(cx, Path::new(relative))).unwrap().is_none(), "{relative}");
         }
         let path = h.path("notes/private.md");
         for excluded in [

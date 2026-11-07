@@ -11,7 +11,7 @@ use super::{SqliteVfs, Store, StoreError};
 // frontmatter/body again before sending anything to a model and before applying its result.
 const PUBLIC_DOCUMENT: &str = "n.kind = 'file' AND n.purged_at IS NULL
     AND d.doc_ns = 'fragment' AND d.lookup_scope = 1
-    AND (n.path LIKE 'fragments/%' OR n.path LIKE 'notes/%')
+    AND (n.path GLOB 'fragments/*' OR n.path GLOB 'notes/*')
     AND instr('/' || n.path, '/.') = 0 AND n.sha IS NOT NULL
     AND n.size <= 131072";
 const NO_TOPIC: &str = "NOT EXISTS (
@@ -39,6 +39,15 @@ pub struct AutoTaggingJob {
     pub claim_id: String,
 }
 
+/// 任务计数：排队（含进行中）、已处理（含「无需新增标签」）、已放弃。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AutoTaggingCounts {
+    pub pending: u64,
+    pub done: u64,
+    pub failed: u64,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub enum AutoTaggingResult {
     Done,
@@ -64,23 +73,26 @@ impl Store {
         prompt_version: &str,
         limit: usize,
     ) -> Result<Vec<AutoTaggingCandidate>, StoreError> {
-        let conn = self.writer.lock().expect("写连接锁中毒");
-        let mut statement = conn.prepare(&format!(
-            "SELECT n.node_id, n.path, n.sha FROM nodes n
-             JOIN doc_index d USING (node_id)
-             LEFT JOIN auto_tagging_seen s ON s.node_id = n.node_id AND s.prompt_version = ?1
-             WHERE {PUBLIC_DOCUMENT} AND {NO_TOPIC}
-               AND (s.file_sha IS NULL OR s.file_sha <> n.sha)
-             ORDER BY n.node_id LIMIT ?2"
-        ))?;
-        let rows = statement.query_map(params![prompt_version, limit.min(256) as i64], |row| {
-            Ok(AutoTaggingCandidate {
-                node_id: row.get(0)?,
-                path: row.get(1)?,
-                file_sha: row.get(2)?,
-            })
-        })?;
-        Ok(rows.collect::<Result<_, _>>()?)
+        // 读快照即可：结果只是候选，入队前 record_scan 会在写事务里再核对 path 与 sha。
+        // 不占写连接，扫描期间正常保存不用排队。
+        self.read(|vfs| -> Result<Vec<AutoTaggingCandidate>, StoreError> {
+            let mut statement = vfs.conn.prepare(&format!(
+                "SELECT n.node_id, n.path, n.sha FROM nodes n
+                 JOIN doc_index d USING (node_id)
+                 LEFT JOIN auto_tagging_seen s ON s.node_id = n.node_id AND s.prompt_version = ?1
+                 WHERE {PUBLIC_DOCUMENT} AND {NO_TOPIC}
+                   AND (s.file_sha IS NULL OR s.file_sha <> n.sha)
+                 ORDER BY n.node_id LIMIT ?2"
+            ))?;
+            let rows = statement.query_map(params![prompt_version, limit.min(256) as i64], |row| {
+                Ok(AutoTaggingCandidate {
+                    node_id: row.get(0)?,
+                    path: row.get(1)?,
+                    file_sha: row.get(2)?,
+                })
+            })?;
+            Ok(rows.collect::<Result<_, _>>()?)
+        })?
     }
 
     /// Record a read snapshot and, when eligible, enqueue its semantic version atomically.
@@ -106,6 +118,12 @@ impl Store {
             "INSERT INTO auto_tagging_seen(node_id,prompt_version,file_sha,body_sha) VALUES (?1,?2,?3,?4)
              ON CONFLICT(node_id,prompt_version) DO UPDATE SET file_sha=excluded.file_sha,body_sha=excluded.body_sha",
             params![candidate.node_id, prompt_version, candidate.file_sha, body_sha],
+        )?;
+        // 旧正文还在排队的任务已经过时（结果也会被 CAS 拒绝）：删掉，免得 claim 每轮都要跳过它们。
+        tx.execute(
+            "DELETE FROM auto_tagging_jobs WHERE node_id=?1 AND prompt_version=?2 AND status='pending'
+             AND (?3 IS NULL OR body_sha<>?3)",
+            params![candidate.node_id, prompt_version, body_sha],
         )?;
         if let Some(body_sha) = body_sha {
             tx.execute(
@@ -190,6 +208,29 @@ impl Store {
     ) -> Result<(), StoreError> {
         let conn = self.writer.lock().expect("写连接锁中毒");
         finish(&conn, job, result)
+    }
+
+    /// 设置页显示的进度：当前 Prompt 版本各状态的任务数（读快照，不占写连接）。
+    pub fn auto_tagging_counts(&self, prompt_version: &str) -> Result<AutoTaggingCounts, StoreError> {
+        self.read(|vfs| -> Result<AutoTaggingCounts, StoreError> {
+            let mut counts = AutoTaggingCounts::default();
+            let mut statement = vfs.conn.prepare(
+                "SELECT status, COUNT(*) FROM auto_tagging_jobs WHERE prompt_version=?1 GROUP BY status",
+            )?;
+            let rows = statement.query_map([prompt_version], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?.max(0) as u64))
+            })?;
+            for row in rows {
+                let (status, count) = row?;
+                match status.as_str() {
+                    "pending" | "running" => counts.pending += count,
+                    "done" => counts.done += count,
+                    "failed" => counts.failed += count,
+                    _ => {}
+                }
+            }
+            Ok(counts)
+        })?
     }
 
     /// Popular topics in a bounded sample of recently changed documents. A reader snapshot
@@ -328,6 +369,34 @@ mod tests {
             .auto_tagging_record_scan(&candidate, "1", Some("body-1"), 0)
             .unwrap();
         candidate
+    }
+
+    #[test]
+    fn uppercase_roots_are_not_candidates_and_new_bodies_supersede_pending_jobs() {
+        let (_dir, store) = open();
+        // 测试夹具共用一个 id：先写小写的那篇，让它拿到 id（另一篇的范围判断才是被测对象）。
+        write(&store, "notes/lower.md", &["inbox"], "lower");
+        // 路径按大小写不敏感解析：已有 notes/ 时写 Notes/ 会落进同一目录，所以用另一个根来造大写路径。
+        write(&store, "Fragments/upper.md", &["inbox"], "upper");
+        let candidates = store.auto_tagging_candidates("1", 10).unwrap();
+        assert_eq!(candidates.iter().map(|c| c.path.as_str()).collect::<Vec<_>>(), ["notes/lower.md"]);
+
+        let candidate = candidates[0].clone();
+        store.auto_tagging_record_scan(&candidate, "1", Some("body-1"), 0).unwrap();
+        write(&store, "notes/lower.md", &["inbox"], "lower, edited");
+        let edited = store.auto_tagging_candidates("1", 10).unwrap().remove(0);
+        store.auto_tagging_record_scan(&edited, "1", Some("body-2"), 0).unwrap();
+        let conn = store.writer.lock().unwrap();
+        let bodies: Vec<String> = conn
+            .prepare("SELECT body_sha FROM auto_tagging_jobs ORDER BY body_sha")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(bodies, ["body-2"]);
+        drop(conn);
+        assert_eq!(store.auto_tagging_counts("1").unwrap(), AutoTaggingCounts { pending: 1, done: 0, failed: 0 });
     }
 
     #[test]

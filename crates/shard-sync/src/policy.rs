@@ -69,6 +69,8 @@ pub fn is_read_only(command: &str) -> bool {
                 | "resolve_target"
                 | "list_library"
                 | "remote:revision_bytes"
+                | "ai_settings_get"
+                | "ai_settings_test"
         )
 }
 
@@ -95,6 +97,7 @@ pub fn offline_label(command: &str) -> &'static str {
         "list_revisions" | "restore_revision" | "remote:revision_bytes" | "list_deleted_entries"
         | "erase_deleted_entries" => "版本历史与数据找回",
         "read_import_xlsx_blob" => "读取 Excel",
+        "ai_settings_get" | "ai_settings_save" | "ai_settings_test" => "AI 设置（自动标签在服务器上运行）",
         _ => "这个操作",
     }
 }
@@ -134,5 +137,11 @@ mod tests {
         }
         assert_eq!(classify("search_vault"), CommandClass::LocalRead);
         assert!(is_read_only("list_revisions"));
+        // AI 设置只在服务器上：离线时明确说需要联网，读取与测试连接不触发同步拉取。
+        for command in ["ai_settings_get", "ai_settings_save", "ai_settings_test"] {
+            assert_eq!(classify(command), CommandClass::OnlineOnly, "{command}");
+            assert!(offline_message(command).contains("AI 设置"), "{command}");
+        }
+        assert!(is_read_only("ai_settings_get") && !is_read_only("ai_settings_save"));
     }
 }

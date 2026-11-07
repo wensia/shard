@@ -16,7 +16,8 @@ use base64::{engine::general_purpose::STANDARD, Engine};
 use http_body_util::BodyExt;
 use serde_json::{json, Value};
 use shard_server::{
-    app, auto_tagging, commands, config::Config, rpc, state::AppState, tagging_model::ModelClient,
+    ai_settings, app, auto_tagging, commands, config::Config, rpc, state::AppState,
+    tagging_model::ModelClient,
 };
 use tower::ServiceExt;
 
@@ -35,6 +36,7 @@ impl Harness {
         let dir = tempfile::tempdir().unwrap();
         let mut registry = rpc::base_registry();
         commands::register(&mut registry);
+        ai_settings::register(&mut registry);
         let state = AppState::open(
             Config::new(dir.path().into(), ORIGIN, None, false).unwrap(),
             registry,
@@ -81,6 +83,18 @@ impl Harness {
     }
 
     async fn request(&self, device: Option<&str>, method: Method, uri: &str, body: Value) -> Value {
+        let (status, value) = self.request_status(device, method, uri, body).await;
+        assert_eq!(status, StatusCode::OK, "{value}");
+        value
+    }
+
+    async fn request_status(
+        &self,
+        device: Option<&str>,
+        method: Method,
+        uri: &str,
+        body: Value,
+    ) -> (StatusCode, Value) {
         let mut request = Request::builder()
             .method(method)
             .uri(uri)
@@ -106,13 +120,7 @@ impl Harness {
             .unwrap();
         let status = reply.status();
         let bytes = reply.into_body().collect().await.unwrap().to_bytes();
-        assert_eq!(
-            status,
-            StatusCode::OK,
-            "{}",
-            String::from_utf8_lossy(&bytes)
-        );
-        serde_json::from_slice(&bytes).unwrap()
+        (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
     }
 
     async fn rpc(&self, device: Option<&str>, name: &str, body: Value) -> Value {
@@ -272,7 +280,8 @@ async fn shutdown_cancels_an_inflight_model_request_without_waiting_for_its_time
     let task = tokio::spawn(async move {
         axum::serve(listener, model).await.unwrap();
     });
-    let worker = auto_tagging::spawn(h.state.clone(), client);
+    h.state.ai.replace_client_for_tests(Some(client));
+    let worker = auto_tagging::spawn(h.state.clone());
     tokio::time::timeout(std::time::Duration::from_secs(5), started.notified())
         .await
         .unwrap();
@@ -282,4 +291,166 @@ async fn shutdown_cancels_an_inflight_model_request_without_waiting_for_its_time
         .unwrap()
         .unwrap();
     task.abort();
+}
+
+/// 本机假模型：正文含「超长」的请求回 400（模拟超出上下文），其余按词表回两个标签。
+async fn fake_model(requests: Arc<AtomicUsize>) -> (ModelClient, tokio::task::JoinHandle<()>) {
+    let model = Router::new().route("/v1/chat/completions", post(move |Json(body): Json<Value>| {
+        requests.fetch_add(1, Ordering::SeqCst);
+        async move {
+            let text = body["messages"][1]["content"].as_str().unwrap().to_string();
+            if text.contains("超长") {
+                return (StatusCode::BAD_REQUEST, Json(json!({"error":{"code":"context_length_exceeded"}})));
+            }
+            let input: Value = serde_json::from_str(&text).unwrap();
+            let items: Vec<_> = input["items"].as_array().unwrap().iter()
+                .map(|entry| json!({"id":entry["id"], "tags":["骑行"]})).collect();
+            (StatusCode::OK, Json(json!({"choices":[{"finish_reason":"stop", "message":{"content":json!({"items":items}).to_string()}}]})))
+        }
+    }));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let client = ModelClient::new(
+        &format!("http://{}/v1", listener.local_addr().unwrap()),
+        "test-model",
+        "test-key",
+    )
+    .unwrap();
+    let task = tokio::spawn(async move {
+        axum::serve(listener, model).await.unwrap();
+    });
+    (client, task)
+}
+
+#[tokio::test]
+async fn settings_turn_the_worker_on_and_off_without_restart() {
+    let h = Harness::new().await;
+    let created = h
+        .rpc(None, "create_fragment", json!({"content":"周末骑行。", "tags":[]}))
+        .await;
+    let requests = Arc::new(AtomicUsize::new(0));
+    let (client, task) = fake_model(requests.clone()).await;
+    let worker = auto_tagging::spawn(h.state.clone());
+
+    // 关闭时不发请求，设置里看到的是 off。
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    assert_eq!(requests.load(Ordering::SeqCst), 0);
+    let view = h.rpc(Some("desktop"), "ai_settings_get", json!({})).await;
+    assert_eq!(view["autoTagging"]["state"], "off");
+    assert_eq!(view["autoTagging"]["source"], "app");
+
+    // 打开：不用重启，worker 立即处理。
+    h.state.ai.replace_client_for_tests(Some(client));
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            let tags = h.fragment(&created["id"]).await["tags"].clone();
+            if tags.as_array().unwrap().contains(&json!("骑行")) {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("开启后应在一个轮询周期内打上标签");
+    let view = h.rpc(Some("ios"), "ai_settings_get", json!({})).await;
+    assert_eq!(view["autoTagging"]["state"], "running");
+    assert_eq!(view["autoTagging"]["counts"]["done"], 1);
+    assert!(view["autoTagging"]["lastSuccessAt"].is_number());
+
+    // 关闭：之后的新内容不再发请求。
+    h.state.ai.replace_client_for_tests(None);
+    let before = requests.load(Ordering::SeqCst);
+    h.rpc(None, "create_fragment", json!({"content":"又一次骑行。", "tags":[]})).await;
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    assert_eq!(requests.load(Ordering::SeqCst), before);
+    assert_eq!(h.rpc(None, "ai_settings_get", json!({})).await["autoTagging"]["state"], "off");
+
+    h.state.begin_shutdown();
+    tokio::time::timeout(std::time::Duration::from_secs(1), worker)
+        .await
+        .unwrap()
+        .unwrap();
+    task.abort();
+}
+
+#[tokio::test]
+async fn one_rejected_document_fails_alone_instead_of_pausing_the_queue() {
+    let h = Harness::new().await;
+    let long = h
+        .rpc(None, "create_fragment", json!({"content":"超长的一篇。", "tags":[]}))
+        .await;
+    let normal = h
+        .rpc(None, "create_fragment", json!({"content":"骑行路线。", "tags":[]}))
+        .await;
+    let requests = Arc::new(AtomicUsize::new(0));
+    let (client, task) = fake_model(requests.clone()).await;
+    let mut outcomes = Vec::new();
+    for _ in 0..4 {
+        outcomes.push(auto_tagging::process_once(&h.state, &client).await.unwrap());
+    }
+    assert!(!outcomes.contains(&auto_tagging::ProcessOutcome::ConfigurationPaused), "{outcomes:?}");
+    assert!(outcomes.contains(&auto_tagging::ProcessOutcome::Failed), "{outcomes:?}");
+    assert_eq!(h.fragment(&long["id"]).await["tags"], json!(["inbox"]));
+    assert!(h.fragment(&normal["id"]).await["tags"].as_array().unwrap().contains(&json!("骑行")));
+    let view = h.rpc(None, "ai_settings_get", json!({})).await;
+    assert_eq!(view["autoTagging"]["counts"]["failed"], 1);
+    assert_eq!(view["autoTagging"]["counts"]["done"], 1);
+    task.abort();
+}
+
+#[tokio::test]
+async fn ai_settings_rpc_saves_for_every_client_and_never_echoes_the_key() {
+    let h = Harness::new().await;
+    let saved = h
+        .rpc(
+            None,
+            "ai_settings_save",
+            json!({"autoTagging":{"enabled":true, "apiBase":"https://api.example.com/v1/", "model":"tagger", "apiKey":"sk-secret-value"}}),
+        )
+        .await;
+    assert_eq!(saved["autoTagging"]["enabled"], true);
+    assert_eq!(saved["autoTagging"]["hasKey"], true);
+    assert_eq!(saved["autoTagging"]["apiBase"], "https://api.example.com/v1");
+    assert!(!saved.to_string().contains("sk-secret-value"));
+    assert!(h.state.ai.current_client().is_some());
+
+    // 桌面与 iOS 用设备令牌，同样能读能改；密钥留空保留。
+    let updated = h
+        .rpc(
+            Some("desktop"),
+            "ai_settings_save",
+            json!({"autoTagging":{"enabled":false, "apiBase":"https://api.example.com/v1", "model":"tagger-2"}}),
+        )
+        .await;
+    assert_eq!(updated["autoTagging"]["enabled"], false);
+    assert_eq!(updated["autoTagging"]["hasKey"], true);
+    assert!(h.state.ai.current_client().is_none());
+    let read = h.rpc(Some("ios"), "ai_settings_get", json!({})).await;
+    assert_eq!(read["autoTagging"]["model"], "tagger-2");
+    assert!(!read.to_string().contains("sk-secret-value"));
+
+    for (body, needle) in [
+        (json!({"autoTagging":{"enabled":true, "apiBase":"http://127.0.0.1:8080/v1", "model":"m", "apiKey":"k"}}), "HTTPS"),
+        (json!({"autoTagging":{"enabled":true, "apiBase":"https://api.example.com/v1", "model":""}}), "模型名称"),
+    ] {
+        let (status, error) = h
+            .request_status(None, Method::POST, "/api/rpc/ai_settings_save", body)
+            .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(error["code"], "AI_SETTINGS_INVALID");
+        assert!(error["message"].as_str().unwrap().contains(needle), "{error}");
+    }
+    // 校验失败不改动已保存的配置。
+    assert_eq!(h.rpc(None, "ai_settings_get", json!({})).await["autoTagging"]["model"], "tagger-2");
+
+    // 测试连接：缺模型名时直接说明，不发请求。
+    let (status, error) = h
+        .request_status(
+            None,
+            Method::POST,
+            "/api/rpc/ai_settings_test",
+            json!({"autoTagging":{"apiBase":"https://api.example.com/v1", "model":""}}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(error["message"].as_str().unwrap().contains("模型名称"), "{error}");
 }

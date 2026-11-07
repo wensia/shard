@@ -7,6 +7,8 @@ use serde_json::{json, Value};
 use shard_core::auto_tagging::{
     build_input, parse_response, TagSuggestion, TaggingItem, SYSTEM_PROMPT,
 };
+use std::net::IpAddr;
+
 use url::{Host, Url};
 
 pub const PROMPT_VERSION: &str = "1";
@@ -17,6 +19,8 @@ const MAX_RESPONSE_BYTES: usize = 64 * 1024;
 pub struct ModelClient {
     client: Client,
     endpoint: Url,
+    /// 设置页回显用：规范化后的基础地址（不含 `/chat/completions`）。
+    api_base: String,
     model: String,
     authorization: HeaderValue,
 }
@@ -26,6 +30,8 @@ pub struct ModelClient {
 pub struct ModelError {
     pub retryable: bool,
     pub configuration: bool,
+    /// 服务商返回的 HTTP 状态码（网络错误、格式错误时没有）。
+    pub status: Option<u16>,
     pub message: String,
 }
 
@@ -34,7 +40,32 @@ impl ModelError {
         Self {
             retryable: false,
             configuration: false,
+            status: None,
             message: message.into(),
+        }
+    }
+
+    /// 400/422 可能只是这一篇的问题（超出上下文、触发内容过滤），也可能是配置不被接受；调用方要再探一次才能区分。
+    pub fn maybe_item_specific(&self) -> bool {
+        self.configuration && matches!(self.status, Some(400 | 422))
+    }
+
+    fn http(status: u16, redirect: bool) -> Self {
+        let message = match status {
+            401 => "API Key 无效或已过期（HTTP 401）".to_string(),
+            403 => "没有权限使用该模型（HTTP 403）".to_string(),
+            404 => "接口地址或模型名称不存在（HTTP 404）".to_string(),
+            408 => "模型服务响应超时（HTTP 408）".to_string(),
+            429 => "请求过于频繁或额度不足（HTTP 429）".to_string(),
+            400 | 422 => format!("模型服务拒绝了请求（HTTP {status}），请确认模型支持 JSON 输出"),
+            _ if redirect => format!("接口地址发生了跳转（HTTP {status}），请填写最终地址"),
+            _ => format!("模型服务返回 HTTP {status}"),
+        };
+        Self {
+            retryable: status >= 500 || matches!(status, 408 | 429),
+            configuration: redirect || matches!(status, 400 | 401 | 403 | 404 | 422),
+            status: Some(status),
+            message,
         }
     }
 
@@ -42,6 +73,7 @@ impl ModelError {
         Self {
             retryable: true,
             configuration: false,
+            status: None,
             message: if error.is_timeout() {
                 "自动标签模型请求超时"
             } else {
@@ -80,7 +112,48 @@ impl ModelClient {
         .map(Some)
     }
 
+    /// App 设置里保存的配置：只接受公网 HTTPS 域名。本机或内网地址只能由运维经环境变量配置，
+    /// 免得一个登录会话就能让服务器向内网服务发请求（SSRF）。
+    pub fn new_public(api_base: &str, model: &str, api_key: &str) -> Result<Self, String> {
+        let url = Url::parse(api_base.trim()).map_err(|_| "自动标签 API 地址无效")?;
+        let private = match url.host() {
+            Some(Host::Domain(name)) => {
+                let name = name.trim_end_matches('.').to_ascii_lowercase();
+                name == "localhost" || name.ends_with(".localhost") || name.ends_with(".local") || name.ends_with(".internal")
+            }
+            Some(Host::Ipv4(ip)) => !is_public_ip(IpAddr::V4(ip)),
+            Some(Host::Ipv6(ip)) => !is_public_ip(IpAddr::V6(ip)),
+            None => true,
+        };
+        if url.scheme() != "https" || private {
+            return Err("自动标签 API 地址须为公网 HTTPS 地址；本机或内网服务请由服务器环境变量配置".into());
+        }
+        Self::new(api_base, model, api_key)
+    }
+
+    pub fn api_base(&self) -> &str {
+        &self.api_base
+    }
+
+    pub fn model(&self) -> &str {
+        &self.model
+    }
+
+    /// 设置页「测试连接」：用一条固定的示例文字走一遍完整的分类契约（JSON 模式、结果校验），
+    /// 返回模型给出的标签。不读资料库，不写任何东西。
+    pub async fn test(&self) -> Result<Vec<String>, ModelError> {
+        let item = TaggingItem {
+            id: "connection-test".into(),
+            title: "连接测试".into(),
+            body: "周末骑车去湖边，拍了几张日落，回来整理了这次骑行的路线和装备清单。".into(),
+            tags: vec!["inbox".into()],
+        };
+        let mut suggestions = self.classify(&[item], &[]).await?;
+        Ok(suggestions.pop().map(|suggestion| suggestion.tags).unwrap_or_default())
+    }
+
     pub fn new(api_base: &str, model: &str, api_key: &str) -> Result<Self, String> {
+        let api_base = api_base.trim();
         let mut endpoint = Url::parse(api_base).map_err(|_| "自动标签 API 地址无效")?;
         let local = match endpoint.host() {
             Some(Host::Domain(name)) => name == "localhost",
@@ -109,6 +182,7 @@ impl ModelClient {
         let mut authorization = HeaderValue::from_str(&format!("Bearer {}", api_key.trim()))
             .map_err(|_| "自动标签 API 密钥格式无效")?;
         authorization.set_sensitive(true);
+        let display_base = endpoint.as_str().trim_end_matches('/').to_string();
         endpoint.set_path(&format!(
             "{}/chat/completions",
             endpoint.path().trim_end_matches('/')
@@ -122,6 +196,7 @@ impl ModelClient {
         Ok(Self {
             client,
             endpoint,
+            api_base: display_base,
             model: model.trim().into(),
             authorization,
         })
@@ -162,12 +237,7 @@ impl ModelClient {
             .map_err(ModelError::network)?;
         let status = response.status();
         if !status.is_success() {
-            return Err(ModelError {
-                retryable: status.is_server_error() || matches!(status.as_u16(), 408 | 429),
-                configuration: status.is_redirection()
-                    || matches!(status.as_u16(), 400 | 401 | 403 | 404 | 422),
-                message: format!("自动标签模型返回 HTTP {}", status.as_u16()),
-            });
+            return Err(ModelError::http(status.as_u16(), status.is_redirection()));
         }
         if response
             .content_length()
@@ -200,6 +270,37 @@ impl ModelClient {
         // serde errors can quote unknown model-supplied field names; do not pass them to logs.
         parse_response(content, items, existing_tags)
             .map_err(|_| ModelError::invalid("自动标签模型返回的分类格式无效"))
+    }
+}
+
+/// 公网可路由的地址。私有、回环、链路本地、CGNAT、文档/保留段一律不算。
+fn is_public_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => {
+            let [a, b, ..] = v4.octets();
+            !(v4.is_private()
+                || v4.is_loopback()
+                || v4.is_link_local()
+                || v4.is_unspecified()
+                || v4.is_broadcast()
+                || v4.is_documentation()
+                || v4.is_multicast()
+                || a == 0
+                || (a == 100 && (64..128).contains(&b))
+                || (a == 198 && (b == 18 || b == 19))
+                || a >= 240)
+        }
+        IpAddr::V6(v6) => {
+            if let Some(v4) = v6.to_ipv4_mapped() {
+                return is_public_ip(IpAddr::V4(v4));
+            }
+            let first = v6.segments()[0];
+            !(v6.is_loopback()
+                || v6.is_unspecified()
+                || v6.is_multicast()
+                || (first & 0xfe00) == 0xfc00
+                || (first & 0xffc0) == 0xfe80)
+        }
     }
 }
 
@@ -284,6 +385,42 @@ mod tests {
         }
         assert!(ModelClient::new("http://127.0.0.1:8788/v1/", "model", "key").is_ok());
         assert!(ModelClient::new("https://example.com/v1", "model", "key\r\nsecret").is_err());
+    }
+
+    #[test]
+    fn app_settings_accept_only_public_https() {
+        for endpoint in [
+            "http://api.example.com/v1",
+            "https://localhost/v1",
+            "https://shard.localhost/v1",
+            "https://127.0.0.1/v1",
+            "https://10.0.0.8/v1",
+            "https://192.168.1.2/v1",
+            "https://169.254.169.254/latest",
+            "https://100.64.0.1/v1",
+            "https://[::1]/v1",
+            "https://[fd00::1]/v1",
+            "https://[::ffff:127.0.0.1]/v1",
+        ] {
+            assert!(ModelClient::new_public(endpoint, "model", "key").is_err(), "{endpoint}");
+        }
+        let client = ModelClient::new_public(" https://api.xiaomimimo.com/v1/ ", " mimo ", "key").unwrap();
+        assert_eq!(client.api_base(), "https://api.xiaomimimo.com/v1");
+        assert_eq!(client.model(), "mimo");
+        assert!(ModelClient::new_public("https://8.8.8.8/v1", "model", "key").is_ok());
+    }
+
+    #[tokio::test]
+    async fn connection_test_runs_the_full_contract_and_returns_tags() {
+        let (client, captured, task) = mock(
+            StatusCode::OK,
+            completion(r#"{"items":[{"id":"connection-test","tags":["骑行","摄影"]}]}"#),
+        )
+        .await;
+        assert_eq!(client.test().await.unwrap(), ["骑行", "摄影"]);
+        let request = captured.lock().unwrap().clone().unwrap();
+        assert_eq!(request["model"], "test-model");
+        task.abort();
     }
 
     #[tokio::test]
