@@ -108,7 +108,10 @@
 
 /* 钉在底部的一块（网页端个人中心）：导航区滚动时它不动，上沿一条分隔线与品牌行下沿呼应 */
 .footer {
+  display: flex;
   flex: none;
+  flex-direction: column;
+  gap: var(--space-1);
   border-top: 1px solid var(--sidebar-border);
   padding: var(--space-2) var(--space-3);
 }

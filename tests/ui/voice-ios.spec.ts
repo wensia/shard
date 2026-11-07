@@ -169,12 +169,14 @@ test("iOS 朗读经原生桥取回 WAV 播放，播放条留在底部导航之�
   expect(await calls(page, "voice_cancel")).toEqual([{ command: "voice_cancel", args: { sessionId: call.args.sessionId } }])
 })
 
-test("iOS 设置显示语音分区，密钥经原生保存且不回显", async ({ page }) => {
+test("iOS 设置的 AI 分区有语音分组，密钥经原生保存且不回显", async ({ page }) => {
   await open(page)
   await page.getByRole("button", { name: "更多操作", exact: true }).click()
   await page.getByRole("menuitem", { name: "设置", exact: true }).click()
-  const dialog = page.getByRole("dialog", { name: "设置", exact: true })
-  await dialog.getByRole("navigation").getByRole("button", { name: "语音", exact: true }).click()
+  const settings = page.getByRole("dialog", { name: "设置", exact: true })
+  await settings.getByRole("navigation").getByRole("button", { name: "AI", exact: true }).click()
+  // iOS 连着服务器：AI 分区里还有自动标签（同样有 API Key 与保存），这里只看语音分组。
+  const dialog = settings.locator('[data-settings-group="voice"]')
   const key = dialog.getByLabel("API Key", { exact: true })
   await expect(key).toHaveAttribute("placeholder", "已保存，留空保留")
   await key.fill("sk-native-only")

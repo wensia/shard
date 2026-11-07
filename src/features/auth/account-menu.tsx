@@ -21,7 +21,7 @@ const COLOR_MODE_ICONS = { system: MonitorIcon, light: SunIcon, dark: MoonIcon }
 
 /**
  * 网页端侧栏底部的个人中心：品牌色头像（邮箱首字母，网页默认陶土红）+ 登录邮箱，点开向上弹出菜单。
- * 账号与安全、主题切换和退出登录集中在这里；其余设置照旧从状态栏进。
+ * 账号与安全、主题切换和退出登录集中在这里；完整设置在它上方的「设置」（⌘,）。
  */
 export function AccountMenu({ onOpenAccount }: { onOpenAccount: () => void }) {
   const email = useSyncExternalStore(subscribeAccountEmail, currentAccountEmail)

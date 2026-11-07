@@ -74,7 +74,7 @@ ShardKit 另有仅允许私有测试端口 `18790` 的真实 Rust 服务互通�
 
 ## 语音输入与朗读
 
-共享界面的语音入口在 iOS 上经原生桥（`type: "voice"`）交给 `Shard/App/VoiceService.swift`：麦克风录音、API Key（iOS 钥匙串，仅本机）和语音服务请求都在 Swift 里，页面只拿到不含密钥的设置、识别文字和校验过的 WAV。首次录音会请求麦克风权限；语音配置与服务器账号无关，需要在手机的「设置 → 语音」里单独填写一次密钥。设计与两端分工见 [voice-input-and-reading.md](../../docs/dev/voice-input-and-reading.md)。
+共享界面的语音入口在 iOS 上经原生桥（`type: "voice"`）交给 `Shard/App/VoiceService.swift`：麦克风录音、API Key（iOS 钥匙串，仅本机）和语音服务请求都在 Swift 里，页面只拿到不含密钥的设置、识别文字和校验过的 WAV。首次录音会请求麦克风权限；语音配置与服务器账号无关，需要在手机的「设置 → AI → 语音输入与朗读」里单独填写一次密钥。设计与两端分工见 [voice-input-and-reading.md](../../docs/dev/voice-input-and-reading.md)。
 
 原生语音验收另起本机假语音服务，并给独立模拟器预先授权麦克风：
 

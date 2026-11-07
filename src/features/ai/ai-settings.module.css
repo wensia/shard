@@ -1,0 +1,26 @@
+/* 设置 → AI：操作行（反馈文字靠左，按钮靠右；窄时换行）。数值全部取 kiln token。 */
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.feedback {
+  margin: 0 auto 0 0;
+  min-width: 0;
+  font-size: var(--text-meta);
+  line-height: 18px;
+  color: var(--muted-foreground);
+  text-wrap: pretty;
+}
+
+.error {
+  margin: var(--space-2) 0 0;
+  font-size: var(--text-meta);
+  line-height: 18px;
+  color: var(--destructive);
+  text-wrap: pretty;
+}

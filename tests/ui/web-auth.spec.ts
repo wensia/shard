@@ -82,7 +82,32 @@ async function installAuthServerMock(page: Page, options: MockOptions) {
         new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } })
       const failure = (status: number, code: string, message: string) => json({ code, message }, status)
       const stepUpRequired = () => failure(403, "STEP_UP_REQUIRED", "这个操作需要再输入一次密码。")
+      // 服务端 ai_settings 的替身：只回 hasKey，不回密钥；校验与服务端同口径的几条。
+      const ai = { enabled: false, apiBase: "https://api.openai.com/v1", model: "", key: null as string | null }
+      const aiView = () => ({
+        autoTagging: {
+          source: "app", enabled: ai.enabled, apiBase: ai.apiBase, model: ai.model, hasKey: ai.key !== null,
+          state: ai.enabled ? "running" : "off", lastSuccessAt: null, lastError: null, lastErrorAt: null,
+          counts: { pending: ai.enabled ? 2 : 0, done: 5, failed: 0 },
+        },
+      })
+      const aiInvalid = (message: string) => failure(400, "AI_SETTINGS_INVALID", message)
       const rpc: Record<string, (args: Record<string, unknown>) => Response | unknown> = {
+        ai_settings_get: () => aiView(),
+        ai_settings_save: (args) => {
+          const form = args.autoTagging as { enabled: boolean; apiBase: string; model: string; apiKey?: string; clearKey?: boolean }
+          if (!form.apiBase.startsWith("https://")) return aiInvalid("自动标签 API 地址须为公网 HTTPS 地址；本机或内网服务请由服务器环境变量配置")
+          const key = form.clearKey ? null : form.apiKey?.trim() || ai.key
+          if (form.enabled && !form.model.trim()) return aiInvalid("开启自动标签需要填写模型名称")
+          if (form.enabled && !key) return aiInvalid("开启自动标签需要填写 API Key")
+          Object.assign(ai, { enabled: form.enabled, apiBase: form.apiBase.replace(/\/+$/u, ""), model: form.model.trim(), key })
+          return aiView()
+        },
+        ai_settings_test: (args) => {
+          const form = args.autoTagging as { model: string; apiKey?: string }
+          if (!form.model.trim() || !(form.apiKey?.trim() || ai.key)) return aiInvalid("请先填写模型名称与 API Key")
+          return { ok: true, tags: ["骑行", "摄影"] }
+        },
         list_fragments: () => clone(state),
         list_library_tree: () => ({ entries: [], assets: [], trashEntries: [], fragmentTrashEntries: [], fragmentStream: { totalCount: 1, years: [] } }),
         list_mind_maps: () => [],
@@ -864,5 +889,94 @@ test("网页端没有录音与钥匙串：不显示语音输入、朗读和语�
   await page.getByRole("menuitem", { name: "设置", exact: true }).click()
   const dialog = page.getByRole("dialog", { name: "设置", exact: true })
   await expect(dialog.getByRole("navigation").getByRole("button", { name: "外观", exact: true })).toBeVisible()
-  await expect(dialog.getByRole("navigation").getByRole("button", { name: "语音", exact: true })).toHaveCount(0)
+  // AI 分区在网页端也有（自动标签在服务器上），但没有语音分组与助手接入（终端命令）。
+  await dialog.getByRole("navigation").getByRole("button", { name: "AI", exact: true }).click()
+  await expect(dialog.locator('[data-settings-group="auto-tagging"]')).toBeVisible()
+  await expect(dialog.locator('[data-settings-group="voice"]')).toHaveCount(0)
+  await expect(dialog.locator('[data-settings-group="assistant"]')).toHaveCount(0)
+})
+
+test.describe("设置入口与 AI 分区", () => {
+  test("侧栏常驻「设置」与 ⌘, 都能打开同一个设置弹窗", async ({ page }) => {
+    await installAuthServerMock(page, { authenticated: true })
+    await page.goto("/")
+    await expect(card(page)).toBeVisible()
+    const sidebar = page.getByRole("complementary", { name: "Shard 侧边栏" })
+    const entry = sidebar.getByRole("button", { name: "设置", exact: true })
+    await expect(entry).toBeVisible()
+    await expect(entry).toHaveAttribute("aria-keyshortcuts", "Meta+,")
+    // 设置入口在个人中心上方，同在底部区域。
+    const entryBox = (await entry.boundingBox())!
+    const accountBox = (await page.locator("[data-shard-account-menu-trigger]").boundingBox())!
+    expect(entryBox.y + entryBox.height).toBeLessThanOrEqual(accountBox.y + 0.5)
+
+    await entry.click()
+    const dialog = page.getByRole("dialog", { name: "设置", exact: true })
+    await expect(dialog).toBeVisible()
+    await dialog.getByRole("button", { name: "关闭", exact: true }).click()
+    await expect(dialog).toHaveCount(0)
+
+    await page.locator("body").click({ position: { x: 600, y: 400 } })
+    await page.keyboard.press("Meta+Comma")
+    await expect(dialog).toBeVisible()
+  })
+
+  test("自动标签：测试连接、保存后密钥不回显，开关即时生效", async ({ page }) => {
+    await installAuthServerMock(page, { authenticated: true })
+    await page.goto("/")
+    await expect(card(page)).toBeVisible()
+    await page.keyboard.press("Meta+Comma")
+    const dialog = page.getByRole("dialog", { name: "设置", exact: true })
+    await dialog.getByRole("navigation").getByRole("button", { name: "AI", exact: true }).click()
+    const group = dialog.locator('[data-settings-group="auto-tagging"]')
+    await expect(group.getByRole("heading", { name: "自动标签", exact: true })).toBeInViewport()
+    await expect(group.getByText("已关闭", { exact: true })).toBeVisible()
+    await expect(group.getByRole("switch")).not.toBeChecked()
+
+    // 没填模型就开：服务端拒绝，开关回到关闭，错误写在操作行下方。
+    await group.getByRole("switch").click()
+    await expect(group.getByRole("alert")).toContainText("模型名称")
+    await expect(group.getByRole("switch")).not.toBeChecked()
+
+    await group.getByLabel("接口地址", { exact: true }).fill("https://api.example.com/v1")
+    await group.getByLabel("模型", { exact: true }).fill("tagger")
+    await group.getByLabel("API Key", { exact: true }).fill("sk-secret-value")
+    await group.getByRole("button", { name: "测试连接", exact: true }).click()
+    await expect(group.getByRole("status").filter({ hasText: "连接正常" })).toHaveText("连接正常，示例内容得到标签：骑行、摄影")
+    expect((await apiCalls(page, "/api/rpc/ai_settings_save")).length).toBe(1)
+
+    await group.getByRole("button", { name: "保存", exact: true }).click()
+    await expect(group.getByText("已保存", { exact: true })).toBeVisible()
+    await expect(group.getByLabel("API Key", { exact: true })).toHaveValue("")
+    await expect(group.getByLabel("API Key", { exact: true })).toHaveAttribute("placeholder", "已保存，留空保留")
+    const saves = await apiCalls(page, "/api/rpc/ai_settings_save")
+    expect(saves.at(-1)?.body).toEqual({
+      autoTagging: { enabled: false, apiBase: "https://api.example.com/v1", model: "tagger", apiKey: "sk-secret-value" },
+    })
+
+    // 开关：用已保存的密钥直接开启，状态变成运行中，读取结果里没有密钥原文。
+    await group.getByRole("switch").click()
+    await expect(group.getByRole("switch")).toBeChecked()
+    await expect(group.getByText("运行中", { exact: true })).toBeVisible()
+    await expect(group.getByText(/已处理 5 条 · 排队 2 条/u)).toBeVisible()
+    expect((await apiCalls(page, "/api/rpc/ai_settings_save")).at(-1)?.body).toEqual({
+      autoTagging: { enabled: true, apiBase: "https://api.example.com/v1", model: "tagger" },
+    })
+    await expect(dialog).not.toContainText("sk-secret-value")
+  })
+
+  test("自动标签：只接受 HTTPS 地址，错误就地显示且不改已保存配置", async ({ page }) => {
+    await installAuthServerMock(page, { authenticated: true })
+    await page.goto("/")
+    await expect(card(page)).toBeVisible()
+    await page.keyboard.press("Meta+Comma")
+    const dialog = page.getByRole("dialog", { name: "设置", exact: true })
+    await dialog.getByRole("navigation").getByRole("button", { name: "AI", exact: true }).click()
+    const group = dialog.locator('[data-settings-group="auto-tagging"]')
+    await group.getByLabel("接口地址", { exact: true }).fill("http://127.0.0.1:11434/v1")
+    await group.getByRole("button", { name: "保存", exact: true }).click()
+    await expect(group.getByRole("alert")).toContainText("HTTPS")
+    await expect(group.getByRole("button", { name: "保存", exact: true })).toBeEnabled()
+    await expect(group.getByLabel("接口地址", { exact: true })).toHaveValue("http://127.0.0.1:11434/v1")
+  })
 })

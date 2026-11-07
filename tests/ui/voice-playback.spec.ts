@@ -12,7 +12,7 @@ async function openVoiceSettings(page: Page) {
   await page.getByRole("button", { name: "更多操作", exact: true }).click()
   await page.getByRole("menuitem", { name: "设置", exact: true }).click()
   const dialog = page.getByRole("dialog")
-  await dialog.getByRole("navigation").getByRole("button", { name: "语音", exact: true }).click()
+  await dialog.getByRole("navigation").getByRole("button", { name: "AI", exact: true }).click()
   return dialog
 }
 

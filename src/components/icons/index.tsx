@@ -90,6 +90,7 @@ import {
   SendHorizontalIcon as LSendHorizontal,
   SeparatorHorizontalIcon as LSeparatorHorizontal,
   SettingsIcon as LSettings,
+  SparklesIcon as LSparkles,
   Share2Icon as LShare2,
   SquareTerminalIcon as LSquareTerminal,
   TableIcon as LTable,
@@ -207,5 +208,7 @@ export const XIcon = /*#__PURE__*/ withIconDefaults(LX)
 export { ShardZenIcon } from "./signature/zen"
 
 export const MicIcon = /*#__PURE__*/ withIconDefaults(LMic)
+/** 设置里的「AI」分区。 */
+export const SparklesIcon = /*#__PURE__*/ withIconDefaults(LSparkles)
 export const Volume2Icon = /*#__PURE__*/ withIconDefaults(LVolume2)
 export const SquareIcon = /*#__PURE__*/ withIconDefaults(LSquare)

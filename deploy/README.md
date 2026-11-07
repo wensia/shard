@@ -12,7 +12,7 @@
 
 ## 0. 前提
 
-可选：[配置服务端自动标签](../docs/dev/server-auto-tagging.md)。默认关闭；启用后会后台处理已有及新增的未分类公开内容。
+可选：[服务端自动标签](../docs/dev/server-auto-tagging.md)。默认关闭；部署后在 App「设置 → AI」里填写模型并开启即可，无需改环境变量或重启。启用后会后台处理已有及新增的未分类公开内容。
 
 - 一个域名（下面用 `shard.example.com`），A/AAAA 记录指向 VPS。
 - VPS：Debian / Ubuntu，开放 22、80、443；SSH 只允许密钥登录。

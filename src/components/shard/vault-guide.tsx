@@ -10,10 +10,10 @@ import {
   LinkIcon,
   Loader2Icon,
   MonitorIcon,
-  MicIcon,
   MoonIcon,
   PaletteIcon,
   RefreshCwIcon,
+  SparklesIcon,
   SquareTerminalIcon,
   SunIcon,
   XIcon,
@@ -59,7 +59,7 @@ import { notify } from "@/lib/notify"
 import { desktopRemoteStatus, isWebRuntime } from "@/lib/transport"
 import { AccountSettings } from "@/features/auth/account-settings"
 import { DataSettings } from "@/features/history/data-settings"
-import { VoiceSettings, voiceAvailable } from "@/features/voice"
+import { AiSettings } from "@/features/ai"
 import type {
   CliInstallStatus,
   GithubCliInfo,
@@ -117,7 +117,7 @@ const monoPathStyle: CSSProperties = {
   userSelect: "all",
 }
 
-export type SettingsSection = "account" | "appearance" | "cli" | "data" | "git" | "server" | "shortcuts" | "vault" | "voice"
+export type SettingsSection = "account" | "ai" | "appearance" | "cli" | "data" | "git" | "server" | "shortcuts" | "vault"
 
 /** 设置的运行形态：网页、连接了服务器的桌面、本机资料库的桌面。 */
 type SettingsRuntime = "local" | "remote" | "web"
@@ -125,11 +125,12 @@ type SettingsRuntime = "local" | "remote" | "web"
 /**
  * 设置单页里的分区顺序，也是左侧锚点导航的顺序。网页端没有本机资料库、Git 与终端命令，换成账号与安全；
  * 桌面连接服务器后，本机资料库与 Git 换成服务器连接与数据找回（导出、抹除要在网页版输入密码确认）。
+ * 「AI」在每种形态都有：自动标签（服务器）、语音（有原生录音的端）、助手接入（桌面）按端显示。
  */
 const SETTINGS_SECTIONS: Record<SettingsRuntime, SettingsSection[]> = {
-  local: ["vault", "git", "server", "appearance", "voice", "cli", "shortcuts"],
-  remote: ["server", "data", "appearance", "voice", "cli", "shortcuts"],
-  web: ["account", "data", "appearance", "voice", "shortcuts"],
+  local: ["vault", "git", "server", "appearance", "ai", "cli", "shortcuts"],
+  remote: ["server", "data", "appearance", "ai", "cli", "shortcuts"],
+  web: ["account", "data", "appearance", "ai", "shortcuts"],
 }
 
 function settingsRuntime(): SettingsRuntime {
@@ -137,10 +138,8 @@ function settingsRuntime(): SettingsRuntime {
   return desktopRemoteStatus() ? "remote" : "local"
 }
 
-/** 语音只在有原生录音与钥匙串的端出现（桌面、iOS App）；浏览器里没有。 */
 function settingsSections(runtime: SettingsRuntime): SettingsSection[] {
-  const sections = SETTINGS_SECTIONS[runtime]
-  return voiceAvailable() ? sections : sections.filter((section) => section !== "voice")
+  return SETTINGS_SECTIONS[runtime]
 }
 
 interface VaultGuideProps {
@@ -545,6 +544,7 @@ const shortcutRows: Record<
   en: [
     { keys: ["⌘", "Enter"], label: "Save fragment" },
     { keys: ["⌘", "K"], label: "Search" },
+    { keys: ["⌘", ","], label: "Settings" },
     { keys: ["⌘", "N"], label: "Quick capture" },
     { keys: ["⌘", "B"], label: "Collapse/expand sidebar" },
     { keys: ["⌘", "1"], label: "Fragments" },
@@ -558,6 +558,7 @@ const shortcutRows: Record<
   zh: [
     { keys: ["⌘", "Enter"], label: "保存片段" },
     { keys: ["⌘", "K"], label: "搜索" },
+    { keys: ["⌘", ","], label: "设置" },
     { keys: ["⌘", "N"], label: "快速捕捉" },
     { keys: ["⌘", "B"], label: "折叠/展开侧边栏" },
     { keys: ["⌘", "1"], label: "碎片" },
@@ -1270,7 +1271,7 @@ export function VaultGuide({
     server: { icon: LinkIcon, label: copy.serverTitle },
     shortcuts: { icon: KeyboardIcon, label: copy.navShortcuts },
     vault: { icon: FolderOpenIcon, label: copy.vaultTitle },
-    voice: { icon: MicIcon, label: locale === "zh" ? "语音" : "Voice" },
+    ai: { icon: SparklesIcon, label: "AI" },
   }
   const spinner = <Loader2Icon aria-hidden="true" className={styles.spin} />
   const cliStatusDescription = cliError ? (
@@ -1302,7 +1303,7 @@ export function VaultGuide({
         }}
       >
         <DialogDescription className="sr-only">
-          配置 Shard 的资料库、同步、外观、语音、终端命令与快捷键。
+          配置 Shard 的资料库、同步、外观、AI（自动标签、语音、助手接入）、终端命令与快捷键。
         </DialogDescription>
         <header className={styles.settingsHeader}>
           <DialogTitle className={styles.settingsTitle}>
@@ -1670,11 +1671,14 @@ export function VaultGuide({
               </SettingsGroup>
             </SettingsBlock>
 
-            {sections.includes("voice") ? (
-              <SettingsBlock id="voice" title={locale === "zh" ? "语音" : "Voice"}>
-                <VoiceSettings />
-              </SettingsBlock>
-            ) : null}
+            <SettingsBlock id="ai" title="AI">
+              <AiSettings
+                canInstallCli={runtime !== "web"}
+                onNavigate={(section) =>
+                  scrollToSection(section, prefersReducedMotion() ? "auto" : "smooth")
+                }
+              />
+            </SettingsBlock>
 
             {runtime === "web" ? null : (
             <SettingsBlock id="cli" title={copy.cliTitle}>

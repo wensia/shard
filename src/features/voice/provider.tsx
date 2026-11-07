@@ -1,11 +1,13 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Button } from '@/components/ui/button'
 import { SelectControl } from '@/components/ui/select'
-import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
+import { requestOpenSettings } from '@/lib/settings-events'
 import type { VoiceContent } from '@/lib/voice-text'
 import { cancelSession, voiceError, voiceInvoke, type VoiceSettingsData } from './api'
-import { VoiceSettings } from './settings'
 import styles from './voice.module.css'
+
+/** 语音的配置只有一处：主设置的「AI」分区（不再另开语音小窗）。 */
+const openVoiceSettings = () => requestOpenSettings('ai')
 
 type Playback = { id: string; owner: string; audio: HTMLAudioElement | null; url: string | null; worker?: Worker; rejectWorker?: () => void; paused: boolean; resume?: () => void }
 type VoiceContextValue = {
@@ -21,7 +23,6 @@ const VoiceContext = createContext<VoiceContextValue>(missing)
 export const useVoice = () => useContext(VoiceContext)
 
 export function VoiceProvider({ children, scopeKey }: { children: ReactNode; scopeKey?: string }) {
-  const [settingsOpen, setSettingsOpen] = useState(false)
   const [player, setPlayer] = useState<'idle' | 'loading' | 'playing' | 'paused'>('idle')
   const [activeOwner, setActiveOwner] = useState<string | null>(null)
   const [error, setError] = useState('')
@@ -45,7 +46,7 @@ export function VoiceProvider({ children, scopeKey }: { children: ReactNode; sco
   async function configured(isCurrent: () => boolean = () => true) {
     const settings = await voiceInvoke<VoiceSettingsData>('voice_get_settings')
     if (!isCurrent()) return false
-    if (!settings.hasKey) { setSettingsOpen(true); return false }
+    if (!settings.hasKey) { openVoiceSettings(); return false }
     return true
   }
   async function read(owner: string, content: VoiceContent, options: { voice?: string } = {}) {
@@ -114,7 +115,7 @@ export function VoiceProvider({ children, scopeKey }: { children: ReactNode; sco
     }
   }
   const value: VoiceContextValue = {
-    openSettings: () => setSettingsOpen(true), configured, stop: () => { stop(); recording.current?.() },
+    openSettings: openVoiceSettings, configured, stop: () => { stop(); recording.current?.() },
     claimRecording(cancel) {
       stop(); recording.current?.(); recording.current = cancel
       return () => { if (recording.current === cancel) recording.current = null }
@@ -137,6 +138,5 @@ export function VoiceProvider({ children, scopeKey }: { children: ReactNode; sco
       </>}
       <Button size="sm" variant="outline" onClick={stop}>{error ? '关闭' : '停止'}</Button>
     </div>}
-    <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}><DialogContent><DialogTitle>语音</DialogTitle><VoiceSettings /></DialogContent></Dialog>
   </VoiceContext.Provider>
 }
