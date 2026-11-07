@@ -630,6 +630,7 @@ pub fn update_public_fragment_in_vault(
     }
     ensure_expected_file_sha(&text, expected_file_sha)?;
     let mut frontmatter = parsed.frontmatter;
+    let tags = merge_body_edit_tags(&frontmatter.tags, &parsed.body, tags);
     let tags = normalize_updated_type_tags(&frontmatter.tags, tags);
     frontmatter.tags = if tags.is_empty() {
         vec!["inbox".to_string()]
@@ -915,6 +916,7 @@ pub fn update_public_fragment_by_id(
     let path = find_fragment_path(cx.vfs, id)?.ok_or_else(|| format!("找不到片段 {}", id))?;
     let text = cx.vfs.read_to_string(&path).map_err(|error| error.to_string())?;
     let parsed = parse_fragment(&text)?;
+    let tags = merge_body_edit_tags(&parsed.frontmatter.tags, &parsed.body, tags);
     let normalized_tags = normalize_updated_type_tags(&parsed.frontmatter.tags, tags);
     if contains_lockbox_tag(&normalized_tags) {
         if is_protected_type(&parsed.frontmatter.tags) {

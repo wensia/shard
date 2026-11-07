@@ -2,6 +2,7 @@
 //! 设计见 `docs/dev/server-sqlite-plan.md` §3、§7。
 
 pub mod app;
+pub mod auto_tagging;
 pub mod auth;
 pub mod commands;
 pub mod config;
@@ -13,3 +14,4 @@ pub mod lockbox;
 pub mod rpc;
 pub mod search;
 pub mod state;
+pub mod tagging_model;

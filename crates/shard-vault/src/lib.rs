@@ -27,6 +27,7 @@
 
 mod prelude;
 
+pub mod auto_tagging;
 pub mod canvas;
 pub mod cli;
 pub mod datasets;

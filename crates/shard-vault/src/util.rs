@@ -42,6 +42,19 @@ pub fn normalize_updated_type_tags(current_tags: &[String], tags: Vec<String>) -
     next
 }
 
+/// 正文编辑只移除原先由正文承载的主题标签；保留属性面板/自动标注写入的元数据标签。
+/// 专用标签更新不调用此函数，用户仍可显式删除这些标签。
+pub fn merge_body_edit_tags(previous_tags: &[String], previous_body: &str, next_tags: Vec<String>) -> Vec<String> {
+    let body_tags: HashSet<_> = shard_core::extract_tags(previous_body).into_iter().collect();
+    let mut tags = next_tags;
+    tags.extend(previous_tags.iter().filter(|tag| {
+        tag.as_str() != LOCKBOX_TAG
+            && !shard_core::auto_tagging::is_untagged(std::slice::from_ref(tag))
+            && !body_tags.contains(tag.as_str())
+    }).cloned());
+    normalize_tags(tags, false)
+}
+
 pub fn hash_text(text: &str) -> String {
     hash_bytes(text.as_bytes())
 }

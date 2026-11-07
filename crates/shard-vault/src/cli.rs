@@ -532,7 +532,7 @@ pub fn plan_rewrite(current_tags: &[String], current_body: &str, next_body: &str
     if next_body == current_body {
         return Ok(None);
     }
-    let tags = edited_tags(current_tags, next_body);
+    let tags = crate::merge_body_edit_tags(current_tags, current_body, edited_tags(current_tags, next_body));
     if contains_lockbox_tag(&tags) {
         return Err(LOCKBOX_MESSAGE.to_string());
     }

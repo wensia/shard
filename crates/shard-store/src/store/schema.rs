@@ -133,6 +133,27 @@ CREATE TABLE lockbox_revisions (
   txn_id INTEGER NOT NULL,
   created_at TEXT NOT NULL
 );
+"#, r#"
+-- Only hashes and operational state are stored here; never model input/output or credentials.
+CREATE TABLE auto_tagging_seen (
+  node_id INTEGER NOT NULL REFERENCES nodes(node_id) ON DELETE CASCADE,
+  prompt_version TEXT NOT NULL,
+  file_sha TEXT NOT NULL,
+  body_sha TEXT,
+  PRIMARY KEY (node_id, prompt_version)
+) WITHOUT ROWID;
+CREATE TABLE auto_tagging_jobs (
+  node_id INTEGER NOT NULL REFERENCES nodes(node_id) ON DELETE CASCADE,
+  body_sha TEXT NOT NULL,
+  prompt_version TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('pending','running','done','failed')),
+  attempts INTEGER NOT NULL DEFAULT 0,
+  claim_id TEXT,
+  next_attempt_at INTEGER NOT NULL DEFAULT 0,
+  last_error TEXT,
+  PRIMARY KEY (node_id, body_sha, prompt_version)
+) WITHOUT ROWID;
+CREATE INDEX auto_tagging_due ON auto_tagging_jobs(prompt_version, status, next_attempt_at);
 "#];
 
 /// blobs.db 的迁移。

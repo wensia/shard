@@ -19,6 +19,10 @@ services:
       RUST_LOG: info
       # docker 日志不是终端：不要颜色转义码
       NO_COLOR: "1"
+      SHARD_AUTO_TAG_ENABLED: ${SHARD_AUTO_TAG_ENABLED:-false}
+      SHARD_AUTO_TAG_API_BASE: ${SHARD_AUTO_TAG_API_BASE:-https://api.openai.com/v1}
+      SHARD_AUTO_TAG_MODEL: ${SHARD_AUTO_TAG_MODEL:-}
+      SHARD_AUTO_TAG_API_KEY: ${SHARD_AUTO_TAG_API_KEY:-}
       # 备份脚本（docker exec shard-server shard-backup.sh）读取
       SHARD_DATA_DIR: /data
       SHARD_BACKUP_DIR: /backups
